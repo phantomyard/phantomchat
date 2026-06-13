@@ -8,6 +8,7 @@
  */
 
 import '../setup';
+import {generateSecretKey, getPublicKey, finalizeEvent} from 'nostr-tools/pure';
 import {fetchNostrProfile, profileToDisplayName, NostrProfile} from '@lib/nostra/nostr-profile';
 
 // --- MockWebSocket ---
@@ -76,7 +77,22 @@ afterEach(() => {
 // --- Kind 0 fetch unit tests ---
 
 describe('kind 0 profile fetch', () => {
-  const testPubkey = 'ab'.repeat(32);
+  // The app verifies the kind-0 event's Schnorr signature and author binding
+  // (relays can serve forged profiles), so fixtures must be a real keypair and
+  // the EVENT must be signed for the requested author.
+  const testSk = generateSecretKey();
+  const testPubkey = getPublicKey(testSk);
+
+  const signedKind0 = (subId: string, profile: Record<string, unknown>) => ([
+    'EVENT',
+    subId,
+    finalizeEvent({
+      kind: 0,
+      content: JSON.stringify(profile),
+      created_at: Math.floor(Date.now() / 1000),
+      tags: []
+    }, testSk)
+  ]);
 
   test('fetchNostrProfile returns profile with display_name from relay', async() => {
     const promise = fetchNostrProfile(testPubkey, ['wss://relay.test']);
@@ -89,14 +105,7 @@ describe('kind 0 profile fetch', () => {
     const subId = req[1];
 
     // Simulate relay responding with kind 0 event containing display_name
-    ws.simulateMessage([
-      'EVENT',
-      subId,
-      {
-        kind: 0,
-        content: JSON.stringify({display_name: 'TestName'})
-      }
-    ]);
+    ws.simulateMessage(signedKind0(subId, {display_name: 'TestName'}));
 
     const result = await promise;
     expect(result).toEqual({display_name: 'TestName'});
@@ -123,14 +132,7 @@ describe('kind 0 profile fetch', () => {
     const req = JSON.parse(ws.sentMessages[0]);
     const subId = req[1];
 
-    ws.simulateMessage([
-      'EVENT',
-      subId,
-      {
-        kind: 0,
-        content: JSON.stringify(profileData)
-      }
-    ]);
+    ws.simulateMessage(signedKind0(subId, profileData));
 
     const profile = await promise;
     expect(profile).not.toBeNull();
@@ -183,14 +185,7 @@ describe('kind 0 profile fetch', () => {
     const req = JSON.parse(ws.sentMessages[0]);
     const subId = req[1];
 
-    ws.simulateMessage([
-      'EVENT',
-      subId,
-      {
-        kind: 0,
-        content: JSON.stringify({name: 'bob_nostr'})
-      }
-    ]);
+    ws.simulateMessage(signedKind0(subId, {name: 'bob_nostr'}));
 
     const profile = await promise;
     expect(profile).toEqual({name: 'bob_nostr'});
@@ -213,11 +208,7 @@ describe('kind 0 profile fetch', () => {
     ws.simulateOpen();
 
     const req = JSON.parse(ws.sentMessages[0]);
-    ws.simulateMessage([
-      'EVENT',
-      req[1],
-      {kind: 0, content: JSON.stringify(fullProfile)}
-    ]);
+    ws.simulateMessage(signedKind0(req[1], fullProfile));
 
     const profile = await promise;
     expect(profile).toEqual(fullProfile);
@@ -234,11 +225,7 @@ describe('kind 0 profile fetch', () => {
     const req = JSON.parse(ws.sentMessages[0]);
     const subId = req[1];
 
-    ws.simulateMessage([
-      'EVENT',
-      subId,
-      {kind: 0, content: JSON.stringify({display_name: 'Test'})}
-    ]);
+    ws.simulateMessage(signedKind0(subId, {display_name: 'Test'}));
 
     await promise;
 

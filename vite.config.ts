@@ -147,7 +147,21 @@ export default defineConfig({
       '**/src/tests/nostra/e2e-tor-wasm.test.ts',
       '**/src/tests/nostra/e2e-ui-flow.test.ts',
       '**/src/tests/nostra/e2e-kind0-profile.test.ts',
+      // Playwright E2E (imports @playwright/test + e2e/ browser helpers) that
+      // lacks the e2e- prefix the rest of the list keyed on, so it slipped into
+      // the unit run and crashed collection with "Playwright Test did not
+      // expect test.describe()". Same browser-E2E tier as the e2e- files above.
+      '**/src/tests/nostra/reactions-nip25.test.ts',
       '**/src/tests/nostra/i2p.test.ts',
+      // Explorer browser/subprocess E2E: these launch Playwright Chromium or
+      // spawn the `explorer:driver` (needs a running app server), so they
+      // belong in a dedicated e2e job, not the jsdom unit gate. The 12 pure
+      // explorer logic tests (ipc, selector-resolver, signature, …) still run.
+      '**/src/tests/explorer/capture.test.ts',
+      '**/src/tests/explorer/driver-intent.test.ts',
+      '**/src/tests/explorer/expectations.test.ts',
+      '**/src/tests/explorer/invariants.test.ts',
+      '**/src/tests/explorer/mark-status.test.ts',
       '**/.gsd/**',
       '**/.worktrees/**',
       '**/.claude/**',
@@ -160,12 +174,14 @@ export default defineConfig({
     },
     environment: 'jsdom',
     testTransformMode: {web: ['.[jt]sx?$']},
-    // otherwise, solid would be loaded twice:
     // deps: {registerNodeLoader: true},
-    // if you have few tests, try commenting one
-    // or both out to improve performance:
-    threads: false,
-    isolate: false,
+    // Run each test file in its own isolated worker so global state
+    // (crypto polyfills, relay sockets, jsdom) can't leak between files.
+    // Previously threads/isolate were disabled for speed, but that caused
+    // cross-file contamination (ERR_INVALID_ARG_TYPE in crypto, hook
+    // timeout cascades in relay-pool). Correctness wins over a few seconds.
+    threads: true,
+    isolate: true,
     globals: true,
     setupFiles: ['./src/tests/setup.ts']
   },

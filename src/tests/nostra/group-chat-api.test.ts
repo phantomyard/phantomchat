@@ -126,10 +126,13 @@ beforeAll(async() => {
   GroupDeliveryTracker = trackerMod.GroupDeliveryTracker;
 });
 
-const OWN_PUBKEY = 'ownpub00000000000000000000000000000000000000000000000000000000ab';
+// Pubkeys must be canonical NIP-01 form: 64-char lowercase hex (validated by
+// group-api SECP_PUBKEY_HEX_RE). Mnemonic placeholders like 'membera…' contain
+// non-hex chars (m, r, …) and are correctly rejected — use valid hex fixtures.
+const OWN_PUBKEY = 'd'.repeat(64);
 const OWN_SK = new Uint8Array(32).fill(1);
-const MEMBER_A = 'membera0000000000000000000000000000000000000000000000000000001';
-const MEMBER_B = 'memberb0000000000000000000000000000000000000000000000000000002';
+const MEMBER_A = 'a'.repeat(64);
+const MEMBER_B = 'b'.repeat(64);
 
 describe('GroupAPI', () => {
   let api: any;

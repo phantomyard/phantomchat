@@ -1,0 +1,53 @@
+name: deploy
+
+# Publishes the built PWA to GitHub Pages on every push to main (i.e. after a
+# PR merges). Pages serves it at the custom domain in public/CNAME
+# (chat.phantomyard.ai) and auto-provisions the Let's Encrypt certificate once
+# DNS resolves — no Terraform/ACM, the same pattern as phantombot.bot.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least-privilege: Pages deploys need pages:write + id-token:write for the
+# OIDC handshake that actions/deploy-pages performs. contents:read is enough
+# to check out and build.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel an in-flight production deploy; queue instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so `generate-changelog` (part of `pnpm run build`)
+          # can read tags/commits.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
