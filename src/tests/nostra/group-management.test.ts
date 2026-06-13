@@ -1,5 +1,9 @@
 import 'fake-indexeddb/auto';
 import '../setup';
+// leaveGroup() calls peerId.toPeerId() — a tweb prototype extension that the
+// app loads via peerIdPolyfill. Import the real polyfill so the test exercises
+// genuine behaviour instead of a hand-rolled stub.
+import '@helpers/peerIdPolyfill';
 import {describe, it, expect, beforeEach, beforeAll, vi} from 'vitest';
 import type {GroupRecord, GroupControlPayload} from '@lib/nostra/group-types';
 
@@ -98,11 +102,14 @@ beforeAll(async() => {
   controlModule = await import('@lib/nostra/group-control-messages');
 });
 
-const OWN_PUBKEY = 'ownpub00000000000000000000000000000000000000000000000000000000ab';
+// Pubkeys must be canonical NIP-01 form: 64-char lowercase hex (validated by
+// group-api SECP_PUBKEY_HEX_RE). Mnemonic placeholders like 'membera…' contain
+// non-hex chars and are correctly rejected — use valid hex fixtures.
+const OWN_PUBKEY = 'd'.repeat(64);
 const OWN_SK = new Uint8Array(32).fill(1);
-const MEMBER_A = 'membera0000000000000000000000000000000000000000000000000000001';
-const MEMBER_B = 'memberb0000000000000000000000000000000000000000000000000000002';
-const NEW_MEMBER = 'newmem00000000000000000000000000000000000000000000000000000003';
+const MEMBER_A = 'a'.repeat(64);
+const MEMBER_B = 'b'.repeat(64);
+const NEW_MEMBER = 'c'.repeat(64);
 const GROUP_ID = 'abc123def456abc123def456abc123de00';
 
 function makeGroup(overrides: Partial<GroupRecord> = {}): GroupRecord {

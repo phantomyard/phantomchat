@@ -27,6 +27,14 @@ afterAll(() => {
 const SENDER_PUB = 'a'.repeat(64);
 const OWN_PUB = 'b'.repeat(64);
 
+// Nostr timestamps are in seconds. The edit handler rejects rumors whose
+// created_at is more than MAX_CREATED_AT_SKEW_SECONDS (3 days) from now, so
+// fixtures must be relative to wall-clock — hard-coded absolute timestamps
+// silently age out of the window and turn every assertion into
+// 'created_at_out_of_window'. Keep these anchored to now.
+const ORIG_TS = Math.floor(Date.now() / 1000) - 60;
+const EDIT_TS = Math.floor(Date.now() / 1000);
+
 function makeCtx(overrides: Partial<ReceiveContext> = {}): ReceiveContext {
   const log = Object.assign(((..._args: any[]) => {}) as any, {
     warn: (..._args: any[]) => {},
@@ -55,7 +63,7 @@ async function seedOriginal(appId: string, content: string) {
     senderPubkey: SENDER_PUB,
     content,
     type: 'text',
-    timestamp: 1700000000,
+    timestamp: ORIG_TS,
     deliveryState: 'delivered',
     mid: 12345
   });
@@ -66,7 +74,7 @@ function editRumor(appId: string, newContent: string, fromOverride?: string): De
     id: 'rumor-hex-of-edit',
     from: fromOverride ?? SENDER_PUB,
     content: JSON.stringify({id: 'chat-new-1', from: SENDER_PUB, to: OWN_PUB, type: 'text', content: newContent, timestamp: Date.now()}),
-    timestamp: 1700000100,
+    timestamp: EDIT_TS,
     rumorKind: 14,
     tags: [
       ['p', OWN_PUB],
@@ -208,7 +216,7 @@ describe('handleRelayMessage — edit handling', () => {
 
     const stored = await getMessageStore().getByAppMessageId(appId);
     expect(stored?.content).toBe('hello edited');
-    expect(stored?.editedAt).toBe(1700000100);
+    expect(stored?.editedAt).toBe(EDIT_TS);
     expect(stored?.mid).toBe(12345);
   });
 

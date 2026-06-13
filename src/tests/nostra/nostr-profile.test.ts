@@ -3,6 +3,7 @@
  */
 
 import '../setup';
+import {generateSecretKey, getPublicKey, finalizeEvent} from 'nostr-tools/pure';
 import {profileToDisplayName, fetchNostrProfile, NostrProfile} from '@lib/nostra/nostr-profile';
 
 // --- MockWebSocket ---
@@ -144,7 +145,22 @@ describe('profileToDisplayName', () => {
 // --- fetchNostrProfile tests ---
 
 describe('fetchNostrProfile', () => {
-  const testPubkey = 'a'.repeat(64);
+  // The app verifies the kind-0 event's Schnorr signature AND that its pubkey
+  // matches the requested author (relays can serve forged profiles). So the
+  // fixture author must be a real keypair and the EVENT must be signed.
+  const testSk = generateSecretKey();
+  const testPubkey = getPublicKey(testSk);
+
+  const signedKind0 = (subId: string, profile: NostrProfile) => ([
+    'EVENT',
+    subId,
+    finalizeEvent({
+      kind: 0,
+      content: JSON.stringify(profile),
+      created_at: Math.floor(Date.now() / 1000),
+      tags: []
+    }, testSk)
+  ]);
 
   test('returns profile when relay responds with EVENT', async() => {
     const profileData: NostrProfile = {
@@ -172,12 +188,8 @@ describe('fetchNostrProfile', () => {
 
     const subId = req[1];
 
-    // Simulate EVENT response
-    ws.simulateMessage([
-      'EVENT',
-      subId,
-      {kind: 0, content: JSON.stringify(profileData)}
-    ]);
+    // Simulate EVENT response (signed by the requested author)
+    ws.simulateMessage(signedKind0(subId, profileData));
 
     const result = await promise;
     expect(result).toEqual(profileData);
@@ -235,11 +247,7 @@ describe('fetchNostrProfile', () => {
     const req = JSON.parse(ws2.sentMessages[0]);
     const subId = req[1];
 
-    ws2.simulateMessage([
-      'EVENT',
-      subId,
-      {kind: 0, content: JSON.stringify(profileData)}
-    ]);
+    ws2.simulateMessage(signedKind0(subId, profileData));
 
     const result = await promise;
     expect(result).toEqual(profileData);
