@@ -235,4 +235,59 @@ describe('MessageStore', () => {
       expect(ids).toContain(conv2);
     });
   });
+
+  describe('tombstones', () => {
+    it('returns 0 for a conversation that has never been deleted', async() => {
+      expect(await store.getTombstone(uniqueConvId())).toBe(0);
+    });
+
+    it('round-trips a deletion watermark', async() => {
+      const conv = uniqueConvId();
+      await store.setTombstone(conv, 1000);
+      expect(await store.getTombstone(conv)).toBe(1000);
+    });
+
+    it('is monotonic — a lower watermark never overwrites a higher one', async() => {
+      const conv = uniqueConvId();
+      await store.setTombstone(conv, 2000);
+      await store.setTombstone(conv, 1000); // stale re-delete
+      expect(await store.getTombstone(conv)).toBe(2000);
+      await store.setTombstone(conv, 3000); // newer re-delete moves forward
+      expect(await store.getTombstone(conv)).toBe(3000);
+    });
+
+    it('clearTombstone removes the watermark', async() => {
+      const conv = uniqueConvId();
+      await store.setTombstone(conv, 1000);
+      await store.clearTombstone(conv);
+      expect(await store.getTombstone(conv)).toBe(0);
+    });
+
+    it('saveMessage drops a message at-or-before the watermark', async() => {
+      const conv = uniqueConvId();
+      await store.setTombstone(conv, 5000);
+
+      // at the watermark — dropped
+      await store.saveMessage(makeMsg({eventId: 'ts-at', conversationId: conv, timestamp: 5000}));
+      expect(await store.getByEventId('ts-at')).toBeNull();
+
+      // before the watermark — dropped
+      await store.saveMessage(makeMsg({eventId: 'ts-before', conversationId: conv, timestamp: 4999}));
+      expect(await store.getByEventId('ts-before')).toBeNull();
+    });
+
+    it('saveMessage lets a strictly-newer message through (revival)', async() => {
+      const conv = uniqueConvId();
+      await store.setTombstone(conv, 5000);
+
+      await store.saveMessage(makeMsg({eventId: 'ts-after', conversationId: conv, timestamp: 5001}));
+      expect(await store.getByEventId('ts-after')).not.toBeNull();
+
+      // Watermark is a permanent low-water mark — NOT cleared by the revival,
+      // so older replays stay suppressed even after the conversation revives.
+      expect(await store.getTombstone(conv)).toBe(5000);
+      await store.saveMessage(makeMsg({eventId: 'ts-old-replay', conversationId: conv, timestamp: 4000}));
+      expect(await store.getByEventId('ts-old-replay')).toBeNull();
+    });
+  });
 });

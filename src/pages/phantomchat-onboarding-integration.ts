@@ -259,6 +259,22 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
         }
       });
 
+      // Conversation-deleted handler — drop the dialog from the chat list.
+      // Fired by ChatAPI.deleteConversation and the VMT contacts.deleteContacts
+      // handler after the underlying messages are wiped + tombstoned. We route
+      // through the same flushHistory path the native "delete chat" UI uses so
+      // the dialog, unread badge and message storages are cleared coherently.
+      // flushHistory re-invokes messages.deleteHistory (idempotent: re-wipe +
+      // re-tombstone, no further dispatch) so there is no event loop.
+      rootScope.addEventListener('phantomchat_conversation_deleted', async({peerPubkey}) => {
+        try {
+          const peerId = await PhantomChatBridge.getInstance().mapPubkeyToPeerId(peerPubkey);
+          await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: false});
+        } catch(err) {
+          console.warn('[PhantomChatOnboardingIntegration] phantomchat_conversation_deleted handler error:', err);
+        }
+      });
+
       // Pending flush with read receipts on peer open
       pendingFlush.attachListener((peerId) => {
         readReceipts.sendForPeer(peerId).catch((err) => {

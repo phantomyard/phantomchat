@@ -986,6 +986,16 @@ export class ChatAPI {
       this.log.error('[ChatAPI] Level 1 deletion failed:', err);
     }
 
+    // Level 1b: Tombstone — record the deletion watermark so relay replays of
+    // this conversation's gift-wraps (24h TTL) can't re-hydrate it on the next
+    // reconnect. Strictly-newer messages still revive the chat (see
+    // MessageStore.setTombstone / the receive-path gate).
+    try {
+      await store.setTombstone(conversationId, Math.floor(Date.now() / 1000));
+    } catch(err) {
+      this.log.warn('[ChatAPI] tombstone write failed (non-fatal):', err);
+    }
+
     // Remove from in-memory history
     this.history = this.history.filter(m => {
       const isConversation = (m.from === peerPubkey && m.to === this.ownId) ||

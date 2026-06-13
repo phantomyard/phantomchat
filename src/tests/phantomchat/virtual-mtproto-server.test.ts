@@ -48,10 +48,19 @@ const mockStore = vi.hoisted(() => ({
   deleteMessages: vi.fn(),
   getReadCursor: vi.fn(),
   setReadCursor: vi.fn(),
-  countUnread: vi.fn()
+  countUnread: vi.fn(),
+  getTombstone: vi.fn().mockResolvedValue(0),
+  setTombstone: vi.fn().mockResolvedValue(undefined)
 }));
 
 const mockGetPubkey = vi.hoisted(() => vi.fn());
+
+// rootScope is reached via dynamic `await import('@lib/rootScope')` inside
+// handlers that dispatch UI events (e.g. deleteContacts → conversation_deleted).
+// The real rootScope.dispatchEvent fires an async MTProtoMessagePort call that
+// rejects in the test env; mock it to a no-op spy so dispatches are observable
+// and don't leak unhandled rejections.
+const mockDispatchEvent = vi.hoisted(() => vi.fn());
 
 vi.mock('@lib/phantomchat/message-store', () => ({
   getMessageStore: () => mockStore
@@ -116,6 +125,14 @@ beforeAll(async() => {
     getAllMappings: vi.fn().mockResolvedValue([]),
     removeMapping: vi.fn(),
     updateMappingProfile: vi.fn()
+  }));
+  vi.doMock('@lib/rootScope', () => ({
+    default: {
+      dispatchEvent: mockDispatchEvent,
+      dispatchEventSingle: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    }
   }));
   vi.doMock('@lib/phantomchat/peer-profile-cache', () => ({
     loadCachedPeerProfile: vi.fn().mockReturnValue(null),
@@ -688,6 +705,8 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result._).toBe('messages.affectedHistory');
       expect(result.offset).toBe(0);
       expect(mockStore.deleteMessages).toHaveBeenCalledWith(CONVERSATION_ID);
+      // Deletion watermark recorded so relay replays can't boomerang the chat.
+      expect(mockStore.setTombstone).toHaveBeenCalledWith(CONVERSATION_ID, expect.any(Number));
     });
 
     it('does not call deleteMessages when peer pubkey cannot be resolved', async () => {
@@ -722,6 +741,50 @@ describe('PhantomChatMTProtoServer', () => {
 
       expect(result).toBe(true);
       expect(mockStore.deleteMessages).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('contacts.deleteContacts', () => {
+    beforeEach(() => {
+      mockStore.deleteMessages.mockResolvedValue(undefined);
+      mockStore.setTombstone.mockResolvedValue(undefined);
+      mockDispatchEvent.mockClear();
+    });
+
+    it('wipes + tombstones the conversation for each deleted contact', async () => {
+      const result = await server.handleMethod('contacts.deleteContacts', {
+        id: [{_: 'inputUser', user_id: PEER_ID, access_hash: 0}]
+      });
+
+      // Returns an updates envelope (not the old silent fallback `true`).
+      expect(result._).toBe('updates');
+      expect(mockStore.deleteMessages).toHaveBeenCalledWith(CONVERSATION_ID);
+      expect(mockStore.setTombstone).toHaveBeenCalledWith(CONVERSATION_ID, expect.any(Number));
+      // Dispatches the dialog-drop event so the chat list removes the dialog.
+      expect(mockDispatchEvent).toHaveBeenCalledWith(
+        'phantomchat_conversation_deleted',
+        expect.objectContaining({peerPubkey: PEER_PUBKEY, conversationId: CONVERSATION_ID})
+      );
+    });
+
+    it('is a safe no-op when no ids are supplied', async () => {
+      const result = await server.handleMethod('contacts.deleteContacts', {id: []});
+
+      expect(result._).toBe('updates');
+      expect(mockStore.deleteMessages).not.toHaveBeenCalled();
+      expect(mockStore.setTombstone).not.toHaveBeenCalled();
+    });
+
+    it('skips a contact whose pubkey cannot be resolved', async () => {
+      mockGetPubkey.mockResolvedValueOnce(null);
+
+      const result = await server.handleMethod('contacts.deleteContacts', {
+        id: [{_: 'inputUser', user_id: 999999, access_hash: 0}]
+      });
+
+      expect(result._).toBe('updates');
+      expect(mockStore.deleteMessages).not.toHaveBeenCalled();
+      expect(mockStore.setTombstone).not.toHaveBeenCalled();
     });
   });
 
@@ -913,7 +976,10 @@ describe('PhantomChatMTProtoServer', () => {
     });
 
     it('action methods return true — contains .delete', async () => {
-      const result = await server.handleMethod('contacts.deleteContacts', {});
+      // contacts.deleteContacts now has a real handler (see deleteContacts
+      // tests below); use another unhandled .delete method to exercise the
+      // fallback pattern.
+      const result = await server.handleMethod('messages.deleteScheduledMessages', {});
 
       expect(result).toBe(true);
     });

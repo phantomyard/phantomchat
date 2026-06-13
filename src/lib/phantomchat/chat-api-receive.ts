@@ -325,6 +325,26 @@ export async function handleRelayMessage(
     return handleSelfEcho(msg, ctx);
   }
 
+  // 4b. Tombstone gate — suppress relay replays of a deleted conversation.
+  // Relays re-deliver kind-1059 gift-wraps (24h TTL) on every reconnect; without
+  // this a message from a chat/contact the user just deleted re-creates the
+  // dialog (the "delete boomerang"). Timestamp-gated: a strictly-newer message
+  // (after the deletion watermark) is allowed through and revives the
+  // conversation, matching Signal-style delete semantics. Dropping here — before
+  // auto-add, history.push and the onMessage dispatch — also keeps the deleted
+  // peer out of the contacts list and stops a replay from re-incrementing
+  // unread counters. The store-level gate in saveMessage is the backstop.
+  try {
+    const store = getMessageStore();
+    const conversationId = store.getConversationId(ctx.ownId, msg.from);
+    const deletedAt = await store.getTombstone(conversationId);
+    if(deletedAt > 0 && msg.timestamp <= deletedAt) {
+      return {action: 'skipped', reason: 'tombstoned'};
+    }
+  } catch(err) {
+    ctx.log.warn('[ChatAPI] tombstone gate check failed:', err);
+  }
+
   // 5. Auto-add unknown senders
   const isKnown = await requestStore.isKnownContact(msg.from).catch(() => true);
   if(!isKnown && msg.from !== ctx.ownId) {
