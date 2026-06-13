@@ -206,7 +206,7 @@ export const DEFAULT_THEME: Theme = {
     _: 'themeSettings',
     pFlags: {},
     base_theme: {_: 'baseThemeClassic'},
-    accent_color: 0x3390ec,
+    accent_color: 0x3080FF,
     message_colors: [0x5CA853],
     wallpaper: {
       _: 'wallPaper',
@@ -232,8 +232,8 @@ export const DEFAULT_THEME: Theme = {
     _: 'themeSettings',
     pFlags: {},
     base_theme: {_: 'baseThemeNight'},
-    accent_color: 0x8774E1,
-    message_colors: [0x8774E1],
+    accent_color: 0x3080FF,
+    message_colors: [0x3080FF],
     wallpaper: {
       _: 'wallPaper',
       pFlags: {
@@ -325,7 +325,7 @@ export const SETTINGS_INIT: StateSettings = {
   },
   themes: [
     makeDefaultAppTheme('day', 'baseThemeClassic', 'hsla(86.4, 43.846153%, 45.117647%, .4)'),
-    makeDefaultAppTheme('night', 'baseThemeNight', 'hsla(299.142857, 44.166666%, 37.470588%, .4)')
+    makeDefaultAppTheme('night', 'baseThemeNight', 'hsla(217, 90%, 55%, .4)')
   ],
   theme: 'system',
   notifications: {

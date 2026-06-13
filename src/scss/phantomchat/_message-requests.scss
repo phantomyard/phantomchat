@@ -22,7 +22,7 @@
     width: 2.5rem;
     height: 2.5rem;
     border-radius: 50%;
-    background: var(--primary-color, #3390ec);
+    background: var(--primary-color, #3080ff);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -48,7 +48,7 @@
     height: 1.25rem;
     padding: 0 0.375rem;
     border-radius: 0.625rem;
-    background: var(--primary-color, #3390ec);
+    background: var(--primary-color, #3080ff);
     color: #fff;
     font-size: 0.75rem;
     font-weight: 700;
@@ -76,7 +76,7 @@
     cursor: pointer;
     margin-right: 0.5rem;
     padding: 0.25rem;
-    color: var(--primary-color, #3390ec);
+    color: var(--primary-color, #3080ff);
   }
 
   &__title {
@@ -106,7 +106,7 @@
     width: 2.5rem;
     height: 2.5rem;
     border-radius: 50%;
-    background: var(--accent-color, #7b68ee);
+    background: var(--accent-color, #3080ff);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -225,7 +225,7 @@
     }
 
     input:checked + .read-receipt-toggle__slider {
-      background-color: var(--primary-color, #3390ec);
+      background-color: var(--primary-color, #3080ff);
     }
 
     input:checked + .read-receipt-toggle__slider::before {

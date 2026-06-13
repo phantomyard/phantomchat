@@ -88,7 +88,7 @@ const colorMap: {
 } = {
   day: {
     // 'background-color': '#f4f4f5',
-    'primary-color': '#3390ec',
+    'primary-color': '#3080FF',
     'message-out-primary-color': '#5CA853',
     'message-background-color': '#ffffff',
     'surface-color': '#ffffff',
@@ -100,14 +100,14 @@ const colorMap: {
   },
   night: {
     // 'background-color': '#181818',
-    'primary-color': '#8774E1',
-    'message-out-primary-color': '#8774E1',
-    'message-background-color': '#212121',
-    'surface-color': '#212121',
+    'primary-color': '#3080FF',
+    'message-out-primary-color': '#3080FF',
+    'message-background-color': '#1C1E27',
+    'surface-color': '#1C1E27',
     'danger-color': '#ff595a',
     'primary-text-color': '#ffffff',
     'secondary-text-color': '#aaaaaa',
-    'saved-color': '#8774E1',
+    'saved-color': '#3080FF',
     'green-color': '#5CC85E'
   }
 };
@@ -151,7 +151,7 @@ export class ThemeController {
 
   public setThemeColor(color = this.themeColor) {
     if(!color) {
-      color = this.isNight() ? '#212121' : '#ffffff';
+      color = this.isNight() ? '#14161D' : '#ffffff';
     }
 
     const themeColorElem = this.themeColorElem;

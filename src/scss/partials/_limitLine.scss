@@ -55,7 +55,7 @@
       left: var(--limit-progress);
       padding: 0 .75rem;
       position: absolute;
-      background: linear-gradient(73.4deg, #6C93FF -7.21%, #976FFF 114.57%, #DF69D1 241.52%);
+      background: linear-gradient(73.4deg, #6C93FF -7.21%, #3080FF 114.57%, #5AA0FF 241.52%);
       background-size: 200px var(--height);
   
       &:after {
@@ -112,7 +112,7 @@
     &.is-end,
     &.is-start {
       --translateX: 0;
-      background: linear-gradient(84.4deg,#6c93ff -4.85%,#976fff 51.72%,#df69d1 110.7%);
+      background: linear-gradient(84.4deg,#6c93ff -4.85%,#3080ff 51.72%,#5aa0ff 110.7%);
       background-size: 200px var(--height);
 
       @include animation-level(2) {
@@ -161,6 +161,6 @@
 
   &-filled {
     color: #fff;
-    --limit-background: linear-gradient(84.4deg, #6C93FF -4.85%, #976FFF 51.72%, #DF69D1 110.7%);
+    --limit-background: linear-gradient(84.4deg, #6C93FF -4.85%, #3080FF 51.72%, #5AA0FF 110.7%);
   }
 }
