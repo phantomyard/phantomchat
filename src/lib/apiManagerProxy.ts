@@ -32,7 +32,7 @@ import idleController from '@helpers/idleController';
 import ServiceMessagePort from '@lib/serviceWorker/serviceMessagePort';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import {makeWorkerURL} from '@helpers/setWorkerProxy';
-import {resolveSwRegistrationUrl} from '@lib/update/sw-register-url';
+import ServiceWorkerURL from '../../sw?worker&url';
 import setDeepProperty, {joinDeepPath, splitDeepPath} from '@helpers/object/setDeepProperty';
 import getThumbKey from '@lib/storages/utils/thumbs/getThumbKey';
 import {NULL_PEER_ID, TEST_NO_STREAMING, THUMB_TYPE_FULL} from '@appManagers/constants';
@@ -672,13 +672,8 @@ class ApiManagerProxy extends MTProtoMessagePort {
       // * doesn't work
       // new URL('../../../sw.ts', import.meta.url),
       // '../../../sw',
-      // Steady state: register the already-installed SW URL from localStorage so
-      // a new deploy (different bundle hash) doesn't silently create a waiting
-      // SW that update-bootstrap Step 1a.5 would flag as compromise. The legit
-      // update flow (update-flow.ts registerNewSw) still calls register() with
-      // the new URL explicitly, after setting pendingFinalization='1'.
-      resolveSwRegistrationUrl(),
-      {type: 'module', scope: './', updateViaCache: 'all'}
+      ServiceWorkerURL,
+      {type: 'module', scope: './'}
     ).then((registration) => {
       if(TEST_NO_STREAMING) {
         throw 1;

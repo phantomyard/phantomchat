@@ -28,10 +28,7 @@ import {onBackgroundsFetch} from '@lib/serviceWorker/backgrounds';
 import {watchMtprotoOnDev} from '@lib/serviceWorker/watchMtprotoOnDev';
 import {watchCacheStoragesLifetime} from './clearOldCache';
 import '@lib/serviceWorker/nostra-push';
-import {requestCacheStrict, unwrapRedirected} from './cache';
-import {setActiveVersion, gcOrphans, getActiveVersion} from './shell-cache';
-import {handleUpdateApproved} from './signed-update-sw';
-import {getBakedPubkey} from '@lib/update/signing/trusted-keys';
+import {CACHE_ASSETS_NAME, requestCache} from './cache';
 
 // #if MTPROTO_SW
 // import '../mtproto/mtproto.worker';
@@ -268,24 +265,13 @@ watchCacheStoragesLifetime({
 watchMtprotoOnDev({connectedWindows, onWindowConnected});
 
 const onFetch = (event: FetchEvent): void => {
-  // Phase A (Task 11): CACHE-ONLY lockdown for all app-shell assets.
-  // Navigation requests and shell file extensions are served strictly from cache.
-  // Network fallback is intentionally removed — a missing asset means cache corruption.
-  // update-manifest.json and .sig are exceptions (probe must reach network).
-  // NOTE: no import.meta.env.PROD guard here — Vite's worker build doesn't inject
-  // that flag into SW context, so the condition would always tree-shake to false.
-  {
-    const _url = new URL(event.request.url);
-    const isSameOrigin = _url.origin === location.origin;
-    const isNavigation = event.request.mode === 'navigate';
-    const looksShell = _url.pathname === '/' || /\.(html?|js|css|wasm|json|svg|woff2?|ttf|webmanifest?|ico|png|jpe?g|mp3|tgs)(\?|$)/.test(_url.pathname);
-    if(isSameOrigin && (isNavigation || looksShell)) {
-      if(_url.pathname === '/update-manifest.json' || _url.pathname === '/update-manifest.json.sig') {
-        // let network handle manifest probe requests
-      } else {
-        return event.respondWith(requestCacheStrict(event));
-      }
-    }
+  if(
+    import.meta.env.PROD &&
+    !IS_SAFARI &&
+    event.request.url.indexOf(location.origin + '/') === 0 &&
+    event.request.url.match(/\.(js|css|jpe?g|json|wasm|png|mp3|svg|tgs|ico|woff2?|ttf|webmanifest?)(?:\?.*)?$/)
+  ) {
+    return event.respondWith(requestCache(event));
   }
 
   if(import.meta.env.DEV && event.request.url.match(/\.([jt]sx?|s?css)?($|\?)/)) {
@@ -361,150 +347,15 @@ const onChangeState = () => {
   ctx.onfetch = onFetch;
 };
 
-// Paths skipped at install-time precache and fetched on-demand instead.
-// Currently emoji PNGs: 3700+ tiny images used only when the emoji picker opens.
-// Precaching them blocks navigator.serviceWorker.ready for 20-30s on first install,
-// and they carry near-zero exploit surface (decoded by native sandboxed image code,
-// no script execution). They still appear in manifest.bundleHashes so the Phase A
-// integrity model is intact — they're just lazy-loaded. The fetch handler serves
-// them from network on first use and CacheStorage caches them automatically.
-//
-// NOTE: manifest entries are emitted with a leading "./" (e.g. "./assets/img/emoji/…"),
-// so we normalize the path before regex-testing. The 0.14.1 build shipped a non-normalized
-// filter that never matched anything — all 3788 emojis were still precached.
-const SKIP_PRECACHE_PATTERNS: RegExp[] = [
-  /^assets\/img\/emoji\//
-];
-
-function normalizeManifestPath(p: string): string {
-  return p.replace(/^\.?\//, '');
-}
-
 ctx.addEventListener('install', (event) => {
   log('installing');
-  event.waitUntil((async() => {
-    try {
-      const manifestRes = await fetch('/update-manifest.json', {cache: 'no-cache'});
-      if(!manifestRes.ok) throw new Error(`manifest fetch ${manifestRes.status}`);
-      const manifest = await manifestRes.json();
-      const version = manifest.version as string;
-      const bundleHashes = manifest.bundleHashes as Record<string, string>;
-      const cacheName = `shell-v${version}`;
-      const cache = await caches.open(cacheName);
-      const allPaths = Object.keys(bundleHashes);
-      const paths = allPaths.filter((p) => {
-        const n = normalizeManifestPath(p);
-        return !SKIP_PRECACHE_PATTERNS.some((re) => re.test(n));
-      });
-      const skippedCount = allPaths.length - paths.length;
-      // First install is TOFU — no signature verification possible (no baked pubkey yet
-      // on fresh machines, OR the manifest is the same-origin bundle that served us the SW).
-      // Parallel fetch in batches to avoid the 30s install timeout. Each path is
-      // retried with exponential backoff to tolerate transient CDN/network failures.
-      // After retries, ANY missing path fails the install — emoji PNGs are already
-      // excluded via SKIP_PRECACHE_PATTERNS, so every remaining path is load-bearing.
-      // A partial precache would leave CACHE-ONLY fetches returning 404 at runtime,
-      // which the 0.14.1 field report surfaced as a broken Settings → App Updates tab.
-      const BATCH_SIZE = 32;
-      const RETRY_DELAYS_MS = [200, 500, 1000];
-      const failedPaths: string[] = [];
-      let successCount = 0;
-      for(let i = 0; i < paths.length; i += BATCH_SIZE) {
-        const batch = paths.slice(i, i + BATCH_SIZE);
-        await Promise.all(batch.map(async(p) => {
-          // Encode URL-reserved chars (`#`, `?`) that fetch would treat as
-          // fragment/query separators and silently strip.
-          const encoded = p.replace(/#/g, '%23').replace(/\?/g, '%3F');
-          const url = new URL(encoded, self.location.href).href;
-          let lastErr: string = 'unknown';
-          for(let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-            try {
-              const res = await fetch(url, {cache: 'no-cache', redirect: 'follow'});
-              if(res.ok) {
-                // Strip the `redirected` flag before storing. Without this, a
-                // navigation request served from this cache entry is aborted
-                // by the browser with ERR_FAILED (Cloudflare Pages 301's
-                // /index.html → / during install).
-                await cache.put(p, await unwrapRedirected(res));
-                successCount++;
-                return;
-              }
-              lastErr = `HTTP ${res.status}`;
-            } catch(err) {
-              lastErr = err instanceof Error ? err.message : String(err);
-            }
-            if(attempt < RETRY_DELAYS_MS.length) {
-              await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
-            }
-          }
-          failedPaths.push(`${p} (${lastErr})`);
-        }));
-      }
-      if(failedPaths.length > 0) {
-        console.error('[sw] install: incomplete precache —', failedPaths.length, 'of', paths.length, 'paths missing:', failedPaths);
-        throw new Error(`[sw] install: incomplete precache (${failedPaths.length}/${paths.length} failed)`);
-      }
-      // Persist version+fingerprint directly here in install — activate handler
-      // cannot rely on self.__INSTALL_* globals because some browsers recycle
-      // the worker scope between install and activate.
-      try {
-        await setActiveVersion(version, manifest.signingKeyFingerprint || 'ed25519:unset');
-      } catch(err) {
-        console.error('[sw] setActiveVersion during install failed:', err);
-      }
-      log('pre-cached shell for version', version, paths.length, 'files (skipped', skippedCount, 'on-demand)');
-    } catch(e) {
-      console.error('[sw] install failed:', e);
-      throw e;
-    }
-    // NO skipWaiting() — new SW stays in waiting until user consent via main-thread SKIP_WAITING message.
-  })());
+  event.waitUntil(ctx.skipWaiting().then(() => log('skipped waiting'))); // Activate worker immediately
 });
 
 ctx.addEventListener('activate', (event) => {
   log('activating', ctx);
-  event.waitUntil((async() => {
-    // setActiveVersion was called during install; activate just GCs orphan caches.
-    try {
-      await gcOrphans();
-    } catch(err) {
-      console.error('[sw] gcOrphans failed:', err);
-    }
-    // NO clients.claim() — reload is handled by main thread via controllerchange listener.
-  })());
-});
-
-// Phase A: main thread sends {type: 'SKIP_WAITING'} after user consent.
-// This is the ONLY path that promotes a waiting SW to active (no skipWaiting in install).
-ctx.addEventListener('message', (event) => {
-  if(event.data && event.data.type === 'SKIP_WAITING') {
-    log('received SKIP_WAITING message, promoting this SW to active');
-    ctx.skipWaiting();
-  }
-});
-
-ctx.addEventListener('message', (event) => {
-  if((event as any).data?.type !== 'UPDATE_APPROVED') return;
-  const port = (event as any).ports[0] as MessagePort | undefined;
-  // Bundle download + verify can take tens of seconds; without waitUntil the SW
-  // may be terminated before UPDATE_RESULT posts back, leaving the popup
-  // stuck on "Applying..." forever.
-  (event as ExtendableMessageEvent).waitUntil((async() => {
-    try {
-      const active = await getActiveVersion();
-      const pubkey = active?.installedPubkey || getBakedPubkey();
-      const res = await handleUpdateApproved(
-        (event as any).data.manifest,
-        (event as any).data.signature,
-        pubkey,
-        (done: number, total: number) => port?.postMessage({type: 'UPDATE_PROGRESS', done, total}),
-        (event as any).data.manifestText
-      );
-      port?.postMessage({type: 'UPDATE_RESULT', outcome: res.outcome, reason: res.reason, chunk: res.chunk, expected: res.expected, actual: res.actual});
-    } catch(e) {
-      port?.postMessage({type: 'UPDATE_RESULT', outcome: 'swap-failed', reason: String(e)});
-    }
-  })());
+  event.waitUntil(ctx.caches.delete(CACHE_ASSETS_NAME).then(() => log('cleared assets cache')));
+  event.waitUntil(ctx.clients.claim().then(() => log('claimed clients')));
 });
 
 // ctx.onerror = (error) => {

@@ -99,7 +99,7 @@ export default class AppNostraRelaySettingsTab extends SliderSuperTab {
 
     // ─── Reset ──────────────────────────────────────────────
     const resetSection = new SettingSection({
-      caption: 'Ripristina la lista ai relay di default di Nostra.chat' as any
+      caption: 'Ripristina la lista ai relay di default di PhantomChat' as any
     });
 
     const resetBtn = Button('btn-primary btn-color-primary btn-transparent danger');

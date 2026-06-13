@@ -81,13 +81,6 @@ Storing a user in Worker's `appUsersManager.users[]` is NOT enough — call `thi
 - All `notDirect` flags were removed from `contextMenu.ts` — all chats are Nostra, there are no Telegram DMs. The type field, invocation logic, and all 10 button properties were deleted.
 - Hamburger profile entry (`buildNostraProfileMenuContent` in `sidebarLeft/index.ts`): the async storage-read path must generate a dicebear avatar from the stored npub *before* calling `fetchOwnKind0`, otherwise fresh-onboarding (no cache, no kind 0 picture) leaves `avatar.src=""` until the user opens the profile tab.
 
-## Phase A Update Popup Wiring
-
-- **Live event is `update_available_signed`** — NOT `update_available`. The latter is legacy (pre-consent-gate) with no listeners; `src/components/popups/updateAvailable/` is dead code, retained only until the cleanup pass. Dispatches from `update-bootstrap.ts:180,184,218,223` go nowhere.
-- Auto-show consent popup lives in `src/index.ts` PROD branch: listener reads `isSnoozed` from `update-popup-controller.ts`, dedups per version, then calls `showUpdateConsentPopup`. Runs BEFORE `runProbeIfDue()` so the dispatch is caught on first probe.
-- Dev test: `__triggerUpdatePopup({version, changelog})` from the browser console — only installed under `import.meta.env.DEV` by `src/lib/update/dev-trigger.ts`. Accept will fail signature check (stub); use for UI/UX testing only.
-- The `UpdateConsent` component (`src/components/popups/updateConsent/index.tsx`) must tolerate missing `rotation` / `signingKeyFingerprint` on the manifest — real manifests don't always carry them, and a strict `!== null` check crashed the popup in 0.14.0 (caught only because the new auto-show exposed a popup that had never actually rendered in prod before).
-
 ## Nostra Module Architecture
 
 `nostra-onboarding-integration.ts` is a thin orchestrator (~240 lines) wiring: `nostra-message-handler.ts` (incoming message builder), `nostra-pending-flush.ts` (queue for closed-chat peers), `nostra-read-receipts.ts` (batch on peer open), `nostra-delivery-ui.ts` (bubble sent/delivered/read icons). `chat-api-receive.ts` extracts `handleRelayMessage` with `ReceiveContext` DI as pure step functions (`isDeleteNotification`, `parseMessageContent`, `extractFileMetadata`, `isDuplicate`). All Nostra rootScope events are typed in `BroadcastEvents` (rootScope.ts) — no `as any` casts.

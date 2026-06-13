@@ -21,6 +21,7 @@ import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
 import {copyTextToClipboard} from '@helpers/clipboard';
 import {toast} from '@components/toast';
 import rootScope from '@lib/rootScope';
+import App from '@config/app';
 
 export default class AppSettingsTab extends SliderSuperTab {
   public async init() {
@@ -191,32 +192,25 @@ export default class AppSettingsTab extends SliderSuperTab {
       listenerSetter: this.listenerSetter
     });
 
-    const updatesRow = new Row({
-      title: 'App Updates',
-      icon: 'download',
-      clickable: async() => {
-        const {default: AppUpdateSettingsTab} = await import('@components/sidebarLeft/tabs/updateSettings');
-        const tab = this.slider.createTab(AppUpdateSettingsTab);
-        tab.open();
-      },
-      listenerSetter: this.listenerSetter
-    });
-
     buttonsDiv.append(
       identityRow.container,
       relayRow.container,
       privacyRow.container,
       notificationsRow.container,
-      generalRow.container,
-      updatesRow.container
+      generalRow.container
     );
 
     const buttonsSection = new SettingSection();
     buttonsSection.content.append(buttonsDiv);
 
+    const versionEl = document.createElement('div');
+    versionEl.textContent = `PhantomChat ${App.versionFull}`;
+    versionEl.style.cssText = 'padding: .5rem 1rem 1rem; text-align: center; color: var(--secondary-text-color); font-size: .8125rem;';
+
     this.scrollable.append(
       profileSection.container,
-      buttonsSection.container
+      buttonsSection.container,
+      versionEl
     );
 
     lottieLoader.loadLottieWorkers();

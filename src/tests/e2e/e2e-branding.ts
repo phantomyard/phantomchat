@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * E2E Test: 11.1 Branding — Hamburger menu → More → "Nostra.chat v0.0.1"
+ * E2E Test: 11.1 Branding — Hamburger menu → More → "PhantomChat v1.0.<build>"
  */
 import {chromium} from 'playwright';
 import {launchOptions} from './helpers/launch-options';
@@ -92,7 +92,7 @@ async function main() {
     return null;
   });
 
-  if(brand?.includes('Nostra.chat')) {
+  if(brand?.includes('PhantomChat')) {
     console.log('PASS: 11.1 — Brand:', brand);
   } else {
     await page.screenshot({path: '/tmp/e2e-11-1-fail.png'});

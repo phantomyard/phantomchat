@@ -37,7 +37,13 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Versioning scheme: 1.0.<build_number>. github.run_number is the monotonic
+      # per-workflow build counter (never regresses), matching phantombot's
+      # 1.0.<build_number> tags. Vite bakes APP_VERSION into the bundle and emits
+      # dist/version + dist/version.json.
       - run: pnpm run build
+        env:
+          APP_VERSION: 1.0.${{ github.run_number }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -51,3 +57,18 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Tag the released build v1.0.<build_number> after a successful deploy, mirroring
+  # phantombot's release-tagging. Scoped contents:write only on this job.
+  tag:
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create and push version tag
+        run: |
+          VERSION="v1.0.${{ github.run_number }}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
