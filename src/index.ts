@@ -57,16 +57,6 @@ import useHasFoldersSidebar, {useIsSidebarCollapsed} from '@stores/foldersSideba
 import appNavigationController from '@components/appNavigationController';
 import {preventCrossTabDynamicImportDeadlock} from '@helpers/preventDeadlock';
 import noop from '@helpers/noop';
-import {updateBootstrap} from '@lib/update/update-bootstrap';
-import {CompromiseAlertError} from '@lib/update/types';
-import {initCacheMissOverlay} from '@lib/serviceWorker/cacheMissOverlay';
-
-// Register as early as possible: if the SW's CACHE-ONLY precache is missing
-// an asset, requestCacheStrict (see serviceWorker/cache.ts) posts a
-// SW_CACHE_MISS message. We must be listening before any dynamic import
-// could fail so the reinstall overlay renders instead of a silent chunk
-// load error.
-initCacheMissOverlay();
 
 // import commonStateStorage from '@lib/commonStateStorage';
 // import { STATE_INIT } from '@config/state';
@@ -410,88 +400,6 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   listenForWindowPrint();
   cancelImageEvents();
   setRootClasses();
-  bootProgress?.(2, 4, 'Verifying integrity');
-
-  // Update integrity bootstrap — runs before IDB / worker init so a compromise
-  // alert can take over the page before any sensitive data is loaded.
-  // Dev builds skip this: Vite HMR rewrites the SW each session, the manifest
-  // URLs point to production origins, and there's no "release" to verify.
-  if(import.meta.env.PROD && 'serviceWorker' in navigator) {
-    // Register popup listeners BEFORE bootstrap — dispatchEventSingle fires
-    // synchronously and events emitted by updateBootstrap (integrity_check_completed,
-    // update_available) are lost if the controller hasn't imported its listeners yet.
-    await import('@lib/update/update-popup-controller');
-    try {
-      await updateBootstrap();
-    } catch(err) {
-      if(err instanceof CompromiseAlertError) {
-        const {mountCompromiseAlert} = await import('@lib/update/compromise-alert-mount');
-        await mountCompromiseAlert(err.reason);
-        return;
-      }
-      throw err;
-    }
-
-    // Migration shim for users upgrading from pre-consent-gate versions
-    const {ensureMigrated} = await import('@lib/update/update-bootstrap');
-    await ensureMigrated();
-
-    // NOTE: the `update_available_signed` → window.__nostraPendingUpdate stash
-    // listener is registered as a module-load side effect inside
-    // update-popup-controller.ts (so it fires before runProbeIfDue on the same
-    // import). Do NOT register a second stash listener here — a duplicate
-    // without the manifestText field would overwrite and break the accept flow.
-
-    // Auto-show consent popup when the probe finds a new signed version.
-    // Without this, the popup only appears via the staleness banner (7 declines)
-    // or a manual visit to the Updates tab — users never get prompted on boot.
-    // De-dup per version so multi-probes in the same session don't stack popups.
-    let autoShownVersion: string | undefined;
-    rootScope.addEventListener('update_available_signed', async({manifest, signature, manifestText}: any) => {
-      if(!manifest || autoShownVersion === manifest.version) return;
-      const {isSnoozed} = await import('@lib/update/update-popup-controller');
-      if(isSnoozed(manifest.version)) return;
-      autoShownVersion = manifest.version;
-      const {showUpdateConsentPopup} = await import('@components/popups/updateConsent/mount');
-      await showUpdateConsentPopup(manifest, signature, manifestText);
-    });
-
-    // Staleness banner: persistent top banner after 7 consecutive declines
-    rootScope.addEventListener('update_staleness_banner', async({version}) => {
-      const {showStalenessBanner} = await import('@components/banners/stalenessBanner.mount');
-      await showStalenessBanner(version, async() => {
-        const pending = (window as any).__nostraPendingUpdate;
-        if(pending) {
-          const {showUpdateConsentPopup} = await import('@components/popups/updateConsent/mount');
-          await showUpdateConsentPopup(pending.manifest, pending.signature, pending.manifestText);
-        }
-      });
-    });
-
-    // Throttled probe on boot (fire-and-forget, 12h cadence) — runs AFTER listeners
-    const {runProbeIfDue} = await import('@lib/update/update-popup-controller');
-    void runProbeIfDue().catch((e) => console.warn('[update] probe failed', e));
-
-    // First-install info popup — show once after fresh install
-    try {
-      const {shouldShowFirstInstall} = await import('@components/popups/firstInstallInfo');
-      if(shouldShowFirstInstall()) {
-        const {getActiveVersion} = await import('@lib/serviceWorker/shell-cache');
-        const active = await getActiveVersion();
-        if(active) {
-          const {showFirstInstallInfoPopup} = await import('@components/popups/firstInstallInfo/mount');
-          showFirstInstallInfoPopup(active.keyFingerprint, active.version);
-        }
-      }
-    } catch(e) {
-      console.warn('[update] first-install popup failed', e);
-    }
-  } else if(import.meta.env.DEV) {
-    // Local simulation hook: exposes window.__triggerUpdatePopup() so the update
-    // popup can be exercised in `pnpm start` without a mainnet deploy.
-    const {install} = await import('@lib/update/dev-trigger');
-    await install();
-  }
 
   bootProgress?.(3, 4, 'Loading account');
   await checkLastActiveAccountFromTMe();

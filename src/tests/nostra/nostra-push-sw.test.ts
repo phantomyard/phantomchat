@@ -58,7 +58,7 @@ describe('nostra-push SW handler', () => {
     expect(loadIdentitySW).not.toHaveBeenCalled();
     expect(showNotification).toHaveBeenCalledTimes(1);
     const [title, opts] = showNotification.mock.calls[0];
-    expect(title).toBe('Nostra.chat');
+    expect(title).toBe('PhantomChat');
     expect(opts.body).toBe('New message');
     expect(opts.tag).toBe('nostra-evt1');
   });
@@ -133,7 +133,7 @@ describe('nostra-push SW handler', () => {
       nostra_event: '{}'
     }));
     const [title, opts] = showNotification.mock.calls[0];
-    expect(title).toBe('Nostra.chat');
+    expect(title).toBe('PhantomChat');
     expect(opts.body).toBe('New message');
   });
 

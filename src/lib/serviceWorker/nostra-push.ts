@@ -31,7 +31,7 @@ interface NostraPushPayload {
   nostra_event: string; // serialized full kind 1059 event
 }
 
-const DEFAULT_TITLE = 'Nostra.chat';
+const DEFAULT_TITLE = 'PhantomChat';
 const DEFAULT_BODY = 'New message';
 
 export async function onNostraPush(event: ExtendableEvent & {data: PushMessageData}): Promise<void> {

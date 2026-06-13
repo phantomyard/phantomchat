@@ -36,11 +36,10 @@ pnpm lint           # ESLint on src/**/*.{ts,tsx}
 
 **Build/test gotchas:**
 - `pnpm test run <file>` (NOT `pnpm test <file>`) for one-shot vitest — `pnpm test` opens watch mode that hangs subagents and CI.
-- Build script forces `NODE_ENV=production && vite build --mode production` — without these, `import.meta.env.PROD` evaluates to `false` in main bundle and entire prod-only blocks (banners, listeners, `update_available_signed` handler) silently disappear from output. Don't strip these flags from `package.json` `build` script.
+- Build script forces `NODE_ENV=production && vite build --mode production` — without these, `import.meta.env.PROD` evaluates to `false` in main bundle and entire prod-only blocks (banners, listeners) silently disappear from output. Don't strip these flags from `package.json` `build` script.
 - `pnpm preview` rebuilds and serves on `:8080`. Vite preview's SPA fallback returns `index.html` for any unmatched URL — including URL-encoded paths to existing files (e.g. `%23` not decoded). This hides production bugs; test URL-sensitive behavior against a real static server (Cloudflare Pages preview), not `vite preview`.
 
 **Dev-mode gotchas (`pnpm start` only, do NOT fight them):**
-- `updateBootstrap()` in `src/index.ts:405` is guarded by `import.meta.env.PROD` — Vite HMR regenerates the SW hash each session, so running the Phase A bootstrap in dev false-positives Step 1a and shows the "possibile compromissione rilevata" alert. Build + serve from `dist/` to test the update flow.
 - `resetLocalData.ts` lazy-imports `confirmationPopup` and `clearAllExceptSeed`. Static imports pull in `popups/index` → `popups/peer`, causing a circular-init race: `ReferenceError: Cannot access 'PopupPeer' before initialization`.
 - **Multi-instance rootScope**: HMR/dynamic imports can create separate `rootScope` instances. Listeners registered on one won't receive dispatches on another. Before adding defenses for a "missing listener" bug, verify the listeners actually exist on the rootScope the app dispatches on. Production builds don't hit this.
 - **Boot splash (`index.html` + `src/index.ts`)**: the inline splash is revealed until `window.__hideBootSplash()` is called. Do NOT add a MutationObserver for `#auth-pages` / `#main-columns` / `#page-chats` — those IDs are shipped as static wireframe wrappers by the tweb fork, so the observer fires on the first microtask and tears the splash down before paint (0.14.0 ship bug). The authoritative signal is the explicit call in `src/index.ts` after `preventCrossTabDynamicImportDeadlock`. A 120s safety timer force-removes the splash if the main bundle throws before reaching the hook.
@@ -168,9 +167,8 @@ solid-js/store  → src/vendor/solid/store
 - Do not save screenshots/images in the project root — use `/tmp/`. `.gitignore` blocks `*.png` at root.
 - Do not assume a component is mounted just because the file exists — grep for imports (`MessageRequests.tsx` existed but was never mounted).
 - Do not assume a `rootScope.dispatchEvent('foo')` is wired — grep for listeners before relying on it.
-- Do not edit `package.json` version manually — release-please handles all version bumps via its release PR.
-- Do NOT run `pnpm version patch|minor|major` to ship a release. Always merge release-please's `chore(main): release X.Y.Z` PR. `pnpm version` is reserved as a manual-recovery path only when release-please itself is broken (and only after explicit user authorization).
-- Do not open two Claude Code instances in the same working directory — use `git worktree add ../nostra.chat-wt/<name> -b <branch> main`, one Claude per worktree.
+- Do not edit `package.json` version manually to ship a release — the deployed version is `1.0.<build_number>`, set by CI from `github.run_number`. The `package.json` value (`1.0.0`) is only the local/dev fallback.
+- Do not open two Claude Code instances in the same working directory — use `git worktree add ../phantomchat-wt/<name> -b <branch> main`, one Claude per worktree.
 - Do not remove the `!public/recorder.min.js` exception in `.gitignore` — it's a third-party UMD imported statically from `src/components/chat/input.ts`.
 - Do NOT narrow the `lint` / `lint-staged` globs back to `src/**/*.ts` — must be `src/**/*.{ts,tsx}`. Solid components live in `.tsx` files; the narrow glob lets indent/formatting errors reach CI where `vite-plugin-checker` catches them, blocking release.
 
@@ -178,19 +176,14 @@ solid-js/store  → src/vendor/solid/store
 
 Full reference: [`docs/RELEASE.md`](docs/RELEASE.md). Day-to-day rules:
 
-- Pipeline triggers **only on `v*` tags** (`.github/workflows/deploy.yml`). Push to `main` directly — no CI on main.
-- **Single release path: merge release-please's `chore(main): release X.Y.Z` PR.** Never edit `package.json` version or `CHANGELOG.md` by hand. Do not run `pnpm version` to ship a release — it bypasses CHANGELOG generation and produces empty release notes. `pnpm version` exists only as a recovery mechanism and requires explicit user authorization.
-- Conventional Commits: `feat:`/`fix:`/`perf:`/`revert:` bump version; everything else is hidden from changelog. **PR titles must also be Conventional** — squash-merge uses the PR title as the single commit on `main`, and release-please parses only that. Non-Conventional titles silently skip release-please (no release PR, no CHANGELOG entry). Fix the title and re-merge so release-please picks it up — do not fall back to `pnpm version` without authorization.
-- If no release-please PR exists after a Conventional-titled merge, wait — the release-please workflow runs on `push: main` and the PR usually appears within ~1 minute. If it's still missing after several minutes, inspect `.github/workflows/release-please.yml` and the action logs before considering a manual recovery.
-- Do NOT enable auto-merge on the release-please PR (accumulates commits, merge manually when releasing).
-- Do NOT re-add `push: branches: main` / `pull_request:` triggers to `deploy.yml`.
-- `pnpm version` runs `preversion = pnpm lint && npx tsc --noEmit` — **any pre-existing lint error anywhere in `src/**/*.ts` blocks the release**, even if unrelated to your change. Fix and push first.
-- `.release-please-manifest.json` is release-please's sole source of truth for "last released version" (it does NOT read git tags or `package.json`). Out-of-sync manifest = release-please proposes an already-shipped version and the release PR collides with the existing tag (PR #33 incident). The `version` lifecycle hook auto-syncs it on `pnpm version`, and `preversion` guards against an already-drifted manifest via `node src/scripts/sync-release-manifest.mjs --check` — so normally you don't touch this file. Only manual intervention is when release-please's own merge path is bypassed in a way the hook can't see (e.g. hand-editing `package.json`, which policy forbids anyway).
-- **IPFS stable URL** `https://ipfs.nostra.chat` is served by `cloudflare-worker/` (DoH DNSLink lookup + proxy to `<cid>.ipfs.dweb.link`). Do NOT `CNAME ipfs → <any public gateway>` — Cloudflare error 1014 (CNAME Cross-User Banned) when proxied, 403 when DNS-only. The Worker route intercepts before CNAME resolution, so the `ipfs` DNS record content is irrelevant as long as it exists with orange proxy. `CLOUDFLARE_API_TOKEN` (Pages token) also has Workers:Edit → reused by the `deploy-worker` job.
+- **CI** (`.github/workflows/ci.yml`) runs on every PR to `main`: `typecheck` + `test`, both required status checks.
+- **Deploy** (`.github/workflows/deploy.yml`) runs on every push to `main` (after a PR merges): build → publish `dist/` to GitHub Pages → tag `v1.0.<build_number>`. Served at `chat.phantomyard.ai`.
+- Versioning is **`1.0.<build_number>`** — CI sets `APP_VERSION=1.0.${github.run_number}`. There is no release-please, no CHANGELOG-gated release, no manual `pnpm version`. Don't hand-edit `package.json` version to ship.
+- No self-update / signed-manifest / IPFS / mirror system — updates ship via a normal Pages redeploy; the service worker picks up the new bundle and the sidebar "Update" button (driven by the `/version` poll) prompts a reload.
 
-## Nostra.chat Architecture Notes
+## Architecture Notes
 
-Subsystem rules — Worker context, Virtual MTProto / MessagePort bridge + middleware rules table, SW install precache, message receive pipeline, delivery tracker, logout & cleanup, UI components, Phase A update popup, Nostra module architecture, background push, MTProto intercept, bug fuzzer, bubble rendering — live in [`docs/CLAUDE-RULES.md`](docs/CLAUDE-RULES.md). Read it before touching any of those areas.
+Subsystem rules — Worker context, Virtual MTProto / MessagePort bridge + middleware rules table, message receive pipeline, delivery tracker, logout & cleanup, UI components, Nostra module architecture, background push, MTProto intercept, bug fuzzer, bubble rendering — live in [`docs/CLAUDE-RULES.md`](docs/CLAUDE-RULES.md). Read it before touching any of those areas.
 
-For deep architecture narrative (Tor runtime, Vitest/E2E quirks, profile sync internals, Phase A update system, profile tab layout, Blossom upload) see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For fuzz status / open findings / per-phase closure log see [`docs/FUZZ-FINDINGS.md`](docs/FUZZ-FINDINGS.md).
+For deep architecture narrative (Tor runtime, Vitest/E2E quirks, profile sync internals, profile tab layout, Blossom upload) see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For fuzz status / open findings / per-phase closure log see [`docs/FUZZ-FINDINGS.md`](docs/FUZZ-FINDINGS.md).
 

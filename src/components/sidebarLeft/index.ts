@@ -207,18 +207,11 @@ export class AppSidebarLeft extends SidebarSlider {
     ripple(this.updateBtn);
     this.updateBtn.append(i18n('Update'));
 
-    attachClickEvent(this.updateBtn, async() => {
+    attachClickEvent(this.updateBtn, () => {
       if(this.updateBtn.classList.contains('is-hidden')) {
         return;
       }
 
-      const pending = (window as any).__nostraPendingUpdate;
-      if(pending) {
-        const {showUpdateConsentPopup} = await import('@components/popups/updateConsent/mount');
-        await showUpdateConsentPopup(pending.manifest, pending.signature);
-        return;
-      }
-      // Fallback: no pending update stashed — force a reload as before.
       appNavigationController.reload();
     });
 
@@ -1771,7 +1764,7 @@ function getVersionLink() {
   });
   const t = document.createElement('span');
   t.classList.add('btn-menu-footer-text');
-  t.textContent = `Nostra.chat v${App.version}`;
+  t.textContent = `PhantomChat v${App.version}`;
   btnMenuFooter.append(t);
 
   return btnMenuFooter;

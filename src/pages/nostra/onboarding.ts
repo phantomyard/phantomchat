@@ -98,8 +98,8 @@ export class NostraOnboarding {
     const title = document.createElement('h1');
     title.classList.add('nostra-welcome-title');
     const accent = document.createElement('span');
-    accent.textContent = '.chat';
-    title.append(document.createTextNode('Welcome to Nostra'), accent);
+    accent.textContent = 'Chat';
+    title.append(document.createTextNode('Welcome to Phantom'), accent);
 
     const description = document.createElement('p');
     description.classList.add('nostra-welcome-description');

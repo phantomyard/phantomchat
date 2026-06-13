@@ -1,8 +1,8 @@
-# Nostra.chat
+# PhantomChat
 
-[![Build](https://github.com/nostra-chat/nostra-chat/actions/workflows/deploy.yml/badge.svg)](https://github.com/nostra-chat/nostra-chat/actions/workflows/deploy.yml)
+[![Build](https://github.com/phantomyard/phantomchat/actions/workflows/deploy.yml/badge.svg)](https://github.com/phantomyard/phantomchat/actions/workflows/deploy.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![PWA](https://img.shields.io/badge/PWA-ready-5A0FC8.svg)](https://nostra.chat)
+[![PWA](https://img.shields.io/badge/PWA-ready-5A0FC8.svg)](https://chat.phantomyard.ai)
 
 Privacy-first decentralized messaging with end-to-end encryption and anonymous relay-based delivery.
 
@@ -10,25 +10,24 @@ Privacy-first decentralized messaging with end-to-end encryption and anonymous r
 
 | Mirror | URL | Notes |
 |---|---|---|
-| 🌐 **Primary** | **<https://nostra.chat>** | Cloudflare Pages, custom domain |
-| 🪞 Mirror 1 | <https://nostra-chat.pages.dev> | Cloudflare fallback |
-| 🪞 Mirror 2 | <https://nostra-chat.github.io/nostra-chat/> | GitHub Pages |
-| 🧅 IPFS (stable URL) | **<https://ipfs.nostra.chat>** | DNSLink gateway, always points to the latest release |
-| 🧅 IPFS (raw CID) | see [IPFS distribution](#ipfs-distribution) below | Censorship-resistant, immutable, per-release |
+| 🌐 **Primary** | **<https://chat.phantomyard.ai>** | GitHub Pages, custom domain (HTTPS enforced) |
 
-Install as a PWA: open any of the links above in Chrome, Edge, or Firefox →
+Multi-mirror and content-addressed (IPFS) distribution are on the
+[roadmap](#roadmap) — see [Distribution](#distribution) below.
+
+Install as a PWA: open the link above in Chrome, Edge, or Firefox →
 the browser will offer an "Install app" option in the address bar or menu.
 
 <!-- TODO: add screenshot of a chat with Tor indicator and delivery states -->
-<!-- ![Nostra.chat screenshot](docs/assets/screenshot-main.png) -->
+<!-- ![PhantomChat screenshot](docs/assets/screenshot-main.png) -->
 
 ## ⚠️ Project status — Alpha software
 
-Nostra.chat is **early alpha**. Expect bugs, expect UI rough edges, expect
+PhantomChat is **early alpha**. Expect bugs, expect UI rough edges, expect
 occasional breaking changes between releases. The code has **not been
 independently audited** by any third party.
 
-**Do not use Nostra.chat for communications where a compromise would put your
+**Do not use PhantomChat for communications where a compromise would put your
 physical safety, freedom, or life at risk.** For those threat models, prefer
 mature, audited tools such as [Signal](https://signal.org/) or
 [Session](https://getsession.org/). We will remove this warning when an
@@ -39,7 +38,7 @@ see [SECURITY.md](SECURITY.md).
 
 ## About
 
-**Nostra.chat** is a 100% client-side Progressive Web App for decentralized messaging, forked from [Telegram Web K](https://github.com/morethanwords/tweb). It replaces the Telegram backend with peer-to-peer encrypted chat over [Nostr](https://nostr.com/) relays and integrates [Tor](https://www.torproject.org/) via WASM for network-level privacy.
+**PhantomChat** is a 100% client-side Progressive Web App for decentralized messaging, forked from [Telegram Web K](https://github.com/morethanwords/tweb). It replaces the Telegram backend with peer-to-peer encrypted chat over [Nostr](https://nostr.com/) relays and integrates [Tor](https://www.torproject.org/) via WASM for network-level privacy.
 
 No servers. No accounts. No install. Just cryptographic keys and a browser.
 
@@ -61,7 +60,7 @@ Tor integration runs entirely in the browser via a WASM build of [Arti](https://
 
 ### Consent-gated updates (signed, no silent code injection)
 
-Starting from v0.12.0, Nostra.chat uses a **consent-gated, cryptographically signed** update system. The app-shell is served **only from cache** after the first install — the Service Worker never fetches new code from the network on its own. Every release manifest is signed with an **Ed25519** key whose public fingerprint is baked into the release that installed on your device; any unsigned or wrong-key-signed manifest is silently dropped. Before applying an update, the client cross-verifies the manifest across 3 independent origins (Cloudflare, GitHub Releases, IPFS) and verifies the signature against the pubkey pinned during your first install.
+Starting from v0.12.0, PhantomChat uses a **consent-gated, cryptographically signed** update system. The app-shell is served **only from cache** after the first install — the Service Worker never fetches new code from the network on its own. Every release manifest is signed with an **Ed25519** key whose public fingerprint is baked into the release that installed on your device; any unsigned or wrong-key-signed manifest is silently dropped. Before applying an update, the client cross-verifies the manifest across 3 independent origins (Cloudflare, GitHub Releases, IPFS) and verifies the signature against the pubkey pinned during your first install.
 
 On first install, a one-time popup shows the signing-key fingerprint so you can record it and verify future rotations. When a new release is available, the app shows a second popup with the changelog, the new version's fingerprint, and (if applicable) a key-rotation cross-certificate — no new code runs without your explicit consent. During download, each chunk is SHA-256 verified; on any mismatch the pending cache is discarded atomically and the active version stays untouched.
 
@@ -105,11 +104,11 @@ See [`docs/UPDATE-SYSTEM.md`](docs/UPDATE-SYSTEM.md) for the operator runbook an
 - PWA installable on mobile and desktop, works offline for cached conversations
 - Deployable from any origin — Cloudflare Pages, GitHub Pages, IPFS — for censorship resistance
 
-### How Nostra.chat compares
+### How PhantomChat compares
 
-A feature-by-feature comparison with other privacy-focused messengers and the mainstream alternatives. This table reflects publicly known facts as of April 2026 and may become outdated — please [open an issue](https://github.com/nostra-chat/nostra-chat/issues) if you spot an inaccuracy.
+A feature-by-feature comparison with other privacy-focused messengers and the mainstream alternatives. This table reflects publicly known facts as of April 2026 and may become outdated — please [open an issue](https://github.com/phantomyard/phantomchat/issues) if you spot an inaccuracy.
 
-| | **Nostra.chat** | Signal | Session | SimpleX | Keet | WhatsApp | Telegram |
+| | **PhantomChat** | Signal | Session | SimpleX | Keet | WhatsApp | Telegram |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **Signup without phone number** | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **User-owned cryptographic identity (self-custody keys)** | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
@@ -143,16 +142,16 @@ A feature-by-feature comparison with other privacy-focused messengers and the ma
 5. SimpleX uses SMP relay servers; anyone can self-host, but most users rely on the project-operated defaults.
 6. Keet is peer-to-peer over Hyperswarm DHT — peers still discover each other via bootstrap nodes operated by the project.
 7. Keet's client and core libraries are open source; the overall ecosystem is developed primarily by a single company (Holepunch).
-8. Nostra.chat has **not yet been independently audited** — see [SECURITY.md](SECURITY.md). A formal audit is planned before leaving alpha. Do not rely on Nostra.chat for high-risk threat models today.
+8. PhantomChat has **not yet been independently audited** — see [SECURITY.md](SECURITY.md). A formal audit is planned before leaving alpha. Do not rely on PhantomChat for high-risk threat models today.
 9. WhatsApp uses the audited Signal protocol, but the closed-source implementation and the surrounding Meta infrastructure have not been publicly audited.
-10. Nostra.chat runs as a PWA — open the URL and start using it. WhatsApp Web and Telegram Web both require a linked mobile device, so "installation-free" is only half true for them.
-11. ⏳ = UI layer present (inherited from Telegram Web K), P2P Nostr transport under active development. See the [roadmap](https://github.com/nostra-chat/nostra-chat/issues) for progress.
-12. Nostra.chat works as a PWA on all major platforms — iOS (Safari), Android (Chrome), Windows, Linux, and macOS — without a native app install.
+10. PhantomChat runs as a PWA — open the URL and start using it. WhatsApp Web and Telegram Web both require a linked mobile device, so "installation-free" is only half true for them.
+11. ⏳ = UI layer present (inherited from Telegram Web K), P2P Nostr transport under active development. See the [roadmap](https://github.com/phantomyard/phantomchat/issues) for progress.
+12. PhantomChat works as a PWA on all major platforms — iOS (Safari), Android (Chrome), Windows, Linux, and macOS — without a native app install.
 13. SimpleX has no account system — each installation is a separate identity. No automatic conversation sync between devices; every contact must be re-linked manually.
 14. WhatsApp requires a phone number and the mobile app to link web/desktop clients. Without the phone, multiplatform is non-functional.
 15. Notifications default to a generic "New message" payload — sender and content are never written to the lockscreen unless the user explicitly opts into a richer preview level in Settings → Notifications. The push relay is open source ([nostr-webpush-relay](https://github.com/nostra-chat/nostr-webpush-relay)) and operates over NIP-98-authenticated registration; users can swap the endpoint to a self-hosted instance at any time.
 
-**This is not a "Nostra.chat wins everything" chart.** Different tools are good at different things:
+**This is not a "PhantomChat wins everything" chart.** Different tools are good at different things:
 
 - **Signal** has the strongest cryptographic reputation and the longest audit history. If your only concern is message confidentiality with a trusted central operator, Signal is the safest choice today.
 - **SimpleX** has arguably the most mature metadata protection model of any messenger, and a Trail of Bits audit.
@@ -161,7 +160,7 @@ A feature-by-feature comparison with other privacy-focused messengers and the ma
 - **WhatsApp** has universal reach, which is itself a meaningful form of security (the person you want to message is already there).
 - **Telegram** has the richest feature set and the best polish.
 
-**Nostra.chat's positioning is different:** fully decentralized over Nostr relays, with user-owned keys, no account to create, censorship-resistant mirror distribution including IPFS, and zero installation — all in the browser. The cost is being newer, less featured, and currently unaudited. **Choose the tool that fits your threat model, not the one with the most green checkmarks.**
+**PhantomChat's positioning is different:** fully decentralized over Nostr relays, with user-owned keys, no account to create, censorship-resistant mirror distribution including IPFS, and zero installation — all in the browser. The cost is being newer, less featured, and currently unaudited. **Choose the tool that fits your threat model, not the one with the most green checkmarks.**
 
 ### Architecture
 
@@ -185,7 +184,7 @@ Nostr Relays (via Tor)
 
 ### Browser support
 
-Nostra.chat requires a modern browser with support for Service Workers,
+PhantomChat requires a modern browser with support for Service Workers,
 SharedWorkers (optional — falls back to DedicatedWorker), IndexedDB, the Web
 Crypto API, and ES2020+.
 
@@ -241,7 +240,7 @@ Open http://localhost:80/
 
 You can also build a standalone image:
 ```bash
-docker build -f ./.docker/Dockerfile_production -t nostra-chat:latest .
+docker build -f ./.docker/Dockerfile_production -t phantomchat:latest .
 ```
 
 ### Tests
@@ -296,45 +295,34 @@ Example: `http://localhost:8080/?debug=1`
 - [ ] P2P mesh — WebRTC DataChannel between contacts, tunneled through Tor
 - [ ] Trust-minimized PWA updates — user-controlled updates with threshold auditor signatures and reproducible builds ([design](docs/TRUST-MINIMIZED-UPDATES.md))
 
-## IPFS distribution
+## Distribution
 
-Every release tag is built, bundled, and pinned to [IPFS](https://ipfs.tech/)
-as an immutable content-addressed bundle via Filebase. The CID changes with
-each release because it is a deterministic function of the build output.
+PhantomChat ships today as a static PWA bundle served from **GitHub Pages**
+at the custom domain **<https://chat.phantomyard.ai>** (HTTPS enforced). Each
+push to `main` builds the app and publishes `dist/` automatically — see
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
 
-### Stable URL — `https://ipfs.nostra.chat`
+Because the entire app is a static, content-addressable bundle, it is
+inherently portable: the contents of `dist/` can be copied to any static
+host or pinned to [IPFS](https://ipfs.tech/) for censorship-resistant,
+content-verifiable delivery.
 
-A DNSLink record (`_dnslink.ipfs.nostra.chat`) is updated automatically on
-every release tag and resolved at request time by a Cloudflare Worker that
-proxies traffic to the `dweb.link` subdomain gateway. The URL is stable —
-users never need to know the current CID.
+### Roadmap for distribution
 
-### Raw CID gateways
+The following are planned but **not yet wired up** for PhantomChat:
 
-If you prefer to verify the exact content served, pick the CID from
-[GitHub Releases](https://github.com/nostra-chat/nostra-chat/releases) or
-from the build commit status, and use any public IPFS gateway:
-
-```
-https://dweb.link/ipfs/<CID>/
-https://ipfs.io/ipfs/<CID>/
-https://cf-ipfs.com/ipfs/<CID>/
-https://w3s.link/ipfs/<CID>/
-```
-
-**Why IPFS matters:** if Cloudflare Pages and GitHub Pages become unavailable
-(censorship, takedown, legal action, account suspension), the IPFS mirror
-remains reachable from any gateway and from local IPFS nodes. The
-content-addressed URL also lets a user verify that the bundle they are
-running matches a specific, immutable version of the source.
-
-A planned [trust-minimized update flow](docs/TRUST-MINIMIZED-UPDATES.md) will
-build on top of this CID-based distribution to add threshold auditor
-signatures before updates are applied.
+- **Multi-mirror** publishing (independent origins for redundancy and
+  takedown resistance).
+- **Content-addressed IPFS** distribution — per-release immutable CIDs so a
+  user can verify the exact bundle they are running, with a stable DNSLink
+  URL resolving to the latest release.
+- A [trust-minimized update flow](docs/TRUST-MINIMIZED-UPDATES.md) building on
+  CID-based distribution to add threshold auditor signatures before updates
+  are applied.
 
 ## Security
 
-Nostra.chat is **alpha, unaudited software**. Read
+PhantomChat is **alpha, unaudited software**. Read
 [SECURITY.md](SECURITY.md) for the threat model, what the project defends
 against, what it does not, and how to privately report vulnerabilities.
 
@@ -376,8 +364,8 @@ development workflow, style rules, and commit message conventions.
 ## Community
 
 - **Nostr:** [`npub1zxn3hul7dsaex9l5a8l8scflxzruxh3v9gvvvgcmtdus7aqenmrskmtyqz`](https://njump.me/npub1zxn3hul7dsaex9l5a8l8scflxzruxh3v9gvvvgcmtdus7aqenmrskmtyqz)
-- **Issues & feature requests:** [GitHub Issues](https://github.com/nostra-chat/nostra-chat/issues)
-- **General discussion:** [GitHub Discussions](https://github.com/nostra-chat/nostra-chat/discussions)
+- **Issues & feature requests:** [GitHub Issues](https://github.com/phantomyard/phantomchat/issues)
+- **General discussion:** [GitHub Discussions](https://github.com/phantomyard/phantomchat/discussions)
 - **Security reports:** see [SECURITY.md](SECURITY.md) (do not use public
   channels for vulnerability reports)
 

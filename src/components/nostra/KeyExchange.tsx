@@ -91,7 +91,7 @@ export default function KeyExchange(props: KeyExchangeProps) {
         if(blob) {
           const file = new File([blob as BlobPart], 'nostra-qr.png', {type: 'image/png'});
           await navigator.share({
-            title: 'My Nostra.chat QR',
+            title: 'My PhantomChat QR',
             text: npub() || '',
             files: [file]
           });

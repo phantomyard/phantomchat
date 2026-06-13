@@ -7,13 +7,18 @@ import checker from 'vite-plugin-checker';
 // import devtools from 'solid-devtools/vite'
 import autoprefixer from 'autoprefixer';
 import {resolve} from 'path';
-import {existsSync, copyFileSync, readFileSync} from 'fs';
+import {existsSync, copyFileSync, readFileSync, writeFileSync} from 'fs';
 import {ServerOptions} from 'vite';
 import {watchLangFile} from './watch-lang.js';
 import path from 'path';
 
 const rootDir = resolve(__dirname);
 const pkgVersion = JSON.parse(readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version as string;
+// Versioning scheme: 1.0.<build_number>. CI sets APP_VERSION=1.0.${github.run_number}
+// (a monotonic, never-regressing build counter). Local/dev builds fall back to the
+// package.json version. This single value feeds the in-app version, the /version and
+// /version.json endpoints, and the sidebar update-available poll.
+const appVersion = process.env.APP_VERSION || pkgVersion;
 const certsDir = path.join(rootDir, 'certs');
 const ENV_LOCAL_FILE_PATH = path.join(rootDir, '.env.local');
 const LANG_PACK_LOCAL_FILE_PATH = path.join(rootDir, 'src', 'langPackLocalVersion.ts');
@@ -106,11 +111,28 @@ if(USE_OWN_SOLID) {
 
 export default defineConfig({
   define: {
-    'import.meta.env.VITE_VERSION': JSON.stringify(pkgVersion),
-    'import.meta.env.VITE_VERSION_FULL': JSON.stringify(pkgVersion),
-    '__BUILD_VERSION__': JSON.stringify(pkgVersion)
+    'import.meta.env.VITE_VERSION': JSON.stringify(appVersion),
+    'import.meta.env.VITE_VERSION_FULL': JSON.stringify(appVersion),
+    '__BUILD_VERSION__': JSON.stringify(appVersion)
   },
   plugins: [
+    // Emit the version endpoints into the build output from the single appVersion
+    // source. `version` (plain text) is polled by the sidebar update-available check;
+    // `version.json` is a curlable health/release endpoint. Overwrites the static
+    // public/version copy so the two can never drift.
+    {
+      name: 'phantomchat-version-emit',
+      apply: 'build',
+      closeBundle() {
+        const outDir = path.join(rootDir, 'dist');
+        if(!existsSync(outDir)) return;
+        writeFileSync(path.join(outDir, 'version'), appVersion);
+        writeFileSync(path.join(outDir, 'version.json'), JSON.stringify({
+          version: appVersion,
+          builtAt: new Date().toISOString()
+        }) + '\n');
+      }
+    },
     // devtools({
     //   /* features options - all disabled by default */
     //   autoname: true // e.g. enable autoname

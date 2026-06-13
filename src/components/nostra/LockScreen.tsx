@@ -83,7 +83,7 @@ export default function LockScreen(): JSX.Element {
       <div class="lock-screen">
         <div class="lock-screen__content">
           <div class="lock-screen__logo">
-            <h1 class="lock-screen__title">Nostra.chat</h1>
+            <h1 class="lock-screen__title">PhantomChat</h1>
           </div>
 
           <div class={`lock-screen__input-area ${shaking() ? 'lock-screen__input-area--shake' : ''}`}>
