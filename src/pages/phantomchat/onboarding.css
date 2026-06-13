@@ -158,8 +158,8 @@
 .phantomchat-welcome-logo {
   width: 88px;
   height: 88px;
-  border-radius: 22%;
-  box-shadow: 0 4px 24px rgba(135, 116, 225, 0.25);
+  border-radius: 50%;
+  background: transparent;
   margin-bottom: 1.25rem;
 }
 

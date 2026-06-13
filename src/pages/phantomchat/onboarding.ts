@@ -90,7 +90,7 @@ export class PhantomChatOnboarding {
 
     const logo = document.createElement('img');
     logo.classList.add('phantomchat-welcome-logo');
-    logo.src = 'assets/img/logo_filled_rounded.png?v=jw3mK7G9Ry';
+    logo.src = 'assets/img/logo_512.png?v=jw3mK7G9Ry';
     logo.alt = '';
     logo.width = 88;
     logo.height = 88;
@@ -103,7 +103,7 @@ export class PhantomChatOnboarding {
 
     const description = document.createElement('p');
     description.classList.add('phantomchat-welcome-description');
-    description.textContent = 'Encrypted, private messaging built on the decentralized Nostr protocol. Your keys, your data. No phone number or email required.';
+    description.textContent = 'Private and encrypted messaging using the decentralized Nostr protocol. Your keys, your data. No phone number or email required.';
 
     const divider = document.createElement('div');
     divider.classList.add('phantomchat-welcome-divider');
