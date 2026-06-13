@@ -894,7 +894,7 @@ $btn-menu-z-index: 4;
         height: 100%;
       }
 
-      // Nostra mode: emoji reactions render as plain text when no lottie
+      // PhantomChat mode: emoji reactions render as plain text when no lottie
       // sticker is available from the catalog stub.
       .btn-menu-reactions-reaction-appear.reaction-text-emoji {
         display: flex;

@@ -64,7 +64,7 @@ import AppGiftsManager from '@appManagers/appGiftsManager';
 import MonoforumDialogsStorage from '@lib/storages/monoforumDialogs';
 import AppPromoManager from '@appManagers/appPromoManager';
 import AppAccountManager from '@appManagers/appAccountManager';
-// api-manager-stub removed: nostraIntercept in apiManager.ts handles all MTProto interception
+// api-manager-stub removed: phantomchatIntercept in apiManager.ts handles all MTProto interception
 
 export default function createManagers(
   appStoragesManager: AppStoragesManager,
@@ -153,7 +153,7 @@ export default function createManagers(
     ctx[name] = manager;
   }
 
-  // Nostra.chat: MTProto interception handled by nostraIntercept in apiManager.ts
+  // PhantomChat.chat: MTProto interception handled by phantomchatIntercept in apiManager.ts
 
   Object.assign(managers.rootScope, {managers});
 

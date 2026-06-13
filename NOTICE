@@ -1,13 +1,13 @@
 PhantomChat
 ===========
 
-This project is a copy of nostra-chat (https://github.com/nostra-chat/nostra-chat),
+This project is a copy of phantomchat-chat (https://github.com/phantomchat-chat/phantomchat-chat),
 which is itself a fork of Telegram Web K (https://github.com/morethanwords/tweb).
 
 It is distributed under the GNU General Public License v3.0 (see LICENSE).
 
 Attribution:
   - Telegram Web K — Copyright (C) Eduard Kuzmenko and contributors
-  - nostra-chat — decentralized Nostr backend and PWA adaptation
+  - phantomchat-chat — decentralized Nostr backend and PWA adaptation
 
 Modifications by PhantomYard are documented in the project git history.

@@ -1,12 +1,12 @@
-# Contributing to Nostra.chat
+# Contributing to PhantomChat.chat
 
-Thank you for your interest in contributing. Nostra.chat is an early-stage
+Thank you for your interest in contributing. PhantomChat.chat is an early-stage
 privacy-focused project and every improvement — code, docs, translations,
 bug reports, design — is welcome.
 
 ## Ways to contribute
 
-- **Report a bug** — open a [GitHub issue](https://github.com/nostra-chat/nostra-chat/issues/new/choose)
+- **Report a bug** — open a [GitHub issue](https://github.com/phantomchat-chat/phantomchat-chat/issues/new/choose)
   with clear reproduction steps, browser info, and what you expected vs what
   happened. **Do not report security vulnerabilities in public issues** —
   see [SECURITY.md](SECURITY.md).
@@ -24,8 +24,8 @@ bug reports, design — is welcome.
 ### 1. Fork & clone
 
 ```bash
-git clone git@github.com:<your-username>/nostra-chat.git
-cd nostra-chat
+git clone git@github.com:<your-username>/phantomchat-chat.git
+cd phantomchat-chat
 pnpm install
 ```
 
@@ -50,7 +50,7 @@ a feature branch keeps the history clean and makes review easier.
   (no space after `if`, ternary operators at end of line, no spaces inside
   braces, etc.).
 - Add or update tests when you touch behavior — `pnpm test` for unit tests,
-  `pnpm test:nostra:quick` for the fast P2P suite.
+  `pnpm test:phantomchat:quick` for the fast P2P suite.
 
 ### 4. Commit messages
 
@@ -130,11 +130,11 @@ Full details are in [CLAUDE.md](CLAUDE.md). The highlights:
 pnpm lint                   # ESLint
 npx tsc --noEmit            # TypeScript check
 pnpm test                   # Vitest unit tests
-pnpm test:nostra:quick      # Fast P2P suite (~2s)
+pnpm test:phantomchat:quick      # Fast P2P suite (~2s)
 pnpm test:e2e:all           # Playwright E2E (slow, needs Docker for local relay)
 ```
 
-Run at least `pnpm lint`, `pnpm test`, and `pnpm test:nostra:quick` before
+Run at least `pnpm lint`, `pnpm test`, and `pnpm test:phantomchat:quick` before
 opening a PR. The full E2E suite runs in CI on every push to `main`.
 
 ## Areas that need help
@@ -159,5 +159,5 @@ comments and block users who violate this policy.
 
 ## License
 
-By contributing to Nostra.chat, you agree that your contributions will be
+By contributing to PhantomChat.chat, you agree that your contributions will be
 licensed under the same [GPL v3](LICENSE) license that covers the project.

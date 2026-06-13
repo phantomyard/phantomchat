@@ -3,7 +3,7 @@ import {render} from 'solid-js/web';
 import Section from '@components/section';
 import numberThousandSplitter from '@helpers/number/numberThousandSplitter';
 import {useChat, usePeer} from '@stores/peers';
-import {usePeerNostraProfile} from '@stores/peerNostraProfile';
+import {usePeerPhantomChatProfile} from '@stores/peerPhantomChatProfile';
 import {BusinessWorkHours, Chat, ChatFull, GeoPoint, HelpTimezonesList, Photo, StoryItem, Document, MessageMedia, Timezone, User, UserFull, UserStatus} from '@layer';
 import {useFullPeer} from '@stores/fullPeers';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
@@ -919,11 +919,11 @@ PeerProfile.Bio = () => {
   const appConfig = useAppConfig();
   const peerTranslation = usePeerTranslation(context.peerId);
 
-  const nostraProfile = usePeerNostraProfile(context.peerId);
+  const phantomchatProfile = usePeerPhantomChatProfile(context.peerId);
   const about = createMemo(() => {
     const fromFull = context.fullPeer?.about;
     if(fromFull) return fromFull;
-    return nostraProfile()?.about || '';
+    return phantomchatProfile()?.about || '';
   });
   const bioLanguagePromise = createMemo(() => detectLanguageForTranslation(about()));
 
@@ -1429,10 +1429,10 @@ PeerProfile.StoryPreviews = (props: {
   );
 };
 
-PeerProfile.NostraWebsite = () => {
+PeerProfile.PhantomChatWebsite = () => {
   const context = useContext(PeerProfileContext);
   const {i18n, I18n, toast} = useHotReloadGuard();
-  const profile = usePeerNostraProfile(context.peerId);
+  const profile = usePeerPhantomChatProfile(context.peerId);
   const url = createMemo(() => profile()?.website?.trim() || '');
 
   const copy = () => {
@@ -1469,10 +1469,10 @@ PeerProfile.NostraWebsite = () => {
   );
 };
 
-PeerProfile.NostraLightning = () => {
+PeerProfile.PhantomChatLightning = () => {
   const context = useContext(PeerProfileContext);
   const {I18n, toast} = useHotReloadGuard();
-  const profile = usePeerNostraProfile(context.peerId);
+  const profile = usePeerPhantomChatProfile(context.peerId);
   const lud16 = createMemo(() => profile()?.lud16?.trim() || '');
 
   const copy = () => {
@@ -1500,10 +1500,10 @@ PeerProfile.NostraLightning = () => {
   );
 };
 
-PeerProfile.NostraNip05 = () => {
+PeerProfile.PhantomChatNip05 = () => {
   const context = useContext(PeerProfileContext);
   const {I18n, toast} = useHotReloadGuard();
-  const profile = usePeerNostraProfile(context.peerId);
+  const profile = usePeerPhantomChatProfile(context.peerId);
   const nip05 = createMemo(() => profile()?.nip05?.trim() || '');
 
   const copy = () => {
@@ -1547,9 +1547,9 @@ PeerProfile.MainSection = () => {
         <PeerProfile.Username />
         <PeerProfile.Location />
         <PeerProfile.Bio />
-        <PeerProfile.NostraWebsite />
-        <PeerProfile.NostraLightning />
-        <PeerProfile.NostraNip05 />
+        <PeerProfile.PhantomChatWebsite />
+        <PeerProfile.PhantomChatLightning />
+        <PeerProfile.PhantomChatNip05 />
         <PeerProfile.Link />
         <PeerProfile.Birthday />
         <PeerProfile.ContactNote />

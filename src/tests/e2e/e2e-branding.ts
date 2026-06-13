@@ -96,7 +96,7 @@ async function main() {
     console.log('PASS: 11.1 — Brand:', brand);
   } else {
     await page.screenshot({path: '/tmp/e2e-11-1-fail.png'});
-    // Try to find any text containing Nostra in visible menus
+    // Try to find any text containing PhantomChat in visible menus
     const debug = await page.evaluate(() => {
       const all = document.querySelectorAll('[class*="menu"]');
       return Array.from(all).map(el => ({

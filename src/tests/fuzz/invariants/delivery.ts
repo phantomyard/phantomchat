@@ -24,7 +24,7 @@ export const deliveryUiMatchesTracker: Invariant = {
 
 async function checkOne(user: UserHandle, id: 'userA' | 'userB'): Promise<InvariantResult> {
   const payload = await user.page.evaluate(() => {
-    const tracker = (window as any).__nostraChatAPI?.deliveryTracker;
+    const tracker = (window as any).__phantomchatChatAPI?.deliveryTracker;
     const states: Record<string, string> = tracker?.getAllStates
       ? tracker.getAllStates()
       : (tracker?.states ? Object.fromEntries(tracker.states) : {});
@@ -65,7 +65,7 @@ async function checkOne(user: UserHandle, id: 'userA' | 'userB'): Promise<Invari
 }
 
 const COLLECT_DELIVERY_STATE = async() => {
-  const chatAPI = (window as any).__nostraChatAPI;
+  const chatAPI = (window as any).__phantomchatChatAPI;
   const tracker = chatAPI?.deliveryTracker;
   const states: Record<string, string> = tracker?.getAllStates
     ? tracker.getAllStates()
@@ -80,7 +80,7 @@ const COLLECT_DELIVERY_STATE = async() => {
     .map((b) => Number((b as HTMLElement).dataset.mid)).filter((n) => !Number.isNaN(n));
   const idbMids: number[] = [];
   try {
-    const req = indexedDB.open('nostra-messages');
+    const req = indexedDB.open('phantomchat-messages');
     const db: IDBDatabase = await new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);

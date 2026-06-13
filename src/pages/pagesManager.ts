@@ -30,8 +30,8 @@ class PagesManager {
   public setPage(page: Page) {
     if(page.isAuthPage) {
       this.pagesDiv.style.display = '';
-      import('./nostra-onboarding-integration').then((m) => {
-        m.mountNostraOnboarding(
+      import('./phantomchat-onboarding-integration').then((m) => {
+        m.mountPhantomChatOnboarding(
           this.pagesDiv.querySelector('.scrollable') ?? this.pagesDiv
         );
       });

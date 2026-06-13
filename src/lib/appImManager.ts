@@ -2503,7 +2503,7 @@ export class AppImManager extends EventListenerBase<{
 
   public async setPeer(options: Partial<ChatSetInnerPeerOptions> = {}, animate?: boolean): Promise<boolean> {
     options.peerId ??= NULL_PEER_ID;
-    // [Nostra.chat] Guard: managers may not be constructed yet during early boot
+    // [PhantomChat.chat] Guard: managers may not be constructed yet during early boot
     if(this.managers?.appPeersManager) {
       options.peerId = await this.managers.appPeersManager.getPeerMigratedTo(options.peerId) || options.peerId;
     }

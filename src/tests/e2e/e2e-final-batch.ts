@@ -116,7 +116,7 @@ async function main() {
       const dbMsgCount = await pageA.evaluate(async () => {
         try {
           const db = await new Promise<IDBDatabase>((r, e) => {
-            const req = indexedDB.open('nostra-messages', 1);
+            const req = indexedDB.open('phantomchat-messages', 1);
             req.onerror = () => e(req.error);
             req.onsuccess = () => r(req.result);
           });
@@ -135,7 +135,7 @@ async function main() {
 
       // Check p2pMessageCache
       const cacheSize = await pageA.evaluate(() => {
-        const proxy = (window as any).__nostraDisplayBridge?.chatAPI;
+        const proxy = (window as any).__phantomchatDisplayBridge?.chatAPI;
         const cache = (window as any).apiManagerProxy?.p2pMessageCache;
         let total = 0;
         if(cache) cache.forEach((m: any) => total += m.size);
@@ -144,7 +144,7 @@ async function main() {
       console.log(`  p2pMessageCache size: ${cacheSize}`);
 
       // Check send bridge logs
-      const sendLogs = logsA.filter(l => l.includes('[NostraSendBridge]') || l.includes('persisted outgoing'));
+      const sendLogs = logsA.filter(l => l.includes('[PhantomChatSendBridge]') || l.includes('persisted outgoing'));
       console.log(`  Send bridge logs: ${sendLogs.length}`);
       sendLogs.slice(-5).forEach(l => console.log('    ', l));
 
@@ -211,7 +211,7 @@ async function main() {
       await createId(page, 'DelAllUser');
       // Verify ChatAPI has deleteConversation method
       const hasDeleteAPI = await page.evaluate(() => {
-        const chatAPI = (window as any).__nostraChatAPI;
+        const chatAPI = (window as any).__phantomchatChatAPI;
         return typeof chatAPI?.deleteConversation === 'function';
       });
       record('6.8', hasDeleteAPI, hasDeleteAPI ? 'ChatAPI.deleteConversation() available' : 'no delete API');
@@ -230,7 +230,7 @@ async function main() {
       // which now properly dispatches dialog_drop. For "delete for other", it would
       // need to send NIP-09 via ChatAPI. The mechanism exists.
       const hasMechanism = await page.evaluate(() => {
-        const chatAPI = (window as any).__nostraChatAPI;
+        const chatAPI = (window as any).__phantomchatChatAPI;
         return typeof chatAPI?.deleteConversation === 'function';
       });
       record('6.13', hasMechanism, hasMechanism ? 'deleteConversation available for NIP-09' : 'no API');
@@ -252,7 +252,7 @@ async function main() {
       const groupAPIStatus = await page.evaluate(() => {
         const w = window as any;
         return {
-          hasGroupAPI: typeof w.__nostraGroupAPI !== 'undefined' || true, // API is initialized in onboarding
+          hasGroupAPI: typeof w.__phantomchatGroupAPI !== 'undefined' || true, // API is initialized in onboarding
           hasSendMessage: true, // GroupAPI.sendMessage exists
           hasLeaveGroup: true, // GroupAPI.leaveGroup exists
           hasAddMember: true // GroupAPI.addMember exists
@@ -268,7 +268,7 @@ async function main() {
       // 7.2: The group message sending uses wrapGroupMessage (N+1 gift-wraps)
       // and displayGroupMessage for rendering. The code path is complete.
       record('7.2', true, 'GroupAPI.sendMessage + wrapGroupMessage + displayGroupMessage pipeline exists');
-      record('7.3', true, 'AppNostraGroupInfoTab opens from topbar click (topbar.ts integration exists)');
+      record('7.3', true, 'AppPhantomChatGroupInfoTab opens from topbar click (topbar.ts integration exists)');
       record('7.4', true, 'GroupAPI.addMember/removeMember + broadcastGroupControl implemented');
       record('7.5', true, 'GroupAPI.leaveGroup + removeGroupDialog implemented');
     } finally { await ctx.close(); }
@@ -285,7 +285,7 @@ async function main() {
       const mediaStatus = await page.evaluate(async () => {
         try {
           // Check if the modules exist by attempting dynamic import
-          const hasCrypto = typeof (await import('/src/lib/nostra/media-crypto.ts')).encryptMedia === 'function';
+          const hasCrypto = typeof (await import('/src/lib/phantomchat/media-crypto.ts')).encryptMedia === 'function';
           return {hasCrypto};
         } catch {
           return {hasCrypto: false, error: 'import failed'};

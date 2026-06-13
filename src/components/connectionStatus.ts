@@ -59,7 +59,7 @@ export default class ConnectionStatusComponent {
 
     // chatsContainer.prepend(this.statusContainer);
 
-    rootScope.addEventListener('nostra_relay_state', (relayState) => {
+    rootScope.addEventListener('phantomchat_relay_state', (relayState) => {
       this.relayStates.set(relayState.url, relayState.connected);
       this.setRelayConnectionStatus();
     });

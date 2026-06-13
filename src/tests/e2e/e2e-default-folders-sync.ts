@@ -39,7 +39,7 @@ async function bootstrapContext(browser: any, relay: LocalRelay, label: string, 
   const page = await ctx.newPage();
   page.on('console', (msg: any) => {
     const t = msg.text();
-    if(/\[ChatAPI\]|\[FoldersSync\]|\[NostraOnboarding|\[NostraSync\]/.test(t)) {
+    if(/\[ChatAPI\]|\[FoldersSync\]|\[PhantomChatOnboarding|\[PhantomChatSync\]/.test(t)) {
       console.log(`[${label}]`, t);
     }
   });

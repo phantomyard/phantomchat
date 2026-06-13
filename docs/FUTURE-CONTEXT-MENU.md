@@ -1,6 +1,6 @@
 # Future Context Menu Features
 
-Funzionalita da implementare per il context menu delle chat Nostra. Ogni item e un progetto separato che richiede il proprio ciclo spec/plan/implementation.
+Funzionalita da implementare per il context menu delle chat PhantomChat. Ogni item e un progetto separato che richiede il proprio ciclo spec/plan/implementation.
 
 ## 1. Scheduled Messages
 
@@ -18,14 +18,14 @@ Permettere all'utente di programmare l'invio di un messaggio a un orario futuro.
 
 ## 2. Forward (copy-paste semantico)
 
-Permettere di inoltrare un messaggio a un altro contatto. In Nostra non c'e server relay per forward nativo — il forward e una copia del contenuto con attribuzione.
+Permettere di inoltrare un messaggio a un altro contatto. In PhantomChat non c'e server relay per forward nativo — il forward e una copia del contenuto con attribuzione.
 
 **Requisiti:**
 - UI: opzione "Forward" nel context menu del bubble
 - Peer picker: dialog per scegliere il destinatario tra i contatti
 - Il messaggio inoltrato deve mostrare "Forwarded from [nome]" come header
 - Contenuto: testo copiato integralmente. Per media (futuro): re-upload necessario
-- Nessun link al messaggio originale (non esiste un message ID globale in Nostra)
+- Nessun link al messaggio originale (non esiste un message ID globale in PhantomChat)
 
 **Complessita:** Bassa — e essenzialmente un send con prefisso/metadata extra.
 

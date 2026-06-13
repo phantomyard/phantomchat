@@ -23,7 +23,7 @@ import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
 import EncryptionKeyStore from '@lib/passcode/keyStore';
 import pause from '@helpers/schedulers/pause';
 import {getWindowClients} from '@helpers/context';
-import {onNostraPush, onNostraNotificationClick} from '@lib/serviceWorker/nostra-push';
+import {onPhantomChatPush, onPhantomChatNotificationClick} from '@lib/serviceWorker/phantomchat-push';
 
 const ctx = self as any as ServiceWorkerGlobalScope;
 const defaultBaseUrl = location.protocol + '//' + location.hostname + location.pathname.split('/').slice(0, -1).join('/') + '/';
@@ -219,12 +219,12 @@ async function handlePushNotificationObject(obj: PushNotificationObject) {
 (ctx as any).handlePushNotificationObject = handlePushNotificationObject;
 
 function onPushEvent(event: PushEvent) {
-  // Nostra discriminator — peek the payload first so we never run the
+  // PhantomChat discriminator — peek the payload first so we never run the
   // Telegram-shape parsing on Nostr-shape pushes.
   let peeked: any;
   try { peeked = event.data?.json(); } catch{ peeked = null; }
-  if(peeked && peeked.app === 'nostra-webpush-relay') {
-    event.waitUntil(onNostraPush(event as unknown as ExtendableEvent & {data: PushMessageData}));
+  if(peeked && peeked.app === 'phantomchat-webpush-relay') {
+    event.waitUntil(onPhantomChatPush(event as unknown as ExtendableEvent & {data: PushMessageData}));
     return;
   }
 
@@ -292,8 +292,8 @@ async function isPasscodeLocked() {
 }
 
 function onNotificationClick(event: NotificationEvent) {
-  if(event.notification?.data?.app === 'nostra') {
-    event.waitUntil(onNostraNotificationClick(event));
+  if(event.notification?.data?.app === 'phantomchat') {
+    event.waitUntil(onPhantomChatNotificationClick(event));
     return;
   }
   const notification = event.notification;

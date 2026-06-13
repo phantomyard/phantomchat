@@ -82,7 +82,7 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
   saveEncryptionKey: (payload: CryptoKey, source: MessageEventSource) => void,
   toggleCacheStorage: (value: boolean, source: MessageEventSource) => void,
   toggleUsingPasscode: (payload: ToggleUsingPasscodePayload, source: MessageEventSource) => void,
-  nostraBridge: (payload: {method: string, params: any}) => Promise<any>,
+  phantomchatBridge: (payload: {method: string, params: any}) => Promise<any>,
 } & MTProtoBroadcastEvent, Master> {
   private static INSTANCE: MTProtoMessagePort;
 

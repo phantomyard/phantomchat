@@ -71,8 +71,8 @@ export class AppSidebarRight extends SidebarSlider {
 
   public replaceSharedMediaTab(tab?: AppSharedMediaTab) {
     const previousTab = this.sharedMediaTab;
-    // [Nostra.chat] FIND-3786a35f obs (A): when a group history_append fires
-    // twice (the two-dispatch rule in nostra-groups-sync) while the sidebar
+    // [PhantomChat.chat] FIND-3786a35f obs (A): when a group history_append fires
+    // twice (the two-dispatch rule in phantomchat-groups-sync) while the sidebar
     // tab is still mid-initialization, `previousTab.container` may be
     // undefined and tweb throws an unhandled rejection. Guard the early
     // .container accesses so a partially-constructed tab is treated as a

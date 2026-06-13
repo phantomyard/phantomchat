@@ -4,7 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-// [Nostra.chat] FIND-chrono-v2: P2P bubble sort needs a (timestamp, mid) tiebreaker.
+// [PhantomChat.chat] FIND-chrono-v2: P2P bubble sort needs a (timestamp, mid) tiebreaker.
 // Same-second tempMid race produces bubbles with identical `timestamp`; the single-key
 // `insertSomething` collapses to insertion order (non-deterministic), exposing an
 // `INV-bubble-chronological` flake on ~60% of replays. Sort primary desc, then

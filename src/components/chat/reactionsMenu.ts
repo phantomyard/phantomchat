@@ -205,7 +205,7 @@ export class ChatReactionsMenu {
       this.availableReactions = availableReactions;
       this.freeCustomEmoji = new Set(
         this.availableReactions
-        // Nostra mode: catalog entries may have no lottie docs (select_animation
+        // PhantomChat mode: catalog entries may have no lottie docs (select_animation
         // undefined), so optional-chain the id access and filter nullish ids.
         .map((availableReaction) => availableReaction.select_animation?.id)
         .filter(Boolean)
@@ -325,7 +325,7 @@ export class ChatReactionsMenu {
     if(reaction._ === 'reactionPaid') return PAID_REACTION_EMOJI_DOCID;
     let docId = (reaction as Reaction.reactionCustomEmoji).document_id;
     if(!docId) {
-      // Nostra mode: availableReaction may be missing (catalog filtered), or
+      // PhantomChat mode: availableReaction may be missing (catalog filtered), or
       // present without lottie docs. Either case yields an undefined docId —
       // callers (`filter(Boolean)` on the Set construction) must tolerate it.
       const availableReaction = this.availableReactions.find((_reaction) => _reaction.reaction === (reaction as Reaction.reactionEmoji).emoticon);
@@ -599,7 +599,7 @@ export class ChatReactionsMenu {
 
       let doc = availableReaction?.static_icon, delay = false;
       if(!doc) {
-        // Nostra mode: plain emoji reactions (reactionEmoji) have no custom
+        // PhantomChat mode: plain emoji reactions (reactionEmoji) have no custom
         // emoji document_id, and the catalog entries have no static_icon
         // either. Render the emoji character directly as text — the menu
         // button still receives clicks via the reactionsMap wiring above.

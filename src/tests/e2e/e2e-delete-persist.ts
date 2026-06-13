@@ -84,7 +84,7 @@ async function main() {
   // Let any pending relay echoes settle so we capture + delete all copies.
   await pageA.waitForTimeout(8000);
   const deleted = await pageA.evaluate(async() => {
-    const {getMessageStore} = await import('/src/lib/nostra/message-store.ts');
+    const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
     const store = getMessageStore();
     // Delete across 3 sweeps to catch late-arriving relay echoes.
     let totalRemoved = 0;
@@ -133,7 +133,7 @@ async function main() {
   if(afterCount.length === 0) {
     afterCount = await pageA.evaluate(async() => {
       try {
-        const {getMessageStore} = await import('/src/lib/nostra/message-store.ts');
+        const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
         const store = getMessageStore();
         const ids = await store.getAllConversationIds();
         const seen = new Set<string>();

@@ -1,8 +1,8 @@
 import type {AppManagers} from '@lib/managers';
 import App from '@config/app';
 
-const NOSTRA_DEV_NPUB = 'npub1zxn3hul7dsaex9l5a8l8scflxzruxh3v9gvvvgcmtdus7aqenmrskmtyqz';
-const GITHUB_ISSUE_URL = 'https://github.com/nostra-chat/nostra-chat/issues/new';
+const PHANTOMCHAT_DEV_NPUB = 'npub1zxn3hul7dsaex9l5a8l8scflxzruxh3v9gvvvgcmtdus7aqenmrskmtyqz';
+const GITHUB_ISSUE_URL = 'https://github.com/phantomchat-chat/phantomchat-chat/issues/new';
 
 function collectDiagnostics(includeNpub: boolean): string {
   const lines: string[] = [];
@@ -12,18 +12,18 @@ function collectDiagnostics(includeNpub: boolean): string {
   lines.push(`Lang: ${navigator.language}`);
   lines.push(`Viewport: ${window.innerWidth}x${window.innerHeight}`);
   try {
-    const pool = (window as any).__nostraPool;
+    const pool = (window as any).__phantomchatPool;
     const relays = pool?.getConnectedRelays?.() || pool?.relays || [];
     const count = Array.isArray(relays) ? relays.length : (relays?.size ?? 0);
     lines.push(`Connected relays: ${count}`);
   } catch{}
   try {
-    const t = (window as any).__nostraPrivacyTransport;
+    const t = (window as any).__phantomchatPrivacyTransport;
     if(t) lines.push(`Privacy: ${t.getState?.() || 'unknown'}`);
   } catch{}
   if(includeNpub) {
     try {
-      const id = localStorage.getItem('nostra_identity');
+      const id = localStorage.getItem('phantomchat_identity');
       if(id) {
         const parsed = JSON.parse(id);
         if(parsed?.npub) lines.push(`Reporter npub: ${parsed.npub}`);
@@ -44,7 +44,7 @@ function buildIssueBody(title: string, description: string, diagnostics: string)
     '```',
     '',
     '---',
-    '_Reported from nostra.chat in-app bug reporter._'
+    '_Reported from phantomchat.chat in-app bug reporter._'
   ].join('\n');
 }
 
@@ -69,33 +69,33 @@ async function sendPrivateReport(
 ): Promise<void> {
   const body = buildPrivateMessage(title, description, collectDiagnostics(true));
 
-  const {decodePubkey} = await import('@lib/nostra/nostr-identity');
-  const {NostraBridge} = await import('@lib/nostra/nostra-bridge');
-  const hexPubkey = decodePubkey(NOSTRA_DEV_NPUB);
-  const bridge = NostraBridge.getInstance();
+  const {decodePubkey} = await import('@lib/phantomchat/nostr-identity');
+  const {PhantomChatBridge} = await import('@lib/phantomchat/phantomchat-bridge');
+  const hexPubkey = decodePubkey(PHANTOMCHAT_DEV_NPUB);
+  const bridge = PhantomChatBridge.getInstance();
   const peerIdLong = await bridge.mapPubkeyToPeerId(hexPubkey);
-  await bridge.storePeerMapping(hexPubkey, peerIdLong, 'Nostra Dev');
+  await bridge.storePeerMapping(hexPubkey, peerIdLong, 'PhantomChat Dev');
 
   const peerId = peerIdLong.toPeerId(false);
 
   const rootScope = (await import('@lib/rootScope')).default;
   const avatar = bridge.deriveAvatarFromPubkeySync(hexPubkey);
   try {
-    await rootScope.managers.appUsersManager.injectP2PUser(hexPubkey, peerIdLong, 'Nostra Dev', avatar);
+    await rootScope.managers.appUsersManager.injectP2PUser(hexPubkey, peerIdLong, 'PhantomChat Dev', avatar);
   } catch(err) {
     console.warn('[ReportBug] injectP2PUser failed', err);
   }
 
-  const {NostraPeerMapper} = await import('@lib/nostra/nostra-peer-mapper');
-  const mapper = new NostraPeerMapper();
-  const user = mapper.createTwebUser({peerId: peerIdLong, firstName: 'Nostra Dev', pubkey: hexPubkey});
+  const {PhantomChatPeerMapper} = await import('@lib/phantomchat/phantomchat-peer-mapper');
+  const mapper = new PhantomChatPeerMapper();
+  const user = mapper.createTwebUser({peerId: peerIdLong, firstName: 'PhantomChat Dev', pubkey: hexPubkey});
   const {MOUNT_CLASS_TO: MC} = await import('@config/debug');
   const proxyRef = MC.apiManagerProxy;
   if(proxyRef?.mirrors?.peers) proxyRef.mirrors.peers[peerId] = user;
   const {reconcilePeer} = await import('@stores/peers');
   reconcilePeer(peerId, user);
 
-  const chatAPI = (window as any).__nostraChatAPI;
+  const chatAPI = (window as any).__phantomchatChatAPI;
   chatAPI?.connect(hexPubkey).catch((err: any) => console.warn('[ReportBug] chatAPI connect failed', err));
 
   await rootScope.managers.appMessagesManager.sendText({peerId, text: body});
@@ -185,7 +185,7 @@ export default function showReportBugPopup(managers: AppManagers): void {
   githubBtn.classList.add('btn-primary', 'btn-color-primary');
   githubBtn.style.cssText = btnBaseStyle + 'color:#fff;';
 
-  const priv = makeOptionButton('🔒', 'Send private report to Nostra Dev', 'Uses your Nostra identity. End-to-end encrypted.');
+  const priv = makeOptionButton('🔒', 'Send private report to PhantomChat Dev', 'Uses your PhantomChat identity. End-to-end encrypted.');
   const privateBtn = priv.btn;
   const privateTitle = priv.titleEl;
   privateBtn.classList.add('btn-primary', 'btn-transparent');
@@ -223,13 +223,13 @@ export default function showReportBugPopup(managers: AppManagers): void {
       await sendPrivateReport(managers, titleInput.value.trim(), descInput.value.trim());
       overlay.remove();
       const {toast} = await import('@components/toast');
-      toast('Bug report sent to Nostra Dev');
+      toast('Bug report sent to PhantomChat Dev');
     } catch(err) {
       console.error('[ReportBug] private send failed', err);
       errorEl.textContent = 'Failed to send. Try GitHub instead.';
       privateBtn.disabled = false;
       githubBtn.disabled = false;
-      privateTitle.textContent = 'Send private report to Nostra Dev';
+      privateTitle.textContent = 'Send private report to PhantomChat Dev';
     }
   });
 

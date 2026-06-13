@@ -9,7 +9,7 @@ Execute remaining Phase 2a tasks (6-33) on the `feat/bug-fuzzer-phase-2a` branch
 ## Where everything is
 
 **Worktree for execution:**
-`/home/raider/Repository/nostra.chat-wt/fuzz-phase-2a` — already set up, deps installed, branch created.
+`/home/raider/Repository/phantomchat.chat-wt/fuzz-phase-2a` — already set up, deps installed, branch created.
 
 **Branch:** `feat/bug-fuzzer-phase-2a` (tracks `origin/feat/bug-fuzzer-phase-2a` — push after the next few commits).
 
@@ -30,8 +30,8 @@ All committed on `feat/bug-fuzzer-phase-2a`:
 
 | SHA | Message |
 |---|---|
-| `660d40a8` | feat(nostra): export isP2PPeer(peerId) predicate helper |
-| `b5fe1963` | test(nostra): add red test for delete P2P short-circuit (FIND-676d365a) |
+| `660d40a8` | feat(phantomchat): export isP2PPeer(peerId) predicate helper |
+| `b5fe1963` | test(phantomchat): add red test for delete P2P short-circuit (FIND-676d365a) |
 | `1f9f4c1f` | fix(messages): P2P short-circuit in deleteMessages — dispatch local update with correct pts_count |
 | `53786c59` | fix(fuzz): un-mute POST_delete_local_bubble_gone after FIND-676d365a fix |
 | `3e385b8a` | docs(fuzz): FIND-676d365a writeup — delete P2P short-circuit |
@@ -51,7 +51,7 @@ Per `docs/superpowers/plans/2026-04-18-bug-fuzzer-phase-2a.md`:
 | 10 | Update FIND-cfd24d69 README status → fixed | low |
 | 11 | Diagnose FIND-1526f892 — determine caso A vs B | medium |
 | 12 | Write red test for sender-side reaction store | low |
-| 13 | Implement `nostra-reactions-local.ts` + dispatch | medium |
+| 13 | Implement `phantomchat-reactions-local.ts` + dispatch | medium |
 | 14 | Wire reactions DOM updater in `src/components/chat/reactions.ts` | medium |
 | 15 | Un-mute `POST_react_emoji_appears` | low |
 | 16 | Write FIND-1526f892 README (sender-side fix, receive-side deferred to 2b) | low |
@@ -79,20 +79,20 @@ Per `docs/superpowers/plans/2026-04-18-bug-fuzzer-phase-2a.md`:
 
 2. **Instance-level manager stubs, not module-level mocks**: `AppManager` wires deps via `Object.assign(this, managers)`. `vi.doMock('@lib/appManagers/appPeersManager'...)` doesn't help because the instance has already been constructed with real refs. Stub on the instance: `appMessagesManager.apiUpdatesManager = {processLocalUpdate: capture}`.
 
-3. **`fake-indexeddb/auto` at test file top**: modules that init IDB at import time will throw `indexedDB is not defined` in jsdom. Import `fake-indexeddb/auto` before importing any Nostra module.
+3. **`fake-indexeddb/auto` at test file top**: modules that init IDB at import time will throw `indexedDB is not defined` in jsdom. Import `fake-indexeddb/auto` before importing any PhantomChat module.
 
-4. **New tests need to be added to `pnpm test:nostra:quick` manually** — per CLAUDE.md, the quick path lists test files explicitly.
+4. **New tests need to be added to `pnpm test:phantomchat:quick` manually** — per CLAUDE.md, the quick path lists test files explicitly.
 
 5. **ESLint `no-space-before-paren` rule**: project enforces `async ()` as `async()`. Pre-commit hook fails on space-before-paren. Task 2's implementer had to `async()` in 4 places.
 
 ## How to resume
 
-Start a fresh Claude Code session at repo root (`/home/raider/Repository/nostra.chat`), then:
+Start a fresh Claude Code session at repo root (`/home/raider/Repository/phantomchat.chat`), then:
 
 ```
 I'm resuming Phase 2a execution per docs/PHASE_2A_HANDOFF.md.
 
-Worktree: ../nostra.chat-wt/fuzz-phase-2a (branch feat/bug-fuzzer-phase-2a).
+Worktree: ../phantomchat.chat-wt/fuzz-phase-2a (branch feat/bug-fuzzer-phase-2a).
 Plan: docs/superpowers/plans/2026-04-18-bug-fuzzer-phase-2a.md
 Spec: docs/superpowers/specs/2026-04-18-bug-fuzzer-phase-2a-design.md
 
@@ -115,9 +115,9 @@ Start with Task 6.
 docker ps  # expect empty table or some containers
 
 # Verify pnpm + tsx work
-cd /home/raider/Repository/nostra.chat-wt/fuzz-phase-2a
+cd /home/raider/Repository/phantomchat.chat-wt/fuzz-phase-2a
 pnpm fuzz --help  # expect help text
-pnpm test:nostra:quick 2>&1 | tail -3  # expect 388+/388+ passing
+pnpm test:phantomchat:quick 2>&1 | tail -3  # expect 388+/388+ passing
 ```
 
 ## Acceptance gate reminder

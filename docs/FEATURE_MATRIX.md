@@ -1,4 +1,4 @@
-# Nostra.chat vs Telegram — Feature Matrix
+# PhantomChat.chat vs Telegram — Feature Matrix
 
 ## Legenda
 
@@ -9,7 +9,7 @@
 | tweb Only | Codice ereditato da tweb, richiede MTProto (non funziona P2P) |
 | Missing | Non implementato |
 | N/A | Non applicabile al modello P2P/Nostr |
-| Nostra+ | Feature unica di Nostra.chat, non presente in Telegram |
+| PhantomChat+ | Feature unica di PhantomChat.chat, non presente in Telegram |
 
 ## Priorita'
 
@@ -25,22 +25,22 @@
 
 ## 1. Onboarding & Account
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
-| 1.1 | Registrazione con numero di telefono | N/A | - | Nostra usa keypair, nessun telefono richiesto |
-| 1.2 | Login via SMS/Call | N/A | - | Nostra usa seed phrase / keypair |
+| 1.1 | Registrazione con numero di telefono | N/A | - | PhantomChat usa keypair, nessun telefono richiesto |
+| 1.2 | Login via SMS/Call | N/A | - | PhantomChat usa seed phrase / keypair |
 | 1.3 | QR code login (multi-device) | tweb Only | P3 | QRIdentity esiste ma per sharing npub, non multi-device login |
-| 1.4 | - | Nostra+: Creazione identita' con seed phrase BIP39 | P0 | Implementato e funzionante |
-| 1.5 | - | Nostra+: Import seed phrase | P0 | Implementato |
-| 1.6 | - | Nostra+: Display name setup durante onboarding | P0 | Implementato |
-| 1.7 | - | Nostra+: Dicebear avatar auto-generato | P0 | Implementato, verificato E2E |
+| 1.4 | - | PhantomChat+: Creazione identita' con seed phrase BIP39 | P0 | Implementato e funzionante |
+| 1.5 | - | PhantomChat+: Import seed phrase | P0 | Implementato |
+| 1.6 | - | PhantomChat+: Display name setup durante onboarding | P0 | Implementato |
+| 1.7 | - | PhantomChat+: Dicebear avatar auto-generato | P0 | Implementato, verificato E2E |
 | 1.8 | 2FA (password) | P2P OK: PIN/Passphrase con PBKDF2 | P1 | Key protection: none/PIN/passphrase |
-| 1.9 | - | Nostra+: NIP-05 identity verification | P2 | Implementato |
-| 1.10 | - | Nostra+: No phone number required | P0 | Core value proposition |
+| 1.9 | - | PhantomChat+: NIP-05 identity verification | P2 | Implementato |
+| 1.10 | - | PhantomChat+: No phone number required | P0 | Core value proposition |
 
 ## 2. Contacts & Discovery
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 2.1 | Aggiungere contatto (telefono) | P2P OK: aggiungere via npub | P0 | Verificato E2E (1.1) |
 | 2.2 | Nickname contatto | P2P OK | P0 | Verificato E2E (1.1) |
@@ -49,15 +49,15 @@
 | 2.5 | Profile fetch da server | P2P Parziale: kind 0 fetch da relay | P1 | CHECKLIST 1.4 non verificato |
 | 2.6 | Foto profilo contatto | P2P OK: Dicebear SVG | P1 | Verificato E2E (1.5, 1.6, 1.7) |
 | 2.7 | Cerca contatti per nome/username | tweb Only | P2 | Search contatti non adattato a P2P |
-| 2.8 | Sync contatti dalla rubrica | N/A | - | Nostra non usa numeri di telefono |
+| 2.8 | Sync contatti dalla rubrica | N/A | - | PhantomChat non usa numeri di telefono |
 | 2.9 | Blocca contatto | P2P Parziale | P1 | UI esiste, blocco P2P da verificare |
-| 2.10 | - | Nostra+: QR code per condivisione npub | P2 | QRIdentity/QRScanner implementati |
+| 2.10 | - | PhantomChat+: QR code per condivisione npub | P2 | QRIdentity/QRScanner implementati |
 | 2.11 | Username pubblico (@user) | P2P Parziale: NIP-05 | P2 | NIP-05 e' l'equivalente Nostr |
 | 2.12 | Last seen / online status | P2P Parziale: kind 30315 heartbeat | P2 | CHECKLIST 1.8 non verificato |
 
 ## 3. Messaggistica 1:1
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 3.1 | Inviare messaggio testo | P2P OK | P0 | Verificato E2E (2.1) |
 | 3.2 | Bolla messaggio (destra = inviato) | P2P OK | P0 | Verificato E2E (2.1) |
@@ -80,7 +80,7 @@
 
 ## 4. Modifica & Cancellazione Messaggi
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 4.1 | Edit messaggio inviato | tweb Only | P1 | Codice esiste, non adattato a P2P (NIP supporta) |
 | 4.2 | Right-click → context menu | P2P OK | P0 | Verificato E2E (6.4) |
@@ -97,7 +97,7 @@
 
 ## 5. Search
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 5.1 | Search globale messaggi | tweb Only | P2 | Richiede indicizzazione P2P messages |
 | 5.2 | Search nella conversazione | Missing | P1 | CHECKLIST 2B.1-2B.3 tutti non verificati |
@@ -106,7 +106,7 @@
 
 ## 6. Reply & Forward
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 6.1 | Reply a messaggio (quote) | tweb Only | P1 | Codice esiste, non adattato a P2P |
 | 6.2 | Forward messaggio | tweb Only | P2 | Codice esiste, non adattato a P2P |
@@ -114,7 +114,7 @@
 
 ## 7. Media & File
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 7.1 | Inviare foto | P2P Parziale | P0 | Blossom encrypt+upload, CHECKLIST 8.1 non verificato |
 | 7.2 | Ricevere foto inline | Missing | P0 | CHECKLIST 8.1 |
@@ -131,7 +131,7 @@
 
 ## 8. Gruppi
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 8.1 | Creare gruppo | P2P Parziale | P1 | GroupAPI esiste, CHECKLIST 7.1 non verificato |
 | 8.2 | Inviare messaggio nel gruppo | Missing | P1 | CHECKLIST 7.2 |
@@ -145,7 +145,7 @@
 
 ## 9. Canali (Broadcast)
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 9.1 | Creare canale | Missing | P3 | Potenzialmente via NIP-28 public channels |
 | 9.2 | Post nel canale | Missing | P3 | - |
@@ -155,7 +155,7 @@
 
 ## 10. Chiamate
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 10.1 | Chiamata voce 1:1 | tweb Only | P2 | WebRTC signaling esiste, non adattato a P2P signaling |
 | 10.2 | Videochiamata 1:1 | tweb Only | P2 | - |
@@ -165,7 +165,7 @@
 
 ## 11. Notifiche
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 11.1 | Push notification | tweb Only | P1 | Service Worker esiste, non adattato a P2P |
 | 11.2 | Notification sound | tweb Only | P2 | - |
@@ -175,7 +175,7 @@
 
 ## 12. Privacy & Security
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 12.1 | E2E encryption (Secret Chat) | P2P OK: NIP-17 Gift-wrap su TUTTI i messaggi | P0 | Verificato — ogni messaggio e' E2E |
 | 12.2 | Read receipt toggle | P2P OK | P1 | Verificato E2E (9.1) |
@@ -185,22 +185,22 @@
 | 12.6 | "Chi vede il mio ultimo accesso" | tweb Only | P2 | - |
 | 12.7 | "Chi vede la mia foto profilo" | tweb Only | P3 | - |
 | 12.8 | Passcode lock | P2P OK | P2 | LockScreen implementato |
-| 12.9 | - | Nostra+: Tor privacy transport | P2 | Implementato con fallback |
-| 12.10 | - | Nostra+: Seed phrase backup/recovery | P0 | Implementato |
-| 12.11 | - | Nostra+: Nessun numero di telefono | P0 | Core |
-| 12.12 | - | Nostra+: Protocollo aperto (Nostr) | P0 | Core |
-| 12.13 | - | Nostra+: Self-hostable | P2 | Via relay personali |
+| 12.9 | - | PhantomChat+: Tor privacy transport | P2 | Implementato con fallback |
+| 12.10 | - | PhantomChat+: Seed phrase backup/recovery | P0 | Implementato |
+| 12.11 | - | PhantomChat+: Nessun numero di telefono | P0 | Core |
+| 12.12 | - | PhantomChat+: Protocollo aperto (Nostr) | P0 | Core |
+| 12.13 | - | PhantomChat+: Self-hostable | P2 | Via relay personali |
 
 ## 13. Settings & Personalizzazione
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 13.1 | Tema chiaro/scuro | tweb Only (prob funziona) | P2 | Probabile che funzioni anche in P2P |
 | 13.2 | Lingua app | tweb Only (prob funziona) | P2 | AppLangPackManager esiste |
 | 13.3 | Dimensione font chat | tweb Only | P3 | - |
-| 13.4 | Gestione relay | Nostra+ P2P OK | P1 | Nostra Relay Settings tab |
-| 13.5 | Gestione identita' | Nostra+ P2P OK | P0 | Nostra Identity tab |
-| 13.6 | Gestione sicurezza chiavi | Nostra+ P2P OK | P0 | Nostra Security tab |
+| 13.4 | Gestione relay | PhantomChat+ P2P OK | P1 | PhantomChat Relay Settings tab |
+| 13.5 | Gestione identita' | PhantomChat+ P2P OK | P0 | PhantomChat Identity tab |
+| 13.6 | Gestione sicurezza chiavi | PhantomChat+ P2P OK | P0 | PhantomChat Security tab |
 | 13.7 | Status page (Tor + Relay) | P2P OK | P1 | Verificato E2E (10.1-10.9) |
 | 13.8 | Data & storage settings | tweb Only | P3 | - |
 | 13.9 | Chat folders | tweb Only | P3 | - |
@@ -208,7 +208,7 @@
 
 ## 14. Storie
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 14.1 | Pubblicare storia | tweb Only | P4 | Non prioritario per MVP P2P |
 | 14.2 | Visualizzare storie | tweb Only | P4 | - |
@@ -216,7 +216,7 @@
 
 ## 15. Bot & Automazione
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 15.1 | Bot commands | tweb Only | P4 | Modello diverso in Nostr |
 | 15.2 | Inline bots | tweb Only | P4 | - |
@@ -224,7 +224,7 @@
 
 ## 16. Multi-device & Sync
 
-| # | Feature Telegram | Stato Nostra.chat | Priorita' | Note |
+| # | Feature Telegram | Stato PhantomChat.chat | Priorita' | Note |
 |---|-----------------|-------------------|-----------|------|
 | 16.1 | Multi-device sync | P2P Parziale | P2 | Stessa seed phrase su piu' browser, relay backfill |
 | 16.2 | Active sessions management | tweb Only | P3 | - |

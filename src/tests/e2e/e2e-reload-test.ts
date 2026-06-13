@@ -135,7 +135,7 @@ async function main() {
 
   // Get own pubkey before reload
   const ownPubkeyBefore = await pageA.evaluate(() => {
-    const server = window.__nostraMTProtoServer;
+    const server = window.__phantomchatMTProtoServer;
     return server?.ownPubkey || 'unknown';
   });
   console.log('Own pubkey before reload:', ownPubkeyBefore?.slice(0, 20));
@@ -152,7 +152,7 @@ async function main() {
   // Capture logs after reload
   pageA.on('console', msg => {
     const t = msg.text();
-    if(t.includes('VirtualMTProto') || t.includes('NostraOnboarding') || t.includes('getDialogs') || t.includes('Loading')) {
+    if(t.includes('VirtualMTProto') || t.includes('PhantomChatOnboarding') || t.includes('getDialogs') || t.includes('Loading')) {
       console.log('[A-reload]', t);
     }
   });
@@ -162,7 +162,7 @@ async function main() {
 
   // Get own pubkey after reload
   const ownPubkeyAfter = await pageA.evaluate(() => {
-    const server = window.__nostraMTProtoServer;
+    const server = window.__phantomchatMTProtoServer;
     return server?.ownPubkey || 'unknown';
   });
   console.log('Own pubkey after reload:', ownPubkeyAfter?.slice(0, 20));

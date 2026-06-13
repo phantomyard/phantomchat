@@ -68,8 +68,8 @@ import ChatRemoveFee, {openRemoveFeePopup} from '@components/chat/removeFee';
 import ChatTopbarSponsored from '@components/chat/topbarSponsored';
 import pause from '@helpers/schedulers/pause';
 import appImManager from '@lib/appImManager';
-import AppNostraGroupInfoTab from '@components/sidebarRight/tabs/nostraGroupInfo';
-import {isGroupPeer} from '@lib/nostra/group-types';
+import AppPhantomChatGroupInfoTab from '@components/sidebarRight/tabs/phantomchatGroupInfo';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import namedPromises from '@helpers/namedPromises';
 import appDialogsManager from '@lib/appDialogsManager';
@@ -88,7 +88,7 @@ import PopupBoost from '@components/popups/boost';
 import PopupPremium from '@components/popups/premium';
 import showNoForwardsPopup from '@components/popups/noForwards';
 import {render} from 'solid-js/web';
-import TorShield from '@components/nostra/torShield';
+import TorShield from '@components/phantomchat/torShield';
 import TorStatus from '@components/popups/torStatus';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
@@ -253,7 +253,7 @@ export default class ChatTopbar {
     this.pushButtonToVerify(this.btnGroupCallMenu, this.verifyRtmpButton.bind(this));
     this.pushButtonToVerify(this.btnDirectMessages, this.verifyDirectMessagesButton.bind(this));
 
-    // * Nostra.chat: mount TorShield icon in chatUtils
+    // * PhantomChat.chat: mount TorShield icon in chatUtils
     const torShieldEl = document.createElement('div');
     torShieldEl.classList.add('topbar-tor-shield');
     render(() => TorShield({
@@ -264,8 +264,8 @@ export default class ChatTopbar {
     this.chatInfoContainer.append(this.btnBack, this.chatInfo, this.chatUtils);
     this.container.append(this.chatInfoContainer);
 
-    // * Nostra.chat: Tor state UI is owned by the global startup banner
-    // mounted in nostra-bridge.initTransport(). The topbar keeps only the
+    // * PhantomChat.chat: Tor state UI is owned by the global startup banner
+    // mounted in phantomchat-bridge.initTransport(). The topbar keeps only the
     // TorShield icon (which opens the dashboard popup on click).
 
     if(this.pinnedMessage) {
@@ -325,10 +325,10 @@ export default class ChatTopbar {
 
           this.appSidebarRight.toggleSidebar(!document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME));
         } else {
-          // Intercept topbar click for Nostra.chat group peers
+          // Intercept topbar click for PhantomChat.chat group peers
           if(isGroupPeer(+this.peerId)) {
-            if(!this.appSidebarRight.isTabExists(AppNostraGroupInfoTab)) {
-              const tab = this.appSidebarRight.createTab(AppNostraGroupInfoTab);
+            if(!this.appSidebarRight.isTabExists(AppPhantomChatGroupInfoTab)) {
+              const tab = this.appSidebarRight.createTab(AppPhantomChatGroupInfoTab);
               tab.groupPeerId = +this.peerId;
               tab.open();
               this.appSidebarRight.toggleSidebar(true);
@@ -367,10 +367,10 @@ export default class ChatTopbar {
     this.buttonsToVerify.push({element, verify});
   }
 
-  // * Nostra.chat: Tor status popup
+  // * PhantomChat.chat: Tor status popup
   private openTorStatusPopup(): void {
-    const pool = (window as any).__nostraPool;
-    const transport = (window as any).__nostraTransport;
+    const pool = (window as any).__phantomchatPool;
+    const transport = (window as any).__phantomchatTransport;
     const relayStates = pool ? pool.getRelayStates() : [];
     const torState = transport ? transport.getState() : 'bootstrapping';
 

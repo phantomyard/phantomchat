@@ -37,7 +37,7 @@ export const historyRehydratesIdentical: Invariant = {
 /**
  * After reloadPage (during-pending-send), the pending message is either:
  *  (a) visible in DOM as a bubble (send completed before or after reload), OR
- *  (b) in the nostra-offline-queue IDB with valid shape (queued for retry),
+ *  (b) in the phantomchat-offline-queue IDB with valid shape (queued for retry),
  * but NEVER silently lost. Regression for D029 queue persistence.
  */
 export const offlineQueuePersistence: Invariant = {
@@ -61,9 +61,9 @@ export const offlineQueuePersistence: Invariant = {
         for(const b of bubbles) {
           if((b.textContent || '').includes(t)) return {inDom: true, inQueue: false};
         }
-        // Check IDB nostra-offline-queue/offline-messages.
+        // Check IDB phantomchat-offline-queue/offline-messages.
         try {
-          const req = indexedDB.open('nostra-offline-queue');
+          const req = indexedDB.open('phantomchat-offline-queue');
           const db: IDBDatabase = await new Promise((resolve, reject) => {
             req.onsuccess = () => resolve(req.result);
             req.onerror = () => reject(req.error);
@@ -94,7 +94,7 @@ export const offlineQueuePersistence: Invariant = {
       await user.page.waitForTimeout(300);
     }
 
-    return {ok: false, message: `pending text "${text.slice(0, 40)}" lost: neither in DOM nor in nostra-offline-queue after reload`, evidence: {user: userId, text: text.slice(0, 100)}};
+    return {ok: false, message: `pending text "${text.slice(0, 40)}" lost: neither in DOM nor in phantomchat-offline-queue after reload`, evidence: {user: userId, text: text.slice(0, 100)}};
   }
 };
 

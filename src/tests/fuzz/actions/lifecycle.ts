@@ -69,7 +69,7 @@ export const reloadPage: ActionSpec = {
         const rs: any = (window as any).rootScope;
         const peerId = (window as any).appImManager?.chat?.peerId;
         if(!rs?.managers?.appMessagesManager || !peerId) return;
-        (window as any).__nostraPendingSend = rs.managers.appMessagesManager.sendText({peerId, text: t}).catch(() => {});
+        (window as any).__phantomchatPendingSend = rs.managers.appMessagesManager.sendText({peerId, text: t}).catch(() => {});
       }, {t: action.args.pendingText});
       await user.page.waitForTimeout(raceWindowMs);
     }
@@ -124,7 +124,7 @@ export const deleteWhileSending: ActionSpec = {
     await sender.page.evaluate(({pid, t}: any) => {
       const rs: any = (window as any).rootScope;
       if(!rs?.managers?.appMessagesManager) return;
-      (window as any).__nostraPendingSend = rs.managers.appMessagesManager.sendText({peerId: pid, text: t}).catch(() => {});
+      (window as any).__phantomchatPendingSend = rs.managers.appMessagesManager.sendText({peerId: pid, text: t}).catch(() => {});
     }, {pid: peerId, t: text});
 
     await sender.page.waitForTimeout(raceWindowMs);
@@ -159,7 +159,7 @@ export const deleteWhileSending: ActionSpec = {
     }
 
     // Let the send complete either way.
-    await sender.page.evaluate(() => (window as any).__nostraPendingSend?.catch?.(() => {}));
+    await sender.page.evaluate(() => (window as any).__phantomchatPendingSend?.catch?.(() => {}));
 
     action.meta = {raceWindowMs, tempMid, text};
     return action;

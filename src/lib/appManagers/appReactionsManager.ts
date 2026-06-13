@@ -485,15 +485,15 @@ export class AppReactionsManager extends AppManager {
   }: SendReactionOptions): Promise<MessageReactions> {
     const p2pPeerId = message?.peerId;
     const numericP2pPeer = Number(p2pPeerId);
-    const isNostraDM = numericP2pPeer >= 1e15;
+    const isPhantomChatDM = numericP2pPeer >= 1e15;
     // Group peerIds live in `-GROUP_PEER_BASE` range (|peerId| >= 2e15, see
     // group-types.ts). Without this branch the P2P shortcut below was
-    // skipped for groups and the reaction never reached `nostraReactions
+    // skipped for groups and the reaction never reached `phantomchatReactions
     // Publish` — the optimistic `local: true` update was the only thing the
     // user ever saw. Closes FIND-191385d3.
-    const isNostraGroup = numericP2pPeer <= -2e15;
-    if(p2pPeerId && (isNostraDM || isNostraGroup)) {
-      // Nostra P2P: VMT bridge publishes kind-7 and persists locally; UI reads the reactions store.
+    const isPhantomChatGroup = numericP2pPeer <= -2e15;
+    if(p2pPeerId && (isPhantomChatDM || isPhantomChatGroup)) {
+      // PhantomChat P2P: VMT bridge publishes kind-7 and persists locally; UI reads the reactions store.
       await this.apiManager.invokeApi('messages.sendReaction', {
         message,
         reaction,
@@ -798,15 +798,15 @@ export class AppReactionsManager extends AppManager {
     }
 
     // FIND-1526f892 sender-side display (Phase 2a): the MTProto flow below
-    // never reaches the bubble DOM for Nostra P2P peers (messages.sendReaction
-    // falls through to {pFlags:{}}). Dispatch nostra_reaction_added here so
+    // never reaches the bubble DOM for PhantomChat P2P peers (messages.sendReaction
+    // falls through to {pFlags:{}}). Dispatch phantomchat_reaction_added here so
     // the main-thread subscriber in reactions.ts appends the emoji to the
     // bubble immediately. Runs for any caller of sendReaction — UI button or
     // programmatic. Receive-side (peer sees it) lands in Phase 2b.
     if(Number(peerId) >= 1e15) {
       const chosenEmoji = chosenReactions.map((rc) => (rc.reaction as any)?.emoticon).filter(Boolean)[0];
       if(chosenEmoji) {
-        this.rootScope.dispatchEvent('nostra_reaction_added', {
+        this.rootScope.dispatchEvent('phantomchat_reaction_added', {
           peerId: Number(peerId),
           mid,
           emoji: chosenEmoji

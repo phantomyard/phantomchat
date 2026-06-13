@@ -9,7 +9,7 @@
  *   3. Clicking Skip opens the confirmation popup.
  *   4. Cancel keeps the app in bootstrapping (still no wss).
  *   5. Confirm switches to direct mode and wss connections start flowing.
- *   6. Session-scoped skip: localStorage 'nostra-tor-enabled' stays 'true'
+ *   6. Session-scoped skip: localStorage 'phantomchat-tor-enabled' stays 'true'
  *      so the next launch retries Tor.
  *
  * Run: pnpm start (in another terminal), then:
@@ -107,7 +107,7 @@ async function main() {
     console.log(`  [ws] ${t}ms → ${url}`);
     try {
       const stateAtOpen = await page.evaluate(() => {
-        const tr = (window as any).__nostraTransport;
+        const tr = (window as any).__phantomchatTransport;
         return tr?.getState?.() ?? 'no-transport';
       });
       if(stateAtOpen === 'bootstrapping') {
@@ -122,7 +122,7 @@ async function main() {
     // ============================================================
     // T0 — Default mode (when-available) — banner must NOT appear.
     // ============================================================
-    await page.evaluate(() => localStorage.removeItem('nostra-tor-mode'));
+    await page.evaluate(() => localStorage.removeItem('phantomchat-tor-mode'));
     await page.reload({waitUntil: 'load'});
     await page.waitForTimeout(3000);
     const noBannerWhenAvailable = await page.locator('.tor-startup-banner').count();
@@ -132,7 +132,7 @@ async function main() {
     // ============================================================
     // T1 — Switch to Tor-only — banner appears.
     // ============================================================
-    await page.evaluate(() => localStorage.setItem('nostra-tor-mode', 'only'));
+    await page.evaluate(() => localStorage.setItem('phantomchat-tor-mode', 'only'));
     await page.reload({waitUntil: 'load'});
     try {
       await page.waitForSelector('.tor-startup-banner', {timeout: 30_000});
@@ -151,7 +151,7 @@ async function main() {
     // ============================================================
     // T3 — Switch to Off — banner never appears.
     // ============================================================
-    await page.evaluate(() => localStorage.setItem('nostra-tor-mode', 'off'));
+    await page.evaluate(() => localStorage.setItem('phantomchat-tor-mode', 'off'));
     await page.reload({waitUntil: 'load'});
     await page.waitForTimeout(3000);
     const noBannerOff = await page.locator('.tor-startup-banner').count();

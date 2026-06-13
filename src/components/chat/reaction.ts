@@ -332,7 +332,7 @@ export default class ReactionElement extends HTMLElement {
     if(reaction._ === 'reactionEmoji') {
       const availableReaction = apiManagerProxy.getReaction(reaction.emoticon);
       return callbackify(availableReaction, (availableReaction) => {
-        // In Nostra mode the reactions catalog is empty (stub response), so
+        // In PhantomChat mode the reactions catalog is empty (stub response), so
         // getReaction returns undefined. Skip the visual customization —
         // the reaction count still renders as plain emoji via fallback path.
         if(!availableReaction) return;
@@ -412,7 +412,7 @@ export default class ReactionElement extends HTMLElement {
   }
 
   private renderDoc(doc: Document.document) {
-    // In Nostra mode the sticker/reaction catalog is stub-empty, so doc can
+    // In PhantomChat mode the sticker/reaction catalog is stub-empty, so doc can
     // arrive undefined from the availableReaction.center_icon ??
     // static_icon fallback chain. wrapSticker dereferences doc.sticker
     // unconditionally — skip when no doc is available, the reaction count
@@ -587,7 +587,7 @@ export default class ReactionElement extends HTMLElement {
       onlyAround?: boolean
       assetName?: LottieAssetName
     }) => {
-      // Nostra mode guard: in the P2P client the reactions catalog
+      // PhantomChat mode guard: in the P2P client the reactions catalog
       // (`messages.getAvailableReactions`) is a stub that returns empty, so
       // `availableReaction` can be undefined AND `sticker`/`around_animation`
       // missing. Both `wrapStickerAnimation` (via aroundParams.doc) and
@@ -603,7 +603,7 @@ export default class ReactionElement extends HTMLElement {
       div && div.classList.add(CLASS_NAME + '-sticker-activate');
 
       const genericEffectSize = options.sizes.genericEffectSize;
-      // Nostra mode: reactions catalog is stub-empty, so `sticker` can arrive
+      // PhantomChat mode: reactions catalog is stub-empty, so `sticker` can arrive
       // undefined even when `genericEffect` is present. Guard the deref —
       // treat missing sticker as non-masked (Lottie default path).
       const isGenericMasked = genericEffect && sticker && sticker.sticker !== StickerType.Lottie;
@@ -631,7 +631,7 @@ export default class ReactionElement extends HTMLElement {
         container: div,
         noCache: true
       }, assetName) : wrapStickerAnimation(aroundParams).stickerPromise;
-      // Nostra: if `sticker` is undefined (stub catalog), fall back to
+      // PhantomChat: if `sticker` is undefined (stub catalog), fall back to
       // `aroundParams.doc` (which already has the genericEffect fallback
       // chain). Skip the whole genericResult if no doc is resolvable —
       // `wrapStickerAnimation` passes `doc` straight to `wrapSticker`,
@@ -645,7 +645,7 @@ export default class ReactionElement extends HTMLElement {
         loopEffect: true,
         textColor
       });
-      // Nostra mode: `availableReaction` can be undefined when the reactions
+      // PhantomChat mode: `availableReaction` can be undefined when the reactions
       // catalog is stub-empty. Resolve the doc via optional chaining — if
       // nothing is available, skip wrapSticker entirely (it dereferences
       // `.sticker` on its first arg and would crash with an undefined doc).
@@ -832,7 +832,7 @@ export default class ReactionElement extends HTMLElement {
         availableReaction,
         genericEffect
       ]) => {
-        // Nostra mode: the reactions catalog is stub-empty, so availableReaction
+        // PhantomChat mode: the reactions catalog is stub-empty, so availableReaction
         // is undefined. If there's also no sticker doc and no genericEffect
         // fallback, the whole around-animation render would crash in
         // wrapSticker with `doc: undefined`. Skip entirely — the reaction

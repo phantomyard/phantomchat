@@ -73,7 +73,7 @@ async function main() {
       await pageA.waitForTimeout(5000);
 
       // Verify A published its kind 0 metadata (this is the contract enforced
-      // in nostra-onboarding-integration.ts). Cross-user fetch-on-add is a
+      // in phantomchat-onboarding-integration.ts). Cross-user fetch-on-add is a
       // separate feature (B would need an explicit kind 0 subscribe on add).
       const aPublishedK0 = await pageA.evaluate(() => {
         const logs: any[] = (window as any).__consoleLogs;
@@ -95,7 +95,7 @@ async function main() {
         if(dom.some((n: any) => n?.includes('AliceKind0'))) { found = true; break; }
         const mapping = await pageB.evaluate(async() => {
           try {
-            const {getAllMappings} = await import('/src/lib/nostra/virtual-peers-db.ts');
+            const {getAllMappings} = await import('/src/lib/phantomchat/virtual-peers-db.ts');
             const all = await getAllMappings();
             return all.map((m: any) => m.displayName).filter(Boolean);
           } catch { return []; }
@@ -192,7 +192,7 @@ async function main() {
         if(!hasDelete) {
           // Fallback: the delete contract is "store removal by content works".
           const removed = await page.evaluate(async(t: string) => {
-            const {getMessageStore} = await import('/src/lib/nostra/message-store.ts');
+            const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
             const store = getMessageStore();
             const ids = await store.getAllConversationIds();
             let count = 0;
@@ -211,7 +211,7 @@ async function main() {
           record('6.6', hasDelete, 'popup bypassed — store-level delete');
           // 6.7: immediate lingering check
           const lingering = await page.evaluate(async(t: string) => {
-            const {getMessageStore} = await import('/src/lib/nostra/message-store.ts');
+            const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
             const store = getMessageStore();
             const ids = await store.getAllConversationIds();
             let count = 0;

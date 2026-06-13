@@ -7,7 +7,7 @@ Manual 2-device verification steps. Complete all boxes before merging.
 This session could not run `pnpm fuzz` because `pnpm start` was not available. Before merging this PR:
 
 1. `pnpm start` in one terminal
-2. In another terminal: `cd /home/raider/Repository/nostra.chat-wt/2b2b && pnpm fuzz --duration=6m --max-commands=40 --seed=42 --emit-baseline`
+2. In another terminal: `cd /home/raider/Repository/phantomchat.chat-wt/2b2b && pnpm fuzz --duration=6m --max-commands=40 --seed=42 --emit-baseline`
 3. Verify output: `findings: 0` and `docs/fuzz-baseline/baseline-seed42-v2b2.json` exists with `"fuzzerVersion": "phase2b2"`.
 4. Verify replay: `pnpm fuzz --replay-baseline` exits 0.
 5. Commit the emitted JSON: `git add docs/fuzz-baseline/baseline-seed42-v2b2.json && git commit -m "chore(fuzz): emit baseline-seed42-v2b2.json (profile scope included)"`
@@ -47,5 +47,5 @@ Two browser windows (device A, device B):
 ## Tech gate (automated)
 - [ ] `pnpm lint` clean.
 - [ ] `npx tsc --noEmit` clean.
-- [ ] `pnpm test:nostra:quick` ≥ 401 passing.
+- [ ] `pnpm test:phantomchat:quick` ≥ 401 passing.
 - [ ] `npx vitest run src/tests/fuzz/` ≥ 68 passing.

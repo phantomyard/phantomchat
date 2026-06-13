@@ -81,7 +81,7 @@ See [`docs/UPDATE-SYSTEM.md`](docs/UPDATE-SYSTEM.md) for the operator runbook an
 - Gift-wrapped delivery and read receipts (togglable per user)
 - Offline message queue with relay backfill on reconnect
 - Multi-relay redundancy — messages deliver even when some relays are down
-- Background system notifications when the tab is closed, via opt-in self-hosted Web Push relay ([nostr-webpush-relay](https://github.com/nostra-chat/nostr-webpush-relay), AGPL-3.0). NIP-98 authenticated, configurable preview level, default endpoint swappable for a self-hosted instance. See [docs/PUSH-NOTIFICATIONS.md](docs/PUSH-NOTIFICATIONS.md).
+- Background system notifications when the tab is closed, via opt-in self-hosted Web Push relay ([nostr-webpush-relay](https://github.com/phantomchat-chat/nostr-webpush-relay), AGPL-3.0). NIP-98 authenticated, configurable preview level, default endpoint swappable for a self-hosted instance. See [docs/PUSH-NOTIFICATIONS.md](docs/PUSH-NOTIFICATIONS.md).
 
 **Identity & contacts**
 - Deterministic [DiceBear](https://www.dicebear.com/) fun-emoji avatars generated from each pubkey
@@ -149,7 +149,7 @@ A feature-by-feature comparison with other privacy-focused messengers and the ma
 12. PhantomChat works as a PWA on all major platforms — iOS (Safari), Android (Chrome), Windows, Linux, and macOS — without a native app install.
 13. SimpleX has no account system — each installation is a separate identity. No automatic conversation sync between devices; every contact must be re-linked manually.
 14. WhatsApp requires a phone number and the mobile app to link web/desktop clients. Without the phone, multiplatform is non-functional.
-15. Notifications default to a generic "New message" payload — sender and content are never written to the lockscreen unless the user explicitly opts into a richer preview level in Settings → Notifications. The push relay is open source ([nostr-webpush-relay](https://github.com/nostra-chat/nostr-webpush-relay)) and operates over NIP-98-authenticated registration; users can swap the endpoint to a self-hosted instance at any time.
+15. Notifications default to a generic "New message" payload — sender and content are never written to the lockscreen unless the user explicitly opts into a richer preview level in Settings → Notifications. The push relay is open source ([nostr-webpush-relay](https://github.com/phantomchat-chat/nostr-webpush-relay)) and operates over NIP-98-authenticated registration; users can swap the endpoint to a self-hosted instance at any time.
 
 **This is not a "PhantomChat wins everything" chart.** Different tools are good at different things:
 
@@ -247,8 +247,8 @@ docker build -f ./.docker/Dockerfile_production -t phantomchat:latest .
 
 ```bash
 pnpm test                     # all tests (Vitest)
-pnpm test:nostra:quick        # critical P2P tests (~160 tests in <2s)
-pnpm test:nostra              # full P2P test suite
+pnpm test:phantomchat:quick        # critical P2P tests (~160 tests in <2s)
+pnpm test:phantomchat              # full P2P test suite
 pnpm lint                     # ESLint
 ```
 
@@ -288,7 +288,7 @@ Example: `http://localhost:8080/?debug=1`
 - [x] 1:1 messaging — NIP-17 gift-wrap DMs, media, delivery tracking, message requests
 - [x] Telegram MTProto fully disabled — zero server connections
 - [x] Group messaging — NIP-17 multi-recipient groups with admin controls
-- [x] Background push notifications — self-hosted Nostr → Web Push relay ([nostr-webpush-relay](https://github.com/nostra-chat/nostr-webpush-relay)), NIP-98 authenticated, default preview hides content
+- [x] Background push notifications — self-hosted Nostr → Web Push relay ([nostr-webpush-relay](https://github.com/phantomchat-chat/nostr-webpush-relay)), NIP-98 authenticated, default preview hides content
 - [ ] Broadcast channels — NIP-28 one-to-many channels
 - [ ] Tor UI improvements — toggle, circuit dashboard, latency indicators
 - [ ] In-browser mini-relay with store-and-forward capability

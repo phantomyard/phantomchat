@@ -388,7 +388,7 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   // Total of 4 phases: workspace setup, integrity, account, ready.
   const bootProgress = (window as any).__bootProgress as undefined | ((step: number, total: number, label?: string) => void);
   bootProgress?.(1, 4, 'Setting up workspace');
-  // Nostra.chat: Telegram redirect disabled -- this is not a Telegram client
+  // PhantomChat.chat: Telegram redirect disabled -- this is not a Telegram client
   // randomlyChooseVersionFromSearch();
   setSidebarLeftWidth();
   toggleAttributePolyfill();
@@ -493,12 +493,12 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
 
   rootScope.managers.rootScope.getPremium().then((isPremium) => {
     rootScope.premium = isPremium;
-  }).catch(noop); // Nostra.chat: MTProto disabled -- getPremium may reject with MTPROTO_DISABLED
+  }).catch(noop); // PhantomChat.chat: MTProto disabled -- getPremium may reject with MTPROTO_DISABLED
 
   themeController.setThemeListener();
 
   // * fetch lang pack updates
-  // Nostra.chat: MTProto is disabled, so `checkLangPackForUpdates` (which issues
+  // PhantomChat.chat: MTProto is disabled, so `checkLangPackForUpdates` (which issues
   // a Telegram-side langpack.getDifference) is a no-op. The IS_BETA guard on the
   // localVersion check meant production clients never reloaded from local lang.ts
   // after a bundle update — any new key added to lang.ts resolved to its raw key
@@ -570,21 +570,21 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
     appNavigationController.overrideHash(params.tgaddr ? '#?tgaddr=' + encodeURIComponent(params.tgaddr) : '');
   }
 
-  // Nostra.chat identity check — intercept before Telegram auth flow.
-  // mountNostraOnboarding handles both new (shows onboarding) and
+  // PhantomChat.chat identity check — intercept before Telegram auth flow.
+  // mountPhantomChatOnboarding handles both new (shows onboarding) and
   // existing (loads encrypted identity → mounts chat) users.
   try {
-    const {mountNostraOnboarding} = await import('@/pages/nostra-onboarding-integration');
+    const {mountPhantomChatOnboarding} = await import('@/pages/phantomchat-onboarding-integration');
     const {maybeShowResetToast} = await import('@components/popups/resetLocalData');
     const authContainer = document.querySelector('#auth-pages .scrollable') as HTMLElement;
     if(authContainer) {
       document.getElementById('auth-pages')!.style.display = '';
-      await mountNostraOnboarding(authContainer);
+      await mountPhantomChatOnboarding(authContainer);
       maybeShowResetToast();
       return; // Skip Telegram auth flow entirely
     }
   } catch(err) {
-    console.error('[Nostra.chat] Failed to mount onboarding:', err);
+    console.error('[PhantomChat.chat] Failed to mount onboarding:', err);
     // Fall through to existing Telegram auth on error
   }
 

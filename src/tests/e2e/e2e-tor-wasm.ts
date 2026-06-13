@@ -69,7 +69,7 @@ async function createIdentity(page) {
 
 async function waitForState(page, target: string, timeoutMs: number) {
   return page.waitForFunction(
-    (t) => (window as any).__nostraTransport?.getRuntimeState() === t,
+    (t) => (window as any).__phantomchatTransport?.getRuntimeState() === t,
     target,
     {timeout: timeoutMs, polling: 1000}
   );
@@ -145,24 +145,24 @@ async function main() {
     // T2 — Bootstrap started
     // ============================================================
     const transportExposed = await page.waitForFunction(
-      () => !!(window as any).__nostraTransport,
+      () => !!(window as any).__phantomchatTransport,
       null,
       {timeout: 15_000, polling: 500}
     ).then(() => true).catch(() => false);
-    record('T2.1', 'window.__nostraTransport exposed within 15s', transportExposed);
+    record('T2.1', 'window.__phantomchatTransport exposed within 15s', transportExposed);
 
     // The state should be either 'booting' or 'tor-active' (if very fast) within 10s
     let firstObservedState: string | null = null;
     try {
       await page.waitForFunction(
         () => {
-          const s = (window as any).__nostraTransport?.getRuntimeState();
+          const s = (window as any).__phantomchatTransport?.getRuntimeState();
           return s === 'booting' || s === 'tor-active' || s === 'direct-active';
         },
         null,
         {timeout: 10_000, polling: 250}
       );
-      firstObservedState = await page.evaluate(() => (window as any).__nostraTransport?.getRuntimeState());
+      firstObservedState = await page.evaluate(() => (window as any).__phantomchatTransport?.getRuntimeState());
     } catch{}
     record('T2.2', 'Bootstrap initiated (state ∈ {booting, tor-active, direct-active}) within 10s',
       firstObservedState !== null && firstObservedState !== 'offline',
@@ -178,7 +178,7 @@ async function main() {
     } catch(err) {
       // Capture diagnostic info on timeout
       const diag = await page.evaluate(() => {
-        const t = (window as any).__nostraTransport;
+        const t = (window as any).__phantomchatTransport;
         const w = t?.webtorClient;
         return {
           transportState: t?.getRuntimeState?.() ?? 'no-transport',
@@ -196,13 +196,13 @@ async function main() {
 
     if(reachedActive) {
       const ready = await page.evaluate(() => {
-        const t = (window as any).__nostraTransport;
+        const t = (window as any).__phantomchatTransport;
         return t?.webtorClient?.isReady?.() ?? false;
       });
       record('T3.2', 'webtorClient.isReady() === true', ready === true);
 
       const details = await page.evaluate(() => {
-        const t = (window as any).__nostraTransport;
+        const t = (window as any).__phantomchatTransport;
         return t?.webtorClient?.getCircuitDetails?.() ?? null;
       });
       record('T3.3', 'getCircuitDetails() returns non-null payload', details !== null,
@@ -240,7 +240,7 @@ async function main() {
       // bootstrap-time exit IP probe populated circuitDetails.exitIp (the
       // only place we can observe a real Tor exit fetch completing in-bounds).
       const probeResult = await page.evaluate(() => {
-        const t = (window as any).__nostraTransport;
+        const t = (window as any).__phantomchatTransport;
         const w = t?.webtorClient;
         const apiAlive = !!w &&
           typeof w.fetch === 'function' &&
@@ -280,7 +280,7 @@ async function main() {
     // T5 — Toggle off → direct fallback
     // ============================================================
     if(reachedActive) {
-      await page.evaluate(() => (window as any).__nostraTransport.setMode('off'));
+      await page.evaluate(() => (window as any).__phantomchatTransport.setMode('off'));
       let reachedDirect = false;
       try {
         await waitForState(page, 'direct-active', 5_000);
@@ -288,8 +288,8 @@ async function main() {
       } catch{}
       record('T5.1', "setMode('off') → state=direct-active within 5s", reachedDirect);
 
-      const lsValue = await page.evaluate(() => localStorage.getItem('nostra-tor-mode'));
-      record('T5.2', "localStorage['nostra-tor-mode'] === 'off'", lsValue === 'off',
+      const lsValue = await page.evaluate(() => localStorage.getItem('phantomchat-tor-mode'));
+      record('T5.2', "localStorage['phantomchat-tor-mode'] === 'off'", lsValue === 'off',
         `value=${lsValue}`);
     } else {
       record('T5.1', 'Toggle off → direct', false, 'blocked by T3.1');
@@ -302,7 +302,7 @@ async function main() {
     if(reachedActive) {
       // Don't await — retry is async and we want to observe transitions
       await page.evaluate(() => {
-        void (window as any).__nostraTransport.setMode('only');
+        void (window as any).__phantomchatTransport.setMode('only');
       });
 
       let reachedBootstrapping = false;
@@ -311,7 +311,7 @@ async function main() {
         reachedBootstrapping = true;
       } catch{
         // It may have raced through booting straight to tor-active — accept that too
-        const cur = await page.evaluate(() => (window as any).__nostraTransport?.getRuntimeState());
+        const cur = await page.evaluate(() => (window as any).__phantomchatTransport?.getRuntimeState());
         if(cur === 'tor-active') reachedBootstrapping = true;
       }
       record('T6.1', "setMode('only') → state=booting (or tor-active) within 5s",

@@ -25,18 +25,18 @@ export default function showLogOutPopup() {
   }).then(async() => {
     const overlay = createOverlay('Clearing data…');
 
-    // 1. Close connections + delete Nostra databases (main thread)
+    // 1. Close connections + delete PhantomChat databases (main thread)
     let failed: string[] = [];
     try {
-      const {clearAllNostraData} = await import('@lib/nostra/nostra-cleanup');
-      failed = await clearAllNostraData();
+      const {clearAllPhantomChatData} = await import('@lib/phantomchat/phantomchat-cleanup');
+      failed = await clearAllPhantomChatData();
     } catch(err) {
-      console.warn('[Nostra.chat] cleanup error:', err);
+      console.warn('[PhantomChat.chat] cleanup error:', err);
       failed = ['unknown'];
     }
 
     if(failed.length > 0) {
-      console.warn('[Nostra.chat] failed to delete:', failed.join(', '));
+      console.warn('[PhantomChat.chat] failed to delete:', failed.join(', '));
       overlay.textContent = 'Logout incomplete — reloading…';
     } else {
       overlay.textContent = 'Logged out — reloading…';

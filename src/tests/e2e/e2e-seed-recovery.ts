@@ -5,7 +5,7 @@
  * Original symptom reported by user: "non c'è un UI per recuperare le 12 parole
  * dopo l'onboarding". Two fixes in one file:
  *
- *   1. Regression: AppNostraSecurityTab used to pass a plain object as
+ *   1. Regression: AppPhantomChatSecurityTab used to pass a plain object as
  *      `checkboxField` to Row(), triggering a swallowed TypeError and rendering
  *      an empty tab. Covered by asserting the Key Protection tab has the radio
  *      picker and Recovery section.
@@ -139,7 +139,7 @@ async function closeCurrentTab(page: Page, containerSelector: string) {
     await clickRowByTitle(page, '.privacy-container', /pin.*passphrase/);
     await page.waitForTimeout(1500);
     const keyProtection = await page.evaluate(() => {
-      const container = document.querySelector('.nostra-security-settings');
+      const container = document.querySelector('.phantomchat-security-settings');
       if(!container) return null;
       const buttons = Array.from(container.querySelectorAll('button')).map(b => b.textContent?.trim() || '');
       const sections = container.querySelectorAll('.sidebar-left-section').length;
@@ -166,14 +166,14 @@ async function closeCurrentTab(page: Page, containerSelector: string) {
       for(const e of rowErrors) console.log('    -', e.slice(0, 200));
     }
 
-    await closeCurrentTab(page, '.nostra-security-settings');
+    await closeCurrentTab(page, '.phantomchat-security-settings');
 
     // ── Path B: Recovery Phrase tab — dedicated, prettier ──
     console.log('  Opening Recovery Phrase tab...');
     await clickRowByTitle(page, '.privacy-container', /recovery phrase/);
     await page.waitForTimeout(1500);
     const seedTab = await page.evaluate(() => {
-      const container = document.querySelector('.nostra-seed-phrase-tab');
+      const container = document.querySelector('.phantomchat-seed-phrase-tab');
       if(!container) return null;
       const buttons = Array.from(container.querySelectorAll('button')).map(b => b.textContent?.trim() || '');
       return {
@@ -194,7 +194,7 @@ async function closeCurrentTab(page: Page, containerSelector: string) {
     // ── Click Reveal ──
     console.log('  Clicking Reveal Recovery Phrase...');
     await page.evaluate(() => {
-      const container = document.querySelector('.nostra-seed-phrase-tab')!;
+      const container = document.querySelector('.phantomchat-seed-phrase-tab')!;
       for(const b of container.querySelectorAll('button')) {
         if(/reveal recovery phrase/i.test(b.textContent || '')) { (b as HTMLElement).click(); return; }
       }
@@ -203,7 +203,7 @@ async function closeCurrentTab(page: Page, containerSelector: string) {
 
     // ── Verify pretty 12-chip grid renders ──
     const grid = await page.evaluate(() => {
-      const chips = document.querySelectorAll('.nostra-seed-phrase-tab .seed-word-chip');
+      const chips = document.querySelectorAll('.phantomchat-seed-phrase-tab .seed-word-chip');
       return Array.from(chips).map(chip => ({
         num: chip.querySelector('.seed-word-chip__num')?.textContent?.trim() || '',
         word: chip.querySelector('.seed-word-chip__word')?.textContent?.trim() || ''
@@ -217,7 +217,7 @@ async function closeCurrentTab(page: Page, containerSelector: string) {
 
     // ── Auxiliary pretty-UI affordances ──
     const affordances = await page.evaluate(() => {
-      const container = document.querySelector('.nostra-seed-phrase-tab')!;
+      const container = document.querySelector('.phantomchat-seed-phrase-tab')!;
       const btns = Array.from(container.querySelectorAll('button')).map(b => b.textContent?.trim() || '');
       return {
         hasCopy: btns.some(t => /^copy/i.test(t)),

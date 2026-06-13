@@ -42,7 +42,7 @@ async function waitForDispatch(user: any, sinceIdx: number, timeoutMs = 30000) {
   const start = Date.now();
   while(Date.now() - start < timeoutMs) {
     for(let i = sinceIdx; i < user.consoleLog.length; i++) {
-      if(user.consoleLog[i].includes('[NostraSync] dispatching nostra_new_message')) return user.consoleLog[i];
+      if(user.consoleLog[i].includes('[PhantomChatSync] dispatching phantomchat_new_message')) return user.consoleLog[i];
     }
     await user.page.waitForTimeout(400);
   }
@@ -93,10 +93,10 @@ async function main() {
 
     const heard = await waitForDispatch(A, A.consoleLog.length /* don't care, we look forward */, 30000);
     if(!heard) {
-      const log = A.consoleLog.filter((l: string) => l.includes('ChatAPI') || l.includes('NostraSync')).slice(-15).join('\n');
-      throw new Error(`A never logged nostra_new_message in 30s.\nA's relay log tail:\n${log}`);
+      const log = A.consoleLog.filter((l: string) => l.includes('ChatAPI') || l.includes('PhantomChatSync')).slice(-15).join('\n');
+      throw new Error(`A never logged phantomchat_new_message in 30s.\nA's relay log tail:\n${log}`);
     }
-    console.log('[test] A received nostra_new_message');
+    console.log('[test] A received phantomchat_new_message');
 
     // Allow the Worker round-trip: setDialogTopMessage → scheduleHandleNewDialogs
     // → handleNewDialogs → dispatch dialogs_multiupdate.

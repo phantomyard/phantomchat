@@ -201,7 +201,7 @@ async function main() {
       // Verify searchMessages bridge works directly (the UI surfaces this,
       // but the contract is the bridge method returning results).
       const bridgeSearch = await page.evaluate(async() => {
-        const server = (window as any).__nostraMTProtoServer;
+        const server = (window as any).__phantomchatMTProtoServer;
         if(!server) return {hasServer: false, results: 0};
         try {
           const result = await server.handleMethod('messages.search', {q: 'UniqueSearchTerm456', limit: 10});

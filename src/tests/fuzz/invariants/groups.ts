@@ -7,7 +7,7 @@
  */
 import type {Invariant, FuzzContext, InvariantResult, UserHandle} from '../types';
 
-// Inlined to avoid importing lib/nostra into the Node harness.
+// Inlined to avoid importing lib/phantomchat into the Node harness.
 const GROUP_PEER_BASE = 2 * 10 ** 15;
 
 interface StoredGroup {
@@ -22,7 +22,7 @@ interface StoredGroup {
 async function listGroups(user: UserHandle): Promise<StoredGroup[]> {
   return user.page.evaluate(async () => {
     try {
-      const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+      const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
       const groups = await getGroupStore().getAll();
       return groups.map((g: any) => ({
         groupId: g.groupId,
@@ -164,8 +164,8 @@ export const groupPeerIdDeterministic: Invariant = {
       const user = ctx.users[id];
       const mismatches = await user.page.evaluate(async () => {
         try {
-          const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
-          const {groupIdToPeerId} = await import('/src/lib/nostra/group-types.ts');
+          const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
+          const {groupIdToPeerId} = await import('/src/lib/phantomchat/group-types.ts');
           const groups = await getGroupStore().getAll();
           const out: Array<{groupId: string; stored: number; computed: number}> = [];
           for(const g of groups) {
@@ -206,7 +206,7 @@ export const groupNoOrphanMirrorPeer: Invariant = {
       const user = ctx.users[id];
       const orphans = await user.page.evaluate(async (basePositive: number) => {
         try {
-          const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+          const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
           const store = getGroupStore();
           const proxy: any = (window as any).apiManagerProxy;
           const peers = proxy?.mirrors?.peers || {};

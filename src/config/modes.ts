@@ -18,7 +18,7 @@ const Modes = {
   ssl: true, // location.search.indexOf('ssl=1') > 0 || location.protocol === 'https:' && location.search.indexOf('ssl=0') === -1,
   asServiceWorker: !!import.meta.env.VITE_MTPROTO_SW,
   transport: 'websocket' as TransportType,
-  noSharedWorker: true, // Nostra.chat: force main-thread managers for API stub interception
+  noSharedWorker: true, // PhantomChat.chat: force main-thread managers for API stub interception
   // Skip the Service Worker in `pnpm start` (dev). Vite HMR + cache-only SW
   // fetch handler fight each other: rebuilds don't get picked up until
   // DevTools "Clear site data", and the Phase A update flow false-positives

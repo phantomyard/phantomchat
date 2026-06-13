@@ -31,7 +31,7 @@ import appImManager from '@lib/appImManager';
 import appSidebarLeft from '..';
 import wrapFolderTitle from '@components/wrappers/folderTitle';
 import useHasFoldersSidebar from '@stores/foldersSidebar';
-import {isProtectedFolder} from '@lib/nostra/folders-protection';
+import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 
 export default class AppChatFoldersTab extends SliderSuperTab {
   private createFolderBtn: HTMLElement;

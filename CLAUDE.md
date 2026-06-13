@@ -1,8 +1,8 @@
-# CLAUDE.md — Nostra.chat
+# CLAUDE.md — PhantomChat.chat
 
 ## Project Overview
 
-**Nostra.chat** is a decentralized messaging client (https://nostra.chat/) built with Solid.js and TypeScript. Forked from Telegram Web K, it replaces the Telegram backend with peer-to-peer encrypted chat over Nostr relays. The codebase is large (~100k+ lines excluding vendor), mature, and highly performance-oriented. License: GPL v3.
+**PhantomChat.chat** is a decentralized messaging client (https://phantomchat.chat/) built with Solid.js and TypeScript. Forked from Telegram Web K, it replaces the Telegram backend with peer-to-peer encrypted chat over Nostr relays. The codebase is large (~100k+ lines excluding vendor), mature, and highly performance-oriented. License: GPL v3.
 
 ## Tech Stack
 
@@ -25,8 +25,8 @@ pnpm install
 pnpm start          # Dev server on :8080
 pnpm build          # Production build → dist/
 pnpm test           # Run tests (Vitest)
-pnpm test:nostra:quick  # Critical P2P tests only (~160 tests in <2s)
-pnpm test:nostra        # Full P2P test suite
+pnpm test:phantomchat:quick  # Critical P2P tests only (~160 tests in <2s)
+pnpm test:phantomchat        # Full P2P test suite
 pnpm lint           # ESLint on src/**/*.{ts,tsx}
 ```
 
@@ -56,7 +56,7 @@ src/
 │   └── ...           # 200+ feature folders
 ├── lib/
 │   ├── appManagers/  # 55+ domain managers (chats, users, messages, etc.)
-│   ├── nostra/       # P2P messaging (Virtual MTProto server, sync, ChatAPI, relay pool, crypto)
+│   ├── phantomchat/       # P2P messaging (Virtual MTProto server, sync, ChatAPI, relay pool, crypto)
 │   ├── mtproto/      # MTProto protocol implementation
 │   ├── storages/     # IndexedDB/localStorage wrappers
 │   ├── rootScope.ts  # Global event emitter & app context
@@ -145,11 +145,11 @@ solid-js/store  → src/vendor/solid/store
 | `src/lib/rootScope.ts` | Global event emitter |
 | `vite.config.ts` | Build configuration |
 | `eslint.config.mjs` | ESLint flat config |
-| `src/lib/nostra/virtual-mtproto-server.ts` | Virtual MTProto Server — intercepts MTProto calls, returns native responses |
-| `src/lib/nostra/nostra-sync.ts` | Incoming message persistence + event dispatch |
-| `src/lib/nostra/nostra-peer-mapper.ts` | Creates tweb-native User/Chat/Message/Dialog objects |
-| `src/lib/nostra/chat-api.ts` | ChatAPI — relay pool, gift-wrap, send/receive |
-| `src/lib/nostra/nostr-relay-pool.ts` | Multi-relay connection pool |
+| `src/lib/phantomchat/virtual-mtproto-server.ts` | Virtual MTProto Server — intercepts MTProto calls, returns native responses |
+| `src/lib/phantomchat/phantomchat-sync.ts` | Incoming message persistence + event dispatch |
+| `src/lib/phantomchat/phantomchat-peer-mapper.ts` | Creates tweb-native User/Chat/Message/Dialog objects |
+| `src/lib/phantomchat/chat-api.ts` | ChatAPI — relay pool, gift-wrap, send/receive |
+| `src/lib/phantomchat/nostr-relay-pool.ts` | Multi-relay connection pool |
 | `src/lib/apiManagerProxy.ts` | Main-thread proxy to Worker managers |
 | `docs/ARCHITECTURE.md` | Deep architecture notes (Tor, Vitest/E2E quirks, profile sync, Phase A) |
 | `docs/RELEASE.md` | Release pipeline reference |
@@ -183,7 +183,7 @@ Full reference: [`docs/RELEASE.md`](docs/RELEASE.md). Day-to-day rules:
 
 ## Architecture Notes
 
-Subsystem rules — Worker context, Virtual MTProto / MessagePort bridge + middleware rules table, message receive pipeline, delivery tracker, logout & cleanup, UI components, Nostra module architecture, background push, MTProto intercept, bug fuzzer, bubble rendering — live in [`docs/CLAUDE-RULES.md`](docs/CLAUDE-RULES.md). Read it before touching any of those areas.
+Subsystem rules — Worker context, Virtual MTProto / MessagePort bridge + middleware rules table, message receive pipeline, delivery tracker, logout & cleanup, UI components, PhantomChat module architecture, background push, MTProto intercept, bug fuzzer, bubble rendering — live in [`docs/CLAUDE-RULES.md`](docs/CLAUDE-RULES.md). Read it before touching any of those areas.
 
 For deep architecture narrative (Tor runtime, Vitest/E2E quirks, profile sync internals, profile tab layout, Blossom upload) see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For fuzz status / open findings / per-phase closure log see [`docs/FUZZ-FINDINGS.md`](docs/FUZZ-FINDINGS.md).
 

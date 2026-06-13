@@ -42,10 +42,10 @@ export class MTTransportController extends EventListenerBase<{
   }
 
   public async pingTransports() {
-    // [Nostra.chat] Defense-in-depth: MTProto disabled
+    // [PhantomChat.chat] Defense-in-depth: MTProto disabled
     // NetworkerFactory-level stub prevents transport creation normally,
     // but this guard ensures no connection even if called directly.
-    throw new Error('[Nostra.chat] MTProto disabled: transport controller cannot create connections');
+    throw new Error('[PhantomChat.chat] MTProto disabled: transport controller cannot create connections');
 
     const dcConfigurator = this.dcConfigurator ??= new DcConfigurator();
     const timeout = 2000;

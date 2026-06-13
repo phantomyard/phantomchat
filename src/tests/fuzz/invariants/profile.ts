@@ -10,9 +10,9 @@
  *     publishing path duplicated the event.
  *
  *   INV-profile-cache-coherent  (medium)
- *     localStorage['nostra-profile-cache'].profile.name must match the
+ *     localStorage['phantomchat-profile-cache'].profile.name must match the
  *     latest kind-0 event this browser knows about (content.name parsed
- *     from `nostra-profile-cache`'s created_at > any older kind-0 on
+ *     from `phantomchat-profile-cache`'s created_at > any older kind-0 on
  *     relay, but within tolerance). We compare cache.name with the
  *     most recently published kind-0 for that pubkey on the relay.
  *
@@ -23,7 +23,7 @@
  *
  * Data sources:
  *   - LocalRelay.getAllEvents() — ground truth for kind-0 events
- *   - localStorage['nostra-profile-cache'] — client cache (see profile-cache.ts)
+ *   - localStorage['phantomchat-profile-cache'] — client cache (see profile-cache.ts)
  *   - window.apiManagerProxy.mirrors.peers — peer-side mirror
  */
 import type {Invariant, FuzzContext, Action, InvariantResult} from '../types';
@@ -83,11 +83,11 @@ export const invProfileCacheCoherent: Invariant = {
     }
     for(const user of ['userA', 'userB'] as const) {
       const u = ctx.users[user];
-      const ownPub: string | null = await u.page.evaluate(() => (window as any).__nostraOwnPubkey ?? null).catch(() => null);
+      const ownPub: string | null = await u.page.evaluate(() => (window as any).__phantomchatOwnPubkey ?? null).catch(() => null);
       if(!ownPub) continue;
       const cache: {name?: string; created_at?: number} | null = await u.page.evaluate(() => {
         try{
-          const raw = localStorage.getItem('nostra-profile-cache');
+          const raw = localStorage.getItem('phantomchat-profile-cache');
           if(!raw) return null;
           const obj = JSON.parse(raw);
           return {name: obj?.profile?.name, created_at: obj?.created_at};

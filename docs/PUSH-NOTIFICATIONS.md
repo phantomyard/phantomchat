@@ -1,6 +1,6 @@
 # Background push notifications
 
-Nostra.chat can deliver system notifications when the app is closed by registering with a Nostr push relay. The default relay is `https://push.nostra.chat`, an open-source Web Push relay (`nostr-webpush-relay`, AGPL-3.0) operated for the Nostra.chat user base.
+PhantomChat.chat can deliver system notifications when the app is closed by registering with a Nostr push relay. The default relay is `https://push.phantomchat.chat`, an open-source Web Push relay (`nostr-webpush-relay`, AGPL-3.0) operated for the PhantomChat.chat user base.
 
 ## What the push relay sees
 
@@ -28,7 +28,7 @@ Every registration and unregistration request to the push relay is authenticated
 
 ## Preview levels
 
-- **Generic** (default): Notifications show "Nostra.chat — new message". No sender, no content. Maximum privacy on the lockscreen.
+- **Generic** (default): Notifications show "PhantomChat.chat — new message". No sender, no content. Maximum privacy on the lockscreen.
 - **Sender + content**: Notifications show the sender's name and the first ~80 characters of the message.
 - **Sender only**: Notifications show the sender's name and "[encrypted]".
 
@@ -36,19 +36,19 @@ For B and C, the Service Worker reads your private key from local storage (Index
 
 ## Endpoint override
 
-Advanced users can swap the push relay from Settings → Notifications → Advanced. The protocol is documented at the relay's repository. To self-host, see [github.com/nostra-chat/nostr-webpush-relay](https://github.com/nostra-chat/nostr-webpush-relay).
+Advanced users can swap the push relay from Settings → Notifications → Advanced. The protocol is documented at the relay's repository. To self-host, see [github.com/phantomchat-chat/nostr-webpush-relay](https://github.com/phantomchat-chat/nostr-webpush-relay).
 
 ## CORS requirement (operators)
 
-The relay's HTTP endpoints (`/info`, `/subscription/*`) are called from the Nostra.chat origin via `fetch()`. The server **must** respond with permissive CORS headers, otherwise the browser blocks the response and push subscription silently fails:
+The relay's HTTP endpoints (`/info`, `/subscription/*`) are called from the PhantomChat.chat origin via `fetch()`. The server **must** respond with permissive CORS headers, otherwise the browser blocks the response and push subscription silently fails:
 
 ```
-Access-Control-Allow-Origin: https://nostra.chat
+Access-Control-Allow-Origin: https://phantomchat.chat
 Access-Control-Allow-Methods: GET, PUT, DELETE
 Access-Control-Allow-Headers: Content-Type, Authorization
 ```
 
-If you observe `[NostraPushClient] /info fetch failed` with `Failed to fetch` in the browser console (and a `No 'Access-Control-Allow-Origin' header is present` warning above it), the relay is missing CORS headers. Fix on the server — the client cannot work around this.
+If you observe `[PhantomChatPushClient] /info fetch failed` with `Failed to fetch` in the browser console (and a `No 'Access-Control-Allow-Origin' header is present` warning above it), the relay is missing CORS headers. Fix on the server — the client cannot work around this.
 
 ## Disabling
 
@@ -60,4 +60,4 @@ With Tor enabled (Settings → Privacy → Tor mode "Always" or "When available"
 
 ## Source code
 
-The push relay server is open source under AGPL-3.0 at [github.com/nostra-chat/nostr-webpush-relay](https://github.com/nostra-chat/nostr-webpush-relay). The protocol contract (HTTP routes, NIP-98 auth header format, push payload schema) is specified in the relay repo's `docs/PROTOCOL.md`.
+The push relay server is open source under AGPL-3.0 at [github.com/phantomchat-chat/nostr-webpush-relay](https://github.com/phantomchat-chat/nostr-webpush-relay). The protocol contract (HTTP routes, NIP-98 auth header format, push payload schema) is specified in the relay repo's `docs/PROTOCOL.md`.

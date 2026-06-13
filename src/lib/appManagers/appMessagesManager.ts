@@ -66,9 +66,9 @@ import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import isLegacyMessageId from '@appManagers/utils/messageId/isLegacyMessageId';
 import {joinDeepPath} from '@helpers/object/setDeepProperty';
 // P2P send bridge removed from Worker — runs only in main thread
-// import {isVirtualPeer, sendTextViaChatAPI, sendMediaViaChatAPI} from '../nostra/nostra-send-bridge';
-import {isP2PPeer} from '@lib/nostra/nostra-bridge';
-import {isGroupPeer} from '@lib/nostra/group-types';
+// import {isVirtualPeer, sendTextViaChatAPI, sendMediaViaChatAPI} from '../phantomchat/phantomchat-send-bridge';
+import {isP2PPeer} from '@lib/phantomchat/phantomchat-bridge';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
 import {LOCAL_ENTITIES} from '@lib/richTextProcessor';
 import {isDialog, isSavedDialog, isForumTopic, isMonoforumDialog} from '@appManagers/utils/dialogs/isDialog';
@@ -561,7 +561,7 @@ export class AppMessagesManager extends AppManager {
   // apiManagerProxy.mirrors.messages, leaving only one bubble on the sender
   // for an N-image paste. The counter guarantees uniqueness regardless of
   // clock resolution.
-  private nostraSendFileCounter = 0;
+  private phantomchatSendFileCounter = 0;
 
   private typings: {[key: string]: {action: SendMessageAction, timeout?: number}} = {};
 
@@ -917,11 +917,11 @@ export class AppMessagesManager extends AppManager {
       invert_media: options.invertMedia,
       ...(inputMediaWebPage ? {media: inputMediaWebPage} : {})
     }).then((updates) => {
-      // [Nostra.chat] P2P shortcut: VMT server returns empty updates with
-      // nostraEdit=true. The server already updated mirrors and dispatched
+      // [PhantomChat.chat] P2P shortcut: VMT server returns empty updates with
+      // phantomchatEdit=true. The server already updated mirrors and dispatched
       // message_edit on the main thread; here we just update Worker storage
       // so subsequent getHistory calls return the new content.
-      if(updates?._ === 'updates' && (updates as any).nostraEdit && Number(peerId) >= 1e15) {
+      if(updates?._ === 'updates' && (updates as any).phantomchatEdit && Number(peerId) >= 1e15) {
         const storage = this.getHistoryMessagesStorage(peerId);
         const stored = storage.get(mid);
         if(stored) {
@@ -1318,7 +1318,7 @@ export class AppMessagesManager extends AppManager {
     }>
   ): Promise<void> {
     let {peerId, text} = options;
-    // P2P message routing handled by nostraIntercept in apiManager.ts
+    // P2P message routing handled by phantomchatIntercept in apiManager.ts
     // sendTextViaChatAPI cannot run in Worker context (no window)
     if(!text.trim() && !options.suggestedPost?.changeMid) {
       return;
@@ -1435,7 +1435,7 @@ export class AppMessagesManager extends AppManager {
       this.pendingAfterMsgs[peerId] = sentRequestOptions;
 
       return apiPromise.then((updates: Updates) => {
-        // [Nostra.chat] For P2P messages AND group messages, nostraIntercept
+        // [PhantomChat.chat] For P2P messages AND group messages, phantomchatIntercept
         // returns empty updates. Finalize the message: clear pending flags,
         // persist to storage, and dispatch message_sent so the bubble
         // transitions from ⏳ to ✓.
@@ -1446,10 +1446,10 @@ export class AppMessagesManager extends AppManager {
 
           // Use the real timestamp-based mid from the Virtual MTProto Server
           // so that the bubble sorts correctly among received messages.
-          const nostraMid = (updates as any).nostraMid;
+          const phantomchatMid = (updates as any).phantomchatMid;
 
-          // [Nostra.chat] FIND-57989db1 — VMT signals P2P send failure by
-          // returning emptyUpdates (no nostraMid). Before this gate, the
+          // [PhantomChat.chat] FIND-57989db1 — VMT signals P2P send failure by
+          // returning emptyUpdates (no phantomchatMid). Before this gate, the
           // Worker proceeded into the success path using the tempId (an
           // integer >= 2^50 per generateTempMessageId), updating the mirror
           // with a mid that has no IDB counterpart because VMT's IDB save
@@ -1465,20 +1465,20 @@ export class AppMessagesManager extends AppManager {
           // leaves it as a ghost integer mid that INV-mirrors-idb-coherent
           // treats as a mirror-vs-IDB divergence (FIND-57989db1 regression
           // surfaced again during Phase 2b.4 / 2b.5 baseline-emit attempts).
-          if(!nostraMid) {
+          if(!phantomchatMid) {
             this.deleteMessageFromStorage(storage, tempId);
             this.rootScope.dispatchEvent('history_delete', {
               peerId,
               msgs: new Set<number>([tempId])
             });
-            message.promise?.reject(new Error('[Nostra.chat] P2P send failed — VMT returned no nostraMid'));
+            message.promise?.reject(new Error('[PhantomChat.chat] P2P send failed — VMT returned no phantomchatMid'));
             return;
           }
 
-          if(nostraMid !== tempId) {
+          if(phantomchatMid !== tempId) {
             this.deleteMessageFromStorage(storage, tempId);
-            message.id = nostraMid;
-            message.mid = nostraMid;
+            message.id = phantomchatMid;
+            message.mid = phantomchatMid;
           }
 
           delete message.pFlags.is_outgoing;
@@ -1487,14 +1487,14 @@ export class AppMessagesManager extends AppManager {
           message.pFlags.unread = true;
           if((updates as any).date) message.date = (updates as any).date;
 
-          // For Nostra groups, generateFromId synthesized a bad
+          // For PhantomChat groups, generateFromId synthesized a bad
           // `from_id={_: peerUser, user_id: <negativeChatId>}` because
           // getSelf() returned undefined. handleGroupOutgoing already
-          // wrote the correct row at `storage[nostraMid]` with the
+          // wrote the correct row at `storage[phantomchatMid]` with the
           // sender's user-level peerId — read it back and merge the
           // corrected from_id / fromId BEFORE we overwrite (FIND-ee66f7ae).
           if(isGroupPeer(Number(peerId))) {
-            const existing = storage.get(nostraMid) as Message.message | undefined;
+            const existing = storage.get(phantomchatMid) as Message.message | undefined;
             if(existing?.from_id && (existing as any).fromId) {
               message.from_id = existing.from_id;
               (message as any).fromId = (existing as any).fromId;
@@ -1624,33 +1624,33 @@ export class AppMessagesManager extends AppManager {
 
     await this.checkSendOptions(options);
 
-    // [Nostra.chat] P2P media shortcut: skip the MTProto chunk upload path.
+    // [PhantomChat.chat] P2P media shortcut: skip the MTProto chunk upload path.
     // The Virtual MTProto Server handles Blossom upload + AES-GCM encryption
     // + kind 15 rumor publish. Bubble injection and message-store persist
     // happen inside the VMT handler, so we only need to dispatch message_sent
     // after the bridge returns. Negative `peerId` in the GROUP_PEER_BASE
-    // range (groups) also routes through the bridge — VMT.nostraSendFile's
+    // range (groups) also routes through the bridge — VMT.phantomchatSendFile's
     // group branch handles fan-out to all members via wrapGroupMessage
     // (FIND-3786a35f obs B).
     const peerIdNumForFile = Number(peerId);
-    const isNostraDMForFile = peerIdNumForFile >= 1e15;
-    const isNostraGroupForFile = isGroupPeer(peerIdNumForFile);
-    if((isNostraDMForFile || isNostraGroupForFile) && (file instanceof File || file instanceof Blob)) {
+    const isPhantomChatDMForFile = peerIdNumForFile >= 1e15;
+    const isPhantomChatGroupForFile = isGroupPeer(peerIdNumForFile);
+    if((isPhantomChatDMForFile || isPhantomChatGroupForFile) && (file instanceof File || file instanceof Blob)) {
       const mime = (file.type || '').toLowerCase();
-      const nostraType: 'image' | 'video' | 'file' | 'voice' =
+      const phantomchatType: 'image' | 'video' | 'file' | 'voice' =
         options.isVoiceMessage ? 'voice' :
         mime.startsWith('image/') ? 'image' :
         mime.startsWith('video/') ? 'video' :
         'file';
       // Issue #111: counter-suffixed tempMid avoids same-ms collisions when
       // sendGrouped Promise.all's multiple sendFile calls for an album.
-      const seq = ++this.nostraSendFileCounter;
+      const seq = ++this.phantomchatSendFileCounter;
       const tempMid = -(Date.now() * 1000 + (seq % 1000));
       try {
-        const updates: any = await this.apiManager.invokeApi('nostraSendFile' as any, {
+        const updates: any = await this.apiManager.invokeApi('phantomchatSendFile' as any, {
           peerId,
           blob: file,
-          type: nostraType,
+          type: phantomchatType,
           caption: options.caption || '',
           tempMid,
           groupedId: options.groupId,
@@ -1659,9 +1659,9 @@ export class AppMessagesManager extends AppManager {
           duration: options.duration,
           waveform: options.waveform
         } as any);
-        if(updates?.nostraMid) {
+        if(updates?.phantomchatMid) {
           const storage = this.getHistoryMessagesStorage(peerId);
-          const realMid = updates.nostraMid;
+          const realMid = updates.phantomchatMid;
           this.rootScope.dispatchEvent('messages_pending');
           this.rootScope.dispatchEvent('message_sent', {
             storageKey: storage.key,
@@ -2789,22 +2789,22 @@ export class AppMessagesManager extends AppManager {
         peer: this.appPeersManager.getInputPeerById(options.peerId)
       };
     } else if(options.replyToMsgId) {
-      // For Nostra peers (1-on-1 P2P or groups) the local mid is the rumor-
+      // For PhantomChat peers (1-on-1 P2P or groups) the local mid is the rumor-
       // derived timestamp mid (> 2^32), and there is no MTProto server in
       // the loop, so `getServerMessageId(localMid) = localMid % 2^32`
       // permanently mangles the value — VMT's `getMessageStore().getByMid`
       // lookup then never finds the parent and replies land without their
-      // NIP-10 `['e', ...]` tag. Pass the mid through unchanged for nostra
+      // NIP-10 `['e', ...]` tag. Pass the mid through unchanged for phantomchat
       // peers so VMT.sendMessage / sendGroupMessage can resolve the parent
       // (FIND-16af771a). For regular MTProto peers, keep the legacy mangle.
       const numericPeer = Number(options.peerId);
-      const isNostraPeer = numericPeer >= 1e15 || isGroupPeer(numericPeer);
+      const isPhantomChatPeer = numericPeer >= 1e15 || isGroupPeer(numericPeer);
       return {
         _: 'inputReplyToMessage',
         monoforum_peer_id: this.appPeersManager.canManageDirectMessages(options.peerId) && options.replyToMonoforumPeerId ?
           this.appPeersManager.getInputPeerById(options.replyToMonoforumPeerId) :
           undefined,
-        reply_to_msg_id: isNostraPeer ? options.replyToMsgId : getServerMessageId(options.replyToMsgId),
+        reply_to_msg_id: isPhantomChatPeer ? options.replyToMsgId : getServerMessageId(options.replyToMsgId),
         reply_to_peer_id: options.replyToPeerId && this.appPeersManager.getInputPeerById(options.replyToPeerId),
         top_msg_id: options.threadId ? getServerMessageId(options.threadId) : undefined,
         ...(options.replyToQuote && {
@@ -2907,7 +2907,7 @@ export class AppMessagesManager extends AppManager {
         this.monoforumDialogsStorage.checkLastMessageForExistingDialog(message);
       }
 
-      // [Nostra.chat] For P2P peers AND groups, the VMT Server / GroupAPI
+      // [PhantomChat.chat] For P2P peers AND groups, the VMT Server / GroupAPI
       // inject the bubble directly from the main thread with the real
       // timestamp-based mid. Skipping the Worker-side history_append
       // avoids a double-render (one from temp mid + one from real mid)
@@ -3239,7 +3239,7 @@ export class AppMessagesManager extends AppManager {
     } else {
       const self = this.appUsersManager.getSelf();
       if(!self) {
-        // Nostra.chat: no MTProto self user — use peerId as sender
+        // PhantomChat.chat: no MTProto self user — use peerId as sender
         return {_: 'peerUser' as const, user_id: peerId.toUserId()};
       }
       return this.appPeersManager.getOutputPeer(self.id.toPeerId());
@@ -4608,8 +4608,8 @@ export class AppMessagesManager extends AppManager {
         // Defense against self-inflicted DoS: recurse only if the peers queued
         // here are DIFFERENT from the ones we just failed to resolve. Without
         // this guard, a transport that consistently returns an empty
-        // peerDialogs response (Nostra mode: messages.getPeerDialogs is a
-        // NOSTRA_STATIC empty stub) keeps the original peers queued (forEach
+        // peerDialogs response (PhantomChat mode: messages.getPeerDialogs is a
+        // PHANTOMCHAT_STATIC empty stub) keeps the original peers queued (forEach
         // at line above is a no-op) and the tail call recurses at ~50Hz,
         // burning CPU and filling RAM with log entries.
         if(this.reloadConversationsPeers.size) {
@@ -4632,7 +4632,7 @@ export class AppMessagesManager extends AppManager {
   }
 
   /**
-   * [Nostra.chat] Invalidate the Worker-side history cache for a peer.
+   * [PhantomChat.chat] Invalidate the Worker-side history cache for a peer.
    * Clears the SlicedArray so the next getHistory() call re-fetches via
    * the bridge instead of returning stale cached data.
    */
@@ -6338,7 +6338,7 @@ export class AppMessagesManager extends AppManager {
   }
 
   public deleteMessages(peerId: PeerId, mids: number[], revoke?: boolean) {
-    // Nostra P2P short-circuit: tweb's generateMessageId/getServerMessageId
+    // PhantomChat P2P short-circuit: tweb's generateMessageId/getServerMessageId
     // round-trip filters out P2P mids (>= 1e15) because MESSAGE_ID_OFFSET
     // modular arithmetic does not reconstruct them. Route P2P deletes
     // straight to the VMT bridge and dispatch a correctly-sized local update

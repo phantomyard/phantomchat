@@ -7,7 +7,7 @@
 import rootScope from '@lib/rootScope';
 import wrapSticker from '@components/wrappers/sticker'
 import {Modify} from '@types';
-import {getFluentEmojiUrl} from '@lib/nostra/fluent-emoji';
+import {getFluentEmojiUrl} from '@lib/phantomchat/fluent-emoji';
 
 export default async function wrapStickerEmoji(options: Modify<Parameters<typeof wrapSticker>[0], {
   div: HTMLElement,
@@ -25,7 +25,7 @@ export default async function wrapStickerEmoji(options: Modify<Parameters<typeof
   if(!doc) {
     div.classList.add('media-sticker-wrapper');
 
-    // Nostra-mode fallback: tweb has no sticker set, but Fluent Emoji
+    // PhantomChat-mode fallback: tweb has no sticker set, but Fluent Emoji
     // (MIT) ships a static-PNG bundle that covers common emoji used by
     // theme chips, big-emoji bubbles, etc. Render it as <img>.
     const fluentUrl = getFluentEmojiUrl(emoji);

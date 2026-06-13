@@ -1,14 +1,14 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Playwright configuration for Nostra.chat E2E tests.
+ * Playwright configuration for PhantomChat.chat E2E tests.
  *
  * Runs E2E tests against the local dev server on port 8080.
  * The webServer block automatically starts `pnpm start` before tests
  * and keeps it running for the test session.
  */
 export default defineConfig({
-  testDir: './src/tests/nostra',
+  testDir: './src/tests/phantomchat',
 
   // Timeout per test — 120s to accommodate PBKDF2 key derivation (~5s per user × 2)
   timeout: 120_000,
@@ -28,7 +28,7 @@ export default defineConfig({
 
   use: {
     // Base URL for relative navigations
-    baseURL: 'http://localhost:8080/nostra',
+    baseURL: 'http://localhost:8080/phantomchat',
 
     // Capture console output for debugging
     trace: 'on-first-retry',

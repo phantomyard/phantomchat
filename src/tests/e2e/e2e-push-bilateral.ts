@@ -4,17 +4,17 @@
  * Two Playwright Chromium contexts (A and B) hit a running production build
  * (dist/ served by `vite preview` or similar). Each onboards with a fresh Nostr
  * identity. A grants notification permission and the app auto-subscribes a Web
- * Push subscription against the live production relay at https://push.nostra.chat.
+ * Push subscription against the live production relay at https://push.phantomchat.chat.
  * A's tab is then "backgrounded". B sends a P2P message to A. The test asserts
  * that A's Service Worker fires a Web Push notification within ~30 seconds.
  *
- * ONLINE ONLY — depends on push.nostra.chat being reachable and on real Nostr
- * relays being up. Must NOT be included in test:nostra:quick or run-all.sh.
+ * ONLINE ONLY — depends on push.phantomchat.chat being reachable and on real Nostr
+ * relays being up. Must NOT be included in test:phantomchat:quick or run-all.sh.
  * Run via: `pnpm test:e2e:push`
  *
  * Skip conditions (exit 0, not a failure):
- *   - NOSTRA_PUSH_E2E_OFFLINE=1 env var
- *   - push.nostra.chat /healthz unreachable
+ *   - PHANTOMCHAT_PUSH_E2E_OFFLINE=1 env var
+ *   - push.phantomchat.chat /healthz unreachable
  *   - App server (E2E_APP_URL / localhost:8080) unreachable
  *   - No Service Worker registered (dev server — run against a prod build instead)
  *   - pushManager.subscribe() fails — environment limitation (headless Chromium
@@ -27,7 +27,7 @@
  *   "Registration failed - permission denied". In such environments this test
  *   skips gracefully. To run the full end-to-end flow:
  *     - Use a real desktop Chromium with a signed-in Google account, OR
- *     - Set NOSTRA_PUSH_E2E_FULL=1 to fail instead of skip on push env limits.
+ *     - Set PHANTOMCHAT_PUSH_E2E_FULL=1 to fail instead of skip on push env limits.
  *
  * What this test ALWAYS covers (even when pushManager is unavailable):
  *   1. Skip logic is correct
@@ -37,9 +37,9 @@
  *   5. Auto-subscribe logic fires when permission is granted
  *
  * What this test covers ONLY when pushManager is available:
- *   6. Full subscription registration with push.nostra.chat
+ *   6. Full subscription registration with push.phantomchat.chat
  *   7. B's Nostr message triggers relay to send a Web Push to A
- *   8. A's SW receives the push and shows a notification with nostra-* tag
+ *   8. A's SW receives the push and shows a notification with phantomchat-* tag
  *
  * Requires: a production build served at APP_URL (not `pnpm start` dev server
  * — the dev server doesn't register a SW because SW registration is guarded
@@ -54,9 +54,9 @@ import {launchOptions} from './helpers/launch-options';
 import {dismissOverlays} from './helpers/dismiss-overlays';
 
 const APP_URL = process.env.E2E_APP_URL || 'http://localhost:8080';
-const PUSH_RELAY = process.env.NOSTRA_PUSH_RELAY || 'https://push.nostra.chat';
+const PUSH_RELAY = process.env.PHANTOMCHAT_PUSH_RELAY || 'https://push.phantomchat.chat';
 // When set, fail instead of skip on pushManager environment limitations
-const FAIL_ON_ENV_LIMIT = process.env.NOSTRA_PUSH_E2E_FULL === '1';
+const FAIL_ON_ENV_LIMIT = process.env.PHANTOMCHAT_PUSH_E2E_FULL === '1';
 // Timeout (ms) to wait for notification after B sends message
 const NOTIFY_TIMEOUT_MS = 30000;
 const POLL_INTERVAL_MS = 500;
@@ -133,8 +133,8 @@ async function addPeerAsContact(page: Page, peerNpub: string, peerName: string):
 
   // Wait until the main UI is ready (own pubkey set means onboarding is done).
   await page.waitForFunction(
-    () => typeof (window as any).__nostraOwnPubkey === 'string' &&
-          (window as any).__nostraOwnPubkey.length === 64,
+    () => typeof (window as any).__phantomchatOwnPubkey === 'string' &&
+          (window as any).__phantomchatOwnPubkey.length === 64,
     null,
     {timeout: 30000}
   );
@@ -202,12 +202,12 @@ async function openChatAndSend(page: Page, peerId: number, text: string): Promis
 // Push subscription helpers
 // ---------------------------------------------------------------------------
 
-/** Read push subscription record from IDB (nostra-push DB). */
+/** Read push subscription record from IDB (phantomchat-push DB). */
 async function getIdbPushSubscription(page: Page): Promise<any> {
   return await page.evaluate(async() => {
     try {
       const db: IDBDatabase = await new Promise((resolve, reject) => {
-        const req = indexedDB.open('nostra-push', 1);
+        const req = indexedDB.open('phantomchat-push', 1);
         req.onerror = () => reject(req.error);
         req.onsuccess = () => resolve(req.result);
         req.onupgradeneeded = () => {
@@ -284,12 +284,12 @@ async function getOwnPrivkeyHex(page: Page): Promise<string | null> {
   return await page.evaluate(async() => {
     try {
       const {loadEncryptedIdentity, loadBrowserKey, decryptKeys} =
-        await import('/src/lib/nostra/key-storage.ts');
+        await import('/src/lib/phantomchat/key-storage.ts');
       const encRecord = await loadEncryptedIdentity();
       const bk = await loadBrowserKey();
       if(!encRecord || !bk) return null;
       const {seed} = await decryptKeys(encRecord.iv, encRecord.encryptedKeys, bk);
-      const {importFromMnemonic} = await import('/src/lib/nostra/nostr-identity.ts');
+      const {importFromMnemonic} = await import('/src/lib/phantomchat/nostr-identity.ts');
       return importFromMnemonic(seed).privateKey;
     } catch{
       return null;
@@ -344,7 +344,7 @@ async function unregisterFromRelay(opts: {endpointBase: string; pubkeyHex: strin
   }
 }
 
-/** Poll SW getNotifications() for a nostra-tagged notification. */
+/** Poll SW getNotifications() for a phantomchat-tagged notification. */
 async function pollForNotification(page: Page, timeoutMs: number): Promise<{title: string; body: string; tag: string} | null> {
   const deadline = Date.now() + timeoutMs;
   while(Date.now() < deadline) {
@@ -357,8 +357,8 @@ async function pollForNotification(page: Page, timeoutMs: number): Promise<{titl
         return [];
       }
     }).catch(() => []);
-    const nostraNotif = (notifs as any[]).find((n) => n.tag?.startsWith('nostra-'));
-    if(nostraNotif) return nostraNotif;
+    const phantomchatNotif = (notifs as any[]).find((n) => n.tag?.startsWith('phantomchat-'));
+    if(phantomchatNotif) return phantomchatNotif;
     await page.waitForTimeout(POLL_INTERVAL_MS);
   }
   return null;
@@ -370,8 +370,8 @@ async function pollForNotification(page: Page, timeoutMs: number): Promise<{titl
 
 (async() => {
   // --- Skip checks ---
-  if(process.env.NOSTRA_PUSH_E2E_OFFLINE === '1') {
-    skipTest('NOSTRA_PUSH_E2E_OFFLINE=1');
+  if(process.env.PHANTOMCHAT_PUSH_E2E_OFFLINE === '1') {
+    skipTest('PHANTOMCHAT_PUSH_E2E_OFFLINE=1');
   }
 
   const relayReachable = await probeUrl(`${PUSH_RELAY}/healthz`);
@@ -412,7 +412,7 @@ async function pollForNotification(page: Page, timeoutMs: number): Promise<{titl
   // on-disk userDataDir for context A so Push API is enabled. Context B
   // can stay ephemeral — it doesn't subscribe.
   const profileDirA = await import('node:fs').then((fs) =>
-    fs.mkdtempSync(require('node:os').tmpdir() + '/nostra-push-ctxA-'));
+    fs.mkdtempSync(require('node:os').tmpdir() + '/phantomchat-push-ctxA-'));
   console.log('[push-bilateral] using persistent profile for A:', profileDirA);
   const browser = await chromium.launch(launchOptions); // for B only
 
@@ -440,7 +440,7 @@ async function pollForNotification(page: Page, timeoutMs: number): Promise<{titl
       } catch{} // eslint-disable-line no-empty
     });
 
-    // CORS proxy: push.nostra.chat doesn't send ACAO headers, so browser-side
+    // CORS proxy: push.phantomchat.chat doesn't send ACAO headers, so browser-side
     // fetches from localhost are blocked. Proxy them through Node.js fetch.
     await ctxA.route(`${PUSH_RELAY}/**`, async(route) => {
       const req = route.request();
@@ -482,7 +482,7 @@ async function pollForNotification(page: Page, timeoutMs: number): Promise<{titl
     // Console logging for debug
     pageA.on('console', (msg) => {
       const txt = msg.text();
-      if(msg.type() === 'error' || txt.includes('[push') || txt.includes('[NostraPush') || txt.includes('[PUSH')) {
+      if(msg.type() === 'error' || txt.includes('[push') || txt.includes('[PhantomChatPush') || txt.includes('[PUSH')) {
         console.log('[A]', msg.type(), txt.slice(0, 150));
       }
     });
@@ -547,14 +547,14 @@ async function pollForNotification(page: Page, timeoutMs: number): Promise<{titl
       browserSub = await tryGetBrowserPushSub(pageA, vapidKey);
       if(!browserSub) {
         if(FAIL_ON_ENV_LIMIT) {
-          throw new Error('pushManager.subscribe() failed — set NOSTRA_PUSH_E2E_FULL=0 to skip instead');
+          throw new Error('pushManager.subscribe() failed — set PHANTOMCHAT_PUSH_E2E_FULL=0 to skip instead');
         }
-        skipTest('pushManager.subscribe() unavailable in this environment (headless Chromium without Google push service access). Set NOSTRA_PUSH_E2E_FULL=1 to fail instead of skip.');
+        skipTest('pushManager.subscribe() unavailable in this environment (headless Chromium without Google push service access). Set PHANTOMCHAT_PUSH_E2E_FULL=1 to fail instead of skip.');
       }
       console.log('[push-bilateral] browser push sub endpoint:', browserSub.endpoint.slice(0, 50) + '...');
 
       // Need to register with relay manually
-      const pubkeyHex = await pageA.evaluate(() => (window as any).__nostraOwnPubkey || null);
+      const pubkeyHex = await pageA.evaluate(() => (window as any).__phantomchatOwnPubkey || null);
       if(!pubkeyHex) throw new Error('own pubkey not set on window after onboarding');
 
       const privkeyHex = await getOwnPrivkeyHex(pageA);

@@ -133,11 +133,11 @@ async function main() {
   const logs: string[] = [];
   pageA.on('console', (msg) => {
     const t = msg.text();
-    if(/\[ChatAPI\]|\[NostraSync\]|\[VirtualMTProto|nostra_file_upload|\[sendFile\]|blossom/i.test(t)) logs.push(`[A] ${t}`);
+    if(/\[ChatAPI\]|\[PhantomChatSync\]|\[VirtualMTProto|phantomchat_file_upload|\[sendFile\]|blossom/i.test(t)) logs.push(`[A] ${t}`);
   });
   pageB.on('console', (msg) => {
     const t = msg.text();
-    if(/\[ChatAPI\]|\[NostraSync\]|\[VirtualMTProto|nostra_file_upload|\[sendFile\]|blossom/i.test(t)) logs.push(`[B] ${t}`);
+    if(/\[ChatAPI\]|\[PhantomChatSync\]|\[VirtualMTProto|phantomchat_file_upload|\[sendFile\]|blossom/i.test(t)) logs.push(`[B] ${t}`);
   });
 
   try {
@@ -205,7 +205,7 @@ async function main() {
 
     // Diagnostic: Bob's store should have a file row with duration
     const bStore = await pageB.evaluate(async() => {
-      const req = indexedDB.open('nostra-messages');
+      const req = indexedDB.open('phantomchat-messages');
       return new Promise<any>((resolve) => {
         req.onsuccess = () => {
           const db = req.result;
@@ -229,7 +229,7 @@ async function main() {
         req.onerror = () => resolve({error: 'open failed'});
       });
     });
-    console.log('  Bob nostra-messages store:', JSON.stringify(bStore));
+    console.log('  Bob phantomchat-messages store:', JSON.stringify(bStore));
 
     if(bStore.count === 1 && bStore.rows[0].hasFm && bStore.rows[0].duration === 2.5) {
       record('V3', 'Receiver store has voice row with duration', 'PASS');

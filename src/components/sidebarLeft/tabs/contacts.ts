@@ -16,7 +16,7 @@ import SortedUserList from '@components/sortedUserList';
 import {getMiddleware} from '@helpers/middleware';
 import replaceContent from '@helpers/dom/replaceContent';
 import rootScope from '@lib/rootScope';
-import {getAllMappings} from '@lib/nostra/virtual-peers-db';
+import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
 import {showAddContactPopup as showAddContactPopupShared} from '@components/popups/addContact';
 
 // TODO: поиск по людям глобальный, если не нашло в контактах никого
@@ -43,7 +43,7 @@ export default class AppContactsTab extends SliderSuperTab {
     this.inputSearch = new InputSearch({
       placeholder: 'Search',
       onChange: (value) => {
-        // [Nostra.chat] Detect npub paste and open P2P chat
+        // [PhantomChat.chat] Detect npub paste and open P2P chat
         if(value && value.trim().startsWith('npub1') && value.trim().length >= 60) {
           this.handleNpubInput(value.trim());
           return;
@@ -170,10 +170,10 @@ export default class AppContactsTab extends SliderSuperTab {
       }
 
       // Inject P2P users into Worker + main thread mirrors
-      const {NostraBridge} = await import('@lib/nostra/nostra-bridge');
-      const bridge = NostraBridge.getInstance();
-      const {NostraPeerMapper} = await import('@lib/nostra/nostra-peer-mapper');
-      const mapper = new NostraPeerMapper();
+      const {PhantomChatBridge} = await import('@lib/phantomchat/phantomchat-bridge');
+      const bridge = PhantomChatBridge.getInstance();
+      const {PhantomChatPeerMapper} = await import('@lib/phantomchat/phantomchat-peer-mapper');
+      const mapper = new PhantomChatPeerMapper();
       const {MOUNT_CLASS_TO} = await import('@config/debug');
       const proxy = MOUNT_CLASS_TO.apiManagerProxy;
       const {reconcilePeer} = await import('@stores/peers');
@@ -197,7 +197,7 @@ export default class AppContactsTab extends SliderSuperTab {
       if(!middleware()) return;
       this.renderContactsList(peerIds, middleware);
     } catch(err) {
-      console.error('[Nostra.chat] failed to load P2P contacts:', err);
+      console.error('[PhantomChat.chat] failed to load P2P contacts:', err);
       const emptyEl = document.createElement('div');
       emptyEl.classList.add('contacts-empty');
       emptyEl.textContent = 'Tap + to add a contact';
@@ -207,7 +207,7 @@ export default class AppContactsTab extends SliderSuperTab {
 
   private async handleNpubInput(npub: string, nickname?: string) {
     try {
-      const {addP2PContact} = await import('@lib/nostra/add-p2p-contact');
+      const {addP2PContact} = await import('@lib/phantomchat/add-p2p-contact');
       const {toast} = await import('@components/toast');
 
       const result = await addP2PContact({
@@ -220,7 +220,7 @@ export default class AppContactsTab extends SliderSuperTab {
       toast('Contact added: ' + result.displayName);
       this.close();
     } catch(err) {
-      console.error('[Nostra.chat] failed to add contact from npub:', err);
+      console.error('[PhantomChat.chat] failed to add contact from npub:', err);
       const {toast} = await import('@components/toast');
       toast('Invalid npub format');
     }

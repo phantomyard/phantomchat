@@ -19,7 +19,7 @@ async function checkOne(user: UserHandle, id: 'userA' | 'userB'): Promise<Invari
     const domSrc = img?.getAttribute('src') || null;
     let cached: any = null;
     try{
-      const raw = localStorage.getItem('nostra-profile-cache');
+      const raw = localStorage.getItem('phantomchat-profile-cache');
       if(raw) cached = JSON.parse(raw);
     } catch{}
     return {domSrc, cachedPicture: cached?.profile?.picture ?? null};

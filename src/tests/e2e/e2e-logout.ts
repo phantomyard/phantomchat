@@ -9,7 +9,7 @@
  *   4. Confirm in the popup
  *   5. Verify: overlay with "Clearing data" appears
  *   6. Verify: page reloads to onboarding (Create New Identity visible)
- *   7. Verify: Nostra IndexedDB databases are gone
+ *   7. Verify: PhantomChat IndexedDB databases are gone
  */
 import {chromium, type Page} from 'playwright';
 import {launchOptions} from './helpers/launch-options';
@@ -72,7 +72,7 @@ async function openSettings(page: Page) {
     // Capture console for debugging
     const logs: string[] = [];
     page.on('console', (msg) => {
-      if(msg.text().includes('[Nostra.chat]') || msg.text().includes('Clearing') || msg.text().includes('Logged out')) {
+      if(msg.text().includes('[PhantomChat.chat]') || msg.text().includes('Clearing') || msg.text().includes('Logged out')) {
         logs.push(msg.text());
       }
     });
@@ -196,12 +196,12 @@ async function openSettings(page: Page) {
     }
     record('onboarding-after-logout', onboardingVisible, onboardingVisible ? 'onboarding screen visible after logout' : 'onboarding NOT visible');
 
-    // ── Step 7: Verify Nostra databases are deleted or empty ──
+    // ── Step 7: Verify PhantomChat databases are deleted or empty ──
     console.log('  Checking IndexedDB cleanup...');
-    // Nostra.chat may be re-created on reload (app checks for identity on boot).
-    // Verify data DBs are gone and Nostra.chat has no identity stored.
+    // PhantomChat.chat may be re-created on reload (app checks for identity on boot).
+    // Verify data DBs are gone and PhantomChat.chat has no identity stored.
     const dbCheck = await page.evaluate(async() => {
-      const dataDBs = ['nostra-messages', 'nostra-message-requests', 'nostra-virtual-peers', 'nostra-groups', 'NostraPool'];
+      const dataDBs = ['phantomchat-messages', 'phantomchat-message-requests', 'phantomchat-virtual-peers', 'phantomchat-groups', 'PhantomChatPool'];
       const remaining: string[] = [];
       if('databases' in indexedDB) {
         const dbs = await indexedDB.databases();
@@ -210,11 +210,11 @@ async function openSettings(page: Page) {
           if(existingNames.includes(name)) remaining.push(name);
         }
       }
-      // Check that Nostra.chat identity store is empty
+      // Check that PhantomChat.chat identity store is empty
       let identityEmpty = true;
       try {
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const req = indexedDB.open('Nostra.chat');
+          const req = indexedDB.open('PhantomChat.chat');
           req.onsuccess = () => resolve(req.result);
           req.onerror = () => reject(req.error);
         });
@@ -233,16 +233,16 @@ async function openSettings(page: Page) {
     });
     const dbsClean = dbCheck.remaining.length === 0 && dbCheck.identityEmpty;
     record('idb-cleanup', dbsClean,
-      dbsClean ? 'all Nostra data cleared'
+      dbsClean ? 'all PhantomChat data cleared'
         : `data DBs remaining: [${dbCheck.remaining.join(', ')}], identity empty: ${dbCheck.identityEmpty}`);
 
     // Check localStorage
     const remainingLS = await page.evaluate(() => {
-      const keys = ['nostra_identity', 'nostra-relay-config', 'nostra-last-seen-timestamp', 'nostra:read-receipts-enabled'];
+      const keys = ['phantomchat_identity', 'phantomchat-relay-config', 'phantomchat-last-seen-timestamp', 'phantomchat:read-receipts-enabled'];
       return keys.filter(k => localStorage.getItem(k) !== null);
     });
     const lsClean = remainingLS.length === 0;
-    record('ls-cleanup', lsClean, lsClean ? 'all Nostra localStorage keys cleared' : `remaining: ${remainingLS.join(', ')}`);
+    record('ls-cleanup', lsClean, lsClean ? 'all PhantomChat localStorage keys cleared' : `remaining: ${remainingLS.join(', ')}`);
 
     // Log console output
     if(logs.length) {

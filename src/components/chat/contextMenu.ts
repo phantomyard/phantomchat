@@ -379,7 +379,7 @@ export default class ChatContextMenu {
       }
 
       // Sponsored bubbles attach `(bubble as any).message` asynchronously (bubbles.ts
-      // `processResult` is async), and Nostra.chat additionally overloads negative `mid`
+      // `processResult` is async), and PhantomChat.chat additionally overloads negative `mid`
       // — the same value `isSponsored` keys on — as the temp-id convention for locally-
       // pending P2P messages. Optional-chain the read so right-clicking either a fast-
       // arriving sponsored row OR a P2P bubble whose mid is still negative falls back
@@ -915,7 +915,7 @@ export default class ChatContextMenu {
       icon: 'pin',
       text: 'Message.Context.Pin',
       onClick: this.onPinClick,
-      // [Nostra.chat] Pin is hidden everywhere because messages.updatePinnedMessage
+      // [PhantomChat.chat] Pin is hidden everywhere because messages.updatePinnedMessage
       // is intercepted by the Virtual MTProto Server but no Nostr protocol layer
       // ships the pin to the peer or persists pinned-mid state across clients.
       // Showing the entry produced an inert action that confused the user (also
@@ -927,7 +927,7 @@ export default class ChatContextMenu {
       icon: 'unpin',
       text: 'Message.Context.Unpin',
       onClick: this.onUnpinClick,
-      // [Nostra.chat] See Pin item above — hidden until pin protocol exists.
+      // [PhantomChat.chat] See Pin item above — hidden until pin protocol exists.
       verify: () => false
     }, {
       icon: 'download',

@@ -22,9 +22,9 @@ export const CONSOLE_ALLOWLIST: readonly RegExp[] = [
   /ServiceWorker registration successful/,
   /SW installed, waiting/i,
 
-  // Nostra.chat informational loggers — NOT errors, they log in info/log channel
-  /\[NostraSync\] buffer size \d+/,
-  /\[NostraOnboarding\] kind 0 publish/,
+  // PhantomChat.chat informational loggers — NOT errors, they log in info/log channel
+  /\[PhantomChatSync\] buffer size \d+/,
+  /\[PhantomChatOnboarding\] kind 0 publish/,
   /\[ChatAPI\] subscription active/,
   /\[NostrRelay\] connected to/,
 
@@ -36,11 +36,11 @@ export const CONSOLE_ALLOWLIST: readonly RegExp[] = [
   // path handles permission-denied gracefully.
   /\[PUSH-API\] the user has blocked notifications/,
 
-  // Nostra's internal logger prints informational messages at console.warn
+  // PhantomChat's internal logger prints informational messages at console.warn
   // level with the shape:
   //   [warning] <any color/format-placeholders> [<elapsed>] [<MODULE-TAG>] …
   // Treating ALL warnings as errors was too aggressive — modules like
-  // [MP-MTPROTO], [MP-CRYPTO], [ChatAPI], [NostraSync], [IDB-tweb-common]
+  // [MP-MTPROTO], [MP-CRYPTO], [ChatAPI], [PhantomChatSync], [IDB-tweb-common]
   // routinely log state transitions via warn. Playwright surfaces the raw
   // warn format including printf placeholders (`%s`, `%c`) and ANSI colour
   // tokens (`\x1b[36m` → `[36m`), so we cannot match the prefix literally —

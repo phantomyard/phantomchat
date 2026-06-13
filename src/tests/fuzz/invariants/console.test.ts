@@ -57,7 +57,7 @@ describe('INV-console-clean', () => {
   });
 
   it('skips warmup window (5s after reload)', async () => {
-    const justReloaded = fakeUser(['[error] [NostraSync] unexpected EOSE'], [Date.now() - 2000]);
+    const justReloaded = fakeUser(['[error] [PhantomChatSync] unexpected EOSE'], [Date.now() - 2000]);
     const c: FuzzContext = {
       users: {userA: justReloaded, userB: fakeUser([])},
       relay: null as any,

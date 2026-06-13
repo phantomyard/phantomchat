@@ -74,8 +74,8 @@ export default class PopupDeleteMessages {
       const peerIdNum = Number(peerId);
       if(peerIdNum >= 1e15 || peerIdNum <= -2e15) {
         // Delete from message-store and mirrors
-        import('@lib/nostra/virtual-mtproto-server').then(async() => {
-          const server = (window as any).__nostraMTProtoServer;
+        import('@lib/phantomchat/virtual-mtproto-server').then(async() => {
+          const server = (window as any).__phantomchatMTProtoServer;
           if(server) {
             await server.handleMethod('messages.deleteMessages', {id: mids});
           }

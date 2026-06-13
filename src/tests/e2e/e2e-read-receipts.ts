@@ -145,7 +145,7 @@ async function main() {
       (window as any).__deliveryUpdates = [];
       const rs = (window as any).rootScope;
       if(rs?.addEventListener) {
-        rs.addEventListener('nostra_delivery_update', (d: any) => {
+        rs.addEventListener('phantomchat_delivery_update', (d: any) => {
           (window as any).__deliveryUpdates.push({state: d?.state, eventId: d?.eventId?.slice(0, 8)});
         });
       }
@@ -175,15 +175,15 @@ async function main() {
     }
 
     const diag = await pageA.evaluate(async(marker: string) => {
-      const ca = (window as any).__nostraChatAPI;
+      const ca = (window as any).__phantomchatChatAPI;
       const updates = (window as any).__deliveryUpdates || [];
       const entries = ca?.deliveryTracker?.states ? Array.from(ca.deliveryTracker.states.entries()) : [];
       // Find the tracker entry for our test message (state 'delivered' or 'read')
       const trackedEntry = (entries as any[]).find((e: any) => e[0].startsWith('chat-'));
       let mapped: any = null;
       if(trackedEntry) {
-        const {NostraBridge} = await import('/src/lib/nostra/nostra-bridge.ts');
-        const mid = await NostraBridge.getInstance().mapEventIdToMid(trackedEntry[0], Math.floor(Date.now() / 1000));
+        const {PhantomChatBridge} = await import('/src/lib/phantomchat/phantomchat-bridge.ts');
+        const mid = await PhantomChatBridge.getInstance().mapEventIdToMid(trackedEntry[0], Math.floor(Date.now() / 1000));
         const bubbleEl = document.querySelector<HTMLElement>(`.bubble[data-mid="${mid}"]`);
         mapped = {
           trackedId: trackedEntry[0],
@@ -199,7 +199,7 @@ async function main() {
       return {
         updates,
         trackerStates: (entries as any[]).map((e) => ({id: e[0], state: e[1]?.state || e[1]})),
-        ownPk: (window as any).__nostraOwnPubkey?.slice(0, 8),
+        ownPk: (window as any).__phantomchatOwnPubkey?.slice(0, 8),
         mapped,
         matchingBubbleDataMid: matchingBubble?.dataset?.mid,
         matchingBubbleClasses: matchingBubble?.className

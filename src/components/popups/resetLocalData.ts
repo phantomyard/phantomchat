@@ -6,7 +6,7 @@ import {toast} from '@components/toast';
 // chain that would TDZ-throw when this file is pulled in at boot (for
 // `maybeShowResetToast` below).
 
-const RESET_FLAG_KEY = 'nostra-just-reset';
+const RESET_FLAG_KEY = 'phantomchat-just-reset';
 
 function createOverlay(text: string): HTMLDivElement {
   const overlay = document.createElement('div');
@@ -33,18 +33,18 @@ export default async function showResetLocalDataPopup() {
   }).then(async() => {
     const overlay = createOverlay('Resetting…');
 
-    // 1. Wipe Nostra data (keeping the seed)
+    // 1. Wipe PhantomChat data (keeping the seed)
     let failed: string[] = [];
     try {
-      const {clearAllExceptSeed} = await import('@lib/nostra/nostra-cleanup');
+      const {clearAllExceptSeed} = await import('@lib/phantomchat/phantomchat-cleanup');
       failed = await clearAllExceptSeed();
     } catch(err) {
-      console.warn('[Nostra.chat] reset error:', err);
+      console.warn('[PhantomChat.chat] reset error:', err);
       failed = ['unknown'];
     }
 
     if(failed.length > 0) {
-      console.warn('[Nostra.chat] failed to delete:', failed.join(', '));
+      console.warn('[PhantomChat.chat] failed to delete:', failed.join(', '));
       overlay.textContent = 'Reset incomplete — reloading…';
     } else {
       overlay.textContent = 'Local data reset — reloading…';
@@ -55,8 +55,8 @@ export default async function showResetLocalDataPopup() {
       sessionStorage.setItem(RESET_FLAG_KEY, '1');
     } catch{}
 
-    // 3. Standard tweb logout path, but keep the Nostra seed
-    rootScope.managers.apiManager.logOut(undefined, {keepNostraIdentity: true});
+    // 3. Standard tweb logout path, but keep the PhantomChat seed
+    rootScope.managers.apiManager.logOut(undefined, {keepPhantomChatIdentity: true});
 
     // 4. Safety reload if the normal flow doesn't fire
     setTimeout(() => {

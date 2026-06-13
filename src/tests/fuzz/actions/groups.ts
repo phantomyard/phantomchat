@@ -47,7 +47,7 @@ async function makeSyntheticPubkey(page: any): Promise<string> {
 async function listOwnGroups(user: UserHandle): Promise<Array<{groupId: string; peerId: number; members: string[]; adminPubkey: string; name: string}>> {
   return user.page.evaluate(async () => {
     try {
-      const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+      const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
       const groups = await getGroupStore().getAll();
       return groups.map((g: any) => ({
         groupId: g.groupId,
@@ -92,11 +92,11 @@ export const createGroup: ActionSpec = {
     try {
       result = await sender.page.evaluate(async ({name, memberPubkeys}: any) => {
         try {
-          const {getGroupAPI} = await import('/src/lib/nostra/group-api.ts');
+          const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
           const api = getGroupAPI();
           const groupId = await api.createGroup(name, memberPubkeys);
           // Look up the record we just wrote so we can snapshot peerId for the postcondition.
-          const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+          const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
           const record = await getGroupStore().get(groupId);
           return {ok: true as const, groupId, peerId: record?.peerId ?? null, memberCount: record?.members.length ?? 0};
         } catch(err) {
@@ -161,7 +161,7 @@ export const sendInGroup: ActionSpec = {
     try {
       result = await sender.page.evaluate(async ({groupId, text}: any) => {
         try {
-          const {getGroupAPI} = await import('/src/lib/nostra/group-api.ts');
+          const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
           const {messageId} = await getGroupAPI().sendMessage(groupId, text);
           return {ok: true as const, messageId};
         } catch(err) {
@@ -239,7 +239,7 @@ export const addMemberToGroup: ActionSpec = {
     try {
       result = await admin.page.evaluate(async ({groupId, newMember}: any) => {
         try {
-          const {getGroupAPI} = await import('/src/lib/nostra/group-api.ts');
+          const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
           await getGroupAPI().addMember(groupId, newMember);
           return {ok: true as const};
         } catch(err) {
@@ -329,7 +329,7 @@ export const removeMemberFromGroup: ActionSpec = {
     try {
       result = await admin.page.evaluate(async ({groupId, member}: any) => {
         try {
-          const {getGroupAPI} = await import('/src/lib/nostra/group-api.ts');
+          const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
           await getGroupAPI().removeMember(groupId, member);
           return {ok: true as const};
         } catch(err) {
@@ -388,7 +388,7 @@ export const leaveGroup: ActionSpec = {
     try {
       result = await leaver.page.evaluate(async (groupId: string) => {
         try {
-          const {getGroupAPI} = await import('/src/lib/nostra/group-api.ts');
+          const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
           await getGroupAPI().leaveGroup(groupId);
           return {ok: true as const};
         } catch(err) {

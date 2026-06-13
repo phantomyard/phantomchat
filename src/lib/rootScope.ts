@@ -26,7 +26,7 @@ import type {MonoforumDialog} from '@lib/storages/monoforumDialogs';
 import type {MyStarGift} from '@appManagers/appGiftsManager';
 import type {MyPromoData} from '@appManagers/appPromoManager';
 import type {ActiveAccountNumber} from '@lib/accounts/types';
-import type {TorMode, RuntimeState} from '@lib/nostra/privacy-transport';
+import type {TorMode, RuntimeState} from '@lib/phantomchat/privacy-transport';
 import {NULL_PEER_ID, UserAuth} from '@appManagers/constants';
 import EventListenerBase, {EventListenerListeners} from '@helpers/eventListenerBase';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -244,18 +244,18 @@ export type BroadcastEvents = {
 
   'auto_delete_period_update': {peerId: PeerId, period: number},
 
-  'nostra_identity_loaded': {npub: string, displayName?: string, nip05?: string, picture?: string, about?: string, website?: string, lud16?: string, banner?: string, protectionType: 'none' | 'pin' | 'passphrase'},
-  'nostra_identity_locked': void,
-  'nostra_identity_unlocked': {npub: string},
-  'nostra_identity_updated': {displayName?: string, nip05?: string, picture?: string, about?: string, website?: string, lud16?: string, banner?: string},
-  'nostra_peer_profile_updated': {peerId: PeerId, pubkey: string, profile: import('./nostra/nostr-profile').NostrProfile},
+  'phantomchat_identity_loaded': {npub: string, displayName?: string, nip05?: string, picture?: string, about?: string, website?: string, lud16?: string, banner?: string, protectionType: 'none' | 'pin' | 'passphrase'},
+  'phantomchat_identity_locked': void,
+  'phantomchat_identity_unlocked': {npub: string},
+  'phantomchat_identity_updated': {displayName?: string, nip05?: string, picture?: string, about?: string, website?: string, lud16?: string, banner?: string},
+  'phantomchat_peer_profile_updated': {peerId: PeerId, pubkey: string, profile: import('./phantomchat/nostr-profile').NostrProfile},
 
-  'nostra_tor_mode_changed': TorMode,
-  'nostra_tor_state': {
+  'phantomchat_tor_mode_changed': TorMode,
+  'phantomchat_tor_state': {
     state: RuntimeState;
     error?: string;
   },
-  'nostra_tor_circuit_update': {
+  'phantomchat_tor_circuit_update': {
     guard: string;
     middle: string;
     exit: string;
@@ -263,40 +263,40 @@ export type BroadcastEvents = {
     exitIp: string;
     healthy: boolean;
   },
-  'nostra_mesh_peer_connected': {pubkey: string; latency: number},
-  'nostra_mesh_peer_disconnected': {pubkey: string},
-  'nostra_relay_state': {
+  'phantomchat_mesh_peer_connected': {pubkey: string; latency: number},
+  'phantomchat_mesh_peer_disconnected': {pubkey: string},
+  'phantomchat_relay_state': {
     url: string;
     connected: boolean;
     latencyMs: number;
     read: boolean;
     write: boolean;
   },
-  'nostra_relay_list_changed': Array<{
+  'phantomchat_relay_list_changed': Array<{
     url: string;
     read: boolean;
     write: boolean;
     enabled: boolean;
   }>,
-  'nostra_message_queued': {messageId: string; status: 'queued' | 'sent'},
-  'nostra_delivery_update': {eventId: string; state: 'sending' | 'sent' | 'delivered' | 'read'},
-  'nostra_message_request': {pubkey: string; firstMessage: string},
-  'nostra_contact_accepted': {pubkey: string; peerId: number},
-  'nostra_new_message': {peerId: number; mid: number; senderPubkey: string; message: {content: string}; timestamp: number},
-  'nostra_reaction_added': {peerId: number; mid: number; emoji: string},
-  'nostra_reactions_changed': {peerId: PeerId | number; mid: number},
-  'nostra_message_edit': {peerId: number; mid: number; senderPubkey: string; originalEventId: string; newContent: string; editedAt: number},
-  'nostra_push_subscription_changed': {state: 'registered' | 'unregistered' | 'error'; pubkey?: string},
-  'nostra_file_upload_progress': {peerId: number; mid: number; percent: number},
-  'nostra_file_upload_failed': {peerId: number; mid: number; error: string},
-  'nostra_file_upload_completed': {peerId: number; mid: number; url: string; realMid: number},
-  'nostra_retry_file_send': {peerId: number; mid: number},
-  'nostra_profile_update': {peerId: number; pubkey: string; displayName: string; about?: string; picture?: string},
-  'nostra_presence_update': {peerId: number; pubkey: string; status: string},
-  'nostra_backfill_complete': void,
-  'nostra_conversation_deleted': {peerPubkey: string; conversationId: string},
-  'nostra_recovery_requested': void,
-  'nostra_read_receipts_toggle': boolean,
+  'phantomchat_message_queued': {messageId: string; status: 'queued' | 'sent'},
+  'phantomchat_delivery_update': {eventId: string; state: 'sending' | 'sent' | 'delivered' | 'read'},
+  'phantomchat_message_request': {pubkey: string; firstMessage: string},
+  'phantomchat_contact_accepted': {pubkey: string; peerId: number},
+  'phantomchat_new_message': {peerId: number; mid: number; senderPubkey: string; message: {content: string}; timestamp: number},
+  'phantomchat_reaction_added': {peerId: number; mid: number; emoji: string},
+  'phantomchat_reactions_changed': {peerId: PeerId | number; mid: number},
+  'phantomchat_message_edit': {peerId: number; mid: number; senderPubkey: string; originalEventId: string; newContent: string; editedAt: number},
+  'phantomchat_push_subscription_changed': {state: 'registered' | 'unregistered' | 'error'; pubkey?: string},
+  'phantomchat_file_upload_progress': {peerId: number; mid: number; percent: number},
+  'phantomchat_file_upload_failed': {peerId: number; mid: number; error: string},
+  'phantomchat_file_upload_completed': {peerId: number; mid: number; url: string; realMid: number},
+  'phantomchat_retry_file_send': {peerId: number; mid: number},
+  'phantomchat_profile_update': {peerId: number; pubkey: string; displayName: string; about?: string; picture?: string},
+  'phantomchat_presence_update': {peerId: number; pubkey: string; status: string},
+  'phantomchat_backfill_complete': void,
+  'phantomchat_conversation_deleted': {peerPubkey: string; conversationId: string},
+  'phantomchat_recovery_requested': void,
+  'phantomchat_read_receipts_toggle': boolean,
 };
 
 export type BroadcastEventsListeners = {

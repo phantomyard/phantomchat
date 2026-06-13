@@ -137,11 +137,11 @@ class ApiManagerProxy extends MTProtoMessagePort {
   public serviceMessagePort: ServiceMessagePort<true>;
   private lastServiceWorker: ServiceWorker;
 
-  private nostraMTProtoServer: any;
+  private phantomchatMTProtoServer: any;
 
-  public setNostraMTProtoServer(server: any) {
-    this.nostraMTProtoServer = server;
-    console.log('[apiManagerProxy] NostraMTProtoServer registered');
+  public setPhantomChatMTProtoServer(server: any) {
+    this.phantomchatMTProtoServer = server;
+    console.log('[apiManagerProxy] PhantomChatMTProtoServer registered');
   }
 
   private pingServiceWorkerPromise: CancellablePromise<void>;
@@ -355,11 +355,11 @@ class ApiManagerProxy extends MTProtoMessagePort {
 
       mirror: this.onMirrorTask,
 
-      nostraBridge: async({method, params}: {method: string, params: any}) => {
-        if(!this.nostraMTProtoServer) {
-          throw new Error('[apiManagerProxy] nostraBridge: server not registered');
+      phantomchatBridge: async({method, params}: {method: string, params: any}) => {
+        if(!this.phantomchatMTProtoServer) {
+          throw new Error('[apiManagerProxy] phantomchatBridge: server not registered');
         }
-        return this.nostraMTProtoServer.handleMethod(method, params);
+        return this.phantomchatMTProtoServer.handleMethod(method, params);
       },
 
       receivedServiceMessagePort: () => {

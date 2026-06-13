@@ -1,7 +1,7 @@
 # Phase 2a — Manual Verification Checklist
 
 **Gate: 2-device manual sanity check before merge. Run on two real devices
-(desktop + mobile, or two desktops) with distinct Nostra identities.**
+(desktop + mobile, or two desktops) with distinct PhantomChat identities.**
 
 ## Setup
 

@@ -29,7 +29,7 @@ import tsNow from '@helpers/tsNow';
 import appManagersManager from '@appManagers/appManagersManager';
 import tryPatchMp4 from '@helpers/fixChromiumMp4';
 import StickerType from '@config/stickerType';
-import {getNostraStickerDocById, isNostraStickerDocId} from '@lib/nostra/nostra-sticker-pack';
+import {getPhantomChatStickerDocById, isPhantomChatStickerDocId} from '@lib/phantomchat/phantomchat-sticker-pack';
 
 export type MyDocument = Document.document;
 
@@ -313,11 +313,11 @@ export class AppDocsManager extends AppManager {
     if(isObject<MyDocument>(docId)) return docId;
     const cached = this.docs[docId];
     if(cached) return cached;
-    // Nostra synthetic sticker docs aren't persisted via saveDoc(); resolve
+    // PhantomChat synthetic sticker docs aren't persisted via saveDoc(); resolve
     // them on demand so the stickers-tab grid can call getDoc(docId) during
     // visibility processing.
-    if(isNostraStickerDocId(docId)) {
-      const doc = getNostraStickerDocById(docId);
+    if(isPhantomChatStickerDocId(docId)) {
+      const doc = getPhantomChatStickerDocById(docId);
       if(doc) {
         this.docs[doc.id] = doc;
         return doc;

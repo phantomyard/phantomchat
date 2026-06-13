@@ -20,7 +20,7 @@ function _getChatMembersString(chat: Chat, chatFull: ChatFull) {
     count = (chat as Chat.chat).participants_count || (chat as any).participants?.participants.length;
   }
 
-  // [Nostra.chat] FIND-3786a35f obs (C) + FIND-e8327b23 §B: synthetic nostra
+  // [PhantomChat.chat] FIND-3786a35f obs (C) + FIND-e8327b23 §B: synthetic phantomchat
   // groups inject a Chat with `participants_count: members.length` but the
   // ChatFull they get is missing a `chatParticipants` array, so
   // `getParticipantsCount` short-circuits to `1`. The Chat-level count is
@@ -46,7 +46,7 @@ export default function getChatMembersString(
   chatFull?: ChatFull
 ) {
   chat ??= apiManagerProxy.getChat(chatId);
-  // [Nostra.chat] FIND-e8327b23 §1: when a user leaves a group and then
+  // [PhantomChat.chat] FIND-e8327b23 §1: when a user leaves a group and then
   // navigates back to the now-defunct group peerId (e.g. via setInnerPeer
   // from a stale link), the mirror is already cleaned up and `chat` is
   // undefined. Without this guard the next `chat._ === 'chatForbidden'`

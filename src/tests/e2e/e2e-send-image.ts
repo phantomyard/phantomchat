@@ -141,7 +141,7 @@ async function main() {
   const logs: string[] = [];
   const logFilter = (tag: string) => (msg: any) => {
     const t = msg.text();
-    if(/\[ChatAPI\]|\[NostraSync\]|\[VirtualMTProto|nostra_file_upload|\[sendFile\]|blossom/i.test(t)) {
+    if(/\[ChatAPI\]|\[PhantomChatSync\]|\[VirtualMTProto|phantomchat_file_upload|\[sendFile\]|blossom/i.test(t)) {
       logs.push(`${tag} ${t}`);
     }
   };
@@ -239,7 +239,7 @@ async function main() {
 
     // Diagnostic: does the message-store on Bob have the file row?
     const bStore = await pageB.evaluate(async() => {
-      const req = indexedDB.open('nostra-messages');
+      const req = indexedDB.open('phantomchat-messages');
       return new Promise<any>((resolve) => {
         req.onsuccess = () => {
           const db = req.result;
@@ -263,7 +263,7 @@ async function main() {
         req.onerror = () => resolve({error: 'open failed'});
       });
     });
-    console.log('  Bob nostra-messages store:', JSON.stringify(bStore));
+    console.log('  Bob phantomchat-messages store:', JSON.stringify(bStore));
 
     const bMirror = await pageB.evaluate(() => {
       const proxy = (window as any).apiManagerProxy || (window as any).MOUNT_CLASS_TO?.apiManagerProxy;
@@ -275,7 +275,7 @@ async function main() {
         hasMedia: !!v.media,
         mediaType: v.media?._,
         docType: v.media?.document?.type,
-        hasFm: !!(v.media?.document?.nostraFileMetadata || v.media?.photo?.nostraFileMetadata),
+        hasFm: !!(v.media?.document?.phantomchatFileMetadata || v.media?.photo?.phantomchatFileMetadata),
         message: (v.message || '').slice(0, 40)
       }));
       return {peerId: im?.chat?.peerId, storageKey, count: entries.length, entries};

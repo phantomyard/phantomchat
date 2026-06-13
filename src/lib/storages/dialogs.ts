@@ -1399,7 +1399,7 @@ export default class DialogsStorage extends AppManager {
       return false;
     }
 
-    // Nostra phantom-dialog guard: a tweb peerless contact created before
+    // PhantomChat phantom-dialog guard: a tweb peerless contact created before
     // ownPubkey was ready ends up with `top_message: 0` and no draft. Tweb's
     // getDialogs post-processing logs "something strange with dialog" for
     // each one on every refresh, and the phantom never gets a server-side

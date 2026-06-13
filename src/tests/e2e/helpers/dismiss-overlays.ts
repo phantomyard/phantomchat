@@ -23,7 +23,7 @@ const BLOCKING_SELECTORS: readonly string[] = [
   'vite-error-overlay',
   'vite-plugin-checker-error-overlay',
 
-  // Nostra startup banners
+  // PhantomChat startup banners
   '.tor-startup-banner',
   '.tor-startup-banner-mount'
 ];

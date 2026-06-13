@@ -4,7 +4,7 @@ This checklist validates the 3 FIND fixes + lifecycle coverage land correctly. B
 
 ## Setup
 
-- Device A + Device B, each with a distinct Nostra identity (either existing or fresh).
+- Device A + Device B, each with a distinct PhantomChat identity (either existing or fresh).
 - Both devices have each other added as a contact.
 - Open the chat A↔B on both devices.
 

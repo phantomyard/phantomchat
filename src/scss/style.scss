@@ -521,12 +521,12 @@
 
 @import "partials/passcodeLockScreen";
 
-@import "nostra/tor-dashboard";
-@import "nostra/tor-ui";
-@import "nostra/tor-startup";
-@import "nostra/mesh-indicators";
-@import "nostra/seed-phrase";
-@import "nostra/nostra-relay-settings";
+@import "phantomchat/tor-dashboard";
+@import "phantomchat/tor-ui";
+@import "phantomchat/tor-startup";
+@import "phantomchat/mesh-indicators";
+@import "phantomchat/seed-phrase";
+@import "phantomchat/phantomchat-relay-settings";
 
 html,
 body {

@@ -5,7 +5,7 @@ import type {AppSidebarLeft} from '@components/sidebarLeft';
 import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpClassName from '@helpers/dom/findUpClassName';
-import {isProtectedFolder} from '@lib/nostra/folders-protection';
+import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 
 export default function createFolderContextMenu({
   appSidebarLeft,

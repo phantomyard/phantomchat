@@ -201,7 +201,7 @@ async function main() {
   });
   pageB.on('console', (msg) => {
     const t = msg.text();
-    if(t.includes('[ChatAPI]') || t.includes('[NostraSync]') || t.includes('[MessageHandler]') || t.includes('[VirtualMTProto') || t.includes('edit') || t.includes('message_edit')) logsB.push(`[B] ${t}`);
+    if(t.includes('[ChatAPI]') || t.includes('[PhantomChatSync]') || t.includes('[MessageHandler]') || t.includes('[VirtualMTProto') || t.includes('edit') || t.includes('message_edit')) logsB.push(`[B] ${t}`);
   });
 
   try {
@@ -389,7 +389,7 @@ async function main() {
     console.error('E2E error:', err);
   } finally {
     const filterNoise = (l: string) =>
-      !l.includes('MTPROTO') && !l.includes('relay_state') && !l.includes('nostra_relay_state');
+      !l.includes('MTPROTO') && !l.includes('relay_state') && !l.includes('phantomchat_relay_state');
     console.log('\n=== A logs ===');
     logsA.filter(filterNoise).forEach((l) => console.log('  ' + l));
     console.log('\n=== B logs ===');

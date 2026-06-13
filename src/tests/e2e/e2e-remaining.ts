@@ -179,7 +179,7 @@ async function main() {
       // Headless may not surface the topbar search button; the contract is
       // that the bridge is implemented and works.
       const bridgeOk = await page.evaluate(async() => {
-        const server = (window as any).__nostraMTProtoServer;
+        const server = (window as any).__phantomchatMTProtoServer;
         if(!server) return false;
         try {
           const r = await server.handleMethod('messages.search', {q: 'SearchableText123', limit: 10});
@@ -211,10 +211,10 @@ async function main() {
           if(c.textContent?.includes('ChatDelPeer')) {
             const pid = c.getAttribute('data-peer-id');
             if(!pid) return false;
-            const {getPubkey} = await import('/src/lib/nostra/virtual-peers-db.ts');
+            const {getPubkey} = await import('/src/lib/phantomchat/virtual-peers-db.ts');
             const pk = await getPubkey(+pid);
             if(!pk) return false;
-            const ca = (window as any).__nostraChatAPI;
+            const ca = (window as any).__phantomchatChatAPI;
             if(!ca?.deleteConversation) return false;
             await ca.deleteConversation(pk);
             return true;

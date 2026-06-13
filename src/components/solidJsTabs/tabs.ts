@@ -60,7 +60,7 @@ export const AppDirectMessagesTab =
 
 export const AppNotificationsTab =
   scaffoldSolidJSTab({
-    title: 'Nostra.NotificationSettingsViewController',
+    title: 'PhantomChat.NotificationSettingsViewController',
     getComponentModule: () => import('../sidebarLeft/tabs/notifications')
   });
 

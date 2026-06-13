@@ -1,6 +1,6 @@
 # Phase 2b.1 — 2-Device Manual Verification
 
-Complete all steps on 2 real devices (Device A, Device B) with distinct identities, connected to the same set of relays (default config or a shared test relay). Run in production build (`pnpm build && pnpm serve` or deployed ipfs.nostra.chat), NOT dev mode — dev-only Vite gotchas can mask real bugs.
+Complete all steps on 2 real devices (Device A, Device B) with distinct identities, connected to the same set of relays (default config or a shared test relay). Run in production build (`pnpm build && pnpm serve` or deployed ipfs.phantomchat.chat), NOT dev mode — dev-only Vite gotchas can mask real bugs.
 
 ## Setup
 

@@ -13,7 +13,7 @@ import type {Postcondition, FuzzContext, Action, InvariantResult, UserHandle} fr
 async function storeHasGroup(user: UserHandle, groupId: string): Promise<boolean> {
   return user.page.evaluate(async (id: string) => {
     try {
-      const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+      const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
       const rec = await getGroupStore().get(id);
       return !!rec;
     } catch {
@@ -25,7 +25,7 @@ async function storeHasGroup(user: UserHandle, groupId: string): Promise<boolean
 async function groupMembers(user: UserHandle, groupId: string): Promise<string[] | null> {
   return user.page.evaluate(async (id: string) => {
     try {
-      const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+      const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
       const rec = await getGroupStore().get(id);
       return rec ? rec.members : null;
     } catch {

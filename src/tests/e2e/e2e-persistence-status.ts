@@ -41,7 +41,7 @@ async function dismissViteOverlay(page: Page) {
 
 async function getRelayStatus(page: Page): Promise<any> {
   return page.evaluate(() => {
-    const ca = (window as any).__nostraChatAPI;
+    const ca = (window as any).__phantomchatChatAPI;
     if(!ca) return {error: 'no ChatAPI'};
     const pool = (ca as any).relayPool;
     if(!pool) return {error: 'no relay pool'};
@@ -84,7 +84,7 @@ async function createIdentity(page: Page, displayName: string): Promise<string> 
 
 async function generateRandomNpub(page: Page): Promise<string> {
   return page.evaluate(async() => {
-    const mod = await import('/src/lib/nostra/nostr-identity.ts');
+    const mod = await import('/src/lib/phantomchat/nostr-identity.ts');
     const arr = new Uint8Array(32);
     crypto.getRandomValues(arr);
     const hex = Array.from(arr).map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -225,7 +225,7 @@ async function testMessagePersistence() {
   const logs: string[] = [];
   page.on('console', (msg) => {
     const t = msg.text();
-    if(t.includes('Nostra') || t.includes('relay') || t.includes('ChatAPI') || t.includes('message published') || t.includes('text sent') || t.includes('injectP2PMessage') || t.includes('received relay message')) {
+    if(t.includes('PhantomChat') || t.includes('relay') || t.includes('ChatAPI') || t.includes('message published') || t.includes('text sent') || t.includes('injectP2PMessage') || t.includes('received relay message')) {
       logs.push(t);
     }
   });
@@ -262,7 +262,7 @@ async function testMessagePersistence() {
     // The legacy p2pMessageCache was replaced by the message-store IndexedDB.
     const cacheSize = await page.evaluate(async() => {
       try {
-        const {getMessageStore} = await import('/src/lib/nostra/message-store.ts');
+        const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
         const store = getMessageStore();
         const ids = await store.getAllConversationIds();
         let total = 0;
@@ -316,7 +316,7 @@ async function testMessagePersistence() {
     // Step 6: Check IndexedDB after reload (5.3)
     const cacheSizeAfter = await page.evaluate(async() => {
       try {
-        const {getMessageStore} = await import('/src/lib/nostra/message-store.ts');
+        const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
         const store = getMessageStore();
         const ids = await store.getAllConversationIds();
         let total = 0;
@@ -355,7 +355,7 @@ async function testDeliveryStatus() {
   const logs: string[] = [];
   page.on('console', (msg) => {
     const t = msg.text();
-    if(t.includes('Nostra') || t.includes('relay') || t.includes('ChatAPI') || t.includes('message published') || t.includes('text sent') || t.includes('injectP2PMessage') || t.includes('received relay message')) {
+    if(t.includes('PhantomChat') || t.includes('relay') || t.includes('ChatAPI') || t.includes('message published') || t.includes('text sent') || t.includes('injectP2PMessage') || t.includes('received relay message')) {
       logs.push(t);
     }
   });

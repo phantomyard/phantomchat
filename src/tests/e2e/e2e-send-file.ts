@@ -158,7 +158,7 @@ async function main() {
 
     // Bob should have a file row with mime application/pdf
     const bStore = await pageB.evaluate(async() => {
-      const req = indexedDB.open('nostra-messages');
+      const req = indexedDB.open('phantomchat-messages');
       return new Promise<any>((resolve) => {
         req.onsuccess = () => {
           const db = req.result;

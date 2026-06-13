@@ -12,7 +12,7 @@ const APP_URL = 'http://localhost:8080';
 
 async function getRelayStatus(page: Page): Promise<any> {
   return page.evaluate(() => {
-    const ca = (window as any).__nostraChatAPI;
+    const ca = (window as any).__phantomchatChatAPI;
     if(!ca) return {error: 'no ChatAPI'};
     const pool = (ca as any).relayPool;
     if(!pool) return {error: 'no relay pool'};
@@ -110,13 +110,13 @@ async function main() {
   const logsB: string[] = [];
   pageA.on('console', (msg) => {
     const t = msg.text();
-    if(t.includes('Nostra') || t.includes('relay') || t.includes('ChatAPI') || t.includes('SendBridge') || t.includes('text sent') || t.includes('injectP2PMessage') || t.includes('received relay message')) {
+    if(t.includes('PhantomChat') || t.includes('relay') || t.includes('ChatAPI') || t.includes('SendBridge') || t.includes('text sent') || t.includes('injectP2PMessage') || t.includes('received relay message')) {
       logsA.push(`[A] ${t}`);
     }
   });
   pageB.on('console', (msg) => {
     const t = msg.text();
-    if(t.includes('Nostra') || t.includes('relay') || t.includes('ChatAPI') || t.includes('incoming') || t.includes('gift') || t.includes('injectP2PMessage') || t.includes('received relay message')) {
+    if(t.includes('PhantomChat') || t.includes('relay') || t.includes('ChatAPI') || t.includes('incoming') || t.includes('gift') || t.includes('injectP2PMessage') || t.includes('received relay message')) {
       logsB.push(`[B] ${t}`);
     }
   });

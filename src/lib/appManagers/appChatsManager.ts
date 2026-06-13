@@ -548,7 +548,7 @@ export class AppChatsManager extends AppManager {
   }
 
   public leaveChat(id: ChatId) {
-    // Nostra context: getSelf() can return undefined when the Virtual MTProto
+    // PhantomChat context: getSelf() can return undefined when the Virtual MTProto
     // self mapping hasn't been registered yet. Reject cleanly instead of
     // throwing a synchronous TypeError that becomes an unhandled rejection.
     const self = this.appUsersManager.getSelf();

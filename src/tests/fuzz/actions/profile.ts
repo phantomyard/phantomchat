@@ -19,7 +19,7 @@ import * as fc from 'fast-check';
 const NAMES = ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank', 'Gus', 'Hank'];
 const BIOS = ['Hello world', 'Just a peer', 'Nostr enjoyer', 'Decentralize!', 'Hodl'];
 const NIP05_USERS = ['alice', 'bob', 'carol', 'dave'];
-const NIP05_DOMAINS = ['example.com', 'nostra.chat', 'test.org'];
+const NIP05_DOMAINS = ['example.com', 'phantomchat.chat', 'test.org'];
 
 /**
  * Open AppEditProfileTab via the slider and wait for the input-wrapper to
@@ -201,11 +201,11 @@ export const uploadAvatarAction: ActionSpec = {
         const url: string = json.url;
 
         const nowSec = Math.floor(Date.now() / 1000);
-        const {saveOwnProfileLocal} = await import('/src/lib/nostra/own-profile-sync.ts');
-        const {publishKind0Metadata} = await import('/src/lib/nostra/nostr-relay.ts');
+        const {saveOwnProfileLocal} = await import('/src/lib/phantomchat/own-profile-sync.ts');
+        const {publishKind0Metadata} = await import('/src/lib/phantomchat/nostr-relay.ts');
 
         // Read current profile to merge with new picture field.
-        const rawCache = localStorage.getItem('nostra-profile-cache');
+        const rawCache = localStorage.getItem('phantomchat-profile-cache');
         let existing: any = {};
         try{ existing = rawCache ? (JSON.parse(rawCache).profile || {}) : {}; } catch{}
 
@@ -253,9 +253,9 @@ export const setNip05Action: ActionSpec = {
     const ok = await u.page.evaluate(async ({nip05}: any) => {
       try{
         const nowSec = Math.floor(Date.now() / 1000);
-        const {saveOwnProfileLocal} = await import('/src/lib/nostra/own-profile-sync.ts');
-        const {publishKind0Metadata} = await import('/src/lib/nostra/nostr-relay.ts');
-        const rawCache = localStorage.getItem('nostra-profile-cache');
+        const {saveOwnProfileLocal} = await import('/src/lib/phantomchat/own-profile-sync.ts');
+        const {publishKind0Metadata} = await import('/src/lib/phantomchat/nostr-relay.ts');
+        const rawCache = localStorage.getItem('phantomchat-profile-cache');
         let existing: any = {};
         try{ existing = rawCache ? (JSON.parse(rawCache).profile || {}) : {}; } catch{}
         const profile = {...existing, nip05};
