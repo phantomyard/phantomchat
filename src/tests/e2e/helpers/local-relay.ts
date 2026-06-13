@@ -14,7 +14,7 @@
 import {execSync} from 'child_process';
 import type {BrowserContext} from 'playwright';
 
-const CONTAINER_NAME = 'nostra-e2e-relay';
+const CONTAINER_NAME = 'phantomchat-e2e-relay';
 const HOST_PORT = 7777;
 const IMAGE = 'pluja/strfry:latest';
 
@@ -25,7 +25,7 @@ relay {
     nofiles = 100000
     info {
         name = "E2E Test Relay"
-        description = "Local relay for Nostra.chat E2E tests"
+        description = "Local relay for PhantomChat.chat E2E tests"
     }
 }
 events {
@@ -115,7 +115,7 @@ export class LocalRelay {
 
   /**
    * Inject the local relay URL into a Playwright BrowserContext.
-   * Sets window.__nostraTestRelays BEFORE any app code loads, which
+   * Sets window.__phantomchatTestRelays BEFORE any app code loads, which
    * nostr-relay-pool.ts reads at module init time to override DEFAULT_RELAYS.
    */
   async injectInto(ctx: BrowserContext): Promise<void> {
@@ -124,15 +124,15 @@ export class LocalRelay {
     ]);
 
     await ctx.addInitScript(`
-      window.__nostraTestRelays = ${relayConfig};
+      window.__phantomchatTestRelays = ${relayConfig};
       // Disable Tor for LocalRelay-based tests. LocalRelay is a direct ws://
       // and Tor bootstrap can stall indefinitely in headless Chromium, leaving
       // initGlobalSubscription gated on a promise that never resolves. Without
       // this, the receiving peer's relay pool never comes up and receive-side
       // tests flake. Tor-specific tests (e2e-tor-*) do not use LocalRelay.
       try {
-        localStorage.setItem('nostra-tor-mode', 'off');
-        localStorage.removeItem('nostra-tor-enabled');
+        localStorage.setItem('phantomchat-tor-mode', 'off');
+        localStorage.removeItem('phantomchat-tor-enabled');
       } catch(e) {}
     `);
   }

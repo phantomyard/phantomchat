@@ -69,7 +69,7 @@ async function addPeerAsContact(page: Page, peerNpub: string, peerName: string):
       (Number.prototype as any).toChatId = function() { return Math.abs(+this); };
       (Number.prototype as any).isPeerId = function() { return true; };
     }
-    const {addP2PContact} = await import('/src/lib/nostra/add-p2p-contact.ts');
+    const {addP2PContact} = await import('/src/lib/phantomchat/add-p2p-contact.ts');
     await addP2PContact({pubkey: pk, nickname: nm, source: 'e2e-reactions-bilateral'});
   }, {pk: peerNpub, nm: peerName});
 }
@@ -104,8 +104,8 @@ async function main() {
   const browser = await chromium.launch(launchOptions);
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
-  await ctxA.addInitScript((url) => { (window as any).__nostraTestRelays = [{url, read: true, write: true}]; }, relay.url);
-  await ctxB.addInitScript((url) => { (window as any).__nostraTestRelays = [{url, read: true, write: true}]; }, relay.url);
+  await ctxA.addInitScript((url) => { (window as any).__phantomchatTestRelays = [{url, read: true, write: true}]; }, relay.url);
+  await ctxB.addInitScript((url) => { (window as any).__phantomchatTestRelays = [{url, read: true, write: true}]; }, relay.url);
 
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
@@ -139,7 +139,7 @@ async function main() {
   // to reconstruct the conversationId from the UI state — cross-cutting over
   // the IDB directly is resilient to mirror/worker race.
   const aRowInfo = await pageA.evaluate(async() => {
-    const req = indexedDB.open('nostra-messages');
+    const req = indexedDB.open('phantomchat-messages');
     const db: IDBDatabase = await new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -156,7 +156,7 @@ async function main() {
     return own ? {eventId: own.eventId, appMessageId: own.appMessageId, mid: own.mid, total: all.length} : {eventId: null, total: all.length};
   });
   console.log('[e2e] A row:', aRowInfo);
-  if(!aRowInfo.eventId) throw new Error(`A never stored the outgoing row (${aRowInfo.total} rows visible in nostra-messages)`);
+  if(!aRowInfo.eventId) throw new Error(`A never stored the outgoing row (${aRowInfo.total} rows visible in phantomchat-messages)`);
   if(!/^[0-9a-f]{64}$/.test(aRowInfo.eventId)) {
     throw new Error(`A row.eventId is not 64-hex rumor id: ${aRowInfo.eventId}`);
   }
@@ -197,7 +197,7 @@ async function main() {
   let aReactionRow: any = null;
   while(Date.now() < deadline) {
     aReactionRow = await pageA.evaluate(async() => {
-      const store = (window as any).__nostraReactionsStore;
+      const store = (window as any).__phantomchatReactionsStore;
       if(!store) return null;
       const all = await store.getAll();
       return all.find((r: any) => r.emoji === '😂') || null;

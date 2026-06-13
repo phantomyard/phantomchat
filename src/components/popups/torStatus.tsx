@@ -44,16 +44,16 @@ export default function TorStatus(props: {
   onMount(() => {
     // Seed with a fresh snapshot + trigger a one-shot WS measurement so
     // relays that never pinged yet get a value immediately.
-    const pool = (window as any).__nostraPool;
+    const pool = (window as any).__phantomchatPool;
     try {
       pool?.measureAll?.();
       const snapshot = pool?.getRelayStates?.();
       if(Array.isArray(snapshot)) setLiveStates(snapshot);
     } catch{}
 
-    rootScope.addEventListener('nostra_relay_state', handleRelayState);
+    rootScope.addEventListener('phantomchat_relay_state', handleRelayState);
     onCleanup(() => {
-      rootScope.removeEventListener('nostra_relay_state', handleRelayState);
+      rootScope.removeEventListener('phantomchat_relay_state', handleRelayState);
     });
   });
 
@@ -120,8 +120,8 @@ export default function TorStatus(props: {
             onClick={() => {
               if(props.torState === 'disabled') return;
               props.onClose();
-              import('@components/sidebarLeft/tabs/nostraTorDashboard').then(({default: AppNostraTorDashboardTab}) => {
-                appSidebarLeft.createTab(AppNostraTorDashboardTab).open();
+              import('@components/sidebarLeft/tabs/phantomchatTorDashboard').then(({default: AppPhantomChatTorDashboardTab}) => {
+                appSidebarLeft.createTab(AppPhantomChatTorDashboardTab).open();
               });
             }}
           >

@@ -132,7 +132,7 @@ async function main() {
   const logsB: string[] = [];
   pageB.on('console', (msg) => {
     const t = msg.text();
-    if(t.includes('[ChatAPI]') || t.includes('[NostraSync]') || t.includes('[NostraOnboarding') || t.includes('unknown') || t.includes('auto-adding')) {
+    if(t.includes('[ChatAPI]') || t.includes('[PhantomChatSync]') || t.includes('[PhantomChatOnboarding') || t.includes('unknown') || t.includes('auto-adding')) {
       logsB.push(`[B] ${t}`);
     }
   });
@@ -189,7 +189,7 @@ async function main() {
     const requestStoreCheck = await pageB.evaluate(async() => {
       try {
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const req = indexedDB.open('nostra-message-requests', 1);
+          const req = indexedDB.open('phantomchat-message-requests', 1);
           req.onerror = () => reject(req.error);
           req.onsuccess = () => resolve(req.result);
           req.onupgradeneeded = () => {};
@@ -214,7 +214,7 @@ async function main() {
     const virtualPeerCheck = await pageB.evaluate(async() => {
       try {
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const req = indexedDB.open('nostra-virtual-peers', 1);
+          const req = indexedDB.open('phantomchat-virtual-peers', 1);
           req.onerror = () => reject(req.error);
           req.onsuccess = () => resolve(req.result);
           req.onupgradeneeded = () => {};

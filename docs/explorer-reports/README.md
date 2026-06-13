@@ -1,7 +1,7 @@
 # Explorer Reports
 
 This directory contains artifacts produced by the agentic explorer
-(`/nostra-explore` slash command). See
+(`/phantomchat-explore` slash command). See
 `docs/superpowers/specs/2026-04-29-agentic-explorer-design.md` for the design.
 
 ## Layout

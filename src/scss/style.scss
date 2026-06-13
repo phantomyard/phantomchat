@@ -189,7 +189,7 @@
   --avatar-color-bottom: var(--peer-avatar-saved-bottom);
   --avatar-border-radius-forum: 37%;
 
-  --premium-gradient: linear-gradient(52.62deg, #6B93FF 12.22%, #976FFF 50.25%, #E46ACE 98.83%);
+  --premium-gradient: linear-gradient(52.62deg, #6B93FF 12.22%, #3080FF 50.25%, #5AA0FF 98.83%);
   --star-background-color: var(--surface-color);
 
   @include respond-to(handhelds) {
@@ -290,7 +290,7 @@
   --rlottie-vector-fill: rgba(0, 0, 0, #{$hover-alpha});
   --limit-line-empty-background: #F1F3F5;
   --old-input-background-color: #F1F3F5;
-  --premium-color: #9275ff;
+  --premium-color: #3080ff;
 
   --gc-background-color: #212121;
   --gc-button-leave-color: rgba(255, 89, 90, .3);
@@ -317,12 +317,12 @@
 .night {
 //:root {
   // * Night theme
-  --body-background-color: #181818;
-  --body-background-color-rgb: 24, 24, 24;
-  --background-color-true: #181818;
+  --body-background-color: #14161D;
+  --body-background-color-rgb: 20, 22, 29;
+  --background-color-true: #14161D;
   // --background-color: #212121;
   --background-color: var(--background-color-true);
-  --border-color: #0f0f0f;
+  --border-color: #0c0d12;
   --scrollbar-color: rgba(255, 255, 255, .2);
   --section-box-shadow-color: rgba(0, 0, 0, .12);
 
@@ -521,12 +521,12 @@
 
 @import "partials/passcodeLockScreen";
 
-@import "nostra/tor-dashboard";
-@import "nostra/tor-ui";
-@import "nostra/tor-startup";
-@import "nostra/mesh-indicators";
-@import "nostra/seed-phrase";
-@import "nostra/nostra-relay-settings";
+@import "phantomchat/tor-dashboard";
+@import "phantomchat/tor-ui";
+@import "phantomchat/tor-startup";
+@import "phantomchat/mesh-indicators";
+@import "phantomchat/seed-phrase";
+@import "phantomchat/phantomchat-relay-settings";
 
 html,
 body {

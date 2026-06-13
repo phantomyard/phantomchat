@@ -1,6 +1,6 @@
 // Downloads Microsoft Fluent Emoji 3D PNGs into public/assets/fluent-emoji/.
 // Source: github.com/microsoft/fluentui-emoji (MIT). Run after editing
-// FLUENT_EMOJI_MAP in src/lib/nostra/fluent-emoji.ts.
+// FLUENT_EMOJI_MAP in src/lib/phantomchat/fluent-emoji.ts.
 //
 // Microsoft's folder naming is inconsistent (some "Red heart", some
 // "Red Heart"). Script tries multiple URL patterns per slug, logs failures.

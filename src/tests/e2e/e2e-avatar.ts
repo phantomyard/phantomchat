@@ -48,7 +48,7 @@ async function dismissViteOverlay(page: Page) {
 
 async function getRelayStatus(page: Page): Promise<any> {
   return page.evaluate(() => {
-    const ca = (window as any).__nostraChatAPI;
+    const ca = (window as any).__phantomchatChatAPI;
     if(!ca) return {error: 'no ChatAPI'};
     const pool = (ca as any).relayPool;
     if(!pool) return {error: 'no relay pool'};

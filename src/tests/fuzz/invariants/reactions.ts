@@ -3,7 +3,7 @@ import type {Invariant, FuzzContext, InvariantResult} from '../types';
 
 async function storeAllOn(user: any): Promise<any[]> {
   return user.page.evaluate(async () => {
-    const s = (window as any).__nostraReactionsStore;
+    const s = (window as any).__phantomchatReactionsStore;
     if(!s) return [];
     return await s.getAll();
   });
@@ -57,8 +57,8 @@ export const reactionBilateral: Invariant = {
       storeAllOn(ctx.users.userB)
     ]);
     // Every row on A with fromPubkey=ownPubkeyA must appear on B too (and vice versa).
-    const ownA = await ctx.users.userA.page.evaluate(() => (window as any).__nostraOwnPubkey);
-    const ownB = await ctx.users.userB.page.evaluate(() => (window as any).__nostraOwnPubkey);
+    const ownA = await ctx.users.userA.page.evaluate(() => (window as any).__phantomchatOwnPubkey);
+    const ownB = await ctx.users.userB.page.evaluate(() => (window as any).__phantomchatOwnPubkey);
     for(const row of rowsA) {
       if(row.fromPubkey !== ownA) continue;
       const mirror = rowsB.find((r: any) => r.reactionEventId === row.reactionEventId);

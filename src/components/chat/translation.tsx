@@ -74,7 +74,7 @@ export function pickLanguage<T extends boolean>(
       },
       onSelect: !multi ? deferred.resolve.bind(deferred) as any : undefined,
       onMultiSelect: multi ? deferred.resolve.bind(deferred) as any : undefined,
-      titleLangKey: multi ? 'Nostra.LanguageViewController' : undefined,
+      titleLangKey: multi ? 'PhantomChat.LanguageViewController' : undefined,
       checkboxSide: 'left',
       noPlaceholder: true
     }

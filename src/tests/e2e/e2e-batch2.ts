@@ -263,7 +263,7 @@ async function main() {
 
       // Delete via message-store directly (same contract as C.4.1)
       const deleteResult = await page.evaluate(async(t: string) => {
-        const {getMessageStore} = await import('/src/lib/nostra/message-store.ts');
+        const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
         const store = getMessageStore();
         let total = 0;
         for(let i = 0; i < 3; i++) {
@@ -315,14 +315,14 @@ async function main() {
           if(c.textContent?.includes(peerName)) {
             const pid = c.getAttribute('data-peer-id');
             if(pid) {
-              const {getPubkey} = await import('/src/lib/nostra/virtual-peers-db.ts');
+              const {getPubkey} = await import('/src/lib/phantomchat/virtual-peers-db.ts');
               peerPubkey = await getPubkey(+pid);
               break;
             }
           }
         }
         if(!peerPubkey) return false;
-        const ca = (window as any).__nostraChatAPI;
+        const ca = (window as any).__phantomchatChatAPI;
         if(!ca?.deleteConversation) return false;
         await ca.deleteConversation(peerPubkey);
         return true;
@@ -331,7 +331,7 @@ async function main() {
       // Verify no lingering messages for this conversation in the store
       const lingeringMsgs = await page.evaluate(async() => {
         try {
-          const {getMessageStore} = await import('/src/lib/nostra/message-store.ts');
+          const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
           const store = getMessageStore();
           const ids = await store.getAllConversationIds();
           let total = 0;

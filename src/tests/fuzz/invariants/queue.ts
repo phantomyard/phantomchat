@@ -2,7 +2,7 @@
 import type {Invariant, FuzzContext, InvariantResult, UserHandle} from '../types';
 
 const COLLECT_QUEUE_LEN = async() => {
-  const q = (window as any).__nostraChatAPI?.offlineQueue;
+  const q = (window as any).__phantomchatChatAPI?.offlineQueue;
   const queueLen = q?.getQueueLength ? q.getQueueLength() : 0;
   return {queueLen};
 };

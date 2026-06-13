@@ -42,7 +42,7 @@ import EditFolderInput from '@components/sidebarLeft/tabs/editFolderInput';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import getRichValueWithCaret from '@helpers/dom/getRichValueWithCaret';
 import trimRichText from '@lib/richTextProcessor/trimRichText';
-import {isProtectedFolder} from '@lib/nostra/folders-protection';
+import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 
 const MAX_FOLDER_NAME_LENGTH = 12;
 

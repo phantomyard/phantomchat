@@ -100,7 +100,7 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
 
   public init(p: ReturnType<typeof AppGeneralSettingsTab['getInitArgs']>) {
     this.container.classList.add('general-settings-container');
-    this.setTitle('Nostra.GeneralSettingsViewController');
+    this.setTitle('PhantomChat.GeneralSettingsViewController');
     const [appSettings, setAppSettings] = useAppSettings();
 
     const section = generateSection.bind(null, this.scrollable);
@@ -304,7 +304,7 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
               play: false
             }).then(({render}) => render).then((player) => {
               // Null when the Fluent Emoji static fallback took over (no
-              // animated lottie in Nostra mode — see wrapStickerEmoji).
+              // animated lottie in PhantomChat mode — see wrapStickerEmoji).
               if(player) k.player = player as RLottiePlayer;
             }).catch(() => {/* emoji not in Fluent pack — chip renders without decoration */});
           }

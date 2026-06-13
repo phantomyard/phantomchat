@@ -50,7 +50,7 @@ async function main() {
 
   // Check what relays the ChatAPI connected to
   const relayInfo = await page.evaluate(() => {
-    const ca = (window as any).__nostraChatAPI;
+    const ca = (window as any).__phantomchatChatAPI;
     if(!ca) return {error: 'no ChatAPI'};
     const pool = (ca as any).relayPool;
     if(!pool) return {error: 'no pool'};

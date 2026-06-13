@@ -11,7 +11,7 @@ describe.skipIf(!distExists)('Build output — dist/index.html', () => {
     html = readFileSync(distIndexPath, 'utf8');
   });
 
-  test('does not contain absolute nostra.app URLs in asset src/href (script/link tags)', () => {
+  test('does not contain absolute phantomchat.app URLs in asset src/href (script/link tags)', () => {
     // Meta tags and canonical links may legitimately reference absolute URLs.
     // Asset references (JS, CSS, images loaded by browser) must not use origin-absolute paths.
     const scriptSrcMatches = html.match(/<script[^>]+src="([^"]+)"/g) || [];
@@ -20,7 +20,7 @@ describe.skipIf(!distExists)('Build output — dist/index.html', () => {
 
     const absoluteAssets = allAssetTags.filter(tag => {
       const value = tag.match(/(?:src|href)="([^"]+)"/)?.[1] ?? '';
-      return value.startsWith('https://nostra.app') || value.startsWith('https://web.telegram.org');
+      return value.startsWith('https://phantomchat.app') || value.startsWith('https://web.telegram.org');
     });
     expect(absoluteAssets).toEqual([]);
   });

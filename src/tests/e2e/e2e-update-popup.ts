@@ -4,7 +4,7 @@
  *
  * Exercises the dev-trigger path that mirrors the prod probe flow:
  *   1. __triggerUpdatePopup() dispatches update_available_signed
- *   2. the stash listener populates window.__nostraPendingUpdate
+ *   2. the stash listener populates window.__phantomchatPendingUpdate
  *   3. showUpdateConsentPopup mounts the UpdateConsent component
  *   4. clicking "Ignora" calls declineUpdate, which persists snooze +
  *      decline counter to localStorage
@@ -56,10 +56,10 @@ async function main(): Promise<void> {
 
     // Clear any leftover snooze state from prior runs.
     await page.evaluate((v) => {
-      localStorage.removeItem('nostra.update.snoozedVersion');
-      localStorage.removeItem('nostra.update.snoozedUntil');
-      localStorage.removeItem(`nostra.update.declineCount.${v}`);
-      delete (window as any).__nostraPendingUpdate;
+      localStorage.removeItem('phantomchat.update.snoozedVersion');
+      localStorage.removeItem('phantomchat.update.snoozedUntil');
+      localStorage.removeItem(`phantomchat.update.declineCount.${v}`);
+      delete (window as any).__phantomchatPendingUpdate;
     }, FAKE_VERSION);
 
     // dev-trigger.install() is kicked off by index.ts DEV branch during boot.
@@ -78,12 +78,12 @@ async function main(): Promise<void> {
       pass('__triggerUpdatePopup returned manifest');
     }
 
-    // Stash listener should have populated __nostraPendingUpdate.
-    const stashed = await page.evaluate(() => (window as any).__nostraPendingUpdate);
+    // Stash listener should have populated __phantomchatPendingUpdate.
+    const stashed = await page.evaluate(() => (window as any).__phantomchatPendingUpdate);
     if(!stashed || stashed.manifest?.version !== FAKE_VERSION) {
-      fail(`window.__nostraPendingUpdate not populated: ${JSON.stringify(stashed)}`);
+      fail(`window.__phantomchatPendingUpdate not populated: ${JSON.stringify(stashed)}`);
     } else {
-      pass('window.__nostraPendingUpdate populated by stash listener');
+      pass('window.__phantomchatPendingUpdate populated by stash listener');
     }
 
     // Popup title renders.
@@ -124,9 +124,9 @@ async function main(): Promise<void> {
 
     // Snooze + decline count persisted to localStorage.
     const lsState = await page.evaluate((v) => ({
-      snoozedVersion: localStorage.getItem('nostra.update.snoozedVersion'),
-      snoozedUntil: localStorage.getItem('nostra.update.snoozedUntil'),
-      declineCount: localStorage.getItem(`nostra.update.declineCount.${v}`)
+      snoozedVersion: localStorage.getItem('phantomchat.update.snoozedVersion'),
+      snoozedUntil: localStorage.getItem('phantomchat.update.snoozedUntil'),
+      declineCount: localStorage.getItem(`phantomchat.update.declineCount.${v}`)
     }), FAKE_VERSION);
 
     if(lsState.snoozedVersion !== FAKE_VERSION) fail(`snoozedVersion = ${lsState.snoozedVersion}, expected ${FAKE_VERSION}`);

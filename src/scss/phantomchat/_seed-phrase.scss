@@ -1,0 +1,155 @@
+/*
+ * PhantomChat.chat — Recovery Phrase tab styles
+ * Styles the 12-word BIP-39 grid, warning card, reveal button,
+ * copy action, and auto-hide countdown bar.
+ */
+
+.phantomchat-seed-phrase-tab {
+  .seed-warning-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    margin: 8px 16px 16px;
+    border-radius: 12px;
+    background: rgba(255, 170, 0, 0.08);
+    border: 1px solid rgba(255, 170, 0, 0.35);
+    color: var(--primary-text-color);
+
+    &__icon {
+      flex: 0 0 28px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #ffaa00;
+      color: #1a1a1a;
+      font-weight: 700;
+      font-size: 18px;
+      line-height: 28px;
+      text-align: center;
+    }
+
+    &__text {
+      flex: 1 1 auto;
+      font-size: 14px;
+      line-height: 1.5;
+
+      strong {
+        color: #ffaa00;
+      }
+    }
+  }
+
+  .seed-reveal-container {
+    padding: 0 16px 24px;
+
+    .seed-reveal-btn {
+      width: 100%;
+      margin-top: 8px;
+    }
+  }
+
+  .seed-grid-wrapper {
+    margin-top: 8px;
+  }
+
+  .seed-word-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 12px;
+    border-radius: 14px;
+    background: var(--surface-color, rgba(127, 127, 127, 0.06));
+    border: 1px solid var(--border-color, rgba(127, 127, 127, 0.15));
+
+    @media (min-width: 480px) {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  .seed-word-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--background-color);
+    border: 1px solid var(--border-color, rgba(127, 127, 127, 0.15));
+    transition: transform 0.12s ease, border-color 0.12s ease;
+    user-select: text;
+    min-width: 0;
+
+    &:hover {
+      transform: translateY(-1px);
+      border-color: var(--primary-color);
+    }
+
+    &__num {
+      flex: 0 0 20px;
+      min-width: 20px;
+      height: 20px;
+      border-radius: 5px;
+      background: var(--primary-color);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 20px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    &__word {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--primary-text-color);
+      letter-spacing: 0;
+      // BIP-39 words are up to 8 chars; allow wrapping as a safety net so
+      // a long word never breaks out of the chip. We never truncate — the
+      // user must read every letter to back the phrase up.
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+  }
+
+  .seed-countdown {
+    margin-top: 16px;
+    padding: 0 4px;
+
+    &__label {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      margin-bottom: 6px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    &__bar {
+      height: 4px;
+      background: rgba(127, 127, 127, 0.2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    &__fill {
+      height: 100%;
+      width: 100%;
+      background: var(--primary-color);
+      transition: width 0.25s linear;
+      border-radius: 2px;
+    }
+  }
+
+  .seed-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+
+    .seed-hide-btn,
+    .seed-copy-btn {
+      flex: 1 1 50%;
+    }
+  }
+}

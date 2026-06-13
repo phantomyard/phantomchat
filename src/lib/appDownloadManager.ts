@@ -181,23 +181,23 @@ export class AppDownloadManager {
   }
 
   public downloadMedia(options: DownloadMediaOptions, type: DownloadType = 'blob', promiseBefore?: Promise<any>): DownloadBlob {
-    // [Nostra.chat] P2P media: a doc/photo may carry either:
-    //  - nostraFileMetadata {url, keyHex, ivHex, ...} for incoming ciphertext
+    // [PhantomChat.chat] P2P media: a doc/photo may carry either:
+    //  - phantomchatFileMetadata {url, keyHex, ivHex, ...} for incoming ciphertext
     //  - a local blob:URL stashed on .url for the sender's optimistic bubble
     // Either way, short-circuit the MTProto path (which would crash on our
     // synthetic ids) and produce a plaintext Blob/URL.
     const media: any = options.media;
-    const nostraFM = media?.nostraFileMetadata;
+    const phantomchatFM = media?.phantomchatFileMetadata;
     const localBlobUrl: string | undefined =
       typeof media?.url === 'string' && media.url.startsWith('blob:') ? media.url :
       typeof media?.sizes?.[0]?.url === 'string' && media.sizes[0].url.startsWith('blob:') ? media.sizes[0].url :
       undefined;
 
-    if(nostraFM?.keyHex && nostraFM?.url) {
-      const fileName = `nostra-${nostraFM.sha256 || nostraFM.url}`;
+    if(phantomchatFM?.keyHex && phantomchatFM?.url) {
+      const fileName = `phantomchat-${phantomchatFM.sha256 || phantomchatFM.url}`;
       return this.d(fileName, () => (async() => {
-        const {fetchAndDecryptNostraFile} = await import('@lib/nostra/nostra-file-fetch');
-        const blob = await fetchAndDecryptNostraFile(nostraFM.url, nostraFM.keyHex, nostraFM.ivHex);
+        const {fetchAndDecryptPhantomChatFile} = await import('@lib/phantomchat/phantomchat-file-fetch');
+        const blob = await fetchAndDecryptPhantomChatFile(phantomchatFM.url, phantomchatFM.keyHex, phantomchatFM.ivHex);
         if(type === 'url') return URL.createObjectURL(blob);
         if(type === 'void') return;
         return blob;
@@ -205,7 +205,7 @@ export class AppDownloadManager {
     }
 
     if(localBlobUrl) {
-      const fileName = `nostra-local-${localBlobUrl}`;
+      const fileName = `phantomchat-local-${localBlobUrl}`;
       return this.d(fileName, () => (async() => {
         if(type === 'url') return localBlobUrl;
         if(type === 'void') return;

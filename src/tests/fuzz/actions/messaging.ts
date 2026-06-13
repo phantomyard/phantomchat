@@ -266,7 +266,7 @@ export const removeReaction: ActionSpec = {
     await sender.page.waitForTimeout(200);
 
     const picked = await sender.page.evaluate(async () => {
-      const store = (window as any).__nostraReactionsStore;
+      const store = (window as any).__phantomchatReactionsStore;
       if(!store) return null;
       const rows = await store.getAll();
       const own = rows.filter((r: any) => r.fromPubkey && r.reactionEventId);
@@ -278,7 +278,7 @@ export const removeReaction: ActionSpec = {
 
     const ok = await sender.page.evaluate(async (reId: string) => {
       try {
-        await (window as any).__nostraReactionsPublish.unpublish(reId);
+        await (window as any).__phantomchatReactionsPublish.unpublish(reId);
         return true;
       } catch { return false; }
     }, picked.reactionEventId);

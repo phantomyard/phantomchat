@@ -13,8 +13,8 @@ function mkPage(opts: {ownPubkey?: string; cache?: any; peers?: any} = {}) {
       // Best-effort simulation of browser-side evaluate.
       const src = String(fn);
       // We implement tiny sniffers based on what the invariant reads.
-      if(src.includes('__nostraOwnPubkey')) return opts.ownPubkey ?? null;
-      if(src.includes('nostra-profile-cache')) return opts.cache ?? null;
+      if(src.includes('__phantomchatOwnPubkey')) return opts.ownPubkey ?? null;
+      if(src.includes('phantomchat-profile-cache')) return opts.cache ?? null;
       if(src.includes('apiManagerProxy')) {
         const peers = opts.peers ?? {};
         for(const p of Object.values(peers) as any[]) {

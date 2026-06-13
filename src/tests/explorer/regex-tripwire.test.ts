@@ -52,18 +52,18 @@ describe('explorer regex tripwire', () => {
     expect(patterns.has('ServiceWorker')).toBe(true);
   });
 
-  it('catches relay / subscription / nostra-sync / virtual-mtproto', () => {
+  it('catches relay / subscription / phantomchat-sync / virtual-mtproto', () => {
     const diff = `${HEADER('src/lib/foo.ts')}
  const x = 1;
 +import {relay} from './relay-pool';
 +import 'virtual-mtproto';
-+import 'nostra-sync';
++import 'phantomchat-sync';
 +const sub: subscription = pool.subscribe();
 `;
     const patterns = new Set(checkDiff(diff).matches.map((m) => m.pattern));
     expect(patterns.has('relay')).toBe(true);
     expect(patterns.has('subscription')).toBe(true);
-    expect(patterns.has('nostra-sync')).toBe(true);
+    expect(patterns.has('phantomchat-sync')).toBe(true);
     expect(patterns.has('virtual-mtproto')).toBe(true);
   });
 

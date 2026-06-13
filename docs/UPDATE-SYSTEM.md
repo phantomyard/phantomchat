@@ -1,6 +1,6 @@
 # Update System — Operator Runbook
 
-Nostra.chat uses a **consent-gated update system**. Every post-first-install version change requires:
+PhantomChat.chat uses a **consent-gated update system**. Every post-first-install version change requires:
 
 1. A manifest (`update-manifest.json`) signed with **Ed25519** by the release key.
 2. Explicit **user consent** via popup.
@@ -69,20 +69,20 @@ Clients probe the manifest + signature from multiple sources (`MANIFEST_SOURCES`
 
 | Namespace | Key / Cache | Purpose |
 |-----------|-------------|---------|
-| IndexedDB | `nostra-update-state` → `active` → `current` | `{version, keyFingerprint, installedPubkey, at}` — active trust anchor |
+| IndexedDB | `phantomchat-update-state` → `active` → `current` | `{version, keyFingerprint, installedPubkey, at}` — active trust anchor |
 | CacheStorage | `shell-v<version>` | The currently-served app-shell |
 | CacheStorage | `shell-v<version>-pending` | In-flight update target (atomic swap source) |
-| localStorage | `nostra.update.snoozedVersion`, `.snoozedUntil` | Per-version 24h snooze |
-| localStorage | `nostra.update.declineCount.<version>` | Declines; triggers staleness banner at 7 |
-| localStorage | `nostra.update.lastProbe` | Throttle (12h) |
-| localStorage | `nostra.update.first-install-seen` | Suppresses the one-time info banner |
-| localStorage | `nostra.update.staleness_snooze` | 24h dismiss for the staleness banner |
+| localStorage | `phantomchat.update.snoozedVersion`, `.snoozedUntil` | Per-version 24h snooze |
+| localStorage | `phantomchat.update.declineCount.<version>` | Declines; triggers staleness banner at 7 |
+| localStorage | `phantomchat.update.lastProbe` | Throttle (12h) |
+| localStorage | `phantomchat.update.first-install-seen` | Suppresses the one-time info banner |
+| localStorage | `phantomchat.update.staleness_snooze` | 24h dismiss for the staleness banner |
 
 ## User-facing flows
 
 ### First install (TOFU)
 
-A user visiting `nostra.chat` with no SW installed:
+A user visiting `phantomchat.chat` with no SW installed:
 1. Browser fetches the index + chunks over HTTPS+HSTS (the TOFU window).
 2. SW installs, reads `update-manifest.json`, precaches every asset, SHA-256-verifies each.
 3. The `FirstInstallInfo` banner appears once, showing the baked key fingerprint.

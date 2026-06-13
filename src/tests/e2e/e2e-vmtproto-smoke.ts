@@ -7,7 +7,7 @@
  * 2. Onboarding creates identity
  * 3. Chat list appears (self-contact)
  * 4. Full width layout works
- * 5. Branding shows Nostra.chat
+ * 5. Branding shows PhantomChat.chat
  * 6. Contacts not pinned by default
  * 7. Hamburger menu items work (Status, Settings)
  */
@@ -171,25 +171,25 @@ async function main() {
       }
 
       const brand = await page.evaluate(() => {
-        // Look for any element whose text contains "Nostra" — the branding
+        // Look for any element whose text contains "PhantomChat" — the branding
         // may render in different selectors across versions.
         const all = document.querySelectorAll('.btn-menu-footer-text, .btn-menu-footer, .menu-footer, footer, .version');
         for(const f of all) {
           const t = f.textContent?.trim();
           if(t && t.length < 200) return t;
         }
-        // Fallback: any element with Nostra.chat text
+        // Fallback: any element with PhantomChat.chat text
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         let node: any;
         while((node = walker.nextNode())) {
           const t = node.nodeValue?.trim();
-          if(t && t.includes('Nostra.chat')) return t;
+          if(t && t.includes('PhantomChat.chat')) return t;
         }
         return 'NOT_FOUND';
       });
       console.log('Brand:', brand);
-      results['5-branding'] = brand?.includes('Nostra.chat') || false;
-      console.log(brand?.includes('Nostra.chat') ? 'PASS' : `FAIL: "${brand}"`);
+      results['5-branding'] = brand?.includes('PhantomChat.chat') || false;
+      console.log(brand?.includes('PhantomChat.chat') ? 'PASS' : `FAIL: "${brand}"`);
 
       // Close menu by pressing Escape
       await page.keyboard.press('Escape');

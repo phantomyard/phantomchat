@@ -121,13 +121,13 @@ async function test11_1() {
     let node: any;
     while((node = walker.nextNode())) {
       const t = node.nodeValue?.trim();
-      if(t && t.includes('Nostra.chat')) return t;
+      if(t && t.includes('PhantomChat.chat')) return t;
     }
     return 'NOT_FOUND';
   });
   console.log('Brand:', brandText);
   await browser.close();
-  return brandText?.includes('Nostra.chat') || false;
+  return brandText?.includes('PhantomChat.chat') || false;
 }
 
 // === Test 1.9 ===
@@ -174,7 +174,7 @@ async function test10_12() {
   console.log('Relays:', relayInfo);
   // Also verify via the global ChatAPI relay pool
   const poolStatus = await page.evaluate(() => {
-    const ca = (window as any).__nostraChatAPI;
+    const ca = (window as any).__phantomchatChatAPI;
     const entries = ca?.relayPool?.relayEntries || [];
     return {
       count: entries.length,
@@ -213,7 +213,7 @@ async function test10_13() {
   console.log('Relays:', relays);
   // Fallback: verify via ChatAPI pool
   const poolHasRelays = await page.evaluate(() => {
-    const ca = (window as any).__nostraChatAPI;
+    const ca = (window as any).__phantomchatChatAPI;
     return (ca?.relayPool?.relayEntries || []).length > 0;
   });
   await browser.close();

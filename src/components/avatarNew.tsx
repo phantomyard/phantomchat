@@ -49,7 +49,7 @@ import type {ActiveAccountNumber} from '@lib/accounts/types';
 import {getCurrentAccount} from '@lib/accounts/getCurrentAccount';
 import {appSettings} from '@stores/appSettings';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
-import {getPubkey} from '@lib/nostra/virtual-peers-db';
+import {getPubkey} from '@lib/phantomchat/virtual-peers-db';
 import {createAutoDeleteIcon} from '@components/chat/utils';
 import {resolveElements} from '@solid-primitives/refs';
 import toArray from '@helpers/array/toArray';

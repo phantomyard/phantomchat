@@ -194,8 +194,8 @@ export default class PromoSlideTab {
       } else {
         title = i18n(
           fromPeerId ?
-            'NostraPremiumUserGiftedPremiumDialogTitleWithPlural' :
-            'NostraPremiumUserGiftedPremiumDialogTitleWithPluralSomeone',
+            'PhantomChatPremiumUserGiftedPremiumDialogTitleWithPlural' :
+            'PhantomChatPremiumUserGiftedPremiumDialogTitleWithPluralSomeone',
           [
             fromPeerId && await wrapPeerTitle({...wrapTitleOptions, peerId: fromPeerId}),
             giftText
@@ -205,12 +205,12 @@ export default class PromoSlideTab {
 
       if(isOutbound) {
         description = i18n(
-          'NostraPremiumUserGiftedPremiumOutboundDialogSubtitle',
+          'PhantomChatPremiumUserGiftedPremiumOutboundDialogSubtitle',
           [await wrapPeerTitle({...wrapTitleOptions, peerId: toPeerId})]
         );
       } else {
         if(gift._ === 'messageActionGiftPremium') {
-          description = i18n('NostraPremiumUserGiftedPremiumDialogSubtitle');
+          description = i18n('PhantomChatPremiumUserGiftedPremiumDialogSubtitle');
         } else {
           const url = 'https://t.me/giftcode/' + gift.slug;
 
@@ -247,7 +247,7 @@ export default class PromoSlideTab {
       ]);
       if(doc.stickerSetInput) {
         const stickerset = await rootScope.managers.appStickersManager.getStickerSet(doc.stickerSetInput);
-        title = i18n('NostraPremiumPeerTitleEmojiStatus', [
+        title = i18n('PhantomChatPremiumPeerTitleEmojiStatus', [
           peerTitle,
           anchorCallback(() => {
             PopupElement.createPopup(PopupStickers, doc.stickerSetInput, true).show()
@@ -255,18 +255,18 @@ export default class PromoSlideTab {
           stickerset.set.title
         ])
       } else {
-        title = i18n('NostraPremiumPeerTitleEmojiStatusNoPack', [peerTitle])
+        title = i18n('PhantomChatPremiumPeerTitleEmojiStatusNoPack', [peerTitle])
       }
-      description = i18n('NostraPremiumPeerSubtitleEmojiStatus');
+      description = i18n('PhantomChatPremiumPeerSubtitleEmojiStatus');
     } else if(this.options.peerId) {
       headingTextTitle.classList.add('smaller-text');
-      title = i18n('NostraPremiumPeerTitle', [
+      title = i18n('PhantomChatPremiumPeerTitle', [
         await wrapPeerTitle({peerId: this.options.peerId})
       ])
-      description = i18n('NostraPremiumPeerSubtitle');
+      description = i18n('PhantomChatPremiumPeerSubtitle');
     } else {
-      title = this.options.isPremiumActive ? i18n('NostraPremiumSubscribedTitle') : i18n('Premium.Boarding.Title');
-      description = this.options.isPremiumActive ? i18n('NostraPremiumSubscribedSubtitle') : i18n('Premium.Boarding.Info');
+      title = this.options.isPremiumActive ? i18n('PhantomChatPremiumSubscribedTitle') : i18n('Premium.Boarding.Title');
+      description = this.options.isPremiumActive ? i18n('PhantomChatPremiumSubscribedSubtitle') : i18n('Premium.Boarding.Info');
     }
 
     headingTextTitle.append(title);

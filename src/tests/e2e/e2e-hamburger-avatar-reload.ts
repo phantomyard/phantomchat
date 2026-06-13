@@ -2,7 +2,7 @@
 /**
  * E2E regression: hamburger-menu avatar after reload.
  *
- * Root-cause bug: nostra-onboarding-integration.ts used to republish a
+ * Root-cause bug: phantomchat-onboarding-integration.ts used to republish a
  * bare kind 0 (`display_name` + `name` only) on every boot, wiping
  * picture/about/website/lud16/nip05 from the relay. On the next boot
  * refreshOwnProfileFromRelays fetched the bare kind 0, saw it was newer
@@ -70,7 +70,7 @@ async function readHamburgerAvatarSrc(page): Promise<string> {
     const src = await page.evaluate(() => {
       const menu = document.querySelector('.btn-menu.active, .btn-menu.bottom-right');
       if(!menu) return null;
-      const img = menu.querySelector('img.nostra-profile-menu-entry-avatar') as HTMLImageElement | null;
+      const img = menu.querySelector('img.phantomchat-profile-menu-entry-avatar') as HTMLImageElement | null;
       return img?.src ?? null;
     });
     if(src) return src;
@@ -102,7 +102,7 @@ async function main() {
   const logs: string[] = [];
   page.on('console', (msg) => {
     const t = msg.text();
-    if(/OwnProfileSync|NostraOnboarding|sidebarLeft|hydrate|identity_updated|profile/i.test(t)) {
+    if(/OwnProfileSync|PhantomChatOnboarding|sidebarLeft|hydrate|identity_updated|profile/i.test(t)) {
       logs.push('[console] ' + t);
     }
   });
@@ -126,7 +126,7 @@ async function main() {
       },
       created_at: Math.floor(Date.now() / 1000)
     };
-    localStorage.setItem('nostra-profile-cache', JSON.stringify(cached));
+    localStorage.setItem('phantomchat-profile-cache', JSON.stringify(cached));
   }, MOCKED_AVATAR_URL);
   console.log('[test] seeded profile cache');
 
@@ -154,7 +154,7 @@ async function main() {
   });
   console.log('[debug] post-reload page state:', JSON.stringify(pageState));
 
-  const cacheAfterReload = await page.evaluate(() => localStorage.getItem('nostra-profile-cache'));
+  const cacheAfterReload = await page.evaluate(() => localStorage.getItem('phantomchat-profile-cache'));
   console.log('[test] post-reload cache:', cacheAfterReload?.slice(0, 180));
 
   // Open hamburger WITHOUT visiting profile
@@ -167,7 +167,7 @@ async function main() {
       menus: Array.from(document.querySelectorAll('.btn-menu')).map((m) => ({
         className: m.className,
         itemCount: m.querySelectorAll('.btn-menu-item').length,
-        hasAvatar: !!m.querySelector('img.nostra-profile-menu-entry-avatar')
+        hasAvatar: !!m.querySelector('img.phantomchat-profile-menu-entry-avatar')
       }))
     };
   });

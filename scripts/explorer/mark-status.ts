@@ -1,7 +1,7 @@
 /**
  * `pnpm exec tsx mark-status.ts <action> <storePath> <signature> [args...]`
  *
- * Thin CLI over signature.ts status helpers — used by the F3 nostra-fixer
+ * Thin CLI over signature.ts status helpers — used by the F3 phantomchat-fixer
  * subagent. We can't reliably call the helpers via `tsx -e "import().then()"`
  * because tsx eval-mode wraps modules in CJS and named exports don't splat
  * onto the imported namespace. Wrapping in a script is simpler and matches

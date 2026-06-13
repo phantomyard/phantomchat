@@ -11,7 +11,7 @@
 
 import MTPNetworker from '@lib/mtproto/networker';
 import App from '@config/app';
-// [Nostra.chat] Unused imports kept for D-03 (no file deletion):
+// [PhantomChat.chat] Unused imports kept for D-03 (no file deletion):
 // import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {AppManager} from '@appManagers/manager';
 // import AccountController from '@lib/accounts/accountController';
@@ -42,8 +42,8 @@ export class NetworkerFactory extends AppManager {
     ConstructorParameters<typeof MTPNetworker>[0],
     'networkerFactory' | 'timeManager' | 'getBaseDcId' | 'updatesProcessor' | 'getInitConnectionParams'
   >): MTPNetworker {
-    // [Nostra.chat] MTProto disabled: never create networker instances
-    throw new Error('[Nostra.chat] MTProto disabled: cannot create networker');
+    // [PhantomChat.chat] MTProto disabled: never create networker instances
+    throw new Error('[PhantomChat.chat] MTProto disabled: cannot create networker');
   }
 
   public startAll() {

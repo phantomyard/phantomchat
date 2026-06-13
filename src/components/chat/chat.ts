@@ -1390,7 +1390,7 @@ export default class Chat extends EventListenerBase<{
       return true;
     }
 
-    // [Nostra.chat] When myId is NULL (P2P mode, no MTProto auth),
+    // [PhantomChat.chat] When myId is NULL (P2P mode, no MTProto auth),
     // use pFlags.out as fallback — set by generateFlags() in Worker
     if(!rootScope.myId && message.pFlags.out) {
       return true;

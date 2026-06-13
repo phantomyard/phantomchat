@@ -100,10 +100,10 @@ import {useAppSettings} from '@stores/appSettings';
 import {openEmojiStatusPicker} from '@components/sidebarLeft/emojiStatusPicker';
 import {animateValue} from '@helpers/animateValue';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
-import AppNostraQRTab from '@components/sidebarLeft/tabs/nostraQR';
+import AppPhantomChatQRTab from '@components/sidebarLeft/tabs/phantomchatQR';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
-import {decodePubkey} from '@lib/nostra/nostr-identity';
-import {loadCachedProfile} from '@lib/nostra/profile-cache';
+import {decodePubkey} from '@lib/phantomchat/nostr-identity';
+import {loadCachedProfile} from '@lib/phantomchat/profile-cache';
 
 export const LEFT_COLUMN_ACTIVE_CLASSNAME = 'is-left-column-shown';
 
@@ -157,7 +157,7 @@ export class AppSidebarLeft extends SidebarSlider {
     const sidebarHeader = this.sidebarEl.querySelector('.item-main .sidebar-header');
     sidebarHeader.append(this.inputSearch.container);
 
-    // Mount Nostra.chat status icons (Tor + Relay) in search bar
+    // Mount PhantomChat.chat status icons (Tor + Relay) in search bar
     this.mountStatusIcons();
 
     // this.toolsBtn = this.sidebarEl.querySelector('.sidebar-tools-button') as HTMLButtonElement;
@@ -692,8 +692,8 @@ export class AppSidebarLeft extends SidebarSlider {
     });
 
     const profileEntry: ButtonMenuItemOptions & {verify?: () => boolean | Promise<boolean>, className?: string} = {
-      regularText: this.buildNostraProfileMenuContent(),
-      className: 'nostra-profile-menu-item',
+      regularText: this.buildPhantomChatProfileMenuContent(),
+      className: 'phantomchat-profile-menu-item',
       onClick: () => {
         closeTabsBefore(() => {
           this.createTab(AppEditProfileTab).open();
@@ -721,7 +721,7 @@ export class AppSidebarLeft extends SidebarSlider {
       regularText: 'My QR Code',
       onClick: () => {
         closeTabsBefore(() => {
-          this.createTab(AppNostraQRTab).open();
+          this.createTab(AppPhantomChatQRTab).open();
         });
       }
     }, {
@@ -729,8 +729,8 @@ export class AppSidebarLeft extends SidebarSlider {
       regularText: 'Status',
       onClick: () => {
         closeTabsBefore(async() => {
-          const {default: AppNostraStatusTab} = await import('@components/sidebarLeft/tabs/nostraStatus');
-          this.createTab(AppNostraStatusTab).open();
+          const {default: AppPhantomChatStatusTab} = await import('@components/sidebarLeft/tabs/phantomchatStatus');
+          this.createTab(AppPhantomChatStatusTab).open();
         });
       }
     }, {
@@ -823,7 +823,7 @@ export class AppSidebarLeft extends SidebarSlider {
         buttons.splice(targetIdx, 0, ...attachMenuBotsButtons);
         buttons[targetIdx].separator = true;
 
-        // [Nostra.chat] AccountController calls may hang in Nostra mode. Wrap with timeouts.
+        // [PhantomChat.chat] AccountController calls may hang in PhantomChat mode. Wrap with timeouts.
         const withTimeout500 = <T>(p: Promise<T>, fallback: T): Promise<T> =>
           Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), 500))]);
         const [totalAccounts, notificationsCount] = await Promise.all([
@@ -834,7 +834,7 @@ export class AppSidebarLeft extends SidebarSlider {
         for(let i = 1; i <= totalAccounts; i++) {
           const accountNumber = i as ActiveAccountNumber;
           if(accountNumber === getCurrentAccount()) {
-            // [Nostra.chat] getSelf() may hang in Nostra mode (no MTProto auth).
+            // [PhantomChat.chat] getSelf() may hang in PhantomChat mode (no MTProto auth).
             // Wrap with a timeout so the menu renders regardless.
             const user = await Promise.race([
               this.managers.appUsersManager.getSelf(),
@@ -943,15 +943,15 @@ export class AppSidebarLeft extends SidebarSlider {
   }
 
 
-  private buildNostraProfileMenuContent(): HTMLElement {
+  private buildPhantomChatProfileMenuContent(): HTMLElement {
     // Inject the per-item style tag once (idempotent: keyed by id).
     // Overrides the fixed 32px height of .btn-menu-item so the profile
     // entry's larger avatar fits within the selection rectangle.
-    if(!document.getElementById('nostra-profile-menu-item-style')) {
+    if(!document.getElementById('phantomchat-profile-menu-item-style')) {
       const style = document.createElement('style');
-      style.id = 'nostra-profile-menu-item-style';
+      style.id = 'phantomchat-profile-menu-item-style';
       style.textContent = `
-        .btn-menu-item.nostra-profile-menu-item {
+        .btn-menu-item.phantomchat-profile-menu-item {
           height: auto;
           min-height: 52px;
           padding-top: 0.5rem;
@@ -963,11 +963,11 @@ export class AppSidebarLeft extends SidebarSlider {
     }
 
     const wrap = document.createElement('div');
-    wrap.classList.add('nostra-profile-menu-entry');
+    wrap.classList.add('phantomchat-profile-menu-entry');
     wrap.style.cssText = 'display:flex;align-items:center;gap:0.75rem;padding:0;width:100%';
 
     const avatar = document.createElement('img');
-    avatar.classList.add('nostra-profile-menu-entry-avatar');
+    avatar.classList.add('phantomchat-profile-menu-entry-avatar');
     avatar.style.cssText = 'width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0';
 
     const text = document.createElement('div');
@@ -982,7 +982,7 @@ export class AppSidebarLeft extends SidebarSlider {
     // Does NOT depend on the Solid identity store — dev-mode HMR can create
     // a second rootScope instance whose store listeners never fire. We read
     // the profile cache directly (localStorage-backed, same key that
-    // `saveOwnProfileLocal` writes) and listen to `nostra_identity_updated`
+    // `saveOwnProfileLocal` writes) and listen to `phantomchat_identity_updated`
     // to react when the cache is refreshed (save / relay hydrate).
     let hasRealPicture = false;
 
@@ -999,15 +999,15 @@ export class AppSidebarLeft extends SidebarSlider {
     };
 
     render();
-    rootScope.addEventListener('nostra_identity_updated', render);
-    rootScope.addEventListener('nostra_identity_loaded', render);
+    rootScope.addEventListener('phantomchat_identity_updated', render);
+    rootScope.addEventListener('phantomchat_identity_loaded', render);
 
     // First-paint guarantee: decode the npub from encrypted storage and
     // render a dicebear avatar immediately so the slot is never blank on
     // fresh onboarding (no cache, no kind 0 picture yet).
     (async() => {
       try {
-        const {loadEncryptedIdentity} = await import('@lib/nostra/key-storage');
+        const {loadEncryptedIdentity} = await import('@lib/phantomchat/key-storage');
         const record = await loadEncryptedIdentity();
         if(!record?.npub) return;
 
@@ -1036,7 +1036,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
     const onNewGroupClick = () => {
       closeTabsBefore(async() => {
-        const {default: AppNostraNewGroupTab} = await import('@components/sidebarLeft/tabs/nostraNewGroup');
+        const {default: AppPhantomChatNewGroupTab} = await import('@components/sidebarLeft/tabs/phantomchatNewGroup');
         const tab = this.createTab(AppAddMembersTab);
         tab.open({
           type: 'chat',
@@ -1044,7 +1044,7 @@ export class AppSidebarLeft extends SidebarSlider {
           title: 'GroupAddMembers',
           placeholder: 'SendMessageTo',
           takeOut: (peerIds) => {
-            return this.createTab(AppNostraNewGroupTab).open({peerIds});
+            return this.createTab(AppPhantomChatNewGroupTab).open({peerIds});
           }
         });
       });
@@ -1109,7 +1109,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
   private async handleNpubInput(npub: string) {
     try {
-      const {addP2PContact} = await import('@lib/nostra/add-p2p-contact');
+      const {addP2PContact} = await import('@lib/phantomchat/add-p2p-contact');
       const {toast} = await import('@components/toast');
 
       const result = await addP2PContact({
@@ -1121,16 +1121,16 @@ export class AppSidebarLeft extends SidebarSlider {
       toast('Contact added: ' + result.displayName);
       simulateClickEvent(this.backBtn);
     } catch(err) {
-      console.error('[Nostra.chat] failed to add contact from npub:', err);
+      console.error('[PhantomChat.chat] failed to add contact from npub:', err);
       const {toast} = await import('@components/toast');
       toast('Invalid npub format');
     }
   }
 
   private mountStatusIcons(): void {
-    // Mount Nostra.chat status icons (Tor + Relay) in the search bar
+    // Mount PhantomChat.chat status icons (Tor + Relay) in the search bar
     Promise.all([
-      import('@components/nostra/SearchBarStatusIcons'),
+      import('@components/phantomchat/SearchBarStatusIcons'),
       import('solid-js/web')
     ]).then(([{default: SearchBarStatusIcons}, {render}]) => {
       const searchContainer = this.inputSearch.container;
@@ -1156,12 +1156,12 @@ export class AppSidebarLeft extends SidebarSlider {
     Promise.all([
       import('@components/popups/torStatus'),
       import('solid-js/web'),
-      import('@components/nostra/tor-ui-state')
+      import('@components/phantomchat/tor-ui-state')
     ]).then(([{default: TorStatus}, {render}, {computeTorUiState}]) => {
       // Gather relay states from pool. Prefer getRelayStates() (canonical
       // {url, connected, latencyMs, read, write} shape) and fall back to
       // getRelayEntries() + config unpacking for older pool builds.
-      const pool = (window as any).__nostraPool;
+      const pool = (window as any).__phantomchatPool;
       let relayStates: any[] = [];
       try {
         if(typeof pool?.getRelayStates === 'function') {
@@ -1432,7 +1432,7 @@ export class AppSidebarLeft extends SidebarSlider {
     };
 
     this.inputSearch.onChange = (value) => {
-      // [Nostra.chat] Detect npub paste and open AddContact flow
+      // [PhantomChat.chat] Detect npub paste and open AddContact flow
       if(value && value.startsWith('npub1') && value.length >= 60) {
         this.handleNpubInput(value.trim());
         return;
@@ -1755,7 +1755,7 @@ export default appSidebarLeft;
 
 function getVersionLink() {
   const btnMenuFooter = document.createElement('a');
-  btnMenuFooter.href = `https://github.com/nostra-chat/nostra-chat/releases/tag/v${App.version}`;
+  btnMenuFooter.href = `https://github.com/phantomchat-chat/phantomchat-chat/releases/tag/v${App.version}`;
   setBlankToAnchor(btnMenuFooter);
   btnMenuFooter.classList.add('btn-menu-footer');
   btnMenuFooter.addEventListener(CLICK_EVENT_NAME, (e) => {

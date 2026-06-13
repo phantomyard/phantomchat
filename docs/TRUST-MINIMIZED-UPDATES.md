@@ -6,7 +6,7 @@
 
 ## Problem
 
-Nostra.chat is a PWA served from multiple mirrors (Cloudflare, GitHub Pages, IPFS).
+PhantomChat.chat is a PWA served from multiple mirrors (Cloudflare, GitHub Pages, IPFS).
 A Service Worker auto-updates the app in the background. This is the standard PWA
 model, but it has a serious weakness for a privacy-focused, censorship-resistant
 messenger: **the user has no way to know whether a new release was backdoored**
@@ -112,7 +112,7 @@ The maintainer publishes, for every release, a Nostr event containing:
     ["git-tag", "v0.3.0"],
     ["cid", "bafy..."],
     ["sha256", "..."],
-    ["changelog-url", "https://github.com/nostra-chat/nostra-chat/releases/tag/v0.3.0"]
+    ["changelog-url", "https://github.com/phantomchat-chat/phantomchat-chat/releases/tag/v0.3.0"]
   ],
   "content": "<optional human-readable release notes>"
 }
@@ -139,7 +139,7 @@ their own Nostr event:
     ["cid", "bafy..."],
     ["result", "pass"],
     ["scope", "full" | "diff-only"],
-    ["review-url", "https://example.org/audit-reports/nostra-chat-v0.3.0.pdf"]
+    ["review-url", "https://example.org/audit-reports/phantomchat-chat-v0.3.0.pdf"]
   ],
   "content": "<auditor's comments>"
 }
@@ -279,13 +279,13 @@ hijack and domain takeover. Phase D is what defeats maintainer compromise.
 - [NIP-33 — Parameterized replaceable events](https://github.com/nostr-protocol/nips/blob/master/33.md)
 - [W3C Discussion — PWA code signing (various threads)](https://github.com/w3c/manifest/)
 
-## Related work in the Nostra.chat codebase
+## Related work in the PhantomChat.chat codebase
 
 This document is a **design proposal only**. No code has been written for it.
 When implementation begins, entry points will likely be:
 
 - `src/lib/serviceWorker/` — intercept SW update lifecycle
-- `src/lib/nostra/chat-api.ts` — reuse existing relay pool for attestation fetch
+- `src/lib/phantomchat/chat-api.ts` — reuse existing relay pool for attestation fetch
 - `src/components/popups/` — update prompt UI
 - `src/config/state.ts` — persist `UpdatePolicy`
-- A new module `src/lib/nostra/update-verifier.ts` for the core verification logic
+- A new module `src/lib/phantomchat/update-verifier.ts` for the core verification logic

@@ -164,7 +164,7 @@ export default class PopupStarGiftValue extends PopupElement {
           key={
             value.pFlags.value_is_average ? 'StarGiftValueAboutAverage' :
             value.pFlags.last_sale_on_fragment ? 'StarGiftValueAboutLastFragment' :
-            'StarGiftValueAboutLastNostra'
+            'StarGiftValueAboutLastPhantomChat'
           }
           args={[gift.title]}
         />
@@ -189,7 +189,7 @@ export default class PopupStarGiftValue extends PopupElement {
               })}
             >
               <I18nTsx
-                key="StarGiftViewResaleNostra"
+                key="StarGiftViewResalePhantomChat"
                 args={[
                   <span>
                     {value.listed_count}

@@ -1,9 +1,9 @@
 /*
- * Nostra.chat — Profile "NIP-05 Identity" section
+ * PhantomChat.chat — Profile "NIP-05 Identity" section
  *
  * Extracted from AppEditProfileTab. Owns the alias input, dynamic setup
  * instructions, verify button, and status indicator. Dispatches
- * nostra_identity_updated on successful verification.
+ * phantomchat_identity_updated on successful verification.
  */
 
 import InputField from '@components/inputField';
@@ -13,9 +13,9 @@ import {attachClickEvent} from '@helpers/dom/clickEvent';
 import type ListenerSetter from '@helpers/listenerSetter';
 import rootScope from '@lib/rootScope';
 import {toast} from '@components/toast';
-import {decodePubkey} from '@lib/nostra/nostr-identity';
-import {verifyNip05, buildNip05Instructions} from '@lib/nostra/nip05';
-import type {Nip05Status} from '@lib/nostra/nip05';
+import {decodePubkey} from '@lib/phantomchat/nostr-identity';
+import {verifyNip05, buildNip05Instructions} from '@lib/phantomchat/nip05';
+import type {Nip05Status} from '@lib/phantomchat/nip05';
 
 export interface Nip05Section {
   /** The SettingSection container to append to the tab's scrollable. */
@@ -73,7 +73,7 @@ export function createNip05Section(opts: {
     if(result.ok) {
       status = 'verified';
       updateStatusDisplay(statusEl, status);
-      rootScope.dispatchEvent('nostra_identity_updated', {nip05: alias});
+      rootScope.dispatchEvent('phantomchat_identity_updated', {nip05: alias});
       toast('NIP-05 verified');
     } else {
       status = 'failed';

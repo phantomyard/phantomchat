@@ -23,9 +23,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TESTS=(
   # NOTE: e2e-push-bilateral.ts is intentionally excluded here.
-  # It is an online-only test that requires push.nostra.chat to be reachable
+  # It is an online-only test that requires push.phantomchat.chat to be reachable
   # and a live Nostr relay. Run it separately: `pnpm test:e2e:push`
-  # Skip with NOSTRA_PUSH_E2E_OFFLINE=1 when offline.
+  # Skip with PHANTOMCHAT_PUSH_E2E_OFFLINE=1 when offline.
 
   # Run dev-boot-smoke first: fastest, cheapest, catches regressions that
   # would silently break every other test's prerequisites (onboarding mount).

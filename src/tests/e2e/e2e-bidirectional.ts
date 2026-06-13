@@ -46,7 +46,7 @@ async function dismissViteOverlay(page: Page) {
 
 async function getRelayStatus(page: Page): Promise<any> {
   return page.evaluate(() => {
-    const ca = (window as any).__nostraChatAPI;
+    const ca = (window as any).__phantomchatChatAPI;
     if(!ca) return {error: 'no ChatAPI'};
     const pool = (ca as any).relayPool;
     if(!pool) return {error: 'no relay pool'};
@@ -244,7 +244,7 @@ async function waitForChatAPIReady(page: Page, timeoutMs = 10000): Promise<boole
   const deadline = Date.now() + timeoutMs;
   while(Date.now() < deadline) {
     const ok = await page.evaluate(() => {
-      const ca = (window as any).__nostraChatAPI;
+      const ca = (window as any).__phantomchatChatAPI;
       if(!ca) return false;
       const entries = ca.relayPool?.relayEntries || [];
       const connected = entries.filter((e: any) => e.instance?.connectionState === 'connected').length;
@@ -299,13 +299,13 @@ async function main() {
   const logsB: string[] = [];
   pageA.on('console', (msg) => {
     const t = msg.text();
-    if(t.includes('[ChatAPI]') || t.includes('[NostrRelay]') || t.includes('[NostraSync]') || t.includes('[NostraOnboarding') || t.includes('[VirtualMTProto') || t.includes('message published') || t.includes('text sent') || t.includes('history_append')) {
+    if(t.includes('[ChatAPI]') || t.includes('[NostrRelay]') || t.includes('[PhantomChatSync]') || t.includes('[PhantomChatOnboarding') || t.includes('[VirtualMTProto') || t.includes('message published') || t.includes('text sent') || t.includes('history_append')) {
       logsA.push(`[A] ${t}`);
     }
   });
   pageB.on('console', (msg) => {
     const t = msg.text();
-    if(t.includes('[ChatAPI]') || t.includes('[NostrRelay]') || t.includes('[NostraSync]') || t.includes('[NostraOnboarding') || t.includes('[VirtualMTProto') || t.includes('message published') || t.includes('text sent') || t.includes('history_append') || t.includes('isKnownContact') || t.includes('onMessage callback') || t.includes('nostra_new_message') || t.includes('unknown sender')) {
+    if(t.includes('[ChatAPI]') || t.includes('[NostrRelay]') || t.includes('[PhantomChatSync]') || t.includes('[PhantomChatOnboarding') || t.includes('[VirtualMTProto') || t.includes('message published') || t.includes('text sent') || t.includes('history_append') || t.includes('isKnownContact') || t.includes('onMessage callback') || t.includes('phantomchat_new_message') || t.includes('unknown sender')) {
       logsB.push(`[B] ${t}`);
     }
   });
@@ -524,7 +524,7 @@ async function main() {
   } finally {
     // Always print diagnostic logs, even on error — filter out noisy relay state events
     const filterNoise = (l: string) =>
-      !l.includes('MTPROTO') && !l.includes('relay_state') && !l.includes('nostra_relay_state');
+      !l.includes('MTPROTO') && !l.includes('relay_state') && !l.includes('phantomchat_relay_state');
     console.log('\n=== User A relevant logs (filtered) ===');
     logsA.filter(filterNoise).forEach((l) => console.log('  ' + l));
     console.log('\n=== User B relevant logs (filtered) ===');

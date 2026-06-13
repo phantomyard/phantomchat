@@ -1,5 +1,5 @@
 /*
- * Nostra.chat Privacy & Security settings
+ * PhantomChat.chat Privacy & Security settings
  * Replaces Telegram's MTProto-dependent privacy settings with
  * Nostr-relevant security options.
  */
@@ -9,9 +9,9 @@ import SettingSection from '@components/settingSection';
 import Row from '@components/row';
 import rootScope from '@lib/rootScope';
 import CheckboxField from '@components/checkboxField';
-import AppNostraSecurityTab from '@components/sidebarLeft/tabs/nostraSecurity';
-import AppNostraSeedPhraseTab from '@components/sidebarLeft/tabs/nostraSeedPhrase';
-import {PrivacyTransport} from '@lib/nostra/privacy-transport';
+import AppPhantomChatSecurityTab from '@components/sidebarLeft/tabs/phantomchatSecurity';
+import AppPhantomChatSeedPhraseTab from '@components/sidebarLeft/tabs/phantomchatSeedPhrase';
+import {PrivacyTransport} from '@lib/phantomchat/privacy-transport';
 
 export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
   public static getInitArgs(fromTab: SliderSuperTab) {
@@ -77,7 +77,7 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
       for(const [m, cb] of checkboxes) {
         cb.setValueSilently(m === next);
       }
-      const transport = (window as any).__nostraPrivacyTransport;
+      const transport = (window as any).__phantomchatPrivacyTransport;
       if(transport?.setMode) {
         await transport.setMode(next);
       } else {
@@ -94,8 +94,8 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
       subtitle: 'Direct connections between contacts',
       icon: 'link',
       clickable: async() => {
-        const {default: AppNostraMeshSettingsTab} = await import('@components/sidebarLeft/tabs/nostraMeshSettings');
-        const tab = new AppNostraMeshSettingsTab(this.slider);
+        const {default: AppPhantomChatMeshSettingsTab} = await import('@components/sidebarLeft/tabs/phantomchatMeshSettings');
+        const tab = new AppPhantomChatMeshSettingsTab(this.slider);
         tab.open();
       },
       listenerSetter: this.listenerSetter
@@ -114,7 +114,7 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
       subtitle: 'Protect your seed phrase with a PIN or passphrase',
       icon: 'lock',
       clickable: () => {
-        const tab = this.slider.createTab(AppNostraSecurityTab);
+        const tab = this.slider.createTab(AppPhantomChatSecurityTab);
         tab.open();
       },
       listenerSetter: this.listenerSetter
@@ -125,7 +125,7 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
       subtitle: 'View your 12-word backup to restore access',
       icon: 'key',
       clickable: () => {
-        const tab = this.slider.createTab(AppNostraSeedPhraseTab);
+        const tab = this.slider.createTab(AppPhantomChatSeedPhraseTab);
         tab.open();
       },
       listenerSetter: this.listenerSetter
@@ -133,7 +133,7 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
 
     securitySection.content.append(keyProtectionRow.container, recoveryPhraseRow.container);
 
-    // Section 2: Read Receipts (Nostra.chat-specific)
+    // Section 2: Read Receipts (PhantomChat.chat-specific)
     const privacySection = new SettingSection({
       name: 'Privacy' as any
     });
@@ -150,12 +150,12 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
 
     readReceiptsRow.checkboxField.input.addEventListener('change', () => {
       const enabled = readReceiptsRow.checkboxField.checked;
-      rootScope.dispatchEvent('nostra_read_receipts_toggle', enabled);
+      rootScope.dispatchEvent('phantomchat_read_receipts_toggle', enabled);
     });
 
     // Check current state from localStorage
     try {
-      const stored = localStorage.getItem('nostra:read-receipts-enabled');
+      const stored = localStorage.getItem('phantomchat:read-receipts-enabled');
       if(stored === 'false') {
         readReceiptsRow.checkboxField.checked = false;
       }
@@ -193,7 +193,7 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
               isDanger: true
             }
           });
-          indexedDB.deleteDatabase('Nostra.chat');
+          indexedDB.deleteDatabase('PhantomChat.chat');
           location.reload();
         } catch{}
       },

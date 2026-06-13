@@ -62,7 +62,7 @@ async function addPeerAsContact(page: Page, peerNpub: string, peerName: string):
       (Number.prototype as any).toChatId = function() { return Math.abs(+this); };
       (Number.prototype as any).isPeerId = function() { return true; };
     }
-    const {addP2PContact} = await import('/src/lib/nostra/add-p2p-contact.ts');
+    const {addP2PContact} = await import('/src/lib/phantomchat/add-p2p-contact.ts');
     await addP2PContact({pubkey: pk, nickname: nm, source: 'e2e-read-cursor'});
   }, {pk: peerNpub, nm: peerName});
 }
@@ -127,7 +127,7 @@ async function callReadHistory(page: Page, peerId: number, maxId: number): Promi
 
 async function countArrivedMessages(page: Page, contents: string[]): Promise<number> {
   return await page.evaluate(async(expected) => {
-    const req = indexedDB.open('nostra-messages');
+    const req = indexedDB.open('phantomchat-messages');
     const db: IDBDatabase = await new Promise((r, rj) => {
       req.onsuccess = () => r(req.result);
       req.onerror = () => rj(req.error);
@@ -152,8 +152,8 @@ async function main() {
   const browser = await chromium.launch(launchOptions);
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
-  await ctxA.addInitScript((url) => { (window as any).__nostraTestRelays = [{url, read: true, write: true}]; }, relay.url);
-  await ctxB.addInitScript((url) => { (window as any).__nostraTestRelays = [{url, read: true, write: true}]; }, relay.url);
+  await ctxA.addInitScript((url) => { (window as any).__phantomchatTestRelays = [{url, read: true, write: true}]; }, relay.url);
+  await ctxB.addInitScript((url) => { (window as any).__phantomchatTestRelays = [{url, read: true, write: true}]; }, relay.url);
 
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();

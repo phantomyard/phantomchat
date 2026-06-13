@@ -5,7 +5,7 @@ import {describe, expect, it} from 'vitest';
  *
  * The fixer subagent MUST emit this JSON to `$FIND_DIR/fix-attempt-1/classification.json`
  * before doing anything else. This test validates the shape — the actual fixer agent
- * lives in `.claude/agents/nostra-fixer.md` and produces this artifact at runtime.
+ * lives in `.claude/agents/phantomchat-fixer.md` and produces this artifact at runtime.
  */
 
 const ALLOWED = ['ui-cosmetic', 'i18n', 'timeout-bump', 'logic-pure', 'css-style'] as const;

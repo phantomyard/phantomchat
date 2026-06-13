@@ -1,4 +1,4 @@
-# ARCHITECTURE.md — Nostra.chat deep notes
+# ARCHITECTURE.md — PhantomChat.chat deep notes
 
 Companion to `CLAUDE.md` in the repo root. Read `CLAUDE.md` first for core rules, commands, and the middleware rules table. This file contains deeper architecture notes that are only relevant when you're actively working on the corresponding subsystem.
 
@@ -16,13 +16,13 @@ Companion to `CLAUDE.md` in the repo root. Read `CLAUDE.md` first for core rules
 
 ## Tor WASM runtime (webtor-rs)
 
-- `ChatAPI` owns its OWN `NostrRelayPool` separate from `NostraBridge._relayPool`. Privacy/startup gates must touch BOTH — `chatAPI.initGlobalSubscription()` bypasses the bridge pool.
+- `ChatAPI` owns its OWN `NostrRelayPool` separate from `PhantomChatBridge._relayPool`. Privacy/startup gates must touch BOTH — `chatAPI.initGlobalSubscription()` bypasses the bridge pool.
 - `PrivacyTransport.waitUntilSettled()` is the authoritative gate (resolves on `active`/`direct`/`failed`). Defer ALL network-touching init behind it when Tor is enabled — no WebSocket must leak the user's IP during the 30-40s bootstrap window.
 - Tor consensus files: `public/webtor/consensus.br.bin` + `microdescriptors.br.bin`. Refresh with `pnpm run update-tor-consensus` (runs automatically only via `pnpm build:release`, which CI invokes — plain `pnpm build` uses the committed snapshot so dev builds are reproducible and don't mutate `public/webtor/`). **Do NOT rename to `.br`** — Vite auto-sets `Content-Encoding: br` for `.br` files, the browser pre-decompresses before the WASM fetch shim sees the bytes, and consensus load fails with `Invalid Data`.
 - `webtor-fallback.ts` rewrites stale `privacy-ethereum.github.io/webtor-rs/*` URLs to local `/webtor/*.br.bin` and caches them in `CacheStorage` (2h TTL via `tor-consensus-cache.ts`). Staleness symptom: `Failed to extend to middle: Circuit-extension handshake authentication failed`.
 - **Never timeout `WebtorClient.fetch()` with `Promise.race`** — arti serializes concurrent callers inside WASM and abandoned promises don't free the stream, wedging the client. Bootstrap retries only via fresh `WebtorClient` (not `abort()`); `PrivacyTransport.bootstrap()` already retries 4× with new clients.
 - Tor HTTP polling (`NostrRelay.startHttpPolling`) chains via `setTimeout` in a `finally` block, never `setInterval` — a 3s interval with 45s per-fetch timeouts saturates the WASM tunnel.
-- Debug handles: `window.__nostraTransport`, `__nostraPool`, `__nostraPrivacyTransport`. Access private `webtorClient` via `(t as any).webtorClient`.
+- Debug handles: `window.__phantomchatTransport`, `__phantomchatPool`, `__phantomchatPrivacyTransport`. Access private `webtorClient` via `(t as any).webtorClient`.
 
 ---
 
@@ -30,9 +30,9 @@ Companion to `CLAUDE.md` in the repo root. Read `CLAUDE.md` first for core rules
 
 **Commands:**
 - TS check: `npx tsc --noEmit 2>&1 | grep "error TS"` (Vite checker may show stale cached errors). Expect ~30 pre-existing errors from `@vendor/emoji`, `@vendor/bezierEasing`.
-- Unit tests: `npx vitest run src/tests/nostra/` — peer mapper, VMT server, sync, relay pool, crypto.
-- `pnpm test:nostra:quick` lists files explicitly — add new tests there or they won't run in the fast path.
-- `pnpm test:nostra` runs 78 files / 1044 tests. Must exit with 0 failures and 0 unhandled errors.
+- Unit tests: `npx vitest run src/tests/phantomchat/` — peer mapper, VMT server, sync, relay pool, crypto.
+- `pnpm test:phantomchat:quick` lists files explicitly — add new tests there or they won't run in the fast path.
+- `pnpm test:phantomchat` runs 78 files / 1044 tests. Must exit with 0 failures and 0 unhandled errors.
 
 **Vitest quirks** (`isolate: false` + `threads: false` — shared module registry across files):
 - `vi.mock()` factories persist across files. Use `mockImplementation()` in `beforeEach`, not shared state.
@@ -48,10 +48,10 @@ Companion to `CLAUDE.md` in the repo root. Read `CLAUDE.md` first for core rules
 - Parallel dev servers: `pnpm exec vite --force --port <8090-8099> --strictPort`.
 
 **Runtime access:**
-- Use `rs.managers.appMessagesManager.*` (imported from `@lib/rootScope`). `apiManagerProxy.managers` is the IPC proxy class, NOT the namespace. `rs.managers` is undefined during early boot — wait for `window.__nostraChatAPI` first.
+- Use `rs.managers.appMessagesManager.*` (imported from `@lib/rootScope`). `apiManagerProxy.managers` is the IPC proxy class, NOT the namespace. `rs.managers` is undefined during early boot — wait for `window.__phantomchatChatAPI` first.
 - Injecting synthetic P2P peers needs `storeMapping(pubkey, peerId, displayName)` from `virtual-peers-db.ts`. Without persistence, VMT's `getPubkey(peerId)` returns null and bridge calls silently return `emptyUpdates`.
-- Playwright console filter must exclude `MTPROTO`, `relay_state`, `nostra_relay_state` noise. Include only: `[ChatAPI]`, `[NostrRelay]`, `[NostraSync]`, `[NostraOnboarding`, `[VirtualMTProto`.
-- **Tests can pass for the wrong reason.** Seeding `nostra-profile-cache` via `localStorage.setItem` and reloading bypasses the entire signal/dispatch chain via `loadCachedProfile()`. A green test here does NOT prove the fresh-onboarding path works — verify in a real browser (chrome-devtools MCP with `new_page`/`isolatedContext`) before claiming a signal-dependent bug is fixed.
+- Playwright console filter must exclude `MTPROTO`, `relay_state`, `phantomchat_relay_state` noise. Include only: `[ChatAPI]`, `[NostrRelay]`, `[PhantomChatSync]`, `[PhantomChatOnboarding`, `[VirtualMTProto`.
+- **Tests can pass for the wrong reason.** Seeding `phantomchat-profile-cache` via `localStorage.setItem` and reloading bypasses the entire signal/dispatch chain via `loadCachedProfile()`. A green test here does NOT prove the fresh-onboarding path works — verify in a real browser (chrome-devtools MCP with `new_page`/`isolatedContext`) before claiming a signal-dependent bug is fixed.
 
 ---
 
@@ -87,7 +87,7 @@ Solid uses event delegation, so **synthetic clicks do not fire delegated handler
 - To trigger edit mode: call `appImManager.chat.input.initMessageEditing(mid)` directly, then fill input and click `button.btn-send`.
 
 **Local relay & network:**
-- `LocalRelay` (`src/tests/e2e/helpers/local-relay.ts`) manages a strfry Docker container on `ws://localhost:7777`. `relay.injectInto(ctx)` overrides `DEFAULT_RELAYS` via `window.__nostraTestRelays` (set before page load via `addInitScript`). Uses `--user $(id -u):$(id -g)` + `--tmpfs /app/strfry-db` (RAM-backed, no stale data, no root cleanup).
+- `LocalRelay` (`src/tests/e2e/helpers/local-relay.ts`) manages a strfry Docker container on `ws://localhost:7777`. `relay.injectInto(ctx)` overrides `DEFAULT_RELAYS` via `window.__phantomchatTestRelays` (set before page load via `addInitScript`). Uses `--user $(id -u):$(id -g)` + `--tmpfs /app/strfry-db` (RAM-backed, no stale data, no root cleanup).
 - Public relay propagation needs **30s** timeout. damus.io + nos.lol reliable; snort.social + nostr.band frequently down.
 - Bidirectional tests need two separate `browser.newContext()` for isolated storage.
 - When filtering WebSocket traffic (`page.on('websocket')`), exclude `ws://localhost:*` — Vite HMR pollutes assertions.
@@ -101,14 +101,14 @@ Solid uses event delegation, so **synthetic clicks do not fire delegated handler
 
 ## Own Profile Sync (cache-first SWR)
 
-- Source of truth: relay. Cache: `localStorage.nostra-profile-cache` (`{profile, created_at}`).
-- `src/lib/nostra/own-profile-sync.ts` exposes `hydrateOwnProfileFromCache()` (sync read + dispatch `nostra_identity_updated`), `refreshOwnProfileFromRelays(pubkey)` (background fetch, newest `created_at` wins), `saveOwnProfileLocal(profile, created_at)` (optimistic update before publish).
-- Boot: `nostra-onboarding-integration.ts` hydrates then refreshes in background. Save: `editProfile` calls `saveOwnProfileLocal` before `publishKind0Metadata`.
-- `useNostraIdentity()` exposes `about`, `website`, `lud16`, `banner` alongside `npub`, `displayName`, `nip05`, `picture` — driven by `nostra_identity_loaded`/`_updated` in `src/stores/nostraIdentity.ts`.
+- Source of truth: relay. Cache: `localStorage.phantomchat-profile-cache` (`{profile, created_at}`).
+- `src/lib/phantomchat/own-profile-sync.ts` exposes `hydrateOwnProfileFromCache()` (sync read + dispatch `phantomchat_identity_updated`), `refreshOwnProfileFromRelays(pubkey)` (background fetch, newest `created_at` wins), `saveOwnProfileLocal(profile, created_at)` (optimistic update before publish).
+- Boot: `phantomchat-onboarding-integration.ts` hydrates then refreshes in background. Save: `editProfile` calls `saveOwnProfileLocal` before `publishKind0Metadata`.
+- `usePhantomChatIdentity()` exposes `about`, `website`, `lud16`, `banner` alongside `npub`, `displayName`, `nip05`, `picture` — driven by `phantomchat_identity_loaded`/`_updated` in `src/stores/phantomchatIdentity.ts`.
 - Conflict resolution: `fetchOwnKind0(pubkey)` queries all relays in parallel, returns highest `created_at`; cache updates only when relay is newer.
 - **Do NOT add plain localStorage stopgaps** for new profile fields — they must flow through `saveOwnProfileLocal` → kind 0 publish to survive multi-device.
-- Legacy `nostra-profile-extras` key auto-migrates and deletes on first read.
-- **Kind 0 republish on boot must merge cached fields.** `nostra-onboarding-integration.ts` publishes kind 0 ~3s after mount. Sending only `display_name`+`name` clobbers `picture`/`about`/`nip05`/`website`/`lud16`/`banner` on the relay — then `refreshOwnProfileFromRelays` overwrites the local cache with the stripped version on the next boot. Always merge `loadCachedProfile()` fields into the republish, and skip entirely when `fetchOwnKind0` shows the relay is already current.
+- Legacy `phantomchat-profile-extras` key auto-migrates and deletes on first read.
+- **Kind 0 republish on boot must merge cached fields.** `phantomchat-onboarding-integration.ts` publishes kind 0 ~3s after mount. Sending only `display_name`+`name` clobbers `picture`/`about`/`nip05`/`website`/`lud16`/`banner` on the relay — then `refreshOwnProfileFromRelays` overwrites the local cache with the stripped version on the next boot. Always merge `loadCachedProfile()` fields into the republish, and skip entirely when `fetchOwnKind0` shows the relay is already current.
 
 ---
 
@@ -123,7 +123,7 @@ Solid uses event delegation, so **synthetic clicks do not fire delegated handler
 
 ## Blossom Avatar Upload
 
-- `src/lib/nostra/blossom-upload.ts` → `uploadToBlossom(blob, privkeyHex)`. Signs NIP-24242 (kind 24242), PUTs to fallback chain: `blossom.primal.net` → `cdn.satellite.earth` → `blossom.band`.
+- `src/lib/phantomchat/blossom-upload.ts` → `uploadToBlossom(blob, privkeyHex)`. Signs NIP-24242 (kind 24242), PUTs to fallback chain: `blossom.primal.net` → `cdn.satellite.earth` → `blossom.band`.
 - Avatar `Blob` exposed via `EditPeer.lastAvatarBlob` (widened `AvatarEdit.onChange`). `EditPeer.uploadAvatar()` is MTProto-only, NOT used here.
 - SHA-256 via Web Crypto (`crypto.subtle.digest`), no `@noble/hashes` / `blossom-client-sdk` deps.
 
@@ -134,4 +134,4 @@ Solid uses event delegation, so **synthetic clicks do not fire delegated handler
 The PWA service worker (`src/lib/serviceWorker/index.service.ts`) is stock Telegram Web K behaviour: `skipWaiting()` on install, `caches.delete(CACHE_ASSETS_NAME)` + `clients.claim()` on activate, asset caching via `requestCache` (`cachedAssets`). There is no signed-manifest / multi-source integrity / consent-gated update system — updates ship via a normal GitHub Pages redeploy and the sidebar "Update" button (driven by the `/version` poll) prompts a reload. See `docs/RELEASE.md`.
 
 **Dev-mode gates (`pnpm start`):**
-- `resetLocalData.ts` must `await import('@components/confirmationPopup')` lazily. A static import pulls in `popups/index` → `popups/peer`, creating a circular-init race in Vite dev's ESM graph that throws `ReferenceError: Cannot access 'PopupPeer' before initialization` at `popups/mute.ts`'s `extends PopupPeer` line. `clearAllExceptSeed` from `nostra-cleanup.ts` is also lazy-imported for the same reason.
+- `resetLocalData.ts` must `await import('@components/confirmationPopup')` lazily. A static import pulls in `popups/index` → `popups/peer`, creating a circular-init race in Vite dev's ESM graph that throws `ReferenceError: Cannot access 'PopupPeer' before initialization` at `popups/mute.ts`'s `extends PopupPeer` line. `clearAllExceptSeed` from `phantomchat-cleanup.ts` is also lazy-imported for the same reason.

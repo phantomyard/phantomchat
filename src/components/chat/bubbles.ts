@@ -1210,11 +1210,11 @@ export default class ChatBubbles {
       });
     }
 
-    // Nostra P2P reactions render path — sibling of messages_reactions (tweb).
-    // Dispatched by nostra-reactions-local shim on store mutation. Use the
+    // PhantomChat P2P reactions render path — sibling of messages_reactions (tweb).
+    // Dispatched by phantomchat-reactions-local shim on store mutation. Use the
     // fresh read so the render sees the committed store state, not the
     // previous cache snapshot (which lags by one dispatch — FIND-bbf8efa8).
-    this.listenerSetter.add(rootScope)('nostra_reactions_changed', async({peerId, mid}) => {
+    this.listenerSetter.add(rootScope)('phantomchat_reactions_changed', async({peerId, mid}) => {
       if(!this.peerId || this.peerId !== peerId) return;
       const bubble = this.getBubble(peerId as PeerId, mid);
       if(!bubble) return;
@@ -1222,22 +1222,22 @@ export default class ChatBubbles {
       // peerIds (negative, |peerId| >= 2e15 in GROUP_PEER_BASE). Without the
       // group branch, FIND-fcfcdec0 #2 — group reactions never re-rendered
       // because the gate matched only positive peerIds and silently dropped
-      // every group event even though nostraReactionsStore had the row.
+      // every group event even though phantomchatReactionsStore had the row.
       const numericPeer = Number(peerId);
-      const isNostraDM = numericPeer >= 1e15;
-      const isNostraGroup = numericPeer <= -2e15;
-      if(isNostraDM || isNostraGroup) {
+      const isPhantomChatDM = numericPeer >= 1e15;
+      const isPhantomChatGroup = numericPeer <= -2e15;
+      if(isPhantomChatDM || isPhantomChatGroup) {
         // WU-4 #15: this async listener's dynamic import can reject (e.g. the
         // chunk fetch fails while offline). Without a guard the rejection
         // escapes eventListenerBase (which only catches sync throws) as an
         // uncaught pageerror. Swallow + log; a missed re-render self-heals on
         // the next dispatch. Prod precaches the chunk so this is dev-reachable.
         try {
-          const {nostraReactionsLocal} = await import('@lib/nostra/nostra-reactions-local');
-          const emojis = await nostraReactionsLocal.getReactionsFresh(peerId as number, mid);
-          this.renderNostraReactions(bubble, emojis);
+          const {phantomchatReactionsLocal} = await import('@lib/phantomchat/phantomchat-reactions-local');
+          const emojis = await phantomchatReactionsLocal.getReactionsFresh(peerId as number, mid);
+          this.renderPhantomChatReactions(bubble, emojis);
         } catch(err) {
-          this.log.warn('nostra_reactions_changed re-render failed', err);
+          this.log.warn('phantomchat_reactions_changed re-render failed', err);
         }
       }
     });
@@ -1565,14 +1565,14 @@ export default class ChatBubbles {
   }
 
   public constructPeerHelpers() {
-    // [Nostra.chat] P2P file upload progress / failed / completed listeners.
+    // [PhantomChat.chat] P2P file upload progress / failed / completed listeners.
     // These update the in-flight media bubble with a progress bar and a retry
     // affordance on hard failure.
     const findBubbleByMid = (mid: number): HTMLElement | null => {
       return this.chatInner?.querySelector?.(`[data-mid="${mid}"]`) as HTMLElement | null;
     };
 
-    this.listenerSetter.add(rootScope)('nostra_file_upload_progress', ({peerId, mid, percent}) => {
+    this.listenerSetter.add(rootScope)('phantomchat_file_upload_progress', ({peerId, mid, percent}) => {
       if(peerId !== this.peerId) return;
       const bubble = findBubbleByMid(mid);
       if(!bubble) return;
@@ -1589,7 +1589,7 @@ export default class ChatBubbles {
       if(inner) inner.style.width = percent + '%';
     });
 
-    this.listenerSetter.add(rootScope)('nostra_file_upload_completed', ({peerId, mid}) => {
+    this.listenerSetter.add(rootScope)('phantomchat_file_upload_completed', ({peerId, mid}) => {
       if(peerId !== this.peerId) return;
       const bubble = findBubbleByMid(mid);
       if(!bubble) return;
@@ -1598,7 +1598,7 @@ export default class ChatBubbles {
       bubble.querySelector('.media-upload-retry')?.remove();
     });
 
-    this.listenerSetter.add(rootScope)('nostra_file_upload_failed', ({peerId, mid}) => {
+    this.listenerSetter.add(rootScope)('phantomchat_file_upload_failed', ({peerId, mid}) => {
       if(peerId !== this.peerId) return;
       const bubble = findBubbleByMid(mid);
       if(!bubble) return;
@@ -1610,7 +1610,7 @@ export default class ChatBubbles {
         retry.title = 'Retry';
         retry.addEventListener('click', (e) => {
           e.stopPropagation();
-          rootScope.dispatchEvent('nostra_retry_file_send', {peerId, mid});
+          rootScope.dispatchEvent('phantomchat_retry_file_send', {peerId, mid});
         });
         bubble.appendChild(retry);
       }
@@ -8774,11 +8774,11 @@ export default class ChatBubbles {
     }
   }
 
-  private renderNostraReactions(bubble: HTMLElement, emojis: string[]): void {
+  private renderPhantomChatReactions(bubble: HTMLElement, emojis: string[]): void {
     let container = bubble.querySelector(':scope > .reactions') as HTMLElement | null;
     if(!container) {
       container = document.createElement('div');
-      container.className = 'reactions nostra-reactions';
+      container.className = 'reactions phantomchat-reactions';
       bubble.appendChild(container);
     }
     container.textContent = emojis.join(' ');
@@ -9484,7 +9484,7 @@ export default class ChatBubbles {
 
         const loadPromises: Promise<any>[] = [];
         // doc can be undefined when the sticker backend has no greeting
-        // sticker (e.g. Nostra mode — backend is stubbed empty by design).
+        // sticker (e.g. PhantomChat mode — backend is stubbed empty by design).
         // wrapSticker dereferences doc.sticker unconditionally, so guard.
         if(doc) {
           await wrapSticker({

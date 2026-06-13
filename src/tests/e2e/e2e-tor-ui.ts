@@ -138,16 +138,16 @@ async function main() {
     });
     record('T1.3', 'Tor toggle shows IP status subtitle', hasSubtitle);
 
-    // T1.4: nostra_tor_state event updates subtitle reactively
+    // T1.4: phantomchat_tor_state event updates subtitle reactively
     const reactiveUpdate = await page.evaluate(() => {
       // Dispatch a state change and check if subtitle updates
-      const rootScope = (window as any).__nostraRootScope || (window as any).rootScope;
+      const rootScope = (window as any).__phantomchatRootScope || (window as any).rootScope;
       if(!rootScope?.dispatchEvent) return {tested: false, reason: 'no rootScope'};
 
       // Find the subtitle element text before
       const beforeText = document.body.textContent || '';
 
-      rootScope.dispatchEvent('nostra_tor_state', {state: 'active'});
+      rootScope.dispatchEvent('phantomchat_tor_state', {state: 'active'});
 
       // Small delay is needed for DOM update
       return new Promise(resolve => {
@@ -160,7 +160,7 @@ async function main() {
         }, 500);
       });
     });
-    record('T1.4', 'nostra_tor_state updates subtitle reactively',
+    record('T1.4', 'phantomchat_tor_state updates subtitle reactively',
       reactiveUpdate?.tested && reactiveUpdate?.hasActiveText,
       reactiveUpdate?.tested ? `active text: ${reactiveUpdate?.hasActiveText}` : reactiveUpdate?.reason);
 

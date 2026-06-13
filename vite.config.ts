@@ -162,19 +162,19 @@ export default defineConfig({
       '**/.{idea,git,cache,output,temp}/**',
       '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*',
       '**/solid/**',
-      '**/src/tests/nostra/e2e-chat.test.ts',
-      '**/src/tests/nostra/e2e-fallback.test.ts',
-      '**/src/tests/nostra/e2e-onboarding-integration.test.ts',
-      '**/src/tests/nostra/e2e-tor-messaging.test.ts',
-      '**/src/tests/nostra/e2e-tor-wasm.test.ts',
-      '**/src/tests/nostra/e2e-ui-flow.test.ts',
-      '**/src/tests/nostra/e2e-kind0-profile.test.ts',
+      '**/src/tests/phantomchat/e2e-chat.test.ts',
+      '**/src/tests/phantomchat/e2e-fallback.test.ts',
+      '**/src/tests/phantomchat/e2e-onboarding-integration.test.ts',
+      '**/src/tests/phantomchat/e2e-tor-messaging.test.ts',
+      '**/src/tests/phantomchat/e2e-tor-wasm.test.ts',
+      '**/src/tests/phantomchat/e2e-ui-flow.test.ts',
+      '**/src/tests/phantomchat/e2e-kind0-profile.test.ts',
       // Playwright E2E (imports @playwright/test + e2e/ browser helpers) that
       // lacks the e2e- prefix the rest of the list keyed on, so it slipped into
       // the unit run and crashed collection with "Playwright Test did not
       // expect test.describe()". Same browser-E2E tier as the e2e- files above.
-      '**/src/tests/nostra/reactions-nip25.test.ts',
-      '**/src/tests/nostra/i2p.test.ts',
+      '**/src/tests/phantomchat/reactions-nip25.test.ts',
+      '**/src/tests/phantomchat/i2p.test.ts',
       // Explorer browser/subprocess E2E: these launch Playwright Chromium or
       // spawn the `explorer:driver` (needs a running app server), so they
       // belong in a dedicated e2e job, not the jsdom unit gate. The 12 pure

@@ -104,7 +104,7 @@ async function main() {
       const t = msg.text();
       // Only flag errors that point back at the empty-tab bug (init throws).
       if(t.includes('open tab error') ||
-         (t.includes('classList') && t.includes('nostra'))) {
+         (t.includes('classList') && t.includes('phantomchat'))) {
         errors.push('console.error: ' + t);
       }
     }
@@ -141,7 +141,7 @@ async function main() {
     await page.screenshot({path: '/tmp/e2e-pin-result.png', fullPage: true});
 
     const diag = await page.evaluate(() => {
-      const tab = document.querySelector('.nostra-security-settings') as HTMLElement | null;
+      const tab = document.querySelector('.phantomchat-security-settings') as HTMLElement | null;
       if(!tab) return {found: false};
       const title = tab.querySelector('.sidebar-header__title')?.textContent?.trim() || '';
       const content = tab.querySelector('.sidebar-content') as HTMLElement | null;
@@ -158,7 +158,7 @@ async function main() {
     if(errors.length) console.log('Captured errors:', errors);
 
     if(!diag.found) {
-      console.error('FAIL: .nostra-security-settings tab not mounted');
+      console.error('FAIL: .phantomchat-security-settings tab not mounted');
       process.exit(1);
     }
     if(!diag.visible) {

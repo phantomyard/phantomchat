@@ -39,7 +39,7 @@ async function dismissViteOverlay(page: Page) {
 
 async function getRelayStatus(page: Page): Promise<any> {
   return page.evaluate(() => {
-    const ca = (window as any).__nostraChatAPI;
+    const ca = (window as any).__phantomchatChatAPI;
     if(!ca) return {error: 'no ChatAPI'};
     const pool = (ca as any).relayPool;
     if(!pool) return {error: 'no relay pool'};
@@ -443,7 +443,7 @@ async function test_2_1_to_2_4() {
     const hasSendLog = consoleLogs.some((l) => l.includes('[ChatAPI]') && l.includes('message published'));
     record('2.3', 'Console log contains "[ChatAPI] message published"',
       hasSendLog,
-      hasSendLog ? 'log found' : 'log not found in ' + consoleLogs.filter((l) => l.includes('Nostra') || l.includes('ChatAPI')).length + ' Nostra/ChatAPI logs. ' + failDiag);
+      hasSendLog ? 'log found' : 'log not found in ' + consoleLogs.filter((l) => l.includes('PhantomChat') || l.includes('ChatAPI')).length + ' PhantomChat/ChatAPI logs. ' + failDiag);
 
     // --- 2.4: Chat list preview shows message text (explicitly checking chat list preview) ---
     const backBtn = pageA.locator('.sidebar-close-button, button.btn-icon.tgico-back, button.btn-icon.tgico-arrow_back').first();

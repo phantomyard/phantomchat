@@ -25,7 +25,7 @@ import {buildLocalFilter, isDefaultLocalTitle} from '@lib/storages/filtersLocal'
 import makeError from '@helpers/makeError';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {isDialog} from '@appManagers/utils/dialogs/isDialog';
-import {isProtectedFolder} from '@lib/nostra/folders-protection';
+import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 
 export type MyDialogFilter = Exclude<DialogFilter, DialogFilter.dialogFilterDefault>;
 

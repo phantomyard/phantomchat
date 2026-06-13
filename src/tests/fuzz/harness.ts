@@ -77,7 +77,7 @@ async function createUser(
   opts: HarnessOptions
 ): Promise<UserHandle> {
   const context = await browser.newContext();
-  // injectInto sets __nostraTestRelays AND disables Tor — the latter is
+  // injectInto sets __phantomchatTestRelays AND disables Tor — the latter is
   // critical: with mode='when-available' the headless webtor bootstrap
   // stalls, gating initGlobalSubscription on a promise that never resolves.
   // The receiver's relay pool then never connects and B→A delivery
@@ -214,7 +214,7 @@ async function injectContact(self: UserHandle, other: UserHandle): Promise<numbe
   // ChatAPI.connect, and dialog dispatch in one fully-consistent pass. This is
   // the same path the UI's Add Contact flow uses.
   return self.page.evaluate(async ({otherNpub, otherName}) => {
-    const {addP2PContact} = await import('/src/lib/nostra/add-p2p-contact.ts');
+    const {addP2PContact} = await import('/src/lib/phantomchat/add-p2p-contact.ts');
     const result = await addP2PContact({
       pubkey: otherNpub,
       nickname: otherName,
@@ -253,7 +253,7 @@ async function warmupHandshake(a: UserHandle, b: UserHandle): Promise<void> {
     log('warmup: step 1 (text) ack');
   } catch(err) {
     log(`warmup: step 1 (text) non-fatal — ${err instanceof Error ? err.message : String(err)}`);
-    // Recovery: pull the mid from B's `nostra-messages` IDB directly. The
+    // Recovery: pull the mid from B's `phantomchat-messages` IDB directly. The
     // message was published to the relay even if B's DOM hasn't rendered it
     // yet (chat not open → render is deferred until setPeer). Step 2 needs
     // the mid to publish the kind-7 reaction, which primes A's kind-7
@@ -262,7 +262,7 @@ async function warmupHandshake(a: UserHandle, b: UserHandle): Promise<void> {
     // per-conversation accessors and we don't know the conversationId.
     try {
       mid = await b.page.evaluate(async(needle: string) => {
-        const req = indexedDB.open('nostra-messages');
+        const req = indexedDB.open('phantomchat-messages');
         const db: IDBDatabase = await new Promise((resolve, reject) => {
           req.onsuccess = () => resolve(req.result);
           req.onerror = () => reject(req.error);
@@ -325,7 +325,7 @@ async function warmupGroupsHandshake(a: UserHandle, b: UserHandle): Promise<void
   const warmupText = `__warmupG_${Date.now()}__`;
   try {
     const groupId = await a.page.evaluate(async (otherHex: string) => {
-      const {getGroupAPI} = await import('/src/lib/nostra/group-api.ts');
+      const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
       return getGroupAPI().createGroup('Warmup', [otherHex]);
     }, b.pubkeyHex);
     // Wait for B to receive the group-create control message.
@@ -333,7 +333,7 @@ async function warmupGroupsHandshake(a: UserHandle, b: UserHandle): Promise<void
     log('warmup/groups: step 1 (create) ack');
 
     await a.page.evaluate(async ({gid, txt}: any) => {
-      const {getGroupAPI} = await import('/src/lib/nostra/group-api.ts');
+      const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
       await getGroupAPI().sendMessage(gid, txt);
     }, {gid: groupId, txt: warmupText});
     await a.page.waitForTimeout(500);
@@ -341,7 +341,7 @@ async function warmupGroupsHandshake(a: UserHandle, b: UserHandle): Promise<void
 
     // B (non-admin) leaves — avoids admin-orphan state on A.
     await b.page.evaluate(async (gid: string) => {
-      const {getGroupAPI} = await import('/src/lib/nostra/group-api.ts');
+      const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
       await getGroupAPI().leaveGroup(gid);
     }, groupId);
     log('warmup/groups: step 3 (leave) ack');
@@ -355,7 +355,7 @@ async function waitForGroupOnUser(user: UserHandle, groupId: string, timeoutMs: 
   while(Date.now() - start < timeoutMs) {
     const has = await user.page.evaluate(async (gid: string) => {
       try {
-        const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+        const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
         return !!(await getGroupStore().get(gid));
       } catch {
         return false;

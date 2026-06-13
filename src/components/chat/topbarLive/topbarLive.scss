@@ -25,7 +25,7 @@
 
   &-background {
     @include sidebar-transform(0, false);
-    background: linear-gradient(90deg, #4588E3 0.79%, #976FFF 54.33%, #E46ACE 97.09%);
+    background: linear-gradient(90deg, #4588E3 0.79%, #3080FF 54.33%, #5AA0FF 97.09%);
     opacity: .1;
     position: absolute;
     inset: 0;
@@ -40,7 +40,7 @@
     overflow: hidden;
 
     &__circle {
-      background: linear-gradient(90deg, #4588E3 0.79%, #976FFF 54.33%, #E46ACE 97.09%);
+      background: linear-gradient(90deg, #4588E3 0.79%, #3080FF 54.33%, #5AA0FF 97.09%);
     }
   }
 

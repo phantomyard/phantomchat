@@ -2,7 +2,7 @@
  * E2E regression: User Info pane shows partner's kind 0 metadata fields.
  *
  * Bug: peerProfile.tsx renders Bio / Website / Lightning / NIP-05 rows
- * gated on `usePeerNostraProfile()` returning a non-empty signal. The
+ * gated on `usePeerPhantomChatProfile()` returning a non-empty signal. The
  * signal is seeded from `peer-profile-cache.ts` — but the cache is NEVER
  * pre-populated for partner peers. `add-p2p-contact.ts:kickOffKind0Fetch`
  * fetches kind 0 to upgrade the displayName, then THROWS AWAY the rest
@@ -13,7 +13,7 @@
  *
  * Fix (separate commit): kickOffKind0Fetch always writes the fetched
  * kind 0 to the peer profile cache via `saveCachedPeerProfile` and
- * dispatches `nostra_peer_profile_updated` so the rows render on first
+ * dispatches `phantomchat_peer_profile_updated` so the rows render on first
  * open without waiting for an on-mount relay round-trip.
  *
  * Scenario:
@@ -21,7 +21,7 @@
  *      lud16 / nip05 to LocalRelay.
  *   2. Bob creates identity and adds Alice as contact (nickname supplied).
  *   3. Within 5 s of `addP2PContact` returning, Bob's localStorage MUST
- *      contain `nostra-peer-profile-cache:<aliceHex>` with all four fields.
+ *      contain `phantomchat-peer-profile-cache:<aliceHex>` with all four fields.
  *   4. After Bob opens chat with Alice and toggles the right sidebar, the
  *      User Info pane MUST contain each of those four values in the DOM
  *      within 2 s (no relay round-trip allowed).
@@ -42,7 +42,7 @@ const ALICE_PROFILE = {
   about: 'Alice has a fully-detailed Nostr profile',
   website: 'https://alice.example.com',
   lud16: 'alice@getalby.example',
-  nip05: 'alice@nostra.chat'
+  nip05: 'alice@phantomchat.chat'
 } as const;
 
 async function createIdentity(page: Page, displayName: string): Promise<string> {
@@ -81,7 +81,7 @@ async function createIdentity(page: Page, displayName: string): Promise<string> 
  */
 async function publishAliceProfile(page: Page): Promise<void> {
   const result = await page.evaluate(async(profile) => {
-    const {publishKind0Metadata} = await import('/src/lib/nostra/nostr-relay.ts');
+    const {publishKind0Metadata} = await import('/src/lib/phantomchat/nostr-relay.ts');
     const deadline = Date.now() + 15000;
     let lastErr: any = null;
     while(Date.now() < deadline) {
@@ -115,7 +115,7 @@ async function addPeerAsContact(page: Page, peerNpub: string, peerName: string):
       (Number.prototype as any).toChatId = function() { return Math.abs(+this); };
       (Number.prototype as any).isPeerId = function() { return true; };
     }
-    const {addP2PContact} = await import('/src/lib/nostra/add-p2p-contact.ts');
+    const {addP2PContact} = await import('/src/lib/phantomchat/add-p2p-contact.ts');
     await addP2PContact({pubkey: pk, nickname: nm, source: 'e2e-user-info-kind0'});
   }, {pk: peerNpub, nm: peerName});
 }
@@ -139,9 +139,9 @@ async function waitForPeerProfileCache(page: Page, peerNpub: string, timeoutMs =
   const deadline = Date.now() + timeoutMs;
   while(Date.now() < deadline) {
     const cached = await page.evaluate(async(npub) => {
-      const {decodePubkey} = await import('/src/lib/nostra/nostr-identity.ts');
+      const {decodePubkey} = await import('/src/lib/phantomchat/nostr-identity.ts');
       const hex = decodePubkey(npub);
-      const raw = localStorage.getItem('nostra-peer-profile-cache:' + hex);
+      const raw = localStorage.getItem('phantomchat-peer-profile-cache:' + hex);
       return raw ? JSON.parse(raw) : null;
     }, peerNpub);
     if(cached) return cached;
@@ -207,7 +207,7 @@ async function main() {
   // Sanity check: relay actually has Alice's full kind 0 (filter by her pubkey
   // and pick the newest, since onboarding also publishes a name-only kind 0).
   const aliceHex = await pageA.evaluate(async(npub) => {
-    const {decodePubkey} = await import('/src/lib/nostra/nostr-identity.ts');
+    const {decodePubkey} = await import('/src/lib/phantomchat/nostr-identity.ts');
     return decodePubkey(npub);
   }, npubA);
   const allEvents = await relay.getAllEvents();
@@ -232,7 +232,7 @@ async function main() {
     throw new Error(
       'PRIMARY: peer profile cache entry missing for Alice — ' +
       'kickOffKind0Fetch fetched kind 0 but never wrote it to ' +
-      'nostra-peer-profile-cache:* (User Info rows will stay hidden ' +
+      'phantomchat-peer-profile-cache:* (User Info rows will stay hidden ' +
       'until on-mount relay round-trip lands)'
     );
   }

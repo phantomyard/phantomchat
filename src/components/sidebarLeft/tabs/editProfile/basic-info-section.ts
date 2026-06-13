@@ -1,5 +1,5 @@
 /*
- * Nostra.chat — Profile "Basic Info" section
+ * PhantomChat.chat — Profile "Basic Info" section
  *
  * Extracted from AppEditProfileTab so adding or removing individual input
  * fields (name, bio, website, lud16, and future additions) does not

@@ -38,7 +38,7 @@ export default class AppLanguageTab extends SliderSuperTab {
   public init(p: ReturnType<typeof AppLanguageTab['getInitArgs']>) {
     this.header.classList.add('with-border');
     this.container.classList.add('language-container');
-    this.setTitle('Nostra.LanguageViewController');
+    this.setTitle('PhantomChat.LanguageViewController');
 
     const section1 = createRoot((dispose) => {
       this.middlewareHelper.get().onDestroy(dispose);

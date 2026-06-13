@@ -639,10 +639,10 @@ export class Authorizer {
   }
 
   public auth(dcId: DcId, temp: boolean): Promise<AuthOptions> {
-    // [Nostra.chat] Defense-in-depth: MTProto disabled
+    // [PhantomChat.chat] Defense-in-depth: MTProto disabled
     // NetworkerFactory-level stub prevents this from being called normally,
     // but this guard ensures no connection even if called directly.
-    throw new Error('[Nostra.chat] MTProto disabled: authorizer cannot initiate handshake');
+    throw new Error('[PhantomChat.chat] MTProto disabled: authorizer cannot initiate handshake');
 
     const key = `${dcId}_${temp}` as const;
     return this.cached[key] ??= this._auth(dcId, temp).catch((err) => {

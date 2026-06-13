@@ -6,7 +6,7 @@
  * assigned: when A sends a message to a group, neither A (sender) nor B
  * (receiver) see the bubble because the group→display bridge is missing.
  *
- * After the fix (new nostra-groups-sync.ts + GroupAPI.onOutgoingMessage):
+ * After the fix (new phantomchat-groups-sync.ts + GroupAPI.onOutgoingMessage):
  *   - Sender's own outgoing row is persisted + dispatched → bubble on A within 3s.
  *   - Receiver's rx pipeline (onGroupMessage) persists + dispatches → bubble on B within 5s.
  *
@@ -29,7 +29,7 @@ async function waitForGroupOn(page: any, groupId: string, timeoutMs: number): Pr
   while(Date.now() < deadline) {
     const has = await page.evaluate(async(gid: string) => {
       try {
-        const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+        const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
         return !!(await getGroupStore().get(gid));
       } catch { return false; }
     }, groupId);
@@ -79,9 +79,9 @@ async function main() {
 
     // Step 1 — A creates a group with B as the sole non-admin member.
     const {groupId, peerId} = await A.page.evaluate(async(otherHex: string) => {
-      const api = (window as any).__nostraGroupAPI;
-      if(!api) throw new Error('__nostraGroupAPI missing on window');
-      const {getGroupStore} = await import('/src/lib/nostra/group-store.ts');
+      const api = (window as any).__phantomchatGroupAPI;
+      if(!api) throw new Error('__phantomchatGroupAPI missing on window');
+      const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
       const gid = await api.createGroup('E2E Groups Bilateral', [otherHex]);
       const rec = await getGroupStore().get(gid);
       return {groupId: gid, peerId: rec?.peerId};
@@ -98,8 +98,8 @@ async function main() {
 
     // Step 3 — A sends a message to the group.
     await A.page.evaluate(async({gid, text}: any) => {
-      const api = (window as any).__nostraGroupAPI;
-      if(!api) throw new Error('__nostraGroupAPI missing on window');
+      const api = (window as any).__phantomchatGroupAPI;
+      if(!api) throw new Error('__phantomchatGroupAPI missing on window');
       await api.sendMessage(gid, text);
     }, {gid: groupId, text: MSG_TEXT});
     console.log(`[e2e-groups] A sent message "${MSG_TEXT}"`);
@@ -124,7 +124,7 @@ async function main() {
   } catch(err) {
     const A = ctx.users.userA;
     const B = ctx.users.userB;
-    const NEEDLE = /NostraOnboardingIntegration|GroupAPI|groups-sync|nostra-groups|NostraGroupsSync|\[GroupAPI\]|tx: |rx: /i;
+    const NEEDLE = /PhantomChatOnboardingIntegration|GroupAPI|groups-sync|phantomchat-groups|PhantomChatGroupsSync|\[GroupAPI\]|tx: |rx: /i;
     console.error('[e2e-groups] diagnostic — A onboarding/groups lines:');
     for(const l of A.consoleLog.filter((x) => NEEDLE.test(x))) console.error('  A:', l.slice(0, 320));
     console.error('[e2e-groups] diagnostic — B onboarding/groups lines:');

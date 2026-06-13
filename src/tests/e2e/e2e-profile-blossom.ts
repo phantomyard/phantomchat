@@ -129,7 +129,7 @@ async function test1_menuEntryRenders() {
         if(item.offsetParent !== null) {
           const r = item.getBoundingClientRect();
           if(r.width > 0 && r.height > 0) {
-            const avatar = item.querySelector('img.nostra-profile-menu-entry-avatar');
+            const avatar = item.querySelector('img.phantomchat-profile-menu-entry-avatar');
             const text = item.textContent || '';
             return {hasAvatar: !!avatar, text};
           }
@@ -164,7 +164,7 @@ async function test2_clickOpensMergedTab() {
   await clickHamburger(page);
   await clickFirstMenuItem(page);
 
-  // Wait for the async init() to finish rendering inputs (Worker calls have 500ms timeout in Nostra mode)
+  // Wait for the async init() to finish rendering inputs (Worker calls have 500ms timeout in PhantomChat mode)
   await page.waitForSelector('input[name="display-name"]', {timeout: 5000});
   await page.waitForSelector('[data-section="nip05"]', {timeout: 5000});
 
@@ -333,8 +333,8 @@ async function test5_nip05Persists() {
 
   await completeOnboarding(page);
 
-  // Route nip05 verification after onboarding so __nostraOwnPubkey is available
-  const ownHex = await page.evaluate(() => (window as any).__nostraOwnPubkey);
+  // Route nip05 verification after onboarding so __phantomchatOwnPubkey is available
+  const ownHex = await page.evaluate(() => (window as any).__phantomchatOwnPubkey);
   await page.route('**/.well-known/nostr.json**', (route) => {
     route.fulfill({
       status: 200,
@@ -359,7 +359,7 @@ async function test5_nip05Persists() {
   // The toast registers a capture-phase document click handler that intercepts ALL clicks.
   await page.waitForTimeout(4000);
 
-  // Close the tab — nip05 is already persisted in the identity store via nostra_identity_updated (Verify handler).
+  // Close the tab — nip05 is already persisted in the identity store via phantomchat_identity_updated (Verify handler).
   await page.evaluate(() => {
     const btn = document.querySelector('.edit-profile-container .sidebar-close-button') as HTMLElement;
     if(btn) btn.click();

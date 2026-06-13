@@ -4,7 +4,7 @@
  * A worktree is "obsolete" when:
  *   - its associated branch's PR is closed/merged on GitHub, OR
  *   - the branch has no upstream (push never succeeded), OR
- *   - the user passes --force, removing every worktree under ../nostra.chat-explorer/
+ *   - the user passes --force, removing every worktree under ../phantomchat.chat-explorer/
  *
  * Run from the main repo. Safe by default: prints what it would do, then
  * removes only after confirmation (skip with --yes).
@@ -77,7 +77,7 @@ function main(): void {
   const yes = args.includes('--yes') || args.includes('-y');
 
   const repoRoot = pickRepoRoot();
-  const explorerParent = resolve(dirname(repoRoot), 'nostra.chat-explorer');
+  const explorerParent = resolve(dirname(repoRoot), 'phantomchat.chat-explorer');
 
   const worktrees = listExplorerWorktrees(repoRoot);
   if(worktrees.length === 0) {

@@ -198,7 +198,7 @@ export default class AppStickersAndEmojiTab extends SliderSuperTab {
     }
 
     {
-      const section = new SettingSection({name: 'Nostra.InstalledStickerPacksController', caption: 'StickersBotInfo'});
+      const section = new SettingSection({name: 'PhantomChat.InstalledStickerPacksController', caption: 'StickersBotInfo'});
 
       const stickerSets: {[id: string]: Row} = {};
 

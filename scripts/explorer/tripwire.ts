@@ -10,7 +10,7 @@
  *   setTimeout | setInterval | requestAnimationFrame | clearTimeout
  *   IndexedDB | StorageKey | getStorage | storage.delete
  *   Worker | SharedWorker | ServiceWorker
- *   relay | subscription | nostra-sync | virtual-mtproto
+ *   relay | subscription | phantomchat-sync | virtual-mtproto
  *
  * Exception: `category=timeout-bump` may modify numeric constants in
  * `src/tests/fuzz/postconditions/` (handled implicitly — that path is already
@@ -49,7 +49,7 @@ const BANNED: Array<{name: string; re: RegExp}> = [
   {name: 'ServiceWorker', re: /\bServiceWorker\b/},
   {name: 'relay', re: /\brelay\b/},
   {name: 'subscription', re: /\bsubscription\b/},
-  {name: 'nostra-sync', re: /\bnostra-sync\b/},
+  {name: 'phantomchat-sync', re: /\bphantomchat-sync\b/},
   {name: 'virtual-mtproto', re: /\bvirtual-mtproto\b/}
 ];
 

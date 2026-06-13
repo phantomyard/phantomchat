@@ -103,7 +103,7 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   qrBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:14px;';
   qrBtn.addEventListener('click', async() => {
     try {
-      const {launchQRScanner} = await import('@components/nostra/QRScanner');
+      const {launchQRScanner} = await import('@components/phantomchat/QRScanner');
       launchQRScanner({
         onDetected: (npub: string) => {
           input.value = npub;
@@ -140,7 +140,7 @@ async function addNpubContact(
   nickname: string,
   onContactAdded?: (peerId: PeerId) => void
 ): Promise<void> {
-  const {addP2PContact} = await import('@lib/nostra/add-p2p-contact');
+  const {addP2PContact} = await import('@lib/phantomchat/add-p2p-contact');
   const result = await addP2PContact({
     pubkey: npub,
     nickname,

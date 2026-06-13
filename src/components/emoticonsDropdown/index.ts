@@ -40,7 +40,7 @@ import ListenerSetter from '@helpers/listenerSetter';
 import {ChatRights} from '@appManagers/appChatsManager';
 import {toastNew} from '@components/toast';
 import ChatInput, {POSTING_NOT_ALLOWED_MAP} from '@components/chat/input';
-import {getNostraStickerDocById, getNostraStickerEmoji, isNostraStickerDocId} from '@lib/nostra/nostra-sticker-pack';
+import {getPhantomChatStickerDocById, getPhantomChatStickerEmoji, isPhantomChatStickerDocId} from '@lib/phantomchat/phantomchat-sticker-pack';
 import safeAssign from '@helpers/object/safeAssign';
 import ButtonIcon from '@components/buttonIcon';
 import StickersTabCategory from '@components/emoticonsDropdown/category';
@@ -667,14 +667,14 @@ export class EmoticonsDropdown extends DropdownHover {
   };
 
   public async sendDocId(options: Parameters<ChatInput['sendMessageWithDocument']>[0]) {
-    // Nostra synthetic sticker: send a plain text message containing just
+    // PhantomChat synthetic sticker: send a plain text message containing just
     // the emoji character. The receiving bubble renders the big Fluent
     // PNG via wrapStickerEmoji. No MTProto Document is ever sent.
     const docIdArg = options.document;
     const rawDocId = typeof docIdArg === 'string' ? docIdArg : (docIdArg as any)?.id;
-    if(typeof rawDocId === 'string' && isNostraStickerDocId(rawDocId)) {
-      const doc = getNostraStickerDocById(rawDocId);
-      const emoji = doc ? getNostraStickerEmoji(doc) : undefined;
+    if(typeof rawDocId === 'string' && isPhantomChatStickerDocId(rawDocId)) {
+      const doc = getPhantomChatStickerDocById(rawDocId);
+      const emoji = doc ? getPhantomChatStickerEmoji(doc) : undefined;
       if(emoji && this.chatInput?.chat) {
         const sendingParams = this.chatInput.chat.getMessageSendingParams();
         rootScope.managers.appMessagesManager.sendText({
@@ -689,7 +689,7 @@ export class EmoticonsDropdown extends DropdownHover {
         }
         return true;
       }
-      console.warn('nostra sticker send: missing doc/emoji/chat', rawDocId);
+      console.warn('phantomchat sticker send: missing doc/emoji/chat', rawDocId);
       return false;
     }
 

@@ -578,7 +578,7 @@ export class AppUsersManager extends AppManager {
 
     user.pFlags ??= {};
 
-    // [Nostra.chat] For P2P synthetic users, prefer the better of the bridge
+    // [PhantomChat.chat] For P2P synthetic users, prefer the better of the bridge
     // response and the synthetic. The bridge falls back to `pubkey.slice(0,12)`
     // when the mapping has no displayName — detect that exact hex-prefix fallback
     // and keep the synthetic; otherwise let the bridge response win so real
@@ -767,7 +767,7 @@ export class AppUsersManager extends AppManager {
 
   /**
    * Inject a synthetic P2P user into the users cache.
-   * Used by Nostra.chat display bridge to make P2P peers visible to tweb.
+   * Used by PhantomChat.chat display bridge to make P2P peers visible to tweb.
    */
   public injectP2PUser(pubkey: string, peerId: number, displayName: string, avatar: string): void {
     if(this.p2pSyntheticUsers.has(peerId)) {
@@ -795,7 +795,7 @@ export class AppUsersManager extends AppManager {
     // Add to contacts list and search index so contact picker finds P2P peers
     this.pushContact(peerId as UserId);
 
-    console.log('[Nostra.chat] injectP2PUser:', {peerId, displayName});
+    console.log('[PhantomChat.chat] injectP2PUser:', {peerId, displayName});
   }
 
   /**
@@ -805,7 +805,7 @@ export class AppUsersManager extends AppManager {
   public updateP2PUserName(peerId: number, displayName: string): void {
     const user = this.p2pSyntheticUsers.get(peerId);
     if(!user) {
-      console.warn('[Nostra.chat] updateP2PUserName: no synthetic user for peerId', peerId);
+      console.warn('[PhantomChat.chat] updateP2PUserName: no synthetic user for peerId', peerId);
       return;
     }
 
@@ -819,7 +819,7 @@ export class AppUsersManager extends AppManager {
     // without this dispatch the chat-list title stays on the old value.
     this.rootScope.dispatchEvent('peer_title_edit', {peerId: (peerId as number).toPeerId(false)});
 
-    console.log('[Nostra.chat] updateP2PUserName:', {peerId, displayName});
+    console.log('[PhantomChat.chat] updateP2PUserName:', {peerId, displayName});
   }
 
   public getUsers() {
@@ -911,7 +911,7 @@ export class AppUsersManager extends AppManager {
       return {_: 'inputUserSelf'};
     }
 
-    // [Nostra.chat] P2P synthetic users may not have full data in the proxy
+    // [PhantomChat.chat] P2P synthetic users may not have full data in the proxy
     if(!user || !user.pFlags) {
       return {
         _: 'inputUser',
@@ -1227,7 +1227,7 @@ export class AppUsersManager extends AppManager {
 
   public updateMyOnlineStatus(offline: boolean) {
     const self = this.getSelf();
-    if(!self) return; // Nostra.chat: no MTProto self user
+    if(!self) return; // PhantomChat.chat: no MTProto self user
     this.setUserStatus(self.id, offline);
     return this.apiManager.invokeApiSingle('account.updateStatus', {offline});
   }

@@ -28,8 +28,8 @@ import bytesFromHex from '@helpers/bytes/bytesFromHex';
 import bytesToHex from '@helpers/bytes/bytesToHex';
 import isObject from '@helpers/object/isObject';
 import pause from '@helpers/schedulers/pause';
-import {NostraMTProtoServer} from '@lib/nostra/virtual-mtproto-server';
-import {assertInvariant, validateActionPrefixes, validateBridgeMethods} from '@lib/nostra/bridge-invariants';
+import {PhantomChatMTProtoServer} from '@lib/phantomchat/virtual-mtproto-server';
+import {assertInvariant, validateActionPrefixes, validateBridgeMethods} from '@lib/phantomchat/bridge-invariants';
 import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
 import ApiManagerMethods from '@appManagers/apiManagerMethods';
 import {getEnvironment} from '@environment/utils';
@@ -71,7 +71,7 @@ export class ApiManager extends ApiManagerMethods {
   private cachedExportPromise: {[x: number]: Promise<unknown>};
   private gettingNetworkers: {[dcIdAndType: string]: Promise<MTPNetworker>};
   private baseDcId: DcId;
-  private nostraMTProtoServer: NostraMTProtoServer | null = null;
+  private phantomchatMTProtoServer: PhantomChatMTProtoServer | null = null;
 
   private afterMessageTempIds: {
     [tempId: string]: {
@@ -96,7 +96,7 @@ export class ApiManager extends ApiManagerMethods {
 
     this.transportType = Modes.transport;
 
-    console.log('[Nostra.chat] ApiManager constructor — MTProto intercept active');
+    console.log('[PhantomChat.chat] ApiManager constructor — MTProto intercept active');
 
     // * Make sure that the used autologin_token is no more than 10000 seconds old
     // * https://core.telegram.org/api/url-authorization
@@ -278,7 +278,7 @@ export class ApiManager extends ApiManagerMethods {
 
   public async logOut(
     migrateAccountTo?: ActiveAccountNumber,
-    opts?: {keepNostraIdentity?: boolean}
+    opts?: {keepPhantomChatIdentity?: boolean}
   ) {
     if(this.loggingOut) {
       return;
@@ -344,13 +344,13 @@ export class ApiManager extends ApiManagerMethods {
           });
         }
       }
-      // [Nostra.chat] Clear Nostr identity key in Worker context (skipped by Reset Local Data)
-      if(!opts?.keepNostraIdentity) {
+      // [PhantomChat.chat] Clear Nostr identity key in Worker context (skipped by Reset Local Data)
+      if(!opts?.keepPhantomChatIdentity) {
         try {
-          const {deleteEncryptedIdentity} = await import('../nostra/key-storage');
+          const {deleteEncryptedIdentity} = await import('../phantomchat/key-storage');
           await deleteEncryptedIdentity();
         } catch(err) {
-          console.warn('[Nostra.chat] failed to clear identity on logout:', err);
+          console.warn('[PhantomChat.chat] failed to clear identity on logout:', err);
         }
       }
 
@@ -603,13 +603,13 @@ export class ApiManager extends ApiManagerMethods {
     this.networkerFactory.setUpdatesProcessor(callback);
   }
 
-  public setNostraMTProtoServer(server: NostraMTProtoServer) {
-    this.nostraMTProtoServer = server;
+  public setPhantomChatMTProtoServer(server: PhantomChatMTProtoServer) {
+    this.phantomchatMTProtoServer = server;
   }
 
   // Static response shapes for methods that don't need real data.
   // Dynamic methods (getHistory, search, etc.) go through the MessagePort bridge.
-  private static readonly NOSTRA_STATIC: Record<string, any> = {
+  private static readonly PHANTOMCHAT_STATIC: Record<string, any> = {
     'messages.getSearchCounters': [],
     'messages.getSavedDialogs': {_: 'messages.savedDialogs', dialogs: [], messages: [], chats: [], users: []},
     'messages.getPinnedSavedDialogs': {_: 'messages.savedDialogs', dialogs: [], messages: [], chats: [], users: []},
@@ -621,7 +621,7 @@ export class ApiManager extends ApiManagerMethods {
     'messages.getStickers': {_: 'messages.stickers', hash: 0, stickers: []},
     'messages.getAllStickers': {_: 'messages.allStickers', hash: 0, sets: []},
     'messages.getEmojiKeywordsDifference': {_: 'emojiKeywordsDifference', lang_code: 'en', from_version: 0, version: 1, keywords: []},
-    // Nostra mode: the sticker/lottie catalog doesn't exist P2P-side, so the
+    // PhantomChat mode: the sticker/lottie catalog doesn't exist P2P-side, so the
     // `static_icon`/`appear_animation`/`select_animation`/etc. Document fields
     // are intentionally undefined. `reactionsMenu.ts` + `reaction.ts` have
     // guards to fall back to plain emoji text rendering when the docs are
@@ -640,13 +640,13 @@ export class ApiManager extends ApiManagerMethods {
     // Found by fuzzer (FIND-5c45981a): chat-open fires getMessageReactionsList +
     // getAvailableEffects + getPeerSettings, all of which crashed downstream
     // processResult calls on the `{pFlags:{}}` fallback. Ship properly-shaped
-    // static responses so the chat-open path is noiseless in Nostra mode.
+    // static responses so the chat-open path is noiseless in PhantomChat mode.
     'messages.getMessageReactionsList': {_: 'messages.messageReactionsList', count: 0, reactions: [], chats: [], users: [], next_offset: ''},
     'messages.getAvailableEffects': {_: 'messages.availableEffects', hash: 0, effects: [], documents: []},
     'messages.getPeerSettings': {_: 'messages.peerSettings', settings: {_: 'peerSettings', pFlags: {}}, chats: [], users: []},
     'messages.getEmojiKeywords': {_: 'emojiKeywordsDifference', lang_code: 'en', from_version: 0, version: 1, keywords: []},
     'messages.getEmojiStickers': {_: 'messages.allStickers', hash: 0, sets: []},
-    // Nostra mode: peer reactions menu is rendered from getTopReactions, so
+    // PhantomChat mode: peer reactions menu is rendered from getTopReactions, so
     // it MUST mirror the getAvailableReactions catalog — else the picker
     // renders 0 entries even when the catalog is populated.
     'messages.getTopReactions': {_: 'messages.reactions', hash: 0, reactions: [
@@ -679,7 +679,7 @@ export class ApiManager extends ApiManagerMethods {
     'account.getContentSettings': {_: 'account.contentSettings', pFlags: {}},
     'account.getNotifySettings': {_: 'peerNotifySettings', pFlags: {}, flags: 0},
     'account.getPassword': {_: 'account.password', pFlags: {has_password: false}, new_algo: {_: 'passwordKdfAlgoUnknown'}, new_secure_algo: {_: 'securePasswordKdfAlgoUnknown'}, secure_random: new Uint8Array(0)},
-    // 'account.getPrivacy' moved to NOSTRA_BRIDGE_METHODS — VMT now reads
+    // 'account.getPrivacy' moved to PHANTOMCHAT_BRIDGE_METHODS — VMT now reads
     // it from localStorage so the user's setPrivacy choice round-trips
     // across reload (was: hardcoded allowAll regardless of what setPrivacy
     // last stored). See virtual-mtproto-server.ts getPrivacy/setPrivacy.
@@ -776,7 +776,7 @@ export class ApiManager extends ApiManagerMethods {
     // `result.full_chat.chat_photo`, `result.full_chat.call`,
     // `result.full_chat.notify_settings`, `result.chats`, `result.users`.
     // `getParticipants` later reads `chatFull.participants._` to dispatch
-    // on chatParticipants vs chatParticipantsForbidden. Nostra has no
+    // on chatParticipants vs chatParticipantsForbidden. PhantomChat has no
     // Telegram-style full-chat data (groups are P2P via GroupAPI), so a
     // minimal chatParticipantsForbidden stub satisfies every consumer.
     'messages.getFullChat': {
@@ -856,7 +856,7 @@ export class ApiManager extends ApiManagerMethods {
     'upload.getWebFile': {_: 'upload.webFile', size: 0, mime_type: '', file_type: {_: 'storage.fileUnknown'}, mtime: 0, bytes: new Uint8Array(0)}
   };
 
-  private static readonly NOSTRA_ACTION_PREFIXES = [
+  private static readonly PHANTOMCHAT_ACTION_PREFIXES = [
     '.set', '.save', '.delete', '.read', '.mark',
     '.toggle', '.send', '.block', '.unblock', '.join', '.leave',
     '.report', '.update', '.install', '.add', '.remove',
@@ -865,8 +865,8 @@ export class ApiManager extends ApiManagerMethods {
     '.hide'
   ];
 
-  // Methods that require real data from NostraMTProtoServer via MessagePort bridge
-  private static readonly NOSTRA_BRIDGE_METHODS = new Set([
+  // Methods that require real data from PhantomChatMTProtoServer via MessagePort bridge
+  private static readonly PHANTOMCHAT_BRIDGE_METHODS = new Set([
     'messages.getHistory',
     'messages.getDialogs',
     'messages.getPinnedDialogs',
@@ -883,7 +883,7 @@ export class ApiManager extends ApiManagerMethods {
     'contacts.getContacts',
     'users.getUsers',
     'users.getFullUser',
-    'nostraSendFile',
+    'phantomchatSendFile',
     // Privacy rules: VMT persists via localStorage so the round-trip works
     // across reload. Worker → bridge → VMT for both read/write.
     'account.getPrivacy',
@@ -893,32 +893,32 @@ export class ApiManager extends ApiManagerMethods {
   private static _invariantsChecked = false;
   private static _loggedFallback: Set<string> | undefined;
 
-  private nostraIntercept(method: string, params: any): any {
+  private phantomchatIntercept(method: string, params: any): any {
     // Validate static intercept config once at first call (see
-    // src/lib/nostra/bridge-invariants.ts — rules 2 and 15).
+    // src/lib/phantomchat/bridge-invariants.ts — rules 2 and 15).
     if(!ApiManager._invariantsChecked) {
       ApiManager._invariantsChecked = true;
-      assertInvariant('NOSTRA_ACTION_PREFIXES', validateActionPrefixes(ApiManager.NOSTRA_ACTION_PREFIXES));
-      assertInvariant('NOSTRA_BRIDGE_METHODS', validateBridgeMethods(ApiManager.NOSTRA_BRIDGE_METHODS));
+      assertInvariant('PHANTOMCHAT_ACTION_PREFIXES', validateActionPrefixes(ApiManager.PHANTOMCHAT_ACTION_PREFIXES));
+      assertInvariant('PHANTOMCHAT_BRIDGE_METHODS', validateBridgeMethods(ApiManager.PHANTOMCHAT_BRIDGE_METHODS));
     }
 
     // Main thread: use local server directly (unchanged)
-    if(this.nostraMTProtoServer) {
-      return this.nostraMTProtoServer.handleMethod(method, params);
+    if(this.phantomchatMTProtoServer) {
+      return this.phantomchatMTProtoServer.handleMethod(method, params);
     }
 
     // Worker: static methods stay local (no round-trip)
-    const staticResponse = ApiManager.NOSTRA_STATIC[method];
+    const staticResponse = ApiManager.PHANTOMCHAT_STATIC[method];
     if(staticResponse !== undefined) return staticResponse;
 
     // Worker: dynamic methods go through MessagePort bridge
-    if(ApiManager.NOSTRA_BRIDGE_METHODS.has(method)) {
+    if(ApiManager.PHANTOMCHAT_BRIDGE_METHODS.has(method)) {
       return MTProtoMessagePort.getInstance<false>()
-      .invoke('nostraBridge', {method, params});
+      .invoke('phantomchatBridge', {method, params});
     }
 
     // Action methods → true
-    if(ApiManager.NOSTRA_ACTION_PREFIXES.some((p) => method.includes(p))) return true;
+    if(ApiManager.PHANTOMCHAT_ACTION_PREFIXES.some((p) => method.includes(p))) return true;
 
     // Default fallback — log once per method so fuzzer/E2E can see which
     // un-mapped method fell through (commonly the root cause of processResult
@@ -928,21 +928,21 @@ export class ApiManager extends ApiManagerMethods {
       ApiManager._loggedFallback.add(method);
       // Use console.log not .warn — INV-console-clean treats warn as error, and
       // this is diagnostic info for the fuzzer, not a regression.
-      console.log('[NostraVMT] fallback {pFlags:{}} for un-mapped method:', method);
+      console.log('[PhantomChatVMT] fallback {pFlags:{}} for un-mapped method:', method);
     }
     return {pFlags: {}};
   }
 
   public invokeApi<T extends keyof MethodDeclMap>(method: T, params: MethodDeclMap[T]['req'] = {}, options: InvokeApiOptions = {}): CancellablePromise<MethodDeclMap[T]['res']> {
-    // [Nostra.chat] Intercept MTProto calls and return empty results
+    // [PhantomChat.chat] Intercept MTProto calls and return empty results
     // This runs in the Worker context where the stub can't easily patch
-    const nostraResult = this.nostraIntercept(method, params);
-    if(nostraResult !== undefined) {
+    const phantomchatResult = this.phantomchatIntercept(method, params);
+    if(phantomchatResult !== undefined) {
       const d = deferredPromise<any>();
-      if(nostraResult instanceof Promise) {
-        nostraResult.then((r) => d.resolve(r)).catch((e) => d.reject(e));
+      if(phantomchatResult instanceof Promise) {
+        phantomchatResult.then((r) => d.resolve(r)).catch((e) => d.reject(e));
       } else {
-        d.resolve(nostraResult);
+        d.resolve(phantomchatResult);
       }
       return d;
     }

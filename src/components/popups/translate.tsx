@@ -33,7 +33,7 @@ export default class PopupTranslate extends PopupElement {
         langKey: 'OK',
         isCancel: true
       }, {
-        langKey: 'Nostra.LanguageViewController',
+        langKey: 'PhantomChat.LanguageViewController',
         callback: () => {
           pickLanguage(false).then((language) => {
             this.peerTranslation.setLanguage(language);

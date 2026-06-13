@@ -15,13 +15,13 @@ import Row from '@components/row';
 import {getHeavyAnimationPromise} from '@hooks/useHeavyAnimationCheck';
 import placeCaretAtEnd from '@helpers/dom/placeCaretAtEnd';
 import shake from '@helpers/dom/shake';
-import useNostraIdentity from '@stores/nostraIdentity';
+import usePhantomChatIdentity from '@stores/phantomchatIdentity';
 import {toast} from '@components/toast';
-import {publishKind0Metadata} from '@lib/nostra/nostr-relay';
-import {uploadToBlossom} from '@lib/nostra/blossom-upload';
-import {saveOwnProfileLocal} from '@lib/nostra/own-profile-sync';
-import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from '@lib/nostra/key-storage';
-import {importFromMnemonic} from '@lib/nostra/nostr-identity';
+import {publishKind0Metadata} from '@lib/phantomchat/nostr-relay';
+import {uploadToBlossom} from '@lib/phantomchat/blossom-upload';
+import {saveOwnProfileLocal} from '@lib/phantomchat/own-profile-sync';
+import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from '@lib/phantomchat/key-storage';
+import {importFromMnemonic} from '@lib/phantomchat/nostr-identity';
 import {createBasicInfoSection, type BasicInfoSection} from './basic-info-section';
 import {createNip05Section, type Nip05Section} from './nip05-section';
 
@@ -59,7 +59,7 @@ export default class AppEditProfileTab extends SliderSuperTab {
   private editPeer: EditPeer;
 
   public static getInitArgs() {
-    // In Nostra mode getSelf() / getProfile() may hang (no MTProto auth).
+    // In PhantomChat mode getSelf() / getProfile() may hang (no MTProto auth).
     // Wrap each promise with a 500ms timeout so the UI renders regardless.
     const withTimeout = <T>(p: Promise<T>, ms = 500, fallback: T): Promise<T> =>
       Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
@@ -99,7 +99,7 @@ export default class AppEditProfileTab extends SliderSuperTab {
     if(npubValue) {
       this.scrollable.append(this.buildPubkeySection(npubValue));
 
-      const identity = useNostraIdentity();
+      const identity = usePhantomChatIdentity();
       this.nip05Section = createNip05Section({
         npub: npubValue,
         initialAlias: identity.nip05() || '',
@@ -119,7 +119,7 @@ export default class AppEditProfileTab extends SliderSuperTab {
     }, {listenerSetter: this.listenerSetter});
 
     // --- Populate initial values from the identity store ---
-    const identity = useNostraIdentity();
+    const identity = usePhantomChatIdentity();
     this.basicInfo.setInitialValues({
       displayName: identity.displayName() || '',
       bio: identity.about() || userFull?.about || '',
@@ -143,7 +143,7 @@ export default class AppEditProfileTab extends SliderSuperTab {
 
   /** Load the npub from the store; fall back to decrypting local storage. */
   private async ensureNpubLoaded(): Promise<string> {
-    const identity = useNostraIdentity();
+    const identity = usePhantomChatIdentity();
     let npub = identity.npub() || '';
     if(npub) return npub;
 
@@ -155,7 +155,7 @@ export default class AppEditProfileTab extends SliderSuperTab {
       const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
       const id = importFromMnemonic(seed);
       npub = id.npub;
-      rootScope.dispatchEvent('nostra_identity_loaded', {
+      rootScope.dispatchEvent('phantomchat_identity_loaded', {
         npub: id.npub,
         displayName: record.displayName || null,
         nip05: undefined,
@@ -191,7 +191,7 @@ export default class AppEditProfileTab extends SliderSuperTab {
     const pictureUrl = await this.maybeUploadAvatar();
 
     const nowSec = Math.floor(Date.now() / 1000);
-    const existingNip05 = useNostraIdentity().nip05() || undefined;
+    const existingNip05 = usePhantomChatIdentity().nip05() || undefined;
 
     saveOwnProfileLocal({
       name: displayName,

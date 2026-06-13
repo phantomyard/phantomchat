@@ -8,7 +8,7 @@ import type {Invariant, FuzzContext, InvariantResult} from '../types';
  * just right-clicked a bubble to pick an emoji), assert that the picker
  * contains ≥3 emoji choices.
  *
- * Background: PR #47 (`fix(nostra): populate getAvailableReactions stub so
+ * Background: PR #47 (`fix(phantomchat): populate getAvailableReactions stub so
  * reactions menu renders`) fixed a latent ship where `getAvailableReactions`
  * returned `{pFlags: {}}` — the picker rendered with zero emoji. The fuzz
  * suite never caught it because `reactToRandomBubble` calls

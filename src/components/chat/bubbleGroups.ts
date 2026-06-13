@@ -373,7 +373,7 @@ export default class BubbleGroups {
 
   constructor(private chat: Chat) {
     if(chat.type !== ChatType.Search) {
-      // [Nostra.chat] FIND-c0046153: for P2P chats, sort by `timestamp`
+      // [PhantomChat.chat] FIND-c0046153: for P2P chats, sort by `timestamp`
       // (message.date) instead of `mid`. The Worker's tempMid scheme
       // (`generateTempMessageId` returns `topMessage + 1` for mids >= 2^50)
       // can produce mids whose numeric prefix does NOT match the message's
@@ -385,7 +385,7 @@ export default class BubbleGroups {
       this._isP2P = isP2P;
       this.sortItemsKey = chat.type === ChatType.Scheduled || isP2P ? 'timestamp' : 'mid';
       this.sortGroupsKey = chat.type === ChatType.Scheduled || isP2P ? 'lastTimestamp' : 'lastMid';
-      // [Nostra.chat] sortGroupItemsKey stays 'groupMid' even for P2P — within-group
+      // [PhantomChat.chat] sortGroupItemsKey stays 'groupMid' even for P2P — within-group
       // same-sender ordering is less critical than cross-group chronology (the FIND-c0046153
       // case was cross-sender, different groups). Matches the disabled Scheduled precedent.
       this.sortGroupItemsKey = /* chat.type === 'scheduled' ? 'timestamp' :  */'groupMid';
@@ -661,7 +661,7 @@ export default class BubbleGroups {
     return this.insertGroupItem(array, item);
   }
 
-  // [Nostra.chat] FIND-chrono-v2: for P2P chats use a (timestamp, mid) two-key sort to
+  // [PhantomChat.chat] FIND-chrono-v2: for P2P chats use a (timestamp, mid) two-key sort to
   // disambiguate same-second ties deterministically. Non-P2P (Telegram MTProto) chats
   // keep the single-key `mid`-based `insertSomething` path unchanged.
   private insertGroupItem(arr: GroupItem[], item: GroupItem): number {

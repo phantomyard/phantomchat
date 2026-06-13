@@ -27,7 +27,7 @@ import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
 import {onBackgroundsFetch} from '@lib/serviceWorker/backgrounds';
 import {watchMtprotoOnDev} from '@lib/serviceWorker/watchMtprotoOnDev';
 import {watchCacheStoragesLifetime} from './clearOldCache';
-import '@lib/serviceWorker/nostra-push';
+import '@lib/serviceWorker/phantomchat-push';
 import {CACHE_ASSETS_NAME, requestCache} from './cache';
 
 // #if MTPROTO_SW

@@ -2,12 +2,12 @@
 
 ## ⚠️ Current security status
 
-Nostra.chat is **alpha software**. It has **not been independently audited** by
+PhantomChat.chat is **alpha software**. It has **not been independently audited** by
 any third party. While the project builds on well-studied primitives (NIP-44,
 NIP-17, NIP-59, BIP-39, AES-GCM, PBKDF2), the integration and the surrounding
 code are new and may contain vulnerabilities.
 
-**Do not rely on Nostra.chat for communications where a compromise would put
+**Do not rely on PhantomChat.chat for communications where a compromise would put
 your physical safety, freedom, or life at risk.** For those threat models,
 prefer mature, audited tools such as [Signal](https://signal.org/) or
 [Session](https://getsession.org/).
@@ -23,11 +23,11 @@ GitHub issue for security bugs.
 npub1zxn3hul7dsaex9l5a8l8scflxzruxh3v9gvvvgcmtdus7aqenmrskmtyqz
 ```
 
-Use any NIP-17 capable client (including Nostra.chat itself) to send a DM.
+Use any NIP-17 capable client (including PhantomChat.chat itself) to send a DM.
 
 **Alternative channel — GitHub Security Advisory**:
 
-1. Go to <https://github.com/nostra-chat/nostra-chat/security/advisories/new>
+1. Go to <https://github.com/phantomchat-chat/phantomchat-chat/security/advisories/new>
 2. Fill in the form — this creates a private advisory visible only to
    maintainers.
 
@@ -52,7 +52,7 @@ Use any NIP-17 capable client (including Nostra.chat itself) to send a DM.
 
 **In scope:**
 
-- Vulnerabilities in the Nostra.chat source code (`src/`) that compromise
+- Vulnerabilities in the PhantomChat.chat source code (`src/`) that compromise
   confidentiality, integrity, or availability of user data or identity keys.
 - Vulnerabilities in the build or release pipeline that could be used to ship
   malicious code to users.
@@ -65,8 +65,8 @@ Use any NIP-17 capable client (including Nostra.chat itself) to send a DM.
 - Issues in upstream Nostr relays themselves — report those to the relay
   operator.
 - Issues in the Telegram Web K fork that only affect the unused MTProto code
-  path (Nostra.chat has MTProto fully disabled — see
-  `src/lib/nostra/virtual-mtproto-server.ts`).
+  path (PhantomChat.chat has MTProto fully disabled — see
+  `src/lib/phantomchat/virtual-mtproto-server.ts`).
 - Issues that require a fully compromised endpoint (malicious browser extension,
   keylogger, OS-level malware). No client-side E2E messenger defends against
   this threat model, and we make no claim to.

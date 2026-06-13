@@ -11,7 +11,7 @@ const ARTIFACTS_ROOT = 'docs/fuzz-reports';
 /**
  * Normalise a failure message before hashing so the same logical bug collapses
  * to the same signature across runs. Strips known volatile tokens:
- *   - timing prefixes "[0.044]" / "[12.7]" from Nostra's logger
+ *   - timing prefixes "[0.044]" / "[12.7]" from PhantomChat's logger
  *   - numeric suffixes like " in 67.2s" or ": 5 attempts"
  *   - hex ids matching common shapes (npub1…, event ids, mids)
  * This is deliberately conservative — over-normalising different bugs into the

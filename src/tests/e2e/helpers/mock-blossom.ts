@@ -6,9 +6,9 @@
  *   - GET  /<sha>  → returns stored bytes
  *
  * Both browser contexts in an E2E test point at the same mock via the
- * window.__nostraTestBlossom override (read by blossom-upload-progress.ts).
+ * window.__phantomchatTestBlossom override (read by blossom-upload-progress.ts).
  * Alice uploads the ciphertext; Bob downloads the same ciphertext when the
- * receiver-side decrypt hook resolves nostraFileMetadata.url.
+ * receiver-side decrypt hook resolves phantomchatFileMetadata.url.
  */
 
 // @ts-nocheck
@@ -93,7 +93,7 @@ export class MockBlossom {
     });
   }
 
-  /** URL base to inject via window.__nostraTestBlossom. */
+  /** URL base to inject via window.__phantomchatTestBlossom. */
   get url(): string {
     return `http://localhost:${this.port}`;
   }
@@ -111,6 +111,6 @@ export class MockBlossom {
 
   async injectInto(ctx: BrowserContext): Promise<void> {
     const url = this.url;
-    await ctx.addInitScript(`window.__nostraTestBlossom = ${JSON.stringify(url)};`);
+    await ctx.addInitScript(`window.__phantomchatTestBlossom = ${JSON.stringify(url)};`);
   }
 }

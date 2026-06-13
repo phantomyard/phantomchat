@@ -29,7 +29,7 @@ import StickerType from '@config/stickerType';
 import {ReferenceContext} from '@lib/storages/references';
 import {STICKERS_LOCAL_IDS, STICKERS_LOCAL_IDS_SET, STICKER_LOCAL_SET_ID, MyMessagesStickerSet, MyStickerSetInput} from '@lib/appManagers/utils/stickers/constants';
 import {getStickerSetInputByDice, getStickerSetInputById, getStickerSetInputByLocalId, getStickerSetInputByShortName, getStickerSetInputByStickerSet} from '@lib/appManagers/utils/stickers/getStickerSetInput';
-import {NOSTRA_STICKER_SET_ID, getNostraStickerSet, getNostraStickerSetHeader, getNostraStickerDocByEmoji} from '@lib/nostra/nostra-sticker-pack';
+import {PHANTOMCHAT_STICKER_SET_ID, getPhantomChatStickerSet, getPhantomChatStickerSetHeader, getPhantomChatStickerDocByEmoji} from '@lib/phantomchat/phantomchat-sticker-pack';
 
 const CACHE_TIME = 3600e3;
 
@@ -151,7 +151,7 @@ export class AppStickersManager extends AppManager {
         includeServerStickers: true
       }).then((docs) => {
         if(!docs.length) {
-          // In Nostra mode the sticker backend is stubbed empty — an empty
+          // In PhantomChat mode the sticker backend is stubbed empty — an empty
           // list is expected, not an error. Silently return so the
           // opening-chat UI falls back to no greeting sticker.
           this.greetingStickers = [];
@@ -199,17 +199,17 @@ export class AppStickersManager extends AppManager {
     useCache: boolean
   }> = {}): MaybePromise<MyMessagesStickerSet> {
     if(typeof(set) === 'string') {
-      if(set === NOSTRA_STICKER_SET_ID || set === 'nostra_fluent') {
-        return getNostraStickerSet() as unknown as MyMessagesStickerSet;
+      if(set === PHANTOMCHAT_STICKER_SET_ID || set === 'phantomchat_fluent') {
+        return getPhantomChatStickerSet() as unknown as MyMessagesStickerSet;
       }
       set = this.names[set] || getStickerSetInputByShortName(set);
     }
 
-    // Nostra synthetic pack: short-circuit before touching MTProto so the
+    // PhantomChat synthetic pack: short-circuit before touching MTProto so the
     // upstream `messages.getStickerSet` empty-stub can't overwrite our
     // documents.
-    if((set as any)?.id === NOSTRA_STICKER_SET_ID || (set as any)?.short_name === 'nostra_fluent') {
-      return getNostraStickerSet() as unknown as MyMessagesStickerSet;
+    if((set as any)?.id === PHANTOMCHAT_STICKER_SET_ID || (set as any)?.short_name === 'phantomchat_fluent') {
+      return getPhantomChatStickerSet() as unknown as MyMessagesStickerSet;
     }
 
     const cacheKey = this.getCacheKey(set);
@@ -405,13 +405,13 @@ export class AppStickersManager extends AppManager {
       if(pack) return this.appDocsManager.getDoc(pack.documents[0]);
     }
 
-    // Nostra fallback: tweb's animated emoji set is empty in Nostra mode.
+    // PhantomChat fallback: tweb's animated emoji set is empty in PhantomChat mode.
     // For the static (non-animation) request, return our synthetic Fluent
     // doc if one exists — `wrapSticker` then paints the PNG via the
-    // `nostra_fluent_url` short-circuit, so single-emoji bubbles render
+    // `phantomchat_fluent_url` short-circuit, so single-emoji bubbles render
     // the same image the user clicked in the picker.
     if(!isAnimation) {
-      return getNostraStickerDocByEmoji(emoji) || getNostraStickerDocByEmoji(cleaned);
+      return getPhantomChatStickerDocByEmoji(emoji) || getPhantomChatStickerDocByEmoji(cleaned);
     }
 
     return undefined;
@@ -762,18 +762,18 @@ export class AppStickersManager extends AppManager {
   };
 
   public async getAllStickers() {
-    // Nostra synthetic pack: upstream MTProto returns an empty sets[] in
-    // Nostra mode (see NOSTRA_STATIC), so we prepend our Fluent Emoji set
+    // PhantomChat synthetic pack: upstream MTProto returns an empty sets[] in
+    // PhantomChat mode (see PHANTOMCHAT_STATIC), so we prepend our Fluent Emoji set
     // so it shows up in the stickers tab of the emoticons dropdown.
     const upstream = await this.apiManager.invokeApiHashable({
       method: 'messages.getAllStickers',
       processResult: this.processAllStickersResult
     });
     assumeType<MessagesAllStickers.messagesAllStickers>(upstream);
-    const nostraHeader = getNostraStickerSetHeader();
-    const alreadyHas = upstream.sets.some((s) => s.id === nostraHeader.id);
+    const phantomchatHeader = getPhantomChatStickerSetHeader();
+    const alreadyHas = upstream.sets.some((s) => s.id === phantomchatHeader.id);
     if(!alreadyHas) {
-      upstream.sets = [nostraHeader, ...upstream.sets];
+      upstream.sets = [phantomchatHeader, ...upstream.sets];
     }
     return upstream;
   }

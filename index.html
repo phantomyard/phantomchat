@@ -51,28 +51,28 @@
     <!--[if IE]>
       <p class="browserupgrade">You are using an <strong>outdated</strong> browser. Please <a href="https://browsehappy.com/">upgrade your browser</a> to improve your experience and security.</p>
     <![endif]-->
-    <div id="nostra-boot-splash" role="status" aria-busy="true" aria-label="Loading">
+    <div id="phantomchat-boot-splash" role="status" aria-busy="true" aria-label="Loading">
       <style>
-        #nostra-boot-splash{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:#1a1a1a;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;transition:opacity .3s ease-out;padding:1.5rem;box-sizing:border-box;-webkit-font-smoothing:antialiased}
-        @media(prefers-color-scheme:light){#nostra-boot-splash{background:#fff;color:#1a1a1a}}
-        #nostra-boot-splash.fade-out{opacity:0;pointer-events:none}
-        #nostra-boot-splash .nbs-box{display:flex;flex-direction:column;align-items:center;text-align:center;max-width:30rem;width:100%}
-        #nostra-boot-splash .nbs-logo-img{width:88px;height:88px;border-radius:22%;box-shadow:0 4px 24px rgba(31,155,223,.25);margin-bottom:1.25rem}
-        #nostra-boot-splash .nbs-title{font-size:1.75rem;font-weight:600;letter-spacing:-.02em;margin:0 0 1rem}
-        #nostra-boot-splash .nbs-title span{color:#1f9bdf}
-        #nostra-boot-splash .nbs-description{font-size:.9rem;line-height:1.55;opacity:.72;margin:0 0 1.75rem}
-        #nostra-boot-splash .nbs-divider{width:3rem;height:1px;background:currentColor;opacity:.15;margin:0 0 1.5rem}
-        #nostra-boot-splash .nbs-progress{position:relative;width:min(20rem,80%);height:6px;background:rgba(31,155,223,.12);border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(31,155,223,.08)}
-        #nostra-boot-splash .nbs-progress-fill{position:absolute;top:0;bottom:0;left:0;width:30%;border-radius:999px;background:linear-gradient(90deg,#1f9bdf 0%,#5bb8f0 50%,#1f9bdf 100%);background-size:200% 100%;box-shadow:0 0 12px rgba(31,155,223,.55);animation:nbs-shimmer 1.6s linear infinite,nbs-indeterminate 1.4s cubic-bezier(.65,.05,.36,1) infinite;transition:width .42s cubic-bezier(.22,1,.36,1),left .42s cubic-bezier(.22,1,.36,1)}
-        #nostra-boot-splash.determinate .nbs-progress-fill{left:0!important;animation:nbs-shimmer 1.6s linear infinite}
-        #nostra-boot-splash.complete .nbs-progress-fill{background:linear-gradient(90deg,#5cc453,#7fd06f);box-shadow:0 0 12px rgba(92,196,83,.55);animation:none}
-        #nostra-boot-splash .nbs-msg{margin-top:1rem;font-size:.95rem;opacity:.82;min-height:1.4em}
-        #nostra-boot-splash .nbs-msg-slow{margin-top:.6rem;font-size:.8rem;opacity:.55;line-height:1.45;max-width:26rem;display:none}
-        #nostra-boot-splash.slow .nbs-msg-slow{display:block}
+        #phantomchat-boot-splash{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:#1a1a1a;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;transition:opacity .3s ease-out;padding:1.5rem;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+        @media(prefers-color-scheme:light){#phantomchat-boot-splash{background:#fff;color:#1a1a1a}}
+        #phantomchat-boot-splash.fade-out{opacity:0;pointer-events:none}
+        #phantomchat-boot-splash .nbs-box{display:flex;flex-direction:column;align-items:center;text-align:center;max-width:30rem;width:100%}
+        #phantomchat-boot-splash .nbs-logo-img{width:88px;height:88px;border-radius:22%;box-shadow:0 4px 24px rgba(31,155,223,.25);margin-bottom:1.25rem}
+        #phantomchat-boot-splash .nbs-title{font-size:1.75rem;font-weight:600;letter-spacing:-.02em;margin:0 0 1rem}
+        #phantomchat-boot-splash .nbs-title span{color:#1f9bdf}
+        #phantomchat-boot-splash .nbs-description{font-size:.9rem;line-height:1.55;opacity:.72;margin:0 0 1.75rem}
+        #phantomchat-boot-splash .nbs-divider{width:3rem;height:1px;background:currentColor;opacity:.15;margin:0 0 1.5rem}
+        #phantomchat-boot-splash .nbs-progress{position:relative;width:min(20rem,80%);height:6px;background:rgba(31,155,223,.12);border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(31,155,223,.08)}
+        #phantomchat-boot-splash .nbs-progress-fill{position:absolute;top:0;bottom:0;left:0;width:30%;border-radius:999px;background:linear-gradient(90deg,#1f9bdf 0%,#5bb8f0 50%,#1f9bdf 100%);background-size:200% 100%;box-shadow:0 0 12px rgba(31,155,223,.55);animation:nbs-shimmer 1.6s linear infinite,nbs-indeterminate 1.4s cubic-bezier(.65,.05,.36,1) infinite;transition:width .42s cubic-bezier(.22,1,.36,1),left .42s cubic-bezier(.22,1,.36,1)}
+        #phantomchat-boot-splash.determinate .nbs-progress-fill{left:0!important;animation:nbs-shimmer 1.6s linear infinite}
+        #phantomchat-boot-splash.complete .nbs-progress-fill{background:linear-gradient(90deg,#5cc453,#7fd06f);box-shadow:0 0 12px rgba(92,196,83,.55);animation:none}
+        #phantomchat-boot-splash .nbs-msg{margin-top:1rem;font-size:.95rem;opacity:.82;min-height:1.4em}
+        #phantomchat-boot-splash .nbs-msg-slow{margin-top:.6rem;font-size:.8rem;opacity:.55;line-height:1.45;max-width:26rem;display:none}
+        #phantomchat-boot-splash.slow .nbs-msg-slow{display:block}
         @keyframes nbs-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
         @keyframes nbs-indeterminate{0%{left:-30%;width:30%}50%{left:35%;width:55%}100%{left:100%;width:30%}}
-        @media(prefers-reduced-motion:reduce){#nostra-boot-splash .nbs-progress-fill{animation:none;left:0;width:35%}}
-        @media(max-width:480px){#nostra-boot-splash .nbs-description{font-size:.85rem}#nostra-boot-splash .nbs-title{font-size:1.5rem}}
+        @media(prefers-reduced-motion:reduce){#phantomchat-boot-splash .nbs-progress-fill{animation:none;left:0;width:35%}}
+        @media(max-width:480px){#phantomchat-boot-splash .nbs-description{font-size:.85rem}#phantomchat-boot-splash .nbs-title{font-size:1.5rem}}
       </style>
       <div class="nbs-box">
         <img class="nbs-logo-img" src="assets/img/logo_filled_rounded.png?v=jw3mK7G9Ry" alt="" width="88" height="88">
@@ -97,7 +97,7 @@
       // the hook (e.g. unhandled boot rejection); in that case the splash fades
       // so the user is not trapped forever.
       (function(){
-        var splash=document.getElementById('nostra-boot-splash');
+        var splash=document.getElementById('phantomchat-boot-splash');
         if(!splash)return;
         var slow=null,safety=null;
         var fill=splash.querySelector('.nbs-progress-fill');

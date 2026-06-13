@@ -197,7 +197,7 @@ async function waitForChatAPIReady(page: Page, timeoutMs = 15000): Promise<boole
   const deadline = Date.now() + timeoutMs;
   while(Date.now() < deadline) {
     const ok = await page.evaluate(() => {
-      const ca = (window as any).__nostraChatAPI;
+      const ca = (window as any).__phantomchatChatAPI;
       if(!ca) return false;
       const entries = ca.relayPool?.relayEntries || [];
       const connected = entries.filter((e: any) => e.instance?.connectionState === 'connected').length;
@@ -396,9 +396,9 @@ async function main() {
     const t = msg.text();
     if(
       t.includes('[ChatAPI]') || t.includes('[NostrRelay]') ||
-      t.includes('[NostraSync]') || t.includes('[NostraOnboarding') ||
+      t.includes('[PhantomChatSync]') || t.includes('[PhantomChatOnboarding') ||
       t.includes('[VirtualMTProto') || t.includes('message published') ||
-      t.includes('history_append') || t.includes('nostra_new_message') ||
+      t.includes('history_append') || t.includes('phantomchat_new_message') ||
       t.includes('dialogs_multiupdate') || t.includes('pinned') ||
       t.includes('pin') || t.includes('duplicate') || t.includes('pending')
     ) {
@@ -625,7 +625,7 @@ async function main() {
   } finally {
     // Print diagnostic logs
     const filterNoise = (l: string) =>
-      !l.includes('MTPROTO') && !l.includes('relay_state') && !l.includes('nostra_relay_state');
+      !l.includes('MTPROTO') && !l.includes('relay_state') && !l.includes('phantomchat_relay_state');
     console.log('\n=== Alice logs (filtered) ===');
     logsA.filter(filterNoise).slice(-30).forEach((l) => console.log('  ' + l));
     console.log('\n=== Bobby logs (filtered) ===');

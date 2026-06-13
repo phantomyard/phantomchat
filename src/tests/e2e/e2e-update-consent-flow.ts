@@ -25,7 +25,7 @@ async function main() {
 
     // Stash a fake pending update on window
     await page.evaluate(() => {
-      (window as any).__nostraPendingUpdate = {
+      (window as any).__phantomchatPendingUpdate = {
         manifest: {
           version: '0.99.0',
           gitSha: 'deadbeefcafe1234',
@@ -64,8 +64,8 @@ async function main() {
 
           // Snooze state persisted
           const state = await page.evaluate(() => ({
-            version: localStorage.getItem('nostra.update.snoozedVersion'),
-            count: localStorage.getItem('nostra.update.declineCount.0.99.0')
+            version: localStorage.getItem('phantomchat.update.snoozedVersion'),
+            count: localStorage.getItem('phantomchat.update.declineCount.0.99.0')
           }));
           if(state.version === '0.99.0' && state.count === '1') {
             console.log('PASS: decline persisted to localStorage');

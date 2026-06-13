@@ -11,7 +11,7 @@ const COLLECT_MIRRORS_VS_IDB = async() => {
   }
   const idbMids: number[] = [];
   try {
-    const req = indexedDB.open('nostra-messages');
+    const req = indexedDB.open('phantomchat-messages');
     const db: IDBDatabase = await new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -59,7 +59,7 @@ export const mirrorsIdbCoherent: Invariant = {
 const COLLECT_IDB_IDENTITY = async() => {
   const rows: Array<{eventId: string; mid: any; twebPeerId: any; timestamp: any}> = [];
   try {
-    const req = indexedDB.open('nostra-messages');
+    const req = indexedDB.open('phantomchat-messages');
     const db: IDBDatabase = await new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -85,7 +85,7 @@ const COLLECT_IDB_IDENTITY = async() => {
 };
 
 /**
- * INV-stored-message-identity-complete — every row in `nostra-messages`
+ * INV-stored-message-identity-complete — every row in `phantomchat-messages`
  * MUST carry the full identity triple {mid, twebPeerId, timestamp} at rest.
  *
  * This is the write-path guard that keeps the invariant

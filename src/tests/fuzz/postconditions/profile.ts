@@ -3,7 +3,7 @@
  * Profile postconditions — fire after specific profile actions.
  *
  *   POST_editName_cache_updated
- *     Within 3s of editName, localStorage['nostra-profile-cache'].profile.name
+ *     Within 3s of editName, localStorage['phantomchat-profile-cache'].profile.name
  *     on the editor's page matches the new name.
  *
  *   POST_editName_relay_published
@@ -31,7 +31,7 @@ export const POST_editName_cache_updated: Postcondition = {
     while(Date.now() < deadline) {
       const cachedName = await u.page.evaluate(() => {
         try{
-          const raw = localStorage.getItem('nostra-profile-cache');
+          const raw = localStorage.getItem('phantomchat-profile-cache');
           if(!raw) return null;
           return JSON.parse(raw)?.profile?.name ?? null;
         } catch{ return null; }
@@ -54,7 +54,7 @@ export const POST_editName_relay_published: Postcondition = {
     const who: 'userA' | 'userB' = action.meta?.user || action.args?.user;
     if(!newName || !who) return {ok: true};
     const u = ctx.users[who];
-    const ownPub: string | null = await u.page.evaluate(() => (window as any).__nostraOwnPubkey ?? null).catch(() => null);
+    const ownPub: string | null = await u.page.evaluate(() => (window as any).__phantomchatOwnPubkey ?? null).catch(() => null);
     if(!ownPub) return {ok: true}; // can't verify without pubkey — skip
     const deadline = Date.now() + 5000;
     while(Date.now() < deadline) {
@@ -88,7 +88,7 @@ export const POST_uploadAvatar_propagated: Postcondition = {
     while(Date.now() < deadline) {
       const cachedPicture = await editor.page.evaluate(() => {
         try{
-          const raw = localStorage.getItem('nostra-profile-cache');
+          const raw = localStorage.getItem('phantomchat-profile-cache');
           if(!raw) return null;
           return JSON.parse(raw)?.profile?.picture ?? null;
         } catch{ return null; }

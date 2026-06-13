@@ -38,10 +38,10 @@ export default class PopupGiftPremium extends PopupElement {
     avatar.node.classList.add(className + '-avatar');
 
     const title = document.createElement('span');
-    _i18n(title, 'GiftNostraPremiumTitle');
+    _i18n(title, 'GiftPhantomChatPremiumTitle');
     title.classList.add(className + '-title');
 
-    const subtitle = i18n('GiftNostraPremiumDescription', [await wrapPeerTitle({peerId})]);
+    const subtitle = i18n('GiftPhantomChatPremiumDescription', [await wrapPeerTitle({peerId})]);
     subtitle.classList.add(className + '-subtitle');
 
     const shortestOption = this.giftOptions.slice().sort((a, b) => a.months - b.months)[0];
