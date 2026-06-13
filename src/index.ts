@@ -32,7 +32,8 @@ import Modes from '@config/modes';
 import {AuthState} from '@types';
 import DEBUG, {IS_BETA} from '@config/debug';
 import IS_INSTALL_PROMPT_SUPPORTED from '@environment/installPrompt';
-import cacheInstallPrompt from '@helpers/dom/installPrompt';
+import cacheInstallPrompt, {onInstallPromptAvailable} from '@helpers/dom/installPrompt';
+import IS_STANDALONE from '@environment/standalone';
 import {fillLocalizedDates} from '@helpers/date';
 import {nextRandomUint} from '@helpers/random';
 import {createEffect} from 'solid-js';
@@ -406,6 +407,22 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
 
   if(IS_INSTALL_PROMPT_SUPPORTED) {
     cacheInstallPrompt();
+
+    // Auto-surface our tasteful install modal — but ONLY when a real one-tap
+    // install is actually possible (Chromium, eligible, not already installed),
+    // and at most once per session. iOS/Firefox never get an auto-popup; they
+    // only reach the install instructions on demand via the menu button.
+    if(!IS_STANDALONE && !window.sessionStorage.getItem('install-prompt-shown')) {
+      onInstallPromptAvailable(() => {
+        if(IS_STANDALONE || window.sessionStorage.getItem('install-prompt-shown')) {
+          return;
+        }
+        window.sessionStorage.setItem('install-prompt-shown', '1');
+        import('@components/popups/installApp').then(({showInstallAppPopup}) => {
+          showInstallAppPopup();
+        });
+      });
+    }
   }
 
   // Make sure this is before checking if the app is locked.

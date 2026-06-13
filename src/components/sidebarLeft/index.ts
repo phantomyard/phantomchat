@@ -48,6 +48,7 @@ import {FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import mediaSizes from '@helpers/mediaSizes';
 import {doubleRaf, fastRaf} from '@helpers/schedulers';
 import {getInstallPrompt} from '@helpers/dom/installPrompt';
+import IS_STANDALONE from '@environment/standalone';
 import liteMode from '@helpers/liteMode';
 import AppPowerSavingTab from '@components/sidebarLeft/tabs/powerSaving';
 import Icon from '@components/icon';
@@ -767,9 +768,17 @@ export class AppSidebarLeft extends SidebarSlider {
       text: 'PWA.Install',
       onClick: () => {
         const installPrompt = getInstallPrompt();
-        installPrompt?.();
+        if(installPrompt) {
+          // Chromium, eligible → fire the native one-tap install prompt.
+          installPrompt();
+        } else {
+          // iOS / Firefox / ineligible → open our modal in instructions mode.
+          import('@components/popups/installApp').then(({showInstallAppPopup}) => {
+            showInstallAppPopup();
+          });
+        }
       },
-      verify: () => !!getInstallPrompt()
+      verify: () => !IS_STANDALONE
     }];
 
     const filteredButtons = menuButtons.filter(Boolean);
