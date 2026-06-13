@@ -33,10 +33,10 @@ if(isDEV) {
 
 const handlebarsPlugin = handlebars({
   context: {
-    title: 'Nostra.chat',
-    description: 'Nostra.chat is a privacy-first messaging app with end-to-end encryption and anonymous relay-based delivery.',
-    url: 'https://nostra.chat/',
-    origin: 'https://nostra.chat/'
+    title: 'PhantomChat',
+    description: 'PhantomChat is a privacy-first messaging app with end-to-end encryption and anonymous relay-based delivery.',
+    url: 'https://chat.phantomyard.ai/',
+    origin: 'https://chat.phantomyard.ai/'
   }
 });
 

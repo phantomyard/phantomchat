@@ -1,6 +1,6 @@
 {
-    "name": "Nostra.chat",
-    "short_name": "Nostra.chat",
+    "name": "PhantomChat",
+    "short_name": "PhantomChat",
     "start_url": "./",
     "description": "Privacy-first decentralized messaging with end-to-end encryption",
     "icons": [
@@ -55,7 +55,7 @@
         "sizes": "1280x910",
         "type": "image/jpeg"
     }],
-    "theme_color": "#229EDD",
+    "theme_color": "#1f9bdf",
     "background_color": "#ffffff",
     "display": "standalone",
     "orientation": "portrait-primary",

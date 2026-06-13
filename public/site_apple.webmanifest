@@ -1,6 +1,6 @@
 {
-    "name": "Nostra.chat",
-    "short_name": "Nostra.chat",
+    "name": "PhantomChat",
+    "short_name": "PhantomChat",
     "start_url": "./",
     "description": "Privacy-first decentralized messaging with end-to-end encryption",
     "icons": [

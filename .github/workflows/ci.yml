@@ -1,0 +1,59 @@
+name: ci
+
+# Runs on every PR targeting main. No `push:` block on purpose — the
+# `pull_request` event already restricts this to branches with an open PR.
+# Branch protection on main wires `typecheck` and `test` as required status
+# checks, mirroring the phantombot repo's CI contract.
+#
+# Toolchain note: phantombot is a Bun project; PhantomChat is a Vite/SolidJS
+# PWA built with pnpm (packageManager pin: pnpm@9.15.3). The job *names*
+# (`typecheck`, `test`), triggers, least-privilege permissions and per-job
+# concurrency match phantombot; only the runtime is adapted to pnpm.
+
+on:
+  pull_request:
+    branches: [main]
+
+# Explicit least-privilege scope. `pull_request` defaults to read-only
+# already, but stating it makes the intended attack surface auditable.
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    # Per-job concurrency so a new push to the PR cancels the in-flight run
+    # of *this* job only — the sibling `test` job cancels independently.
+    concurrency:
+      group: ci-typecheck-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      # tsc resolves @/langPackLocalVersion, which the build normally
+      # generates from the example. Seed it so the typecheck has it.
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: pnpm install --frozen-lockfile
+      - run: npx tsc --noEmit
+
+  test:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-test-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: pnpm install --frozen-lockfile
+      # `run` mode (not watch). The vitest config already excludes the
+      # browser/Tor e2e suites and runs unit tests under jsdom.
+      - run: pnpm exec vitest run
