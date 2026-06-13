@@ -1,0 +1,169 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+import ButtonMenu, {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import filterAsync from '@helpers/array/filterAsync';
+import callbackify from '@helpers/callbackify';
+import contextMenuController from '@helpers/contextMenuController';
+import ListenerSetter from '@helpers/listenerSetter';
+import {getMiddleware, Middleware} from '@helpers/middleware';
+import positionMenu from '@helpers/positionMenu';
+import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import {logger} from '@lib/logger';
+
+const log = logger('createContextMenu');
+
+export default function createContextMenu<T extends ButtonMenuItemOptionsVerifiable>({
+  buttons,
+  findElement,
+  listenTo,
+  appendTo,
+  filterButtons,
+  onOpen,
+  onClose,
+  onCloseAfter,
+  onElementReady,
+  onOpenBefore,
+  listenerSetter: attachListenerSetter,
+  middleware,
+  listenForClick
+}: {
+  buttons: T[],
+  findElement?: (e: MouseEvent | TouchEvent) => HTMLElement,
+  listenTo: HTMLElement,
+  appendTo?: HTMLElement,
+  filterButtons?: (buttons: T[]) => Promise<T[]>,
+  onOpen?: (e: Event, target: HTMLElement) => any,
+  onClose?: () => any,
+  onCloseAfter?: () => any,
+  onOpenBefore?: () => any,
+  onElementReady?: (element: HTMLElement) => void,
+  listenerSetter?: ListenerSetter,
+  middleware?: Middleware,
+  listenForClick?: boolean
+}) {
+  appendTo ??= document.body;
+
+  attachListenerSetter ??= new ListenerSetter();
+  const listenerSetter = new ListenerSetter();
+  const middlewareHelper = middleware ? middleware.create() : getMiddleware();
+  let element: HTMLElement;
+
+  const open = (e: MouseEvent | TouchEvent) => {
+    const target = findElement ? findElement(e as any) : listenTo;
+    if(!target) {
+      return;
+    }
+
+    let _element = element;
+    if(e instanceof MouseEvent || e.hasOwnProperty('preventDefault')) (e as any).preventDefault();
+    if(_element && _element.classList.contains('active')) {
+      return false;
+    }
+    if(e instanceof MouseEvent || e.hasOwnProperty('cancelBubble')) (e as any).cancelBubble = true;
+
+    const r = async() => {
+      try {
+        await onOpen?.(e, target);
+      } catch(e) {
+        if(e instanceof Error) {
+          log.error('Error opening context menu:', e);
+        } else {
+          log('Opening context menu was blocked, reason:', e);
+        }
+        onClose?.();
+        return;
+      }
+
+      const initResult = await init();
+      if(!initResult) {
+        onClose?.();
+        return;
+      }
+
+      target.classList.add('menu-open');
+
+      _element = initResult.element;
+      const {cleanup, destroy} = initResult;
+
+      positionMenu(e, _element);
+      contextMenuController.openBtnMenu(_element, () => {
+        target.classList.remove('menu-open');
+        onClose?.();
+        cleanup();
+
+        setTimeout(() => {
+          onCloseAfter?.();
+          destroy();
+        }, 300);
+      });
+    };
+
+    r();
+  };
+
+  attachContextMenuListener({
+    element: listenTo,
+    callback: open,
+    listenerSetter: attachListenerSetter
+  });
+
+  const cleanup = () => {
+    listenerSetter.removeAll();
+    middlewareHelper.clean();
+  };
+
+  const destroy = () => {
+    cleanup();
+    attachListenerSetter.removeAll();
+  };
+
+  const init = async() => {
+    cleanup();
+
+    buttons.forEach((button) => button.element = undefined);
+    const f = filterButtons || ((buttons: T[]) => filterAsync(buttons, (button) => {
+      return button?.verify ? callbackify(button.verify(), (result) => result ?? false) : true;
+    }));
+
+    const filteredButtons = await f(buttons);
+    if(!filteredButtons.length) {
+      return;
+    }
+
+    const _element = element = await ButtonMenu({
+      buttons: filteredButtons,
+      listenerSetter
+    });
+    _element.classList.add('contextmenu');
+
+    await onOpenBefore?.();
+    onElementReady?.(_element);
+
+    appendTo.append(_element);
+
+    return {
+      element: _element,
+      cleanup,
+      destroy: () => {
+        _element.remove();
+      }
+    };
+  };
+
+  if(middleware) {
+    middleware.onDestroy(() => {
+      destroy();
+    });
+  }
+
+  if(listenForClick) {
+    attachClickEvent(listenTo, open, {listenerSetter: attachListenerSetter});
+  }
+
+  return {element, destroy, open};
+}

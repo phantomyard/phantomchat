@@ -1,0 +1,49 @@
+.mesh-settings-container {
+  .mesh-stats {
+    padding: 12px 16px;
+    font-size: 14px;
+    color: var(--secondary-text-color);
+  }
+
+  .mesh-contact-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    gap: 10px;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .mesh-contact-name {
+    flex: 1;
+    font-family: var(--font-monospace);
+    font-size: 13px;
+  }
+
+  .mesh-contact-status {
+    font-size: 12px;
+    color: var(--secondary-text-color);
+    text-transform: capitalize;
+  }
+}
+
+.mesh-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+
+  &--online { background: var(--green); }
+  &--offline { background: var(--secondary-text-color); opacity: 0.3; }
+}
+
+.mesh-p2p-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(var(--green-rgb), 0.15);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 500;
+}

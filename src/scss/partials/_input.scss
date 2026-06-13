@@ -1,0 +1,608 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.input-wrapper {
+  width: 360px;
+  margin: 0 auto;
+}
+
+.input-field {
+  --height: 54px;
+  --border-radius: #{$border-radius-medium};
+  // --padding: calc((var(--height) - var(--border-width) * 2 - var(--line-height)) / 2);
+  --padding: 1rem;
+  --padding-horizontal: 1rem;
+  --border-width: 1px;
+  position: relative;
+  display: flex;
+  align-items: center;
+
+  @include respond-to(handhelds) {
+    --height: 50px;
+    --padding: .9375rem;
+    --padding-horizontal: .9375rem;
+  }
+  
+  .arrow-down {
+    position: absolute;
+    content: " ";
+    top: 50%;
+    bottom: 0;
+    right: 21px;
+    cursor: pointer;
+    
+    height: 0;
+    width: 0;
+    
+    border: solid var(--secondary-text-color);
+    border-radius: 1px;
+    border-width: 0 2px 2px 0;
+    display: inline-block;
+    padding: 5px;
+    vertical-align: middle;
+    
+    z-index: 2;
+    
+    margin-top: -9px;
+    transform: rotate(45deg);
+    transition: .2s all;
+  }
+
+  label {
+    position: absolute;
+    color: $placeholder-color;
+    top: 0;
+    inset-inline: var(--padding-horizontal) auto;
+    z-index: 2;
+    height: 1.5rem;
+    transform: translate(0, 0);
+    background-color: var(--surface-color);
+    transform-origin: var(--transform-origin-left-center);
+    pointer-events: none;
+    margin-top: calc((var(--height) - 1.5rem) / 2); // * Center of first line
+    user-select: none;
+    white-space: nowrap;
+
+    @include animation-level(2) {
+      transition: .2s transform, .2s padding, .1s opacity, font-weight 0s .1s;
+    }
+  }
+
+  &-border {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    border: 2px solid var(--primary-color);
+    opacity: 0;
+    border-radius: var(--border-radius);
+    pointer-events: none;
+    z-index: 1;
+
+    @include animation-level(2) {
+      transition: opacity .2s;
+    }
+  }
+
+  &-icon {
+    position: absolute;
+    right: 1rem;
+    z-index: 1;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: .375rem;
+    pointer-events: none;
+  }
+  
+  &-input {
+    border: var(--border-width) solid var(--input-search-border-color);
+    border-radius: var(--border-radius);
+    background-color: var(--surface-color);
+    //padding: 0 1rem;
+    padding: calc(var(--padding) - var(--border-width)) calc(var(--padding-horizontal) - var(--border-width));
+    box-sizing: border-box;
+    width: 100%;
+    min-height: var(--height);
+    transition: 0s border-color;
+    position: relative;
+    z-index: 1;
+    line-height: var(--line-height);
+
+    /* &:-internal-autofill-selected {
+      -webkit-box-shadow: 0 0 0px 1000px var(--surface-color) inset;
+    } */
+
+    &:-webkit-autofill,
+    &:-webkit-autofill:hover,
+    &:-webkit-autofill:focus,
+    &:-webkit-autofill:active {
+      //transition: background-color 5000s ease-in-out 0s;
+      -webkit-box-shadow: 0 0 0px 1000px var(--surface-color) inset;
+    }
+
+    &:-webkit-autofill::first-line,
+    &:-webkit-autofill,
+    &:-webkit-autofill:hover,
+    &:-webkit-autofill:focus,
+    &:-webkit-autofill:active {
+      font-family: "Roboto", -apple-system, apple color emoji, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif !important;
+      font-size: 1rem !important;
+      color: var(--primary-text-color) !important;
+    }
+
+    @include animation-level(0) {
+      transition: none !important;
+    }
+
+    @include hover() {
+      &:not(:focus):not(.error):not(.valid) {
+        //border-color: var(--color-gray);
+        //border-color: #000;
+        border-color: var(--primary-color);
+        transition: .2s border-color;
+
+        & ~ label {
+          color: var(--primary-color);
+        }
+      }
+
+      /* &:not(:focus):not(.error):not(.valid) ~ label {
+        transition: .2s transform, .2s padding, .1s opacity, font-weight 0s 1s;
+      } */
+    }
+
+    /* font-weight: 500; */
+
+    /* &:hover {
+      border-color: #000;
+    } */
+    
+    &:focus {
+      border-color: var(--primary-color);
+      //padding: 0 calc(1rem - 1px);
+    }
+    
+    /* &:disabled {
+      background-color: #fff;
+      color: #000;
+    } */
+    
+    &.error {
+      border-color: var(--danger-color);
+
+      & ~ label {
+        color: var(--danger-color) !important;
+      }
+
+      & ~ .input-field-border {
+        border-color: var(--danger-color) !important;
+      }
+    }
+
+    &.valid {
+      border-color: #26962F;
+      
+      & ~ label {
+        color: #26962F !important;
+      }
+
+      & ~ .input-field-border {
+        border-color: #26962F !important;
+      }
+    }
+
+    /* &.error, &.valid {
+      transition: .2s border-width;
+    } */
+
+    &:focus ~ .arrow-down {
+      margin-top: -4px;
+      transform: rotate(225deg);
+      border-color: var(--primary-color);
+    }
+
+    &:focus ~ label, &.force-focus ~ label {
+      color: var(--primary-color);
+      font-weight: var(--font-weight-bold);
+    }
+
+    &:focus ~ .input-field-border, &.force-focus ~ .input-field-border {
+      opacity: 1;
+    }
+
+    /* // * valid for plain text, empty for contenteditable
+    &:valid ~ label, 
+    &:not(:empty):focus ~ label {
+      transition-delay: 0s, 0s, 0s, 0s;
+    } */
+
+    &:focus ~ label,
+    &:valid ~ label,
+    &:not(.is-empty) ~ label,
+    &:disabled ~ label,
+    &.force-focus ~ label {
+      transform: translate(calc(-.1875rem + (1rem - var(--padding-horizontal))), calc(var(--height) / -2 + .0625rem)) scale(.75);
+      padding: 0 .3125rem;
+      opacity: 1;
+    }
+
+    &:not(:focus).is-empty ~ .input-field-placeholder ~ label {
+      opacity: 0;
+    }
+  }
+
+  &-input-fake {
+    opacity: 0;
+    pointer-events: none;
+    position: absolute !important;
+    top: 0;
+
+    // * override scrollable styles
+    bottom: auto!important;
+    left: var(--imc-padding-horizontal) !important;
+    right: var(--imc-padding-horizontal)!important;
+    width: auto !important;
+    height: auto!important;
+
+    z-index: -3;
+  }
+
+  & &-input[contenteditable="false"] {
+    opacity: var(--disabled-opacity);
+    pointer-events: none;
+  }
+
+  &-placeholder {
+    color: #a2acb4;
+    display: block; /* For Firefox By Ariel Flesler */
+    pointer-events: none;
+    position: absolute;
+    opacity: 0;
+    max-width: 100%;
+    padding-inline-end: 0.5rem;
+    inset-inline-start: var(--padding-horizontal);
+    z-index: 1;
+    @include text-overflow(true);
+
+    @include animation-level(2) {
+      transform: translateX(calc(1rem * var(--reflect)));
+      transition: opacity var(--input-placeholder-transition) .01s, transform var(--input-placeholder-transition) .01s;
+    }
+
+    &.is-empty {
+      opacity: 1;
+
+      @include animation-level(2) {
+        transform: translateX(0);
+      }
+    }
+  }
+
+  &-right-label {
+    position: absolute;
+    inset-inline-end: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    color: var(--secondary-text-color);
+  }
+}
+
+.input-fields-row {
+  display: flex;
+
+  .input-field {
+    flex: 1 1 auto;
+    width: 1%; // fix width because of contenteditable
+  }
+}
+
+.input-wrapper {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: 100%;
+}
+
+::placeholder { /* Chrome, Firefox, Opera, Safari 10.1+ */
+  color: #909192;
+  opacity: 1; /* Firefox */
+}
+
+:-ms-input-placeholder { /* Internet Explorer 10-11 */
+  color: #909192;
+}
+
+::-ms-input-placeholder { /* Microsoft Edge */
+  color: #909192;
+}
+
+input:focus,
+button:focus {
+  outline: none;
+}
+
+.input-clear {
+  outline: none;
+  border: none;
+  padding: 0;
+
+  &.error {
+    body.animation-level-0 & {
+      color: var(--danger-color) !important;
+    }
+
+    body:not(.animation-level-0) & {
+      animation: input-shake .2s ease-in-out forwards;
+    }
+  }
+}
+
+@keyframes input-shake {
+  0% {
+    transform: translateX(0);
+  }
+
+  25% {
+    transform: translateX(-.5rem);
+  }
+
+  75% {
+    transform: translateX(.5rem);
+  }
+
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.input-search {
+  --border-width: 1px;
+  --height: 44px;
+  --border-radius: 22px;
+  --icon-left-add-offset: .1875rem;
+  --icon-left-offset: calc(.8125rem + var(--icon-left-add-offset));
+  --icon-size: 1.5rem;
+  --padding-horizontal: calc(var(--height) + 3px + var(--icon-left-add-offset) - var(--border-width));
+  position: relative;
+  width: 100%;
+  margin-inline: .5rem;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+
+  @include respond-to(handhelds) {
+    margin-inline-start: 1rem;
+  }
+
+  @keyframes grow-input {
+    from {
+      transform: scale(.5);
+      opacity: 0;
+    }
+
+    to {
+      transform: scale(1);
+      opacity: var(--max-opacity, 1);
+    }
+  }
+
+  @keyframes hide-input {
+    from {
+      transform: scale(1);
+      opacity: var(--max-opacity, 1);
+    }
+
+    to {
+      transform: scale(.5);
+      opacity: 0;
+    }
+  }
+
+  .will-animate {
+    @include animation-level(2) {
+      animation: grow-input .25s forwards ease-in-out;
+    }
+
+    &.is-hiding {
+      @include animation-level(2) {
+        animation: hide-input .25s forwards ease-in-out;
+      }
+
+      @include animation-level(0) {
+        opacity: 0;
+      }
+    }
+  }
+
+  &.show-placeholder &-placeholder {
+    display: block !important;
+  }
+
+  &.old-style &-input {
+    background-color: var(--old-input-background-color);
+    border-color: transparent;
+  }
+
+  &-placeholder {
+    position: absolute;
+    color: $placeholder-color;
+    z-index: 1;
+    white-space: nowrap;
+    inset-inline-start: calc(var(--padding-horizontal) + var(--border-width));
+    pointer-events: none;
+    transform-origin: left center;
+  }
+
+  &-input {
+    --border-width: inherit;
+    --padding-horizontal: inherit;
+    background-color: var(--input-search-background-color);
+    padding: 0px var(--padding-horizontal);
+    height: var(--height);
+    min-height: var(--height) !important;
+    max-height: var(--height) !important;
+    //line-height: calc(var(--height) + 2px - var(--border-width) * 2);
+    border-color: var(--input-search-border-color);
+    line-height: var(--line-height-16);
+    
+    @include animation-level(2) {
+      transition: background-color .2s ease-in-out, border-color .2s ease-in-out;
+    }
+
+    @include hover() {
+      &:not(:focus) {
+        border-color: var(--secondary-color) !important;
+        //border-color: #000;
+      }
+    }
+
+    &.with-focus-effect:focus {
+      background-color: transparent;
+      border-color: var(--primary-color);
+
+      & ~ .input-search-part {
+        --max-opacity: 1;
+        color: var(--primary-color);
+      }
+
+      & ~ .preloader-container {
+        .preloader-path-new {
+          stroke: var(--primary-color);
+        }
+      }
+
+      & ~ .input-search-button {
+        @include hover-background-effect(primary);
+      }
+    }
+
+    /* &:empty:before {
+      color: #909192 !important;
+    } */
+
+    &.is-empty ~ .input-search-clear:not(.always-visible),
+    &:not(.is-empty) ~ .input-search-placeholder {
+      display: none;
+    }
+  }
+
+  &.is-picked .input-search-placeholder {
+    display: none;
+  }
+
+  .input-search-part {
+    --max-opacity: .6;
+    position: absolute;
+    // top: 50%;
+    // transform: translate(0, -50%);
+    text-align: center;
+    font-size: var(--icon-size);
+    color: var(--secondary-text-color);
+    opacity: var(--max-opacity);
+    line-height: 1;
+    z-index: 1;
+
+    @include animation-level(2) {
+      transition: opacity .2s ease-out, color .2s ease-out;
+    }
+  }
+
+  &-icon,
+  .preloader-container {
+    width: var(--icon-size);
+    height: var(--icon-size);
+    inset-inline-start: var(--icon-left-offset);
+    pointer-events: none;
+  }
+
+  .preloader-container {
+    right: auto;
+    z-index: 1;
+
+    .preloader-path-new {
+      stroke: var(--secondary-color);
+
+      @include animation-level(2) {
+        transition: stroke .2s ease-out !important;
+      }
+    }
+  }
+
+  &-clear {
+    inset-inline-end: calc((var(--height) - 2.25rem) / 2);
+    z-index: 1;
+  }
+
+  &-button {
+    padding: .375rem !important;
+  }
+}
+
+.input-field-password {
+  .input-field-input {
+    padding-inline-end: 2.5rem;
+    max-height: var(--height);
+
+    &[type="password"] {
+      font-size: 2.25rem;
+      padding-left: calc(.875rem - var(--border-width));
+      line-height: 1;
+      padding-top: 0;
+      padding-bottom: 0;
+      font-family: Arial, Helvetica, sans-serif; // roboto is weird here, can't make them centered
+  
+      @media (-webkit-min-device-pixel-ratio: 2) { 
+        font-size: 1.75rem;
+        letter-spacing: .125rem;
+      }
+  
+      html.is-ios & {
+        // ! меньше 1rem будет зумить поле
+        font-size: 1rem;
+      }
+
+      &::-ms-reveal {
+        display: none; // Remove the reveal password eye in Edge browsers
+      }
+    }
+  }
+  
+  .toggle-visible {
+    position: absolute;
+    right: .375rem;
+    z-index: 2;
+    font-size: 1.5rem;
+    color: $placeholder-color;
+    cursor: pointer;
+    transition: color .2s;
+    padding: .5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    top: 50%;
+    transform: translateY(-50%);
+
+    @include hover() {
+      color: var(--primary-text-color);
+    }
+  }
+}
+
+.input-field-phone {
+  .input-field-input {
+    --letter-spacing: .24px;
+
+    &:after {
+      content: attr(data-left-pattern);
+      // opacity: .4;
+      color: $placeholder-color;
+      letter-spacing: var(--letter-spacing);
+    }
+  }
+}

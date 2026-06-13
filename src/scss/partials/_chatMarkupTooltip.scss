@@ -1,0 +1,135 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.markup-tooltip {
+	$widthRegular: 312px;
+	$widthLink: 420px;
+	$padding: 7px;
+
+	background: var(--surface-color);
+	border-radius: $border-radius-medium;
+	transform: translateZ(0);
+	opacity: 0;
+	transition: opacity var(--layer-transition), transform var(--layer-transition), width var(--layer-transition);
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	height: 44px;
+	width: $widthRegular;
+	overflow: hidden;
+	z-index: 5;
+	display: flex;
+	justify-content: flex-start;
+
+	body.animation-level-0 & {
+		transition: none;
+	}
+
+	&-wrapper {
+		position: absolute;
+		left: 0;
+		top: 0;
+		display: flex;
+		align-items: center;
+		justify-content: flex-start;
+		//width: 420px;
+		width: #{$widthRegular + $widthLink};
+		height: 100%;
+		transform: translateX(0);
+		transition: transform var(--layer-transition);
+		max-width: 100%;
+
+		body.animation-level-0 & {
+			transition: none;
+		}
+	}
+
+	&-tools {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: $padding;
+		flex: 0 0 auto;
+		max-width: 100%;
+
+		&-regular {
+			width: $widthRegular;
+		}
+
+		&-link {
+			width: $widthLink;
+
+			.markup-tooltip-delimiter {
+				margin: 0 .25rem;
+			}
+		}
+	}
+
+	&-delimiter {
+		width: 1px;
+		height: 25px;
+		background-color: var(--border-color);
+	}
+
+	.btn-icon {
+		border-radius: $border-radius !important;
+		width: 30px;
+		height: 30px;
+		padding: 0;
+
+		&.active {
+			color: #fff!important;
+			background-color: var(--primary-color)!important;
+		}
+	}
+
+	&:not(.is-visible) {
+		pointer-events: none;
+	}
+
+	&.is-visible {
+		opacity: 1;
+	}
+
+	&.is-link {
+		width: $widthLink;
+	}
+
+	&.is-link &-wrapper {
+		transform: translateX(#{-$widthRegular});
+	}
+
+	&-link-apply {
+		color: var(--primary-color);
+		font-size: 2rem;
+
+		&-container {
+			display: flex;
+			align-items: center;
+			opacity: 0;
+			transition: opacity var(--layer-transition);
+			pointer-events: none;
+
+			body.animation-level-0 & {
+				transition: none;
+			}
+		}
+	}
+
+	.input-clear {
+		flex: 1 1 auto;
+		text-overflow: ellipsis;
+
+		margin: 0 .5rem;
+
+		&.is-valid + .markup-tooltip-link-apply-container {
+			opacity: 1;
+			pointer-events: all;
+		}
+	}
+}

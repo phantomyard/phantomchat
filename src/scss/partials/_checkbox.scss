@@ -1,0 +1,437 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.checkbox-field {
+  --size: 1.25rem;
+  --offset-left: 0px;
+  margin: 1.5rem 1.1875rem;
+  display: block;
+  text-align: start;
+  position: relative;
+  cursor: pointer;
+  min-width: var(--size);
+  min-height: var(--size);
+
+  @include animation-level(2) {
+    transition: .2s opacity;
+  }
+
+  &.checkbox-disabled {
+    pointer-events: none !important;
+    opacity: var(--disabled-opacity);
+  }
+
+  @include respond-to(handhelds) {
+    margin-bottom: 27px;
+  }
+
+  .checkbox-box {
+    position: absolute;
+    inset-inline-start: var(--offset-left);
+    top: 50%;
+    transform: translateY(-50%);
+    width: var(--size);
+    height: var(--size);
+    border-radius: .3125rem;
+    overflow: hidden;
+    pointer-events: none;
+
+    html.is-safari & {
+      -webkit-mask-image: -webkit-radial-gradient(circle, white 100%, black 100%); // fix safari overflow
+    }
+
+    &-check,
+    &-background,
+    &-border {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    &-border {
+      inset-inline: 0;
+      bottom: 0;
+      border-radius: inherit;
+      border: 2px solid #8d969c;
+      //border-color: #000;
+    }
+
+    &-background {
+      // it is needed for circle scale animation
+      inset: -15%;
+
+      background-color: var(--primary-color);
+      transform: scale(0);
+      border-radius: 50%;
+      transition: transform .2s .05s ease-in-out;
+
+      @include animation-level(0) {
+        transition: none !important;
+      }
+    }
+
+    &-check {
+      --offset: 7px;
+      width: calc(var(--size) - var(--offset));
+      height: calc(var(--size) - var(--offset));
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+
+      use {
+        stroke: #fff;
+        stroke-width: 3.75;
+        stroke-linecap: round;
+        stroke-dasharray: 0, 24.19;
+        stroke-dashoffset: 0;
+        transition: stroke-dasharray .1s ease-in-out, visibility 0s .1s;
+        visibility: hidden; // fix blinking on parent's transform
+
+        @include animation-level(0) {
+          transition: none !important;
+        }
+      }
+    }
+  }
+
+  .checkbox-caption {
+    position: relative;
+    padding-inline-start: 3.375rem;
+    transition: .2s opacity;
+    color: inherit;
+    pointer-events: none;
+    line-height: var(--line-height);
+
+    @include text-overflow(false);
+
+    @include animation-level(0) {
+      transition: none;
+    }
+  }
+
+  &.hover-effect {
+    display: flex;
+    align-items: center;
+    height: 3.5rem;
+    padding: 0 1.1875rem;
+    margin-left: 0;
+    margin-right: 0;
+
+    .checkbox-box {
+      inset-inline-start: auto;
+    }
+  }
+
+  .anchor-url {
+    pointer-events: all;
+  }
+}
+
+.checkbox-ripple {
+  overflow: hidden;
+  border-radius: $border-radius-medium;
+
+  .checkbox-box,
+  .checkbox-caption {
+    pointer-events: none;
+  }
+}
+
+.checkbox-field-round {
+  --size: 1.5rem;
+
+  .checkbox-box {
+    border-radius: 50%;
+    overflow: auto;
+
+    &-background {
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+    }
+
+    &-border {
+      border: 2px solid var(--secondary-color);
+      z-index: 1;
+    }
+
+    &-check {
+      --offset: calc(var(--size) - (var(--size) / 2 + .125rem));
+    }
+
+    html.is-safari & {
+      -webkit-mask-image: none;
+    }
+  }
+}
+
+.radio-field {
+  --size: 1.375rem;
+  --offset-left: 0px;
+	position: relative;
+	text-align: start;
+	margin: 1.25rem 0;
+	line-height: var(--line-height); // omg it centers the text
+  cursor: pointer;
+
+  &.hidden-widget {
+    cursor: default;
+
+    .radio-field-main {
+      &::before,
+      &::after {
+        visibility: hidden;
+      }
+    }
+  }
+
+  > input {
+    &:checked {
+      & ~ .radio-field-main {
+        &::before {
+          border-color: var(--primary-color);
+        }
+
+        &::after {
+          transform: translateY(-50%) scale(1);
+        }
+      }
+    }
+  }
+
+  // ! can't use &-main here, check popup create poll
+  .radio-field-main {
+    padding-inline-start: 3.5rem;
+    position: relative;
+    // color: var(--primary-text-color);
+    color: inherit;
+
+    &::before, 
+    &::after {
+      content: '';
+      display: block;
+      position: absolute;
+      inset-inline-start: var(--offset-left);
+      top: 50%;
+      width: var(--size);
+      height: var(--size);
+      transform: translateY(-50%);
+    }
+
+    &::before {
+      border: 2px solid var(--secondary-text-color);
+      border-radius: 50%;
+      opacity: 1;
+
+      @include animation-level(2) {
+        transition: border-color .1s ease, opacity .1s ease;
+      }
+    }
+
+    &::after {
+      inset-inline-start: calc(var(--offset-left) + .3125rem);
+      width: .75rem;
+      height: .75rem;
+      border-radius: 50%;
+      background: var(--primary-color);
+      transform: translateY(-50%) scale(0);
+      transform-origin: center;
+
+      @include animation-level(2) {
+        transition: transform .1s ease;
+      }
+    }
+
+    &.is-locked {
+      &:before,
+      &:after {
+        display: none;
+      }
+    }
+
+    /* &-subtitle {
+      color: var(--secondary-text-color) !important;
+      font-size: 14px !important;
+    } */
+  }
+
+  &-lock {
+    position: absolute;
+    inset-inline-start: var(--offset-left);
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--secondary-text-color);
+    font-size: 1.5rem;
+  }
+
+  &.radio-field-right {
+    .radio-field-main {
+      &:before {
+        inset-inline: auto 0;
+      }
+
+      &:after {
+        inset-inline: auto .3125rem;
+      }
+    }
+  }
+
+  /* &-with-subtitle {
+    .radio-field-main {
+      margin-bottom: 1.5rem;
+
+      &-subtitle {
+        margin-bottom: -1.5rem;
+      }
+    }
+  } */
+}
+
+[type="checkbox"],
+[type="radio"] {
+  box-sizing: border-box;
+  padding: 0;
+  opacity: 0;
+  z-index: var(--z-below);
+  position: absolute;
+}
+
+.checkbox-field .checkbox-field-input {
+  &:checked:not(.is-fake-disabled) + .checkbox-box {
+    .checkbox-box-check {
+      use {
+        stroke-dasharray: 24.19, 24.19;
+        visibility: visible;
+        transition: stroke-dasharray .1s .15s ease-in-out, visibility 0s .15s;
+      }
+    }
+
+    .checkbox-box-background {
+      transition: transform .2s 0s ease-in-out;
+      transform: scale(1);
+    }
+  }
+
+  /* &:checked + .checkbox-box {
+    
+  } */
+
+  &:disabled + .checkbox-box,
+  &:disabled ~ .checkbox-caption {
+    cursor: default;
+    opacity: var(--disabled-opacity);
+  }
+}
+
+.checkbox-field-restriction {
+  .checkbox-box {
+    &-border {
+      display: none;
+    }
+
+    &-background {
+      transform: none !important;
+      transition: background-color .2s !important;
+    }
+
+    &-check use {
+      visibility: visible !important;
+      stroke-dasharray: 24.19, 24.19 !important;
+      transform: rotate(0) translateY(0);
+      transition: stroke-dashoffset .2s ease-in-out, transform .2s ease-in-out !important;
+    }
+  }
+}
+
+.checkbox-field-restriction [type="checkbox"] {
+  &:not(:checked) + .checkbox-box {
+    .checkbox-box-check {
+      use {
+        transform: rotate(45deg) translateY(-10px);
+        stroke-dashoffset: 35.5;
+        //stroke-dashoffset: -13;
+
+        /* stroke-dashoffset: 24;
+        stroke-dasharray: 12.095, 24.19 !important; */
+      }
+    }
+
+    .checkbox-box-background {
+      background-color: var(--danger-color);
+    }
+  }
+}
+
+.checkbox-field-toggle {
+  --size: 20px;
+  margin: 0 .3125rem;
+  padding: 0 .25rem; // horizontal because of the bounce
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+
+  .checkbox-toggle {
+    --offset: 3px;
+    --toggle-width: 1.9375rem;
+    width: var(--toggle-width);
+    height: .875rem;
+    background-color: var(--secondary-color);
+    border-radius: $border-radius-big;
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin: 0 var(--offset);
+
+    @include animation-level(2) {
+      transition: background-color .1s;
+    }
+
+    &-circle {
+      width: 1.25rem;
+      height: 1.25rem;
+      border: 2px solid var(--secondary-color);
+      background-color: var(--surface-color);
+      content: " ";
+      transform: translateX(calc(var(--offset) * var(--reflect) * -1));
+      border-radius: 50%;
+      position: absolute;
+      inset-inline-start: 0;
+
+      @include animation-level(2) {
+        transition: border-color .1s, transform .1s cubic-bezier(.22, .75, .7, 1.3);
+      }
+
+      &.with-lock {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: .875rem;
+      }
+    }
+  }
+
+  &-restriction {
+    .checkbox-toggle {
+      background-color: var(--danger-color);
+
+      &-circle {
+        border-color: var(--danger-color);
+        color: var(--danger-color);
+      }
+    }
+  }
+
+  [type="checkbox"]:checked:not(.is-fake-disabled) + .checkbox-toggle {
+    background-color: var(--primary-color);
+
+    .checkbox-toggle-circle {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+      transform: translateX(calc((var(--toggle-width) - 1.25rem + var(--offset)) * var(--reflect)));
+    }
+  }
+}

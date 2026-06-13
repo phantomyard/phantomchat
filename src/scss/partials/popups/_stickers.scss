@@ -1,0 +1,87 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.popup-stickers {
+  $parent: ".popup";
+  user-select: none;
+
+  .scrollable {
+    &.is-loading {
+      min-height: 9rem;
+      position: relative;
+    }
+  }
+
+  .super-emojis {
+    padding: 0 .5rem;
+  }
+
+  #{$parent} {
+    &-container {
+      max-width: 420px;
+      max-height: 420px;
+      width: 420px;
+      padding: 0;
+    }
+  
+    &-close {
+      font-size: 1.5rem;
+    }
+  
+    &-header {
+      margin: .625rem 1rem;
+      flex: 0 0 auto;
+    }
+
+    &-footer {
+      color: var(--primary-color);
+  
+      .btn-primary {
+        width: auto;
+        margin: 0 auto;
+      }
+    }
+  }
+
+  .sticker-set {
+    margin: .0625rem 0;
+
+    .row-title {
+      font-weight: var(--font-weight-bold);
+    }
+
+    &-stickers {
+      --per-row: 5;
+      --item-size: var(--popup-sticker-size);
+      padding: 0 5px;
+      display: grid;
+      grid-template-columns: repeat(var(--per-row), 1fr);
+      position: relative;
+
+      @include respond-to(handhelds) {
+        --per-row: 4;
+      }
+
+      .media-sticker-wrapper {
+        width: var(--item-size);
+        height: var(--item-size);
+        margin-bottom: 2px;
+        justify-self: center;
+        cursor: pointer;
+        position: relative;
+  
+        @include respond-to(handhelds) {
+          margin-bottom: 8px;
+        }
+  
+        &:hover {
+          border-radius: 12px;
+          background-color: var(--light-secondary-text-color);
+        }
+      }
+    }
+  }
+}

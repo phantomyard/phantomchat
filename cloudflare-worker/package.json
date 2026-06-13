@@ -1,0 +1,14 @@
+{
+  "name": "nostra-ipfs-gateway",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Cloudflare Worker that serves ipfs.nostra.chat by resolving DNSLink and proxying to dweb.link subdomain gateway",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

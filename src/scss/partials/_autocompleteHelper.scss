@@ -1,0 +1,56 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.autocomplete-helper {
+  --border-radius: #{$border-radius-medium};
+  position: absolute !important;
+	// bottom: calc(100% + .625rem);
+	bottom: calc(100% + .5rem);
+	overflow: hidden;
+	padding: 0 !important;
+  border-radius: var(--border-radius) !important;
+	max-width: 100%;
+	inset-inline-start: 0;
+  width: auto !important;
+  color: var(--primary-text-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--surface-color);
+
+	/* @include respond-to(esg-bottom-new) {
+		bottom: calc(100% + .5rem);
+	} */
+
+  &:not(.is-visible) {
+		display: none;
+	}
+
+	&.is-visible {
+		visibility: hidden;
+	}
+
+	@include animation-level(2) {
+		&.is-visible {
+			animation: fade-out-opacity .2s ease-in-out forwards;
+			transition: visibility 0s .2s;
+		}
+	}
+
+	.bubbles:not(.is-selecting) ~ .chat-input &.is-visible:not(.backwards),
+  #stories-viewer &.is-visible:not(.backwards) {
+		visibility: visible;
+		
+		@include animation-level(2) {
+			animation-name: fade-in-opacity;
+			transition: visibility 0s 0s;
+		}
+	}
+
+	@media only screen and (max-width: 319px) { 
+		max-width: calc(100vw - var(--padding-horizontal) * 4);
+	}
+}

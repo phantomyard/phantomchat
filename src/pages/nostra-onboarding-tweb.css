@@ -1,0 +1,90 @@
+/**
+ * Nostra.chat Onboarding — tweb Contained Mode
+ *
+ * Overrides applied when NostraOnboarding is mounted inside tweb's
+ * #auth-pages container (nostra-contained class).
+ *
+ * tweb's auth pages use a dark background, so we:
+ * - Remove the full-viewport gradient background
+ * - Remove the 100vh min-height (let it size to content)
+ * - Keep the onboarding card centered inside the container
+ * - Ensure all text elements remain legible on dark background
+ */
+
+/* Contained mode wrapper — overrides onboarding.css full-viewport rules */
+.nostra-onboarding-wrapper.nostra-contained {
+  min-height: auto;
+  background: #1a1a2e; /* Hardcoded dark background so white text is visible regardless of tweb theme */
+  padding: 2rem 1rem;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Mobile: reduce padding */
+@media (max-width: 480px) {
+  .nostra-onboarding-wrapper.nostra-contained {
+    padding: 1rem;
+  }
+}
+
+/* Ensure inner elements render correctly on dark tweb background */
+
+/* Logo */
+.nostra-onboarding-wrapper.nostra-contained .nostra-logo {
+  margin-bottom: 1.5rem;
+}
+
+/* Title gradient — ensure it has a background to show the gradient */
+.nostra-onboarding-wrapper.nostra-contained .nostra-title {
+  background: linear-gradient(90deg, #229EDD, #00D4AA);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  /* Fallback for browsers without background-clip support */
+  color: #229EDD;
+}
+
+/* Info text — tweb auth pages have muted background; info text is light gray */
+.nostra-onboarding-wrapper.nostra-contained .nostra-subtitle {
+  color: #8892b0;
+}
+
+/* OwnID display card — semi-transparent on dark background */
+.nostra-onboarding-wrapper.nostra-contained .ownid-display,
+.nostra-onboarding-wrapper.nostra-contained .seed-display {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Buttons — gradient primary button still works on transparent bg */
+.nostra-onboarding-wrapper.nostra-contained .btn-primary {
+  background: linear-gradient(135deg, #229EDD, #1a9fd4);
+  color: white;
+}
+
+/* Info section — ensure legible on tweb dark bg */
+.nostra-onboarding-wrapper.nostra-contained .nostra-info {
+  color: #8892b0;
+}
+
+/* Import textarea */
+.nostra-onboarding-wrapper.nostra-contained .import-section textarea {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid #2d3748;
+  color: #fff;
+}
+
+/* Import textarea placeholder */
+.nostra-onboarding-wrapper.nostra-contained .import-section textarea::placeholder {
+  color: #4a5568;
+}
+
+/* Hide tweb auth page elements that might peek through behind the onboarding */
+#auth-pages .page-body {
+  background: transparent;
+}

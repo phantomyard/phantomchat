@@ -1,0 +1,19 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.popup-limit {
+  .popup-container {
+    min-width: unquote('min(100%, 22.5rem)');
+  }
+
+  .popup-body {
+    margin: 0 -0.5rem .5rem;
+  }
+
+  .scrollable-y {
+    height: 15rem;
+  }
+}

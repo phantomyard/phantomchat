@@ -1,0 +1,246 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.popup-date-picker {
+  $parent: ".popup";
+  user-select: none;
+
+  #{$parent} {
+    &-container {
+      // max-width: 300px;
+      // max-height: 424px;
+      /* min-width: 300px;
+      width: 300px; */
+      padding: 12px 14px;
+
+      @media (min-height: 470px) {
+        &[data-lines="7"] {
+          top: 19px;
+          //left: 8px;
+        }
+
+        &[data-lines="5"] {
+          top: -19px;
+        }
+      }
+    }
+
+    &-header {
+      margin-left: 6px;
+      margin-top: 4px;  
+      margin-bottom: 1.375rem;
+      // flex: 0 0 auto;
+    }
+
+    &-title {
+      font-weight: var(--font-weight-bold);
+      font-size: 20px;  
+    }
+
+    &-buttons {
+      order: 2;
+      margin-right: -2px;
+      
+      & button + button {
+        margin-left: 9px;
+        margin-top: 0;
+      }
+    }
+  }
+  
+  .date-picker {
+    &-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex: 0 0 auto;
+
+      .date-picker-month-title {
+        font-size: 14px;
+        font-weight: var(--font-weight-bold);
+      }
+    }
+
+    &-prev {
+      transform: rotate(90deg);
+    }
+
+    &-next {
+      transform: rotate(-90deg);
+    }
+
+    &-prev,
+    &-next {
+      &:disabled {
+        visibility: hidden;
+      }
+    }
+
+    &-months {
+      margin-top: 7px;
+      margin-bottom: 1.5rem;
+      user-select: none;
+    }
+
+    &-month {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      width: 100%;
+      justify-content: center;
+
+      .btn-icon {
+        justify-self: center;
+        width: 38px;
+        height: 38px;
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+
+        &:disabled {
+          opacity: 1;
+        }
+      }
+
+      &-date:disabled {
+        opacity: .7 !important;
+      }
+
+      .btn-icon:not(:disabled) {
+        color: var(--primary-text-color);
+      }
+
+      .btn-icon.active {
+        color: var(--badge-text-color);
+        border-radius: 50%;
+        background-color: var(--primary-color) !important;
+      }
+    }
+  }
+}
+
+.popup-schedule {
+  .popup-header {
+    margin-top: 5px;
+    margin-bottom: 17px;
+    margin-left: 0;
+
+    @include respond-to(handhelds) {
+      margin-left: 3px;
+    }
+  }
+
+  .popup-container {
+    min-width: 420px;
+    width: 420px;
+    padding: 4px 16px 16px 16px;
+
+    @include respond-to(handhelds) {
+      min-width: 312px;
+      width: 312px;
+      padding: 4px 14px 14px 14px;
+    }
+
+    &[data-lines="5"] {
+      top: -16px;
+    }
+
+    &[data-lines="7"] {
+      top: 16px;
+    }
+  }
+
+  .date-picker {
+    &-month {
+      margin-right: -20px;
+      margin-left: 2px;
+      width: unset;
+
+      @include respond-to(handhelds) {
+        margin-left: 0;
+        margin-right: -6px;
+      }
+
+      &-title {
+        font-weight: var(--font-weight-bold);
+        font-size: 20px;
+        flex: 1 1 auto;
+      }
+
+      .btn-icon {
+        justify-self: auto;
+        font-weight: var(--font-weight-bold);
+        font-size: 14px;
+        width: 36px;
+        height: 36px;
+        margin-top: -4px;
+      }
+
+      &-date:disabled {
+        color: #9ba3a8 !important;
+      }
+
+      &-day {
+        font-weight: var(--font-weight-bold);
+        color: var(--primary-text-color) !important;
+        font-size: 14px !important;
+      }
+    }
+
+    &-months {
+      margin-bottom: 14px;
+
+      @include respond-to(handhelds) {
+        margin-bottom: 13px;
+      }
+    }
+
+    &-time {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+
+      @include respond-to(handhelds) {
+        margin-bottom: 22px;
+      }
+
+      .input-field {
+        width: 80px;
+
+        &-input {
+          text-align: center;
+        }
+      }
+
+      &-delimiter {
+        padding: 14px 20px;
+        font-weight: var(--font-weight-bold);
+      }
+    }
+
+    &-controls {
+      .btn-icon {
+        &:disabled {
+          visibility: visible;
+          //opacity: 1;
+        }
+      }
+    }
+  }
+
+  .btn-primary {
+    @include respond-to(handhelds) {
+      height: 50px;
+      width: 280px;
+      margin-left: 2px;
+    }
+  }
+
+  &-secondary {
+    margin-top: .5rem !important;
+  }
+}

@@ -1,0 +1,260 @@
+/* Tor UI — shield icon, banners, popups */
+
+.tor-shield {
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  transition: color 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+  }
+
+  &--bootstrapping {
+    color: #9e9e9e;
+  }
+
+  &--active {
+    color: #4caf50;
+  }
+
+  &--direct {
+    color: #ff9800;
+  }
+
+  &--failed {
+    color: #f44336;
+  }
+}
+
+.tor-banner {
+  width: 100%;
+  padding: 8px 16px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 3;
+  box-sizing: border-box;
+
+  &--bootstrap {
+    background: #e3f2fd;
+    color: #1565c0;
+  }
+
+  &--direct {
+    background: #fff3e0;
+    color: #e65100;
+  }
+
+  &--reconnected {
+    background: #e8f5e9;
+    color: #2e7d32;
+    transition: opacity 0.5s ease-out;
+
+    &.tor-banner--fading {
+      opacity: 0;
+    }
+  }
+
+  &__text {
+    flex: 1;
+  }
+
+  &__retry-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline;
+    font-size: 14px;
+    color: inherit;
+    padding: 0;
+    margin-left: 12px;
+  }
+
+  &__dismiss {
+    background: none;
+    border: none;
+    cursor: pointer;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    margin-left: 8px;
+    color: inherit;
+    opacity: 0.7;
+
+    &:hover {
+      opacity: 1;
+    }
+  }
+}
+
+.tor-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tor-popup {
+  background: var(--surface-color);
+  color: var(--primary-text-color);
+  border-radius: 12px;
+  max-width: 360px;
+  width: 90%;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+
+  &__title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--primary-text-color);
+  }
+
+  &__body {
+    font-size: 14px;
+    color: var(--secondary-text-color);
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }
+
+  &__actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  &__btn {
+    padding: 8px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    border: none;
+    transition: background 0.15s;
+
+    &--secondary {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--primary-text-color);
+
+      &:hover {
+        background: rgba(var(--primary-text-color-rgb, 0, 0, 0), 0.06);
+      }
+    }
+
+    &--warning {
+      background: #ff9800;
+      color: #fff;
+
+      &:hover {
+        background: #f57c00;
+      }
+    }
+
+    &--link {
+      background: transparent;
+      color: var(--primary-color);
+
+      &:hover {
+        background: rgba(var(--primary-color-rgb, 0, 123, 255), 0.08);
+      }
+    }
+
+    &--disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+  }
+}
+
+.tor-status-popup {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.tor-status-relay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+  color: var(--primary-text-color);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.tor-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+
+  &--green {
+    background: #4caf50;
+  }
+
+  &--red {
+    background: #f44336;
+  }
+
+  &--yellow {
+    background: #ff9800;
+  }
+
+  &--gray {
+    background: #9e9e9e;
+  }
+}
+
+.tor-status-url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tor-status-latency {
+  color: var(--secondary-text-color);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.tor-status-badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+
+  span {
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(var(--secondary-text-color-rgb), 0.15);
+    color: var(--secondary-text-color);
+  }
+}
+
+.row-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}

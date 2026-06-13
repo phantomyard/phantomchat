@@ -1,0 +1,142 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.popup-forward {
+  $parent: ".popup";
+
+  #{$parent} {
+    &-container {
+      width: 420px;
+      max-width: 420px;
+      //padding: 12px 20px 32.5px;
+      padding: 7px 0 0 0;
+      max-height: unquote('min(40.625rem, 100%)');
+      height: 40.625rem;
+    }
+
+    &-header {
+      flex: 0 0 auto;
+      margin-bottom: 7px;
+      padding: 0 1rem;
+
+      @include respond-to(handhelds) {
+        padding-inline-start: .8125rem;
+      }
+
+      // .btn-primary {
+      //   width: auto;
+      //   height: 2.5rem;
+      //   padding: 0 1rem;
+      // }
+    }
+
+    &-title {
+      flex-grow: 1;
+      padding: 0;
+      min-height: 40px !important;
+      display: flex;
+      align-items: center;
+
+      .selector-search-input {
+        font-size: var(--font-size-20);
+      }
+    }
+
+    &-close {
+      @include respond-to(handhelds) {
+        margin-inline-end: 1.1875rem;
+      }
+    }
+  }
+
+  &-auto-height {
+    height: auto !important;
+
+    .sidebar-left-section {
+      min-height: auto !important;
+    }
+  }
+
+  .selector.active,
+  .chatlist-container {
+    height: auto;
+    overflow: hidden;
+    display: flex;
+    width: 100%;
+    flex-direction: row;
+    flex: 1 1 auto;
+  }
+
+  .selector {
+    &-search {
+      // padding-inline: 0 !important;
+      gap: .5rem;
+
+      &-section {
+        padding: 0 !important;
+
+        &-container {
+          width: 100%;
+          padding-bottom: .75rem;
+          border-bottom: 1px solid var(--border-color);
+
+          & + .popup-body {
+            .scrollable {
+              padding-top: .5rem !important;
+            }
+
+            .chatlist {
+              margin-top: .5rem !important;
+            }
+          } 
+        }
+
+        // .sidebar-left-section-content {
+        //   margin: 0 !important;
+        // }
+      }
+
+      &-input {
+        line-height: 1;
+        padding: 0 !important;
+        min-height: 2rem;
+      }
+    }
+
+    &-user {
+      margin: 0 !important;
+    }
+
+    .chatlist {
+      margin-top: 0 !important;
+    }
+  }
+
+  .gradient-delimiter {
+    display: none;
+  }
+
+  .sidebar-left-section {
+    padding-top: 0 !important;
+    margin-bottom: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .chatlist-container {
+    .scrollable {
+      border-bottom: none;
+      border-top-color: var(--surface-color);
+    }
+  }
+
+  .tabs-container {
+    height: 100%;
+
+    .selector:not(.active) {
+      display: none;
+    }
+  }
+}

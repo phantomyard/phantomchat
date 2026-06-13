@@ -1,0 +1,39 @@
+/*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
+.color-picker {
+  width: 380px;
+  max-width: 100%;
+  margin: 1.1875rem auto .25rem;
+  user-select: none;
+
+  @include respond-to(handhelds) {
+    padding: 0 .75rem;
+  }
+
+  &-box,
+  &-color-slider,
+  &-dragger {
+    overflow: visible !important;
+  }
+
+  &-sliders {
+    margin: 1rem 0 1.125rem;
+  }
+
+  &-dragger {
+    cursor: grab;
+  }
+
+  &-inputs {
+    display: flex;
+    gap: 1.25rem;
+
+    .input-field {
+      flex: 1 1 auto;
+    }
+  }
+}

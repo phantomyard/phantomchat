@@ -1,0 +1,7 @@
+name = "nostra-ipfs-gateway"
+main = "src/index.js"
+compatibility_date = "2024-11-06"
+
+routes = [
+  {pattern = "ipfs.nostra.chat/*", zone_name = "nostra.chat"}
+]

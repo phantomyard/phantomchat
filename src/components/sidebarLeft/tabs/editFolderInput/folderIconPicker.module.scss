@@ -1,0 +1,26 @@
+.FolderIconPicker {
+  --size: 28px;
+  width: var(--size);
+  height: var(--size);
+  margin-inline-end: 8px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  user-select: none;
+  background-color: var(--light-secondary-text-color);
+  color: var(--primary-text-color);
+  font-size: 18px;
+  line-height: 1;
+  transition: background-color .15s ease;
+
+  &:hover {
+    background-color: var(--secondary-text-color);
+  }
+}
+
+.Dropdown {
+  z-index: 6;
+}

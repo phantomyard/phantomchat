@@ -1,0 +1,184 @@
+import {createRoot, createSignal, getOwner, runWithOwner} from 'solid-js';
+
+import noop from '@helpers/noop';
+
+import {useMediaEditorContext} from '@components/mediaEditor/context';
+import {delay} from '@components/mediaEditor/utils';
+
+import {FRAMES_PER_SECOND, STICKER_SIZE} from '@components/mediaEditor/finalRender/constants';
+import {MediaEditorFinalResultPayload} from '@components/mediaEditor/finalRender/createFinalResult';
+import drawStickerLayer from '@components/mediaEditor/finalRender/drawStickerLayer';
+import drawTextLayer from '@components/mediaEditor/finalRender/drawTextLayer';
+import {generateVideoPreview} from '@components/mediaEditor/finalRender/generateVideoPreview';
+import {ScaledLayersAndLines} from '@components/mediaEditor/finalRender/getScaledLayersAndLines';
+import ImageStickerFrameByFrameRenderer from '@components/mediaEditor/finalRender/imageStickerFrameByFrameRenderer';
+import LottieStickerFrameByFrameRenderer from '@components/mediaEditor/finalRender/lottieStickerFrameByFrameRenderer';
+import {StickerFrameByFrameRenderer} from '@components/mediaEditor/finalRender/types';
+import VideoStickerFrameByFrameRenderer from '@components/mediaEditor/finalRender/videoStickerFrameByFrameRenderer';
+import calcCodecAndBitrate, {BITRATE_TARGET_FPS} from '@components/mediaEditor/finalRender/calcCodecAndBitrate';
+import StickerType from '@config/stickerType';
+
+type Args = {
+  scaledLayers: ScaledLayersAndLines['scaledLayers'];
+  scaledWidth: number;
+  scaledHeight: number;
+  ctx: CanvasRenderingContext2D;
+  imageCanvas: HTMLCanvasElement;
+  brushCanvas: HTMLCanvasElement;
+  resultCanvas: HTMLCanvasElement;
+};
+
+export default async function renderToVideoGIF({
+  scaledWidth,
+  scaledHeight,
+  scaledLayers,
+  ctx,
+  imageCanvas,
+  brushCanvas,
+  resultCanvas
+}: Args) {
+  const owner = getOwner();
+  const context = useMediaEditorContext();
+
+  const {editorState: {pixelRatio}, dontCreatePreview} = context;
+
+  const creationProgress = createRoot(dispose => {
+    const signal = createSignal(0);
+    return {signal, dispose};
+  });
+
+  const [, setProgress] = creationProgress.signal;
+
+  const renderers = new Map<number, StickerFrameByFrameRenderer>();
+
+  let canceled = false;
+
+  async function renderFrame(encoder: VideoEncoder, frameNo: number) {
+    const promises = Array.from(renderers.values()).map((renderer) =>
+      renderer.renderFrame(frameNo % (renderer.getTotalFrames() + 1))
+    );
+    await Promise.all(promises);
+
+    ctx.clearRect(0, 0, scaledWidth, scaledHeight);
+    ctx.drawImage(imageCanvas, 0, 0);
+    ctx.drawImage(brushCanvas, 0, 0);
+
+    scaledLayers.forEach((layer) => {
+      if(layer.type === 'text') drawTextLayer(context, ctx, layer);
+      if(layer.type === 'sticker' && renderers.has(layer.id)) {
+        const renderer = renderers.get(layer.id);
+        drawStickerLayer(context, ctx, layer, renderer.getRenderedFrame(), renderer.getRatio());
+      }
+    });
+
+    const videoFrame = new VideoFrame(resultCanvas, {
+      timestamp: (frameNo * 1e6) / FRAMES_PER_SECOND,
+      duration: 1e6 / FRAMES_PER_SECOND
+    });
+    encoder.encode(videoFrame);
+    videoFrame.close();
+  }
+
+  function cleanup(encoder: VideoEncoder) {
+    encoder.close();
+    Array.from(renderers.values()).forEach((renderer) => renderer.destroy());
+  }
+
+  const resultPromise = new Promise<MediaEditorFinalResultPayload>(async(resolve, reject) => {
+    let maxFrames = 0;
+
+    const [{ArrayBufferTarget, Muxer}] = await Promise.all([
+      import('mp4-muxer'),
+      ...scaledLayers.map(async(layer) => {
+        if(!layer.sticker) return;
+
+        const stickerType = layer.sticker?.sticker;
+        let renderer: StickerFrameByFrameRenderer;
+
+        if(stickerType === StickerType.Static) renderer = new ImageStickerFrameByFrameRenderer();
+        if(stickerType === StickerType.Lottie) renderer = new LottieStickerFrameByFrameRenderer();
+        if(stickerType === StickerType.WebM) renderer = new VideoStickerFrameByFrameRenderer();
+        if(!renderer) return;
+
+        renderers.set(layer.id, renderer);
+        await renderer.init(layer.sticker!, STICKER_SIZE * layer.scale * pixelRatio);
+        maxFrames = Math.max(maxFrames, renderer.getTotalFrames());
+      }),
+      delay(200)
+    ]);
+
+    const muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: {
+        codec: 'avc',
+        width: scaledWidth,
+        height: scaledHeight,
+        frameRate: FRAMES_PER_SECOND
+      },
+      fastStart: 'in-memory'
+    });
+
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (e) => console.error(e)
+    });
+
+    encoder.configure({
+      width: scaledWidth,
+      height: scaledHeight,
+      ...calcCodecAndBitrate(scaledWidth, scaledHeight, BITRATE_TARGET_FPS)
+    });
+
+    for(let frameNo = 0; frameNo <= maxFrames; frameNo++) {
+      if(canceled) {
+        reject();
+        cleanup(encoder);
+      }
+
+      await renderFrame(encoder, frameNo);
+      setProgress(frameNo / maxFrames);
+    }
+
+    await encoder.flush();
+    muxer.finalize();
+
+    cleanup(encoder);
+
+    const {buffer} = muxer.target;
+    resolve({
+      blob: new Blob([buffer], {type: 'video/mp4'}),
+      hasSound: false
+    });
+  });
+
+  let result: MediaEditorFinalResultPayload;
+
+  resultPromise.then((value) => (result = value)).catch(noop);
+
+  return {
+    preview: dontCreatePreview ? undefined : await runWithOwner(owner, () => generateVideoPreview({scaledWidth, scaledHeight})),
+    isVideo: true,
+    getResult: () => {
+      return result ?? resultPromise;
+    },
+    cancel: () => {
+      canceled = true;
+    },
+    creationProgress
+  };
+
+  // const div = document.createElement('div')
+  // div.style.position = 'fixed';
+  // div.style.zIndex = '1000';
+  // div.style.top = '50%';
+  // div.style.left = '50%';
+  // div.style.transform = 'translate(-50%, -50%)';
+  // const img = document.createElement('video')
+  // img.src = URL.createObjectURL(blob)
+  // img.controls = true
+  // img.autoplay = true
+  // img.loop = true
+  // img.style.maxWidth = '450px'
+  // div.append(img)
+  // document.body.append(div)
+}

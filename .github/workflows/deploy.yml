@@ -1,0 +1,194 @@
+name: Deploy Nostra.chat
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Prepare local-only files
+        run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: pnpm build:release
+
+      - name: Sign update manifest
+        if: env.UPDATE_SIGNING_KEY != ''
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: pnpm run sign-manifest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  deploy-cloudflare:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=nostra-chat
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-github-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/
+
+      - uses: actions/deploy-pages@v4
+        id: deployment
+
+  upload-release-manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload manifest to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/update-manifest.json
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+
+  deploy-ipfs:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - id: ipfs
+        uses: ipshipyard/ipfs-deploy-action@v1
+        with:
+          path-to-deploy: dist
+          filebase-access-key: ${{ secrets.FILEBASE_ACCESS_KEY }}
+          filebase-secret-key: ${{ secrets.FILEBASE_SECRET_KEY }}
+          filebase-bucket: ${{ secrets.FILEBASE_BUCKET }}
+          github-token: ${{ github.token }}
+
+      - name: Update DNSLink on Cloudflare
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          DNSLINK_NAME: _dnslink.ipfs.nostra.chat
+          CID: ${{ steps.ipfs.outputs.cid }}
+        run: |
+          set -euo pipefail
+          CONTENT="dnslink=/ipfs/${CID}"
+          echo "Updating ${DNSLINK_NAME} -> ${CONTENT}"
+
+          # Look up existing TXT record ID
+          RECORD_ID=$(curl -fsS -X GET \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=TXT&name=${DNSLINK_NAME}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            | jq -r '.result[0].id // empty')
+
+          PAYLOAD=$(jq -nc \
+            --arg name "${DNSLINK_NAME}" \
+            --arg content "${CONTENT}" \
+            '{type:"TXT", name:$name, content:$content, ttl:60}')
+
+          if [ -n "${RECORD_ID}" ]; then
+            echo "Updating existing record ${RECORD_ID}"
+            curl -fsS -X PUT \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${PAYLOAD}" | jq -e '.success' > /dev/null
+          else
+            echo "Creating new TXT record"
+            curl -fsS -X POST \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${PAYLOAD}" | jq -e '.success' > /dev/null
+          fi
+
+          echo "✅ DNSLink updated: https://ipfs.nostra.chat → /ipfs/${CID}" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-worker:
+    needs: deploy-ipfs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: cloudflare-worker/pnpm-lock.yaml
+
+      - name: Install worker dependencies
+        working-directory: cloudflare-worker
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Deploy Cloudflare Worker
+        working-directory: cloudflare-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy

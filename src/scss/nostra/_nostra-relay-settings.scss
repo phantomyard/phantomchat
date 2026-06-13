@@ -1,0 +1,133 @@
+.nostra-relay-settings {
+  .relay-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 16px;
+  }
+
+  .relay-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--surface-color);
+    transition: box-shadow .15s ease;
+
+    &:hover {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .06);
+    }
+
+    &--disabled {
+      opacity: .55;
+    }
+  }
+
+  .relay-card__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .relay-card__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+
+    &--green { background: #4caf50; }
+    &--yellow { background: #ffeb3b; }
+    &--red { background: #f44336; }
+  }
+
+  .relay-card__url {
+    font-family: var(--font-monospace, monospace);
+    font-size: 13px;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .relay-card__latency {
+    font-size: 12px;
+    color: var(--secondary-text-color);
+    flex-shrink: 0;
+
+    &.latency-good { color: #4caf50; }
+    &.latency-moderate { color: #ff9800; }
+    &.latency-slow { color: #f44336; }
+  }
+
+  .relay-card__footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .relay-chip {
+    min-width: 36px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+
+    &--active {
+      background: var(--primary-color);
+      color: #fff;
+      border-color: var(--primary-color);
+    }
+  }
+
+  .relay-card__delete {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    opacity: 0;
+    transition: opacity .12s ease;
+    color: var(--secondary-text-color);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+
+    &:hover {
+      color: var(--danger-color, #e53935);
+      background: rgba(0, 0, 0, .04);
+    }
+  }
+
+  .relay-card:hover .relay-card__delete {
+    opacity: 1;
+  }
+
+  .relay-tor-aggregate {
+    margin: 8px 16px 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--border-color);
+    font-size: 12px;
+    color: var(--secondary-text-color);
+  }
+
+  .relay-list-empty {
+    padding: 16px;
+    text-align: center;
+    color: var(--secondary-text-color);
+    font-size: 14px;
+  }
+}

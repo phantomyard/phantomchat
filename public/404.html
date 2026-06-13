@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Nostra.chat</title>
+    <script>
+      // GitHub Pages SPA fallback
+      // Preserve the full path in sessionStorage before redirecting to root
+      var path = window.location.pathname + window.location.search + window.location.hash;
+      sessionStorage.setItem('redirect', path);
+      window.location.replace('/');
+    </script>
+  </head>
+  <body></body>
+</html>

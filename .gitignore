@@ -1,0 +1,82 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+!src/scripts/build/
+coverage/
+public/*.js
+public/*.js.map
+public/*.css
+public/changelogs/
+!public/recorder.min.js
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Environment
+.env
+.env.*
+!.env.example
+.env.local
+
+# Auto-generated local versions (template in .example.ts)
+src/langPackLocalVersion.ts
+
+test-results/
+
+# Misc
+vendor/
+!src/vendor/
+*.log
+.cache/
+tmp/
+stats.html
+stats.json
+*.png
+!public/**/*.png
+!src/**/*.png
+ssh.json
+yarn.lock
+todo.md
+
+# Throw files you don't need in this folder
+ignore
+
+# MCP browser testing artifacts
+.playwright-mcp/
+.artifacts/
+.bg-shell/
+
+# Development tooling
+.worktrees/
+.superpowers
+.claude/ralph-loop.local.md
+.claude/worktrees
+.claude/scheduled_tasks.lock
+
+# Fuzzer artifacts (local run outputs)
+docs/FUZZ-FINDINGS.md
+docs/fuzz-reports/
+
+signing-private.key
+*.private.key
+
+# Explorer volatile run state (non-finding runs)
+docs/explorer-reports/runs/
+docs/explorer-reports/errors/
+docs/explorer-reports/FIND-*/
+docs/explorer-reports/seen-signatures.json
+docs/explorer-reports/areas-coverage.json
+docs/explorer-reports/allowlist.ts
+docs/explorer-reports/triage-rejected.jsonl

@@ -1,0 +1,296 @@
+import {batch, onCleanup} from 'solid-js';
+import namedPromises from '@helpers/namedPromises';
+import pickKeys from '@helpers/object/pickKeys';
+import safeAssign from '@helpers/object/safeAssign';
+import {default as appDialogsManager, DialogElement} from '@lib/appDialogsManager';
+import {AppManagers} from '@lib/managers';
+import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
+import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
+import {logger} from '@lib/logger';
+import {createDeferredSortedVirtualList, DeferredSortedVirtualListItem} from '@components/deferredSortedVirtualList';
+import {LoadingDialogSkeletonSize} from '@components/loadingDialogSkeleton';
+import Scrollable from '@components/scrollable';
+import rootScope from '@lib/rootScope';
+
+
+export default class SortedDialogList {
+  private appDialogsManager: typeof appDialogsManager;
+  public managers: AppManagers;
+  public log: ReturnType<typeof logger>;
+  public list: HTMLElement;
+  public indexKey: ReturnType<typeof getDialogIndexKey>;
+  public onListLengthChange: () => void;
+  public virtualFilterId: PeerId;
+  public monoforumParentPeerId: PeerId;
+
+  private virtualList: ReturnType<typeof createDeferredSortedVirtualList<SortedDialogListItem>>;
+
+  /**
+   * The custom emoji from the last message gets destroyed completely when removing the dialog
+   * element from the DOM, with no easy way of re-initializing them, so we need to forcefully
+   * re-initialize the last message
+   */
+  private unmountedDialogElements = new WeakMap<DialogElement, boolean>;
+
+  constructor(options: {
+    appDialogsManager: SortedDialogList['appDialogsManager'],
+    managers: SortedDialogList['managers'],
+    log?: SortedDialogList['log'],
+    indexKey: SortedDialogList['indexKey'],
+    onListLengthChange?: SortedDialogList['onListLengthChange'],
+    virtualFilterId?: SortedDialogList['virtualFilterId'],
+    monoforumParentPeerId?: SortedDialogList['monoforumParentPeerId'],
+
+    scrollable: Scrollable,
+    requestItemForIdx: (idx: number, itemsLength: number) => void,
+    onListShrinked: () => void,
+    itemSize: LoadingDialogSkeletonSize,
+    noAvatar?: boolean // For the loading skeleton placeholder
+  }) {
+    safeAssign(this, pickKeys(options, [
+      'appDialogsManager',
+      'managers',
+      'log',
+      'indexKey',
+      'virtualFilterId',
+      'monoforumParentPeerId',
+      'onListLengthChange'
+    ]));
+
+    this.virtualList = createDeferredSortedVirtualList({
+      scrollable: options.scrollable.container,
+      getItemElement: (item, key) => {
+        if(item.type === 'custom-pinned-dialog') {
+          return item.value.render();
+        }
+
+        const dialogElement = item.value;
+
+        if(this.unmountedDialogElements.get(dialogElement)) {
+          const {options} = this.getDialogOptions(key);
+
+          /**
+           * Re-initing the dialog is pretty expensive on performance,
+           * so we wait a little bit before it, in case the user scrolls
+           * like crazy up and down
+           */
+          const timeout = self.setTimeout(() => {
+            this.appDialogsManager.initDialog(dialogElement, options)
+            .then(
+              () => {
+                this.unmountedDialogElements.delete(dialogElement);
+              },
+              () => {}
+            );
+          }, 200);
+
+          onCleanup(() => {
+            self.clearTimeout(timeout);
+          });
+        }
+
+        return dialogElement.dom.listEl;
+      },
+      onItemUnmount: (item) => {
+        if(item.type === 'dialog') {
+          this.unmountedDialogElements.set(item.value, true);
+        }
+      },
+      onListShrinked: options.onListShrinked,
+      requestItemForIdx: options.requestItemForIdx,
+      sortWith: (a, b) => b - a,
+      itemSize: options.itemSize,
+      noAvatar: options.noAvatar,
+      onListLengthChange: options.onListLengthChange
+    });
+
+    this.list = this.virtualList.list;
+
+    this.list.classList.add('chatlist', 'virtual-chatlist');
+  }
+
+
+  public async getIndexForKey(key: any) {
+    if(key instanceof CustomPinnedDialog) return 0;
+    if(key === this.monoforumParentPeerId) return 0;
+    if(key === this.virtualFilterId && key !== rootScope.myId) return 0;
+
+    if(this.monoforumParentPeerId) {
+      const dialog = await this.managers.monoforumDialogsStorage.getDialogByParent(this.monoforumParentPeerId, key);
+      return getDialogIndex(dialog);
+    }
+
+    return this.managers.dialogsStorage.getDialogIndex(
+      this.virtualFilterId ?? key,
+      this.indexKey,
+      this.virtualFilterId ? key : undefined
+    )
+  }
+
+  public async createItemForKey(key: any) {
+    const {index, value} = await namedPromises({
+      index: this.getIndexForKey(key),
+      value: this.createElementForKey(key)
+    });
+
+    return {id: key, index, value};
+  }
+
+  private getDialogOptions(key: any) {
+    const loadPromises: Promise<any>[] = [];
+
+    const options: Parameters<typeof appDialogsManager['addListDialog']>[0] = {
+      peerId: this.virtualFilterId ?? key,
+      loadPromises,
+      isBatch: true,
+      threadId: (this.virtualFilterId && key !== this.virtualFilterId) || rootScope.myId === this.virtualFilterId ? key : undefined,
+      isMainList: this.indexKey === 'index_0',
+      controlled: true,
+      monoforumParentPeerId: key !== this.monoforumParentPeerId ? this.monoforumParentPeerId : undefined,
+      asAllChats: this.getAsAllChats(key),
+      meAsSaved: !this.monoforumParentPeerId,
+      wrapOptions: undefined
+    };
+
+    return {options, loadPromises};
+  }
+
+  private getAsAllChats(key: any) {
+    if(key instanceof CustomPinnedDialog) return;
+    if(this.virtualFilterId === rootScope.myId) return;
+    return key === this.monoforumParentPeerId ? 'monoforum' : key === this.virtualFilterId ? 'topics' : undefined;
+  }
+
+  public async createElementForKey(key: any): Promise<SortedDialogListItem> {
+    if(key instanceof CustomPinnedDialog) return {
+      type: 'custom-pinned-dialog',
+      value: key
+    };
+
+    const {options, loadPromises} = this.getDialogOptions(key);
+
+    const autoDeletePeriod = await this.getDialogAutoDeletePeriod(key);
+    options.autoDeletePeriod = autoDeletePeriod;
+
+    const dialogElement = this.appDialogsManager.addListDialog(options);
+
+    await Promise.all(loadPromises);
+
+    return {
+      type: 'dialog',
+      value: dialogElement
+    };
+  }
+
+  private async getDialogAutoDeletePeriod(key: any) {
+    if(
+      key instanceof CustomPinnedDialog ||
+      this.virtualFilterId ||
+      this.monoforumParentPeerId
+    ) return;
+
+    const dialog = await this.managers.dialogsStorage.getDialogOnly(key);
+    if(!dialog) return;
+
+    return dialog.ttl_period || undefined;
+  }
+
+  public addDeferredItems(items: DeferredSortedVirtualListItem<SortedDialogListItem>[], totalCount: number) {
+    batch(() => {
+      this.virtualList.setWasAtLeastOnceFetched(true);
+      this.virtualList.addItems(items);
+      this.virtualList.setTotalCount(totalCount);
+    });
+  }
+
+  public async add(key: any) {
+    const item = await this.createItemForKey(key);
+    this.virtualList.addItems([item]);
+    // this.virtualList.setTotalCount(prev => prev + 1);
+  }
+
+  public async addPinned(key: any) {
+    const item = await this.createItemForKey(key);
+    this.virtualList.addPinnedItems([item]);
+  }
+
+  public async ensurePinned(key: any) {
+    const item = await this.createItemForKey(key);
+    this.virtualList.ensurePinnedItems([item]);
+  }
+
+  public removePinned(key: any) {
+    this.virtualList.removePinnedItem(key);
+  }
+
+  public blockAnimation() {
+    return this.virtualList.blockAnimation();
+  }
+
+  public delete(key: any) {
+    batch(() => {
+      this.virtualList.removeItem(key) &&
+      this.virtualList.setTotalCount(prev => Math.max(0, prev - 1));
+    });
+  }
+
+  public has(key: any) {
+    return this.virtualList.has(key);
+  }
+
+  public getDialogElement(key: any) {
+    const item = this.virtualList.get(key);
+    if(item?.type === 'dialog') return item.value;
+  }
+
+  public getAllDialogElementsMap() {
+    const map = this.virtualList.getAll();
+
+    const filteredEntries = Array.from(map.entries())
+    .map(([key, value]) => value?.type === 'dialog' ? [key, value.value] as [any, DialogElement] : null)
+    .filter(Boolean);
+
+    return new Map(filteredEntries);
+  }
+
+  public getSortedItems() {
+    return this.virtualList.sortedItems();
+  }
+
+  public async update(key: any) {
+    const index = await this.getIndexForKey(key);
+    this.virtualList.updateItem(key, index);
+  }
+
+  public itemsLength() {
+    return this.virtualList.itemsLength();
+  }
+
+  public clear() {
+    this.virtualList?.clear();
+  }
+
+  public destroy() {
+    this.virtualList?.dispose();
+  }
+}
+
+interface CustomPinnedDialogCtorArgs {
+  render: () => HTMLElement;
+};
+
+export class CustomPinnedDialog {
+  render: () => HTMLElement;
+
+  constructor({render}: CustomPinnedDialogCtorArgs) {
+    this.render = render;
+  }
+}
+
+type SortedDialogListItem = {
+  type: 'custom-pinned-dialog',
+  value: CustomPinnedDialog;
+} | {
+  type: 'dialog',
+  value: DialogElement;
+}
