@@ -32,7 +32,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
       # tsc resolves @/langPackLocalVersion, which the build normally
       # generates from the example. Seed it so the typecheck has it.
@@ -50,7 +50,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
