@@ -351,6 +351,17 @@ export class ChatAPI {
         });
         return;
       }
+      if(event.kind === 30315) {
+        // NIP-38 presence heartbeat → real Online / "last seen at HH:MM".
+        // The presence engine resolves the author pubkey to a tracked contact
+        // and updates its tweb user status.
+        import('./phantomchat-presence').then(({onRemotePresenceEvent}) => {
+          onRemotePresenceEvent(event);
+        }).catch((err) => {
+          this.log.warn('[ChatAPI] presence onRemotePresenceEvent failed:', err);
+        });
+        return;
+      }
     });
     phantomchatReactionsReceive.setOwnPubkey(this.ownId);
     phantomchatTypingReceive.setOwnPubkey(this.ownId);
@@ -1140,6 +1151,13 @@ export class ChatAPI {
    */
   private async handleRelayMessage(msg: DecryptedMessage): Promise<void> {
     this.log('[ChatAPI] received relay message:', msg.id.slice(0, 8) + '...');
+    // Presence: any inbound message is proof the peer is active right now, so
+    // mark them online immediately (don't wait for the next 60s heartbeat).
+    if(msg.from && msg.from !== this.ownId) {
+      import('./phantomchat-presence').then(({onPeerActivity}) => {
+        onPeerActivity(msg.from);
+      }).catch(() => { /* presence is optional */ });
+    }
     try {
       const result = await handleRelayMessageImpl(msg, {
         ownId: this.ownId,

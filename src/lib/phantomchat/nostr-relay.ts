@@ -53,6 +53,17 @@ export const NOSTR_KIND_DELETE = 5;
 export const NOSTR_KIND_TYPING = 20001;
 
 /**
+ * NIP-38 user-status / presence (kind 30315, parameterized-replaceable). A peer
+ * (phantombot, or any PhantomChat client) republishes one of these on a ~60s
+ * heartbeat, p-tagged to us and carrying `["status","online"]`. We treat each as
+ * a liveness beat: the contact shows a REAL "Online" while beats arrive and
+ * flips to "last seen at HH:MM" once they stop past the offline threshold. Like
+ * typing it's plaintext (not gift-wrapped) and routed through the raw-event
+ * handler. Must match phantombot's `NOSTR_KIND_PRESENCE`.
+ */
+export const NOSTR_KIND_PRESENCE = 30315;
+
+/**
  * Decrypted message structure returned by getMessages.
  * After NIP-17 migration, includes rumor kind and tags for routing.
  */
@@ -491,7 +502,7 @@ export class NostrRelay {
     this.log('[NostrRelay] subscribing to messages');
 
     const filter: Record<string, unknown> = {
-      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING],
+      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING, NOSTR_KIND_PRESENCE],
       '#p': [this.publicKey]
     };
 
@@ -1044,7 +1055,7 @@ export class NostrRelay {
     // through NIP-17 unwrap — they carry their referent in e/p tags. Typing
     // (kind 20001, NIP-16 ephemeral) was being dropped at the gift-wrap-only
     // gate below, so the three-dots indicator never fired.
-    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING) {
+    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING || event.kind === NOSTR_KIND_PRESENCE) {
       if(!verifyEvent(event as any)) {
         this.log.warn('[NostrRelay] dropping non-giftwrap event with invalid signature, kind:', event.kind, 'pubkey:', event.pubkey.slice(0, 8) + '...');
         return;

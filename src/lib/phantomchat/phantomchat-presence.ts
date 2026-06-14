@@ -12,8 +12,6 @@
 
 import rootScope from '@lib/rootScope';
 import {MOUNT_CLASS_TO} from '@config/debug';
-import {DEFAULT_RELAYS} from './nostr-relay-pool';
-import {logSwallow} from './log-swallow';
 
 const LOG_PREFIX = '[PhantomChatPresence]';
 
@@ -36,9 +34,6 @@ const lastActivity = new Map<string, number>();
 
 /** Map pubkey → peerId for status updates */
 const pubkeyToPeerId = new Map<string, number>();
-
-/** WebSocket connections for presence subscription */
-const presenceWs: WebSocket[] = [];
 
 /**
  * Initialize the presence system.
@@ -65,14 +60,24 @@ export async function initPresence(pubkey: string, privkeyHex: string): Promise<
 }
 
 /**
- * Register a contact's pubkey for presence tracking.
- * Also starts a lightweight presence subscription if not already active.
+ * Register a contact's pubkey for presence tracking. Presence events are NOT
+ * fetched here: kind-30315 beats arrive over the SHARED relay pool (the same
+ * subscription that already carries gift-wraps / typing / reactions) and are
+ * fed in via `onRemotePresenceEvent`. This just records the pubkey→peerId map
+ * so an incoming beat can be resolved to the right contact. Idempotent.
  */
 export function trackPeerPresence(pubkey: string, peerId: number): void {
   pubkeyToPeerId.set(pubkey, peerId);
+}
 
-  // Start presence subscription for this contact
-  subscribePresenceFor(pubkey);
+/**
+ * Feed a kind-30315 presence event received over the shared relay pool (routed
+ * here by chat-api's raw-event dispatcher). Resolves the author to a tracked
+ * contact and updates their status to online. Safe to call with any event —
+ * non-30315 or untracked authors are ignored.
+ */
+export function onRemotePresenceEvent(event: any): void {
+  handlePresenceEvent(event);
 }
 
 /**
@@ -116,78 +121,6 @@ async function publishHeartbeat(): Promise<void> {
     }
   } catch(err) {
     console.debug(`${LOG_PREFIX} heartbeat publish failed:`, err);
-  }
-}
-
-/**
- * Subscribe to kind 30315 events from a specific contact.
- * Uses a lightweight WebSocket connection to the first available relay.
- */
-function subscribePresenceFor(pubkey: string): void {
-  // Only open one subscription per relay set
-  if(presenceWs.length > 0) {
-    // Re-subscribe with updated authors list
-    resubscribeAll();
-    return;
-  }
-
-  const relayUrl = DEFAULT_RELAYS[0]?.url;
-  if(!relayUrl) return;
-
-  try {
-    const ws = new WebSocket(relayUrl);
-    const subId = 'presence-' + Math.random().toString(36).slice(2, 8);
-
-    ws.onopen = () => {
-      const authors = Array.from(pubkeyToPeerId.keys());
-      const filter = {
-        'kinds': [KIND_STATUS],
-        authors,
-        '#d': ['general'],
-        'since': Math.floor(Date.now() / 1000) - 300
-      };
-      ws.send(JSON.stringify(['REQ', subId, filter]));
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if(msg[0] === 'EVENT' && msg[2]) {
-          handlePresenceEvent(msg[2]);
-        }
-      } catch{
-        // ignore parse errors
-      }
-    };
-
-    ws.onerror = () => {
-      // Silently fail — presence is optional
-    };
-
-    presenceWs.push(ws);
-  } catch{
-    // WebSocket not available or relay down
-  }
-}
-
-/**
- * Re-subscribe with updated authors list on existing WS connections.
- */
-function resubscribeAll(): void {
-  const authors = Array.from(pubkeyToPeerId.keys());
-  if(authors.length === 0) return;
-
-  for(const ws of presenceWs) {
-    if(ws.readyState !== WebSocket.OPEN) continue;
-
-    const subId = 'presence-' + Math.random().toString(36).slice(2, 8);
-    const filter = {
-      'kinds': [KIND_STATUS],
-      authors,
-      '#d': ['general'],
-      'since': Math.floor(Date.now() / 1000) - 300
-    };
-    ws.send(JSON.stringify(['REQ', subId, filter]));
   }
 }
 
@@ -268,10 +201,6 @@ export function destroyPresence(): void {
     clearInterval(staleCheckTimer);
     staleCheckTimer = null;
   }
-  for(const ws of presenceWs) {
-    try { ws.close(); } catch(e) { logSwallow('Presence.destroy.wsClose', e); }
-  }
-  presenceWs.length = 0;
   lastActivity.clear();
   pubkeyToPeerId.clear();
   ownPubkey = null;
