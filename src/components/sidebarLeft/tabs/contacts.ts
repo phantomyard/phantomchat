@@ -153,7 +153,35 @@ export default class AppContactsTab extends SliderSuperTab {
 
   private async loadP2PContacts(query: string | undefined, middleware: () => boolean) {
     try {
-      const mappings = await getAllMappings();
+      const allMappings = await getAllMappings();
+      if(!middleware()) return;
+
+      // Backstop against delete-boomerang: even though the delete paths now call
+      // removeMapping, drop any peer whose conversation carries a tombstone. This
+      // keeps a deleted contact from reappearing if a stale mapping survives (e.g.
+      // re-injected by an in-flight relay event between delete and reload).
+      let mappings = allMappings;
+      try {
+        const {loadIdentity} = await import('@lib/phantomchat/identity');
+        const identity = await loadIdentity();
+        const ownPubkey = identity?.publicKey ?? null;
+        if(ownPubkey) {
+          const {getMessageStore} = await import('@lib/phantomchat/message-store');
+          const store = getMessageStore();
+          const checks = await Promise.all(allMappings.map(async(m) => {
+            try {
+              const conversationId = store.getConversationId(ownPubkey, m.pubkey);
+              const deletedAt = await store.getTombstone(conversationId);
+              return deletedAt > 0;
+            } catch{
+              return false;
+            }
+          }));
+          mappings = allMappings.filter((_, i) => !checks[i]);
+        }
+      } catch(err) {
+        console.warn('[PhantomChat.chat] tombstone backstop skipped:', err);
+      }
       if(!middleware()) return;
 
       const lowerQuery = query?.toLowerCase();

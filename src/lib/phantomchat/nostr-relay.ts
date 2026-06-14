@@ -1039,10 +1039,12 @@ export class NostrRelay {
       return;
     }
 
-    // Route plaintext non-giftwrap kinds (reactions, deletes) through the
-    // raw-event handler after verifying the signature. These do not go
-    // through NIP-17 unwrap — they carry their referent in e/p tags.
-    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE) {
+    // Route plaintext non-giftwrap kinds (reactions, deletes, typing) through
+    // the raw-event handler after verifying the signature. These do not go
+    // through NIP-17 unwrap — they carry their referent in e/p tags. Typing
+    // (kind 20001, NIP-16 ephemeral) was being dropped at the gift-wrap-only
+    // gate below, so the three-dots indicator never fired.
+    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING) {
       if(!verifyEvent(event as any)) {
         this.log.warn('[NostrRelay] dropping non-giftwrap event with invalid signature, kind:', event.kind, 'pubkey:', event.pubkey.slice(0, 8) + '...');
         return;
