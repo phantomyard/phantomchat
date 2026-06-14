@@ -461,7 +461,14 @@ export async function handleGroupIncoming(
   // path (buildPhantomChatMedia → messageMediaPhoto / messageMediaDocument with
   // a `phantomchatFileMetadata` sidecar that the download manager reads to
   // fetch+decrypt the encrypted Blossom blob on demand).
-  const media = fileMetadata ? buildPhantomChatMedia(mid, fileMetadata) : undefined;
+  // The group rumor carries the authoritative media class at the payload's
+  // top level (`type`), not inside fileMetadata. Thread it onto the metadata
+  // so buildPhantomChatMedia classifies voice notes correctly instead of
+  // re-guessing from mime (mirrors the DM `mediaType` wire field).
+  const mediaFm = fileMetadata && type !== 'text' ?
+    {...fileMetadata, mediaType: (fileMetadata as any).mediaType ?? type} :
+    fileMetadata;
+  const media = mediaFm ? buildPhantomChatMedia(mid, mediaFm) : undefined;
 
   const msg = mapper.createTwebMessage({
     mid,

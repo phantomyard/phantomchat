@@ -802,7 +802,7 @@ export class AppUsersManager extends AppManager {
    * Update display name for an existing P2P synthetic user.
    * Re-mirrors the user to main thread so the UI updates reactively.
    */
-  public updateP2PUserName(peerId: number, displayName: string): void {
+  public updateP2PUserName(peerId: number, displayName: string, lastName?: string): void {
     const user = this.p2pSyntheticUsers.get(peerId);
     if(!user) {
       console.warn('[PhantomChat.chat] updateP2PUserName: no synthetic user for peerId', peerId);
@@ -810,6 +810,12 @@ export class AppUsersManager extends AppManager {
     }
 
     user.first_name = displayName;
+    // Only touch last_name when the caller supplies it (manual rename via Edit
+    // Contact). kind:0 upgrades pass a single combined name and must not clear
+    // a previously-set surname implicitly.
+    if(lastName !== undefined) {
+      user.last_name = lastName || undefined;
+    }
     this.users[peerId] = user;
 
     // Re-mirror to main thread so UI picks up the new name
@@ -819,7 +825,7 @@ export class AppUsersManager extends AppManager {
     // without this dispatch the chat-list title stays on the old value.
     this.rootScope.dispatchEvent('peer_title_edit', {peerId: (peerId as number).toPeerId(false)});
 
-    console.log('[PhantomChat.chat] updateP2PUserName:', {peerId, displayName});
+    console.log('[PhantomChat.chat] updateP2PUserName:', {peerId, displayName, lastName});
   }
 
   public getUsers() {

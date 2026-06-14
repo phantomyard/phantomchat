@@ -22,16 +22,29 @@ export interface PhantomChatFileMetadata {
   waveform?: string;
   /** #11: caption typed with the file (rendered as the bubble text) */
   caption?: string;
+  /**
+   * Authoritative media class the sender tagged this file with
+   * ('image' | 'video' | 'voice' | 'file'). Threaded on the wire so the
+   * receiver never has to *re-guess* the type from mime + duration. The
+   * heuristics below remain as a fallback for messages already on relays
+   * that predate this field. Fixes the "Unknown file" render for voice
+   * notes whose recorded blob mime came across as application/octet-stream.
+   */
+  mediaType?: 'image' | 'video' | 'voice' | 'file';
 }
 
 export function buildPhantomChatMedia(mid: number, fm: PhantomChatFileMetadata): any {
-  const isVoice = !!fm.duration && (fm.mimeType || '').includes('audio');
+  const mime = fm.mimeType || '';
+  // Prefer the explicit, sender-tagged media class. Fall back to the legacy
+  // mime + duration/waveform heuristic for pre-`mediaType` messages.
+  const hasVoiceSignal = (!!fm.duration || !!fm.waveform) && mime.includes('audio');
+  const isVoice = fm.mediaType === 'voice' || (fm.mediaType === undefined && hasVoiceSignal);
   // Treat anything tagged `image/*` as a photo even when explicit width/height
   // are absent (e.g. when the sender's UI didn't extract dimensions, or the
   // rumor came from a path that drops them). Falling through to
   // `messageMediaDocument` rendered the bubble as a generic file attachment
   // — visually broken on both DM and group receive paths (FIND-e60cef56 γ).
-  const isImage = (fm.mimeType || '').startsWith('image/');
+  const isImage = !isVoice && (fm.mediaType === 'image' || mime.startsWith('image/'));
 
   if(isImage) {
     // Default to 320×320 when dimensions are missing — tweb's image bubble
@@ -71,8 +84,8 @@ export function buildPhantomChatMedia(mid: number, fm: PhantomChatFileMetadata):
   }
 
   const docType = isVoice ? 'voice' :
-    (fm.mimeType || '').startsWith('video/') ? 'video' :
-    (fm.mimeType || '').startsWith('audio/') ? 'audio' :
+    (fm.mediaType === 'video' || mime.startsWith('video/')) ? 'video' :
+    mime.startsWith('audio/') ? 'audio' :
     undefined;
 
   return {

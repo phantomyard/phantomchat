@@ -19,7 +19,9 @@ import {
   SCHEMA_VERSION,
   storeMapping,
   getMapping,
-  updateMappingProfile
+  updateMappingProfile,
+  setMappingDisplayName,
+  getPubkey
 } from '@lib/phantomchat/virtual-peers-db';
 
 // Save original indexedDB so we can restore after tests (isolate:false leaks globals)
@@ -725,6 +727,84 @@ describe('updateMappingProfile', () => {
 
     const result = await getMapping('0'.repeat(64));
     expect(result).toBeUndefined();
+  });
+});
+
+// Manual rename (Edit Contact → Save) force-write path. Unlike
+// updateMappingProfile, this always overwrites the displayName — even over an
+// npub placeholder — so the user's chosen name sticks.
+describe('setMappingDisplayName', () => {
+  beforeEach(async() => {
+    installIndexedDBMock();
+    VirtualPeersDB.getInstance().destroy();
+    const db = new VirtualPeersDB();
+    await (db as any).getDB();
+  });
+
+  afterEach(() => {
+    VirtualPeersDB.getInstance().destroy();
+  });
+
+  test('force-writes the displayName over an npub placeholder', async() => {
+    const pubkey = '2'.repeat(64);
+    await storeMapping(pubkey, 800, 'npub...2222222222');
+
+    await setMappingDisplayName(pubkey, 'Lena Bot');
+
+    const result = await getMapping(pubkey);
+    expect(result!.displayName).toBe('Lena Bot');
+  });
+
+  test('overwrites even a previously-set nickname (manual rename always wins)', async() => {
+    const pubkey = '3'.repeat(64);
+    await storeMapping(pubkey, 801, 'Old Nickname', {name: 'Kai', display_name: 'Kai'});
+
+    await setMappingDisplayName(pubkey, 'New Name');
+
+    const result = await getMapping(pubkey);
+    expect(result!.displayName).toBe('New Name');
+  });
+
+  test('preserves nostrProfile and other fields', async() => {
+    const pubkey = '4'.repeat(64);
+    const profile = {name: 'kai', display_name: 'Kai', about: 'a bot'};
+    await storeMapping(pubkey, 802, 'placeholder', profile);
+
+    await setMappingDisplayName(pubkey, 'Kai Manual');
+
+    const result = await getMapping(pubkey);
+    expect(result!.displayName).toBe('Kai Manual');
+    expect(result!.nostrProfile).toEqual(profile);
+    expect(result!.peerId).toBe(802);
+  });
+
+  test('a manually-set name survives a later kind:0 upgrade', async() => {
+    const pubkey = '5'.repeat(64);
+    await storeMapping(pubkey, 803, 'npub...5555555555');
+
+    // User renames manually.
+    await setMappingDisplayName(pubkey, 'My Custom Name');
+    // Contact later publishes / refreshes a kind:0 profile.
+    await updateMappingProfile(pubkey, 'Their Kind0 Name', {name: 'Their Kind0 Name'});
+
+    const result = await getMapping(pubkey);
+    // WU-2 #10 guard: a user nickname distinct from the kind:0 name is kept.
+    expect(result!.displayName).toBe('My Custom Name');
+  });
+
+  test('no-ops for non-existent pubkey', async() => {
+    await setMappingDisplayName('6'.repeat(64), 'Nobody');
+    const result = await getMapping('6'.repeat(64));
+    expect(result).toBeUndefined();
+  });
+
+  test('renamed name is reverse-resolvable by peerId', async() => {
+    const pubkey = '7'.repeat(64);
+    await storeMapping(pubkey, 804, 'npub...7777777777');
+    await setMappingDisplayName(pubkey, 'Reverse Test');
+
+    expect(await getPubkey(804)).toBe(pubkey);
+    expect((await getMapping(pubkey))!.displayName).toBe('Reverse Test');
   });
 });
 

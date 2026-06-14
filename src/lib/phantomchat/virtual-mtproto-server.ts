@@ -1995,7 +1995,8 @@ export class PhantomChatMTProtoServer {
               keyHex: p.keyHex,
               ivHex: p.ivHex,
               duration: p.duration,
-              waveform: p.waveform
+              waveform: p.waveform,
+              mediaType: p.mediaType
             }
           });
         },

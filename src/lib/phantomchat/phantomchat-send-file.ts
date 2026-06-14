@@ -81,6 +81,7 @@ export interface SendCtx {
     height?: number;
     duration?: number;
     waveform?: string;
+    mediaType?: PhantomChatFileType;
   }): Promise<void>;
   log: ((...args: any[]) => void) & {warn(...args: any[]): void; error(...args: any[]): void};
 }
@@ -256,9 +257,16 @@ export async function sendFileViaPhantomChat(
     const timestampSec = Math.floor(Date.now() / 1000);
     const slot = (__sendFileMidCounter = (__sendFileMidCounter + 1) % 1_000_000);
     const mid = timestampSec * 1_000_000 + slot;
+    // Voice notes recorded via opus-recorder can surface with an empty
+    // `blob.type` → 'application/octet-stream'. Pin a sensible audio mime so
+    // the sender's own stored row (re-rendered via buildPhantomChatMedia on
+    // reload/echo) classifies as voice instead of "Unknown file".
+    const effectiveMime = (type === 'voice' && (!blob.type || blob.type === 'application/octet-stream')) ?
+      'audio/ogg; codecs=opus' :
+      (blob.type || 'application/octet-stream');
     const eventId = await ctx.chatAPI.sendFileMessage(
       type, url, sha256Hex, keyHex, ivHex,
-      blob.type || 'application/octet-stream',
+      effectiveMime,
       blob.size,
       args.width && args.height ? {width: args.width, height: args.height} : undefined,
       {duration: args.duration, waveform: args.waveform, mid, twebPeerId: Math.abs(peerId), timestampSec, caption: args.caption}
@@ -267,11 +275,12 @@ export async function sendFileViaPhantomChat(
     await ctx.saveMessage({
       peerId, mid, eventId,
       content: args.caption || '',
-      mimeType: blob.type || 'application/octet-stream',
+      mimeType: effectiveMime,
       size: blob.size, url, sha256: sha256Hex,
       keyHex, ivHex,
       width: args.width, height: args.height,
-      duration: args.duration, waveform: args.waveform
+      duration: args.duration, waveform: args.waveform,
+      mediaType: type
     });
 
     // Event name kept for backward compatibility with UI listeners.

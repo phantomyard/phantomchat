@@ -55,6 +55,8 @@ export interface StoredMessage {
     ivHex: string;
     duration?: number;
     waveform?: string;
+    /** Authoritative sender-tagged media class (image/video/voice/file). */
+    mediaType?: 'image' | 'video' | 'voice' | 'file';
   };
   /** tweb message ID (mid) — computed ONCE at creation via mapEventId(eventId, timestamp) */
   mid: number;

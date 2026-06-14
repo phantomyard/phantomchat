@@ -246,16 +246,26 @@ export default class AppEditContactTab extends SliderSuperTab {
       this.editPeer.nextBtn.disabled = true;
 
       try {
-        await this.managers.appUsersManager.addContact(
-          userId,
-          this.nameInputField.value,
-          this.lastNameInputField.value,
-          (await this.managers.appUsersManager.getUser(userId)).phone,
-          this.sharePhoneCheckboxField?.checked
-        )
+        // PhantomChat P2P peers are synthetic (no Telegram backend), so the
+        // stock contacts.addContact path no-ops against the virtual-MTProto
+        // server and the rename silently reverts. Drive the working P2P
+        // rename primitives instead.
+        const {isP2PPeer} = await import('@lib/phantomchat/phantomchat-bridge');
+        if(isP2PPeer(Number(userId))) {
+          const {renameP2PContact} = await import('@lib/phantomchat/rename-p2p-contact');
+          await renameP2PContact(Number(userId), this.nameInputField.value, this.lastNameInputField.value);
+        } else {
+          await this.managers.appUsersManager.addContact(
+            userId,
+            this.nameInputField.value,
+            this.lastNameInputField.value,
+            (await this.managers.appUsersManager.getUser(userId)).phone,
+            this.sharePhoneCheckboxField?.checked
+          )
 
-        if(this.noteInputField.isChanged()) {
-          await this.managers.appProfileManager.updateUserNote(userId, this.noteInputField.richValue);
+          if(this.noteInputField.isChanged()) {
+            await this.managers.appProfileManager.updateUserNote(userId, this.noteInputField.richValue);
+          }
         }
       } catch(error) {
         console.error(error)

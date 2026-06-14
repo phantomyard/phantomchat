@@ -97,6 +97,31 @@ describe('phantomchat-send-file', () => {
     expect((ctx.saveMessage as any).mock.calls[0][0]).toMatchObject({content: 'sunset 🌅'});
   });
 
+  it('tags voice notes with mediaType + an audio mime even when blob.type is empty', async() => {
+    mockedUpload.mockImplementation(async() => ({url: 'https://mock/v', sha256: 'abc'}));
+    const {ctx} = makeCtx();
+
+    await sendFileViaPhantomChat(ctx, {
+      peerId: 1_000_000_000_000_009,
+      // opus-recorder can hand us a blob with no type → octet-stream.
+      blob: new Blob([new Uint8Array([1, 2, 3])]),
+      type: 'voice',
+      caption: '',
+      tempMid: -10,
+      duration: 4,
+      waveform: 'aabb'
+    });
+
+    // Sender passes the authoritative type + a non-octet audio mime on the wire.
+    const call = (ctx.chatAPI.sendFileMessage as any).mock.calls[0];
+    expect(call[0]).toBe('voice');                 // type arg
+    expect(call[5]).toContain('audio');            // mimeType arg, no longer octet-stream
+    // …and persists both on the sender's own row so reload/echo renders voice.
+    const saved = (ctx.saveMessage as any).mock.calls[0][0];
+    expect(saved.mediaType).toBe('voice');
+    expect(saved.mimeType).toContain('audio');
+  });
+
   it('retries 3 times on upload failure, then hard fails', async() => {
     mockedUpload.mockRejectedValue(new Error('network'));
     const {ctx, dispatched} = makeCtx();
