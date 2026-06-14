@@ -198,6 +198,30 @@ describe('Group Management', () => {
       expect(payload.type).toBe('group_leave');
       expect(store().delete).toHaveBeenCalledWith(GROUP_ID);
     });
+
+    it('writes a deletion tombstone + purges messages so the group cannot resurrect', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      const convId = `group:${GROUP_ID}`;
+
+      // Seed a leftover group message — the exact orphan that getGroupHistory
+      // would otherwise rebuild the group from.
+      await ms.saveMessage({
+        eventId: 'evt-resurrect-1', conversationId: convId,
+        senderPubkey: MEMBER_A, content: 'hi', type: 'text',
+        timestamp: Math.floor(Date.now() / 1000), deliveryState: 'delivered',
+        isOutgoing: false
+      });
+
+      store().get.mockResolvedValueOnce(makeGroup());
+      await api.leaveGroup(GROUP_ID);
+
+      // Tombstone watermark must be set, and the orphan messages purged.
+      const deletedAt = await ms.getTombstone(convId);
+      expect(deletedAt).toBeGreaterThan(0);
+      const remaining = await ms.getMessages(convId, 50);
+      expect(remaining.length).toBe(0);
+    });
   });
 
   describe('handleControlMessage', () => {
