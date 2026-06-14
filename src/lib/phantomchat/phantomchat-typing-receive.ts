@@ -144,6 +144,16 @@ class PhantomChatTypingReceive {
     // Never show a typing indicator for ourselves.
     if(this.ownPubkey && event.pubkey === this.ownPubkey) return;
 
+    // Routing visibility: log every accepted tick with whether it carries the
+    // ['group', id] tag. This is the one fact that decides group-vs-1:1 routing —
+    // if a group reply-in-progress shows on the sender's DM row, this line tells
+    // us immediately whether the tag was missing on the wire (sender bug) or the
+    // routing below mishandled it (receiver bug).
+    {
+      const gTag = event.tags.find((t) => t[0] === 'group' && typeof t[1] === 'string' && t[1].length > 0);
+      console.log(`${LOG_PREFIX} tick from ${String(event.pubkey).slice(0, 8)} content="${event.content || 'start'}" groupTag=${gTag ? gTag[1] : 'NONE'}`);
+    }
+
     // Defensive #p check — subscription already filters, but a permissive
     // relay could deliver an unaddressed event. For a GROUP tick the p-tags are
     // the members (which include us), so this still passes legitimately.
@@ -197,10 +207,12 @@ class PhantomChatTypingReceive {
         }
       }
       // groupPeerId is negative (peerChat); chat_id is the positive chat id.
+      console.log(`${LOG_PREFIX} → GROUP route: chat_id=${-groupPeerId} member=${senderPeerId} stop=${!!isStop}`);
       this.groupDispatcher(-groupPeerId, senderPeerId, isStop);
       return;
     }
 
+    console.log(`${LOG_PREFIX} → 1:1 route: peer=${senderPeerId} stop=${!!isStop}`);
     this.dispatcher(senderPeerId, isStop);
   }
 }
