@@ -839,9 +839,23 @@ export class AppUsersManager extends AppManager {
    * bounds an online status so tweb expires it naturally if beats stop.
    */
   public updateP2PUserStatus(peerId: number, isOnline: boolean, timestampSec: number, onlineUntilSec?: number): void {
-    const user = this.p2pSyntheticUsers.get(peerId);
-    if(!user) {
+    // Self-heal: presence tracks contacts loaded from the persistent mapping
+    // store, which can include peers that were never injected into
+    // `p2pSyntheticUsers` THIS session (injection happens on message
+    // receive / contact add). When that map lacks the peer, this used to
+    // early-return — the worker copy stayed on its injected `userStatusRecently`
+    // default and the topbar (which reads `getUser().status` from here) reverted
+    // the badge from "online" to "last seen recently" on its 60s refresh. That
+    // was the presence flicker. Fall back to the live user record so the status
+    // write always lands and dispatches, and re-register it as synthetic so
+    // subsequent updates take the fast path.
+    const user: User | undefined = this.p2pSyntheticUsers.get(peerId) || this.users[peerId];
+    if(!user || user._ !== 'user') {
+      console.warn('[PhantomChatPresence][worker] updateP2PUserStatus: no user record for peer', peerId, '— status write skipped');
       return;
+    }
+    if(!this.p2pSyntheticUsers.has(peerId) && (user as any).p2pPubkey) {
+      this.p2pSyntheticUsers.set(peerId, user);
     }
 
     user.status = isOnline ?
