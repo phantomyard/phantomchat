@@ -87,9 +87,6 @@ import {createAutoDeleteIcon} from '@components/chat/utils';
 import PopupBoost from '@components/popups/boost';
 import PopupPremium from '@components/popups/premium';
 import showNoForwardsPopup from '@components/popups/noForwards';
-import {render} from 'solid-js/web';
-import TorShield from '@components/phantomchat/torShield';
-import TorStatus from '@components/popups/torStatus';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
 
@@ -253,20 +250,8 @@ export default class ChatTopbar {
     this.pushButtonToVerify(this.btnGroupCallMenu, this.verifyRtmpButton.bind(this));
     this.pushButtonToVerify(this.btnDirectMessages, this.verifyDirectMessagesButton.bind(this));
 
-    // * PhantomChat.chat: mount TorShield icon in chatUtils
-    const torShieldEl = document.createElement('div');
-    torShieldEl.classList.add('topbar-tor-shield');
-    render(() => TorShield({
-      onTap: () => this.openTorStatusPopup()
-    }), torShieldEl);
-    this.chatUtils.prepend(torShieldEl);
-
     this.chatInfoContainer.append(this.btnBack, this.chatInfo, this.chatUtils);
     this.container.append(this.chatInfoContainer);
-
-    // * PhantomChat.chat: Tor state UI is owned by the global startup banner
-    // mounted in phantomchat-bridge.initTransport(). The topbar keeps only the
-    // TorShield icon (which opens the dashboard popup on click).
 
     if(this.pinnedMessage) {
       this.appendPinnedMessage(this.pinnedMessage);
@@ -365,23 +350,6 @@ export default class ChatTopbar {
 
     element.classList.add('hide');
     this.buttonsToVerify.push({element, verify});
-  }
-
-  // * PhantomChat.chat: Tor status popup
-  private openTorStatusPopup(): void {
-    const pool = (window as any).__phantomchatPool;
-    const transport = (window as any).__phantomchatTransport;
-    const relayStates = pool ? pool.getRelayStates() : [];
-    const torState = transport ? transport.getState() : 'bootstrapping';
-
-    const overlay = document.createElement('div');
-    overlay.classList.add('topbar-tor-status-popup');
-    render(() => TorStatus({
-      relayStates,
-      torState,
-      onClose: () => overlay.remove()
-    }), overlay);
-    document.body.append(overlay);
   }
 
   private verifyButtons = (e?: Event) => {

@@ -158,7 +158,7 @@ export class AppSidebarLeft extends SidebarSlider {
     const sidebarHeader = this.sidebarEl.querySelector('.item-main .sidebar-header');
     sidebarHeader.append(this.inputSearch.container);
 
-    // Mount PhantomChat.chat status icons (Tor + Relay) in search bar
+    // Mount PhantomChat.chat relay status icon in search bar
     this.mountStatusIcons();
 
     // this.toolsBtn = this.sidebarEl.querySelector('.sidebar-tools-button') as HTMLButtonElement;
@@ -1137,7 +1137,7 @@ export class AppSidebarLeft extends SidebarSlider {
   }
 
   private mountStatusIcons(): void {
-    // Mount PhantomChat.chat status icons (Tor + Relay) in the search bar
+    // Mount PhantomChat.chat relay status icon in the search bar
     Promise.all([
       import('@components/phantomchat/SearchBarStatusIcons'),
       import('solid-js/web')
@@ -1149,73 +1149,12 @@ export class AppSidebarLeft extends SidebarSlider {
       searchContainer.append(mountEl);
 
       render(() => SearchBarStatusIcons({
-        onTorClick: () => {
-          this.openTorStatusPopup();
-        },
         onRelayClick: () => {
           this.openStatusTab?.();
         }
       }), mountEl);
     }).catch((err) => {
       console.warn('[AppSidebarLeft] status icons mount failed:', err);
-    });
-  }
-
-  private openTorStatusPopup(): void {
-    Promise.all([
-      import('@components/popups/torStatus'),
-      import('solid-js/web'),
-      import('@components/phantomchat/tor-ui-state')
-    ]).then(([{default: TorStatus}, {render}, {computeTorUiState}]) => {
-      // Gather relay states from pool. Prefer getRelayStates() (canonical
-      // {url, connected, latencyMs, read, write} shape) and fall back to
-      // getRelayEntries() + config unpacking for older pool builds.
-      const pool = (window as any).__phantomchatPool;
-      let relayStates: any[] = [];
-      try {
-        if(typeof pool?.getRelayStates === 'function') {
-          relayStates = pool.getRelayStates();
-        } else {
-          const entries = pool?.getRelayEntries?.() ?? [];
-          for(const entry of entries) {
-            const inst = entry?.instance;
-            const cfg = entry?.config || {};
-            relayStates.push({
-              url: cfg.url || '',
-              connected: inst?.getState?.() === 'connected',
-              latencyMs: inst?.getLatency?.() ?? -1,
-              read: cfg.read ?? true,
-              write: cfg.write ?? true
-            });
-          }
-        }
-      } catch(e) {
-        console.warn('[TorStatusPopup] failed to gather relay states:', e);
-      }
-
-      // Get Tor state (disabled check first)
-      const torUiState = computeTorUiState();
-      const torStateForPopup: Record<string, string> = {
-        active: 'active',
-        bootstrap: 'bootstrapping',
-        direct: 'direct',
-        error: 'failed',
-        disabled: 'disabled'
-      };
-
-      // Mount popup overlay
-      const overlayEl = document.createElement('div');
-      document.body.append(overlayEl);
-
-      const cleanup = render(() => TorStatus({
-        relayStates,
-        torState: (torStateForPopup[torUiState] || 'direct') as any,
-        onClose: () => {
-          overlayEl.remove();
-        }
-      }), overlayEl);
-    }).catch((err) => {
-      console.warn('[AppSidebarLeft] tor status popup failed:', err);
     });
   }
 

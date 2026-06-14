@@ -17,10 +17,6 @@ function collectDiagnostics(includeNpub: boolean): string {
     const count = Array.isArray(relays) ? relays.length : (relays?.size ?? 0);
     lines.push(`Connected relays: ${count}`);
   } catch{}
-  try {
-    const t = (window as any).__phantomchatPrivacyTransport;
-    if(t) lines.push(`Privacy: ${t.getState?.() || 'unknown'}`);
-  } catch{}
   if(includeNpub) {
     try {
       const id = localStorage.getItem('phantomchat_identity');

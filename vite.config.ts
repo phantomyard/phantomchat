@@ -97,10 +97,7 @@ const ADDITIONAL_ALIASES = {
   '@vendor': resolve(rootDir, 'src/vendor'),
   '@layer': resolve(rootDir, 'src/layer'),
   '@types': resolve(rootDir, 'src/types'),
-  '@': resolve(rootDir, 'src'),
-  // Privacy WASM module paths (mirrors public/ directory for WASM bundles)
-  '/tor-wasm': resolve(rootDir, 'public/tor-wasm'),
-  '/webtor': resolve(rootDir, 'public/webtor')
+  '@': resolve(rootDir, 'src')
 };
 
 if(USE_OWN_SOLID) {
@@ -163,10 +160,7 @@ export default defineConfig({
       '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*',
       '**/solid/**',
       '**/src/tests/phantomchat/e2e-chat.test.ts',
-      '**/src/tests/phantomchat/e2e-fallback.test.ts',
       '**/src/tests/phantomchat/e2e-onboarding-integration.test.ts',
-      '**/src/tests/phantomchat/e2e-tor-messaging.test.ts',
-      '**/src/tests/phantomchat/e2e-tor-wasm.test.ts',
       '**/src/tests/phantomchat/e2e-ui-flow.test.ts',
       '**/src/tests/phantomchat/e2e-kind0-profile.test.ts',
       // Playwright E2E (imports @playwright/test + e2e/ browser helpers) that

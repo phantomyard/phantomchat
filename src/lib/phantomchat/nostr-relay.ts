@@ -159,8 +159,8 @@ export class NostrRelay {
   // State change callback — notifies pool when relay connects/disconnects
   public onStateChange: ((state: 'disconnected' | 'connecting' | 'connected' | 'reconnecting') => void) | null = null;
 
-  // Latency update callback — fires whenever measureLatency / the Tor poll
-  // loop updates latencyMs. Pool re-dispatches as phantomchat_relay_state.
+  // Latency update callback — fires whenever measureLatency updates latencyMs.
+  // Pool re-dispatches as phantomchat_relay_state.
   public onLatencyUpdate: ((latencyMs: number) => void) | null = null;
 
   // Subscription management
@@ -179,14 +179,9 @@ export class NostrRelay {
   private readonly reconnectBackoffMs: number = 10000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  // Dual-mode transport (Phase 3)
-  private mode: 'websocket' | 'http-polling' = 'websocket';
-  private torFetchFn?: (url: string) => Promise<string>;
+  // Latency tracking
   private latencyMs: number = -1;
   public directLatencyMs: number = -1;
-  public torLatencyMs: number = -1;
-  private pollingInterval: ReturnType<typeof setInterval> | null = null;
-  private lastPolled: number = 0;
   private latencyInterval: ReturnType<typeof setInterval> | null = null;
   private readonly latencyRefreshMs: number = 60000;
 
@@ -253,12 +248,6 @@ export class NostrRelay {
       return;
     }
 
-    // In HTTP polling mode, start polling instead of WebSocket
-    if(this.mode === 'http-polling') {
-      this.startHttpPolling();
-      return;
-    }
-
     this.log('[NostrRelay] connecting to relay:', this.relayUrl);
     this.setConnectionState('connecting');
 
@@ -276,11 +265,7 @@ export class NostrRelay {
           this.subscribeMessages();
         }
 
-        // Only WS mode uses the periodic ping — Tor mode piggybacks on
-        // the HTTP poll loop for latency samples.
-        if(this.mode === 'websocket') {
-          this.startLatencyRefresh();
-        }
+        this.startLatencyRefresh();
       };
 
       this.ws.onmessage = (event) => {
@@ -327,11 +312,6 @@ export class NostrRelay {
   disconnect(): void {
     this.log('[NostrRelay] disconnecting');
 
-    // Clear Tor polling state so any in-flight poll's `finally` block sees
-    // an inactive relay and refuses to reschedule the next iteration.
-    this.mode = 'websocket';
-    this.torFetchFn = undefined;
-    this.stopHttpPolling();
     this.stopLatencyRefresh();
     this.setLatency(-1);
 
@@ -532,12 +512,6 @@ export class NostrRelay {
    * subscribed. Never rejects or hangs — safe to await on the boot path.
    */
   whenSubscribed(timeoutMs = 8000): Promise<boolean> {
-    // http-polling (Tor) transport has no EOSE — a connected polling relay is
-    // as "ready" as it gets, so don't stall the boot barrier on an EOSE that
-    // never arrives (would otherwise add the full timeout to every Tor boot).
-    if(this.mode === 'http-polling') {
-      return Promise.resolve(this.connectionState === 'connected');
-    }
     if(!this.subscriptionReady) return Promise.resolve(this.isSubscribed);
     return Promise.race([
       this.subscriptionReady.promise,
@@ -653,65 +627,12 @@ export class NostrRelay {
     }
   }
 
-  // ==================== Dual-Mode Transport (Phase 3) ====================
-
-  /**
-   * Switch to HTTP polling mode via Tor.
-   * Closes existing WebSocket, starts HTTP polling with the given fetch function.
-   */
-  setTorMode(fetchFn: (url: string) => Promise<string>): void {
-    this.mode = 'http-polling';
-    this.torFetchFn = fetchFn;
-
-    // Close existing WebSocket
-    if(this.ws) {
-      this.ws.onclose = null;
-      this.ws.close();
-      this.ws = null;
-    }
-
-    // Start HTTP polling if we were connected
-    if(this.connectionState === 'connected' || this.connectionState === 'connecting') {
-      this.startHttpPolling();
-    }
-
-    // Tor mode doesn't need the WS ping interval — each HTTP poll IS
-    // a latency sample. Stop any pre-existing refresh loop from WS mode.
-    this.stopLatencyRefresh();
-    this.setLatency(-1);
-  }
-
-  /**
-   * Switch back to direct WebSocket mode.
-   * Stops HTTP polling, clears torFetchFn, re-establishes WebSocket.
-   */
-  setDirectMode(): void {
-    this.mode = 'websocket';
-    this.torFetchFn = undefined;
-    this.stopHttpPolling();
-
-    // Re-establish WebSocket if we should be connected
-    if(this.connectionState === 'connected' || this.connectionState === 'connecting') {
-      this.connectionState = 'disconnected';
-      this.connect();
-    }
-
-    this.startLatencyRefresh();
-  }
-
   /**
    * Measure relay latency.
-   * HTTP polling mode: time a Tor HTTP fetch.
-   * WebSocket mode: send REQ with limit:0, time EOSE response.
+   * Sends a REQ with limit:0, times the EOSE response.
    * @returns Latency in ms, or -1 if unreachable
    */
   async measureLatency(): Promise<number> {
-    // In http-polling mode the poll loop itself is the latency signal
-    // (see startHttpPolling) — no synthetic ping needed.
-    if(this.mode === 'http-polling') {
-      return this.latencyMs;
-    }
-
     if(this.connectionState !== 'connected' || !this.ws) {
       this.setLatency(-1);
       return -1;
@@ -811,97 +732,6 @@ export class NostrRelay {
 
   getConnectionState(): string {
     return this.connectionState;
-  }
-
-  /**
-   * Get the current transport mode.
-   */
-  getMode(): 'websocket' | 'http-polling' {
-    return this.mode;
-  }
-
-  /**
-   * Start HTTP polling for events through Tor.
-   */
-  private startHttpPolling(): void {
-    this.stopHttpPolling();
-
-    if(!this.torFetchFn) return;
-
-    const httpsUrl = this.relayUrl
-    .replace('wss://', 'https://')
-    .replace('ws://', 'https://');
-
-    this.lastPolled = Math.floor(Date.now() / 1000) - 60;
-    this.setConnectionState('connected');
-
-    let consecutiveFailures = 0;
-    const baseDelay = 3000;
-    const maxDelay = 60_000;
-
-    const poll = async() => {
-      if(this.mode !== 'http-polling' || !this.torFetchFn) return;
-
-      const fetchStart = performance.now();
-      try {
-        const params = new URLSearchParams({
-          'kinds': '1059',
-          '#p': this.publicKey,
-          'since': String(this.lastPolled)
-        });
-        const url = `${httpsUrl}/?${params}`;
-        const body = await this.torFetchFn(url);
-
-        // Each Tor fetch IS a real latency sample — record it directly
-        // instead of firing a separate synthetic ping.
-        const elapsed = Math.round(performance.now() - fetchStart);
-        this.torLatencyMs = elapsed;
-        this.setLatency(elapsed);
-
-        let events: NostrEvent[] = [];
-        try {
-          events = JSON.parse(body);
-        } catch{
-          // empty or invalid response
-        }
-
-        if(Array.isArray(events) && events.length > 0) {
-          this.lastPolled = Math.max(...events.map(e => e.created_at)) + 1;
-          for(const event of events) {
-            this.handleEvent(event);
-          }
-        }
-        consecutiveFailures = 0;
-      } catch(err) {
-        consecutiveFailures++;
-        this.setLatency(-1);
-        this.log.warn('[NostrRelay] HTTP poll error:', err);
-      } finally {
-        // Schedule next poll only AFTER this one finishes — never let polls
-        // pile up in parallel, otherwise a slow Tor circuit gets saturated
-        // by concurrent fetches, multiplying the backlog every cycle.
-        if(this.mode === 'http-polling' && this.torFetchFn) {
-          const delay = consecutiveFailures > 0 ?
-            Math.min(baseDelay * Math.pow(2, consecutiveFailures), maxDelay) :
-            baseDelay;
-          this.pollingInterval = setTimeout(poll, delay) as any;
-        }
-      }
-    };
-
-    // Kick off the first poll — subsequent ones are chained via setTimeout
-    this.pollingInterval = setTimeout(poll, 100) as any;
-  }
-
-  /**
-   * Stop HTTP polling.
-   */
-  private stopHttpPolling(): void {
-    if(this.pollingInterval) {
-      clearTimeout(this.pollingInterval as any);
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
-    }
   }
 
   // ==================== Private Methods ====================

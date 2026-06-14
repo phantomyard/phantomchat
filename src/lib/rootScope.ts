@@ -26,7 +26,6 @@ import type {MonoforumDialog} from '@lib/storages/monoforumDialogs';
 import type {MyStarGift} from '@appManagers/appGiftsManager';
 import type {MyPromoData} from '@appManagers/appPromoManager';
 import type {ActiveAccountNumber} from '@lib/accounts/types';
-import type {TorMode, RuntimeState} from '@lib/phantomchat/privacy-transport';
 import {NULL_PEER_ID, UserAuth} from '@appManagers/constants';
 import EventListenerBase, {EventListenerListeners} from '@helpers/eventListenerBase';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -250,19 +249,6 @@ export type BroadcastEvents = {
   'phantomchat_identity_updated': {displayName?: string, nip05?: string, picture?: string, about?: string, website?: string, lud16?: string, banner?: string},
   'phantomchat_peer_profile_updated': {peerId: PeerId, pubkey: string, profile: import('./phantomchat/nostr-profile').NostrProfile},
 
-  'phantomchat_tor_mode_changed': TorMode,
-  'phantomchat_tor_state': {
-    state: RuntimeState;
-    error?: string;
-  },
-  'phantomchat_tor_circuit_update': {
-    guard: string;
-    middle: string;
-    exit: string;
-    latency: number;
-    exitIp: string;
-    healthy: boolean;
-  },
   'phantomchat_mesh_peer_connected': {pubkey: string; latency: number},
   'phantomchat_mesh_peer_disconnected': {pubkey: string},
   'phantomchat_relay_state': {

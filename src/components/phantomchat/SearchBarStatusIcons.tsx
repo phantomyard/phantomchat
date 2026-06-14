@@ -1,10 +1,9 @@
 /**
- * SearchBarStatusIcons — Tor onion + Nostrich relay status indicators
+ * SearchBarStatusIcons — Nostrich relay status indicator
  */
 
 import {createSignal, onCleanup, JSX} from 'solid-js';
 import rootScope from '@lib/rootScope';
-import {TorUiState, TOR_UI_COLORS, computeTorUiState} from '@components/phantomchat/tor-ui-state';
 
 type RelayState = 'all' | 'partial' | 'none';
 
@@ -15,24 +14,6 @@ const RELAY_COLORS: Record<RelayState, string> = {
 };
 
 // ─── SVG Icons ───────────────────────────────────────────────────
-
-function TorOnionIcon(props: {color: string; opacity?: number; onClick?: () => void}): JSX.Element {
-  return (
-    <svg
-      width="16" height="16" viewBox="0 0 24 24"
-      fill="none" stroke={props.color} stroke-width="2"
-      stroke-linecap="round" stroke-linejoin="round"
-      style={{'cursor': 'pointer', 'margin-left': '4px', 'opacity': String(props.opacity ?? 1)}}
-      onClick={props.onClick}
-    >
-      <ellipse cx="12" cy="14" rx="4" ry="6" />
-      <ellipse cx="12" cy="14" rx="7" ry="9" />
-      <ellipse cx="12" cy="14" rx="10" ry="10" />
-      <line x1="12" y1="4" x2="12" y2="2" />
-      <line x1="10" y1="3" x2="14" y2="3" />
-    </svg>
-  );
-}
 
 // Nostrich ostrich silhouette — the PNG is pre-processed (cropped + alpha
 // channel, ~1.5KB). Used as a CSS mask so we can tint it via background-color.
@@ -64,11 +45,9 @@ function NostrichIcon(props: {color: string; onClick?: () => void}): JSX.Element
 // ─── Main Component ──────────────────────────────────────────────
 
 export default function SearchBarStatusIcons(props: {
-  onTorClick?: () => void;
   onRelayClick?: () => void;
 }): JSX.Element {
-  // Default both to red — "prove you're connected" rather than the other way.
-  const [torState, setTorState] = createSignal<TorUiState>(computeTorUiState());
+  // Default to red — "prove you're connected" rather than the other way.
   const [relayState, setRelayState] = createSignal<RelayState>('none');
 
   // Per-URL connection map. `phantomchat_relay_state` fires once per relay with
@@ -86,28 +65,16 @@ export default function SearchBarStatusIcons(props: {
     else setRelayState('partial');
   };
 
-  const torHandler = () => {
-    setTorState(computeTorUiState());
-  };
-
-  const torEnabledHandler = () => {
-    setTorState(computeTorUiState());
-  };
-
   const relayHandler = (state: any) => {
     if(!state || typeof state !== 'object' || typeof state.url !== 'string') return;
     relayConnections.set(state.url, !!state.connected);
     recomputeRelayState();
   };
 
-  rootScope.addEventListener('phantomchat_tor_state', torHandler);
   rootScope.addEventListener('phantomchat_relay_state', relayHandler);
-  rootScope.addEventListener('phantomchat_tor_mode_changed', torEnabledHandler);
 
   onCleanup(() => {
-    rootScope.removeEventListener('phantomchat_tor_state', torHandler);
     rootScope.removeEventListener('phantomchat_relay_state', relayHandler);
-    rootScope.removeEventListener('phantomchat_tor_mode_changed', torEnabledHandler);
   });
 
   // Seed from the live pool so the icon is correct on first paint, before
@@ -140,11 +107,6 @@ export default function SearchBarStatusIcons(props: {
         'pointer-events': 'auto'
       }}
     >
-      <TorOnionIcon
-        color={TOR_UI_COLORS[torState()]}
-        opacity={torState() === 'disabled' ? 0.55 : 1}
-        onClick={props.onTorClick}
-      />
       <NostrichIcon
         color={RELAY_COLORS[relayState()]}
         onClick={props.onRelayClick}

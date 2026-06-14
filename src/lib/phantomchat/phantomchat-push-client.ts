@@ -5,8 +5,8 @@
  * deployed at https://push.phantomchat.chat — see docs/PUSH-NOTIFICATIONS.md).
  *
  * Caller responsibilities:
- *   - Pass `fetchFn` so the caller can route via Tor's webtorClient.fetch
- *     when PrivacyTransport mode is active. Default is globalThis.fetch.
+ *   - Optionally pass `fetchFn` to override the request transport.
+ *     Default is globalThis.fetch.
  *   - Pass `privkeyHex` (the user's nsec, hex) so this module can sign
  *     NIP-98 Authorization headers without owning identity-loading logic.
  *

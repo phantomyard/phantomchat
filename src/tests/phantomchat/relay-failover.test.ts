@@ -1,6 +1,6 @@
 /**
  * Tests for relay pool failover — publish with one relay down,
- * recovery respects Tor mode, relay state events
+ * recovery, relay state events
  */
 
 import '../setup';
@@ -31,8 +31,6 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
     disconnected = false;
     messageHandler: ((msg: MockMsg) => void) | null = null;
     connectionState: string = 'disconnected';
-    mode: 'websocket' | 'http-polling' = 'websocket';
-    torFetchFn: ((url: string) => Promise<string>) | null = null;
     latencyMs: number = -1;
     sentRawEvents: any[] = [];
 
@@ -87,20 +85,6 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
 
     sendRawEvent(event: any): void {
       this.sentRawEvents.push(event);
-    }
-
-    setTorMode(fetchFn: (url: string) => Promise<string>): void {
-      this.mode = 'http-polling';
-      this.torFetchFn = fetchFn;
-    }
-
-    setDirectMode(): void {
-      this.mode = 'websocket';
-      this.torFetchFn = null;
-    }
-
-    getMode(): string {
-      return this.mode;
     }
 
     async measureLatency(): Promise<number> {
@@ -243,54 +227,6 @@ describe('Relay Pool Failover', () => {
       // 4 succeed, 1 fails
       expect(result.successes.length).toBe(4);
       expect(result.failures.length).toBe(1);
-    });
-  });
-
-  describe('Tor mode and recovery', () => {
-    it('pool setTorMode calls setTorMode on all relay instances', async() => {
-      await pool.initialize();
-
-      const mockFetch = vi.fn().mockResolvedValue('[]');
-      pool.setTorMode(mockFetch);
-
-      for(const instance of mockRelayInstances) {
-        expect(instance.mode).toBe('http-polling');
-      }
-    });
-
-    it('pool setDirectMode calls setDirectMode on all relay instances', async() => {
-      await pool.initialize();
-
-      const mockFetch = vi.fn().mockResolvedValue('[]');
-      pool.setTorMode(mockFetch);
-      pool.setDirectMode();
-
-      for(const instance of mockRelayInstances) {
-        expect(instance.mode).toBe('websocket');
-      }
-    });
-
-    it('pool recovery skips reconnection when in Tor mode and Tor not ready', async() => {
-      await pool.initialize();
-
-      // Set Tor mode
-      const mockFetch = vi.fn().mockResolvedValue('[]');
-      pool.setTorMode(mockFetch);
-
-      // Disconnect one relay
-      mockRelayInstances[0].connected = false;
-      mockRelayInstances[0].connectionState = 'disconnected';
-
-      // Clear torFetchFn to simulate Tor not ready
-      pool.clearTorFetchFn();
-
-      // Trigger recovery manually
-      (pool as any).recoverFailedRelays();
-
-      // Recovery should NOT reconnect the relay (Tor mode but no fetchFn)
-      expect(mockRelayInstances[0].initialized).toBe(true); // from initial connect
-      // The relay should still be disconnected
-      expect(mockRelayInstances[0].connectionState).toBe('disconnected');
     });
   });
 

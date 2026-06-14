@@ -131,10 +131,6 @@ export class NostrRelayPool {
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
 
-  // Tor mode state (Phase 3)
-  private torFetchFn?: (url: string) => Promise<string>;
-  private inTorMode: boolean = false;
-
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
 
@@ -628,32 +624,6 @@ export class NostrRelayPool {
     this.dispatchRelayListChanged();
   }
 
-  // ─── Tor Mode (Phase 3) ───────────────────────────────────────
-
-  setTorMode(fetchFn: (url: string) => Promise<string>): void {
-    this.inTorMode = true;
-    this.torFetchFn = fetchFn;
-    for(const entry of this.relayEntries) {
-      entry.instance.setTorMode(fetchFn);
-    }
-  }
-
-  setDirectMode(): void {
-    this.inTorMode = false;
-    this.torFetchFn = undefined;
-    for(const entry of this.relayEntries) {
-      entry.instance.setDirectMode();
-    }
-  }
-
-  /**
-   * Clear Tor fetchFn without switching mode.
-   * Used when Tor is not ready but we're still in Tor mode.
-   */
-  clearTorFetchFn(): void {
-    this.torFetchFn = undefined;
-  }
-
   // ─── Relay States (Phase 3) ───────────────────────────────────
 
   /**
@@ -837,12 +807,6 @@ export class NostrRelayPool {
   }
 
   private recoverFailedRelays(): void {
-    // Pitfall 6: skip recovery when in Tor mode but Tor not ready
-    if(this.inTorMode && !this.torFetchFn) {
-      this.log('[NostrRelayPool] pool recovery skipped: Tor mode but no fetchFn available');
-      return;
-    }
-
     for(const entry of this.relayEntries) {
       if(entry.instance.getState() === 'disconnected') {
         this.log('[NostrRelayPool] pool recovery: retrying', entry.config.url);

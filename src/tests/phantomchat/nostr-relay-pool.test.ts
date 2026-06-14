@@ -102,14 +102,6 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       return -1;
     }
 
-    getMode(): string {
-      return 'websocket';
-    }
-
-    setTorMode(_fetchFn: (url: string) => Promise<string>): void {}
-
-    setDirectMode(): void {}
-
     sendRawEvent(_event: any): void {}
   }
 
@@ -555,42 +547,6 @@ describe('NostrRelayPool', () => {
     });
   });
 
-  describe('Tor mode (Phase 3)', () => {
-    it('setTorMode calls setTorMode on all relay entries', async() => {
-      const onMessage = vi.fn();
-      const relays = [
-        {url: 'wss://relay1.test', read: true, write: true},
-        {url: 'wss://relay2.test', read: true, write: true}
-      ];
-      const pool = new NostrRelayPool({relays, onMessage});
-      await pool.initialize();
-
-      const spy1 = vi.spyOn(mockRelayInstances[0], 'setTorMode');
-      const spy2 = vi.spyOn(mockRelayInstances[1], 'setTorMode');
-
-      const fetchFn = vi.fn();
-      pool.setTorMode(fetchFn);
-
-      expect(spy1).toHaveBeenCalled();
-      expect(spy2).toHaveBeenCalled();
-    });
-
-    it('setDirectMode calls setDirectMode on all relay entries', async() => {
-      const onMessage = vi.fn();
-      const relays = [
-        {url: 'wss://relay1.test', read: true, write: true}
-      ];
-      const pool = new NostrRelayPool({relays, onMessage});
-      await pool.initialize();
-
-      const spy1 = vi.spyOn(mockRelayInstances[0], 'setDirectMode');
-
-      pool.setDirectMode();
-
-      expect(spy1).toHaveBeenCalled();
-    });
-  });
-
   describe('publishNip65 (Phase 3)', () => {
     it('publishes NIP-65 event to write-enabled relays only', async() => {
       const onMessage = vi.fn();
@@ -613,30 +569,4 @@ describe('NostrRelayPool', () => {
     });
   });
 
-  describe('pool recovery Tor mode (Phase 3)', () => {
-    it('skips reconnection when in Tor mode without fetchFn', async() => {
-      const onMessage = vi.fn();
-      const relays = [
-        {url: 'wss://relay1.test', read: true, write: true}
-      ];
-      const pool = new NostrRelayPool({relays, onMessage});
-      await pool.initialize();
-
-      // Enter Tor mode then clear fetchFn
-      const fetchFn = vi.fn();
-      pool.setTorMode(fetchFn);
-      pool.clearTorFetchFn();
-
-      // Simulate disconnect
-      mockRelayInstances[0].simulateDisconnect();
-      mockRelayInstances[0].initialized = false;
-
-      // Advance pool recovery interval (60s)
-      vi.advanceTimersByTime(60_000);
-      await vi.advanceTimersByTimeAsync(0);
-
-      // Recovery should be skipped — relay NOT re-initialized
-      expect(mockRelayInstances[0].initialized).toBe(false);
-    });
-  });
 });

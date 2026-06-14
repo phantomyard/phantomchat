@@ -8,21 +8,6 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-/webtor/*
-  Cache-Control: public, max-age=31536000, immutable
-
-# Tor consensus + microdescriptors are regenerated on every build by
-# scripts/update-tor-consensus.mjs (fresh fetch from torproject.org) so their
-# bytes change between deploys despite the stable filename. Override the
-# /webtor/* immutable rule above so CDN edges revalidate and browsers don't
-# serve a year-stale copy after a redeploy. Validity is enforced at runtime by
-# webtor-rs (directory-authority signatures) and tor-consensus-cache.ts (TTL).
-/webtor/consensus.br.bin
-  Cache-Control: public, max-age=300, must-revalidate
-
-/webtor/microdescriptors.br.bin
-  Cache-Control: public, max-age=300, must-revalidate
-
 /*.woff2
   Cache-Control: public, max-age=31536000, immutable
 

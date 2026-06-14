@@ -201,37 +201,15 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       };
       console.log('[PhantomChatOnboardingIntegration] PhantomChatSync wired to ChatAPI');
 
-      // Defer the ChatAPI's global subscription until the PrivacyTransport
-      // has reached tor-active when Tor is required. ChatAPI owns its own
-      // NostrRelayPool which would otherwise open direct WebSockets to every
-      // relay the moment initGlobalSubscription runs — leaking the user IP
-      // for the full duration of the Tor bootstrap in Tor-only mode.
+      // ChatAPI owns its own NostrRelayPool. Start its global subscription
+      // immediately over direct WebSocket — there is no Tor layer to wait for.
       const startChatAPI = () => {
         chatAPI.initGlobalSubscription().catch((err) => {
           console.warn('[PhantomChatOnboardingIntegration] global subscription failed:', err);
         });
       };
 
-      const mode = (await import('@lib/phantomchat/privacy-transport')).PrivacyTransport.readMode();
-      if(mode === 'only') {
-        // In only-mode we must wait for Tor before ChatAPI opens its relay sockets.
-        const transport = (window as any).__phantomchatTransport;
-        const getState = () => transport?.getRuntimeState?.();
-        if(getState() === 'tor-active') {
-          startChatAPI();
-        } else {
-          const handler = (e: {state: string}) => {
-            if(e.state === 'tor-active') {
-              rootScope.removeEventListener('phantomchat_tor_state', handler);
-              startChatAPI();
-            }
-          };
-          rootScope.addEventListener('phantomchat_tor_state', handler);
-        }
-      } else {
-        // when-available / off — ChatAPI starts immediately.
-        startChatAPI();
-      }
+      startChatAPI();
 
       // --- Wire extracted modules ---
       const pendingFlush = createPendingFlush();
@@ -295,11 +273,8 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           const existing = await getRegistration();
           if(existing && existing.pubkey === pubkeyHex) return;
 
-          const transport = (window as any).__phantomchatTransport;
-          const torActive = transport?.getRuntimeState?.() === 'tor-active';
-          const fetchFn: typeof fetch | undefined = torActive && typeof transport?.fetch === 'function' ?
-            ((input: RequestInfo | URL, init?: RequestInit) => transport.fetch(typeof input === 'string' ? input : input.toString(), init)) as typeof fetch :
-            undefined;
+          // Direct WebSocket transport — no Tor fetch wrapper.
+          const fetchFn: typeof fetch | undefined = undefined;
 
           const vapidKey = await resolveVapidKey();
           if(!vapidKey) return;

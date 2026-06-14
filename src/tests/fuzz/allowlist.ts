@@ -65,13 +65,10 @@ export const CONSOLE_ALLOWLIST: readonly RegExp[] = [
   // unhandled-rejection paths. It's cancellation signal, not a regression.
   /^\[pageerror\] peer changed(?:\n|$)/,
 
-  // Chromium resource-preload diagnostic: when Vite dev server preloads
-  // webtor's WASM module via <link rel="preload"> but the user's action
-  // path doesn't hit webtor (most fuzz iterations don't touch torrent
-  // streaming), Chromium emits a "preloaded but not used" warning. It is
-  // a diagnostic about resource hints, not a runtime bug. Phase 2a runs
-  // targeted port 8090 where the preload was absent; Phase 2b.1 on 8080
-  // surfaces it and it consistently aborts fuzz replay at action 1.
+  // Chromium resource-preload diagnostic: when the Vite dev server preloads
+  // a WASM/asset module via <link rel="preload"> but the user's action path
+  // doesn't hit it, Chromium emits a "preloaded but not used" warning. It is
+  // a diagnostic about resource hints, not a runtime bug.
   /preloaded using link preload but not used within a few seconds/,
 
   // Dev-mode ServiceWorker registration fails because Vite's dev server
@@ -91,31 +88,7 @@ export const CONSOLE_ALLOWLIST: readonly RegExp[] = [
   // not a regression introduced by any Phase 2b change; it predates the
   // fuzzer and fires within the first few seconds of boot during P2P contact
   // exchange. Allowlisted so it doesn't mask the actual FIND under test.
-  /\[ACC-\d+-MESSAGES\] noIdsDialogs\b/,
-
-  // Tor bootstrap cold-start noise (FIND-450d2436 + variants). The fuzz
-  // harness talks to LocalRelay via `ws://127.0.0.1:<port>` — never routed
-  // through Tor — but the app's Tor (arti-js) module still bootstraps on boot
-  // and emits a family of Arti circuit diagnostics until the circuit
-  // stabilises or the module is shut down. These surface as either
-  //   `[error] Fetch request failed: Internal error: <Arti-specific>` or
-  //   `[error] Failed to wait for circuit: Internal error: <Arti-specific>`
-  // Observed tails include "Failed to extend to exit", "Failed to begin stream",
-  // "Channel not established", and "Received an END cell with reason ...".
-  // All are benign in fuzz context; match the prefix pairs so variants don't
-  // flake the replay before the invariant under test is reached.
-  /Fetch request failed: Internal error:/,
-  /Failed to wait for circuit: Internal error:/,
-
-  // WebtorClient uses the same arti-js runtime to bootstrap a WebRTC torrent
-  // circuit. In fuzz we never trigger a `webtor` code path (no media is
-  // streamed via torrent), but the module still attempts circuit warmup on
-  // boot and emits `[warning] [WebtorClient] circuit attempt N failed:
-  // waitForCircuit attempt timed out after 20000ms`. Same justification as
-  // the Tor entry above: benign in fuzz context, masks the real invariant
-  // otherwise. (`waitForCircuit attempt timed out` is the stable suffix.)
-  /\[WebtorClient\] circuit attempt \d+ failed/,
-  /waitForCircuit attempt timed out/
+  /\[ACC-\d+-MESSAGES\] noIdsDialogs\b/
 ];
 
 /**
