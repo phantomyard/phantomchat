@@ -28,6 +28,7 @@ let ownPubkey: string | null = null;
 let ownPrivkey: Uint8Array | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+let presencePollTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Map pubkey → last activity timestamp (ms) */
 const lastActivity = new Map<string, number>();
@@ -56,6 +57,11 @@ export async function initPresence(pubkey: string, privkeyHex: string): Promise<
   // Check for stale peers every 60s
   staleCheckTimer = setInterval(checkStalePresence, 60_000);
 
+  // Poll all tracked peers' latest heartbeat every 60s (Andrew's ask: check
+  // activity on load + every 60s). Belt-and-suspenders with the live `#p`
+  // subscription so presence stays fresh even if a beat is missed.
+  presencePollTimer = setInterval(pollPresence, 60_000);
+
   // Re-check presence whenever a chat opens (catch-up before the next beat).
   wireChatOpenRefresh();
 
@@ -71,6 +77,7 @@ export async function initPresence(pubkey: string, privkeyHex: string): Promise<
  */
 export function trackPeerPresence(pubkey: string, peerId: number): void {
   pubkeyToPeerId.set(pubkey, peerId);
+  console.log(`${LOG_PREFIX} tracking ${pubkey.slice(0, 8)} → peer ${peerId} (total tracked: ${pubkeyToPeerId.size})`);
 }
 
 /**
@@ -106,12 +113,21 @@ async function publishHeartbeat(): Promise<void> {
   try {
     const {finalizeEvent} = await import('nostr-tools/pure');
 
+    // CRITICAL: the live relay subscription filters presence by `#p:[myPubkey]`
+    // (see nostr-relay.subscribeMessages). A heartbeat with no `p` tag is
+    // therefore delivered to NO ONE — which is why peers only ever showed
+    // online after an actual message (onPeerActivity), never from heartbeats.
+    // Tag every tracked contact so each one's `#p:[theirKey]` subscription
+    // matches this beat and renders us online in real time.
+    const pTags: string[][] = Array.from(pubkeyToPeerId.keys()).map((pk) => ['p', pk]);
+
     const event = finalizeEvent({
       kind: KIND_STATUS,
       created_at: Math.floor(Date.now() / 1000),
       tags: [
         ['d', 'general'],
-        ['status', 'online']
+        ['status', 'online'],
+        ...pTags
       ],
       content: 'online'
     }, ownPrivkey);
@@ -121,6 +137,9 @@ async function publishHeartbeat(): Promise<void> {
     const pool = chatAPI?.relayPool;
     if(pool && pool.isConnected()) {
       await pool.publishRawEvent(event);
+      console.log(`${LOG_PREFIX} ♥ heartbeat published (online), p-tagged ${pTags.length} contacts`);
+    } else {
+      console.log(`${LOG_PREFIX} heartbeat skipped: relay pool not connected (pool=${!!pool})`);
     }
   } catch(err) {
     console.debug(`${LOG_PREFIX} heartbeat publish failed:`, err);
@@ -135,8 +154,12 @@ function handlePresenceEvent(event: any): void {
 
   const pubkey = event.pubkey;
   const peerId = pubkeyToPeerId.get(pubkey);
-  if(!peerId) return;
+  if(!peerId) {
+    console.log(`${LOG_PREFIX} ← beat from ${String(pubkey).slice(0, 8)} IGNORED (peer not tracked; tracked=${pubkeyToPeerId.size})`);
+    return;
+  }
 
+  console.log(`${LOG_PREFIX} ← beat from ${String(pubkey).slice(0, 8)} → peer ${peerId} (online)`);
   const timestamp = event.created_at * 1000;
   lastActivity.set(pubkey, timestamp);
   updatePeerStatus(peerId, 'online', event.created_at);
@@ -157,9 +180,11 @@ function updatePeerStatus(peerId: number, status: 'online' | 'offline', timestam
   const onlineUntil = timestamp + Math.floor(OFFLINE_THRESHOLD_MS / 1000);
 
   // (1) Worker store — the source of truth the topbar reads on chat open.
+  let workerCalled = false;
   try {
     const updateStatus = rootScope.managers?.appUsersManager?.updateP2PUserStatus;
     if(updateStatus) {
+      workerCalled = true;
       Promise.resolve(
         updateStatus.call(
           rootScope.managers.appUsersManager,
@@ -176,11 +201,19 @@ function updatePeerStatus(peerId: number, status: 'online' | 'offline', timestam
 
   // (2) Main-thread mirror — immediate reactive UI refresh.
   const apiManagerProxy = MOUNT_CLASS_TO.apiManagerProxy;
-  if(!apiManagerProxy) return;
+  if(!apiManagerProxy) {
+    console.log(`${LOG_PREFIX} setStatus peer ${peerId}=${status}: workerCall=${workerCalled} mirror=NO_PROXY`);
+    return;
+  }
 
   const peerIdValue: PeerId = peerId.toPeerId(false);
   const peer = apiManagerProxy.getPeer(peerIdValue);
-  if(!peer || peer._ !== 'user') return;
+  if(!peer || peer._ !== 'user') {
+    console.log(`${LOG_PREFIX} setStatus peer ${peerId}=${status}: workerCall=${workerCalled} mirror=NO_USER(${peer?._ ?? 'null'})`);
+    return;
+  }
+
+  console.log(`${LOG_PREFIX} setStatus peer ${peerId}=${status}: workerCall=${workerCalled} mirror=OK`);
 
   if(status === 'online') {
     (peer as any).status = {
@@ -216,7 +249,9 @@ async function refreshPeerOnOpen(peerId: number): Promise<void> {
   for(const [pk, pid] of pubkeyToPeerId) {
     if(pid === peerId) { pubkey = pk; break; }
   }
-  if(!pubkey) return;
+  if(!pubkey) return; // not a tracked P2P peer (group/other) — silent
+
+  console.log(`${LOG_PREFIX} chat-open refresh: peer ${peerId} (${pubkey.slice(0, 8)})`);
 
   // Re-assert known activity first so the badge updates instantly if we already
   // have a recent beat for this peer.
@@ -260,6 +295,41 @@ function wireChatOpenRefresh(): void {
 }
 
 /**
+ * Poll the relays for the latest heartbeat of every tracked peer in a single
+ * REQ and feed each result through handlePresenceEvent. This is the 60s cadence
+ * that keeps the badge live independent of the push subscription.
+ */
+async function pollPresence(): Promise<void> {
+  const authors = Array.from(pubkeyToPeerId.keys());
+  if(authors.length === 0) return;
+
+  try {
+    const chatAPI = (window as any).__phantomchatChatAPI;
+    const pool = chatAPI?.relayPool;
+    if(!pool?.isConnected?.()) {
+      console.log(`${LOG_PREFIX} poll skipped: relay pool not connected`);
+      return;
+    }
+    const events: any[] = await pool.queryRawEvents({
+      kinds: [KIND_STATUS],
+      authors,
+      limit: authors.length
+    });
+    // Keep only the freshest beat per author, then apply.
+    const freshest = new Map<string, any>();
+    for(const ev of events || []) {
+      if(ev?.kind !== KIND_STATUS) continue;
+      const cur = freshest.get(ev.pubkey);
+      if(!cur || ev.created_at > cur.created_at) freshest.set(ev.pubkey, ev);
+    }
+    console.log(`${LOG_PREFIX} poll: queried ${authors.length} peers, got ${freshest.size} live beats`);
+    for(const ev of freshest.values()) handlePresenceEvent(ev);
+  } catch(err) {
+    console.debug(`${LOG_PREFIX} poll failed:`, (err as Error)?.message);
+  }
+}
+
+/**
  * Check for peers that haven't sent activity recently.
  * Mark them as offline.
  */
@@ -288,6 +358,10 @@ export function destroyPresence(): void {
   if(staleCheckTimer) {
     clearInterval(staleCheckTimer);
     staleCheckTimer = null;
+  }
+  if(presencePollTimer) {
+    clearInterval(presencePollTimer);
+    presencePollTimer = null;
   }
   lastActivity.clear();
   pubkeyToPeerId.clear();
