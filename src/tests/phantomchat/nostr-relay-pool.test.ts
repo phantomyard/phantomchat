@@ -440,7 +440,10 @@ describe('NostrRelayPool', () => {
 
       await pool.initialize();
 
-      expect(getMessagesSpy).toHaveBeenCalledWith(1700000000);
+      // Backfill subtracts the 48h NIP-17 gift-wrap fuzz window from lastSeen
+      // so messages whose outer created_at was randomized into the past are not
+      // missed. 48h = 172800s → 1700000000 - 172800 = 1699827200.
+      expect(getMessagesSpy).toHaveBeenCalledWith(1700000000 - 48 * 60 * 60);
       getMessagesSpy.mockRestore();
     });
 
