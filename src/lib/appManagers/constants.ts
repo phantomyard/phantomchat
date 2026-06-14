@@ -45,18 +45,15 @@ export const PEER_FULL_TTL = 3 * 60e3;
 
 export const FOLDER_ID_ALL: REAL_FOLDER_ID = 0;
 export const FOLDER_ID_ARCHIVE: REAL_FOLDER_ID = 1;
-export const FOLDER_ID_PERSONS: SYSTEM_FOLDER_ID = 2;
 export const FOLDER_ID_GROUPS: SYSTEM_FOLDER_ID = 3;
 export const REAL_FOLDERS: Set<number> = new Set([
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_PERSONS,
   FOLDER_ID_GROUPS
 ]);
 export const PROTECTED_FOLDERS: Set<number> = new Set([
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_PERSONS,
   FOLDER_ID_GROUPS
 ]);
 export const START_LOCAL_ID = Math.max(...Array.from(REAL_FOLDERS)) + 1 as MyDialogFilter['localId'];

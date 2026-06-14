@@ -3,7 +3,6 @@ import {FoldersSync} from '@lib/phantomchat/folders-sync';
 import {buildLocalFilter} from '@lib/storages/filtersLocal';
 import {
   FOLDER_ID_ALL,
-  FOLDER_ID_PERSONS,
   FOLDER_ID_GROUPS,
   FOLDER_ID_ARCHIVE
 } from '@appManagers/constants';
@@ -21,7 +20,6 @@ function mkCustom(id: number, title: string): MyDialogFilter {
 function mkBaseFilters(): MyDialogFilter[] {
   return [
     buildLocalFilter(FOLDER_ID_ALL),
-    buildLocalFilter(FOLDER_ID_PERSONS),
     buildLocalFilter(FOLDER_ID_GROUPS),
     buildLocalFilter(FOLDER_ID_ARCHIVE)
   ];
@@ -83,7 +81,7 @@ describe('FoldersSync.reconcile', () => {
     const deps = mkMockDeps();
     const payload = {
       version: 1,
-      order: [0, 2, 3, 1, 5],
+      order: [0, 3, 1, 5],
       customFolders: [mkCustom(5, 'RemoteCustom')],
       protectedTitles: {}
     };
@@ -107,7 +105,7 @@ describe('FoldersSync.reconcile', () => {
     localStorage.setItem('phantomchat-folders-last-modified', '200');
     const payload = {
       version: 1,
-      order: [0, 2, 3, 1],
+      order: [0, 3, 1],
       customFolders: [] as MyDialogFilter[],
       protectedTitles: {}
     };
@@ -131,7 +129,7 @@ describe('FoldersSync.reconcile', () => {
     deps._state.fetchResults.push({
       kind: FOLDERS_SYNC_KIND,
       created_at: 200,
-      content: `enc(${JSON.stringify({version: 1, order: [0, 2, 3, 1], customFolders: [], protectedTitles: {}})})`
+      content: `enc(${JSON.stringify({version: 1, order: [0, 3, 1], customFolders: [], protectedTitles: {}})})`
     });
     const sync = new FoldersSync(deps);
     const res = await sync.reconcile();
@@ -155,7 +153,7 @@ describe('FoldersSync.reconcile', () => {
     const deps = mkMockDeps();
     const payload = {
       version: 1,
-      order: [0, 2, 3, 1],
+      order: [0, 3, 1],
       customFolders: [] as MyDialogFilter[],
       protectedTitles: {}
     };

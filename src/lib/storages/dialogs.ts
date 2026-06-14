@@ -16,7 +16,7 @@ import tsNow from '@helpers/tsNow';
 import SearchIndex from '@lib/searchIndex';
 import {SliceEnd} from '@helpers/slicedArray';
 import {MyDialogFilter} from '@lib/storages/filters';
-import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_PERSONS, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '@appManagers/constants';
+import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '@appManagers/constants';
 import {MaybePromise, Modify, NoneToVoidFunction} from '@types';
 import ctx from '@environment/ctx';
 import AppStorage from '@lib/storage';
@@ -1717,11 +1717,11 @@ export default class DialogsStorage extends AppManager {
       }
 
       const folder = this.getFolder(filterId);
-      // Persons (2) / Groups (3) are pFlags-driven local system folders: no
-      // dialog has folder_id 2/3, so getTopMessages returns the global folder
-      // count, not the filtered subset. Using result.count would make the
-      // virtual list allocate skeleton rows for non-existent dialogs.
-      const isLocalSystemFolder = filterId === FOLDER_ID_PERSONS || filterId === FOLDER_ID_GROUPS;
+      // Groups (3) is a pFlags-driven local system folder: no dialog has
+      // folder_id 3, so getTopMessages returns the global folder count, not
+      // the filtered subset. Using result.count would make the virtual list
+      // allocate skeleton rows for non-existent dialogs.
+      const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS;
 
       if(skipMigrated) {
         curDialogStorage = this.getFolderDialogs(filterId, skipMigrated);

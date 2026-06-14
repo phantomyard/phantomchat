@@ -364,6 +364,62 @@ describe('PhantomChatMTProtoServer', () => {
     });
   });
 
+  // ─── self:self skip (never surface the user as their own chat/contact) ───
+
+  describe('self:self conversation is skipped everywhere', () => {
+    const SELF_CONV_ID = [OWN_PUBKEY, OWN_PUBKEY].join(':');
+    const selfMessage = {
+      ...mockMessage,
+      conversationId: SELF_CONV_ID,
+      senderPubkey: OWN_PUBKEY,
+      content: 'note to self hello',
+      isOutgoing: true
+    };
+
+    it('getDialogs drops a self:self conversation', async () => {
+      mockStore.getAllConversationIds.mockResolvedValue([SELF_CONV_ID]);
+      mockStore.getMessages.mockResolvedValue([selfMessage]);
+
+      const result = await server.handleMethod('messages.getDialogs', {});
+
+      expect(result.dialogs).toEqual([]);
+      expect(result.users).toEqual([]);
+      expect(result.count).toBe(0);
+    });
+
+    it('getDialogs keeps a real peer but drops the self:self one', async () => {
+      mockStore.getAllConversationIds.mockResolvedValue([SELF_CONV_ID, CONVERSATION_ID]);
+      mockStore.getMessages.mockImplementation(async (convId: string) =>
+        convId === SELF_CONV_ID ? [selfMessage] : [mockMessage]
+      );
+
+      const result = await server.handleMethod('messages.getDialogs', {});
+
+      expect(result.dialogs.length).toBe(1);
+      expect(result.users.length).toBe(1);
+    });
+
+    it('searchMessages does not return self:self matches', async () => {
+      mockStore.getAllConversationIds.mockResolvedValue([SELF_CONV_ID]);
+      mockStore.getMessages.mockResolvedValue([selfMessage]);
+
+      const result = await server.handleMethod('messages.search', {q: 'hello'});
+
+      expect(result.messages).toEqual([]);
+      expect(result.users).toEqual([]);
+    });
+
+    it('getContacts does not list the user as their own contact', async () => {
+      mockStore.getAllConversationIds.mockResolvedValue([SELF_CONV_ID]);
+      mockStore.getMessages.mockResolvedValue([selfMessage]);
+
+      const result = await server.handleMethod('contacts.getContacts', {});
+
+      expect(result.contacts).toEqual([]);
+      expect(result.users).toEqual([]);
+    });
+  });
+
   // ─── users.getFullUser ────────────────────────────────────────────
 
   describe('users.getFullUser', () => {

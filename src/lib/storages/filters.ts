@@ -15,7 +15,6 @@ import assumeType from '@helpers/assumeType';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_PERSONS,
   FOLDER_ID_GROUPS,
   REAL_FOLDERS,
   REAL_FOLDER_ID,
@@ -91,10 +90,10 @@ export default class FiltersStorage extends AppManager {
   /**
    * ! use it only with saving
    *
-   * Ensures the 4 locally-seeded system folders (All, Persons, Groups, Archive)
+   * Ensures the 3 locally-seeded system folders (All, Groups, Archive)
    * are present in the filter array, in that order, followed by any user custom
    * folders. For existing users whose filtersArr already contains only [ALL, ARCHIVE],
-   * this method retroactively inserts Persons and Groups. Preserves user-renamed
+   * this method retroactively inserts Groups. Preserves user-renamed
    * titles across reloads via the LANGPACK: sentinel check.
    */
   private prependFilters(filters: DialogFilter[]) {
@@ -102,8 +101,11 @@ export default class FiltersStorage extends AppManager {
 
     const allChatsFilter = this.localFilters[FOLDER_ID_ALL];
     const archiveFilter = this.localFilters[FOLDER_ID_ARCHIVE];
-    const personsFilter = this.localFilters[FOLDER_ID_PERSONS];
     const groupsFilter = this.localFilters[FOLDER_ID_GROUPS];
+
+    // Persons (id 2) was a removed system folder. Strip any stale persisted
+    // copy so existing users who had it seeded stop seeing it.
+    findAndSplice(filters, (f) => (f as MyDialogFilter).id === 2);
 
     // ALL: replace existing or prepend
     const allIdx = filters.findIndex(
@@ -127,23 +129,16 @@ export default class FiltersStorage extends AppManager {
       return fresh;
     };
 
-    // PERSONS: ensure present at index 1, preserve rename
-    const existingPersons = filters.find(
-      (f) => (f as MyDialogFilter).id === FOLDER_ID_PERSONS
-    ) as MyDialogFilter | undefined;
-    findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_PERSONS);
-    filters.splice(1, 0, preserveRename(existingPersons, personsFilter));
-
-    // GROUPS: ensure present at index 2, preserve rename
+    // GROUPS: ensure present at index 1, preserve rename
     const existingGroups = filters.find(
       (f) => (f as MyDialogFilter).id === FOLDER_ID_GROUPS
     ) as MyDialogFilter | undefined;
     findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_GROUPS);
-    filters.splice(2, 0, preserveRename(existingGroups, groupsFilter));
+    filters.splice(1, 0, preserveRename(existingGroups, groupsFilter));
 
-    // ARCHIVE: ensure present at index 3 (after all system folders)
+    // ARCHIVE: ensure present at index 2 (after all system folders)
     findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_ARCHIVE);
-    filters.splice(3, 0, archiveFilter);
+    filters.splice(2, 0, archiveFilter);
 
     this.localId = START_LOCAL_ID;
     filters.forEach((filter) => {
