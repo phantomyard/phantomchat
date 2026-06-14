@@ -1,13 +1,28 @@
 /**
- * PhantomChat.chat Presence Module
+ * PhantomChat.chat Presence Module — PING / PONG model
  *
- * Tracks peer "last seen" status based on:
- * 1. Message reception timestamps (primary signal)
- * 2. Kind 30315 heartbeat publish (NIP-38 inspired) for own status
- * 3. Kind 30315 heartbeat subscription for contacts via lightweight WS
+ * HONEST presence. The previous design was a one-way kind-30315 beacon: each
+ * side shouted "I'm online" on a timer and nobody ever answered. A green badge
+ * meant "the peer published a beacon", NOT "the peer can actually hear you" — so
+ * a peer whose inbound subscription had gone deaf still showed online while
+ * silently dropping your messages.
  *
- * The module updates tweb's User.status field on synthetic P2P users
- * so the UI shows "online", "last seen recently", etc.
+ * This module replaces that with a round-trip handshake over the SAME NIP-17
+ * gift-wrap path that real messages travel:
+ *
+ *   - On chat-open, and every 60s while that chat stays open, we send a PING
+ *     (a gift-wrapped `{type:'presence-ping', nonce}` envelope) to the peer.
+ *   - The peer answers with a PONG echoing the nonce.
+ *   - A returned pong is proof the peer received our gift-wrap — i.e. the real
+ *     delivery path is alive — so we flip the badge to a TRUE online.
+ *   - No pong within the offline threshold ⇒ the badge falls to "last seen".
+ *
+ * Because the ping rides kind-1059 (not a side channel), "online" now means
+ * "I just proved I can deliver to you", which is exactly the signal the user
+ * needs before trusting that a message will land.
+ *
+ * Incoming pings are answered (pong) by chat-api's presence wiring; receiving a
+ * ping OR a normal message also marks that peer alive (both prove liveness).
  */
 
 import rootScope from '@lib/rootScope';
@@ -15,74 +30,64 @@ import {MOUNT_CLASS_TO} from '@config/debug';
 
 const LOG_PREFIX = '[PhantomChatPresence]';
 
-/** How often to publish own heartbeat (ms) */
-const HEARTBEAT_INTERVAL_MS = 60_000;
+/** How often we re-ping the currently-open chat's peer (ms). */
+const PING_INTERVAL_MS = 60_000;
 
-/** Consider a peer offline if no activity for this long (ms) */
+/** A pending ping older than this is considered lost and swept (ms). */
+const PING_TIMEOUT_MS = 15_000;
+
+/** Consider a peer offline if no proof-of-life for this long (ms). */
 const OFFLINE_THRESHOLD_MS = 180_000;
 
-/** Kind 30315 = NIP-38 user status */
-const KIND_STATUS = 30315;
-
 let ownPubkey: string | null = null;
-let ownPrivkey: Uint8Array | null = null;
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let pingTimer: ReturnType<typeof setInterval> | null = null;
 let staleCheckTimer: ReturnType<typeof setInterval> | null = null;
-let presencePollTimer: ReturnType<typeof setInterval> | null = null;
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Map pubkey → last activity timestamp (ms) */
-const lastActivity = new Map<string, number>();
+/** Map pubkey → last proof-of-life timestamp (ms). */
+const lastAlive = new Map<string, number>();
 
-/** Map pubkey → peerId for status updates */
+/** Map pubkey → peerId for status updates. */
 const pubkeyToPeerId = new Map<string, number>();
+
+/** Outstanding pings we sent, keyed by nonce → {pubkey, sentAt}. */
+const pendingPings = new Map<string, {pubkey: string; sentAt: number}>();
+
+/** The peer whose chat is currently open — the one we actively probe. */
+let activePeerPubkey: string | null = null;
 
 /**
  * Initialize the presence system.
- * Call once after identity is loaded and relay pool is connected.
+ * Call once after identity is loaded and the relay pool is connected.
  */
-export async function initPresence(pubkey: string, privkeyHex: string): Promise<void> {
+export async function initPresence(pubkey: string, _privkeyHex?: string): Promise<void> {
   ownPubkey = pubkey;
-  try {
-    const {hexToBytes} = await import('nostr-tools/utils');
-    ownPrivkey = hexToBytes(privkeyHex);
-  } catch(err) {
-    console.warn(`${LOG_PREFIX} failed to parse privkey:`, err);
-    return;
-  }
 
-  // Populate the tracking set from the persistent contact mapping store BEFORE
-  // the first heartbeat fires. Previously trackPeerPresence was called ONLY from
-  // the Contacts sidebar tab's render loop, so if the user never opened that tab
-  // the tracked set stayed empty (tracked=0): heartbeats p-tagged no one and every
-  // inbound beat was dropped as "not tracked". Loading from the authoritative
-  // mapping store here (and refreshing each poll) makes presence work regardless
-  // of which screen the user is on.
+  // Populate the tracking set from the authoritative contact mapping store so an
+  // inbound ping/pong resolves to the right contact regardless of which screen
+  // the user is on (see refreshTrackedContacts).
   await refreshTrackedContacts();
 
-  // Start publishing heartbeats
-  setTimeout(publishHeartbeat, 5000); // delay to let relay pool connect
-  heartbeatTimer = setInterval(publishHeartbeat, HEARTBEAT_INTERVAL_MS);
+  // Probe the currently-open chat's peer on the 60s cadence. Opening a chat
+  // fires an immediate ping via wireChatOpenRefresh; this keeps it fresh while
+  // the chat stays open.
+  pingTimer = setInterval(pingActivePeer, PING_INTERVAL_MS);
 
-  // Check for stale peers every 60s
-  staleCheckTimer = setInterval(checkStalePresence, 60_000);
+  // Fall a peer to "last seen" once its proof-of-life ages past the threshold.
+  staleCheckTimer = setInterval(checkStalePresence, 30_000);
 
-  // Poll all tracked peers' latest heartbeat every 60s (Andrew's ask: check
-  // activity on load + every 60s). Belt-and-suspenders with the live `#p`
-  // subscription so presence stays fresh even if a beat is missed.
-  presencePollTimer = setInterval(pollPresence, 60_000);
+  // Drop pings that never got a pong so the pending map can't grow unbounded.
+  sweepTimer = setInterval(sweepPendingPings, PING_TIMEOUT_MS);
 
-  // Re-check presence whenever a chat opens (catch-up before the next beat).
+  // Ping (and re-assert) whenever a chat opens.
   wireChatOpenRefresh();
 
-  console.log(`${LOG_PREFIX} initialized for ${pubkey.slice(0, 8)}...`);
+  console.log(`${LOG_PREFIX} initialized for ${pubkey.slice(0, 8)}... (ping/pong)`);
 }
 
 /**
- * Register a contact's pubkey for presence tracking. Presence events are NOT
- * fetched here: kind-30315 beats arrive over the SHARED relay pool (the same
- * subscription that already carries gift-wraps / typing / reactions) and are
- * fed in via `onRemotePresenceEvent`. This just records the pubkey→peerId map
- * so an incoming beat can be resolved to the right contact. Idempotent.
+ * Register a contact's pubkey for presence tracking. Records the pubkey→peerId
+ * map so an incoming ping/pong can be resolved to the right contact. Idempotent.
  */
 export function trackPeerPresence(pubkey: string, peerId: number): void {
   pubkeyToPeerId.set(pubkey, peerId);
@@ -91,10 +96,8 @@ export function trackPeerPresence(pubkey: string, peerId: number): void {
 
 /**
  * Populate the tracking set from the authoritative contact mapping store
- * (`getAllMappings` — the same source the Contacts tab uses). This decouples
- * presence tracking from the Contacts UI render so it works on first load and
- * keeps up with contacts added later (called again at the top of each poll).
- * Idempotent; only logs when it actually adds new peers.
+ * (`getAllMappings`). Decouples tracking from the Contacts UI render so it works
+ * on first load and keeps up with contacts added later. Idempotent.
  */
 async function refreshTrackedContacts(): Promise<void> {
   try {
@@ -102,9 +105,7 @@ async function refreshTrackedContacts(): Promise<void> {
     const mappings = await getAllMappings();
     let added = 0;
     for(const m of mappings) {
-      if(!pubkeyToPeerId.has(m.pubkey)) {
-        added++;
-      }
+      if(!pubkeyToPeerId.has(m.pubkey)) added++;
       pubkeyToPeerId.set(m.pubkey, m.peerId);
     }
     if(added > 0) {
@@ -116,88 +117,91 @@ async function refreshTrackedContacts(): Promise<void> {
 }
 
 /**
- * Feed a kind-30315 presence event received over the shared relay pool (routed
- * here by chat-api's raw-event dispatcher). Resolves the author to a tracked
- * contact and updates their status to online. Safe to call with any event —
- * non-30315 or untracked authors are ignored.
- */
-export function onRemotePresenceEvent(event: any): void {
-  handlePresenceEvent(event);
-}
-
-/**
- * Called when a message is received from a contact.
- * Updates their "last seen" to now.
+ * Called when a message is received from a contact. A delivered message is
+ * itself proof the peer is alive, so refresh their liveness.
  */
 export function onPeerActivity(pubkey: string): void {
-  const now = Date.now();
-  lastActivity.set(pubkey, now);
-
-  const peerId = pubkeyToPeerId.get(pubkey);
-  if(peerId) {
-    updatePeerStatus(peerId, 'online', Math.floor(now / 1000));
-  }
+  markAlive(pubkey);
 }
 
 /**
- * Publish own heartbeat — kind 30315, d="general", content="online"
+ * A peer PINGED us. They can reach us and want to know if we can reach them.
+ * They are demonstrably alive, so mark them online. (chat-api sends the pong.)
  */
-async function publishHeartbeat(): Promise<void> {
-  if(!ownPubkey || !ownPrivkey) return;
+export function onRemotePing(fromPubkey: string): void {
+  console.log(`${LOG_PREFIX} ← ping from ${fromPubkey.slice(0, 8)} (peer alive)`);
+  markAlive(fromPubkey);
+}
 
+/**
+ * A peer answered one of our PINGs with a PONG. This is the authoritative
+ * proof-of-delivery signal: the peer received our gift-wrap, so the real
+ * message path to them is alive. Correlate by nonce (defensive — a pong from a
+ * tracked peer is trusted regardless) and flip the badge to a true online.
+ */
+export function onRemotePong(fromPubkey: string, nonce: string): void {
+  const pending = nonce ? pendingPings.get(nonce) : undefined;
+  if(pending) {
+    pendingPings.delete(nonce);
+    if(pending.pubkey !== fromPubkey) {
+      console.debug(`${LOG_PREFIX} pong nonce/author mismatch — ignoring`);
+      return;
+    }
+  }
+  // Only honor pongs from peers we actually track (and, if we had a pending
+  // ping for this nonce, that the author matched). An untracked author with no
+  // matching nonce is noise.
+  if(!pubkeyToPeerId.has(fromPubkey)) return;
+  console.log(`${LOG_PREFIX} ← pong from ${fromPubkey.slice(0, 8)} (delivery path alive)`);
+  markAlive(fromPubkey);
+}
+
+/** Record proof-of-life for a peer and flip its badge online. */
+function markAlive(pubkey: string): void {
+  const now = Date.now();
+  lastAlive.set(pubkey, now);
+  const peerId = pubkeyToPeerId.get(pubkey);
+  if(peerId) updatePeerStatus(peerId, 'online', Math.floor(now / 1000));
+}
+
+/**
+ * Send a presence PING to a peer over the gift-wrap path and record the nonce
+ * so the matching pong can be correlated.
+ */
+async function sendPing(pubkey: string): Promise<void> {
+  if(!pubkey || pubkey === ownPubkey) return;
   try {
-    const {finalizeEvent} = await import('nostr-tools/pure');
-
-    // CRITICAL: the live relay subscription filters presence by `#p:[myPubkey]`
-    // (see nostr-relay.subscribeMessages). A heartbeat with no `p` tag is
-    // therefore delivered to NO ONE — which is why peers only ever showed
-    // online after an actual message (onPeerActivity), never from heartbeats.
-    // Tag every tracked contact so each one's `#p:[theirKey]` subscription
-    // matches this beat and renders us online in real time.
-    const pTags: string[][] = Array.from(pubkeyToPeerId.keys()).map((pk) => ['p', pk]);
-
-    const event = finalizeEvent({
-      kind: KIND_STATUS,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ['d', 'general'],
-        ['status', 'online'],
-        ...pTags
-      ],
-      content: 'online'
-    }, ownPrivkey);
-
-    // Publish via ChatAPI relay pool
     const chatAPI = (window as any).__phantomchatChatAPI;
     const pool = chatAPI?.relayPool;
-    if(pool && pool.isConnected()) {
-      await pool.publishRawEvent(event);
-      console.log(`${LOG_PREFIX} ♥ heartbeat published (online), p-tagged ${pTags.length} contacts`);
-    } else {
-      console.log(`${LOG_PREFIX} heartbeat skipped: relay pool not connected (pool=${!!pool})`);
-    }
+    if(!pool?.isConnected?.() || typeof pool.publishPresence !== 'function') return;
+
+    const nonce = (typeof crypto !== 'undefined' && crypto.randomUUID) ?
+      crypto.randomUUID() :
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pendingPings.set(nonce, {pubkey, sentAt: Date.now()});
+
+    await pool.publishPresence(pubkey, nonce, 'ping');
+    console.log(`${LOG_PREFIX} → ping ${pubkey.slice(0, 8)} (nonce ${nonce.slice(0, 8)})`);
   } catch(err) {
-    console.debug(`${LOG_PREFIX} heartbeat publish failed:`, err);
+    console.debug(`${LOG_PREFIX} ping failed:`, (err as Error)?.message);
   }
 }
 
+/** Re-probe the currently-open chat's peer (60s cadence). */
+function pingActivePeer(): void {
+  if(activePeerPubkey) void sendPing(activePeerPubkey);
+}
+
 /**
- * Handle incoming presence event.
+ * Drop pings that never got a pong. Doesn't itself mark anyone offline — that's
+ * checkStalePresence's job once proof-of-life ages out — it just bounds the
+ * pending map.
  */
-function handlePresenceEvent(event: any): void {
-  if(!event || event.kind !== KIND_STATUS) return;
-
-  const pubkey = event.pubkey;
-  const peerId = pubkeyToPeerId.get(pubkey);
-  if(!peerId) {
-    console.log(`${LOG_PREFIX} ← beat from ${String(pubkey).slice(0, 8)} IGNORED (peer not tracked; tracked=${pubkeyToPeerId.size})`);
-    return;
+function sweepPendingPings(): void {
+  const now = Date.now();
+  for(const [nonce, info] of pendingPings) {
+    if(now - info.sentAt > PING_TIMEOUT_MS) pendingPings.delete(nonce);
   }
-
-  console.log(`${LOG_PREFIX} ← beat from ${String(pubkey).slice(0, 8)} → peer ${peerId} (online)`);
-  const timestamp = event.created_at * 1000;
-  lastActivity.set(pubkey, timestamp);
-  updatePeerStatus(peerId, 'online', event.created_at);
 }
 
 /**
@@ -205,10 +209,7 @@ function handlePresenceEvent(event: any): void {
  *
  * CRITICAL: the status must be written to the WORKER's appUsersManager, because
  * that is the store the topbar/profile read back through `getUser` when a chat
- * (re)opens. Writing only the main-thread peer mirror — as this did before —
- * left the worker copy on its injected default, so switching chats and
- * returning reverted the badge to "last seen recently" even though the peer was
- * online. We update both: the worker (authoritative for the readers) AND the
+ * (re)opens. We update both the worker (authoritative for readers) AND the
  * main-thread mirror (immediate reactive refresh).
  */
 function updatePeerStatus(peerId: number, status: 'online' | 'offline', timestamp: number): void {
@@ -248,140 +249,73 @@ function updatePeerStatus(peerId: number, status: 'online' | 'offline', timestam
     return;
   }
 
-  console.log(`${LOG_PREFIX} setStatus peer ${peerId}=${status}: workerCall=${workerCalled} mirror=OK`);
-
   if(status === 'online') {
-    (peer as any).status = {
-      _: 'userStatusOnline',
-      expires: onlineUntil
-    };
+    (peer as any).status = {_: 'userStatusOnline', expires: onlineUntil};
   } else {
-    (peer as any).status = {
-      _: 'userStatusOffline',
-      was_online: timestamp
-    };
+    (peer as any).status = {_: 'userStatusOffline', was_online: timestamp};
   }
 
-  // Reconcile peer to trigger UI update
   import('@stores/peers').then(({reconcilePeer}) => {
     reconcilePeer(peerIdValue, peer);
   }).catch((e) => console.debug('[PhantomChatPresence] peer reconcile failed:', e?.message));
 
-  // Notify topbar/profile to refresh status string
   rootScope.dispatchEvent('user_update' as any, peerId);
 }
 
 /**
- * Catch-up on chat open: re-assert any presence we already know and fire a
- * one-shot kind-30315 query for the peer's latest heartbeat. Without this,
- * opening a chat before the first periodic beat of the session showed the stale
- * injected default; Andrew asked for an explicit check on chat load (then the
- * 60s cadence keeps it fresh).
+ * Catch-up on chat open: set the active peer (so the 60s loop probes them),
+ * re-assert any recent proof-of-life instantly, then fire an immediate ping so
+ * the badge reflects reality without waiting for the next interval.
  */
 async function refreshPeerOnOpen(peerId: number): Promise<void> {
-  // Resolve this peerId back to its pubkey (reverse of pubkeyToPeerId).
+  // Resolve this peerId back to its pubkey.
   let pubkey: string | undefined;
   for(const [pk, pid] of pubkeyToPeerId) {
     if(pid === peerId) { pubkey = pk; break; }
   }
-  if(!pubkey) return; // not a tracked P2P peer (group/other) — silent
+  if(!pubkey) {
+    // Not a tracked P2P peer (group/other) — stop probing on chat switch.
+    activePeerPubkey = null;
+    return;
+  }
 
-  console.log(`${LOG_PREFIX} chat-open refresh: peer ${peerId} (${pubkey.slice(0, 8)})`);
+  activePeerPubkey = pubkey;
+  console.log(`${LOG_PREFIX} chat-open: peer ${peerId} (${pubkey.slice(0, 8)}) — pinging`);
 
-  // Re-assert known activity first so the badge updates instantly if we already
-  // have a recent beat for this peer.
-  const known = lastActivity.get(pubkey);
+  // Re-assert known liveness first so the badge updates instantly if we already
+  // have a recent proof-of-life for this peer.
+  const known = lastAlive.get(pubkey);
   if(known && Date.now() - known <= OFFLINE_THRESHOLD_MS) {
     updatePeerStatus(peerId, 'online', Math.floor(known / 1000));
   }
 
-  // Then query the relays for the freshest heartbeat (authoritative).
-  try {
-    const chatAPI = (window as any).__phantomchatChatAPI;
-    const pool = chatAPI?.relayPool;
-    if(!pool?.isConnected?.()) return;
-    const events: any[] = await pool.queryRawEvents({
-      kinds: [KIND_STATUS],
-      authors: [pubkey],
-      limit: 1
-    });
-    let latest: any | undefined;
-    for(const ev of events || []) {
-      if(ev?.kind === KIND_STATUS && (!latest || ev.created_at > latest.created_at)) latest = ev;
-    }
-    if(latest) handlePresenceEvent(latest);
-  } catch(err) {
-    console.debug(`${LOG_PREFIX} chat-open presence query failed:`, (err as Error)?.message);
-  }
+  // Then probe for the truth.
+  void sendPing(pubkey);
 }
 
 /**
- * Hook a chat-open signal so presence is re-checked when the user enters a
+ * Hook a chat-open signal so presence is probed when the user enters a
  * conversation. Call once from initPresence.
  */
 function wireChatOpenRefresh(): void {
   rootScope.addEventListener('peer_changed' as any, (payload: any) => {
     const peerId: number | undefined = typeof payload === 'number' ? payload : payload?.peerId;
     if(typeof peerId !== 'number') return;
-    // Only P2P virtual peers carry presence; ignore others cheaply.
-    if(!pubkeyToPeerId.size) return;
     void refreshPeerOnOpen(peerId);
   });
 }
 
 /**
- * Poll the relays for the latest heartbeat of every tracked peer in a single
- * REQ and feed each result through handlePresenceEvent. This is the 60s cadence
- * that keeps the badge live independent of the push subscription.
- */
-async function pollPresence(): Promise<void> {
-  // Pick up any contacts added since init (e.g. a new chat started this session)
-  // so presence tracks them without needing a Contacts-tab visit.
-  await refreshTrackedContacts();
-
-  const authors = Array.from(pubkeyToPeerId.keys());
-  if(authors.length === 0) return;
-
-  try {
-    const chatAPI = (window as any).__phantomchatChatAPI;
-    const pool = chatAPI?.relayPool;
-    if(!pool?.isConnected?.()) {
-      console.log(`${LOG_PREFIX} poll skipped: relay pool not connected`);
-      return;
-    }
-    const events: any[] = await pool.queryRawEvents({
-      kinds: [KIND_STATUS],
-      authors,
-      limit: authors.length
-    });
-    // Keep only the freshest beat per author, then apply.
-    const freshest = new Map<string, any>();
-    for(const ev of events || []) {
-      if(ev?.kind !== KIND_STATUS) continue;
-      const cur = freshest.get(ev.pubkey);
-      if(!cur || ev.created_at > cur.created_at) freshest.set(ev.pubkey, ev);
-    }
-    console.log(`${LOG_PREFIX} poll: queried ${authors.length} peers, got ${freshest.size} live beats`);
-    for(const ev of freshest.values()) handlePresenceEvent(ev);
-  } catch(err) {
-    console.debug(`${LOG_PREFIX} poll failed:`, (err as Error)?.message);
-  }
-}
-
-/**
- * Check for peers that haven't sent activity recently.
- * Mark them as offline.
+ * Fall a peer to offline once its proof-of-life ages past the threshold. With a
+ * 60s ping cadence this means ~3 unanswered pings before the badge drops.
  */
 function checkStalePresence(): void {
   const now = Date.now();
-
-  for(const [pubkey, lastSeen] of lastActivity) {
+  for(const [pubkey, lastSeen] of lastAlive) {
     if(now - lastSeen > OFFLINE_THRESHOLD_MS) {
       const peerId = pubkeyToPeerId.get(pubkey);
-      if(peerId) {
-        updatePeerStatus(peerId, 'offline', Math.floor(lastSeen / 1000));
-      }
-      lastActivity.delete(pubkey);
+      if(peerId) updatePeerStatus(peerId, 'offline', Math.floor(lastSeen / 1000));
+      lastAlive.delete(pubkey);
     }
   }
 }
@@ -390,20 +324,12 @@ function checkStalePresence(): void {
  * Clean up on page unload.
  */
 export function destroyPresence(): void {
-  if(heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-  if(staleCheckTimer) {
-    clearInterval(staleCheckTimer);
-    staleCheckTimer = null;
-  }
-  if(presencePollTimer) {
-    clearInterval(presencePollTimer);
-    presencePollTimer = null;
-  }
-  lastActivity.clear();
+  if(pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+  if(staleCheckTimer) { clearInterval(staleCheckTimer); staleCheckTimer = null; }
+  if(sweepTimer) { clearInterval(sweepTimer); sweepTimer = null; }
+  lastAlive.clear();
   pubkeyToPeerId.clear();
+  pendingPings.clear();
+  activePeerPubkey = null;
   ownPubkey = null;
-  ownPrivkey = null;
 }

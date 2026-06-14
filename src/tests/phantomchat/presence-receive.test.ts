@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 /**
- * Behavioral test for the presence RECEIVE side (phantomchat-presence.ts).
+ * Behavioral test for the presence RECEIVE side (phantomchat-presence.ts),
+ * PING/PONG model.
  *
- * A kind-30315 beat from a TRACKED contact must flip that contact's tweb user
- * status to `userStatusOnline`; a beat from an UNTRACKED author, or a non-30315
- * event, must be ignored. This is what turns "last seen recently" into a REAL
- * Online badge. onPeerActivity (fired on any inbound message) must do the same.
+ * A PONG from a TRACKED contact (proof our gift-wrap reached them) must flip
+ * that contact's tweb user status to `userStatusOnline`; a pong from an
+ * UNTRACKED author must be ignored. A PING from a tracked contact (they're
+ * demonstrably alive) does the same, as does onPeerActivity (any inbound
+ * message). This is what turns "last seen recently" into a REAL Online badge.
  */
 
 import {describe, it, expect, beforeEach, vi} from 'vitest';
@@ -17,22 +19,9 @@ if(!(Number.prototype as any).toPeerId) {
 
 const PEER = 'b'.repeat(64);
 const UNTRACKED = 'c'.repeat(64);
-const OWN = 'a'.repeat(64);
 const PEER_ID = 7;
 
-function presenceEvent(over: Partial<any> = {}): any {
-  return {
-    id: 'evt-' + Math.random().toString(36).slice(2),
-    kind: 30315,
-    pubkey: PEER,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [['d', 'general'], ['status', 'online'], ['p', OWN]],
-    content: 'online',
-    ...over
-  };
-}
-
-describe('phantomchat presence receive', () => {
+describe('phantomchat presence receive (ping/pong)', () => {
   let presence: any;
   let fakeUser: any;
   let dispatched: any[];
@@ -65,23 +54,23 @@ describe('phantomchat presence receive', () => {
     presence = await import('@lib/phantomchat/phantomchat-presence');
   });
 
-  it('marks a tracked peer online on a 30315 beat', () => {
+  it('marks a tracked peer online on a pong', () => {
     presence.trackPeerPresence(PEER, PEER_ID);
-    presence.onRemotePresenceEvent(presenceEvent());
+    presence.onRemotePong(PEER, 'nonce-1');
     expect(fakeUser.status?._).toBe('userStatusOnline');
     // It also notifies the topbar/profile to refresh the status string.
     expect(dispatched.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('ignores a beat from an untracked author', () => {
-    presence.onRemotePresenceEvent(presenceEvent({pubkey: UNTRACKED}));
+  it('ignores a pong from an untracked author', () => {
+    presence.onRemotePong(UNTRACKED, 'nonce-x');
     expect(fakeUser.status).toBeUndefined();
   });
 
-  it('ignores a non-30315 kind', () => {
+  it('marks a tracked peer online on an inbound ping', () => {
     presence.trackPeerPresence(PEER, PEER_ID);
-    presence.onRemotePresenceEvent(presenceEvent({kind: 7}));
-    expect(fakeUser.status).toBeUndefined();
+    presence.onRemotePing(PEER);
+    expect(fakeUser.status?._).toBe('userStatusOnline');
   });
 
   it('onPeerActivity marks a tracked peer online', () => {
@@ -90,14 +79,15 @@ describe('phantomchat presence receive', () => {
     expect(fakeUser.status?._).toBe('userStatusOnline');
   });
 
-  it('does not throw on a malformed event', () => {
-    expect(() => presence.onRemotePresenceEvent(null)).not.toThrow();
-    expect(() => presence.onRemotePresenceEvent({})).not.toThrow();
+  it('does not throw on malformed input', () => {
+    expect(() => presence.onRemotePong('', '')).not.toThrow();
+    expect(() => presence.onRemotePing('')).not.toThrow();
+    expect(() => presence.onPeerActivity('')).not.toThrow();
   });
 
-  it('writes the status into the WORKER store (the topbar read-path) on a beat', () => {
+  it('writes the status into the WORKER store (the topbar read-path) on a pong', () => {
     presence.trackPeerPresence(PEER, PEER_ID);
-    presence.onRemotePresenceEvent(presenceEvent());
+    presence.onRemotePong(PEER, 'nonce-2');
     // updateP2PUserStatus(peerId, isOnline, tsSec, onlineUntilSec)
     expect(workerStatusCalls.length).toBeGreaterThanOrEqual(1);
     const [peerId, isOnline] = workerStatusCalls[0];

@@ -195,6 +195,18 @@ export class NostrRelayPool {
 
   private _onReceiptCb?: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void;
   private _onRawEventCb?: (event: NostrEvent) => void;
+  private _onPresenceCb?: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void;
+
+  /**
+   * Register a callback for presence PING / PONG control envelopes. These ride
+   * the SAME kind-1059 gift-wrap path as real messages (so a returned pong
+   * proves the actual delivery path is alive, not a side-channel), but they are
+   * intercepted in `handleIncomingMessage` and NEVER surfaced as chat bubbles.
+   * The pool's normal rumor-id dedup applies, so each ping/pong fires once.
+   */
+  setOnPresence(cb: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void): void {
+    this._onPresenceCb = cb;
+  }
 
   /**
    * Get the private key bytes (for delivery tracker gift-wrap signing).
@@ -360,6 +372,53 @@ export class NostrRelayPool {
 
     await Promise.all(promises);
     return {successes, failures, rumorId, wraps};
+  }
+
+  /**
+   * Publish a presence PING or PONG to `recipientPubkey`. Builds the phantomchat
+   * envelope `{type:'presence-ping'|'presence-pong', nonce, ...}`, NIP-17-wraps
+   * it, and publishes ONLY the recipient wrap (wraps[0]) — never the self-wrap:
+   * a presence probe is point-to-point, our own other devices have no use for
+   * it, and skipping the self-wrap avoids us ping-ponging with ourselves. Rides
+   * the kind-1059 path on purpose so a pong proves the real message path is live.
+   * Best-effort: resolves even if all relays fail (presence is advisory).
+   */
+  async publishPresence(
+    recipientPubkey: string,
+    nonce: string,
+    kind: 'ping' | 'pong'
+  ): Promise<void> {
+    if(!this.privateKeyBytes) return;
+    const envelope = JSON.stringify({
+      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `presence-${Date.now()}`,
+      from: this.publicKey,
+      to: recipientPubkey,
+      type: kind === 'ping' ? 'presence-ping' : 'presence-pong',
+      nonce,
+      content: '',
+      timestamp: Date.now()
+    });
+
+    let recipientWrap: NostrEvent | undefined;
+    try {
+      const {wraps} = wrapNip17Message(this.privateKeyBytes, recipientPubkey, envelope);
+      recipientWrap = wraps[0] as unknown as NostrEvent;
+    } catch(err) {
+      this.log.debug('[NostrRelayPool] presence wrap failed:', err);
+      return;
+    }
+    if(!recipientWrap) return;
+
+    const writeEntries = this.relayEntries.filter(e =>
+      e.config.write && this.enabled.get(e.config.url) !== false
+    );
+    for(const entry of writeEntries) {
+      try {
+        entry.instance.publishRawEvent(recipientWrap);
+      } catch{
+        // best-effort per relay; presence is advisory
+      }
+    }
   }
 
   /**
@@ -770,6 +829,25 @@ export class NostrRelayPool {
       this.seenIds.delete(evicted);
     }
 
+    // Presence PING/PONG interception. These ride the gift-wrap path but are
+    // control envelopes, not chat: route them to the presence callback and stop
+    // — they must never reach onMessageCb (no bubble, no auto-add, no delivery
+    // receipt) and must not advance lastSeenTimestamp (a presence probe is not a
+    // message and shouldn't move the backfill watermark). Self-sent presence is
+    // ignored (we don't track our own liveness). Dedup above already ran, so a
+    // replayed ping/pong is consumed once.
+    const presence = this.parsePresenceEnvelope(msg);
+    if(presence) {
+      if(msg.from !== this.publicKey && this._onPresenceCb) {
+        try {
+          this._onPresenceCb({type: presence.type, from: msg.from, nonce: presence.nonce});
+        } catch(err) {
+          this.log.error('[NostrRelayPool] presence handler threw:', err);
+        }
+      }
+      return;
+    }
+
     // Update lastSeenTimestamp
     if(msg.timestamp > this.lastSeenTimestamp) {
       this.lastSeenTimestamp = msg.timestamp;
@@ -778,6 +856,26 @@ export class NostrRelayPool {
 
     // Deliver
     this.onMessageCb(msg);
+  }
+
+  /**
+   * Cheap classifier: is this decrypted message a presence ping/pong envelope?
+   * Returns the parsed type + nonce, or null for anything else (chat text, file,
+   * delete, edit, non-JSON). Only JSON content carrying our presence `type` is
+   * matched, so a normal `{type:'text'}` message returns null and flows on.
+   */
+  private parsePresenceEnvelope(msg: DecryptedMessage): {type: 'ping' | 'pong'; nonce: string} | null {
+    const content = msg.content;
+    // Fast reject: presence envelopes always contain the marker substring.
+    if(typeof content !== 'string' || content.indexOf('presence-p') === -1) return null;
+    try {
+      const env = JSON.parse(content);
+      if(env?.type === 'presence-ping') return {type: 'ping', nonce: typeof env.nonce === 'string' ? env.nonce : ''};
+      if(env?.type === 'presence-pong') return {type: 'pong', nonce: typeof env.nonce === 'string' ? env.nonce : ''};
+    } catch{
+      // not JSON — a plain message
+    }
+    return null;
   }
 
   private handleIncomingRawEvent(event: NostrEvent): void {

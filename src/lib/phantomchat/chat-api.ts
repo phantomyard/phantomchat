@@ -365,17 +365,31 @@ export class ChatAPI {
         });
         return;
       }
-      if(event.kind === 30315) {
-        // NIP-38 presence heartbeat → real Online / "last seen at HH:MM".
-        // The presence engine resolves the author pubkey to a tracked contact
-        // and updates its tweb user status.
-        import('./phantomchat-presence').then(({onRemotePresenceEvent}) => {
-          onRemotePresenceEvent(event);
-        }).catch((err) => {
-          this.log.warn('[ChatAPI] presence onRemotePresenceEvent failed:', err);
-        });
-        return;
-      }
+      // NOTE: kind-30315 (NIP-38 one-way presence beacon) is intentionally NOT
+      // handled here anymore. It only ever proved "the peer shouted online",
+      // never "the peer can hear you". It was replaced by the gift-wrapped
+      // ping/pong handshake wired via setOnPresence below, where a returned pong
+      // proves the real message-delivery path is alive.
+    });
+
+    // Presence PING/PONG handshake (replaces the one-way kind-30315 beacon).
+    // A ping from a peer means they can reach us AND are asking if we can reach
+    // them: mark them alive and answer with a pong over the same gift-wrap path.
+    // A pong is the answer to one of OUR pings: the presence engine correlates
+    // it by nonce and flips the peer's badge to a HONEST online.
+    this.relayPool.setOnPresence((presence) => {
+      import('./phantomchat-presence').then((mod) => {
+        if(presence.type === 'ping') {
+          mod.onRemotePing(presence.from);
+          this.relayPool.publishPresence(presence.from, presence.nonce, 'pong').catch(
+            (e) => this.log.debug('[ChatAPI] pong publish failed:', e?.message)
+          );
+        } else {
+          mod.onRemotePong(presence.from, presence.nonce);
+        }
+      }).catch((err) => {
+        this.log.warn('[ChatAPI] presence handler failed:', err);
+      });
     });
     phantomchatReactionsReceive.setOwnPubkey(this.ownId);
     phantomchatTypingReceive.setOwnPubkey(this.ownId);
