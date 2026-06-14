@@ -126,6 +126,41 @@ export async function updateMappingProfile(
 }
 
 /**
+ * Force-set a user-supplied display name (nickname) on an existing mapping.
+ *
+ * Unlike {@link updateMappingProfile} — which only overwrites a kind:0-derived
+ * or empty name so a contact's kind:0 rebrand can propagate — this writes the
+ * name unconditionally. It is the manual-rename path (Edit Contact → Save):
+ * the user's choice always wins, and because the resulting displayName is
+ * distinct from any kind:0 name, the WU-2 #10 guard in updateMappingProfile
+ * then preserves it against future kind:0 upgrades. The nostrProfile and all
+ * other fields are preserved. No-op if the mapping doesn't exist.
+ */
+export async function setMappingDisplayName(
+  pubkey: string,
+  displayName: string
+): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const getReq = store.get(pubkey);
+    getReq.onerror = () => reject(getReq.error);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as VirtualPeerMapping | undefined;
+      if(!existing) {
+        resolve();
+        return;
+      }
+      existing.displayName = displayName;
+      const putReq = store.put(existing);
+      putReq.onerror = () => reject(putReq.error);
+      putReq.onsuccess = () => resolve();
+    };
+  });
+}
+
+/**
  * Get a single mapping by pubkey.
  */
 export async function getMapping(pubkey: string): Promise<VirtualPeerMapping | undefined> {
