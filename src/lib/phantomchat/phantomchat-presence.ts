@@ -50,6 +50,15 @@ export async function initPresence(pubkey: string, privkeyHex: string): Promise<
     return;
   }
 
+  // Populate the tracking set from the persistent contact mapping store BEFORE
+  // the first heartbeat fires. Previously trackPeerPresence was called ONLY from
+  // the Contacts sidebar tab's render loop, so if the user never opened that tab
+  // the tracked set stayed empty (tracked=0): heartbeats p-tagged no one and every
+  // inbound beat was dropped as "not tracked". Loading from the authoritative
+  // mapping store here (and refreshing each poll) makes presence work regardless
+  // of which screen the user is on.
+  await refreshTrackedContacts();
+
   // Start publishing heartbeats
   setTimeout(publishHeartbeat, 5000); // delay to let relay pool connect
   heartbeatTimer = setInterval(publishHeartbeat, HEARTBEAT_INTERVAL_MS);
@@ -78,6 +87,32 @@ export async function initPresence(pubkey: string, privkeyHex: string): Promise<
 export function trackPeerPresence(pubkey: string, peerId: number): void {
   pubkeyToPeerId.set(pubkey, peerId);
   console.log(`${LOG_PREFIX} tracking ${pubkey.slice(0, 8)} → peer ${peerId} (total tracked: ${pubkeyToPeerId.size})`);
+}
+
+/**
+ * Populate the tracking set from the authoritative contact mapping store
+ * (`getAllMappings` — the same source the Contacts tab uses). This decouples
+ * presence tracking from the Contacts UI render so it works on first load and
+ * keeps up with contacts added later (called again at the top of each poll).
+ * Idempotent; only logs when it actually adds new peers.
+ */
+async function refreshTrackedContacts(): Promise<void> {
+  try {
+    const {getAllMappings} = await import('@lib/phantomchat/virtual-peers-db');
+    const mappings = await getAllMappings();
+    let added = 0;
+    for(const m of mappings) {
+      if(!pubkeyToPeerId.has(m.pubkey)) {
+        added++;
+      }
+      pubkeyToPeerId.set(m.pubkey, m.peerId);
+    }
+    if(added > 0) {
+      console.log(`${LOG_PREFIX} loaded ${added} contact(s) from mapping store (total tracked: ${pubkeyToPeerId.size})`);
+    }
+  } catch(err) {
+    console.debug(`${LOG_PREFIX} refreshTrackedContacts failed:`, (err as Error)?.message);
+  }
 }
 
 /**
@@ -300,6 +335,10 @@ function wireChatOpenRefresh(): void {
  * that keeps the badge live independent of the push subscription.
  */
 async function pollPresence(): Promise<void> {
+  // Pick up any contacts added since init (e.g. a new chat started this session)
+  // so presence tracks them without needing a Contacts-tab visit.
+  await refreshTrackedContacts();
+
   const authors = Array.from(pubkeyToPeerId.keys());
   if(authors.length === 0) return;
 
