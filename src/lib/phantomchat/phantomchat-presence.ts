@@ -80,7 +80,7 @@ export async function initPresence(pubkey: string, _privkeyHex?: string): Promis
   sweepTimer = setInterval(sweepPendingPings, PING_TIMEOUT_MS);
 
   // Ping (and re-assert) whenever a chat opens.
-  wireChatOpenRefresh();
+  await wireChatOpenRefresh();
 
   console.log(`${LOG_PREFIX} initialized for ${pubkey.slice(0, 8)}... (ping/pong)`);
 }
@@ -297,12 +297,27 @@ async function refreshPeerOnOpen(peerId: number): Promise<void> {
  * Hook a chat-open signal so presence is probed when the user enters a
  * conversation. Call once from initPresence.
  */
-function wireChatOpenRefresh(): void {
-  rootScope.addEventListener('peer_changed' as any, (payload: any) => {
-    const peerId: number | undefined = typeof payload === 'number' ? payload : payload?.peerId;
-    if(typeof peerId !== 'number') return;
-    void refreshPeerOnOpen(peerId);
-  });
+async function wireChatOpenRefresh(): Promise<void> {
+  // CRITICAL: `peer_changed` is dispatched on appImManager, NOT on rootScope.
+  // The previous version listened on rootScope, so the handler never fired —
+  // activePeerPubkey stayed null, which silently killed BOTH the chat-open ping
+  // and the 60s interval ping (pingActivePeer no-ops when activePeerPubkey is
+  // null). This is the same event the core `has-chat` body-class toggle uses, so
+  // it's proven to fire on every real chat open. Dynamic import avoids a
+  // circular dependency (the established pattern in add-p2p-contact.ts).
+  try {
+    const appImManager = (await import('@lib/appImManager')).default;
+    appImManager.addEventListener('peer_changed' as any, (payload: any) => {
+      // payload is the opened Chat (has `.peerId`); be defensive about shape.
+      const peerId: number | undefined = typeof payload === 'number' ?
+        payload :
+        (typeof payload?.peerId === 'number' ? payload.peerId : undefined);
+      if(typeof peerId !== 'number') return;
+      void refreshPeerOnOpen(peerId);
+    });
+  } catch(err) {
+    console.debug(`${LOG_PREFIX} wireChatOpenRefresh failed:`, (err as Error)?.message);
+  }
 }
 
 /**
