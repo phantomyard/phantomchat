@@ -828,6 +828,31 @@ export class AppUsersManager extends AppManager {
     console.log('[PhantomChat.chat] updateP2PUserName:', {peerId, displayName, lastName});
   }
 
+  /**
+   * Update the live status of a synthetic P2P user (presence).
+   *
+   * The presence engine previously wrote status only to the main-thread peer
+   * mirror, but the topbar/profile read it back through `getUser` HERE in the
+   * Worker — so on chat re-open the status reverted to the injected default
+   * ("last seen recently"). This writes the SAME store the readers consult, then
+   * re-mirrors + dispatches `user_update` so the UI refreshes. `onlineUntilSec`
+   * bounds an online status so tweb expires it naturally if beats stop.
+   */
+  public updateP2PUserStatus(peerId: number, isOnline: boolean, timestampSec: number, onlineUntilSec?: number): void {
+    const user = this.p2pSyntheticUsers.get(peerId);
+    if(!user) {
+      return;
+    }
+
+    user.status = isOnline ?
+      {_: 'userStatusOnline', expires: onlineUntilSec ?? (timestampSec + 180)} :
+      {_: 'userStatusOffline', was_online: timestampSec};
+    this.users[peerId] = user;
+
+    this.mirrorUser(user);
+    this.rootScope.dispatchEvent('user_update', peerId as UserId);
+  }
+
   public getUsers() {
     return this.users;
   }

@@ -36,13 +36,23 @@ describe('phantomchat presence receive', () => {
   let presence: any;
   let fakeUser: any;
   let dispatched: any[];
+  let workerStatusCalls: any[];
 
   beforeEach(async() => {
     vi.resetModules();
     dispatched = [];
+    workerStatusCalls = [];
     vi.doMock('@stores/peers', () => ({reconcilePeer: vi.fn()}));
     vi.doMock('@lib/rootScope', () => ({
-      default: {dispatchEvent: (...a: any[]) => dispatched.push(a)}
+      default: {
+        dispatchEvent: (...a: any[]) => dispatched.push(a),
+        addEventListener: () => {},
+        managers: {
+          appUsersManager: {
+            updateP2PUserStatus: (...a: any[]) => workerStatusCalls.push(a)
+          }
+        }
+      }
     }));
 
     const {MOUNT_CLASS_TO} = await import('@config/debug');
@@ -83,5 +93,15 @@ describe('phantomchat presence receive', () => {
   it('does not throw on a malformed event', () => {
     expect(() => presence.onRemotePresenceEvent(null)).not.toThrow();
     expect(() => presence.onRemotePresenceEvent({})).not.toThrow();
+  });
+
+  it('writes the status into the WORKER store (the topbar read-path) on a beat', () => {
+    presence.trackPeerPresence(PEER, PEER_ID);
+    presence.onRemotePresenceEvent(presenceEvent());
+    // updateP2PUserStatus(peerId, isOnline, tsSec, onlineUntilSec)
+    expect(workerStatusCalls.length).toBeGreaterThanOrEqual(1);
+    const [peerId, isOnline] = workerStatusCalls[0];
+    expect(peerId).toBe(PEER_ID);
+    expect(isOnline).toBe(true);
   });
 });
