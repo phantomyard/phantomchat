@@ -54,6 +54,7 @@ const mockStore = vi.hoisted(() => ({
 }));
 
 const mockGetPubkey = vi.hoisted(() => vi.fn());
+const mockRemoveMapping = vi.hoisted(() => vi.fn());
 
 // rootScope is reached via dynamic `await import('@lib/rootScope')` inside
 // handlers that dispatch UI events (e.g. deleteContacts → conversation_deleted).
@@ -72,7 +73,7 @@ vi.mock('@lib/phantomchat/virtual-peers-db', () => ({
   getDB: vi.fn(),
   storeMapping: vi.fn(),
   getAllMappings: vi.fn().mockResolvedValue([]),
-  removeMapping: vi.fn(),
+  removeMapping: mockRemoveMapping,
   updateMappingProfile: vi.fn()
 }));
 
@@ -123,7 +124,7 @@ beforeAll(async() => {
     getDB: vi.fn(),
     storeMapping: vi.fn(),
     getAllMappings: vi.fn().mockResolvedValue([]),
-    removeMapping: vi.fn(),
+    removeMapping: mockRemoveMapping,
     updateMappingProfile: vi.fn()
   }));
   vi.doMock('@lib/rootScope', () => ({
@@ -749,6 +750,19 @@ describe('PhantomChatMTProtoServer', () => {
       mockStore.deleteMessages.mockResolvedValue(undefined);
       mockStore.setTombstone.mockResolvedValue(undefined);
       mockDispatchEvent.mockClear();
+      mockRemoveMapping.mockClear();
+      mockRemoveMapping.mockResolvedValue(undefined);
+    });
+
+    it('removes the peer from virtual-peers-db so it cannot re-appear in Contacts (delete-boomerang)', async () => {
+      const result = await server.handleMethod('contacts.deleteContacts', {
+        id: [{_: 'inputUser', user_id: PEER_ID, access_hash: 0}]
+      });
+
+      expect(result._).toBe('updates');
+      // The tombstone alone is not enough — Contacts re-enumerates from
+      // getAllMappings(), so the mapping itself must be dropped.
+      expect(mockRemoveMapping).toHaveBeenCalledWith(PEER_PUBKEY);
     });
 
     it('wipes + tombstones the conversation for each deleted contact', async () => {

@@ -12,7 +12,7 @@ import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
 import {loadCachedPeerProfile, refreshPeerProfileFromRelays} from './peer-profile-cache';
 import {buildPhantomChatMedia} from './phantomchat-media-shape';
-import {getPubkey, getMapping} from './virtual-peers-db';
+import {getPubkey, getMapping, removeMapping} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
 import {isGroupPeer} from './group-types';
 // Lazy imports for group-store / group-api so test files that never hit the
@@ -1188,7 +1188,16 @@ export class PhantomChatMTProtoServer {
         const conversationId = store.getConversationId(this.ownPubkey, pubkey);
         await store.deleteMessages(conversationId);
         await store.setTombstone(conversationId, now);
-        console.log(LOG_PREFIX, 'deleteContacts: wiped + tombstoned conversation', conversationId);
+        // Remove the peer from virtual-peers-db too. Tombstones only gate
+        // MESSAGE replays; the Contacts tab re-enumerates people straight from
+        // getAllMappings(), so without this the deleted contact reappears on
+        // every reload (delete-boomerang). removeMapping closes that door.
+        try {
+          await removeMapping(pubkey);
+        } catch(err) {
+          console.warn(LOG_PREFIX, 'deleteContacts: removeMapping failed', err);
+        }
+        console.log(LOG_PREFIX, 'deleteContacts: wiped + tombstoned + unmapped conversation', conversationId);
 
         // Drop the dialog from the chat list (display layer listens for this).
         try {

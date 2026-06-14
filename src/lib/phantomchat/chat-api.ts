@@ -1017,6 +1017,17 @@ export class ChatAPI {
       this.log.warn('[ChatAPI] tombstone write failed (non-fatal):', err);
     }
 
+    // Level 1c: drop the peer from virtual-peers-db. The tombstone above only
+    // suppresses MESSAGE replays; the Contacts tab rebuilds people from
+    // getAllMappings(), so a still-mapped peer reappears on reload regardless
+    // of the tombstone (delete-boomerang). removeMapping stops that.
+    try {
+      const {removeMapping} = await import('./virtual-peers-db');
+      await removeMapping(peerPubkey);
+    } catch(err) {
+      this.log.warn('[ChatAPI] removeMapping failed (non-fatal):', err);
+    }
+
     // Remove from in-memory history
     this.history = this.history.filter(m => {
       const isConversation = (m.from === peerPubkey && m.to === this.ownId) ||

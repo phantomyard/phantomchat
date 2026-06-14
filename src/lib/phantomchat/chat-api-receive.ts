@@ -488,7 +488,10 @@ export async function handleRelayMessage(
           keyHex: fileMetadata.keyHex,
           ivHex: fileMetadata.ivHex,
           duration: fileMetadata.duration,
-          waveform: fileMetadata.waveform
+          waveform: fileMetadata.waveform,
+          // Persist the authoritative media class so reload classifies voice /
+          // image / video without re-guessing from mime+duration.
+          mediaType: fileMetadata.mediaType
         } : undefined
       };
       store.saveMessage(row).catch((err) => {
@@ -545,6 +548,16 @@ async function handleSelfEcho(
 
   const conversationId = store.getConversationId(ctx.ownId, peerPubkey);
   const parsed = parseMessageContent(msg.content);
+  // Self-echo carries the same wire payload as a normal incoming message, so it
+  // must run the SAME file-metadata reconstruction — otherwise voice notes /
+  // images echoed back to our own devices render their raw metadata JSON as
+  // text (FIND: "Unknown file" + JSON bubble). Mirror the incoming path:
+  // extract fileMetadata, switch type to 'file', and use the caption (not the
+  // JSON) as the bubble text.
+  let echoType: ChatMessageType = (parsed.type || 'text') as ChatMessageType;
+  const echoFileMetadata = extractFileMetadata(parsed, msg.rumorKind);
+  if(echoFileMetadata) echoType = 'file';
+  const echoContent = echoFileMetadata ? (echoFileMetadata.caption || '') : parsed.content;
 
   // Identity-triple contract: cross-device self-echo writes MUST carry
   // mid+twebPeerId or they become ghost-mid sources downstream.
@@ -568,14 +581,29 @@ async function handleSelfEcho(
     eventId: echoId,
     conversationId,
     senderPubkey: ctx.ownId,
-    content: parsed.content,
-    type: 'text',
+    content: echoContent,
+    type: echoType === 'text' ? 'text' : 'file',
     timestamp: msg.timestamp,
     deliveryState: 'sent',
     mid: resolvedMid,
     twebPeerId: resolvedPeerId,
     isOutgoing: true,
-    appMessageId
+    appMessageId,
+    fileMetadata: echoFileMetadata ? {
+      url: echoFileMetadata.url,
+      sha256: echoFileMetadata.sha256,
+      mimeType: echoFileMetadata.mimeType,
+      size: echoFileMetadata.size,
+      width: echoFileMetadata.width,
+      height: echoFileMetadata.height,
+      keyHex: echoFileMetadata.keyHex,
+      ivHex: echoFileMetadata.ivHex,
+      duration: echoFileMetadata.duration,
+      waveform: echoFileMetadata.waveform,
+      // Persist the authoritative media class so reload classifies it as voice
+      // without re-guessing from mime+duration.
+      mediaType: echoFileMetadata.mediaType
+    } : undefined
   });
 
   if(ctx.onMessage) {
@@ -583,12 +611,13 @@ async function handleSelfEcho(
       id: echoId,
       from: ctx.ownId,
       to: peerPubkey,
-      type: 'text',
-      content: parsed.content,
+      type: echoType,
+      content: echoContent,
       timestamp: msg.timestamp,
       status: 'sent',
       relayEventId: msg.id,
-      isOutgoing: true
+      isOutgoing: true,
+      fileMetadata: echoFileMetadata
     } as any);
   }
 
