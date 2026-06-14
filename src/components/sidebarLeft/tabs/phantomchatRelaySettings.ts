@@ -25,8 +25,8 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
     // ─── Preferences ────────────────────────────────────────
     const prefSection = new SettingSection({
-      name: 'Preferenze' as any,
-      caption: 'Ignora i relay di default e usa solo quelli che hai aggiunto tu' as any
+      name: 'Preferences' as any,
+      caption: 'Ignore the default relays and use only the ones you added' as any
     });
 
     const onlyMineCheckbox = new CheckboxField({
@@ -38,7 +38,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
     });
 
     const onlyMineRow = new Row({
-      title: 'Usa solo i miei relay',
+      title: 'Use only my relays',
       checkboxField: onlyMineCheckbox,
       clickable: true
     });
@@ -46,7 +46,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
     // ─── Current Relays ─────────────────────────────────────
     const relaysSection = new SettingSection({
-      name: 'I tuoi relay' as any,
+      name: 'Your relays' as any,
       caption: true
     });
     this.captionEl = relaysSection.caption;
@@ -68,7 +68,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
     // ─── Add Relay ──────────────────────────────────────────
     const addSection = new SettingSection({
-      name: 'Aggiungi relay' as any
+      name: 'Add relay' as any
     });
 
     const urlInput = new InputField({
@@ -78,7 +78,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
     });
 
     const addBtn = Button('btn-primary btn-color-primary');
-    addBtn.textContent = 'Aggiungi';
+    addBtn.textContent = 'Add';
     addBtn.style.width = '100%';
     addBtn.style.marginTop = '8px';
     attachClickEvent(addBtn, () => {
@@ -99,11 +99,11 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
     // ─── Reset ──────────────────────────────────────────────
     const resetSection = new SettingSection({
-      caption: 'Ripristina la lista ai relay di default di PhantomChat' as any
+      caption: 'Restore the list to PhantomChat default relays' as any
     });
 
     const resetBtn = Button('btn-primary btn-color-primary btn-transparent danger');
-    resetBtn.textContent = 'Ripristina predefiniti';
+    resetBtn.textContent = 'Restore defaults';
     attachClickEvent(resetBtn, () => {
       if(!this.relayPool) return;
       const current = this.relayPool.getRelays();
@@ -145,7 +145,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
     if(relays.length === 0) {
       const empty = document.createElement('div');
       empty.classList.add('relay-list-empty');
-      empty.textContent = 'Nessun relay configurato';
+      empty.textContent = 'No relays configured';
       container.append(empty);
       this.updateCaption(0, 0);
       return;
@@ -286,7 +286,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
   private updateCaption(connected: number, total: number): void {
     if(this.captionEl) {
-      this.captionEl.textContent = `${connected}/${total} connessi`;
+      this.captionEl.textContent = `${connected}/${total} connected`;
     }
   }
 }

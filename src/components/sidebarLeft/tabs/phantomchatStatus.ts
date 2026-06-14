@@ -11,6 +11,8 @@ import Row from '@components/row';
 import rootScope from '@lib/rootScope';
 import {DEFAULT_RELAYS} from '@lib/phantomchat/nostr-relay-pool';
 import {PrivacyTransport} from '@lib/phantomchat/privacy-transport';
+import App from '@config/app';
+import appNavigationController from '@components/appNavigationController';
 
 type TorState = 'tor-active' | 'booting' | 'direct-active' | 'offline' | 'disabled';
 
@@ -225,8 +227,8 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
     const linksSection = new SettingSection({});
 
     const privacyLink = new Row({
-      title: 'Impostazioni privacy e Tor',
-      subtitle: 'Abilita o disabilita Tor, gestisci privacy',
+      title: 'Privacy & Tor settings',
+      subtitle: 'Enable or disable Tor, manage privacy',
       icon: 'lock',
       clickable: () => {
         import('@components/sidebarLeft/tabs/privacyAndSecurity').then(
@@ -238,8 +240,8 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
     });
 
     const relaysLink = new Row({
-      title: 'Gestisci Nostr relays',
-      subtitle: 'Aggiungi, rimuovi e configura i relay',
+      title: 'Manage Nostr relays',
+      subtitle: 'Add, remove and configure relays',
       icon: 'link',
       clickable: () => {
         import('@components/sidebarLeft/tabs/phantomchatRelaySettings').then(
@@ -255,10 +257,70 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
       relaysLink.container
     );
 
+    // ─── Section: About / App version ────────────────────────
+
+    const aboutSection = new SettingSection({
+      name: 'About' as any,
+      caption: 'App version and updates' as any
+    });
+
+    const currentVersion = App.versionFull || App.version || 'dev';
+
+    const versionRow = new Row({
+      title: 'Version',
+      subtitle: `PhantomChat ${currentVersion}`,
+      icon: 'info'
+    });
+
+    let updateReady = false;
+    let checking = false;
+
+    const updateRow = new Row({
+      title: 'Check for updates',
+      subtitle: 'Tap to check now',
+      icon: 'download',
+      clickable: () => {
+        // If a newer build was already found, this acts as "Update now".
+        if(updateReady) {
+          appNavigationController.reload();
+          return;
+        }
+
+        if(checking) return;
+        checking = true;
+        updateRow.subtitle.textContent = 'Checking…';
+
+        fetch('version', {cache: 'no-cache'})
+        .then((res) => (res.status === 200 && res.ok && res.text()) || Promise.reject(new Error('bad response')))
+        .then((text) => {
+          const latest = text.trim();
+          if(latest && latest !== currentVersion) {
+            updateReady = true;
+            updateRow.title.textContent = 'Update now';
+            updateRow.subtitle.textContent = `Version ${latest} is ready — tap to reload`;
+          } else {
+            updateRow.subtitle.textContent = `You're on the latest version (${currentVersion})`;
+          }
+        })
+        .catch(() => {
+          updateRow.subtitle.textContent = 'Could not check — tap to retry';
+        })
+        .finally(() => {
+          checking = false;
+        });
+      }
+    });
+
+    aboutSection.content.append(
+      versionRow.container,
+      updateRow.container
+    );
+
     this.scrollable.append(
       torSection.container,
       relaySection.container,
-      linksSection.container
+      linksSection.container,
+      aboutSection.container
     );
   }
 }
