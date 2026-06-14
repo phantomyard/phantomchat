@@ -179,6 +179,21 @@ export class NostrRelay {
   private readonly reconnectBackoffMs: number = 10000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
+  // Outbound publish buffer (FIND-3786a35f / double-message fix). A DM sent
+  // while the socket is still mid-connect (cold page load — the SW reconnects
+  // every relay WS and presence beats only start landing once they're OPEN)
+  // used to throw out of publishRawEvent and be silently dropped: the relay
+  // pool's publish() recorded a per-relay failure but had NO retry layer
+  // despite safeSend's comment claiming one. Net effect: the FIRST message in a
+  // fresh session vanished, the second (sockets now OPEN) went through — the
+  // "have to message Lena twice" bug. Fix: buffer STORED events (gift-wraps,
+  // deletes, reactions, metadata) when the socket isn't OPEN and flush them on
+  // the next onopen. Ephemeral events (typing/presence, kind 20000–29999) are
+  // worthless once stale, so they are NOT buffered.
+  private pendingPublishes: {payload: string; expiresAt: number}[] = [];
+  private readonly maxPendingPublishes: number = 50;
+  private readonly pendingPublishTtlMs: number = 30000;
+
   // Latency tracking
   private latencyMs: number = -1;
   public directLatencyMs: number = -1;
@@ -264,6 +279,10 @@ export class NostrRelay {
           this.pendingSubscribe = false;
           this.subscribeMessages();
         }
+
+        // Flush any stored-event publishes buffered while the socket was
+        // opening (the double-message / first-DM-dropped fix).
+        this.flushPendingPublishes();
 
         this.startLatencyRefresh();
       };
@@ -560,12 +579,73 @@ export class NostrRelay {
    * Used by relay pool to publish pre-wrapped gift-wrap events.
    */
   publishRawEvent(event: NostrEvent): void {
-    if(this.connectionState !== 'connected') {
+    const payload = JSON.stringify(['EVENT', event]);
+
+    // Fast path: socket OPEN → send live.
+    if(this.connectionState === 'connected' && this.safeSend(payload)) {
+      return;
+    }
+
+    // Socket not OPEN (cold-load connecting, or a reconnect race). Ephemeral
+    // events (typing/presence) are pointless once stale — preserve the old
+    // throw-and-drop behaviour. Stored events MUST NOT be lost: buffer and
+    // flush on reconnect so a message sent while the socket is still opening
+    // still reaches the relay.
+    const isEphemeral = event.kind >= 20000 && event.kind < 30000;
+    if(isEphemeral) {
       throw new Error('Not connected to relay');
     }
 
-    if(!this.safeSend(JSON.stringify(['EVENT', event]))) {
-      throw new Error('Not connected to relay');
+    this.bufferPendingPublish(payload);
+  }
+
+  /**
+   * Queue a stored-event payload for delivery on the next successful connect.
+   * Bounded by count and TTL so a long offline stretch can't grow unbounded or
+   * flush hopelessly-stale events. Kicks a connect if we're fully disconnected.
+   */
+  private bufferPendingPublish(payload: string): void {
+    const now = Date.now();
+    // Evict expired before appending.
+    this.pendingPublishes = this.pendingPublishes.filter(p => p.expiresAt > now);
+    this.pendingPublishes.push({payload, expiresAt: now + this.pendingPublishTtlMs});
+    // Drop oldest if over cap.
+    while(this.pendingPublishes.length > this.maxPendingPublishes) {
+      this.pendingPublishes.shift();
+    }
+    this.log('[NostrRelay] buffered publish (socket not open); pending:', this.pendingPublishes.length);
+    // Make sure something is driving us back to connected.
+    if(this.connectionState === 'disconnected') {
+      this.connect();
+    }
+  }
+
+  /**
+   * Flush buffered stored-event publishes after the socket reopens. Expired
+   * entries are discarded; anything that re-races a flapping socket is kept for
+   * the next onopen. Called from the onopen handler.
+   */
+  private flushPendingPublishes(): void {
+    if(this.pendingPublishes.length === 0) return;
+    const now = Date.now();
+    const queued = this.pendingPublishes;
+    this.pendingPublishes = [];
+    let flushed = 0;
+    let dropped = 0;
+    for(const p of queued) {
+      if(p.expiresAt <= now) {
+        dropped++;
+        continue;
+      }
+      if(this.safeSend(p.payload)) {
+        flushed++;
+      } else {
+        // Socket flapped between onopen and here — requeue for the next open.
+        this.pendingPublishes.push(p);
+      }
+    }
+    if(flushed || dropped) {
+      this.log(`[NostrRelay] flushed ${flushed} buffered publish(es), dropped ${dropped} expired`);
     }
   }
 
