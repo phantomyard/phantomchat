@@ -258,6 +258,13 @@ export class ChatAPI {
               for(const event of events) {
                 await this.relayPool.publishRawEvent(event);
               }
+            },
+            // Always-on retry: re-publish the original wraps (same rumor id →
+            // receiver dedups) until a delivery ack arrives.
+            resendFn: async(wraps: any[]) => {
+              for(const wrap of wraps) {
+                await this.relayPool.publishRawEvent(wrap);
+              }
             }
           });
         }
@@ -309,6 +316,13 @@ export class ChatAPI {
           publishFn: async(events: any[]) => {
             for(const event of events) {
               await this.relayPool.publishRawEvent(event);
+            }
+          },
+          // Always-on retry: re-publish the original wraps (same rumor id →
+          // receiver dedups) until a delivery ack arrives.
+          resendFn: async(wraps: any[]) => {
+            for(const wrap of wraps) {
+              await this.relayPool.publishRawEvent(wrap);
             }
           }
         });
@@ -615,6 +629,14 @@ export class ChatAPI {
 
         const result: PublishResult = await this.relayPool.publish(peerOwnId!, plaintext, opts?.replyTo);
         publishedRumorId = result.rumorId;
+
+        // Hand the signed wraps to the delivery tracker so the always-on retry
+        // layer can resend the IDENTICAL events (same rumor id → receiver
+        // dedups) if no delivery ack comes back. Registered before markSent so
+        // the retry timer can pick them up.
+        if(this.deliveryTracker && result.wraps?.length) {
+          this.deliveryTracker.registerOutgoing(messageId, result.wraps);
+        }
 
         if(result.successes.length > 0) {
           publishSucceeded = true;

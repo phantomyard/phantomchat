@@ -40,6 +40,15 @@ export interface PublishResult {
    * Bug #3 (FIND-4e18d35d) for the divergence this aligns.
    */
   rumorId?: string;
+  /**
+   * The signed kind-1059 gift-wrap events that were published (recipient +
+   * self wraps). Returned so the delivery tracker can RE-publish the exact
+   * same events on retry — resending the identical wrap (same rumor id) means
+   * the receiver dedups it, so a retry can never create a double message.
+   * Re-wrapping instead would mint a new rumor id and double-deliver.
+   * Present only for `publish()`.
+   */
+  wraps?: NostrEvent[];
 }
 
 export interface RelayPoolOptions {
@@ -93,6 +102,13 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 
 const DEDUP_CACHE_MAX = 10_000;
 const POOL_RECOVERY_INTERVAL_MS = 60_000;
+// NIP-17 gift-wrap (kind 1059) outer created_at is randomized up to 48h into
+// the PAST for metadata privacy (see nostr-crypto.createGiftWrap). A relay
+// `since` query filters on that fuzzed outer timestamp, so a since pinned to
+// lastSeen would miss freshly-sent messages whose wrap was backdated. Widen
+// every catch-up query by the full fuzz window; dedup by stable rumor id
+// absorbs the resulting overlap.
+const GIFTWRAP_FUZZ_WINDOW_SEC = 48 * 60 * 60;
 const IDB_RELAY_CONFIG_KEY = 'phantomchat-relay-config';
 const LS_LAST_SEEN_KEY = 'phantomchat-last-seen-timestamp';
 
@@ -127,6 +143,11 @@ export class NostrRelayPool {
 
   // Subscription state
   private isSubscribedFlag: boolean = false;
+
+  // Per-relay "has connected at least once" set. Used to distinguish the FIRST
+  // connect (startup — covered by initialize()'s global backfill) from a
+  // RE-connect (recovers the idle gap via backfillRelay). Keyed by relay url.
+  private relayHasConnected: Set<string> = new Set();
 
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
@@ -338,7 +359,7 @@ export class NostrRelayPool {
     });
 
     await Promise.all(promises);
-    return {successes, failures, rumorId};
+    return {successes, failures, rumorId, wraps};
   }
 
   /**
@@ -705,8 +726,22 @@ export class NostrRelayPool {
       instance.onRawEvent((ev) => this.handleIncomingRawEvent(ev));
     }
 
-    // Notify pool on relay state change so ConnectionStatusComponent updates
+    // Notify pool on relay state change so ConnectionStatusComponent updates.
+    // Also detect RE-connects: a fresh REQ only streams events from now
+    // forward, so anything that landed while this relay was disconnected
+    // (idle WS drop, network blip) is recovered by an explicit since-backfill.
+    // First connect is skipped here — initialize() already runs a global
+    // backfill at startup.
     instance.onStateChange = () => {
+      if(instance.getState() === 'connected') {
+        const firstConnect = !this.relayHasConnected.has(config.url);
+        this.relayHasConnected.add(config.url);
+        if(!firstConnect && this.isSubscribedFlag && config.read) {
+          this.backfillRelay({config, instance}).catch(
+            swallowHandler('NostrRelayPool.reconnectBackfill')
+          );
+        }
+      }
       this.notifyStateChange();
     };
 
@@ -783,12 +818,25 @@ export class NostrRelayPool {
     this.notifyStateChange();
   }
 
+  /**
+   * Catch-up `since` for backfill queries. We subtract the gift-wrap fuzz
+   * window from lastSeenTimestamp because kind-1059 outer timestamps are
+   * randomized up to 48h into the past — a tighter `since` would miss recent
+   * messages whose wrap was backdated. Returns undefined (= fetch all) when we
+   * have no watermark yet. Dedup by rumor id makes the overlap harmless.
+   */
+  private catchUpSince(): number | undefined {
+    if(this.lastSeenTimestamp <= 0) return undefined;
+    return Math.max(0, this.lastSeenTimestamp - GIFTWRAP_FUZZ_WINDOW_SEC);
+  }
+
   private async backfill(): Promise<void> {
     const readEntries = this.relayEntries.filter(e => e.config.read);
+    const since = this.catchUpSince();
 
     const promises = readEntries.map(async(entry) => {
       try {
-        const messages = await entry.instance.getMessages(this.lastSeenTimestamp);
+        const messages = await entry.instance.getMessages(since);
         for(const msg of messages) {
           this.handleIncomingMessage(msg);
         }
@@ -798,6 +846,27 @@ export class NostrRelayPool {
     });
 
     await Promise.all(promises);
+  }
+
+  /**
+   * Backfill a SINGLE relay after it reconnects. Closes the idle gap: events
+   * that arrived while this relay's socket was down are not replayed to a fresh
+   * REQ, so we query them explicitly (fuzz-aware `since`) and run them through
+   * the normal dedup + dispatch path. Cheap and idempotent — already-seen
+   * rumor ids are dropped by the LRU in handleIncomingMessage.
+   */
+  private async backfillRelay(entry: RelayEntry): Promise<void> {
+    if(!entry.config.read) return;
+    const since = this.catchUpSince();
+    this.log('[NostrRelayPool] reconnect backfill for', entry.config.url, 'since', since ?? '(all)');
+    try {
+      const messages = await entry.instance.getMessages(since);
+      for(const msg of messages) {
+        this.handleIncomingMessage(msg);
+      }
+    } catch(err) {
+      this.log.error('[NostrRelayPool] reconnect backfill failed for:', entry.config.url, err);
+    }
   }
 
   private startRecovery(): void {

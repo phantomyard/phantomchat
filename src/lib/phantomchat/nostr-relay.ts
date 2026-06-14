@@ -1066,6 +1066,27 @@ export class NostrRelay {
       return;
     }
 
+    // The socket is gone, and any REQ subscription on the relay died with it.
+    // Clear isSubscribed and arm pendingSubscribe so the NEXT onopen sends a
+    // FRESH REQ. Previously isSubscribed stayed true across a reconnect, so
+    // onopen's `subscribeMessages()` hit the `if(this.isSubscribed) return`
+    // guard and never re-sent the REQ — after an idle disconnect the client
+    // believed it was subscribed but no live subscription existed on the new
+    // socket, so inbound DMs silently stopped until a full page reload. This
+    // is the root cause of the "ignores the first message after idle" bug.
+    // (Live DMs are NIP-17 single-shot with no redundancy, unlike groups which
+    // are gift-wrapped per-member across all relays, so the dead sub was
+    // invisible on group chats.) The pool runs a since-backfill on reconnect
+    // to recover anything that landed during the dead window.
+    if(this.isSubscribed || this.pendingSubscribe) {
+      this.isSubscribed = false;
+      this.pendingSubscribe = true;
+    }
+    // A pending readiness barrier can never resolve on a dead socket — settle
+    // it false so any awaiter unblocks instead of hanging until timeout.
+    this.subscriptionReady?.resolve(false);
+    this.subscriptionReady = null;
+
     this.stopLatencyRefresh();
     this.setLatency(-1);
     this.setConnectionState('reconnecting');

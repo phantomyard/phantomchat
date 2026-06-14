@@ -5,7 +5,7 @@
  * creation/parsing, and read receipt privacy toggle.
  */
 
-import {describe, it, expect, beforeEach, beforeAll, vi} from 'vitest';
+import {describe, it, expect, beforeEach, afterEach, beforeAll, vi} from 'vitest';
 
 // Mock rootScope
 vi.mock('@lib/rootScope', () => ({
@@ -255,5 +255,74 @@ describe('parseReceipt', () => {
       tags: [['p', 'someone']], id: 'r'
     };
     expect(parseReceipt(rumor)).toBeNull();
+  });
+});
+
+// ─── Always-on delivery retry ──────────────────────────────────────
+
+describe('DeliveryTracker retry (always-on)', () => {
+  const fakePrivateKey = new Uint8Array(32).fill(1);
+  const fakePublicKey = 'aaaa'.repeat(16);
+  const wraps = [{id: 'wrap-a', kind: 1059, content: '', pubkey: '', created_at: 0, tags: [] as string[][], sig: ''}];
+  let tracker: any;
+  let resendFn: any;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resendFn = vi.fn().mockResolvedValue(undefined);
+    if(typeof localStorage !== 'undefined') localStorage.removeItem('phantomchat:read-receipts-enabled');
+    tracker = new DeliveryTracker({
+      privateKey: fakePrivateKey,
+      publicKey: fakePublicKey,
+      publishFn: vi.fn().mockResolvedValue(undefined),
+      resendFn
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resends the SAME wraps when no delivery ack arrives', async() => {
+    tracker.registerOutgoing('chat-1-0', wraps);
+    tracker.markSent('chat-1-0');
+
+    expect(resendFn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(resendFn).toHaveBeenCalledTimes(1);
+    // Must resend the identical wrap objects — same rumor id → receiver dedups.
+    expect(resendFn).toHaveBeenLastCalledWith(wraps);
+
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(resendFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops retrying once a delivery receipt arrives', async() => {
+    tracker.registerOutgoing('chat-2-0', wraps);
+    tracker.markSent('chat-2-0');
+
+    // Delivery ack before the first retry fires.
+    tracker.handleReceipt({
+      kind: 14, content: '', pubkey: 'peer', created_at: 0,
+      tags: [['e', 'chat-2-0'], ['receipt-type', 'delivery']], id: 'rcpt'
+    });
+
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(resendFn).not.toHaveBeenCalled();
+  });
+
+  it('gives up after the capped number of attempts', async() => {
+    tracker.registerOutgoing('chat-3-0', wraps);
+    tracker.markSent('chat-3-0');
+
+    await vi.advanceTimersByTimeAsync(8000 + 20000 + 45000 + 5000);
+    // Exactly 3 scheduled attempts (8s, 20s, 45s), then it stops.
+    expect(resendFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('is a no-op when no wraps were registered (legacy/offline path)', async() => {
+    tracker.markSent('chat-4-0');
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(resendFn).not.toHaveBeenCalled();
   });
 });
