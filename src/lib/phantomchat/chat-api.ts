@@ -26,6 +26,7 @@ import {isControlEvent, getGroupIdFromRumor} from './group-control-messages';
 import rootScope from '@lib/rootScope';
 import {handleRelayMessage as handleRelayMessageImpl, IncomingEdit} from './chat-api-receive';
 import {phantomchatReactionsReceive} from './phantomchat-reactions-receive';
+import {phantomchatTypingReceive} from './phantomchat-typing-receive';
 import {setChatAPI as setReactionsChatAPI} from './phantomchat-reactions-publish';
 
 /**
@@ -341,8 +342,16 @@ export class ChatAPI {
         });
         return;
       }
+      if(event.kind === 20001) {
+        // NIP-16 ephemeral typing indicator → native three-dots.
+        phantomchatTypingReceive.onTyping(event as any).catch((err) => {
+          this.log.warn('[ChatAPI] typing onTyping failed:', err);
+        });
+        return;
+      }
     });
     phantomchatReactionsReceive.setOwnPubkey(this.ownId);
+    phantomchatTypingReceive.setOwnPubkey(this.ownId);
     phantomchatReactionsReceive.setMessageResolver(async(eventId) => {
       const {getMessageStore} = await import('./message-store');
       const store = getMessageStore();
@@ -984,6 +993,16 @@ export class ChatAPI {
       this.log('[ChatAPI] Level 1: local messages deleted for conversation:', conversationId);
     } catch(err) {
       this.log.error('[ChatAPI] Level 1 deletion failed:', err);
+    }
+
+    // Level 1b: Tombstone — record the deletion watermark so relay replays of
+    // this conversation's gift-wraps (24h TTL) can't re-hydrate it on the next
+    // reconnect. Strictly-newer messages still revive the chat (see
+    // MessageStore.setTombstone / the receive-path gate).
+    try {
+      await store.setTombstone(conversationId, Math.floor(Date.now() / 1000));
+    } catch(err) {
+      this.log.warn('[ChatAPI] tombstone write failed (non-fatal):', err);
     }
 
     // Remove from in-memory history

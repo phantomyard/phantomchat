@@ -35,5 +35,12 @@
 /update-manifest.json
   Cache-Control: no-cache, must-revalidate
 
+# Canonical relay list — single source of truth shared with the phantombot
+# server (which fetches this same URL over HTTP). Must revalidate so edits
+# propagate to both the PWA and phantombot on next load instead of serving a
+# CDN-stale copy.
+/relays.json
+  Cache-Control: no-cache, must-revalidate
+
 /*.webmanifest
   Cache-Control: public, max-age=3600

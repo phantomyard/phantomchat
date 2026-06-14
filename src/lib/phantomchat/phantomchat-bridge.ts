@@ -10,7 +10,7 @@
 
 import type {User} from '@layer';
 import {initVirtualPeersDB, storeMapping, getPubkey, getAllMappings} from './virtual-peers-db';
-import {NostrRelayPool, DEFAULT_RELAYS} from './nostr-relay-pool';
+import {NostrRelayPool, DEFAULT_RELAYS, loadCanonicalRelays, RelayConfig} from './nostr-relay-pool';
 import {OfflineQueue} from './offline-queue';
 import {PrivacyTransport} from './privacy-transport';
 import {MeshManager} from '@lib/phantomchat/mesh-manager';
@@ -109,8 +109,13 @@ export class PhantomChatBridge {
       this.pubkeyCache.set(m.pubkey, m.peerId);
     }
 
+    // Fetch the canonical relay list (served at /relays.json — the single
+    // source of truth shared with phantombot). Falls back to the hardcoded
+    // DEFAULT_RELAYS when the fetch fails (offline / 404 / malformed).
+    const canonical = await loadCanonicalRelays();
+
     // Bootstrap relay pool + privacy transport
-    this.initTransport();
+    this.initTransport(canonical ?? undefined);
 
     this._initialized = true;
   }
@@ -127,9 +132,9 @@ export class PhantomChatBridge {
    *     local IndexedDB store and outgoing messages queue in OfflineQueue.
    *   - Tor disabled: pool.initialize() runs immediately (legacy path).
    */
-  private initTransport(): void {
+  private initTransport(relays?: RelayConfig[]): void {
     const pool = new NostrRelayPool({
-      relays: [...DEFAULT_RELAYS],
+      relays: [...(relays ?? DEFAULT_RELAYS)],
       onMessage: () => {
         // Message routing is handled by Phase 4
       }

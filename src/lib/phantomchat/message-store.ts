@@ -102,9 +102,10 @@ export type PartialStoredMessage = Omit<StoredMessage, 'mid' | 'twebPeerId'> & {
 // ─── Constants ─────────────────────────────────────────────────────
 
 const DB_NAME = 'phantomchat-messages';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_NAME = 'messages';
 const CURSOR_STORE = 'read-cursors';
+const TOMBSTONE_STORE = 'conversation-tombstones';
 const DEFAULT_LIMIT = 50;
 
 // ─── Singleton ─────────────────────────────────────────────────────
@@ -161,6 +162,13 @@ export class MessageStore {
         if(!db.objectStoreNames.contains(CURSOR_STORE)) {
           db.createObjectStore(CURSOR_STORE, {keyPath: 'conversationId'});
         }
+        // v3: per-conversation deletion watermark ("tombstone"). Keyed by
+        // conversationId; value carries `deletedAt` (unix seconds). Used to
+        // suppress relay-replayed messages at-or-before the deletion so a
+        // deleted chat/contact does not boomerang back on reconnect.
+        if(!db.objectStoreNames.contains(TOMBSTONE_STORE)) {
+          db.createObjectStore(TOMBSTONE_STORE, {keyPath: 'conversationId'});
+        }
       };
     });
   }
@@ -179,6 +187,21 @@ export class MessageStore {
    * through to the throw path in VMT.
    */
   async saveMessage(msg: PartialStoredMessage): Promise<void> {
+    // Tombstone gate (defense-in-depth). A conversation the user deleted
+    // carries a deletion watermark; any message at-or-before that watermark is
+    // a relay replay of already-deleted history and must not be re-persisted.
+    // Strictly-newer messages (timestamp > watermark) pass through and revive
+    // the conversation — timestamp-gated "delete", Signal-style. The receive
+    // path (chat-api-receive) applies the same gate earlier to also suppress
+    // the UI dispatch; this store-level gate guarantees no write path (backfill,
+    // sync, group) can silently re-hydrate a tombstoned conversation.
+    if(msg.conversationId && typeof msg.timestamp === 'number') {
+      const deletedAt = await this.getTombstone(msg.conversationId);
+      if(deletedAt > 0 && msg.timestamp <= deletedAt) {
+        return;
+      }
+    }
+
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -499,6 +522,69 @@ export class MessageStore {
         putReq.onerror = () => reject(putReq.error);
         putReq.onsuccess = () => resolve();
       };
+    });
+  }
+
+  /**
+   * Read the deletion watermark for a conversation.
+   * Returns the unix-seconds timestamp of the most recent deletion, or 0 if the
+   * conversation has never been deleted.
+   */
+  async getTombstone(conversationId: string): Promise<number> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(TOMBSTONE_STORE, 'readonly');
+      const store = tx.objectStore(TOMBSTONE_STORE);
+      const req = store.get(conversationId);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const row = req.result as {conversationId: string; deletedAt: number} | undefined;
+        resolve(row?.deletedAt ?? 0);
+      };
+    });
+  }
+
+  /**
+   * Set (or extend) the deletion watermark for a conversation.
+   * Monotonic: a write with a `deletedAt` below the stored value is a no-op so a
+   * re-delete only ever moves the watermark forward. The watermark is a
+   * permanent low-water mark — it is intentionally NOT cleared when a newer
+   * message revives the conversation, so old replayed history stays suppressed
+   * forever while genuinely new messages still get through.
+   */
+  async setTombstone(conversationId: string, deletedAt: number): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(TOMBSTONE_STORE, 'readwrite');
+      const store = tx.objectStore(TOMBSTONE_STORE);
+      const getReq = store.get(conversationId);
+      getReq.onerror = () => reject(getReq.error);
+      getReq.onsuccess = () => {
+        const existing = getReq.result as {conversationId: string; deletedAt: number} | undefined;
+        if(existing && existing.deletedAt >= deletedAt) {
+          resolve();
+          return;
+        }
+        const putReq = store.put({conversationId, deletedAt});
+        putReq.onerror = () => reject(putReq.error);
+        putReq.onsuccess = () => resolve();
+      };
+    });
+  }
+
+  /**
+   * Remove the deletion watermark for a conversation. Rarely needed — provided
+   * for an explicit "re-add and resync full history" flow where the caller
+   * deliberately wants old messages to flow back in.
+   */
+  async clearTombstone(conversationId: string): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(TOMBSTONE_STORE, 'readwrite');
+      const store = tx.objectStore(TOMBSTONE_STORE);
+      const req = store.delete(conversationId);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
     });
   }
 

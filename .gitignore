@@ -11,6 +11,9 @@ public/*.js.map
 public/*.css
 public/changelogs/
 !public/recorder.min.js
+!public/encoderWorker.min.js
+!public/decoderWorker.min.js
+!public/waveWorker.min.js
 
 # OS files
 .DS_Store

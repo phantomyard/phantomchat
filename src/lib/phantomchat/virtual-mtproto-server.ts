@@ -381,6 +381,9 @@ export class PhantomChatMTProtoServer {
       case 'contacts.getContacts':
         return this.getContacts();
 
+      case 'contacts.deleteContacts':
+        return this.deleteContacts(params);
+
       case 'users.getFullUser':
         return this.getFullUser(params);
 
@@ -1142,6 +1145,64 @@ export class PhantomChatMTProtoServer {
       saved_count: 0,
       users
     };
+  }
+
+  /**
+   * Delete one or more contacts.
+   *
+   * In phantomchat the contact list is DERIVED from conversations (see
+   * getContacts) — there is no standalone address book. So "delete contact"
+   * only sticks if the underlying conversation is wiped too; otherwise
+   * getContacts re-derives the contact on the next refresh and relay replays
+   * re-create its dialog. We therefore mirror deleteHistory: wipe local
+   * messages + write the deletion watermark (tombstone) so replays can't
+   * boomerang it back, then dispatch `phantomchat_conversation_deleted` so the
+   * display layer drops the dialog from the chat list.
+   *
+   * Previously this method had no handler and fell through `fallback()`, which
+   * returned `true` and silently dropped the user's request (the reported
+   * "deleted people keep coming back" bug).
+   */
+  private async deleteContacts(params: any): Promise<any> {
+    const emptyUpdates = {_: 'updates', updates: [] as any[], users: [] as any[], chats: [] as any[], date: Math.floor(Date.now() / 1000), seq: 0};
+
+    const inputUsers: any[] = Array.isArray(params?.id) ? params.id : [];
+    if(inputUsers.length === 0 || !this.ownPubkey) {
+      return emptyUpdates;
+    }
+
+    const store = getMessageStore();
+    const now = Math.floor(Date.now() / 1000);
+
+    for(const input of inputUsers) {
+      try {
+        const peerId = extractPeerId(input) ?? (typeof input?.user_id !== 'undefined' ? Number(input.user_id) : null);
+        if(peerId === null || peerId <= 0) continue;
+
+        const pubkey = await getPubkey(Math.abs(peerId));
+        if(!pubkey) {
+          console.warn(LOG_PREFIX, 'deleteContacts: no pubkey for peerId', peerId);
+          continue;
+        }
+
+        const conversationId = store.getConversationId(this.ownPubkey, pubkey);
+        await store.deleteMessages(conversationId);
+        await store.setTombstone(conversationId, now);
+        console.log(LOG_PREFIX, 'deleteContacts: wiped + tombstoned conversation', conversationId);
+
+        // Drop the dialog from the chat list (display layer listens for this).
+        try {
+          const rs: any = (await import('@lib/rootScope')).default;
+          rs.dispatchEvent('phantomchat_conversation_deleted', {peerPubkey: pubkey, conversationId});
+        } catch(err) {
+          console.warn(LOG_PREFIX, 'deleteContacts: dialog-drop dispatch failed', err);
+        }
+      } catch(err) {
+        console.warn(LOG_PREFIX, 'deleteContacts: failed for input', input, err);
+      }
+    }
+
+    return emptyUpdates;
   }
 
   private async getFullUser(params: any): Promise<any> {
@@ -2266,7 +2327,11 @@ export class PhantomChatMTProtoServer {
 
       if(convId) {
         await store.deleteMessages(convId);
-        console.log(LOG_PREFIX, method, 'wiped conversation', convId);
+        // Record the deletion watermark so relay-replayed gift-wraps (24h TTL)
+        // don't re-hydrate the conversation on the next reconnect. Strictly-newer
+        // messages still revive it (timestamp-gated; see MessageStore.setTombstone).
+        await store.setTombstone(convId, Math.floor(Date.now() / 1000));
+        console.log(LOG_PREFIX, method, 'wiped + tombstoned conversation', convId);
       } else {
         console.warn(LOG_PREFIX, method, 'could not resolve conversationId for peerId', peerId);
       }

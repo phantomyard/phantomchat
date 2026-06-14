@@ -61,6 +61,36 @@ export const DEFAULT_RELAYS: RelayConfig[] = Array.isArray(_testRelays) ? _testR
   {url: 'wss://nostr.data.haus', read: true, write: true}
 ];
 
+/**
+ * Canonical relay list, served as a static file at `/relays.json`. This is the
+ * single source of truth shared with the phantombot server (which fetches the
+ * same URL over HTTP on startup), so the relay set is maintained in exactly one
+ * place. The hardcoded DEFAULT_RELAYS above is a build-time fallback used only
+ * when the fetch fails (offline, 404, malformed) — it must stay in sync as a
+ * disaster net but is not authoritative at runtime.
+ *
+ * Shape: `{ "relays": ["wss://...", ...] }`. Returns null on any failure so the
+ * caller can fall back to DEFAULT_RELAYS.
+ */
+export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
+  // Tests pin relays via window.__phantomchatTestRelays — never fetch then.
+  if(typeof window !== 'undefined' && Array.isArray((window as any).__phantomchatTestRelays)) {
+    return null;
+  }
+  try {
+    const res = await fetch('/relays.json', {cache: 'no-cache'});
+    if(!res.ok) return null;
+    const data = await res.json();
+    const urls: unknown = data?.relays;
+    if(!Array.isArray(urls)) return null;
+    const valid = urls.filter((u): u is string => typeof u === 'string' && u.startsWith('wss://'));
+    const configs: RelayConfig[] = valid.map((url) => ({url, read: true, write: true}));
+    return configs.length > 0 ? configs : null;
+  } catch{
+    return null;
+  }
+}
+
 const DEDUP_CACHE_MAX = 10_000;
 const POOL_RECOVERY_INTERVAL_MS = 60_000;
 const IDB_RELAY_CONFIG_KEY = 'phantomchat-relay-config';

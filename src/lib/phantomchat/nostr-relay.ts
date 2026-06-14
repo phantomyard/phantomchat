@@ -42,6 +42,17 @@ export const NOSTR_KIND_REACTION = 7;
 export const NOSTR_KIND_DELETE = 5;
 
 /**
+ * Typing indicator (kind 20001) — a NIP-16 EPHEMERAL event (range 20000–29999).
+ * Relays do NOT store ephemeral events; they only fan them out to connected
+ * subscribers. That makes typing perfect as a transient signal: it cannot be
+ * replayed on reconnect and self-expires the instant nobody is listening. The
+ * sender (phantombot, or any PhantomChat peer) p-tags the recipient; the
+ * recipient injects a native `updateUserTyping` (three-dots, 6s auto-expiry).
+ * Must match phantombot's `NOSTR_KIND_TYPING`.
+ */
+export const NOSTR_KIND_TYPING = 20001;
+
+/**
  * Decrypted message structure returned by getMessages.
  * After NIP-17 migration, includes rumor kind and tags for routing.
  */
@@ -480,7 +491,7 @@ export class NostrRelay {
     this.log('[NostrRelay] subscribing to messages');
 
     const filter: Record<string, unknown> = {
-      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE],
+      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING],
       '#p': [this.publicKey]
     };
 
