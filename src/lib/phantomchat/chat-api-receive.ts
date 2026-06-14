@@ -157,7 +157,13 @@ export function extractFileMetadata(
         ivHex: fileParsed.iv || fileParsed.ivHex || '',
         duration: typeof fileParsed.duration === 'number' ? fileParsed.duration : undefined,
         waveform: typeof fileParsed.waveform === 'string' ? fileParsed.waveform : undefined,
-        caption: typeof fileParsed.caption === 'string' && fileParsed.caption ? fileParsed.caption : undefined
+        caption: typeof fileParsed.caption === 'string' && fileParsed.caption ? fileParsed.caption : undefined,
+        // Authoritative sender-tagged media class (image/video/voice/file).
+        // Absent on pre-`mediaType` messages → buildPhantomChatMedia falls
+        // back to the mime/duration heuristic.
+        mediaType: fileParsed.mediaType === 'image' || fileParsed.mediaType === 'video' ||
+          fileParsed.mediaType === 'voice' || fileParsed.mediaType === 'file' ?
+          fileParsed.mediaType : undefined
       };
     }
   } catch{

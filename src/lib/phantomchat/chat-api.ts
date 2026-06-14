@@ -73,6 +73,8 @@ export interface ChatMessage {
     waveform?: string;
     /** #11: caption typed with the photo/file (rendered as the bubble text) */
     caption?: string;
+    /** Authoritative sender-tagged media class (image/video/voice/file). */
+    mediaType?: 'image' | 'video' | 'voice' | 'file';
   };
 }
 
@@ -515,13 +517,23 @@ export class ChatAPI {
     dim?: {width: number; height: number},
     extras?: {duration?: number; waveform?: string; mid?: number; twebPeerId?: number; timestampSec?: number; caption?: string}
   ): Promise<string> {
+    // A voice note recorded via opus-recorder can arrive with an empty
+    // `blob.type` → 'application/octet-stream', which made the receiver's
+    // mime heuristic fail and render it as a generic "Unknown file". Pin a
+    // sensible default so even the heuristic fallback classifies it as audio.
+    const effectiveMime = (type === 'voice' && (!mimeType || mimeType === 'application/octet-stream')) ?
+      'audio/ogg; codecs=opus' :
+      mimeType;
     const fileContent = JSON.stringify({
       url,
       sha256,
-      mimeType,
+      mimeType: effectiveMime,
       size,
       key,
       iv,
+      // Authoritative media class so the receiver never re-guesses voice vs
+      // file from mime/duration (the cause of the "Unknown file" render).
+      mediaType: type,
       ...(dim ? {width: dim.width, height: dim.height} : {}),
       ...(extras?.duration !== undefined ? {duration: extras.duration} : {}),
       ...(extras?.waveform !== undefined ? {waveform: extras.waveform} : {}),

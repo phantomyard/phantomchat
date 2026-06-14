@@ -7335,7 +7335,11 @@ export default class ChatBubbles {
                   }
                 },
                 fontSize: this.chat.appSettings.messagesTextSize,
-                canTranscribeVoice: true
+                // PhantomChat has no server-side voice transcription. Leaving
+                // this on rendered a transcribe (→A) button whose only action
+                // was the inherited "Subscribe to Premium" toast. Disabled so
+                // the button — and the dead paywall — never appear.
+                canTranscribeVoice: false
               });
               preview.append(docDiv);
               props.media.hasDocument = true;
@@ -7639,7 +7643,10 @@ export default class ChatBubbles {
               fontSize: this.chat.appSettings.messagesTextSize,
               richTextFragment: richText,
               richTextOptions: getRichTextOptions(),
-              canTranscribeVoice: true,
+              // PhantomChat has no server-side voice transcription — see note
+              // at the other canTranscribeVoice site. Disabled to remove the
+              // transcribe button and the dead "Subscribe to Premium" toast.
+              canTranscribeVoice: false,
               translatableParams,
               factCheckBox,
               isOut

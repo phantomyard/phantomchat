@@ -36,8 +36,16 @@ export function wrapRoundVideoBubble({
   transcribe.classList.add('bubble-beside-button', 'bubble-beside-button--transcribe', 'with-hover');
   hasBesideButton && transcribe.classList.add('bubble-beside-button--lifted');
   transcribe.append(Icon('transcribe'));
-  content.append(transcribe);
-  bubble.classList.add('with-beside-button');
+  // PhantomChat has no server-side transcription. The element is still
+  // constructed (downstream code holds references to it) but is never
+  // mounted into the DOM, so the transcribe button — and the dead
+  // "Subscribe to Premium" alert behind it — can never appear on round
+  // video notes. Mirrors disabling canTranscribeVoice on voice bubbles.
+  const PHANTOMCHAT_TRANSCRIPTION_ENABLED = false;
+  if(PHANTOMCHAT_TRANSCRIPTION_ENABLED) {
+    content.append(transcribe);
+    bubble.classList.add('with-beside-button');
+  }
 
   const mediaContainer = bubble.querySelector('.attachment.media-container') as HTMLElement;
   const audioMessageContainer = document.createElement('div');
