@@ -1,8 +1,7 @@
 /**
  * AppPhantomChatStatusTab — Status page in hamburger menu
  *
- * Displays Tor status and Nostr relay connection status with
- * per-layer transport detail (WebSocket direct vs Tor HTTP polling).
+ * Displays Nostr relay connection status.
  */
 
 import SliderSuperTab from '@components/sliderTab';
@@ -10,22 +9,8 @@ import SettingSection from '@components/settingSection';
 import Row from '@components/row';
 import rootScope from '@lib/rootScope';
 import {DEFAULT_RELAYS} from '@lib/phantomchat/nostr-relay-pool';
-import {PrivacyTransport} from '@lib/phantomchat/privacy-transport';
-
-type TorState = 'tor-active' | 'booting' | 'direct-active' | 'offline' | 'disabled';
-
-const TOR_STATE_LABELS: Record<TorState, string> = {
-  'tor-active': 'Active via Tor',
-  'booting': 'Connecting via Tor…',
-  'direct-active': 'Direct',
-  'offline': 'Offline',
-  'disabled': 'Disabled'
-};
-
-const MODE_ICONS: Record<string, string> = {
-  'websocket': '🌐',
-  'http-polling': '🧅'
-};
+import App from '@config/app';
+import appNavigationController from '@components/appNavigationController';
 
 function latencyBadge(ms: number): string {
   if(!ms || ms <= 0) return '';
@@ -34,15 +19,14 @@ function latencyBadge(ms: number): string {
   return `🔴 ${ms}ms`;
 }
 
-function formatConnectionState(state: string, latencyMs: number, mode: string): string {
-  const modeIcon = MODE_ICONS[mode] || '';
+function formatConnectionState(state: string, latencyMs: number): string {
   switch(state) {
     case 'connected':
-      return `${modeIcon} Connected · ${latencyBadge(latencyMs) || 'online'}`;
+      return `🌐 Connected · ${latencyBadge(latencyMs) || 'online'}`;
     case 'connecting':
-      return `${modeIcon} ⏳ Connecting...`;
+      return '🌐 ⏳ Connecting...';
     case 'reconnecting':
-      return `${modeIcon} ⏳ Reconnecting...`;
+      return '🌐 ⏳ Reconnecting...';
     case 'disconnected':
     default:
       return '🔴 Disconnected';
@@ -57,97 +41,6 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
   public async init() {
     this.container.classList.add('phantomchat-status-container');
     this.setTitle('Status' as any);
-
-    // ─── Section: Tor Status ─────────────────────────────────
-
-    const torSection = new SettingSection({
-      name: 'Tor Connection' as any,
-      caption: 'Anonymous routing via Tor network' as any
-    });
-
-    const torStatusRow = new Row({
-      title: 'Tor Status',
-      subtitle: 'Checking...',
-      icon: 'lock'
-    });
-
-    const torTransportRow = new Row({
-      title: 'Transport',
-      subtitle: 'Unknown',
-      icon: 'settings'
-    });
-
-    const torErrorRow = new Row({
-      title: 'Last error',
-      subtitle: '—',
-      icon: 'info'
-    });
-    torErrorRow.container.style.display = 'none';
-
-    const torCircuitRow = new Row({
-      title: 'View Tor Circuit',
-      subtitle: 'Guard → Middle → Exit, rebuild, exit IP',
-      icon: 'forward',
-      clickable: () => {
-        if(!PrivacyTransport.isTorEnabled()) return;
-        import('@components/sidebarLeft/tabs/phantomchatTorDashboard').then(
-          ({default: AppPhantomChatTorDashboardTab}) => {
-            this.slider.createTab(AppPhantomChatTorDashboardTab).open();
-          }
-        );
-      }
-    });
-
-    const updateTorState = (state: TorState, error?: string) => {
-      torStatusRow.subtitle.textContent = TOR_STATE_LABELS[state] || state;
-
-      const transport = state === 'tor-active' ?
-        '🧅 Tor SOCKS (WebSocket over Tor)' :
-        state === 'booting' ?
-          '⏳ Waiting for Tor bootstrap...' :
-          state === 'disabled' ?
-            '🌐 Direct WebSocket (Tor disabled)' :
-            '🌐 Direct WebSocket (no Tor)';
-      torTransportRow.subtitle.textContent = transport;
-
-      if(state === 'offline' && error) {
-        torErrorRow.subtitle.textContent = error;
-        torErrorRow.container.style.display = '';
-      } else {
-        torErrorRow.container.style.display = 'none';
-      }
-
-      if(state === 'disabled') {
-        torCircuitRow.container.classList.add('row-disabled');
-      } else {
-        torCircuitRow.container.classList.remove('row-disabled');
-      }
-    };
-
-    const computeInitialTor = (): TorState => {
-      if(PrivacyTransport.readMode() === 'off') return 'disabled';
-      const raw = (window as any).__phantomchatPrivacyTransport?.getRuntimeState?.();
-      if(raw === 'tor-active' || raw === 'direct-active' || raw === 'booting') return raw as TorState;
-      return 'direct-active';
-    };
-    updateTorState(computeInitialTor());
-
-    rootScope.addEventListener('phantomchat_tor_state', (payload) => {
-      const state = (typeof payload === 'string' ? payload : payload?.state) as TorState;
-      const error = typeof payload === 'object' ? payload?.error : undefined;
-      updateTorState(state || 'direct-active', error);
-    });
-
-    rootScope.addEventListener('phantomchat_tor_mode_changed', () => {
-      updateTorState(computeInitialTor());
-    });
-
-    torSection.content.append(
-      torStatusRow.container,
-      torTransportRow.container,
-      torErrorRow.container,
-      torCircuitRow.container
-    );
 
     // ─── Section: Relay Status ───────────────────────────────
 
@@ -191,10 +84,9 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
           const connected = instance?.isConnected?.() ?? false;
           const latency = instance?.getLatency?.() ?? 0;
           const state = instance?.getConnectionState?.() || 'disconnected';
-          const mode = instance?.getMode?.() || 'websocket';
 
           if(connected) connectedCount++;
-          row.subtitle.textContent = formatConnectionState(state, latency, mode);
+          row.subtitle.textContent = formatConnectionState(state, latency);
         });
 
         // Update relay section caption with live connected count
@@ -225,8 +117,8 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
     const linksSection = new SettingSection({});
 
     const privacyLink = new Row({
-      title: 'Impostazioni privacy e Tor',
-      subtitle: 'Abilita o disabilita Tor, gestisci privacy',
+      title: 'Privacy & Security settings',
+      subtitle: 'Manage privacy and security',
       icon: 'lock',
       clickable: () => {
         import('@components/sidebarLeft/tabs/privacyAndSecurity').then(
@@ -238,8 +130,8 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
     });
 
     const relaysLink = new Row({
-      title: 'Gestisci Nostr relays',
-      subtitle: 'Aggiungi, rimuovi e configura i relay',
+      title: 'Manage Nostr relays',
+      subtitle: 'Add, remove and configure relays',
       icon: 'link',
       clickable: () => {
         import('@components/sidebarLeft/tabs/phantomchatRelaySettings').then(
@@ -255,10 +147,69 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
       relaysLink.container
     );
 
+    // ─── Section: About / App version ────────────────────────
+
+    const aboutSection = new SettingSection({
+      name: 'About' as any,
+      caption: 'App version and updates' as any
+    });
+
+    const currentVersion = App.versionFull || App.version || 'dev';
+
+    const versionRow = new Row({
+      title: 'Version',
+      subtitle: `PhantomChat ${currentVersion}`,
+      icon: 'info'
+    });
+
+    let updateReady = false;
+    let checking = false;
+
+    const updateRow = new Row({
+      title: 'Check for updates',
+      subtitle: 'Tap to check now',
+      icon: 'download',
+      clickable: () => {
+        // If a newer build was already found, this acts as "Update now".
+        if(updateReady) {
+          appNavigationController.reload();
+          return;
+        }
+
+        if(checking) return;
+        checking = true;
+        updateRow.subtitle.textContent = 'Checking…';
+
+        fetch('version', {cache: 'no-cache'})
+        .then((res) => (res.status === 200 && res.ok && res.text()) || Promise.reject(new Error('bad response')))
+        .then((text) => {
+          const latest = text.trim();
+          if(latest && latest !== currentVersion) {
+            updateReady = true;
+            updateRow.title.textContent = 'Update now';
+            updateRow.subtitle.textContent = `Version ${latest} is ready — tap to reload`;
+          } else {
+            updateRow.subtitle.textContent = `You're on the latest version (${currentVersion})`;
+          }
+        })
+        .catch(() => {
+          updateRow.subtitle.textContent = 'Could not check — tap to retry';
+        })
+        .finally(() => {
+          checking = false;
+        });
+      }
+    });
+
+    aboutSection.content.append(
+      versionRow.container,
+      updateRow.container
+    );
+
     this.scrollable.append(
-      torSection.container,
       relaySection.container,
-      linksSection.container
+      linksSection.container,
+      aboutSection.container
     );
   }
 }

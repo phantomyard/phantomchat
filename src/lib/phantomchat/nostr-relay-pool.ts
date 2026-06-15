@@ -8,7 +8,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
-import {wrapNip17Message, wrapNip17Edit} from './nostr-crypto';
+import {wrapNip17Message, wrapNip17Edit, rewrapNip17Message, UnsignedEvent} from './nostr-crypto';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromMnemonic} from './nostr-identity';
@@ -40,6 +40,23 @@ export interface PublishResult {
    * Bug #3 (FIND-4e18d35d) for the divergence this aligns.
    */
   rumorId?: string;
+  /**
+   * The signed kind-1059 gift-wrap events that were published (recipient +
+   * self wraps). Present only for `publish()`.
+   *
+   * NOTE: the delivery-retry layer no longer re-publishes these verbatim — a
+   * relay will not re-forward a duplicate outer event id to an already-live
+   * subscriber, so an identical resend can never rescue a ghosted message.
+   * Retry re-wraps `rumor` (below) into a FRESH outer event instead.
+   */
+  wraps?: NostrEvent[];
+  /**
+   * The immutable inner rumor (kind 14) of the published payload. Returned so
+   * the delivery-retry layer can re-wrap the SAME rumor — preserving its id so
+   * the receiver dedups — in a fresh outer gift-wrap that the relay WILL
+   * re-forward. Present only for `publish()`.
+   */
+  rumor?: UnsignedEvent;
 }
 
 export interface RelayPoolOptions {
@@ -93,6 +110,20 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 
 const DEDUP_CACHE_MAX = 10_000;
 const POOL_RECOVERY_INTERVAL_MS = 60_000;
+// Gift-wrap (kind 1059) outer created_at is now the REAL send time — backdating
+// was removed (see nostr-crypto.createGiftWrap) because it was the root cause of
+// the "first message ghosts" bug: a relay applies a subscription's `since` to
+// LIVE events too, and a wrap backdated up to 48h could never be recovered by a
+// tight catch-up `since`. With truthful timestamps this only needs to absorb a
+// little clock skew / out-of-order delivery, so it shrinks from 48h to minutes.
+const GIFTWRAP_FUZZ_WINDOW_SEC = 5 * 60;
+// The catch-up poll (the delivery backbone) re-queries connected read relays on
+// this cadence and pulls the last RECENT_BACKFILL_WINDOW_SEC of wraps. A relay
+// can silently fail to PUSH a freshly-published wrap to our live subscription,
+// but the wrap still PERSISTS on the relay — so a periodic PULL recovers it.
+// Dedup by rumor id makes the overlap with the live push free.
+const BACKFILL_POLL_INTERVAL_MS = 15_000;
+const RECENT_BACKFILL_WINDOW_SEC = 90;
 const IDB_RELAY_CONFIG_KEY = 'phantomchat-relay-config';
 const LS_LAST_SEEN_KEY = 'phantomchat-last-seen-timestamp';
 
@@ -119,6 +150,10 @@ export class NostrRelayPool {
   // Pool recovery
   private recoveryInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Catch-up poll (delivery backbone — recovers wraps the live push dropped)
+  private backfillPollInterval: ReturnType<typeof setInterval> | null = null;
+  private backfillPollInFlight = false;
+
   // Identity
   private publicKey: string = '';
 
@@ -128,12 +163,13 @@ export class NostrRelayPool {
   // Subscription state
   private isSubscribedFlag: boolean = false;
 
+  // Per-relay "has connected at least once" set. Used to distinguish the FIRST
+  // connect (startup — covered by initialize()'s global backfill) from a
+  // RE-connect (recovers the idle gap via backfillRelay). Keyed by relay url.
+  private relayHasConnected: Set<string> = new Set();
+
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
-
-  // Tor mode state (Phase 3)
-  private torFetchFn?: (url: string) => Promise<string>;
-  private inTorMode: boolean = false;
 
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
@@ -178,6 +214,18 @@ export class NostrRelayPool {
 
   private _onReceiptCb?: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void;
   private _onRawEventCb?: (event: NostrEvent) => void;
+  private _onPresenceCb?: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void;
+
+  /**
+   * Register a callback for presence PING / PONG control envelopes. These ride
+   * the SAME kind-1059 gift-wrap path as real messages (so a returned pong
+   * proves the actual delivery path is alive, not a side-channel), but they are
+   * intercepted in `handleIncomingMessage` and NEVER surfaced as chat bubbles.
+   * The pool's normal rumor-id dedup applies, so each ping/pong fires once.
+   */
+  setOnPresence(cb: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void): void {
+    this._onPresenceCb = cb;
+  }
 
   /**
    * Get the private key bytes (for delivery tracker gift-wrap signing).
@@ -244,6 +292,10 @@ export class NostrRelayPool {
 
     // Start pool recovery
     this.startRecovery();
+
+    // Start the catch-up poll — the delivery backbone that no longer relies on
+    // relays pushing live events reliably.
+    this.startBackfillPoll();
   }
 
   disconnect(): void {
@@ -268,6 +320,11 @@ export class NostrRelayPool {
     if(this.recoveryInterval) {
       clearInterval(this.recoveryInterval);
       this.recoveryInterval = null;
+    }
+
+    if(this.backfillPollInterval) {
+      clearInterval(this.backfillPollInterval);
+      this.backfillPollInterval = null;
     }
 
     for(const entry of this.relayEntries) {
@@ -295,6 +352,7 @@ export class NostrRelayPool {
     // Wrap once, publish to all relays (avoids wrapping N times for N relays)
     let wraps: NostrEvent[];
     let rumorId: string | undefined;
+    let rumor: UnsignedEvent | undefined;
     try {
       if(!this.privateKeyBytes) {
         // Fallback: use storeMessage on individual relays (they wrap internally).
@@ -319,6 +377,7 @@ export class NostrRelayPool {
       const wrapped = wrapNip17Message(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
       wraps = wrapped.wraps as unknown as NostrEvent[];
       rumorId = wrapped.rumorId;
+      rumor = wrapped.rumor;
     } catch(err) {
       return {
         successes: [],
@@ -342,7 +401,80 @@ export class NostrRelayPool {
     });
 
     await Promise.all(promises);
-    return {successes, failures, rumorId};
+    return {successes, failures, rumorId, wraps, rumor};
+  }
+
+  /**
+   * Re-wrap a previously-published rumor in a FRESH outer gift-wrap and publish
+   * it to all write relays. Used by the delivery-retry layer: the rumor id is
+   * preserved (receiver dedups → no double message) but the outer kind-1059
+   * event id is new, so relays re-forward it to an already-live subscriber —
+   * which a verbatim resend of the original wrap cannot do. Returns the freshly
+   * minted wraps (mainly for tests/inspection). Best-effort per relay.
+   */
+  rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): NostrEvent[] {
+    if(!this.privateKeyBytes) return [];
+    const wraps = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent[];
+    const writeEntries = this.relayEntries.filter(e =>
+      e.config.write && this.enabled.get(e.config.url) !== false
+    );
+    for(const entry of writeEntries) {
+      try {
+        for(const wrap of wraps) {
+          entry.instance.publishRawEvent(wrap);
+        }
+      } catch{
+        // best-effort per relay; the retry schedule will try again
+      }
+    }
+    return wraps;
+  }
+
+  /**
+   * Publish a presence PING or PONG to `recipientPubkey`. Builds the phantomchat
+   * envelope `{type:'presence-ping'|'presence-pong', nonce, ...}`, NIP-17-wraps
+   * it, and publishes ONLY the recipient wrap (wraps[0]) — never the self-wrap:
+   * a presence probe is point-to-point, our own other devices have no use for
+   * it, and skipping the self-wrap avoids us ping-ponging with ourselves. Rides
+   * the kind-1059 path on purpose so a pong proves the real message path is live.
+   * Best-effort: resolves even if all relays fail (presence is advisory).
+   */
+  async publishPresence(
+    recipientPubkey: string,
+    nonce: string,
+    kind: 'ping' | 'pong'
+  ): Promise<void> {
+    if(!this.privateKeyBytes) return;
+    const envelope = JSON.stringify({
+      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `presence-${Date.now()}`,
+      from: this.publicKey,
+      to: recipientPubkey,
+      type: kind === 'ping' ? 'presence-ping' : 'presence-pong',
+      nonce,
+      content: '',
+      timestamp: Date.now()
+    });
+
+    let recipientWrap: NostrEvent | undefined;
+    try {
+      const {wraps} = wrapNip17Message(this.privateKeyBytes, recipientPubkey, envelope);
+      recipientWrap = wraps[0] as unknown as NostrEvent;
+    } catch(err) {
+      this.log.debug('[NostrRelayPool] presence wrap failed:', err);
+      return;
+    }
+    if(!recipientWrap) return;
+
+    const writeEntries = this.relayEntries.filter(e =>
+      e.config.write && this.enabled.get(e.config.url) !== false
+    );
+    for(const entry of writeEntries) {
+      try {
+        entry.instance.publishRawEvent(recipientWrap);
+      } catch{
+        // best-effort per relay; presence is advisory
+      }
+    }
   }
 
   /**
@@ -628,32 +760,6 @@ export class NostrRelayPool {
     this.dispatchRelayListChanged();
   }
 
-  // ─── Tor Mode (Phase 3) ───────────────────────────────────────
-
-  setTorMode(fetchFn: (url: string) => Promise<string>): void {
-    this.inTorMode = true;
-    this.torFetchFn = fetchFn;
-    for(const entry of this.relayEntries) {
-      entry.instance.setTorMode(fetchFn);
-    }
-  }
-
-  setDirectMode(): void {
-    this.inTorMode = false;
-    this.torFetchFn = undefined;
-    for(const entry of this.relayEntries) {
-      entry.instance.setDirectMode();
-    }
-  }
-
-  /**
-   * Clear Tor fetchFn without switching mode.
-   * Used when Tor is not ready but we're still in Tor mode.
-   */
-  clearTorFetchFn(): void {
-    this.torFetchFn = undefined;
-  }
-
   // ─── Relay States (Phase 3) ───────────────────────────────────
 
   /**
@@ -735,8 +841,22 @@ export class NostrRelayPool {
       instance.onRawEvent((ev) => this.handleIncomingRawEvent(ev));
     }
 
-    // Notify pool on relay state change so ConnectionStatusComponent updates
+    // Notify pool on relay state change so ConnectionStatusComponent updates.
+    // Also detect RE-connects: a fresh REQ only streams events from now
+    // forward, so anything that landed while this relay was disconnected
+    // (idle WS drop, network blip) is recovered by an explicit since-backfill.
+    // First connect is skipped here — initialize() already runs a global
+    // backfill at startup.
     instance.onStateChange = () => {
+      if(instance.getState() === 'connected') {
+        const firstConnect = !this.relayHasConnected.has(config.url);
+        this.relayHasConnected.add(config.url);
+        if(!firstConnect && this.isSubscribedFlag && config.read) {
+          this.backfillRelay({config, instance}).catch(
+            swallowHandler('NostrRelayPool.reconnectBackfill')
+          );
+        }
+      }
       this.notifyStateChange();
     };
 
@@ -765,6 +885,25 @@ export class NostrRelayPool {
       this.seenIds.delete(evicted);
     }
 
+    // Presence PING/PONG interception. These ride the gift-wrap path but are
+    // control envelopes, not chat: route them to the presence callback and stop
+    // — they must never reach onMessageCb (no bubble, no auto-add, no delivery
+    // receipt) and must not advance lastSeenTimestamp (a presence probe is not a
+    // message and shouldn't move the backfill watermark). Self-sent presence is
+    // ignored (we don't track our own liveness). Dedup above already ran, so a
+    // replayed ping/pong is consumed once.
+    const presence = this.parsePresenceEnvelope(msg);
+    if(presence) {
+      if(msg.from !== this.publicKey && this._onPresenceCb) {
+        try {
+          this._onPresenceCb({type: presence.type, from: msg.from, nonce: presence.nonce});
+        } catch(err) {
+          this.log.error('[NostrRelayPool] presence handler threw:', err);
+        }
+      }
+      return;
+    }
+
     // Update lastSeenTimestamp
     if(msg.timestamp > this.lastSeenTimestamp) {
       this.lastSeenTimestamp = msg.timestamp;
@@ -773,6 +912,26 @@ export class NostrRelayPool {
 
     // Deliver
     this.onMessageCb(msg);
+  }
+
+  /**
+   * Cheap classifier: is this decrypted message a presence ping/pong envelope?
+   * Returns the parsed type + nonce, or null for anything else (chat text, file,
+   * delete, edit, non-JSON). Only JSON content carrying our presence `type` is
+   * matched, so a normal `{type:'text'}` message returns null and flows on.
+   */
+  private parsePresenceEnvelope(msg: DecryptedMessage): {type: 'ping' | 'pong'; nonce: string} | null {
+    const content = msg.content;
+    // Fast reject: presence envelopes always contain the marker substring.
+    if(typeof content !== 'string' || content.indexOf('presence-p') === -1) return null;
+    try {
+      const env = JSON.parse(content);
+      if(env?.type === 'presence-ping') return {type: 'ping', nonce: typeof env.nonce === 'string' ? env.nonce : ''};
+      if(env?.type === 'presence-pong') return {type: 'pong', nonce: typeof env.nonce === 'string' ? env.nonce : ''};
+    } catch{
+      // not JSON — a plain message
+    }
+    return null;
   }
 
   private handleIncomingRawEvent(event: NostrEvent): void {
@@ -813,12 +972,25 @@ export class NostrRelayPool {
     this.notifyStateChange();
   }
 
+  /**
+   * Catch-up `since` for the startup / reconnect backfills. We subtract a small
+   * fuzz window from lastSeenTimestamp to absorb clock skew and out-of-order
+   * delivery (wrap timestamps are now truthful — no 48h backdate — so this no
+   * longer needs to be hours wide). Returns undefined (= fetch all) when we have
+   * no watermark yet. Dedup by rumor id makes the overlap harmless.
+   */
+  private catchUpSince(): number | undefined {
+    if(this.lastSeenTimestamp <= 0) return undefined;
+    return Math.max(0, this.lastSeenTimestamp - GIFTWRAP_FUZZ_WINDOW_SEC);
+  }
+
   private async backfill(): Promise<void> {
     const readEntries = this.relayEntries.filter(e => e.config.read);
+    const since = this.catchUpSince();
 
     const promises = readEntries.map(async(entry) => {
       try {
-        const messages = await entry.instance.getMessages(this.lastSeenTimestamp);
+        const messages = await entry.instance.getMessages(since);
         for(const msg of messages) {
           this.handleIncomingMessage(msg);
         }
@@ -830,19 +1002,81 @@ export class NostrRelayPool {
     await Promise.all(promises);
   }
 
+  /**
+   * Backfill a SINGLE relay after it reconnects. Closes the idle gap: events
+   * that arrived while this relay's socket was down are not replayed to a fresh
+   * REQ, so we query them explicitly (fuzz-aware `since`) and run them through
+   * the normal dedup + dispatch path. Cheap and idempotent — already-seen
+   * rumor ids are dropped by the LRU in handleIncomingMessage.
+   */
+  private async backfillRelay(entry: RelayEntry): Promise<void> {
+    if(!entry.config.read) return;
+    const since = this.catchUpSince();
+    this.log('[NostrRelayPool] reconnect backfill for', entry.config.url, 'since', since ?? '(all)');
+    try {
+      const messages = await entry.instance.getMessages(since);
+      for(const msg of messages) {
+        this.handleIncomingMessage(msg);
+      }
+    } catch(err) {
+      this.log.error('[NostrRelayPool] reconnect backfill failed for:', entry.config.url, err);
+    }
+  }
+
   private startRecovery(): void {
     this.recoveryInterval = setInterval(() => {
       this.recoverFailedRelays();
     }, POOL_RECOVERY_INTERVAL_MS);
   }
 
-  private recoverFailedRelays(): void {
-    // Pitfall 6: skip recovery when in Tor mode but Tor not ready
-    if(this.inTorMode && !this.torFetchFn) {
-      this.log('[NostrRelayPool] pool recovery skipped: Tor mode but no fetchFn available');
-      return;
-    }
+  /**
+   * Start the catch-up poll: the delivery backbone. Every
+   * BACKFILL_POLL_INTERVAL_MS we re-query each CONNECTED read relay for the last
+   * RECENT_BACKFILL_WINDOW_SEC of gift-wraps and run them through the normal
+   * dedup + dispatch path. This is what makes delivery robust without depending
+   * on relays to PUSH live events reliably: a wrap the live push silently
+   * dropped still persists on the relay, so the next poll recovers it. The
+   * window is a small FIXED span (not lastSeen-based) so the query stays cheap
+   * regardless of how long ago the last message was — deep history is the job of
+   * the startup / reconnect backfills, not this poll.
+   */
+  private startBackfillPoll(): void {
+    this.backfillPollInterval = setInterval(() => {
+      void this.backfillRecent();
+    }, BACKFILL_POLL_INTERVAL_MS);
+  }
 
+  /**
+   * One catch-up poll tick. Pulls the last RECENT_BACKFILL_WINDOW_SEC of wraps
+   * from every connected read relay. Guarded against overlap (a slow relay must
+   * not let two polls pile up) and silent on a per-relay failure.
+   */
+  private async backfillRecent(): Promise<void> {
+    if(this.backfillPollInFlight) return;
+    if(!this.isSubscribedFlag) return;
+    this.backfillPollInFlight = true;
+    try {
+      const since = Math.floor(Date.now() / 1000) - RECENT_BACKFILL_WINDOW_SEC;
+      const readEntries = this.relayEntries.filter(
+        e => e.config.read && e.instance.getState() === 'connected'
+      );
+      const promises = readEntries.map(async(entry) => {
+        try {
+          const messages = await entry.instance.getMessages(since);
+          for(const msg of messages) {
+            this.handleIncomingMessage(msg);
+          }
+        } catch(err) {
+          this.log.error('[NostrRelayPool] catch-up poll failed for:', entry.config.url, err);
+        }
+      });
+      await Promise.all(promises);
+    } finally {
+      this.backfillPollInFlight = false;
+    }
+  }
+
+  private recoverFailedRelays(): void {
     for(const entry of this.relayEntries) {
       if(entry.instance.getState() === 'disconnected') {
         this.log('[NostrRelayPool] pool recovery: retrying', entry.config.url);

@@ -4,7 +4,6 @@ import copy from '@helpers/object/copy';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_PERSONS,
   FOLDER_ID_GROUPS
 } from '@appManagers/constants';
 
@@ -37,11 +36,6 @@ export function buildLocalFilter(id: number): MyDialogFilter {
     filter.pFlags.exclude_archived = true;
   } else if(id === FOLDER_ID_ARCHIVE) {
     filter.pFlags.exclude_unarchived = true;
-  } else if(id === FOLDER_ID_PERSONS) {
-    filter.pFlags.contacts = true;
-    filter.pFlags.non_contacts = true;
-    filter.pFlags.exclude_archived = true;
-    filter.title = literalTitle('People');
   } else if(id === FOLDER_ID_GROUPS) {
     filter.pFlags.groups = true;
     filter.pFlags.exclude_archived = true;
@@ -56,9 +50,7 @@ export function buildLocalFilter(id: number): MyDialogFilter {
  * must still be recognized as defaults during migration. Keep this list
  * small — only strings that were the ACTUAL default at some prior release.
  */
-const LEGACY_DEFAULT_TITLES: Record<number, readonly string[]> = {
-  [FOLDER_ID_PERSONS]: ['Contacts']
-};
+const LEGACY_DEFAULT_TITLES: Record<number, readonly string[]> = {};
 
 /**
  * Returns true for titles produced by buildLocalFilter (unchanged default

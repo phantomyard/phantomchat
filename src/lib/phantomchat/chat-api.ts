@@ -258,6 +258,13 @@ export class ChatAPI {
               for(const event of events) {
                 await this.relayPool.publishRawEvent(event);
               }
+            },
+            // Always-on retry: re-publish the original wraps (same rumor id →
+            // receiver dedups) until a delivery ack arrives.
+            resendFn: async(wraps: any[]) => {
+              for(const wrap of wraps) {
+                await this.relayPool.publishRawEvent(wrap);
+              }
             }
           });
         }
@@ -310,6 +317,13 @@ export class ChatAPI {
             for(const event of events) {
               await this.relayPool.publishRawEvent(event);
             }
+          },
+          // Always-on retry: re-publish the original wraps (same rumor id →
+          // receiver dedups) until a delivery ack arrives.
+          resendFn: async(wraps: any[]) => {
+            for(const wrap of wraps) {
+              await this.relayPool.publishRawEvent(wrap);
+            }
           }
         });
       }
@@ -351,6 +365,31 @@ export class ChatAPI {
         });
         return;
       }
+      // NOTE: kind-30315 (NIP-38 one-way presence beacon) is intentionally NOT
+      // handled here anymore. It only ever proved "the peer shouted online",
+      // never "the peer can hear you". It was replaced by the gift-wrapped
+      // ping/pong handshake wired via setOnPresence below, where a returned pong
+      // proves the real message-delivery path is alive.
+    });
+
+    // Presence PING/PONG handshake (replaces the one-way kind-30315 beacon).
+    // A ping from a peer means they can reach us AND are asking if we can reach
+    // them: mark them alive and answer with a pong over the same gift-wrap path.
+    // A pong is the answer to one of OUR pings: the presence engine correlates
+    // it by nonce and flips the peer's badge to a HONEST online.
+    this.relayPool.setOnPresence((presence) => {
+      import('./phantomchat-presence').then((mod) => {
+        if(presence.type === 'ping') {
+          mod.onRemotePing(presence.from);
+          this.relayPool.publishPresence(presence.from, presence.nonce, 'pong').catch(
+            (e) => this.log.debug('[ChatAPI] pong publish failed:', e?.message)
+          );
+        } else {
+          mod.onRemotePong(presence.from, presence.nonce);
+        }
+      }).catch((err) => {
+        this.log.warn('[ChatAPI] presence handler failed:', err);
+      });
     });
     phantomchatReactionsReceive.setOwnPubkey(this.ownId);
     phantomchatTypingReceive.setOwnPubkey(this.ownId);
@@ -604,6 +643,22 @@ export class ChatAPI {
 
         const result: PublishResult = await this.relayPool.publish(peerOwnId!, plaintext, opts?.replyTo);
         publishedRumorId = result.rumorId;
+
+        // Register a RE-WRAP closure with the delivery tracker so the always-on
+        // retry layer can re-publish if no delivery ack comes back. It re-wraps
+        // the SAME rumor (same rumor id → receiver dedups, never a double) in a
+        // FRESH outer gift-wrap, which is the only thing relays will re-forward
+        // to an already-live subscriber — a verbatim resend of result.wraps is
+        // dropped as a duplicate and never rescues a ghosted first message
+        // (FIND-ghost-first-msg). Registered before markSent so the retry timer
+        // can pick it up.
+        if(this.deliveryTracker && result.rumor) {
+          const rumor = result.rumor;
+          const recipient = peerOwnId!;
+          this.deliveryTracker.registerOutgoing(messageId, () => {
+            this.relayPool.rewrapAndPublish(recipient, rumor);
+          });
+        }
 
         if(result.successes.length > 0) {
           publishSucceeded = true;
@@ -1140,6 +1195,13 @@ export class ChatAPI {
    */
   private async handleRelayMessage(msg: DecryptedMessage): Promise<void> {
     this.log('[ChatAPI] received relay message:', msg.id.slice(0, 8) + '...');
+    // Presence: any inbound message is proof the peer is active right now, so
+    // mark them online immediately (don't wait for the next 60s heartbeat).
+    if(msg.from && msg.from !== this.ownId) {
+      import('./phantomchat-presence').then(({onPeerActivity}) => {
+        onPeerActivity(msg.from);
+      }).catch(() => { /* presence is optional */ });
+    }
     try {
       const result = await handleRelayMessageImpl(msg, {
         ownId: this.ownId,

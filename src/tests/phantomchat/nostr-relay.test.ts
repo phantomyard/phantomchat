@@ -264,6 +264,50 @@ describe('NostrRelay', () => {
     });
   });
 
+  describe('publishRawEvent buffering (double-message / first-DM-dropped fix)', () => {
+    const storedEvent = {
+      id: 'a'.repeat(64),
+      pubkey: 'b'.repeat(64),
+      created_at: Math.floor(Date.now() / 1000),
+      kind: 1059, // gift-wrap → STORED, must be buffered when socket not open
+      tags: [] as string[][],
+      content: 'ciphertext',
+      sig: 'c'.repeat(128)
+    };
+
+    test('buffers a stored gift-wrap published before the socket opens, then flushes on open', async() => {
+      relay.connect(); // socket is CONNECTING (MockWebSocket opens after 10ms)
+
+      // Publish while still connecting — must NOT throw, must NOT send yet.
+      expect(() => relay.publishRawEvent(storedEvent as any)).not.toThrow();
+      const mockWs = getLastMockWs()!;
+      const sentBeforeOpen = mockWs.sentMessages.filter(m => m.includes('"EVENT"'));
+      expect(sentBeforeOpen.length).toBe(0);
+
+      // Let the socket open → onopen flushes the buffer.
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const sentAfterOpen = mockWs.sentMessages.filter(m => m.includes('"EVENT"'));
+      expect(sentAfterOpen.length).toBe(1);
+      expect(sentAfterOpen[0]).toContain(storedEvent.id);
+    });
+
+    test('does NOT buffer ephemeral typing events (still throws when not connected)', () => {
+      relay.connect(); // CONNECTING
+      const typingEvent = {...storedEvent, kind: 20001}; // ephemeral range
+      expect(() => relay.publishRawEvent(typingEvent as any)).toThrow('Not connected');
+    });
+
+    test('sends immediately when already connected (no buffering)', async() => {
+      relay.connect();
+      await new Promise(resolve => setTimeout(resolve, 50)); // now OPEN
+
+      const mockWs = getLastMockWs()!;
+      const before = mockWs.sentMessages.length;
+      relay.publishRawEvent(storedEvent as any);
+      expect(mockWs.sentMessages.length).toBe(before + 1);
+    });
+  });
+
   describe('subscribeMessages', () => {
     test('sends REQ with kinds:[1059] filter', async() => {
       relay.connect();

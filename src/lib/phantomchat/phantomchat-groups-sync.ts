@@ -383,6 +383,31 @@ export async function handleGroupIncoming(
     rumor.created_at :
     Math.floor((appTsMs || Date.now()) / 1000);
 
+  // Resurrection guard (live path). The history-rebuild path in
+  // virtual-mtproto-server already refuses to revive a tombstoned group, but
+  // relays re-deliver group rumors (kind-1059 gift-wraps, 24h TTL) on every
+  // reconnect — and THIS live-receive path rendered them unconditionally,
+  // re-creating a group the user had just deleted (the "zombie HQ"). Gate it
+  // the same way the 1:1 receive path does: if the group conversation carries a
+  // deletion tombstone and this rumor is not strictly newer than the deletion
+  // watermark, drop it before any saveMessage/inject/dispatch. A genuinely new
+  // message (sent after the delete) is still allowed through and revives the
+  // group, matching Signal-style delete semantics. The store-level gate in
+  // saveMessage is the backstop.
+  try {
+    const deletedAt = await store.getTombstone(`group:${groupId}`);
+    if(deletedAt > 0 && timestampSec <= deletedAt) {
+      console.log(LOG_PREFIX, 'rx: dropping tombstoned group rumor', {
+        groupId: groupId.slice(0, 8),
+        timestampSec,
+        deletedAt
+      });
+      return;
+    }
+  } catch(err) {
+    console.warn(LOG_PREFIX, 'rx: tombstone gate check failed; continuing', {err});
+  }
+
   let groupPeerId: number;
   try {
     groupPeerId = await groupIdToPeerId(groupId);

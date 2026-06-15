@@ -3,7 +3,6 @@ import type {DialogFilter} from '@layer';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_PERSONS,
   FOLDER_ID_GROUPS
 } from '@appManagers/constants';
 import {buildLocalFilter, isDefaultLocalTitle} from '@lib/storages/filtersLocal';
@@ -23,16 +22,6 @@ describe('buildLocalFilter', () => {
     expect(f.pFlags.exclude_unarchived).toBe(true);
   });
 
-  it('builds Persons with contacts + non_contacts + exclude_archived', () => {
-    const f = buildLocalFilter(FOLDER_ID_PERSONS) as DialogFilter.dialogFilter;
-    expect(f.id).toBe(FOLDER_ID_PERSONS);
-    expect(f.pFlags.contacts).toBe(true);
-    expect(f.pFlags.non_contacts).toBe(true);
-    expect(f.pFlags.exclude_archived).toBe(true);
-    expect(f.pFlags.groups).toBeFalsy();
-    expect(f.pFlags.broadcasts).toBeFalsy();
-  });
-
   it('builds Groups with groups + exclude_archived', () => {
     const f = buildLocalFilter(FOLDER_ID_GROUPS) as DialogFilter.dialogFilter;
     expect(f.id).toBe(FOLDER_ID_GROUPS);
@@ -41,27 +30,15 @@ describe('buildLocalFilter', () => {
     expect(f.pFlags.contacts).toBeFalsy();
   });
 
-  it('uses literal English titles for Persons and Groups', () => {
-    expect(buildLocalFilter(FOLDER_ID_PERSONS).title.text).toBe('People');
+  it('uses literal English title for Groups', () => {
     expect(buildLocalFilter(FOLDER_ID_GROUPS).title.text).toBe('Groups');
   });
 
   it('isDefaultLocalTitle recognizes fresh seeds, empty, and legacy LANGPACK', () => {
-    expect(isDefaultLocalTitle(FOLDER_ID_PERSONS, 'People')).toBe(true);
     expect(isDefaultLocalTitle(FOLDER_ID_GROUPS, 'Groups')).toBe(true);
-    expect(isDefaultLocalTitle(FOLDER_ID_PERSONS, '')).toBe(true);
-    expect(isDefaultLocalTitle(FOLDER_ID_PERSONS, 'LANGPACK:FilterContacts')).toBe(true);
-    expect(isDefaultLocalTitle(FOLDER_ID_PERSONS, 'Amici')).toBe(false);
-  });
-
-  it('isDefaultLocalTitle recognizes legacy "Contacts" title for FOLDER_ID_PERSONS as default', () => {
-    // Legacy users shipped with 'Contacts' as the persons-folder title; we want the
-    // migration path to overwrite that with the new default on next boot.
-    expect(isDefaultLocalTitle(FOLDER_ID_PERSONS, 'Contacts')).toBe(true);
-    // Other folders do not treat 'Contacts' as a default:
-    expect(isDefaultLocalTitle(FOLDER_ID_GROUPS, 'Contacts')).toBe(false);
-    // Other arbitrary legacy strings are not whitelisted:
-    expect(isDefaultLocalTitle(FOLDER_ID_PERSONS, 'Chats')).toBe(false);
+    expect(isDefaultLocalTitle(FOLDER_ID_GROUPS, '')).toBe(true);
+    expect(isDefaultLocalTitle(FOLDER_ID_GROUPS, 'LANGPACK:FilterGroups')).toBe(true);
+    expect(isDefaultLocalTitle(FOLDER_ID_GROUPS, 'Amici')).toBe(false);
   });
 });
 
@@ -71,28 +48,45 @@ import findAndSplice from '@helpers/array/findAndSplice';
 // without dialogsStorage access — so we can unit-test the ordering invariants.
 function prependForTest(existing: DialogFilter[]): DialogFilter[] {
   const filters: any[] = existing.slice();
+  // Persons (id 2) is a removed system folder — strip any stale persisted copy.
+  findAndSplice(filters, (f: any) => f.id === 2);
   const allIdx = filters.findIndex((f: any) => f.id === FOLDER_ID_ALL);
   if(allIdx === -1) filters.unshift(buildLocalFilter(FOLDER_ID_ALL));
   const ensure = (id: number, index: number) => {
     findAndSplice(filters, (f: any) => f.id === id);
     filters.splice(index, 0, buildLocalFilter(id));
   };
-  ensure(FOLDER_ID_PERSONS, 1);
-  ensure(FOLDER_ID_GROUPS, 2);
-  ensure(FOLDER_ID_ARCHIVE, 3);
+  ensure(FOLDER_ID_GROUPS, 1);
+  ensure(FOLDER_ID_ARCHIVE, 2);
   return filters;
 }
 
 describe('prependFilters seed ordering', () => {
-  it('seeds all 4 system folders for an empty array', () => {
+  it('seeds all 3 system folders for an empty array', () => {
     const out = prependForTest([]);
-    expect(out.map((f: any) => f.id)).toEqual([0, 2, 3, 1]);
+    expect(out.map((f: any) => f.id)).toEqual([0, 3, 1]);
   });
 
-  it('inserts Persons and Groups for users with [ALL, ARCHIVE] only', () => {
+  it('inserts Groups for users with [ALL, ARCHIVE] only', () => {
     const existing = [buildLocalFilter(FOLDER_ID_ALL), buildLocalFilter(FOLDER_ID_ARCHIVE)];
     const out = prependForTest(existing);
-    expect(out.map((f: any) => f.id)).toEqual([0, 2, 3, 1]);
+    expect(out.map((f: any) => f.id)).toEqual([0, 3, 1]);
+  });
+
+  it('strips a stale persisted Persons folder (id 2)', () => {
+    const stalePersons = {
+      ...buildLocalFilter(FOLDER_ID_ALL),
+      id: 2,
+      title: {_: 'textWithEntities' as const, text: 'People', entities: [] as never[]}
+    };
+    const existing = [
+      buildLocalFilter(FOLDER_ID_ALL),
+      stalePersons as any,
+      buildLocalFilter(FOLDER_ID_ARCHIVE)
+    ];
+    const out = prependForTest(existing);
+    expect(out.map((f: any) => f.id)).toEqual([0, 3, 1]);
+    expect(out.find((f: any) => f.id === 2)).toBeUndefined();
   });
 
   it('preserves user custom folders at the tail', () => {
@@ -107,7 +101,7 @@ describe('prependFilters seed ordering', () => {
       custom as any
     ];
     const out = prependForTest(existing);
-    expect(out.map((f: any) => f.id)).toEqual([0, 2, 3, 1, 42]);
-    expect((out[4] as any).title.text).toBe('Work');
+    expect(out.map((f: any) => f.id)).toEqual([0, 3, 1, 42]);
+    expect((out[3] as any).title.text).toBe('Work');
   });
 });

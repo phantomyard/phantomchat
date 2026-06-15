@@ -53,6 +53,17 @@ export const NOSTR_KIND_DELETE = 5;
 export const NOSTR_KIND_TYPING = 20001;
 
 /**
+ * NIP-38 user-status / presence (kind 30315, parameterized-replaceable). A peer
+ * (phantombot, or any PhantomChat client) republishes one of these on a ~60s
+ * heartbeat, p-tagged to us and carrying `["status","online"]`. We treat each as
+ * a liveness beat: the contact shows a REAL "Online" while beats arrive and
+ * flips to "last seen at HH:MM" once they stop past the offline threshold. Like
+ * typing it's plaintext (not gift-wrapped) and routed through the raw-event
+ * handler. Must match phantombot's `NOSTR_KIND_PRESENCE`.
+ */
+export const NOSTR_KIND_PRESENCE = 30315;
+
+/**
  * Decrypted message structure returned by getMessages.
  * After NIP-17 migration, includes rumor kind and tags for routing.
  */
@@ -148,8 +159,8 @@ export class NostrRelay {
   // State change callback — notifies pool when relay connects/disconnects
   public onStateChange: ((state: 'disconnected' | 'connecting' | 'connected' | 'reconnecting') => void) | null = null;
 
-  // Latency update callback — fires whenever measureLatency / the Tor poll
-  // loop updates latencyMs. Pool re-dispatches as phantomchat_relay_state.
+  // Latency update callback — fires whenever measureLatency updates latencyMs.
+  // Pool re-dispatches as phantomchat_relay_state.
   public onLatencyUpdate: ((latencyMs: number) => void) | null = null;
 
   // Subscription management
@@ -168,14 +179,24 @@ export class NostrRelay {
   private readonly reconnectBackoffMs: number = 10000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  // Dual-mode transport (Phase 3)
-  private mode: 'websocket' | 'http-polling' = 'websocket';
-  private torFetchFn?: (url: string) => Promise<string>;
+  // Outbound publish buffer (FIND-3786a35f / double-message fix). A DM sent
+  // while the socket is still mid-connect (cold page load — the SW reconnects
+  // every relay WS and presence beats only start landing once they're OPEN)
+  // used to throw out of publishRawEvent and be silently dropped: the relay
+  // pool's publish() recorded a per-relay failure but had NO retry layer
+  // despite safeSend's comment claiming one. Net effect: the FIRST message in a
+  // fresh session vanished, the second (sockets now OPEN) went through — the
+  // "have to message Lena twice" bug. Fix: buffer STORED events (gift-wraps,
+  // deletes, reactions, metadata) when the socket isn't OPEN and flush them on
+  // the next onopen. Ephemeral events (typing/presence, kind 20000–29999) are
+  // worthless once stale, so they are NOT buffered.
+  private pendingPublishes: {payload: string; expiresAt: number}[] = [];
+  private readonly maxPendingPublishes: number = 50;
+  private readonly pendingPublishTtlMs: number = 30000;
+
+  // Latency tracking
   private latencyMs: number = -1;
   public directLatencyMs: number = -1;
-  public torLatencyMs: number = -1;
-  private pollingInterval: ReturnType<typeof setInterval> | null = null;
-  private lastPolled: number = 0;
   private latencyInterval: ReturnType<typeof setInterval> | null = null;
   private readonly latencyRefreshMs: number = 60000;
 
@@ -242,12 +263,6 @@ export class NostrRelay {
       return;
     }
 
-    // In HTTP polling mode, start polling instead of WebSocket
-    if(this.mode === 'http-polling') {
-      this.startHttpPolling();
-      return;
-    }
-
     this.log('[NostrRelay] connecting to relay:', this.relayUrl);
     this.setConnectionState('connecting');
 
@@ -265,11 +280,11 @@ export class NostrRelay {
           this.subscribeMessages();
         }
 
-        // Only WS mode uses the periodic ping — Tor mode piggybacks on
-        // the HTTP poll loop for latency samples.
-        if(this.mode === 'websocket') {
-          this.startLatencyRefresh();
-        }
+        // Flush any stored-event publishes buffered while the socket was
+        // opening (the double-message / first-DM-dropped fix).
+        this.flushPendingPublishes();
+
+        this.startLatencyRefresh();
       };
 
       this.ws.onmessage = (event) => {
@@ -316,11 +331,6 @@ export class NostrRelay {
   disconnect(): void {
     this.log('[NostrRelay] disconnecting');
 
-    // Clear Tor polling state so any in-flight poll's `finally` block sees
-    // an inactive relay and refuses to reschedule the next iteration.
-    this.mode = 'websocket';
-    this.torFetchFn = undefined;
-    this.stopHttpPolling();
     this.stopLatencyRefresh();
     this.setLatency(-1);
 
@@ -491,7 +501,7 @@ export class NostrRelay {
     this.log('[NostrRelay] subscribing to messages');
 
     const filter: Record<string, unknown> = {
-      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING],
+      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING, NOSTR_KIND_PRESENCE],
       '#p': [this.publicKey]
     };
 
@@ -521,12 +531,6 @@ export class NostrRelay {
    * subscribed. Never rejects or hangs — safe to await on the boot path.
    */
   whenSubscribed(timeoutMs = 8000): Promise<boolean> {
-    // http-polling (Tor) transport has no EOSE — a connected polling relay is
-    // as "ready" as it gets, so don't stall the boot barrier on an EOSE that
-    // never arrives (would otherwise add the full timeout to every Tor boot).
-    if(this.mode === 'http-polling') {
-      return Promise.resolve(this.connectionState === 'connected');
-    }
     if(!this.subscriptionReady) return Promise.resolve(this.isSubscribed);
     return Promise.race([
       this.subscriptionReady.promise,
@@ -575,12 +579,73 @@ export class NostrRelay {
    * Used by relay pool to publish pre-wrapped gift-wrap events.
    */
   publishRawEvent(event: NostrEvent): void {
-    if(this.connectionState !== 'connected') {
+    const payload = JSON.stringify(['EVENT', event]);
+
+    // Fast path: socket OPEN → send live.
+    if(this.connectionState === 'connected' && this.safeSend(payload)) {
+      return;
+    }
+
+    // Socket not OPEN (cold-load connecting, or a reconnect race). Ephemeral
+    // events (typing/presence) are pointless once stale — preserve the old
+    // throw-and-drop behaviour. Stored events MUST NOT be lost: buffer and
+    // flush on reconnect so a message sent while the socket is still opening
+    // still reaches the relay.
+    const isEphemeral = event.kind >= 20000 && event.kind < 30000;
+    if(isEphemeral) {
       throw new Error('Not connected to relay');
     }
 
-    if(!this.safeSend(JSON.stringify(['EVENT', event]))) {
-      throw new Error('Not connected to relay');
+    this.bufferPendingPublish(payload);
+  }
+
+  /**
+   * Queue a stored-event payload for delivery on the next successful connect.
+   * Bounded by count and TTL so a long offline stretch can't grow unbounded or
+   * flush hopelessly-stale events. Kicks a connect if we're fully disconnected.
+   */
+  private bufferPendingPublish(payload: string): void {
+    const now = Date.now();
+    // Evict expired before appending.
+    this.pendingPublishes = this.pendingPublishes.filter(p => p.expiresAt > now);
+    this.pendingPublishes.push({payload, expiresAt: now + this.pendingPublishTtlMs});
+    // Drop oldest if over cap.
+    while(this.pendingPublishes.length > this.maxPendingPublishes) {
+      this.pendingPublishes.shift();
+    }
+    this.log('[NostrRelay] buffered publish (socket not open); pending:', this.pendingPublishes.length);
+    // Make sure something is driving us back to connected.
+    if(this.connectionState === 'disconnected') {
+      this.connect();
+    }
+  }
+
+  /**
+   * Flush buffered stored-event publishes after the socket reopens. Expired
+   * entries are discarded; anything that re-races a flapping socket is kept for
+   * the next onopen. Called from the onopen handler.
+   */
+  private flushPendingPublishes(): void {
+    if(this.pendingPublishes.length === 0) return;
+    const now = Date.now();
+    const queued = this.pendingPublishes;
+    this.pendingPublishes = [];
+    let flushed = 0;
+    let dropped = 0;
+    for(const p of queued) {
+      if(p.expiresAt <= now) {
+        dropped++;
+        continue;
+      }
+      if(this.safeSend(p.payload)) {
+        flushed++;
+      } else {
+        // Socket flapped between onopen and here — requeue for the next open.
+        this.pendingPublishes.push(p);
+      }
+    }
+    if(flushed || dropped) {
+      this.log(`[NostrRelay] flushed ${flushed} buffered publish(es), dropped ${dropped} expired`);
     }
   }
 
@@ -642,65 +707,12 @@ export class NostrRelay {
     }
   }
 
-  // ==================== Dual-Mode Transport (Phase 3) ====================
-
-  /**
-   * Switch to HTTP polling mode via Tor.
-   * Closes existing WebSocket, starts HTTP polling with the given fetch function.
-   */
-  setTorMode(fetchFn: (url: string) => Promise<string>): void {
-    this.mode = 'http-polling';
-    this.torFetchFn = fetchFn;
-
-    // Close existing WebSocket
-    if(this.ws) {
-      this.ws.onclose = null;
-      this.ws.close();
-      this.ws = null;
-    }
-
-    // Start HTTP polling if we were connected
-    if(this.connectionState === 'connected' || this.connectionState === 'connecting') {
-      this.startHttpPolling();
-    }
-
-    // Tor mode doesn't need the WS ping interval — each HTTP poll IS
-    // a latency sample. Stop any pre-existing refresh loop from WS mode.
-    this.stopLatencyRefresh();
-    this.setLatency(-1);
-  }
-
-  /**
-   * Switch back to direct WebSocket mode.
-   * Stops HTTP polling, clears torFetchFn, re-establishes WebSocket.
-   */
-  setDirectMode(): void {
-    this.mode = 'websocket';
-    this.torFetchFn = undefined;
-    this.stopHttpPolling();
-
-    // Re-establish WebSocket if we should be connected
-    if(this.connectionState === 'connected' || this.connectionState === 'connecting') {
-      this.connectionState = 'disconnected';
-      this.connect();
-    }
-
-    this.startLatencyRefresh();
-  }
-
   /**
    * Measure relay latency.
-   * HTTP polling mode: time a Tor HTTP fetch.
-   * WebSocket mode: send REQ with limit:0, time EOSE response.
+   * Sends a REQ with limit:0, times the EOSE response.
    * @returns Latency in ms, or -1 if unreachable
    */
   async measureLatency(): Promise<number> {
-    // In http-polling mode the poll loop itself is the latency signal
-    // (see startHttpPolling) — no synthetic ping needed.
-    if(this.mode === 'http-polling') {
-      return this.latencyMs;
-    }
-
     if(this.connectionState !== 'connected' || !this.ws) {
       this.setLatency(-1);
       return -1;
@@ -800,97 +812,6 @@ export class NostrRelay {
 
   getConnectionState(): string {
     return this.connectionState;
-  }
-
-  /**
-   * Get the current transport mode.
-   */
-  getMode(): 'websocket' | 'http-polling' {
-    return this.mode;
-  }
-
-  /**
-   * Start HTTP polling for events through Tor.
-   */
-  private startHttpPolling(): void {
-    this.stopHttpPolling();
-
-    if(!this.torFetchFn) return;
-
-    const httpsUrl = this.relayUrl
-    .replace('wss://', 'https://')
-    .replace('ws://', 'https://');
-
-    this.lastPolled = Math.floor(Date.now() / 1000) - 60;
-    this.setConnectionState('connected');
-
-    let consecutiveFailures = 0;
-    const baseDelay = 3000;
-    const maxDelay = 60_000;
-
-    const poll = async() => {
-      if(this.mode !== 'http-polling' || !this.torFetchFn) return;
-
-      const fetchStart = performance.now();
-      try {
-        const params = new URLSearchParams({
-          'kinds': '1059',
-          '#p': this.publicKey,
-          'since': String(this.lastPolled)
-        });
-        const url = `${httpsUrl}/?${params}`;
-        const body = await this.torFetchFn(url);
-
-        // Each Tor fetch IS a real latency sample — record it directly
-        // instead of firing a separate synthetic ping.
-        const elapsed = Math.round(performance.now() - fetchStart);
-        this.torLatencyMs = elapsed;
-        this.setLatency(elapsed);
-
-        let events: NostrEvent[] = [];
-        try {
-          events = JSON.parse(body);
-        } catch{
-          // empty or invalid response
-        }
-
-        if(Array.isArray(events) && events.length > 0) {
-          this.lastPolled = Math.max(...events.map(e => e.created_at)) + 1;
-          for(const event of events) {
-            this.handleEvent(event);
-          }
-        }
-        consecutiveFailures = 0;
-      } catch(err) {
-        consecutiveFailures++;
-        this.setLatency(-1);
-        this.log.warn('[NostrRelay] HTTP poll error:', err);
-      } finally {
-        // Schedule next poll only AFTER this one finishes — never let polls
-        // pile up in parallel, otherwise a slow Tor circuit gets saturated
-        // by concurrent fetches, multiplying the backlog every cycle.
-        if(this.mode === 'http-polling' && this.torFetchFn) {
-          const delay = consecutiveFailures > 0 ?
-            Math.min(baseDelay * Math.pow(2, consecutiveFailures), maxDelay) :
-            baseDelay;
-          this.pollingInterval = setTimeout(poll, delay) as any;
-        }
-      }
-    };
-
-    // Kick off the first poll — subsequent ones are chained via setTimeout
-    this.pollingInterval = setTimeout(poll, 100) as any;
-  }
-
-  /**
-   * Stop HTTP polling.
-   */
-  private stopHttpPolling(): void {
-    if(this.pollingInterval) {
-      clearTimeout(this.pollingInterval as any);
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
-    }
   }
 
   // ==================== Private Methods ====================
@@ -1044,7 +965,7 @@ export class NostrRelay {
     // through NIP-17 unwrap — they carry their referent in e/p tags. Typing
     // (kind 20001, NIP-16 ephemeral) was being dropped at the gift-wrap-only
     // gate below, so the three-dots indicator never fired.
-    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING) {
+    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING || event.kind === NOSTR_KIND_PRESENCE) {
       if(!verifyEvent(event as any)) {
         this.log.warn('[NostrRelay] dropping non-giftwrap event with invalid signature, kind:', event.kind, 'pubkey:', event.pubkey.slice(0, 8) + '...');
         return;
@@ -1144,6 +1065,27 @@ export class NostrRelay {
     if(this.connectionState === 'disconnected') {
       return;
     }
+
+    // The socket is gone, and any REQ subscription on the relay died with it.
+    // Clear isSubscribed and arm pendingSubscribe so the NEXT onopen sends a
+    // FRESH REQ. Previously isSubscribed stayed true across a reconnect, so
+    // onopen's `subscribeMessages()` hit the `if(this.isSubscribed) return`
+    // guard and never re-sent the REQ — after an idle disconnect the client
+    // believed it was subscribed but no live subscription existed on the new
+    // socket, so inbound DMs silently stopped until a full page reload. This
+    // is the root cause of the "ignores the first message after idle" bug.
+    // (Live DMs are NIP-17 single-shot with no redundancy, unlike groups which
+    // are gift-wrapped per-member across all relays, so the dead sub was
+    // invisible on group chats.) The pool runs a since-backfill on reconnect
+    // to recover anything that landed during the dead window.
+    if(this.isSubscribed || this.pendingSubscribe) {
+      this.isSubscribed = false;
+      this.pendingSubscribe = true;
+    }
+    // A pending readiness barrier can never resolve on a dead socket — settle
+    // it false so any awaiter unblocks instead of hanging until timeout.
+    this.subscriptionReady?.resolve(false);
+    this.subscriptionReady = null;
 
     this.stopLatencyRefresh();
     this.setLatency(-1);

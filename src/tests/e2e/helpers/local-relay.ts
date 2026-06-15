@@ -125,15 +125,6 @@ export class LocalRelay {
 
     await ctx.addInitScript(`
       window.__phantomchatTestRelays = ${relayConfig};
-      // Disable Tor for LocalRelay-based tests. LocalRelay is a direct ws://
-      // and Tor bootstrap can stall indefinitely in headless Chromium, leaving
-      // initGlobalSubscription gated on a promise that never resolves. Without
-      // this, the receiving peer's relay pool never comes up and receive-side
-      // tests flake. Tor-specific tests (e2e-tor-*) do not use LocalRelay.
-      try {
-        localStorage.setItem('phantomchat-tor-mode', 'off');
-        localStorage.removeItem('phantomchat-tor-enabled');
-      } catch(e) {}
     `);
   }
 

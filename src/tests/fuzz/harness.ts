@@ -77,11 +77,8 @@ async function createUser(
   opts: HarnessOptions
 ): Promise<UserHandle> {
   const context = await browser.newContext();
-  // injectInto sets __phantomchatTestRelays AND disables Tor — the latter is
-  // critical: with mode='when-available' the headless webtor bootstrap
-  // stalls, gating initGlobalSubscription on a promise that never resolves.
-  // The receiver's relay pool then never connects and B→A delivery
-  // silently fails (warmup step 1, all bidirectional fuzz scenarios).
+  // injectInto sets __phantomchatTestRelays so the app talks to the LocalRelay
+  // over direct ws:// instead of the default relay set.
   await relay.injectInto(context);
 
   // Blossom mock: intercept PUT/POST to upload/media endpoints, hash body,

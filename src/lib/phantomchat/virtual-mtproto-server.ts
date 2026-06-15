@@ -630,6 +630,9 @@ export class PhantomChatMTProtoServer {
             this.ownPubkey && msgB === this.ownPubkey ? msgA :
             msgB;
 
+          // Skip self:self conversations — the user is not their own chat.
+          if(peerPubkey === this.ownPubkey) continue;
+
           const latestMsgs = await store.getMessages(convId, 1);
           if(latestMsgs.length === 0) continue;
 
@@ -905,6 +908,21 @@ export class PhantomChatMTProtoServer {
           const candidateId = convId.slice('group:'.length);
           const candidatePeerId = await g2p(candidateId);
           if(candidatePeerId === peerId) {
+            // Resurrection guard: if the user deliberately deleted this group,
+            // a deletion tombstone exists for its conversation. Never rebuild a
+            // tombstoned group — purge the orphan messages so the scan can't
+            // keep matching it, and fall through to the empty result. This is
+            // the fix for "deleted groups keep coming back".
+            const deletedAt = await store.getTombstone(convId);
+            if(deletedAt > 0) {
+              console.warn(LOG_PREFIX, 'getGroupHistory: group is tombstoned (deleted) — refusing resurrection, purging orphan messages', {groupId: candidateId, peerId, deletedAt});
+              try {
+                await store.deleteMessages(convId);
+              } catch(err) {
+                console.warn(LOG_PREFIX, 'getGroupHistory: orphan purge after tombstone failed', err);
+              }
+              break;
+            }
             // Synthesize a minimal record + persist so future lookups hit
             // the indexed path. Members are reconstructed from message
             // senders we have on disk; admin defaults to ownPubkey for
@@ -1056,6 +1074,9 @@ export class PhantomChatMTProtoServer {
               this.ownPubkey && pubkeyB === this.ownPubkey ? pubkeyA :
               pubkeyB;
 
+            // Skip self:self conversations — don't surface the user as a result.
+            if(peerPubkey === this.ownPubkey) continue;
+
             const peerId = await this.mapper.mapPubkey(peerPubkey);
             if(stored.mid == null) {
               console.error(LOG_PREFIX, 'searchMessages: stored message missing mid — upstream write path is broken', {eventId: stored.eventId, timestamp: stored.timestamp});
@@ -1120,6 +1141,9 @@ export class PhantomChatMTProtoServer {
           const peerPubkey = this.ownPubkey && pubkeyA === this.ownPubkey ? pubkeyB :
             this.ownPubkey && pubkeyB === this.ownPubkey ? pubkeyA :
             pubkeyB;
+
+          // Skip self:self conversations — the user is not their own contact.
+          if(peerPubkey === this.ownPubkey) continue;
 
           const peerId = await this.mapper.mapPubkey(peerPubkey);
           const peerMapping = await getMapping(peerPubkey);

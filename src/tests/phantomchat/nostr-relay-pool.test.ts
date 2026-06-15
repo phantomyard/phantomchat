@@ -102,14 +102,6 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       return -1;
     }
 
-    getMode(): string {
-      return 'websocket';
-    }
-
-    setTorMode(_fetchFn: (url: string) => Promise<string>): void {}
-
-    setDirectMode(): void {}
-
     sendRawEvent(_event: any): void {}
   }
 
@@ -329,6 +321,83 @@ describe('NostrRelayPool', () => {
     });
   });
 
+  describe('presence ping/pong interception', () => {
+    function presenceMsg(id: string, type: 'presence-ping' | 'presence-pong', nonce: string): DecryptedMessage {
+      return {
+        id,
+        from: 'peer-pubkey-hex',
+        content: JSON.stringify({id: 'env-' + id, from: 'peer-pubkey-hex', to: 'me', type, nonce, content: '', timestamp: Date.now()}),
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+    }
+
+    it('routes a presence ping to the presence callback, NOT onMessage', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [{url: 'wss://r.test', read: true, write: true}], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+      const onPresence = vi.fn();
+      pool.setOnPresence(onPresence);
+
+      mockRelayInstances[0].simulateMessage(presenceMsg('ping-1', 'presence-ping', 'n-abc'));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(onPresence).toHaveBeenCalledTimes(1);
+      expect(onPresence).toHaveBeenCalledWith({type: 'ping', from: 'peer-pubkey-hex', nonce: 'n-abc'});
+    });
+
+    it('routes a presence pong to the presence callback', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [{url: 'wss://r.test', read: true, write: true}], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+      const onPresence = vi.fn();
+      pool.setOnPresence(onPresence);
+
+      mockRelayInstances[0].simulateMessage(presenceMsg('pong-1', 'presence-pong', 'n-xyz'));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(onPresence).toHaveBeenCalledWith({type: 'pong', from: 'peer-pubkey-hex', nonce: 'n-xyz'});
+    });
+
+    it('still delivers a normal text envelope to onMessage', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [{url: 'wss://r.test', read: true, write: true}], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+      pool.setOnPresence(vi.fn());
+
+      const textMsg: DecryptedMessage = {
+        id: 'text-1',
+        from: 'peer-pubkey-hex',
+        content: JSON.stringify({id: 'm1', type: 'text', content: 'hi', timestamp: Date.now()}),
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+      mockRelayInstances[0].simulateMessage(textMsg);
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage).toHaveBeenCalledWith(textMsg);
+    });
+
+    it('dedups a presence event across relays (fires the callback once)', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [
+        {url: 'wss://r1.test', read: true, write: true},
+        {url: 'wss://r2.test', read: true, write: true}
+      ], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+      const onPresence = vi.fn();
+      pool.setOnPresence(onPresence);
+
+      const ping = presenceMsg('ping-dup', 'presence-ping', 'n-dup');
+      mockRelayInstances[0].simulateMessage(ping);
+      mockRelayInstances[1].simulateMessage(ping);
+
+      expect(onPresence).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('reconnection', () => {
     it('pool-level recovery retries all failed relays every 60s', async() => {
       const onMessage = vi.fn();
@@ -448,8 +517,45 @@ describe('NostrRelayPool', () => {
 
       await pool.initialize();
 
-      expect(getMessagesSpy).toHaveBeenCalledWith(1700000000);
+      // Backfill subtracts a small fuzz window (clock skew / out-of-order slack)
+      // from lastSeen. Backdating was removed, so this is minutes, not 48h:
+      // 5*60 = 300s → 1700000000 - 300 = 1699999700.
+      expect(getMessagesSpy).toHaveBeenCalledWith(1700000000 - 5 * 60);
       getMessagesSpy.mockRestore();
+    });
+
+    it('catch-up poll re-queries connected read relays with a tight since', async() => {
+      vi.useFakeTimers();
+      try {
+        const onMessage = vi.fn();
+        const relays = [
+          {url: 'wss://relay1.test', read: true, write: true}
+        ];
+        const pool = new NostrRelayPool({relays, onMessage});
+        await pool.initialize();
+
+        // The poll only runs once subscribed and only against CONNECTED read
+        // relays — mirror that state.
+        pool.subscribeMessages();
+        const inst = mockRelayInstances[mockRelayInstances.length - 1];
+        inst.connectionState = 'connected';
+        const spy = vi.spyOn(inst, 'getMessages').mockResolvedValue([]);
+
+        // Advance past one poll interval (BACKFILL_POLL_INTERVAL_MS = 15s).
+        // Fake timers move Date.now() forward too, so measure "now" at the
+        // moment the poll fires, not before.
+        await vi.advanceTimersByTimeAsync(15_000);
+        const nowAtFire = Math.floor(Date.now() / 1000);
+
+        expect(spy).toHaveBeenCalled();
+        const calledSince = spy.mock.calls[0]![0] as number;
+        // RECENT_BACKFILL_WINDOW_SEC = 90; allow a couple seconds of slack.
+        expect(calledSince).toBeGreaterThanOrEqual(nowAtFire - 90 - 3);
+        expect(calledSince).toBeLessThanOrEqual(nowAtFire - 90 + 3);
+        spy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('updates lastSeenTimestamp as messages arrive', async() => {
@@ -555,42 +661,6 @@ describe('NostrRelayPool', () => {
     });
   });
 
-  describe('Tor mode (Phase 3)', () => {
-    it('setTorMode calls setTorMode on all relay entries', async() => {
-      const onMessage = vi.fn();
-      const relays = [
-        {url: 'wss://relay1.test', read: true, write: true},
-        {url: 'wss://relay2.test', read: true, write: true}
-      ];
-      const pool = new NostrRelayPool({relays, onMessage});
-      await pool.initialize();
-
-      const spy1 = vi.spyOn(mockRelayInstances[0], 'setTorMode');
-      const spy2 = vi.spyOn(mockRelayInstances[1], 'setTorMode');
-
-      const fetchFn = vi.fn();
-      pool.setTorMode(fetchFn);
-
-      expect(spy1).toHaveBeenCalled();
-      expect(spy2).toHaveBeenCalled();
-    });
-
-    it('setDirectMode calls setDirectMode on all relay entries', async() => {
-      const onMessage = vi.fn();
-      const relays = [
-        {url: 'wss://relay1.test', read: true, write: true}
-      ];
-      const pool = new NostrRelayPool({relays, onMessage});
-      await pool.initialize();
-
-      const spy1 = vi.spyOn(mockRelayInstances[0], 'setDirectMode');
-
-      pool.setDirectMode();
-
-      expect(spy1).toHaveBeenCalled();
-    });
-  });
-
   describe('publishNip65 (Phase 3)', () => {
     it('publishes NIP-65 event to write-enabled relays only', async() => {
       const onMessage = vi.fn();
@@ -613,30 +683,4 @@ describe('NostrRelayPool', () => {
     });
   });
 
-  describe('pool recovery Tor mode (Phase 3)', () => {
-    it('skips reconnection when in Tor mode without fetchFn', async() => {
-      const onMessage = vi.fn();
-      const relays = [
-        {url: 'wss://relay1.test', read: true, write: true}
-      ];
-      const pool = new NostrRelayPool({relays, onMessage});
-      await pool.initialize();
-
-      // Enter Tor mode then clear fetchFn
-      const fetchFn = vi.fn();
-      pool.setTorMode(fetchFn);
-      pool.clearTorFetchFn();
-
-      // Simulate disconnect
-      mockRelayInstances[0].simulateDisconnect();
-      mockRelayInstances[0].initialized = false;
-
-      // Advance pool recovery interval (60s)
-      vi.advanceTimersByTime(60_000);
-      await vi.advanceTimersByTimeAsync(0);
-
-      // Recovery should be skipped — relay NOT re-initialized
-      expect(mockRelayInstances[0].initialized).toBe(false);
-    });
-  });
 });

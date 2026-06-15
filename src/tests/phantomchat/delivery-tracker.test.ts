@@ -5,7 +5,7 @@
  * creation/parsing, and read receipt privacy toggle.
  */
 
-import {describe, it, expect, beforeEach, beforeAll, vi} from 'vitest';
+import {describe, it, expect, beforeEach, afterEach, beforeAll, vi} from 'vitest';
 
 // Mock rootScope
 vi.mock('@lib/rootScope', () => ({
@@ -255,5 +255,112 @@ describe('parseReceipt', () => {
       tags: [['p', 'someone']], id: 'r'
     };
     expect(parseReceipt(rumor)).toBeNull();
+  });
+});
+
+// ─── Always-on delivery retry ──────────────────────────────────────
+
+describe('DeliveryTracker retry (always-on)', () => {
+  const fakePrivateKey = new Uint8Array(32).fill(1);
+  const fakePublicKey = 'aaaa'.repeat(16);
+  const wraps = [{id: 'wrap-a', kind: 1059, content: '', pubkey: '', created_at: 0, tags: [] as string[][], sig: ''}];
+  let tracker: any;
+  let resendFn: any;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resendFn = vi.fn().mockResolvedValue(undefined);
+    if(typeof localStorage !== 'undefined') localStorage.removeItem('phantomchat:read-receipts-enabled');
+    tracker = new DeliveryTracker({
+      privateKey: fakePrivateKey,
+      publicKey: fakePublicKey,
+      publishFn: vi.fn().mockResolvedValue(undefined),
+      resendFn
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resends the SAME wraps when no delivery ack arrives', async() => {
+    tracker.registerOutgoing('chat-1-0', wraps);
+    tracker.markSent('chat-1-0');
+
+    expect(resendFn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(resendFn).toHaveBeenCalledTimes(1);
+    // Must resend the identical wrap objects — same rumor id → receiver dedups.
+    expect(resendFn).toHaveBeenLastCalledWith(wraps);
+
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(resendFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops retrying once a delivery receipt arrives', async() => {
+    tracker.registerOutgoing('chat-2-0', wraps);
+    tracker.markSent('chat-2-0');
+
+    // Delivery ack before the first retry fires.
+    tracker.handleReceipt({
+      kind: 14, content: '', pubkey: 'peer', created_at: 0,
+      tags: [['e', 'chat-2-0'], ['receipt-type', 'delivery']], id: 'rcpt'
+    });
+
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(resendFn).not.toHaveBeenCalled();
+  });
+
+  it('gives up after the capped number of attempts', async() => {
+    tracker.registerOutgoing('chat-3-0', wraps);
+    tracker.markSent('chat-3-0');
+
+    await vi.advanceTimersByTimeAsync(8000 + 20000 + 45000 + 5000);
+    // Exactly 3 scheduled attempts (8s, 20s, 45s), then it stops.
+    expect(resendFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('is a no-op when no wraps were registered (legacy/offline path)', async() => {
+    tracker.markSent('chat-4-0');
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(resendFn).not.toHaveBeenCalled();
+  });
+
+  // ── Production path: a re-wrap CLOSURE (fresh outer wrap each attempt) ──
+  // Re-publishing the identical wrap can't rescue a ghosted message (relays
+  // won't re-forward a duplicate outer id to a live subscriber), so production
+  // registers a closure that mints a fresh outer wrap on every retry.
+  it('invokes the re-wrap closure (not resendFn) on each retry', async() => {
+    const rewrap = vi.fn();
+    tracker.registerOutgoing('chat-5-0', rewrap);
+    tracker.markSent('chat-5-0');
+
+    expect(rewrap).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(rewrap).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(rewrap).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(45000);
+    expect(rewrap).toHaveBeenCalledTimes(3);
+    // The legacy resendFn is bypassed entirely on the closure path.
+    expect(resendFn).not.toHaveBeenCalled();
+  });
+
+  it('stops invoking the re-wrap closure once a delivery receipt arrives', async() => {
+    const rewrap = vi.fn();
+    tracker.registerOutgoing('chat-6-0', rewrap);
+    tracker.markSent('chat-6-0');
+
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(rewrap).toHaveBeenCalledTimes(1);
+
+    tracker.handleReceipt({
+      kind: 14, content: '', pubkey: 'peer', created_at: 0,
+      tags: [['e', 'chat-6-0'], ['receipt-type', 'delivery']], id: 'rcpt'
+    });
+
+    await vi.advanceTimersByTimeAsync(120000);
+    // No further attempts after the ack.
+    expect(rewrap).toHaveBeenCalledTimes(1);
   });
 });

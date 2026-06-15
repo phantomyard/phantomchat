@@ -642,6 +642,12 @@ export class GroupAPI {
     // group in chat list until the next reload.
     const peerId = await groupIdToPeerId(groupId);
     await this.store.delete(groupId);
+    // Purge the group's local messages and write a deletion tombstone so the
+    // orphan-recovery scan in getGroupHistory can never resurrect it. Deleting
+    // only the store record (as before) left 'group:<id>' messages on disk,
+    // which getGroupHistory rebuilt into a half-broken zombie group — the
+    // "deleted groups keep coming back / not a member of group" bug.
+    await this.tombstoneGroupConversation(groupId);
     await cleanupGroupChatInjection(peerId);
 
     // Drop the chat-list dialog row symmetrically (FIND-3786a35f obs (D)).
@@ -687,8 +693,58 @@ export class GroupAPI {
     if(group) {
       return this.leaveGroup(group.groupId);
     }
-    this.log('[GroupAPI] leaveGroupByPeerId: orphan peer (no store record), cleaning mirror only:', peerId);
+    this.log('[GroupAPI] leaveGroupByPeerId: orphan peer (no store record), tombstoning + cleaning mirror:', peerId);
+    // Even with no store record, leftover 'group:<id>' messages on disk would
+    // let getGroupHistory rebuild the group. Find the matching conversation by
+    // peerId and tombstone + purge it so the deletion sticks.
+    await this.tombstoneOrphanGroupByPeerId(peerId);
     await cleanupGroupChatInjection(peerId);
+  }
+
+  /**
+   * Purge a group's local messages and write a deletion tombstone.
+   *
+   * Group conversations are keyed 'group:<groupId>' in the message store — the
+   * same tombstone scheme deleteContacts uses for 1:1 deletions. Writing the
+   * watermark here is what stops getGroupHistory's orphan-recovery scan from
+   * resurrecting a deliberately-deleted group. Best-effort: failures are logged
+   * but never block the leave flow.
+   */
+  private async tombstoneGroupConversation(groupId: string): Promise<void> {
+    try {
+      const store = getMessageStore();
+      const convId = `group:${groupId}`;
+      const now = Math.floor(Date.now() / 1000);
+      await store.deleteMessages(convId);
+      await store.setTombstone(convId, now);
+      this.log('[GroupAPI] tombstoned + purged group conversation:', convId, 'at', now);
+    } catch(err) {
+      this.log.warn('[GroupAPI] tombstoneGroupConversation failed (non-fatal):', err);
+    }
+  }
+
+  /**
+   * Resolve a group conversation by peerId (when the store record is already
+   * gone) and tombstone it. Mirrors getGroupHistory's orphan scan: walk the
+   * 'group:*' conversation ids and match groupIdToPeerId(candidate) === peerId.
+   */
+  private async tombstoneOrphanGroupByPeerId(peerId: number): Promise<void> {
+    try {
+      const store = getMessageStore();
+      const convIds = await store.getAllConversationIds();
+      for(const convId of convIds) {
+        if(!convId.startsWith('group:')) continue;
+        const candidateId = convId.slice('group:'.length);
+        const candidatePeerId = await groupIdToPeerId(candidateId);
+        if(candidatePeerId === peerId) {
+          await this.tombstoneGroupConversation(candidateId);
+          return;
+        }
+      }
+      this.log('[GroupAPI] tombstoneOrphanGroupByPeerId: no group conversation matched peerId', peerId);
+    } catch(err) {
+      this.log.warn('[GroupAPI] tombstoneOrphanGroupByPeerId failed (non-fatal):', err);
+    }
   }
 
   // ─── Incoming message handling ────────────────────────────────

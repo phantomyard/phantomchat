@@ -102,7 +102,15 @@ export class AppSidebarRight extends SidebarSlider {
 
         previousTab.container.remove();
       }
-    } else {
+    } else if(tab) {
+      // [PhantomChat.chat] FIND-3786a35f obs (B): the reset-peer path
+      // (chat.ts:1093) calls replaceSharedMediaTab() with NO tab during
+      // deletion teardown (dropDialogOnDeletion → flushHistory → setPeer).
+      // If there's also no usable previousTab, the old code blindly did
+      // `tab.container` and threw, aborting deletion teardown partway —
+      // which left group tombstone/mirror cleanup incomplete and let
+      // deleted groups resurrect. Treat "no previous tab AND no new tab"
+      // as a no-op instead of crashing.
       this.tabsContainer.prepend(tab.container);
     }
 

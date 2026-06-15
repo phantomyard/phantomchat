@@ -1,11 +1,10 @@
 /**
- * Blossom Blob Storage Client — Upload/Download via Tor Proxy
+ * Blossom Blob Storage Client — Upload/Download
  *
  * Uploads encrypted media blobs to Blossom servers (BUD-02 protocol).
  * Downloads blobs by SHA-256 hash with server fallback chain.
  *
  * Transport-agnostic: accepts any fetch-compatible function.
- * In production, pass PrivacyTransport's Tor fetch wrapper for IP privacy.
  */
 
 import {encryptMedia, sha256Hex, hexToBytes, decryptMedia} from './media-crypto';

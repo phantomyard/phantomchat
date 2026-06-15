@@ -7,10 +7,10 @@
  * by the unit test suite in folders-sync.test.ts with mocked ChatAPI.
  *
  * Steps:
- *   1. Boot device A (fresh identity), verify 3 default folders (All/Persons/Groups) appear
- *   2. Verify Persons/Groups carry the literal English titles
+ *   1. Boot device A (fresh identity), verify default folders (All/Groups) appear
+ *   2. Verify Groups carries the literal English title
  *   3. Create custom folder "Lavoro" — verify it persists
- *   4. Verify protection guard rejects deletion of FOLDER_ID_PERSONS
+ *   4. Verify protection guard rejects deletion of FOLDER_ID_GROUPS
  *   5. Verify FoldersSync publishes to the local relay after the debounced window
  *
  * Run: npx tsx src/tests/e2e/e2e-default-folders-sync.ts
@@ -128,20 +128,16 @@ async function run() {
     if(!foldersA) throw new Error('A: filtersStorage not reachable via apiManagerProxy');
     const idsA = foldersA.map((f: any) => f.id);
     if(!idsA.includes(0)) throw new Error(`A: missing FOLDER_ID_ALL (0) — got ids: ${idsA}`);
-    if(!idsA.includes(2)) throw new Error(`A: missing FOLDER_ID_PERSONS (2) — got ids: ${idsA}`);
+    if(idsA.includes(2)) throw new Error(`A: removed FOLDER_ID_PERSONS (2) is still present — got ids: ${idsA}`);
     if(!idsA.includes(3)) throw new Error(`A: missing FOLDER_ID_GROUPS (3) — got ids: ${idsA}`);
-    console.log('[A] ✓ 3 default folders present (All=0, Persons=2, Groups=3)');
+    console.log('[A] ✓ default folders present (All=0, Groups=3), Persons (2) removed');
 
-    // Verify Persons/Groups carry the literal English titles
-    const personsA = foldersA.find((f: any) => f.id === 2);
+    // Verify Groups carries the literal English title
     const groupsA = foldersA.find((f: any) => f.id === 3);
-    if(personsA?.title !== 'People') {
-      throw new Error(`A: Persons expected title "People" — got "${personsA?.title}"`);
-    }
     if(groupsA?.title !== 'Groups') {
       throw new Error(`A: Groups expected title "Groups" — got "${groupsA?.title}"`);
     }
-    console.log('[A] ✓ Persons/Groups carry literal English titles');
+    console.log('[A] ✓ Groups carries literal English title');
 
     // Create custom folder "Lavoro"
     const createResult = await aPage.evaluate(async() => {
@@ -182,7 +178,7 @@ async function run() {
     console.log('[A] ✓ Lavoro persisted locally');
 
     // ========================================================================
-    // Protection guard: attempt to delete FOLDER_ID_PERSONS
+    // Protection guard: attempt to delete FOLDER_ID_GROUPS
     // ========================================================================
     console.log('\n--- Protection guard test ---');
     const deletePersonsResult = await aPage.evaluate(async() => {
@@ -192,7 +188,7 @@ async function run() {
       // updateDialogFilter(filter, remove=true) should be rejected for protected folders
       const filter = {
         _: 'dialogFilter',
-        id: 2,
+        id: 3,
         pFlags: {},
         title: {_: 'textWithEntities', text: '', entities: []},
         exclude_peers: [],
@@ -211,9 +207,9 @@ async function run() {
     });
     console.log('[A] protected delete result:', deletePersonsResult);
     if(deletePersonsResult === 'RESOLVED') {
-      throw new Error('A: protection guard did NOT reject deletion of FOLDER_ID_PERSONS');
+      throw new Error('A: protection guard did NOT reject deletion of FOLDER_ID_GROUPS');
     }
-    console.log('[A] ✓ protection guard correctly rejected Persons folder deletion');
+    console.log('[A] ✓ protection guard correctly rejected Groups folder deletion');
 
     // ========================================================================
     // Summary

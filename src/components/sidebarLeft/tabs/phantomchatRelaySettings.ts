@@ -25,8 +25,8 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
     // ─── Preferences ────────────────────────────────────────
     const prefSection = new SettingSection({
-      name: 'Preferenze' as any,
-      caption: 'Ignora i relay di default e usa solo quelli che hai aggiunto tu' as any
+      name: 'Preferences' as any,
+      caption: 'Ignore the default relays and use only the ones you added' as any
     });
 
     const onlyMineCheckbox = new CheckboxField({
@@ -38,7 +38,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
     });
 
     const onlyMineRow = new Row({
-      title: 'Usa solo i miei relay',
+      title: 'Use only my relays',
       checkboxField: onlyMineCheckbox,
       clickable: true
     });
@@ -46,7 +46,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
     // ─── Current Relays ─────────────────────────────────────
     const relaysSection = new SettingSection({
-      name: 'I tuoi relay' as any,
+      name: 'Your relays' as any,
       caption: true
     });
     this.captionEl = relaysSection.caption;
@@ -68,7 +68,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
     // ─── Add Relay ──────────────────────────────────────────
     const addSection = new SettingSection({
-      name: 'Aggiungi relay' as any
+      name: 'Add relay' as any
     });
 
     const urlInput = new InputField({
@@ -78,7 +78,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
     });
 
     const addBtn = Button('btn-primary btn-color-primary');
-    addBtn.textContent = 'Aggiungi';
+    addBtn.textContent = 'Add';
     addBtn.style.width = '100%';
     addBtn.style.marginTop = '8px';
     attachClickEvent(addBtn, () => {
@@ -99,11 +99,11 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
     // ─── Reset ──────────────────────────────────────────────
     const resetSection = new SettingSection({
-      caption: 'Ripristina la lista ai relay di default di PhantomChat' as any
+      caption: 'Restore the list to PhantomChat default relays' as any
     });
 
     const resetBtn = Button('btn-primary btn-color-primary btn-transparent danger');
-    resetBtn.textContent = 'Ripristina predefiniti';
+    resetBtn.textContent = 'Restore defaults';
     attachClickEvent(resetBtn, () => {
       if(!this.relayPool) return;
       const current = this.relayPool.getRelays();
@@ -139,40 +139,21 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
     const relays: RelayConfig[] = this.relayPool?.getRelays() ?? [];
     const states = this.relayPool?.getRelayStates() ?? [];
     const stateMap = new Map(states.map((s: any) => [s.url, s]));
-    const entries = this.relayPool?.getRelayEntries() ?? [];
-    const instanceMap = new Map(entries.map((e: any) => [e.config.url, e.instance]));
 
     if(relays.length === 0) {
       const empty = document.createElement('div');
       empty.classList.add('relay-list-empty');
-      empty.textContent = 'Nessun relay configurato';
+      empty.textContent = 'No relays configured';
       container.append(empty);
       this.updateCaption(0, 0);
       return;
     }
 
-    let overheadSum = 0;
-    let overheadCount = 0;
     let connectedCount = 0;
 
     for(const relay of relays) {
       const st = stateMap.get(relay.url);
       if(st?.connected) connectedCount++;
-      const instance = instanceMap.get(relay.url);
-      const torLat = instance?.torLatencyMs ?? -1;
-      const dirLat = instance?.directLatencyMs ?? -1;
-      if(torLat >= 0 && dirLat >= 0) {
-        overheadSum += torLat - dirLat;
-        overheadCount++;
-      }
-    }
-
-    if(overheadCount > 0) {
-      const avgOverhead = Math.round(overheadSum / overheadCount);
-      const aggEl = document.createElement('div');
-      aggEl.classList.add('relay-tor-aggregate');
-      aggEl.textContent = `🧅 Avg Tor overhead: +${avgOverhead}ms across ${overheadCount} relay${overheadCount > 1 ? 's' : ''}`;
-      container.append(aggEl);
     }
 
     this.updateCaption(connectedCount, relays.length);
@@ -182,12 +163,9 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
       const connected = st?.connected ?? false;
       const latencyMs = st?.latencyMs ?? -1;
       const enabled = st?.enabled ?? true;
-      const instance = instanceMap.get(relay.url);
-      const torLatency = instance?.torLatencyMs ?? -1;
-      const directLatency = instance?.directLatencyMs ?? -1;
 
       container.append(
-        this.createCard(relay, connected, latencyMs, enabled, torLatency, directLatency)
+        this.createCard(relay, connected, latencyMs, enabled)
       );
     }
   }
@@ -196,9 +174,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
     relay: RelayConfig,
     connected: boolean,
     latencyMs: number,
-    enabled: boolean,
-    torLatency: number,
-    directLatency: number
+    enabled: boolean
   ): HTMLElement {
     const card = document.createElement('div');
     card.classList.add('relay-card');
@@ -218,13 +194,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
     const lat = document.createElement('span');
     lat.classList.add('relay-card__latency');
     if(latencyMs >= 0) {
-      if(torLatency >= 0 && directLatency >= 0) {
-        const overhead = torLatency - directLatency;
-        lat.textContent = `${latencyMs}ms (Tor +${overhead}ms)`;
-        lat.classList.add(overhead < 200 ? 'latency-good' : overhead < 500 ? 'latency-moderate' : 'latency-slow');
-      } else {
-        lat.textContent = `${latencyMs}ms`;
-      }
+      lat.textContent = `${latencyMs}ms`;
     } else {
       lat.textContent = connected ? '…' : 'offline';
     }
@@ -286,7 +256,7 @@ export default class AppPhantomChatRelaySettingsTab extends SliderSuperTab {
 
   private updateCaption(connected: number, total: number): void {
     if(this.captionEl) {
-      this.captionEl.textContent = `${connected}/${total} connessi`;
+      this.captionEl.textContent = `${connected}/${total} connected`;
     }
   }
 }

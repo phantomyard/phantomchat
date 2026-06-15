@@ -68,4 +68,43 @@ describe('phantomchatTypingReceive', () => {
     await expect(typing.onTyping(makeEvent())).resolves.toBeUndefined();
     expect(dispatched).toEqual([]);
   });
+
+  it('dispatches a CANCEL (not a start) for a stop-marked DM event', async() => {
+    const calls: Array<{peerId: number, isStop?: boolean}> = [];
+    typing.setTypingDispatcher((peerId: number, isStop?: boolean) => calls.push({peerId, isStop}));
+    await typing.onTyping(makeEvent({content: 'stop'}));
+    expect(calls).toEqual([{peerId: 4242, isStop: true}]);
+  });
+
+  it('routes a group-tagged event to the GROUP dispatcher with chat id + sender', async() => {
+    const groupCalls: Array<{chatId: number, from: number, isStop?: boolean}> = [];
+    let ensured = false;
+    typing.setGroupResolver(async() => -1500); // negative group peerId
+    typing.setUserEnsurer(async() => { ensured = true; });
+    typing.setGroupTypingDispatcher((chatId: number, from: number, isStop?: boolean) =>
+      groupCalls.push({chatId, from, isStop}));
+
+    await typing.onTyping(makeEvent({tags: [['group', 'hq-id'], ['p', OWN]]}));
+
+    // chat id is the positive form of the negative group peerId; sender = 4242.
+    expect(groupCalls).toEqual([{chatId: 1500, from: 4242, isStop: false}]);
+    // The 1:1 dispatcher must NOT fire for a group tick.
+    expect(dispatched).toEqual([]);
+    // The typing member's User was ensured so the name renders.
+    expect(ensured).toBe(true);
+  });
+
+  it('group stop dispatches a group CANCEL and skips user-ensure', async() => {
+    const groupCalls: Array<{chatId: number, from: number, isStop?: boolean}> = [];
+    let ensured = false;
+    typing.setGroupResolver(async() => -1500);
+    typing.setUserEnsurer(async() => { ensured = true; });
+    typing.setGroupTypingDispatcher((chatId: number, from: number, isStop?: boolean) =>
+      groupCalls.push({chatId, from, isStop}));
+
+    await typing.onTyping(makeEvent({content: 'stop', tags: [['group', 'hq-id'], ['p', OWN]]}));
+
+    expect(groupCalls).toEqual([{chatId: 1500, from: 4242, isStop: true}]);
+    expect(ensured).toBe(false);
+  });
 });

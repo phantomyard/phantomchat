@@ -132,7 +132,7 @@ export function wrapNip17Message(
   recipientPubHex: string,
   content: string,
   replyTo?: {eventId: string; relayUrl?: string}
-): {wraps: NTNostrEvent[]; rumorId: string} {
+): {wraps: NTNostrEvent[]; rumorId: string; rumor: UnsignedEvent} {
   const senderPubHex = getPublicKey(senderSk);
   const tags: string[][] = [['p', recipientPubHex]];
   if(replyTo) {
@@ -144,18 +144,58 @@ export function wrapNip17Message(
   // can key by the SAME id the receiver will see after unwrap.
   const rumor = createRumor(content, senderSk, tags);
 
-  // Create seal + gift-wrap for recipient
+  // Seal + gift-wrap for recipient and self (multi-device recovery).
+  const {wraps} = sealAndWrapRumor(rumor, senderSk, recipientPubHex, senderPubHex);
+
+  return {
+    wraps,
+    rumorId: rumor.id,
+    // The immutable rumor is returned so callers (the delivery-retry layer)
+    // can RE-wrap the SAME rumor in a FRESH outer gift-wrap. Re-publishing the
+    // identical outer event is useless: a relay will not re-forward a duplicate
+    // event id to an already-live subscription, so a ghosted first message
+    // never self-heals. A fresh wrap has a new outer id (relay forwards it) but
+    // the rumor id is unchanged (receiver dedups → never a double).
+    rumor
+  };
+}
+
+/**
+ * Re-wrap an EXISTING rumor in a fresh gift-wrap pair (recipient + self).
+ *
+ * Used by the always-on delivery-retry layer. The rumor object — and therefore
+ * its `.id` — is preserved verbatim, so the receiver dedups by rumor id and
+ * never renders a duplicate. Only the outer kind-1059 wraps are regenerated
+ * (new ephemeral key + new outer id each time), which is exactly what makes a
+ * relay re-forward the event to a subscriber that already EOSE'd.
+ */
+export function rewrapNip17Message(
+  senderSk: Uint8Array,
+  recipientPubHex: string,
+  rumor: UnsignedEvent
+): NTNostrEvent[] {
+  const senderPubHex = getPublicKey(senderSk);
+  return sealAndWrapRumor(rumor, senderSk, recipientPubHex, senderPubHex).wraps;
+}
+
+/**
+ * Shared seal+wrap step: produces [recipientWrap, selfWrap] for a given rumor.
+ * Each call regenerates the seals and gift-wraps, so outer ids differ between
+ * calls while the inner rumor (and its id) is untouched.
+ */
+function sealAndWrapRumor(
+  rumor: UnsignedEvent,
+  senderSk: Uint8Array,
+  recipientPubHex: string,
+  senderPubHex: string
+): {wraps: NTNostrEvent[]} {
   const recipientSeal = createSeal(rumor, senderSk, recipientPubHex);
   const recipientWrap = createGiftWrap(recipientSeal, recipientPubHex);
 
-  // Create seal + gift-wrap for self (multi-device recovery)
   const selfSeal = createSeal(rumor, senderSk, senderPubHex);
   const selfWrap = createGiftWrap(selfSeal, senderPubHex);
 
-  return {
-    wraps: [recipientWrap, selfWrap] as unknown as NTNostrEvent[],
-    rumorId: rumor.id
-  };
+  return {wraps: [recipientWrap, selfWrap] as unknown as NTNostrEvent[]};
 }
 
 /**
@@ -336,7 +376,14 @@ export function createRumor(
  *
  * Create a sealed event (NIP-17 kind 13).
  * Encrypts the rumor JSON with NIP-44, signs with sender's key.
- * Uses randomized created_at within past 48 hours for metadata protection.
+ *
+ * created_at is the REAL send time (no backdating). NIP-17 permits randomizing
+ * a seal's timestamp up to 48h into the past for metadata privacy, but the seal
+ * is encrypted INSIDE the gift-wrap — a relay/observer never sees it — so
+ * backdating the seal bought no privacy at all while making every timestamp a
+ * lie. More importantly, truthful timestamps are what let a receiver poll with a
+ * tight `since` to catch any message the relay failed to push live (the cause of
+ * the "first message ghosts" bug). See createGiftWrap for the same change.
  */
 export function createSeal(
   rumor: UnsignedEvent,
@@ -346,8 +393,7 @@ export function createSeal(
   const convKey = getConversationKey(senderSk, recipientPk);
   const encryptedContent = nip44Encrypt(JSON.stringify(rumor), convKey);
 
-  const randomOffset = Math.floor(Math.random() * 48 * 60 * 60);
-  const created_at = Math.floor(Date.now() / 1000) - randomOffset;
+  const created_at = Math.floor(Date.now() / 1000);
 
   const sealTemplate = {
     kind: 13,
@@ -364,7 +410,16 @@ export function createSeal(
  *
  * Create a gift-wrapped event (NIP-17 kind 1059).
  * Uses an ephemeral key to wrap the seal, tagged with recipient pubkey.
- * Uses randomized created_at for metadata protection.
+ *
+ * created_at is the REAL send time (no backdating). The randomized 0–48h
+ * backdate this used to apply was the root cause of the "first message ghosts"
+ * bug: relays apply a subscription's `since` filter to LIVE events too, so a
+ * receiver could not safely poll with a tight `since` to recover a message the
+ * relay dropped from its live push — a backdated wrap was timestamped hours
+ * before any sane catch-up window. With a truthful timestamp, a short periodic
+ * `since = now − ~70s` poll reliably heals any live-push miss. The only thing
+ * we forfeit is timing-metadata privacy against a relay operator, which is worth
+ * nothing for a closed loop between Andrew and his own agents.
  */
 export function createGiftWrap(
   seal: SignedEvent,
@@ -374,8 +429,7 @@ export function createGiftWrap(
   const convKey = getConversationKey(ephemeralSk, recipientPk);
   const encryptedContent = nip44Encrypt(JSON.stringify(seal), convKey);
 
-  const randomOffset = Math.floor(Math.random() * 48 * 60 * 60);
-  const created_at = Math.floor(Date.now() / 1000) - randomOffset;
+  const created_at = Math.floor(Date.now() / 1000);
 
   const wrapTemplate = {
     kind: 1059,

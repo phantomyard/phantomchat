@@ -24,11 +24,21 @@
 import rootScope from '@lib/rootScope';
 import {verifyEvent} from 'nostr-tools/pure';
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
+import {groupIdToPeerId} from './group-types';
+import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 
 const LOG_PREFIX = '[PhantomChatTypingReceive]';
 
 /** Drop typing events whose created_at is older than this (seconds). */
 const STALE_SECONDS = 30;
+
+/**
+ * Content marker on a kind-20001 event. Empty = "typing now" (start/refresh);
+ * `'stop'` = "stopped" (cancel immediately). Mirrors phantombot's transport so
+ * a reply-published STOP clears the dots at once instead of waiting out the 6s
+ * auto-expiry — the "typing lingers after the answer" fix.
+ */
+const TYPING_STOP = 'stop';
 
 interface NostrEventLite {
   id: string;
@@ -43,8 +53,25 @@ interface NostrEventLite {
 /** Maps a 64-hex pubkey to the deterministic virtual peerId. */
 type PeerResolver = (pubkey: string) => Promise<number>;
 
-/** Injects the typing update into tweb. Default → apiUpdatesManager. */
-type TypingDispatcher = (peerId: number) => void;
+/** Maps a group id to its deterministic (negative) group peerId. */
+type GroupResolver = (groupId: string) => Promise<number>;
+
+/**
+ * Injects a 1:1 typing update into tweb. `isStop` true cancels the indicator.
+ * Default → apiUpdatesManager `updateUserTyping`.
+ */
+type TypingDispatcher = (peerId: number, isStop?: boolean) => void;
+
+/**
+ * Injects a GROUP typing update into tweb. `chatId` is the positive chat id,
+ * `fromUserPeerId` the member who's typing. `isStop` cancels. Default →
+ * apiUpdatesManager `updateChatUserTyping` (which natively renders the member's
+ * name and aggregates "Lena and Kai are typing…").
+ */
+type GroupTypingDispatcher = (chatId: number, fromUserPeerId: number, isStop?: boolean) => void;
+
+/** Ensures a User exists for a pubkey so the group typing name renders. */
+type UserEnsurer = (pubkey: string, peerId: number) => Promise<void>;
 
 /** Verifies a Nostr event's Schnorr signature. Default → nostr-tools. */
 type SignatureVerifier = (event: NostrEventLite) => boolean;
@@ -53,6 +80,7 @@ class PhantomChatTypingReceive {
   private ownPubkey = '';
   private mapper = new PhantomChatPeerMapper();
   private resolver: PeerResolver = (pubkey) => this.mapper.mapPubkey(pubkey);
+  private groupResolver: GroupResolver = (groupId) => groupIdToPeerId(groupId);
   private verify: SignatureVerifier = (event) => {
     try {
       return verifyEvent(event as any);
@@ -60,7 +88,10 @@ class PhantomChatTypingReceive {
       return false;
     }
   };
-  private dispatcher: TypingDispatcher = (peerId) => {
+  private ensureUser: UserEnsurer = async(pubkey, peerId) => {
+    await ensureSenderUserInjected({senderPubkey: pubkey, peerId, logPrefix: LOG_PREFIX});
+  };
+  private dispatcher: TypingDispatcher = (peerId, isStop) => {
     // Native path: a local `updateUserTyping` populates appProfileManager's
     // typingsInPeer store (which the topbar reads back via getPeerTypings) AND
     // dispatches `peer_typings`, AND arms the 6s auto-expiry. We never await —
@@ -69,10 +100,26 @@ class PhantomChatTypingReceive {
       rootScope.managers.apiUpdatesManager.processLocalUpdate({
         _: 'updateUserTyping',
         user_id: peerId,
-        action: {_: 'sendMessageTypingAction'}
+        action: {_: isStop ? 'sendMessageCancelAction' : 'sendMessageTypingAction'}
       } as any)
     ).catch((err) => {
       console.debug(LOG_PREFIX, 'processLocalUpdate failed:', err?.message);
+    });
+  };
+  private groupDispatcher: GroupTypingDispatcher = (chatId, fromUserPeerId, isStop) => {
+    // `updateChatUserTyping` routes the dots into the group chat. tweb resolves
+    // the typing member from `from_id` and renders their name, aggregating
+    // multiple typers natively — so a group reply-in-progress shows "Lena is
+    // typing…" in the group, not as a 1:1 DM indicator.
+    Promise.resolve(
+      rootScope.managers.apiUpdatesManager.processLocalUpdate({
+        _: 'updateChatUserTyping',
+        chat_id: chatId,
+        from_id: {_: 'peerUser', user_id: fromUserPeerId},
+        action: {_: isStop ? 'sendMessageCancelAction' : 'sendMessageTypingAction'}
+      } as any)
+    ).catch((err) => {
+      console.debug(LOG_PREFIX, 'group processLocalUpdate failed:', err?.message);
     });
   };
 
@@ -80,8 +127,14 @@ class PhantomChatTypingReceive {
 
   /** Test seam: override how a pubkey resolves to a peerId. */
   setPeerResolver(r: PeerResolver) { this.resolver = r; }
-  /** Test seam: override how the typing update is injected. */
+  /** Test seam: override how a group id resolves to its (negative) peerId. */
+  setGroupResolver(r: GroupResolver) { this.groupResolver = r; }
+  /** Test seam: override how the 1:1 typing update is injected. */
   setTypingDispatcher(d: TypingDispatcher) { this.dispatcher = d; }
+  /** Test seam: override how the group typing update is injected. */
+  setGroupTypingDispatcher(d: GroupTypingDispatcher) { this.groupDispatcher = d; }
+  /** Test seam: override the user-ensure step. */
+  setUserEnsurer(e: UserEnsurer) { this.ensureUser = e; }
   /** Test seam: override signature verification. */
   setSignatureVerifier(v: SignatureVerifier) { this.verify = v; }
 
@@ -91,8 +144,19 @@ class PhantomChatTypingReceive {
     // Never show a typing indicator for ourselves.
     if(this.ownPubkey && event.pubkey === this.ownPubkey) return;
 
+    // Routing visibility: log every accepted tick with whether it carries the
+    // ['group', id] tag. This is the one fact that decides group-vs-1:1 routing —
+    // if a group reply-in-progress shows on the sender's DM row, this line tells
+    // us immediately whether the tag was missing on the wire (sender bug) or the
+    // routing below mishandled it (receiver bug).
+    {
+      const gTag = event.tags.find((t) => t[0] === 'group' && typeof t[1] === 'string' && t[1].length > 0);
+      console.log(`${LOG_PREFIX} tick from ${String(event.pubkey).slice(0, 8)} content="${event.content || 'start'}" groupTag=${gTag ? gTag[1] : 'NONE'}`);
+    }
+
     // Defensive #p check — subscription already filters, but a permissive
-    // relay could deliver an unaddressed event.
+    // relay could deliver an unaddressed event. For a GROUP tick the p-tags are
+    // the members (which include us), so this still passes legitimately.
     if(this.ownPubkey) {
       const pTags = event.tags.filter((t) => t[0] === 'p');
       if(pTags.length > 0 && !pTags.some((t) => t[1] === this.ownPubkey)) return;
@@ -109,15 +173,47 @@ class PhantomChatTypingReceive {
       return;
     }
 
-    let peerId: number;
+    // 'stop' marker → cancel the indicator immediately instead of letting it
+    // ride the 6s auto-expiry.
+    const isStop = event.content === TYPING_STOP;
+
+    let senderPeerId: number;
     try {
-      peerId = await this.resolver(event.pubkey);
+      senderPeerId = await this.resolver(event.pubkey);
     } catch(err) {
       console.debug(LOG_PREFIX, 'peer resolve failed:', (err as Error)?.message);
       return;
     }
 
-    this.dispatcher(peerId);
+    // GROUP tick: a ['group', id] tag means the dots belong in the group chat,
+    // not the sender's DM. Resolve the group's chat peerId and dispatch a
+    // chat-typing update keyed to the member who's typing.
+    const groupTag = event.tags.find((t) => t[0] === 'group' && typeof t[1] === 'string' && t[1].length > 0);
+    if(groupTag) {
+      let groupPeerId: number;
+      try {
+        groupPeerId = await this.groupResolver(groupTag[1]);
+      } catch(err) {
+        console.debug(LOG_PREFIX, 'group resolve failed:', (err as Error)?.message);
+        return;
+      }
+      // Ensure the typing member has a User so the name renders (idempotent).
+      // Skip on stop — there's nothing to label when clearing.
+      if(!isStop) {
+        try {
+          await this.ensureUser(event.pubkey, senderPeerId);
+        } catch(err) {
+          console.debug(LOG_PREFIX, 'ensureUser non-critical:', (err as Error)?.message);
+        }
+      }
+      // groupPeerId is negative (peerChat); chat_id is the positive chat id.
+      console.log(`${LOG_PREFIX} → GROUP route: chat_id=${-groupPeerId} member=${senderPeerId} stop=${!!isStop}`);
+      this.groupDispatcher(-groupPeerId, senderPeerId, isStop);
+      return;
+    }
+
+    console.log(`${LOG_PREFIX} → 1:1 route: peer=${senderPeerId} stop=${!!isStop}`);
+    this.dispatcher(senderPeerId, isStop);
   }
 }
 

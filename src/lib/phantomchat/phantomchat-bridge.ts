@@ -12,7 +12,6 @@ import type {User} from '@layer';
 import {initVirtualPeersDB, storeMapping, getPubkey, getAllMappings} from './virtual-peers-db';
 import {NostrRelayPool, DEFAULT_RELAYS, loadCanonicalRelays, RelayConfig} from './nostr-relay-pool';
 import {OfflineQueue} from './offline-queue';
-import {PrivacyTransport} from './privacy-transport';
 import {MeshManager} from '@lib/phantomchat/mesh-manager';
 import {MessageRouter} from '@lib/phantomchat/message-router';
 import {isSignalKind} from '@lib/phantomchat/mesh-signaling';
@@ -75,9 +74,8 @@ export class PhantomChatBridge {
   /** In-memory cache: eventId → mid */
   private midCache = new Map<string, number>();
 
-  /** Relay pool, transport, and queue references */
+  /** Relay pool and queue references */
   private _relayPool: NostrRelayPool | null = null;
-  private _privacyTransport: PrivacyTransport | null = null;
   private _offlineQueue: OfflineQueue | null = null;
 
   private constructor() {}
@@ -97,7 +95,7 @@ export class PhantomChatBridge {
 
   /**
    * Initialize the bridge with the current user's pubkey.
-   * Opens IndexedDB, pre-loads existing mappings, and bootstraps PrivacyTransport.
+   * Opens IndexedDB, pre-loads existing mappings, and initializes the relay transport.
    */
   async init(userPubkey: string): Promise<void> {
     this._userPubkey = userPubkey;
@@ -114,23 +112,19 @@ export class PhantomChatBridge {
     // DEFAULT_RELAYS when the fetch fails (offline / 404 / malformed).
     const canonical = await loadCanonicalRelays();
 
-    // Bootstrap relay pool + privacy transport
+    // Bootstrap relay pool
     this.initTransport(canonical ?? undefined);
 
     this._initialized = true;
   }
 
   /**
-   * Initialize NostrRelayPool, OfflineQueue, and PrivacyTransport.
+   * Initialize NostrRelayPool and OfflineQueue.
    *
-   * Privacy-critical ordering:
-   *   - Tor enabled (default): start PrivacyTransport.bootstrap() FIRST and
-   *     wait until it reaches a settled state ('active', 'direct', or
-   *     'failed') before calling pool.initialize(). This guarantees no
-   *     WebSocket is ever opened while the Tor circuit is still building.
-   *     During bootstrap the app is still usable — chats read from the
-   *     local IndexedDB store and outgoing messages queue in OfflineQueue.
-   *   - Tor disabled: pool.initialize() runs immediately (legacy path).
+   * The relay pool always connects via direct WebSocket — the relay transport
+   * opens immediately. The app remains usable while the pool connects: chats
+   * read from the local IndexedDB store and outgoing messages queue in
+   * OfflineQueue.
    */
   private initTransport(relays?: RelayConfig[]): void {
     const pool = new NostrRelayPool({
@@ -141,46 +135,17 @@ export class PhantomChatBridge {
     });
 
     const queue = new OfflineQueue(pool);
-    const transport = new PrivacyTransport(pool, queue);
 
     this._relayPool = pool;
     this._offlineQueue = queue;
-    this._privacyTransport = transport;
 
     // Expose for topbar and debug
     if(typeof window !== 'undefined') {
       (window as any).__phantomchatPool = pool;
-      (window as any).__phantomchatTransport = transport;
     }
 
-    const mode = PrivacyTransport.readMode();
-
-    if(mode === 'off') {
-      // No Tor path at all — go direct immediately.
-      pool.initialize().catch(() => {});
-    } else if(mode === 'when-available') {
-      // Direct-first path with background Tor upgrade. No banner.
-      transport.bootstrap();
-      pool.initialize().catch(() => {});
-    } else {
-      // mode === 'only' — mount the startup banner, wait for Tor before opening the pool.
-      if(typeof window !== 'undefined') {
-        void this.mountTorStartupBanner();
-      }
-      transport.bootstrap();
-      // Gate pool.initialize until the transport reaches tor-active. We poll via
-      // phantomchat_tor_state because waitUntilSettled is deprecated.
-      const onceActive = new Promise<void>((resolve) => {
-        const handler = (e: {state: unknown}) => {
-          if(e.state === 'tor-active') {
-            rootScope.removeEventListener('phantomchat_tor_state', handler);
-            resolve();
-          }
-        };
-        rootScope.addEventListener('phantomchat_tor_state', handler);
-      });
-      onceActive.then(() => pool.initialize()).catch(() => {});
-    }
+    console.log('[PhantomChatBridge] transport init: direct WebSocket (Tor removed), relays:', (relays ?? DEFAULT_RELAYS).length);
+    pool.initialize().catch(() => {});
 
     // Initialize mini-relay worker
     if(typeof window !== 'undefined') {
@@ -286,11 +251,6 @@ export class PhantomChatBridge {
   /** Get the relay pool instance */
   getRelayPool(): NostrRelayPool | null {
     return this._relayPool;
-  }
-
-  /** Get the privacy transport instance */
-  getPrivacyTransport(): PrivacyTransport | null {
-    return this._privacyTransport;
   }
 
   isInitialized(): boolean {
@@ -425,28 +385,6 @@ export class PhantomChatBridge {
     const hue = Math.abs(hash) % 360;
     const hue2 = (hue + 40) % 360;
     return `linear-gradient(135deg, hsl(${hue}, 70%, 60%), hsl(${hue2}, 70%, 45%))`;
-  }
-
-  /**
-   * Mount the Tor startup banner on document.body. Lazy-loads the Solid
-   * component so the extra weight only lands when Tor is in `only` mode.
-   * The banner has no user-facing buttons; the only escape hatch is the
-   * Tor mode switch in Privacy & Security.
-   */
-  private async mountTorStartupBanner(): Promise<void> {
-    const transport = this._privacyTransport;
-    if(!transport) return;
-
-    const [{default: TorStartupBanner}, {render}] = await Promise.all([
-      import('@components/phantomchat/torStartupBanner'),
-      import('solid-js/web')
-    ]);
-
-    const bannerEl = document.createElement('div');
-    bannerEl.classList.add('tor-startup-banner-mount');
-    document.body.append(bannerEl);
-
-    render(() => TorStartupBanner(), bannerEl);
   }
 
   /**

@@ -3,16 +3,18 @@ import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_PERSONS,
   FOLDER_ID_GROUPS
 } from '@appManagers/constants';
 
 describe('isProtectedFolder', () => {
-  it('returns true for All/Archive/Persons/Groups', () => {
+  it('returns true for All/Archive/Groups', () => {
     expect(isProtectedFolder(FOLDER_ID_ALL)).toBe(true);
     expect(isProtectedFolder(FOLDER_ID_ARCHIVE)).toBe(true);
-    expect(isProtectedFolder(FOLDER_ID_PERSONS)).toBe(true);
     expect(isProtectedFolder(FOLDER_ID_GROUPS)).toBe(true);
+  });
+
+  it('returns false for the removed Persons folder (id 2)', () => {
+    expect(isProtectedFolder(2)).toBe(false);
   });
 
   it('returns false for user custom folder IDs', () => {

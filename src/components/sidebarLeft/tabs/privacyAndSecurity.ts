@@ -11,7 +11,6 @@ import rootScope from '@lib/rootScope';
 import CheckboxField from '@components/checkboxField';
 import AppPhantomChatSecurityTab from '@components/sidebarLeft/tabs/phantomchatSecurity';
 import AppPhantomChatSeedPhraseTab from '@components/sidebarLeft/tabs/phantomchatSeedPhrase';
-import {PrivacyTransport} from '@lib/phantomchat/privacy-transport';
 
 export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
   public static getInitArgs(fromTab: SliderSuperTab) {
@@ -21,70 +20,6 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
   public async init(_p?: any) {
     this.container.classList.add('privacy-container');
     this.setTitle('PrivacySettings');
-
-    // --- Tor section ---
-    const torSection = new SettingSection({
-      name: 'Tor.Mode.SectionTitle' as any,
-      caption: 'Tor.Mode.SectionCaption' as any
-    });
-
-    type TorModeOption = {
-      mode: 'only' | 'when-available' | 'off';
-      titleKey: string;
-      descKey: string;
-    };
-    const MODE_OPTIONS: TorModeOption[] = [
-      {mode: 'when-available', titleKey: 'Tor.Mode.WhenAvailable.Label', descKey: 'Tor.Mode.WhenAvailable.Desc'},
-      {mode: 'only', titleKey: 'Tor.Mode.Only.Label', descKey: 'Tor.Mode.Only.Desc'},
-      {mode: 'off', titleKey: 'Tor.Mode.Off.Label', descKey: 'Tor.Mode.Off.Desc'}
-    ];
-
-    const currentMode = PrivacyTransport.readMode();
-    const checkboxes = new Map<TorModeOption['mode'], CheckboxField>();
-
-    MODE_OPTIONS.forEach((opt) => {
-      // tweb CheckboxField has no built-in radio style — we use `toggle: true`
-      // and enforce exclusivity in `selectMode` below. If the codebase grows a
-      // radio primitive (`round: true` etc.) later, swap it in here.
-      const cb = new CheckboxField({
-        toggle: true,
-        checked: opt.mode === currentMode
-      });
-      checkboxes.set(opt.mode, cb);
-
-      const row = new Row({
-        checkboxField: cb,
-        titleLangKey: opt.titleKey as any,
-        subtitleLangKey: opt.descKey as any,
-        clickable: true,
-        listenerSetter: this.listenerSetter
-      });
-
-      cb.input.addEventListener('change', () => {
-        if(!cb.checked) {
-          // The user tapped to de-select the active mode — re-assert it,
-          // there's no "no mode" state.
-          cb.setValueSilently(true);
-          return;
-        }
-        void selectMode(opt.mode);
-      });
-
-      torSection.content.append(row.container);
-    });
-
-    async function selectMode(next: TorModeOption['mode']) {
-      for(const [m, cb] of checkboxes) {
-        cb.setValueSilently(m === next);
-      }
-      const transport = (window as any).__phantomchatPrivacyTransport;
-      if(transport?.setMode) {
-        await transport.setMode(next);
-      } else {
-        // No live transport (onboarding/offline fixtures) — persist directly.
-        PrivacyTransport.setModeStatic(next);
-      }
-    }
 
     // --- Mesh Network section ---
     const meshSection = new SettingSection({name: 'Mesh Network' as any});
@@ -204,7 +139,6 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
     dangerSection.content.append(deleteAccountRow.container);
 
     this.scrollable.append(
-      torSection.container,
       meshSection.container,
       securitySection.container,
       privacySection.container,
