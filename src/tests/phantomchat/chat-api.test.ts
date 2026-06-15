@@ -407,6 +407,16 @@ describe('ChatAPI', () => {
 
       expect(messageId).toBeDefined();
       expect(mockQueue.queueCallCount).toBe(1);
+
+      // FIND-ghost-first-msg: the queued payload MUST be the full wire envelope
+      // (the same bytes the connected path publishes), NOT the raw text — the
+      // receiver JSON.parses the rumor content and drops anything that isn't
+      // {type,content,...}. Queuing raw text here was the cold-start ghost.
+      const queued = mockQueue.queuedMessages[0];
+      expect(queued).toBeDefined();
+      const envelope = JSON.parse(queued.payload);
+      expect(envelope.type).toBe('text');
+      expect(envelope.content).toBe('Message while offline');
     });
 
     test('queues via offlineQueue when all relays fail', async() => {
