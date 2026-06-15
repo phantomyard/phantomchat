@@ -630,18 +630,26 @@ export class ChatAPI {
     // strfry to reject e-tags with `unexpected size for fixed-size tag: e`.
     let publishedRumorId: string | undefined;
     let publishSucceeded = false;
+    // Build the wire envelope ONCE. Both the live publish below AND the
+    // offline-queue fallback (queueMessage → offlineQueue → relayPool.publish)
+    // must publish this SAME envelope as the rumor content: the receiver does
+    // JSON.parse(rumor.content) and requires {type,content,...}. Previously the
+    // offline path queued the RAW `content` instead, so every offline/cold-start
+    // message arrived as a non-JSON rumor and was silently dropped by the peer —
+    // the real cause of "first (cold) message ghosts, resend works"
+    // (FIND-ghost-first-msg). The connected path took the correct envelope, so
+    // a resend (once sockets were up) always went through.
+    const wireEnvelope = JSON.stringify({
+      id: messageId,
+      from: this.ownId,
+      to: peerOwnId,
+      type,
+      content,
+      timestamp
+    });
     if(this.relayPool.isConnected()) {
       try {
-        const plaintext = JSON.stringify({
-          id: messageId,
-          from: this.ownId,
-          to: peerOwnId,
-          type,
-          content,
-          timestamp
-        });
-
-        const result: PublishResult = await this.relayPool.publish(peerOwnId!, plaintext, opts?.replyTo);
+        const result: PublishResult = await this.relayPool.publish(peerOwnId!, wireEnvelope, opts?.replyTo);
         publishedRumorId = result.rumorId;
 
         // Register a RE-WRAP closure with the delivery tracker so the always-on
@@ -753,9 +761,11 @@ export class ChatAPI {
       }
     } else {
       // Either offline, disconnected, or every relay rejected. Queue the
-      // payload for later redelivery. The stored row (if any) has
-      // deliveryState='sending' and will transition when the queue flushes.
-      await this.queueMessage(messageId, content);
+      // FULL wire envelope (not the raw content) for later redelivery, so the
+      // flushed rumor parses on the receiver exactly like a live send. The
+      // stored row (if any) has deliveryState='sending' and will transition
+      // when the queue flushes.
+      await this.queueMessage(messageId, wireEnvelope);
     }
 
     return messageId;
@@ -917,9 +927,14 @@ export class ChatAPI {
   }
 
   /**
-   * Queue a message for offline delivery
+   * Queue a message for offline delivery.
+   *
+   * @param payload The exact wire payload to publish on flush — the JSON
+   *   envelope `{id,from,to,type,content,timestamp}`, NOT the raw text. The
+   *   receiver JSON.parses the rumor content, so a raw-text payload is dropped
+   *   as malformed (FIND-ghost-first-msg).
    */
-  private async queueMessage(messageId: string, content: string): Promise<void> {
+  private async queueMessage(messageId: string, payload: string): Promise<void> {
     const peerOwnId = this.activePeer;
 
     if(!peerOwnId) {
@@ -935,7 +950,7 @@ export class ChatAPI {
     }
 
     try {
-      await this.offlineQueue.queue(peerOwnId, content);
+      await this.offlineQueue.queue(peerOwnId, payload);
       this.updateMessageStatus(messageId, 'sent');
       this.log('[ChatAPI] message queued:', messageId);
     } catch(err) {
