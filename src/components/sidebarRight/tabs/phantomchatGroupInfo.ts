@@ -1,6 +1,9 @@
 import {SliderSuperTab} from '@components/slider';
 import SettingSection from '@components/settingSection';
 import Row from '@components/row';
+import InputField from '@components/inputField';
+import ButtonCorner from '@components/buttonCorner';
+import toggleDisability from '@helpers/dom/toggleDisability';
 import AppAddMembersTab from '@components/sidebarLeft/tabs/addMembers';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import confirmationPopup from '@components/confirmationPopup';
@@ -43,6 +46,60 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
     }
 
     const isAdmin = ownPubkey === group.adminPubkey;
+
+    // Admin-only: edit group name + description. This replaces the native
+    // Telegram AppEditChatTab for P2P groups (which is Telegram-backed — its
+    // Administrators/Members/Permissions sub-tabs query a server that doesn't
+    // exist and render the empty "No Results" state). updateGroupInfo broadcasts
+    // the change to members and refreshes the chat-list/topbar title.
+    if(isAdmin) {
+      const editSection = new SettingSection({});
+      const inputWrapper = document.createElement('div');
+      inputWrapper.classList.add('input-wrapper');
+
+      const nameInput = new InputField({label: 'CreateGroup.NameHolder', maxLength: 128});
+      nameInput.setOriginalValue(group.name);
+
+      const descInput = new InputField({label: 'DescriptionPlaceholder', maxLength: 255});
+      if(group.description) descInput.setOriginalValue(group.description);
+
+      inputWrapper.append(nameInput.container, descInput.container);
+      editSection.content.append(inputWrapper);
+
+      const saveBtn = ButtonCorner({icon: 'check'});
+      this.content.append(saveBtn);
+
+      const refreshSave = () => {
+        const name = nameInput.value.trim();
+        const desc = descInput.value.trim();
+        const changed = name !== group.name || desc !== (group.description || '');
+        saveBtn.classList.toggle('is-visible', changed && !!name);
+      };
+      this.listenerSetter.add(nameInput.input)('input', refreshSave);
+      this.listenerSetter.add(descInput.input)('input', refreshSave);
+
+      attachClickEvent(saveBtn, async() => {
+        const name = nameInput.value.trim();
+        if(!name) return;
+        const toggle = toggleDisability([saveBtn], true);
+        try {
+          await getGroupAPI().updateGroupInfo(this.groupId, {
+            name,
+            description: descInput.value.trim() || undefined
+          });
+          group.name = name;
+          group.description = descInput.value.trim() || undefined;
+          this.setTitle(name as LangPackKey);
+          saveBtn.classList.remove('is-visible');
+        } catch(err) {
+          console.error('[PhantomChatGroupInfo] updateGroupInfo failed:', err);
+        } finally {
+          toggle();
+        }
+      }, {listenerSetter: this.listenerSetter});
+
+      this.scrollable.append(editSection.container);
+    }
 
     // Members section
     const membersSection = new SettingSection({
