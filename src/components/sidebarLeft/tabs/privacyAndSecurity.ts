@@ -21,23 +21,6 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
     this.container.classList.add('privacy-container');
     this.setTitle('PrivacySettings');
 
-    // --- Mesh Network section ---
-    const meshSection = new SettingSection({name: 'Mesh Network' as any});
-
-    const meshRow = new Row({
-      title: 'P2P Mesh Settings',
-      subtitle: 'Direct connections between contacts',
-      icon: 'link',
-      clickable: async() => {
-        const {default: AppPhantomChatMeshSettingsTab} = await import('@components/sidebarLeft/tabs/phantomchatMeshSettings');
-        const tab = new AppPhantomChatMeshSettingsTab(this.slider);
-        tab.open();
-      },
-      listenerSetter: this.listenerSetter
-    });
-
-    meshSection.content.append(meshRow.container);
-
     // Section 1: Key Security
     const securitySection = new SettingSection({
       name: 'Key Protection' as any,
@@ -118,19 +101,13 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
       subtitle: 'Remove all local data and identity',
       icon: 'delete',
       clickable: async() => {
-        const {default: confirmationPopup} = await import('@components/confirmationPopup');
-        try {
-          await confirmationPopup({
-            titleLangKey: 'DeleteAccount' as any,
-            descriptionLangKey: 'AreYouSure' as any,
-            button: {
-              langKey: 'Delete' as any,
-              isDanger: true
-            }
-          });
-          indexedDB.deleteDatabase('PhantomChat.chat');
-          location.reload();
-        } catch{}
+        // Delete Account routes through the proven logout teardown
+        // (showDeleteAccountPopup → logOut keepPhantomChatIdentity:false), which
+        // deletes the Nostr key in the Worker context + clears tweb state. A
+        // main-thread indexedDB.deleteDatabase() alone is blocked by the
+        // SharedWorker's open connections and silently fails (the reported bug).
+        const {showDeleteAccountPopup} = await import('@components/popups/resetLocalData');
+        showDeleteAccountPopup();
       },
       listenerSetter: this.listenerSetter
     });
@@ -139,7 +116,6 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
     dangerSection.content.append(deleteAccountRow.container);
 
     this.scrollable.append(
-      meshSection.container,
       securitySection.container,
       privacySection.container,
       dangerSection.container

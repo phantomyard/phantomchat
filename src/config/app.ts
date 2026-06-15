@@ -35,7 +35,13 @@ const App = {
   threads,
   lottieWorkers: threads,
   cryptoWorkers: threads,
-  interclientBroadcastChannel: 'tgweb'
+  interclientBroadcastChannel: 'tgweb',
+  // Background Web Push is disabled until a push relay is deployed. The default
+  // push.phantomchat.chat endpoint doesn't exist, so auto-subscribe just spams
+  // "/info fetch failed" in the logs. The push code is intentionally KEPT — flip
+  // this to true once a relay is live to re-enable the onboarding auto-subscribe
+  // and the Notifications push UI. See docs/PUSH-NOTIFICATIONS.md.
+  pushEnabled: false
 };
 
 if(App.isMainDomain) { // use Webogram credentials then

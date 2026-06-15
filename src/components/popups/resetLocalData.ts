@@ -68,6 +68,57 @@ export default async function showResetLocalDataPopup() {
 }
 
 /**
+ * DELETE ACCOUNT — the destructive sibling of Reset Local Data. Wipes the local
+ * PhantomChat data AND the Nostr identity, then reloads into onboarding.
+ *
+ * Critically it routes through tweb's logOut with keepPhantomChatIdentity:false,
+ * which deletes the identity key IN THE WORKER CONTEXT (deleteEncryptedIdentity),
+ * clears tweb account state, and closes IDB connections. A plain main-thread
+ * indexedDB.deleteDatabase() is blocked by the SharedWorker's open connections
+ * and silently fails — that was the "Delete Account doesn't actually delete" bug.
+ */
+export async function showDeleteAccountPopup() {
+  const {default: confirmationPopup} = await import('@components/confirmationPopup');
+  confirmationPopup({
+    title: 'Delete Account',
+    descriptionRaw: 'This permanently deletes your identity (keys), all messages, contacts, groups, relays, and settings on this device. It cannot be undone — make sure you have your Recovery Phrase if you ever want this account back. Continue?',
+    button: {
+      text: document.createTextNode('Delete'),
+      isDanger: true
+    }
+  }).then(async() => {
+    const overlay = createOverlay('Deleting account…');
+
+    // Clear the PhantomChat data DBs (messages, groups, virtual-peers, pool).
+    // The identity DB is left to logOut below, which deletes it in the Worker
+    // context where the live connection actually is.
+    try {
+      const {clearAllExceptSeed} = await import('@lib/phantomchat/phantomchat-cleanup');
+      await clearAllExceptSeed();
+    } catch(err) {
+      console.warn('[PhantomChat.chat] delete account error:', err);
+    }
+
+    try {
+      localStorage.clear();
+    } catch{}
+
+    overlay.textContent = 'Account deleted — reloading…';
+
+    // Full logout, NOT keeping the identity → deletes the Nostr key in the
+    // Worker + clears tweb state + closes DBs + triggers the reload.
+    rootScope.managers.apiManager.logOut(undefined, {keepPhantomChatIdentity: false});
+
+    // Safety reload if the normal flow doesn't fire.
+    setTimeout(() => {
+      location.href = location.origin;
+    }, 4000);
+  }).catch(() => {
+    // User canceled — no-op
+  });
+}
+
+/**
  * Called once at boot. If the previous page triggered a Reset Local Data,
  * shows a confirmation toast and clears the marker.
  */

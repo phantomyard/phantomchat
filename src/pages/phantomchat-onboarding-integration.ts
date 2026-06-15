@@ -11,6 +11,7 @@
  * 4. User reloads (identity exists) → init() → showExistingIdentity → callback fires → mount chat → init Virtual MTProto Server
  */
 
+import App from '../config/app';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from '../lib/phantomchat/key-storage';
 import {importFromMnemonic} from '../lib/phantomchat/nostr-identity';
 import {PhantomChatBridge} from '../lib/phantomchat/phantomchat-bridge';
@@ -266,6 +267,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // VAPID public key is fetched (and localStorage-cached) via resolveVapidKey.
       (async() => {
         try {
+          // Push is gated off until a relay is deployed (App.pushEnabled). Without
+          // this guard, resolveVapidKey() hits the non-existent push relay on every
+          // boot and spams "/info fetch failed". Keep the code; flip the flag later.
+          if(!App.pushEnabled) return;
           if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
           const {subscribePush, getRegistration} = await import('@lib/phantomchat/phantomchat-push-client');
           const {resolveVapidKey} = await import('@lib/phantomchat/phantomchat-push-helpers');

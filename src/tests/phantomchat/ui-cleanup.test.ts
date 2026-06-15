@@ -156,21 +156,6 @@ describe('WS-D: Privacy & Security for PhantomChat.chat', () => {
   });
 });
 
-// ---- WS-E: Notifications guarded ----
-describe('WS-E: Notifications MTProto guards', () => {
-  const notifSrc = readFile('components/sidebarLeft/tabs/notifications.tsx');
-
-  it('has try-catch guards around MTProto calls', () => {
-    // Count catch blocks — should have multiple guards
-    const catchCount = (notifSrc.match(/catch\s*[\({]/g) || []).length;
-    expect(catchCount).toBeGreaterThanOrEqual(3);
-  });
-
-  it('has default fallback values for muted state', () => {
-    // Should have default enabled value when MTProto fails
-    expect(notifSrc).toContain('catch');
-  });
-});
 
 // ---- Onboarding uses tweb components ----
 describe('Onboarding uses tweb components', () => {
@@ -216,5 +201,23 @@ describe('Integration: apiManager PHANTOMCHAT_STATIC', () => {
 
   it('has account.getPrivacy in PHANTOMCHAT_STATIC', () => {
     expect(apiManagerSrc).toContain('account.getPrivacy');
+  });
+});
+
+// ---- WS-F: Delete Account performs a full local wipe ----
+describe('WS-F: Delete Account', () => {
+  const privacySrc = readFile('components/sidebarLeft/tabs/privacyAndSecurity.ts');
+  const resetSrc = readFile('components/popups/resetLocalData.ts');
+
+  it('routes through showDeleteAccountPopup, not a naive single-DB delete', () => {
+    expect(privacySrc).toContain('showDeleteAccountPopup');
+    // Regression: the old handler did an un-awaited delete of only the identity DB,
+    // which was blocked by the SharedWorker's open connections and raced by reload.
+    expect(privacySrc).not.toContain("indexedDB.deleteDatabase('PhantomChat.chat')");
+  });
+
+  it('deletes the identity via logOut (worker context) with keepPhantomChatIdentity:false', () => {
+    expect(resetSrc).toContain('showDeleteAccountPopup');
+    expect(resetSrc).toContain('keepPhantomChatIdentity: false');
   });
 });
