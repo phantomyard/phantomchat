@@ -26,16 +26,16 @@ describe('NIP-17 gift-wrap structure', () => {
     expect(rumor.kind).toBe(14);
   });
 
-  it('gift-wrap created_at is randomized (differs from actual now)', () => {
+  it('gift-wrap created_at is the real send time (no backdating)', () => {
     const {wraps} = wrapNip17Message(skA, pkB, 'timestamp test');
     const nowSec = Math.floor(Date.now() / 1000);
-    // At least one wrap should have a created_at that differs from now by > 0
-    // (randomized within past 48 hours)
-    const diffs = wraps.map(w => Math.abs(nowSec - w.created_at));
-    // The probability that ALL diffs are exactly 0 is astronomically low
-    // We check the wrap has a created_at (could be past)
+    // Backdating was removed: a wrap's created_at must be ~now, not randomized
+    // up to 48h into the past. Truthful timestamps are what let the receiver
+    // catch a dropped message with a tight `since` catch-up poll. Allow a small
+    // slack for test execution time only.
     for(const w of wraps) {
-      expect(w.created_at).toBeGreaterThan(0);
+      expect(w.created_at).toBeGreaterThan(nowSec - 5);
+      expect(w.created_at).toBeLessThanOrEqual(nowSec + 1);
     }
   });
 

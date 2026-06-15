@@ -110,13 +110,20 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 
 const DEDUP_CACHE_MAX = 10_000;
 const POOL_RECOVERY_INTERVAL_MS = 60_000;
-// NIP-17 gift-wrap (kind 1059) outer created_at is randomized up to 48h into
-// the PAST for metadata privacy (see nostr-crypto.createGiftWrap). A relay
-// `since` query filters on that fuzzed outer timestamp, so a since pinned to
-// lastSeen would miss freshly-sent messages whose wrap was backdated. Widen
-// every catch-up query by the full fuzz window; dedup by stable rumor id
-// absorbs the resulting overlap.
-const GIFTWRAP_FUZZ_WINDOW_SEC = 48 * 60 * 60;
+// Gift-wrap (kind 1059) outer created_at is now the REAL send time — backdating
+// was removed (see nostr-crypto.createGiftWrap) because it was the root cause of
+// the "first message ghosts" bug: a relay applies a subscription's `since` to
+// LIVE events too, and a wrap backdated up to 48h could never be recovered by a
+// tight catch-up `since`. With truthful timestamps this only needs to absorb a
+// little clock skew / out-of-order delivery, so it shrinks from 48h to minutes.
+const GIFTWRAP_FUZZ_WINDOW_SEC = 5 * 60;
+// The catch-up poll (the delivery backbone) re-queries connected read relays on
+// this cadence and pulls the last RECENT_BACKFILL_WINDOW_SEC of wraps. A relay
+// can silently fail to PUSH a freshly-published wrap to our live subscription,
+// but the wrap still PERSISTS on the relay — so a periodic PULL recovers it.
+// Dedup by rumor id makes the overlap with the live push free.
+const BACKFILL_POLL_INTERVAL_MS = 15_000;
+const RECENT_BACKFILL_WINDOW_SEC = 90;
 const IDB_RELAY_CONFIG_KEY = 'phantomchat-relay-config';
 const LS_LAST_SEEN_KEY = 'phantomchat-last-seen-timestamp';
 
@@ -142,6 +149,10 @@ export class NostrRelayPool {
 
   // Pool recovery
   private recoveryInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Catch-up poll (delivery backbone — recovers wraps the live push dropped)
+  private backfillPollInterval: ReturnType<typeof setInterval> | null = null;
+  private backfillPollInFlight = false;
 
   // Identity
   private publicKey: string = '';
@@ -281,6 +292,10 @@ export class NostrRelayPool {
 
     // Start pool recovery
     this.startRecovery();
+
+    // Start the catch-up poll — the delivery backbone that no longer relies on
+    // relays pushing live events reliably.
+    this.startBackfillPoll();
   }
 
   disconnect(): void {
@@ -305,6 +320,11 @@ export class NostrRelayPool {
     if(this.recoveryInterval) {
       clearInterval(this.recoveryInterval);
       this.recoveryInterval = null;
+    }
+
+    if(this.backfillPollInterval) {
+      clearInterval(this.backfillPollInterval);
+      this.backfillPollInterval = null;
     }
 
     for(const entry of this.relayEntries) {
@@ -953,11 +973,11 @@ export class NostrRelayPool {
   }
 
   /**
-   * Catch-up `since` for backfill queries. We subtract the gift-wrap fuzz
-   * window from lastSeenTimestamp because kind-1059 outer timestamps are
-   * randomized up to 48h into the past — a tighter `since` would miss recent
-   * messages whose wrap was backdated. Returns undefined (= fetch all) when we
-   * have no watermark yet. Dedup by rumor id makes the overlap harmless.
+   * Catch-up `since` for the startup / reconnect backfills. We subtract a small
+   * fuzz window from lastSeenTimestamp to absorb clock skew and out-of-order
+   * delivery (wrap timestamps are now truthful — no 48h backdate — so this no
+   * longer needs to be hours wide). Returns undefined (= fetch all) when we have
+   * no watermark yet. Dedup by rumor id makes the overlap harmless.
    */
   private catchUpSince(): number | undefined {
     if(this.lastSeenTimestamp <= 0) return undefined;
@@ -1007,6 +1027,53 @@ export class NostrRelayPool {
     this.recoveryInterval = setInterval(() => {
       this.recoverFailedRelays();
     }, POOL_RECOVERY_INTERVAL_MS);
+  }
+
+  /**
+   * Start the catch-up poll: the delivery backbone. Every
+   * BACKFILL_POLL_INTERVAL_MS we re-query each CONNECTED read relay for the last
+   * RECENT_BACKFILL_WINDOW_SEC of gift-wraps and run them through the normal
+   * dedup + dispatch path. This is what makes delivery robust without depending
+   * on relays to PUSH live events reliably: a wrap the live push silently
+   * dropped still persists on the relay, so the next poll recovers it. The
+   * window is a small FIXED span (not lastSeen-based) so the query stays cheap
+   * regardless of how long ago the last message was — deep history is the job of
+   * the startup / reconnect backfills, not this poll.
+   */
+  private startBackfillPoll(): void {
+    this.backfillPollInterval = setInterval(() => {
+      void this.backfillRecent();
+    }, BACKFILL_POLL_INTERVAL_MS);
+  }
+
+  /**
+   * One catch-up poll tick. Pulls the last RECENT_BACKFILL_WINDOW_SEC of wraps
+   * from every connected read relay. Guarded against overlap (a slow relay must
+   * not let two polls pile up) and silent on a per-relay failure.
+   */
+  private async backfillRecent(): Promise<void> {
+    if(this.backfillPollInFlight) return;
+    if(!this.isSubscribedFlag) return;
+    this.backfillPollInFlight = true;
+    try {
+      const since = Math.floor(Date.now() / 1000) - RECENT_BACKFILL_WINDOW_SEC;
+      const readEntries = this.relayEntries.filter(
+        e => e.config.read && e.instance.getState() === 'connected'
+      );
+      const promises = readEntries.map(async(entry) => {
+        try {
+          const messages = await entry.instance.getMessages(since);
+          for(const msg of messages) {
+            this.handleIncomingMessage(msg);
+          }
+        } catch(err) {
+          this.log.error('[NostrRelayPool] catch-up poll failed for:', entry.config.url, err);
+        }
+      });
+      await Promise.all(promises);
+    } finally {
+      this.backfillPollInFlight = false;
+    }
   }
 
   private recoverFailedRelays(): void {

@@ -517,11 +517,45 @@ describe('NostrRelayPool', () => {
 
       await pool.initialize();
 
-      // Backfill subtracts the 48h NIP-17 gift-wrap fuzz window from lastSeen
-      // so messages whose outer created_at was randomized into the past are not
-      // missed. 48h = 172800s → 1700000000 - 172800 = 1699827200.
-      expect(getMessagesSpy).toHaveBeenCalledWith(1700000000 - 48 * 60 * 60);
+      // Backfill subtracts a small fuzz window (clock skew / out-of-order slack)
+      // from lastSeen. Backdating was removed, so this is minutes, not 48h:
+      // 5*60 = 300s → 1700000000 - 300 = 1699999700.
+      expect(getMessagesSpy).toHaveBeenCalledWith(1700000000 - 5 * 60);
       getMessagesSpy.mockRestore();
+    });
+
+    it('catch-up poll re-queries connected read relays with a tight since', async() => {
+      vi.useFakeTimers();
+      try {
+        const onMessage = vi.fn();
+        const relays = [
+          {url: 'wss://relay1.test', read: true, write: true}
+        ];
+        const pool = new NostrRelayPool({relays, onMessage});
+        await pool.initialize();
+
+        // The poll only runs once subscribed and only against CONNECTED read
+        // relays — mirror that state.
+        pool.subscribeMessages();
+        const inst = mockRelayInstances[mockRelayInstances.length - 1];
+        inst.connectionState = 'connected';
+        const spy = vi.spyOn(inst, 'getMessages').mockResolvedValue([]);
+
+        // Advance past one poll interval (BACKFILL_POLL_INTERVAL_MS = 15s).
+        // Fake timers move Date.now() forward too, so measure "now" at the
+        // moment the poll fires, not before.
+        await vi.advanceTimersByTimeAsync(15_000);
+        const nowAtFire = Math.floor(Date.now() / 1000);
+
+        expect(spy).toHaveBeenCalled();
+        const calledSince = spy.mock.calls[0]![0] as number;
+        // RECENT_BACKFILL_WINDOW_SEC = 90; allow a couple seconds of slack.
+        expect(calledSince).toBeGreaterThanOrEqual(nowAtFire - 90 - 3);
+        expect(calledSince).toBeLessThanOrEqual(nowAtFire - 90 + 3);
+        spy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('updates lastSeenTimestamp as messages arrive', async() => {
