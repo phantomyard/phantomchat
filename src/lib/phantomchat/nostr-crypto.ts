@@ -132,7 +132,7 @@ export function wrapNip17Message(
   recipientPubHex: string,
   content: string,
   replyTo?: {eventId: string; relayUrl?: string}
-): {wraps: NTNostrEvent[]; rumorId: string} {
+): {wraps: NTNostrEvent[]; rumorId: string; rumor: UnsignedEvent} {
   const senderPubHex = getPublicKey(senderSk);
   const tags: string[][] = [['p', recipientPubHex]];
   if(replyTo) {
@@ -144,18 +144,58 @@ export function wrapNip17Message(
   // can key by the SAME id the receiver will see after unwrap.
   const rumor = createRumor(content, senderSk, tags);
 
-  // Create seal + gift-wrap for recipient
+  // Seal + gift-wrap for recipient and self (multi-device recovery).
+  const {wraps} = sealAndWrapRumor(rumor, senderSk, recipientPubHex, senderPubHex);
+
+  return {
+    wraps,
+    rumorId: rumor.id,
+    // The immutable rumor is returned so callers (the delivery-retry layer)
+    // can RE-wrap the SAME rumor in a FRESH outer gift-wrap. Re-publishing the
+    // identical outer event is useless: a relay will not re-forward a duplicate
+    // event id to an already-live subscription, so a ghosted first message
+    // never self-heals. A fresh wrap has a new outer id (relay forwards it) but
+    // the rumor id is unchanged (receiver dedups → never a double).
+    rumor
+  };
+}
+
+/**
+ * Re-wrap an EXISTING rumor in a fresh gift-wrap pair (recipient + self).
+ *
+ * Used by the always-on delivery-retry layer. The rumor object — and therefore
+ * its `.id` — is preserved verbatim, so the receiver dedups by rumor id and
+ * never renders a duplicate. Only the outer kind-1059 wraps are regenerated
+ * (new ephemeral key + new outer id each time), which is exactly what makes a
+ * relay re-forward the event to a subscriber that already EOSE'd.
+ */
+export function rewrapNip17Message(
+  senderSk: Uint8Array,
+  recipientPubHex: string,
+  rumor: UnsignedEvent
+): NTNostrEvent[] {
+  const senderPubHex = getPublicKey(senderSk);
+  return sealAndWrapRumor(rumor, senderSk, recipientPubHex, senderPubHex).wraps;
+}
+
+/**
+ * Shared seal+wrap step: produces [recipientWrap, selfWrap] for a given rumor.
+ * Each call regenerates the seals and gift-wraps, so outer ids differ between
+ * calls while the inner rumor (and its id) is untouched.
+ */
+function sealAndWrapRumor(
+  rumor: UnsignedEvent,
+  senderSk: Uint8Array,
+  recipientPubHex: string,
+  senderPubHex: string
+): {wraps: NTNostrEvent[]} {
   const recipientSeal = createSeal(rumor, senderSk, recipientPubHex);
   const recipientWrap = createGiftWrap(recipientSeal, recipientPubHex);
 
-  // Create seal + gift-wrap for self (multi-device recovery)
   const selfSeal = createSeal(rumor, senderSk, senderPubHex);
   const selfWrap = createGiftWrap(selfSeal, senderPubHex);
 
-  return {
-    wraps: [recipientWrap, selfWrap] as unknown as NTNostrEvent[],
-    rumorId: rumor.id
-  };
+  return {wraps: [recipientWrap, selfWrap] as unknown as NTNostrEvent[]};
 }
 
 /**

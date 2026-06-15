@@ -86,6 +86,14 @@ export function parseReceipt(rumor: RumorEvent): {originalEventId: string; recei
  * with no signal. We resend the EXACT same wrap events (same rumor id, so the
  * receiver dedups — never a double) until a delivery receipt arrives or we
  * exhaust the schedule. Backoff: ~8s, ~20s, ~45s.
+ *
+ * IMPORTANT (FIND-ghost-first-msg): the retry must NOT re-publish the identical
+ * outer gift-wrap. Relays will not re-forward a duplicate event id to a
+ * subscriber that has already EOSE'd, so a verbatim resend can never rescue a
+ * message the recipient's live subscription missed (the "first message ghosts,
+ * second works" bug). Production therefore registers a re-wrap closure that
+ * mints a FRESH outer wrap (new outer id, same rumor id → receiver dedups) on
+ * every attempt. The legacy array form is kept only for older tests.
  */
 const RETRY_DELAYS_MS = [8000, 20000, 45000];
 // Cap on tracked outgoing payloads so a long session can't grow unbounded.
@@ -99,9 +107,12 @@ export class DeliveryTracker {
   private readReceiptsEnabled: boolean;
 
   // ─── Always-on delivery retry ──────────────────────────────────
-  // Resends the exact published wraps if a message isn't acked in time.
+  // Re-publishes an un-acked message if no delivery receipt comes back in time.
+  // Each tracked message stores a normalized resend thunk: the production path
+  // re-wraps the rumor in a fresh outer gift-wrap; the legacy path re-publishes
+  // the stored wraps via resendFn.
   private resendFn?: (wraps: any[]) => Promise<void>;
-  private outgoingWraps: Map<string, any[]> = new Map();
+  private outgoingResend: Map<string, () => Promise<void>> = new Map();
   private outgoingOrder: string[] = [];
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
@@ -134,17 +145,31 @@ export class DeliveryTracker {
   }
 
   /**
-   * Register the signed wraps for an outgoing message so the retry layer can
-   * resend the IDENTICAL events if no delivery ack arrives. Call right before
-   * markSent(). Bounded LRU so memory can't grow without limit.
+   * Register how to re-publish an outgoing message if no delivery ack arrives.
+   * Call right before markSent(). Bounded LRU so memory can't grow without
+   * limit.
+   *
+   * @param resend Either a re-wrap closure (production: mints a fresh outer
+   *   gift-wrap each call so relays re-forward it; same rumor id → receiver
+   *   dedups) or, for legacy callers/tests, the array of signed wraps to
+   *   re-publish verbatim via `resendFn`.
    */
-  registerOutgoing(eventId: string, wraps: any[]): void {
-    if(!this.resendFn || !wraps?.length) return;
-    if(!this.outgoingWraps.has(eventId)) this.outgoingOrder.push(eventId);
-    this.outgoingWraps.set(eventId, wraps);
+  registerOutgoing(eventId: string, resend: any[] | (() => void | Promise<void>)): void {
+    let thunk: (() => Promise<void>) | undefined;
+    if(typeof resend === 'function') {
+      thunk = () => Promise.resolve(resend());
+    } else if(resend?.length && this.resendFn) {
+      const wraps = resend;
+      const fn = this.resendFn;
+      thunk = () => Promise.resolve(fn(wraps));
+    }
+    if(!thunk) return;
+
+    if(!this.outgoingResend.has(eventId)) this.outgoingOrder.push(eventId);
+    this.outgoingResend.set(eventId, thunk);
     while(this.outgoingOrder.length > MAX_TRACKED_OUTGOING) {
       const evicted = this.outgoingOrder.shift()!;
-      this.outgoingWraps.delete(evicted);
+      this.outgoingResend.delete(evicted);
       this.clearRetry(evicted);
     }
   }
@@ -170,10 +195,11 @@ export class DeliveryTracker {
         this.clearRetry(eventId);
         return;
       }
-      const wraps = this.outgoingWraps.get(eventId);
-      if(wraps && this.resendFn) {
-        // Fire-and-forget; identical wrap → receiver dedups, no double-send.
-        Promise.resolve(this.resendFn(wraps)).catch(() => { /* relay retry is best-effort */ });
+      const resend = this.outgoingResend.get(eventId);
+      if(resend) {
+        // Fire-and-forget. Production re-wraps (fresh outer id, same rumor id →
+        // relay re-forwards, receiver dedups). No double message either way.
+        Promise.resolve(resend()).catch(() => { /* relay retry is best-effort */ });
       }
       this.scheduleRetry(eventId, attempt + 1);
     }, RETRY_DELAYS_MS[attempt]);
@@ -188,7 +214,7 @@ export class DeliveryTracker {
       clearTimeout(timer);
       this.retryTimers.delete(eventId);
     }
-    if(this.outgoingWraps.delete(eventId)) {
+    if(this.outgoingResend.delete(eventId)) {
       const idx = this.outgoingOrder.indexOf(eventId);
       if(idx !== -1) this.outgoingOrder.splice(idx, 1);
     }
@@ -214,9 +240,9 @@ export class DeliveryTracker {
     rootScope.dispatchEvent('phantomchat_delivery_update', {eventId, state: 'sent'});
 
     // Arm the always-on retry. If a delivery receipt doesn't come back before
-    // the first delay, we resend the same wraps. No-op when no wraps were
-    // registered (resendFn absent, or legacy/offline path).
-    if(this.resendFn && this.outgoingWraps.has(eventId)) {
+    // the first delay, we re-publish. No-op when nothing was registered
+    // (offline path, or a legacy caller with no resendFn).
+    if(this.outgoingResend.has(eventId)) {
       this.scheduleRetry(eventId, 0);
     }
   }

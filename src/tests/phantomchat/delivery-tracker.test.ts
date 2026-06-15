@@ -325,4 +325,42 @@ describe('DeliveryTracker retry (always-on)', () => {
     await vi.advanceTimersByTimeAsync(120000);
     expect(resendFn).not.toHaveBeenCalled();
   });
+
+  // ── Production path: a re-wrap CLOSURE (fresh outer wrap each attempt) ──
+  // Re-publishing the identical wrap can't rescue a ghosted message (relays
+  // won't re-forward a duplicate outer id to a live subscriber), so production
+  // registers a closure that mints a fresh outer wrap on every retry.
+  it('invokes the re-wrap closure (not resendFn) on each retry', async() => {
+    const rewrap = vi.fn();
+    tracker.registerOutgoing('chat-5-0', rewrap);
+    tracker.markSent('chat-5-0');
+
+    expect(rewrap).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(rewrap).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(rewrap).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(45000);
+    expect(rewrap).toHaveBeenCalledTimes(3);
+    // The legacy resendFn is bypassed entirely on the closure path.
+    expect(resendFn).not.toHaveBeenCalled();
+  });
+
+  it('stops invoking the re-wrap closure once a delivery receipt arrives', async() => {
+    const rewrap = vi.fn();
+    tracker.registerOutgoing('chat-6-0', rewrap);
+    tracker.markSent('chat-6-0');
+
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(rewrap).toHaveBeenCalledTimes(1);
+
+    tracker.handleReceipt({
+      kind: 14, content: '', pubkey: 'peer', created_at: 0,
+      tags: [['e', 'chat-6-0'], ['receipt-type', 'delivery']], id: 'rcpt'
+    });
+
+    await vi.advanceTimersByTimeAsync(120000);
+    // No further attempts after the ack.
+    expect(rewrap).toHaveBeenCalledTimes(1);
+  });
 });

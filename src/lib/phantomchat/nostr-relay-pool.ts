@@ -8,7 +8,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
-import {wrapNip17Message, wrapNip17Edit} from './nostr-crypto';
+import {wrapNip17Message, wrapNip17Edit, rewrapNip17Message, UnsignedEvent} from './nostr-crypto';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromMnemonic} from './nostr-identity';
@@ -42,13 +42,21 @@ export interface PublishResult {
   rumorId?: string;
   /**
    * The signed kind-1059 gift-wrap events that were published (recipient +
-   * self wraps). Returned so the delivery tracker can RE-publish the exact
-   * same events on retry — resending the identical wrap (same rumor id) means
-   * the receiver dedups it, so a retry can never create a double message.
-   * Re-wrapping instead would mint a new rumor id and double-deliver.
-   * Present only for `publish()`.
+   * self wraps). Present only for `publish()`.
+   *
+   * NOTE: the delivery-retry layer no longer re-publishes these verbatim — a
+   * relay will not re-forward a duplicate outer event id to an already-live
+   * subscriber, so an identical resend can never rescue a ghosted message.
+   * Retry re-wraps `rumor` (below) into a FRESH outer event instead.
    */
   wraps?: NostrEvent[];
+  /**
+   * The immutable inner rumor (kind 14) of the published payload. Returned so
+   * the delivery-retry layer can re-wrap the SAME rumor — preserving its id so
+   * the receiver dedups — in a fresh outer gift-wrap that the relay WILL
+   * re-forward. Present only for `publish()`.
+   */
+  rumor?: UnsignedEvent;
 }
 
 export interface RelayPoolOptions {
@@ -324,6 +332,7 @@ export class NostrRelayPool {
     // Wrap once, publish to all relays (avoids wrapping N times for N relays)
     let wraps: NostrEvent[];
     let rumorId: string | undefined;
+    let rumor: UnsignedEvent | undefined;
     try {
       if(!this.privateKeyBytes) {
         // Fallback: use storeMessage on individual relays (they wrap internally).
@@ -348,6 +357,7 @@ export class NostrRelayPool {
       const wrapped = wrapNip17Message(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
       wraps = wrapped.wraps as unknown as NostrEvent[];
       rumorId = wrapped.rumorId;
+      rumor = wrapped.rumor;
     } catch(err) {
       return {
         successes: [],
@@ -371,7 +381,33 @@ export class NostrRelayPool {
     });
 
     await Promise.all(promises);
-    return {successes, failures, rumorId, wraps};
+    return {successes, failures, rumorId, wraps, rumor};
+  }
+
+  /**
+   * Re-wrap a previously-published rumor in a FRESH outer gift-wrap and publish
+   * it to all write relays. Used by the delivery-retry layer: the rumor id is
+   * preserved (receiver dedups → no double message) but the outer kind-1059
+   * event id is new, so relays re-forward it to an already-live subscriber —
+   * which a verbatim resend of the original wrap cannot do. Returns the freshly
+   * minted wraps (mainly for tests/inspection). Best-effort per relay.
+   */
+  rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): NostrEvent[] {
+    if(!this.privateKeyBytes) return [];
+    const wraps = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent[];
+    const writeEntries = this.relayEntries.filter(e =>
+      e.config.write && this.enabled.get(e.config.url) !== false
+    );
+    for(const entry of writeEntries) {
+      try {
+        for(const wrap of wraps) {
+          entry.instance.publishRawEvent(wrap);
+        }
+      } catch{
+        // best-effort per relay; the retry schedule will try again
+      }
+    }
+    return wraps;
   }
 
   /**

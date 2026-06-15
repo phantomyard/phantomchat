@@ -644,12 +644,20 @@ export class ChatAPI {
         const result: PublishResult = await this.relayPool.publish(peerOwnId!, plaintext, opts?.replyTo);
         publishedRumorId = result.rumorId;
 
-        // Hand the signed wraps to the delivery tracker so the always-on retry
-        // layer can resend the IDENTICAL events (same rumor id → receiver
-        // dedups) if no delivery ack comes back. Registered before markSent so
-        // the retry timer can pick them up.
-        if(this.deliveryTracker && result.wraps?.length) {
-          this.deliveryTracker.registerOutgoing(messageId, result.wraps);
+        // Register a RE-WRAP closure with the delivery tracker so the always-on
+        // retry layer can re-publish if no delivery ack comes back. It re-wraps
+        // the SAME rumor (same rumor id → receiver dedups, never a double) in a
+        // FRESH outer gift-wrap, which is the only thing relays will re-forward
+        // to an already-live subscriber — a verbatim resend of result.wraps is
+        // dropped as a duplicate and never rescues a ghosted first message
+        // (FIND-ghost-first-msg). Registered before markSent so the retry timer
+        // can pick it up.
+        if(this.deliveryTracker && result.rumor) {
+          const rumor = result.rumor;
+          const recipient = peerOwnId!;
+          this.deliveryTracker.registerOutgoing(messageId, () => {
+            this.relayPool.rewrapAndPublish(recipient, rumor);
+          });
         }
 
         if(result.successes.length > 0) {
