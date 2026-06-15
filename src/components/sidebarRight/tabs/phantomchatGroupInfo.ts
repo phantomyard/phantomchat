@@ -1,6 +1,7 @@
 import {SliderSuperTab} from '@components/slider';
 import SettingSection from '@components/settingSection';
 import Row from '@components/row';
+import AppAddMembersTab from '@components/sidebarLeft/tabs/addMembers';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import confirmationPopup from '@components/confirmationPopup';
 import {getGroupAPI} from '@lib/phantomchat/group-api';
@@ -48,7 +49,10 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
       name: 'Members' as LangPackKey
     });
 
-    for(const pubkey of group.members) {
+    // Build one member row (admin-only remove handler). Reused for the initial
+    // roster AND for members added live via "Add Members" below.
+    const renderedMembers = new Set<string>();
+    const appendMemberRow = (pubkey: string) => {
       const displayName = mappingByPubkey.get(pubkey) || 'P2P ' + pubkey.slice(0, 6).toUpperCase();
       const isAdminMember = pubkey === group.adminPubkey;
 
@@ -69,6 +73,7 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
             });
             await getGroupAPI().removeMember(this.groupId, pubkey);
             row.container.remove();
+            renderedMembers.delete(pubkey);
           } catch{
             // user cancelled
           }
@@ -76,6 +81,50 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
       }
 
       membersSection.content.append(row.container);
+      renderedMembers.add(pubkey);
+    };
+
+    for(const pubkey of group.members) {
+      appendMemberRow(pubkey);
+    }
+
+    // Admin can ADD members after creation (addMember is admin-only). Opens the
+    // contacts picker; selected peers are mapped back to pubkeys and added one
+    // by one, with their rows appended live.
+    if(isAdmin) {
+      const addEl = document.createElement('span');
+      addEl.style.color = 'var(--primary-color)';
+      addEl.textContent = 'Add Members';
+
+      const addRow = new Row({
+        title: addEl,
+        listenerSetter: this.listenerSetter
+      });
+
+      attachClickEvent(addRow.container, () => {
+        this.slider.createTab(AppAddMembersTab).open({
+          type: 'chat',
+          skippable: false,
+          title: 'GroupAddMembers' as LangPackKey,
+          placeholder: 'SendMessageTo' as LangPackKey,
+          takeOut: async(peerIds: PeerId[]) => {
+            const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
+            const resolved = await Promise.all(peerIds.map((pid) => getPubkey(+pid)));
+            const pubkeys = resolved.filter((pk): pk is string => !!pk);
+            for(const pk of pubkeys) {
+              if(renderedMembers.has(pk)) continue;
+              try {
+                await getGroupAPI().addMember(this.groupId, pk);
+                appendMemberRow(pk);
+              } catch(err) {
+                console.error('[PhantomChatGroupInfo] addMember failed:', err);
+              }
+            }
+          }
+        });
+      }, {listenerSetter: this.listenerSetter});
+
+      membersSection.content.append(addRow.container);
     }
 
     this.scrollable.append(membersSection.container);
@@ -133,8 +182,8 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
       attachClickEvent(deleteRow.container, async() => {
         try {
           await confirmationPopup({
-            titleLangKey: 'Delete Group' as LangPackKey,
-            descriptionLangKey: 'AreYouSure' as LangPackKey,
+            title: 'Delete Group',
+            description: 'Delete this group for everyone? It will be removed for all members and cannot be undone.',
             button: {langKey: 'Delete' as LangPackKey, isDanger: true}
           });
           await getGroupAPI().deleteGroup(this.groupId);
