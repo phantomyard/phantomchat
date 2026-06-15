@@ -116,6 +116,46 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
     }, {listenerSetter: this.listenerSetter});
 
     leaveSection.content.append(leaveRow.container);
+
+    // Admin-only: delete the group for EVERYONE (no restrictions). Broadcasts a
+    // group_delete so other members' clients drop it too, then tears it down
+    // locally. Non-admins only get "Leave Group" above.
+    if(isAdmin) {
+      const deleteEl = document.createElement('span');
+      deleteEl.style.color = 'var(--danger-color)';
+      deleteEl.textContent = 'Delete Group';
+
+      const deleteRow = new Row({
+        title: deleteEl,
+        listenerSetter: this.listenerSetter
+      });
+
+      attachClickEvent(deleteRow.container, async() => {
+        try {
+          await confirmationPopup({
+            titleLangKey: 'Delete Group' as LangPackKey,
+            descriptionLangKey: 'AreYouSure' as LangPackKey,
+            button: {langKey: 'Delete' as LangPackKey, isDanger: true}
+          });
+          await getGroupAPI().deleteGroup(this.groupId);
+
+          try {
+            const dialogsStorage = (rootScope.managers as any).dialogsStorage;
+            if(dialogsStorage?.dropP2PDialog) {
+              await dialogsStorage.dropP2PDialog(this.groupPeerId.toPeerId(true));
+            }
+          } catch{/* ignore */}
+          rootScope.dispatchEvent('dialog_drop', {peerId: this.groupPeerId.toPeerId(true)} as any);
+
+          this.close();
+        } catch{
+          // user cancelled
+        }
+      }, {listenerSetter: this.listenerSetter});
+
+      leaveSection.content.append(deleteRow.container);
+    }
+
     this.scrollable.append(leaveSection.container);
   }
 }

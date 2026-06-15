@@ -30,6 +30,7 @@ export type GroupControlType =
   | 'group_add_member'
   | 'group_remove_member'
   | 'group_leave'
+  | 'group_delete'
   | 'group_info_update'
   | 'group_admin_transfer'
   | 'group_edit_message'
