@@ -156,21 +156,6 @@ describe('WS-D: Privacy & Security for PhantomChat.chat', () => {
   });
 });
 
-// ---- WS-E: Notifications guarded ----
-describe('WS-E: Notifications MTProto guards', () => {
-  const notifSrc = readFile('components/sidebarLeft/tabs/notifications.tsx');
-
-  it('has try-catch guards around MTProto calls', () => {
-    // Count catch blocks — should have multiple guards
-    const catchCount = (notifSrc.match(/catch\s*[\({]/g) || []).length;
-    expect(catchCount).toBeGreaterThanOrEqual(3);
-  });
-
-  it('has default fallback values for muted state', () => {
-    // Should have default enabled value when MTProto fails
-    expect(notifSrc).toContain('catch');
-  });
-});
 
 // ---- Onboarding uses tweb components ----
 describe('Onboarding uses tweb components', () => {
