@@ -16,7 +16,7 @@ import findUpTag from '@helpers/dom/findUpTag';
 import {toastNew} from '@components/toast';
 import PopupMute from '@components/popups/mute';
 import {AppManagers} from '@lib/managers';
-import {CAN_HIDE_TOPIC, FOLDER_ID_ARCHIVE, GENERAL_TOPIC_ID, REAL_FOLDERS} from '@appManagers/constants';
+import {CAN_HIDE_TOPIC, GENERAL_TOPIC_ID, REAL_FOLDERS} from '@appManagers/constants';
 import showLimitPopup from '@components/popups/limit';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import PopupElement from '@components/popups';
@@ -205,16 +205,6 @@ export default class DialogsContextMenu {
       verify: () => {
         return !this.monoforumParentPeerId && this.peerId !== rootScope.myId && this.managers.appNotificationsManager.isPeerLocalMuted({peerId: this.dialog.peerId, threadId: this.threadId});
       }
-    }, {
-      icon: 'archive',
-      text: 'Archive',
-      onClick: this.onArchiveClick,
-      verify: () => !this.threadId && !this.monoforumParentPeerId && (this.dialog as Dialog).folder_id !== FOLDER_ID_ARCHIVE && this.peerId !== rootScope.myId
-    }, {
-      icon: 'unarchive',
-      text: 'Unarchive',
-      onClick: this.onArchiveClick,
-      verify: () => !this.threadId && !this.monoforumParentPeerId && (this.dialog as Dialog).folder_id === FOLDER_ID_ARCHIVE && this.peerId !== rootScope.myId
     }, CAN_HIDE_TOPIC ? {
       icon: 'hide',
       text: 'Hide',
@@ -309,12 +299,6 @@ export default class DialogsContextMenu {
     return true;
   }
 
-  private onArchiveClick = async() => {
-    const dialog = await this.managers.appMessagesManager.getDialogOnly(this.peerId);
-    if(dialog) {
-      this.managers.appMessagesManager.editPeerFolders([dialog.peerId], +!dialog.folder_id);
-    }
-  };
 
   private onHideTopicClick = () => {
     this.managers.appMessagesManager.editForumTopic({

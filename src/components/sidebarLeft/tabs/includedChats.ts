@@ -214,7 +214,6 @@ export default class AppIncludedChatsTab extends SliderSuperTab {
         contacts: {ico: 'newprivate', text: 'ChatList.Filter.Contacts'},
         non_contacts: {ico: 'noncontacts', text: 'ChatList.Filter.NonContacts'},
         groups: {ico: 'group', text: 'ChatList.Filter.Groups'},
-        broadcasts: {ico: 'newchannel', text: 'ChatList.Filter.Channels'},
         bots: {ico: 'bots', text: 'ChatList.Filter.Bots'}
       };
     }

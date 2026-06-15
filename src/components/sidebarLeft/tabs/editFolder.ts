@@ -23,17 +23,10 @@ import wrapDraftText from '@lib/richTextProcessor/wrapDraftText';
 import filterAsync from '@helpers/array/filterAsync';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import SettingSection from '@components/settingSection';
-import {DialogFilter, ExportedChatlistInvite} from '@layer';
+import {DialogFilter} from '@layer';
 import rootScope from '@lib/rootScope';
 import confirmationPopup from '@components/confirmationPopup';
-import Row from '@components/row';
-import createContextMenu from '@helpers/dom/createContextMenu';
-import findUpClassName from '@helpers/dom/findUpClassName';
-import {copyTextToClipboard} from '@helpers/clipboard';
-import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import AppSharedFolderTab from '@components/sidebarLeft/tabs/sharedFolder';
 import showLimitPopup from '@components/popups/limit';
-import toggleDisability from '@helpers/dom/toggleDisability';
 import PopupSharedFolderInvite from '@components/popups/sharedFolderInvite';
 import PopupElement from '@components/popups';
 import {TGICO_CLASS} from '@helpers/tgico';
@@ -63,12 +56,10 @@ export default class AppEditFolderTab extends SliderSuperTab {
 
   private includePeerIds: SettingSection;
   private excludePeerIds: SettingSection;
-  private inviteLinks: SettingSection;
   private flags: {[k in 'contacts' | 'non_contacts' | 'groups' | 'broadcasts' | 'bots' | 'exclude_muted' | 'exclude_archived' | 'exclude_read']: HTMLElement} = {} as any;
 
   private includePeerIdsButtons: EditFolderButton[];
   private excludePeerIdsButtons: EditFolderButton[];
-  private inviteLinksCreate: HTMLElement;
   private animation: RLottiePlayer;
   private filter: MyDialogFilter;
   private originalFilter: MyDialogFilter;
@@ -249,25 +240,17 @@ export default class AppEditFolderTab extends SliderSuperTab {
       name: 'exclude_read'
     }], this.flags, 'FilterExcludeInfo');
 
-    this.inviteLinks = generateList('folder-list-links', 'InviteLinks', [{
-      icon: 'add',
-      text: 'SharedFolder.CreateLink',
-      withRipple: true
-    }], {}, 'SharedFolder.Description');
-
     this.scrollable.append(
       this.stickerContainer,
       this.caption,
       inputSection.container,
       this.includePeerIds.container,
-      this.excludePeerIds.container,
-      this.inviteLinks.container
+      this.excludePeerIds.container
     );
 
     this.toggleExcludedPeers();
     const includedFlagsContainer = this.includePeerIds.container.querySelector('.folder-categories');
     const excludedFlagsContainer = this.excludePeerIds.container.querySelector('.folder-categories');
-    this.inviteLinksCreate = this.inviteLinks.container.querySelector('.btn') as HTMLElement;
 
     attachClickEvent(includedFlagsContainer.querySelector('.btn') as HTMLElement, () => {
       this.slider.createTab(AppIncludedChatsTab).open(this.filter, 'included', this);
@@ -357,9 +340,6 @@ export default class AppEditFolderTab extends SliderSuperTab {
     ] : [];
 
     return Promise.all([
-      this.managers.apiManager.getLimit('chatlistInvites'),
-      this.managers.apiManager.getLimit('chatlistInvites', true),
-
       this.loadAnimationPromise = p.animationData.then(async(cb) => {
         const player = await cb({
           container: this.stickerContainer,
@@ -375,7 +355,7 @@ export default class AppEditFolderTab extends SliderSuperTab {
       }),
 
       ...reloadMissingPromises
-    ]).then(([chatlistInvitesLimit, chatlistInvitesPremiumLimit]) => {
+    ]).then(() => {
       if(this.type === 'edit') {
         this.setFilter(this.originalFilter, true);
         this.onEditOpen();
@@ -383,185 +363,6 @@ export default class AppEditFolderTab extends SliderSuperTab {
         this.setInitFilter();
         this.onCreateOpen();
       }
-
-      this.managers.filtersStorage.getExportedInvites(this.filter.id).catch((err: ApiError) => {
-        if(err.type === 'FILTER_NOT_SUPPORTED') {
-          return [] as ExportedChatlistInvite[];
-        }
-
-        throw err;
-      }).then((chatlistInvites) => {
-        const CLASS_NAME = 'usernames';
-
-        const content = this.inviteLinks.generateContentElement();
-        const map: Map<HTMLElement, ExportedChatlistInvite> = new Map();
-        const invitesMap: Map<string, Row> = new Map();
-
-        const onLinksLengthChange = () => {
-          this.inviteLinksCreate.classList.toggle('hide', map.size >= chatlistInvitesPremiumLimit);
-        };
-
-        const onLinkDeletion = (link: ExportedChatlistInvite) => {
-          const row = invitesMap.get(link.url);
-          if(row) {
-            row.container.remove();
-            invitesMap.delete(link.url);
-            map.delete(row.container);
-            onLinksLengthChange();
-          }
-        };
-
-        const updateLink = (row: Row, chatlistInvite: ExportedChatlistInvite) => {
-          const title = chatlistInvite.title && chatlistInvite.title !== this.filter.title.text ?
-            wrapEmojiText(chatlistInvite.title) :
-            chatlistInvite.url.replace(/(.+?):\/\//, '');
-          const subtitle = i18n('SharedFolder.Includes', [i18n('Chats', [chatlistInvite.peers.length])]);
-          row.title.replaceChildren(title);
-          row.subtitle.replaceChildren(subtitle);
-        };
-
-        const wrapLink = (chatlistInvite: ExportedChatlistInvite) => {
-          const row = new Row({
-            title: true,
-            subtitle: true,
-            clickable: true
-          });
-
-          updateLink(row, chatlistInvite);
-
-          row.container.classList.add(CLASS_NAME + '-username', 'active');
-          const media = row.createMedia('medium');
-          media.classList.add(CLASS_NAME + '-username-icon');
-          media.append(Icon('link'));
-
-          content.append(row.container);
-          map.set(row.container, chatlistInvite);
-          invitesMap.set(chatlistInvite.url, row);
-          onLinksLengthChange();
-        };
-
-        let target: HTMLElement;
-        createContextMenu({
-          buttons: [{
-            icon: 'copy',
-            text: 'CopyLink',
-            onClick: () => copyTextToClipboard(map.get(target).url)
-          }, {
-            icon: 'delete',
-            className: 'danger',
-            text: 'Delete',
-            onClick: () => {
-              const chatlistInvite = map.get(target);
-              this.managers.filtersStorage.deleteExportedInvite(
-                this.filter.id,
-                chatlistInvite.url
-              ).then(() => {
-                onLinkDeletion(chatlistInvite);
-              });
-            }
-          }],
-          listenTo: content,
-          listenerSetter: this.listenerSetter,
-          findElement: (e) => findUpClassName(e.target, 'row'),
-          onOpen: (e, _target) => target = _target
-        });
-
-        attachClickEvent(this.inviteLinksCreate, async() => {
-          if(map.size >= chatlistInvitesLimit) {
-            showLimitPopup('chatlistInvites');
-            return;
-          }
-
-          if(!this.filter.title) {
-            toastNew({langPackKey: 'SharedFolder.Toast.NeedName'});
-            return;
-          }
-
-          const pFlags = (this.filter as DialogFilter.dialogFilter).pFlags;
-          if(pFlags) {
-            const found = [this.includePeerIdsButtons, this.excludePeerIdsButtons].some((buttons) => {
-              return buttons.some((button) => !!pFlags[button.name]);
-            });
-
-            if(found) {
-              toastNew({langPackKey: 'SharedFolder.Toast.NoTypes'});
-              return;
-            }
-          }
-
-          if((this.filter as DialogFilter.dialogFilter).excludePeerIds?.length) {
-            toastNew({langPackKey: 'SharedFolder.Toast.NoExcluded'});
-            return;
-          }
-
-          const toggle = toggleDisability([this.inviteLinksCreate], true);
-          try {
-            const result = confirmEditing(false);
-            if(!(result instanceof Promise)) {
-              throw '';
-            }
-
-            const filter = await result as DialogFilter.dialogFilter;
-            this.updateFilter(filter);
-            this.type = 'edit';
-            this.originalFilter = filter;
-            this.editCheckForChange();
-          } catch(err) {
-            toggle();
-            return;
-          }
-
-          this.managers.filtersStorage.exportChatlistInvite({
-            ...this.filter,
-            _: 'dialogFilterChatlist',
-            ...({pFlags: this.filter._ === 'dialogFilter' ? {has_my_invites: true} : this.filter.pFlags})
-          }).then((exportedChatlistInvite) => {
-            toggle();
-            openChatlistInvite(exportedChatlistInvite.invite).finally(() => {
-              wrapLink(exportedChatlistInvite.invite);
-            });
-          }, (err: ApiError) => {
-            toggle();
-            if(err.type === 'INVITES_TOO_MUCH' || err.type === 'FILTERS_TOO_MUCH' || err.type === 'CHATLISTS_TOO_MUCH') {
-              showLimitPopup('chatlistInvites');
-              return;
-            } else if(err.type === 'PEERS_LIST_EMPTY' || err.type === 'CHAT_ADMIN_REQUIRED') {
-              openChatlistInvite();
-              return;
-            }
-
-            throw err;
-          });
-        }, {listenerSetter: this.listenerSetter});
-
-        const openChatlistInvite = (chatlistInvite?: ExportedChatlistInvite) => {
-          const row = invitesMap.get(chatlistInvite?.url);
-          const tab = this.slider.createTab(AppSharedFolderTab);
-          tab.filter = this.filter as DialogFilter.dialogFilterChatlist;
-          tab.chatlistInvite = chatlistInvite;
-          tab.eventListener.addEventListener('delete', () => {
-            onLinkDeletion(chatlistInvite);
-          });
-          tab.eventListener.addEventListener('edit', (chatlistInvite) => {
-            map.set(row.container, chatlistInvite);
-            updateLink(row, chatlistInvite);
-          });
-
-          return tab.open();
-        };
-
-        attachClickEvent(content, (e) => {
-          const target = findUpClassName(e.target, 'row');
-          const chatlistInvite = map.get(target as HTMLElement);
-          if(!chatlistInvite) {
-            return;
-          }
-
-          openChatlistInvite(chatlistInvite);
-        }, {listenerSetter: this.listenerSetter});
-
-        chatlistInvites.forEach(wrapLink);
-      });
     });
   }
 

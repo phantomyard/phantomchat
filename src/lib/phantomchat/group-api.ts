@@ -635,27 +635,72 @@ export class GroupAPI {
     const controlWraps = broadcastGroupControl(this.ownSk, remaining, payload);
     await this.publishFn(controlWraps);
 
-    // Delete group locally + clean up main-thread mirror state symmetric to
-    // `ensureGroupChatInjected` (phantomchat-groups-sync.ts). Without the mirror
-    // cleanup the Chat entry survives store deletion, violating
-    // INV-group-no-orphan-mirror-peer and briefly re-rendering the "left"
-    // group in chat list until the next reload.
+    await this.teardownGroupLocally(groupId);
+    this.log('[GroupAPI] left group:', groupId);
+  }
+
+  /**
+   * Delete the group for EVERYONE — admin only, no restrictions.
+   *
+   * Broadcasts a `group_delete` control to all OTHER members so their clients
+   * tombstone + drop the group too (broadcastGroupControl also self-wraps for
+   * multi-device), then tears the group down locally. P2P has no server to
+   * force-wipe a group off other devices, so this is cooperative: each member's
+   * client honors `group_delete` from the verified admin (see handleGroupDelete).
+   */
+  async deleteGroup(groupId: string): Promise<void> {
+    const group = await this.store.get(groupId);
+    if(!group) throw new Error(`Group not found: ${groupId}`);
+    if(group.adminPubkey !== this.ownPubkey) throw new Error('Only admin can delete the group');
+
+    const others = group.members.filter(m => m !== this.ownPubkey);
+    const payload: GroupControlPayload = {
+      type: 'group_delete',
+      groupId
+    };
+
+    const controlWraps = broadcastGroupControl(this.ownSk, others, payload);
+    await this.publishFn(controlWraps);
+
+    await this.teardownGroupLocally(groupId);
+    this.log('[GroupAPI] deleted group for all members:', groupId);
+  }
+
+  /**
+   * Delete a group resolved by tweb peerId (admin only). Mirror of
+   * leaveGroupByPeerId for the delete-for-everyone path.
+   */
+  async deleteGroupByPeerId(peerId: number): Promise<void> {
+    const group = await this.store.getByPeerId(peerId);
+    if(group) {
+      return this.deleteGroup(group.groupId);
+    }
+    // No store record — best-effort local cleanup so the row vanishes and the
+    // conversation stays tombstoned.
+    this.log('[GroupAPI] deleteGroupByPeerId: orphan peer (no store record), tombstoning + cleaning mirror:', peerId);
+    await this.tombstoneOrphanGroupByPeerId(peerId);
+    await cleanupGroupChatInjection(peerId);
+  }
+
+  /**
+   * Local group teardown shared by leaveGroup / deleteGroup / handleGroupDelete:
+   * delete the store record, write the deletion tombstone (so neither the
+   * orphan-recovery scan nor a replayed control message can resurrect it —
+   * FIND-group-resurrection), purge the injected main-thread mirror (symmetric
+   * to ensureGroupChatInjected; without it the Chat entry survives store
+   * deletion, violating INV-group-no-orphan-mirror-peer), and drop the
+   * chat-list dialog row.
+   */
+  private async teardownGroupLocally(groupId: string): Promise<void> {
     const peerId = await groupIdToPeerId(groupId);
     await this.store.delete(groupId);
-    // Purge the group's local messages and write a deletion tombstone so the
-    // orphan-recovery scan in getGroupHistory can never resurrect it. Deleting
-    // only the store record (as before) left 'group:<id>' messages on disk,
-    // which getGroupHistory rebuilt into a half-broken zombie group — the
-    // "deleted groups keep coming back / not a member of group" bug.
     await this.tombstoneGroupConversation(groupId);
     await cleanupGroupChatInjection(peerId);
 
-    // Drop the chat-list dialog row symmetrically (FIND-3786a35f obs (D)).
-    // Earlier we just dispatched `dialog_drop` with `{peerId}` but tweb's
-    // autonomousDialogList gates on `isDialog(d) === d._ === 'dialog'` —
-    // bare `{peerId}` fails the guard and the row stayed in the DOM.
-    // Dispatch a minimum Dialog-shaped envelope instead so the autonomous
-    // chat list deletes by getDialogKey(dialog) = dialog.peerId.
+    // Drop the chat-list dialog row (FIND-3786a35f obs (D)). tweb's
+    // autonomousDialogList gates on `d._ === 'dialog'`, so a bare {peerId}
+    // fails the guard and the row stays in the DOM — dispatch a minimal
+    // Dialog-shaped envelope so it deletes by getDialogKey(dialog) = peerId.
     const groupPeerIdAsDialogPeerId = peerId.toPeerId(true);
     try {
       rootScope.dispatchEvent('dialog_drop' as any, {
@@ -672,10 +717,8 @@ export class GroupAPI {
         pFlags: {}
       } as any);
     } catch(err) {
-      this.log.warn('[GroupAPI] leaveGroup: dialog_drop dispatch non-critical:', err);
+      this.log.warn('[GroupAPI] teardownGroupLocally: dialog_drop dispatch non-critical:', err);
     }
-
-    this.log('[GroupAPI] left group:', groupId);
   }
 
   /**
@@ -821,6 +864,27 @@ export class GroupAPI {
       return;
     }
 
+    // TOMBSTONE GATE (FIND-group-resurrection). If this group was deleted/left
+    // locally, ignore any control message timestamped at or before the deletion
+    // watermark — most importantly a `group_create` (or its self-wrap) replayed
+    // from the relay backlog on reload, which would otherwise re-`store.save()`
+    // and re-inject the dialog, resurrecting a group the user deleted. Mirrors
+    // the content-message gate in phantomchat-groups-sync. A genuinely newer
+    // control (sent AFTER the delete, e.g. being re-added) still passes through,
+    // matching Signal-style revive semantics.
+    if(payload?.groupId) {
+      try {
+        const deletedAt = await getMessageStore().getTombstone(`group:${payload.groupId}`);
+        const ts = typeof rumor.created_at === 'number' ? rumor.created_at : Math.floor(Date.now() / 1000);
+        if(deletedAt > 0 && ts <= deletedAt) {
+          this.log('[GroupAPI] dropping tombstoned control message', payload.type, payload.groupId.slice(0, 8), {ts, deletedAt});
+          return;
+        }
+      } catch(err) {
+        this.log.warn('[GroupAPI] control tombstone gate check failed; continuing:', err);
+      }
+    }
+
     switch(payload.type) {
       case 'group_create':
         await this.handleGroupCreate(payload, senderPubkey);
@@ -833,6 +897,9 @@ export class GroupAPI {
         break;
       case 'group_leave':
         await this.handleMemberLeave(payload, senderPubkey);
+        break;
+      case 'group_delete':
+        await this.handleGroupDelete(payload, senderPubkey);
         break;
       case 'group_info_update':
         await this.handleInfoUpdate(payload);
@@ -964,6 +1031,24 @@ export class GroupAPI {
         await this.store.updateMembers(payload.groupId, remaining);
       }
     }
+  }
+
+  /**
+   * Apply an incoming `group_delete` (admin deleted the group for everyone).
+   * Only the group's admin may delete; a delete from anyone else is ignored to
+   * stop a non-admin from nuking a group on other members' devices. The proven
+   * `senderPubkey` (rumor.pubkey) is checked against our record's adminPubkey.
+   * If we have no record (already gone), we still tear down by groupId so a
+   * racing backlog create can't leave a zombie.
+   */
+  private async handleGroupDelete(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
+    const group = await this.store.get(payload.groupId);
+    if(group && group.adminPubkey !== senderPubkey) {
+      this.log.warn('[GroupAPI] ignoring group_delete from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+      return;
+    }
+    await this.teardownGroupLocally(payload.groupId);
+    this.log('[GroupAPI] group deleted by admin:', payload.groupId.slice(0, 8));
   }
 
   private async handleMemberLeave(payload: GroupControlPayload, senderPubkey: string): Promise<void> {

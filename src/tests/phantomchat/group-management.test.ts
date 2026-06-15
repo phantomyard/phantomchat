@@ -132,7 +132,7 @@ describe('Group Management', () => {
   let api: any;
   let publishedEvents: any[];
 
-  beforeEach(() => {
+  beforeEach(async() => {
     vi.clearAllMocks();
     publishedEvents = [];
 
@@ -146,6 +146,13 @@ describe('Group Management', () => {
 
     const publishFn = async(events: any[]) => { publishedEvents.push(...events); };
     api = new GroupAPI(OWN_PUBKEY, OWN_SK, publishFn);
+
+    // Test isolation: the leaveGroup test writes a deletion tombstone for
+    // GROUP_ID into the (persistent fake-indexeddb) message store. Clear it so
+    // the control-message tombstone gate doesn't carry over and drop control
+    // messages in subsequent same-GROUP_ID tests.
+    const {getMessageStore} = await import('@lib/phantomchat/message-store');
+    await getMessageStore().clearTombstone(`group:${GROUP_ID}`);
   });
 
   describe('addMember', () => {
@@ -224,6 +231,25 @@ describe('Group Management', () => {
     });
   });
 
+  describe('deleteGroup (admin, broadcast-to-all)', () => {
+    it('admin: broadcasts group_delete to other members and removes local group', async() => {
+      store().get.mockResolvedValueOnce(makeGroup());
+      await api.deleteGroup(GROUP_ID);
+
+      const [, recipients, payload] = broadcast().mock.calls[0];
+      expect(payload.type).toBe('group_delete');
+      expect(recipients).toContain(MEMBER_A);
+      expect(recipients).toContain(MEMBER_B);
+      expect(recipients).not.toContain(OWN_PUBKEY); // self-wrap is added by broadcastGroupControl
+      expect(store().delete).toHaveBeenCalledWith(GROUP_ID);
+    });
+
+    it('throws if not admin', async() => {
+      store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
+      await expect(api.deleteGroup(GROUP_ID)).rejects.toThrow('Only admin');
+    });
+  });
+
   describe('handleControlMessage', () => {
     it('group_create creates group in store', async() => {
       const payload: GroupControlPayload = {
@@ -243,6 +269,73 @@ describe('Group Management', () => {
       expect(saved.groupId).toBe('newgroup123456789012345678901234');
       expect(saved.name).toBe('New Group');
       expect(saved.adminPubkey).toBe(MEMBER_A);
+    });
+
+    // FIND-group-resurrection: a deleted/left group must NOT come back when the
+    // original group_create (or its self-wrap) is replayed from the relay
+    // backlog on reload. The control path now honors the deletion tombstone.
+    it('drops a replayed group_create for a tombstoned group (no resurrection)', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const groupId = 'tombstonedgroup0000000000000000a';
+      await getMessageStore().setTombstone(`group:${groupId}`, 2000);
+
+      const payload: GroupControlPayload = {
+        type: 'group_create', groupId, groupName: 'Zombie',
+        memberPubkeys: [MEMBER_A, OWN_PUBKEY], adminPubkey: MEMBER_A
+      };
+      const rumor = {
+        id: 'ctrl-zombie', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_A, created_at: 1000, // at/below the deletion watermark
+        tags: [['control', 'true'], ['group', groupId]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+      expect(store().save).not.toHaveBeenCalled();
+    });
+
+    it('still applies a group_create newer than the tombstone (revive semantics)', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const groupId = 'tombstonedgroup0000000000000000b';
+      await getMessageStore().setTombstone(`group:${groupId}`, 1000);
+
+      const payload: GroupControlPayload = {
+        type: 'group_create', groupId, groupName: 'Revived',
+        memberPubkeys: [MEMBER_A, OWN_PUBKEY], adminPubkey: MEMBER_A
+      };
+      const rumor = {
+        id: 'ctrl-revive', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_A, created_at: 2000, // above the deletion watermark
+        tags: [['control', 'true'], ['group', groupId]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+      expect(store().save).toHaveBeenCalledTimes(1);
+    });
+
+    it('group_delete from the admin tears the group down locally', async() => {
+      store().get.mockResolvedValue(makeGroup({adminPubkey: MEMBER_A}));
+      const payload: GroupControlPayload = {type: 'group_delete', groupId: GROUP_ID};
+      const rumor = {
+        id: 'ctrl-del', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_A, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+      expect(store().delete).toHaveBeenCalledWith(GROUP_ID);
+    });
+
+    it('group_delete from a non-admin is ignored (no teardown)', async() => {
+      store().get.mockResolvedValue(makeGroup({adminPubkey: MEMBER_A}));
+      const payload: GroupControlPayload = {type: 'group_delete', groupId: GROUP_ID};
+      const rumor = {
+        id: 'ctrl-del2', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_B, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_B);
+      expect(store().delete).not.toHaveBeenCalled();
     });
 
     it('group_remove_member with targetPubkey=self removes group locally', async() => {

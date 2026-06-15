@@ -12,11 +12,10 @@ import InputSearch from '@components/inputSearch';
 import SidebarSlider, {SliderSuperTab} from '@components/slider';
 import TransitionSlider from '@components/transition';
 import AppNewGroupTab from '@components/sidebarLeft/tabs/newGroup';
-import AppSearchSuper, {SearchSuperMediaType} from '@components/appSearchSuper';
+import AppSearchSuper from '@components/appSearchSuper';
 import {DateData, fillTipDates} from '@helpers/date';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import AppSettingsTab from '@components/sidebarLeft/tabs/settings';
-import AppNewChannelTab from '@components/sidebarLeft/tabs/newChannel';
 import AppContactsTab from '@components/sidebarLeft/tabs/contacts';
 import AppArchivedTab from '@components/sidebarLeft/tabs/archivedTab';
 import AppAddMembersTab from '@components/sidebarLeft/tabs/addMembers';
@@ -1073,14 +1072,6 @@ export class AppSidebarLeft extends SidebarSlider {
     };
 
     return [{
-      icon: 'newchannel',
-      text: singular ? 'Channel' : 'NewChannel',
-      onClick: () => {
-        closeTabsBefore(() => {
-          this.createTab(AppNewChannelTab).open();
-        });
-      }
-    }, {
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
       onClick: onNewGroupClick
@@ -1210,15 +1201,6 @@ export class AppSidebarLeft extends SidebarSlider {
         name: 'FilterChats',
         type: 'chats'
       }, {
-        name: 'ChannelsTab',
-        type: 'channels'
-      }, {
-        name: 'MiniApps.AppsSearch',
-        type: 'apps'
-      }, {
-        name: 'PostsSearch.TabName',
-        type: 'posts'
-      }, {
         inputFilter: 'inputMessagesFilterPhotoVideo',
         name: 'SharedMediaTab2',
         type: 'media'
@@ -1247,20 +1229,9 @@ export class AppSidebarLeft extends SidebarSlider {
       managers: this.managers
     });
 
-    let prevTab: SearchSuperMediaType
-    searchSuper.onChangeTab = (tab) => {
-      if(prevTab === 'posts') {
-        simulateClickEvent(this.inputSearch.clearBtn);
-      }
-
-      prevTab = tab.type;
+    searchSuper.onChangeTab = () => {
       searchSuper.searchContext.chatType = 'all';
-      if(tab.type === 'posts') {
-        searchSuper.globalPostsSearch?.setQuery(this.inputSearch.value);
-      }
     };
-
-    this.watchChannelsTabVisibility();
 
     searchContainer.prepend(searchSuper.nav.parentElement.parentElement);
     scrollable.append(searchSuper.container);
@@ -1398,11 +1369,6 @@ export class AppSidebarLeft extends SidebarSlider {
     };
 
     const updateSearchQuery = ({search: value, chatType}: UpdateSearchQueryArgs) => {
-      if(searchSuper.mediaTab.type === 'posts') {
-        searchSuper.globalPostsSearch?.setQuery(value);
-        return
-      }
-
       // spot input
       searchSuper.cleanupHTML();
       searchSuper.setQuery({
@@ -1591,30 +1557,6 @@ export class AppSidebarLeft extends SidebarSlider {
         close();
       }
     };
-  }
-
-  private async watchChannelsTabVisibility() {
-    const checkChannelsVisiblity = async() => {
-      const dialogs = await this.managers.dialogsStorage.getCachedDialogs();
-
-      let hasChannels = false;
-      for(const dialog of dialogs) {
-        hasChannels = await this.managers.appPeersManager.isBroadcast(dialog.peerId);
-        if(hasChannels) break;
-      }
-
-      const channelsTab = this.searchSuper.mediaTabs.find((tab) => tab.type === 'channels');
-      channelsTab.menuTab?.classList.toggle('hide', !hasChannels);
-    };
-
-    checkChannelsVisiblity();
-
-    rootScope.addEventListener('channel_update', () => {
-      pause(200).then(() => checkChannelsVisiblity());
-    });
-    rootScope.addEventListener('peer_deleted', () => {
-      checkChannelsVisiblity();
-    });
   }
 
   public closeSearch() {
