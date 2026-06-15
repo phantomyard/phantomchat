@@ -203,3 +203,15 @@ describe('Integration: apiManager PHANTOMCHAT_STATIC', () => {
     expect(apiManagerSrc).toContain('account.getPrivacy');
   });
 });
+
+// ---- WS-F: Delete Account performs a full local wipe ----
+describe('WS-F: Delete Account', () => {
+  const src = readFile('components/sidebarLeft/tabs/privacyAndSecurity.ts');
+
+  it('uses clearAllPhantomChatData (the awaited full wipe), not a naive single-DB delete', () => {
+    expect(src).toContain('clearAllPhantomChatData');
+    // Regression: the old handler did an un-awaited delete of only the identity DB,
+    // which was blocked by open connections and raced by the reload.
+    expect(src).not.toContain("indexedDB.deleteDatabase('PhantomChat.chat')");
+  });
+});
