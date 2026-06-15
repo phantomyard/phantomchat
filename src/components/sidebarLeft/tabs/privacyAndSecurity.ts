@@ -101,43 +101,13 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
       subtitle: 'Remove all local data and identity',
       icon: 'delete',
       clickable: async() => {
-        const {default: confirmationPopup} = await import('@components/confirmationPopup');
-        try {
-          await confirmationPopup({
-            title: 'Delete Account',
-            descriptionRaw: 'This permanently deletes your identity (keys), all messages, contacts, groups, relays, and settings on this device. It cannot be undone — make sure you have your Recovery Phrase if you ever want this account back. Continue?',
-            button: {
-              text: document.createTextNode('Delete'),
-              isDanger: true
-            }
-          });
-        } catch{
-          return; // user cancelled
-        }
-
-        // Full wipe. The old handler deleted only the identity database WITHOUT
-        // awaiting it and then reloaded immediately — the delete was blocked by
-        // the app's open IDB connections and lost the race against reload, so the
-        // account survived (the reported bug). clearAllPhantomChatData()
-        // force-closes connections and deletes EVERY PhantomChat DB (identity +
-        // messages + groups + virtual-peers + pool), awaited to completion.
-        const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);color:#fff;font-size:1.25rem;backdrop-filter:blur(8px)';
-        overlay.textContent = 'Deleting account…';
-        document.body.appendChild(overlay);
-
-        try {
-          const {clearAllPhantomChatData} = await import('@lib/phantomchat/phantomchat-cleanup');
-          const failed = await clearAllPhantomChatData();
-          if(failed.length) console.warn('[PrivacyAndSecurity] delete account: some DBs failed to delete:', failed.join(', '));
-        } catch(err) {
-          console.warn('[PrivacyAndSecurity] delete account error:', err);
-        }
-        try { localStorage.clear(); } catch{}
-        try { sessionStorage.clear(); } catch{}
-
-        overlay.textContent = 'Account deleted — reloading…';
-        location.href = location.origin;
+        // Delete Account routes through the proven logout teardown
+        // (showDeleteAccountPopup → logOut keepPhantomChatIdentity:false), which
+        // deletes the Nostr key in the Worker context + clears tweb state. A
+        // main-thread indexedDB.deleteDatabase() alone is blocked by the
+        // SharedWorker's open connections and silently fails (the reported bug).
+        const {showDeleteAccountPopup} = await import('@components/popups/resetLocalData');
+        showDeleteAccountPopup();
       },
       listenerSetter: this.listenerSetter
     });
