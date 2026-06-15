@@ -821,6 +821,27 @@ export class GroupAPI {
       return;
     }
 
+    // TOMBSTONE GATE (FIND-group-resurrection). If this group was deleted/left
+    // locally, ignore any control message timestamped at or before the deletion
+    // watermark — most importantly a `group_create` (or its self-wrap) replayed
+    // from the relay backlog on reload, which would otherwise re-`store.save()`
+    // and re-inject the dialog, resurrecting a group the user deleted. Mirrors
+    // the content-message gate in phantomchat-groups-sync. A genuinely newer
+    // control (sent AFTER the delete, e.g. being re-added) still passes through,
+    // matching Signal-style revive semantics.
+    if(payload?.groupId) {
+      try {
+        const deletedAt = await getMessageStore().getTombstone(`group:${payload.groupId}`);
+        const ts = typeof rumor.created_at === 'number' ? rumor.created_at : Math.floor(Date.now() / 1000);
+        if(deletedAt > 0 && ts <= deletedAt) {
+          this.log('[GroupAPI] dropping tombstoned control message', payload.type, payload.groupId.slice(0, 8), {ts, deletedAt});
+          return;
+        }
+      } catch(err) {
+        this.log.warn('[GroupAPI] control tombstone gate check failed; continuing:', err);
+      }
+    }
+
     switch(payload.type) {
       case 'group_create':
         await this.handleGroupCreate(payload, senderPubkey);
