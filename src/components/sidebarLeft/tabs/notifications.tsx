@@ -18,6 +18,7 @@ import cancelEvent from '@helpers/dom/cancelEvent';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import {IconTsx} from '@components/iconTsx';
 import PhantomChatBackgroundNotifications from '@components/sidebarLeft/tabs/phantomchatBackgroundNotifications';
+import App from '@config/app';
 
 const NotImplementedBadge = () => (
   <IconTsx
@@ -213,16 +214,18 @@ const NotificationsSection = () => {
         </Row.CheckboxFieldToggle>
         <Row.Title>{i18n('Notifications.Show')}</Row.Title>
       </NotificationRow>
-      <NotificationRow>
-        <Row.CheckboxFieldToggle>
-          <NotificationCheckbox
-            checked={appSettings.notifications.push}
-            onChange={(value) => setAppSettings('notifications', 'push', value)}
-            toggle
-          />
-        </Row.CheckboxFieldToggle>
-        <Row.Title>{i18n('Notifications.Offline')}</Row.Title>
-      </NotificationRow>
+      {App.pushEnabled && (
+        <NotificationRow>
+          <Row.CheckboxFieldToggle>
+            <NotificationCheckbox
+              checked={appSettings.notifications.push}
+              onChange={(value) => setAppSettings('notifications', 'push', value)}
+              toggle
+            />
+          </Row.CheckboxFieldToggle>
+          <Row.Title>{i18n('Notifications.Offline')}</Row.Title>
+        </NotificationRow>
+      )}
       <NotificationRow>
         <Row.CheckboxFieldToggle>
           <NotificationCheckbox
@@ -317,7 +320,7 @@ const Notifications = () => {
   return (
     <>
       <NotificationsSection />
-      <PhantomChatBackgroundNotifications />
+      {App.pushEnabled && <PhantomChatBackgroundNotifications />}
       <SoundSection />
       <SoundEffectsSection />
       <NotifySection
