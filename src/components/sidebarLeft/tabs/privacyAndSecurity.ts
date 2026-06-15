@@ -21,23 +21,6 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
     this.container.classList.add('privacy-container');
     this.setTitle('PrivacySettings');
 
-    // --- Mesh Network section ---
-    const meshSection = new SettingSection({name: 'Mesh Network' as any});
-
-    const meshRow = new Row({
-      title: 'P2P Mesh Settings',
-      subtitle: 'Direct connections between contacts',
-      icon: 'link',
-      clickable: async() => {
-        const {default: AppPhantomChatMeshSettingsTab} = await import('@components/sidebarLeft/tabs/phantomchatMeshSettings');
-        const tab = new AppPhantomChatMeshSettingsTab(this.slider);
-        tab.open();
-      },
-      listenerSetter: this.listenerSetter
-    });
-
-    meshSection.content.append(meshRow.container);
-
     // Section 1: Key Security
     const securitySection = new SettingSection({
       name: 'Key Protection' as any,
@@ -139,7 +122,6 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
     dangerSection.content.append(deleteAccountRow.container);
 
     this.scrollable.append(
-      meshSection.container,
       securitySection.container,
       privacySection.container,
       dangerSection.container
