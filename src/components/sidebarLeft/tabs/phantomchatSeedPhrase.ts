@@ -121,7 +121,9 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
   private showSeed(seed: string, nsec: string): void {
     if(!this.gridContainer || !this.revealContainer) return;
 
-    const words = seed.split(' ');
+    // nsec-imported accounts have no BIP-39 mnemonic (seed === '') — show a note
+    // instead of an empty 12-word grid; the nsec section below is their backup.
+    const words = seed ? seed.split(' ') : [];
     this.gridContainer.innerHTML = '';
     this.gridContainer.style.display = 'block';
 
@@ -131,6 +133,13 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
 
     const grid = document.createElement('div');
     grid.classList.add('seed-word-grid');
+
+    if(!words.length) {
+      const note = document.createElement('div');
+      note.style.cssText = 'opacity:0.7;font-size:0.8125rem;text-align:center;padding:0.25rem 0';
+      note.textContent = 'This account was imported from a key, so it has no 12-word recovery phrase. Back it up with the private key (nsec) below.';
+      grid.append(note);
+    }
 
     for(let i = 0; i < words.length; i++) {
       const chip = document.createElement('div');
@@ -152,21 +161,23 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
     const actions = document.createElement('div');
     actions.classList.add('seed-actions');
 
-    const copyBtn = Button('btn-primary btn-color-primary seed-copy-btn');
-    copyBtn.textContent = 'Copy';
-    copyBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(seed).then(() => {
-        copyBtn.textContent = 'Copied!';
-        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
-        toast('Recovery phrase copied');
-      });
-    });
-
     const hideBtn = Button('btn-primary btn-transparent seed-hide-btn');
     hideBtn.textContent = 'Hide';
     hideBtn.addEventListener('click', () => this.hideSeed());
+    actions.append(hideBtn);
 
-    actions.append(hideBtn, copyBtn);
+    if(seed) {
+      const copyBtn = Button('btn-primary btn-color-primary seed-copy-btn');
+      copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(seed).then(() => {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+          toast('Recovery phrase copied');
+        });
+      });
+      actions.append(copyBtn);
+    }
 
     // Countdown bar (visual auto-hide timer)
     const countdownWrap = document.createElement('div');

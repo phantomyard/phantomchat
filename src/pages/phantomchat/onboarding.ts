@@ -8,6 +8,7 @@
 import {
   generateNostrIdentity,
   importFromMnemonic,
+  importFromNsec,
   validateMnemonic,
   NostrIdentity
 } from '@lib/phantomchat/nostr-identity';
@@ -192,7 +193,7 @@ export class PhantomChatOnboarding {
 
     const subtitle = document.createElement('div');
     subtitle.classList.add('subtitle', 'text-center');
-    subtitle.textContent = 'Enter your 12-word recovery phrase';
+    subtitle.textContent = 'Enter your 12-word recovery phrase — or paste an nsec into the first box to import a key from another Nostr app (e.g. 0xchat)';
 
     const grid = document.createElement('div');
     grid.classList.add('phantomchat-seed-grid');
@@ -255,6 +256,19 @@ export class PhantomChatOnboarding {
     inputs.forEach((input, i) => {
       input.addEventListener('input', () => {
         const value = input.value.trim().toLowerCase();
+        // Paste an nsec (or 64-hex secret) into the first box → import a key from
+        // another Nostr app (0xchat). No 12-word seed; the account has no recovery
+        // phrase (its backup is the nsec).
+        if(i === 0 && (value.startsWith('nsec1') || /^[0-9a-f]{64}$/.test(value))) {
+          try {
+            this.identity = importFromNsec(value);
+            errorEl.textContent = '';
+            this.showDisplayName();
+          } catch(err) {
+            errorEl.textContent = 'Failed to import key: ' + (err as Error).message;
+          }
+          return;
+        }
         const pastedWords = value.split(/\s+/);
         if(pastedWords.length === 12 && i === 0) {
           pastedWords.forEach((w, idx) => {

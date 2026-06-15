@@ -39,6 +39,40 @@ export function validateMnemonic(mnemonic: string): boolean {
 }
 
 /**
+ * Import an existing identity from a raw Nostr private key — an `nsec1…`
+ * (NIP-19) or a 64-char hex secret. Used to adopt a key created in another
+ * Nostr client (e.g. 0xchat) so both apps drive the same npub.
+ *
+ * A raw key has no BIP-39 mnemonic (you can't derive the seed words back from
+ * a private key), so `mnemonic` is empty — the account simply has no recovery
+ * phrase; its backup IS the nsec. Throws on malformed input.
+ */
+export function importFromNsec(nsecOrHex: string): NostrIdentity {
+  const trimmed = nsecOrHex.trim();
+  let privKeyBytes: Uint8Array;
+  if(trimmed.startsWith('nsec1')) {
+    const decoded = decode(trimmed);
+    if(decoded.type !== 'nsec') {
+      throw new Error('Expected an nsec key');
+    }
+    privKeyBytes = decoded.data as Uint8Array;
+  } else if(/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+    privKeyBytes = hexToBytes(trimmed);
+  } else {
+    throw new Error('Invalid private key — expected nsec1… or 64-char hex');
+  }
+
+  const pubKeyHex = getPublicKey(privKeyBytes);
+  return {
+    mnemonic: '',
+    privateKey: bytesToHex(privKeyBytes),
+    publicKey: pubKeyHex,
+    npub: nip19NpubEncode(pubKeyHex),
+    nsec: nip19NsecEncode(privKeyBytes)
+  };
+}
+
+/**
  * Encode a hex public key as npub (bech32).
  */
 export function npubEncode(pubkeyHex: string): string {
