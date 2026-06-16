@@ -177,6 +177,17 @@ export class ChatAPI {
       this.offlineQueue = new OfflineQueue(this.relayPool);
     }
 
+    // When an offline-queued text send finally flushes, the publish returns the
+    // canonical rumor id. Migrate the local row + delivery tracker off the app
+    // message id onto that rumor id so the receiver's delivery receipt (which
+    // references the rumor id) marks the bubble delivered — mirrors what the
+    // connected send path does inline via publishedRumorId + rekey().
+    if(this.offlineQueue && typeof this.offlineQueue.setOnFlushed === 'function') {
+      this.offlineQueue.setOnFlushed((info) => {
+        void this.handleQueueFlushed(info);
+      });
+    }
+
     // Wire receipt handler from relay pool to delivery tracker
     if(typeof this.relayPool.setOnReceipt === 'function') {
       this.relayPool.setOnReceipt((receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => {
@@ -630,6 +641,10 @@ export class ChatAPI {
     // strfry to reject e-tags with `unexpected size for fixed-size tag: e`.
     let publishedRumorId: string | undefined;
     let publishSucceeded = false;
+    // Delivery-tracking key. Starts as the app message id; for NIP-17 plain-text
+    // sends it's re-keyed to the rumor id after publish (see below), because the
+    // peer receipts the rumor id, not the envelope's app id.
+    let trackId = messageId;
     // Build the wire envelope ONCE. Both the live publish below AND the
     // offline-queue fallback (queueMessage → offlineQueue → relayPool.publish)
     // must publish this SAME envelope as the rumor content: the receiver does
@@ -647,10 +662,24 @@ export class ChatAPI {
       content,
       timestamp
     });
+    // NIP-17 send: TEXT messages go out as plain rumor content (interops with
+    // 0xchat/Amethyst). Non-text (files) keep the JSON envelope — the receiver
+    // distinguishes a file by its JSON {url,…} content, and stock clients don't
+    // interop on files anyway. metadata the envelope used to carry is native to
+    // the rumor: from=pubkey, to=p-tag, timestamp=created_at, id=rumor id.
+    const wirePayload = type === 'text' ? content : wireEnvelope;
     if(this.relayPool.isConnected()) {
       try {
-        const result: PublishResult = await this.relayPool.publish(peerOwnId!, wireEnvelope, opts?.replyTo);
+        const result: PublishResult = await this.relayPool.publish(peerOwnId!, wirePayload, opts?.replyTo);
         publishedRumorId = result.rumorId;
+
+        // For plain-text sends the peer's delivery receipt references the rumor
+        // id, so re-key delivery tracking from the app id → rumor id; otherwise
+        // the ✓✓ (delivered) tick would never match. Files keep the app id.
+        if(type === 'text' && publishedRumorId) {
+          trackId = publishedRumorId;
+          this.deliveryTracker?.rekey(messageId, trackId);
+        }
 
         // Register a RE-WRAP closure with the delivery tracker so the always-on
         // retry layer can re-publish if no delivery ack comes back. It re-wraps
@@ -663,7 +692,7 @@ export class ChatAPI {
         if(this.deliveryTracker && result.rumor) {
           const rumor = result.rumor;
           const recipient = peerOwnId!;
-          this.deliveryTracker.registerOutgoing(messageId, () => {
+          this.deliveryTracker.registerOutgoing(trackId, () => {
             this.relayPool.rewrapAndPublish(recipient, rumor);
           });
         }
@@ -757,15 +786,15 @@ export class ChatAPI {
       const msg = this.history.find((m) => m.id === messageId);
       if(msg) msg.status = 'sent';
       if(this.deliveryTracker) {
-        this.deliveryTracker.markSent(messageId);
+        this.deliveryTracker.markSent(trackId);
       }
     } else {
-      // Either offline, disconnected, or every relay rejected. Queue the
-      // FULL wire envelope (not the raw content) for later redelivery, so the
-      // flushed rumor parses on the receiver exactly like a live send. The
-      // stored row (if any) has deliveryState='sending' and will transition
-      // when the queue flushes.
-      await this.queueMessage(messageId, wireEnvelope);
+      // Either offline, disconnected, or every relay rejected. Queue the same
+      // wire payload we'd have published (plain text for NIP-17 text, envelope
+      // for files) for later redelivery, so the flushed rumor parses on the
+      // receiver exactly like a live send. The stored row (if any) has
+      // deliveryState='sending' and will transition when the queue flushes.
+      await this.queueMessage(messageId, wirePayload);
     }
 
     return messageId;
@@ -950,12 +979,58 @@ export class ChatAPI {
     }
 
     try {
-      await this.offlineQueue.queue(peerOwnId, payload);
+      // Pass the app message id so the queue can hand it back on flush and we
+      // can migrate the row + tracker to the canonical rumor id (see
+      // handleQueueFlushed). Without it an offline text send stays single-check.
+      await this.offlineQueue.queue(peerOwnId, payload, messageId);
       this.updateMessageStatus(messageId, 'sent');
       this.log('[ChatAPI] message queued:', messageId);
     } catch(err) {
       this.log.error('[ChatAPI] queue failed:', err);
       this.updateMessageStatus(messageId, 'failed');
+    }
+  }
+
+  /**
+   * Migrate an offline-queued send onto its canonical rumor id once the queue
+   * flushes it to a relay. The local row was written under the app message id
+   * (`chat-…`) because no rumor id existed at queue time; the receiver receipts
+   * the rumor id, so without this migration the bubble stays single-check and
+   * the self-wrap echo can't dedup against the row. Mirrors the connected
+   * path's inline `publishedRumorId` + `rekey()`.
+   */
+  private async handleQueueFlushed(info: {appMessageId?: string; to: string; rumorId?: string; rumor?: unknown}): Promise<void> {
+    const {appMessageId, rumorId, rumor, to} = info;
+    if(!appMessageId || !rumorId || appMessageId === rumorId) return;
+
+    // Arm receipt matching FIRST, synchronously — before any await. This handler
+    // is invoked fire-and-forget from OfflineQueue.flush (`void
+    // handleQueueFlushed`), and a delivery receipt for `rumorId` can arrive the
+    // instant flush returns. If the tracker were still keyed by `appMessageId`
+    // at that point (because we were awaiting the async store migration), the
+    // receipt would be dropped. The connected send path re-keys the tracker
+    // synchronously right after publish for exactly this reason.
+    if(this.deliveryTracker) {
+      // Move tracker state (still 'sending' from the offline send) onto the
+      // rumor id, arm the retry re-wrap, then mark sent so a delivery receipt
+      // referencing the rumor id transitions it to 'delivered'.
+      this.deliveryTracker.rekey(appMessageId, rumorId);
+      if(rumor) {
+        this.deliveryTracker.registerOutgoing(rumorId, () => {
+          this.relayPool.rewrapAndPublish(to, rumor as any);
+        });
+      }
+      this.deliveryTracker.markSent(rumorId);
+    }
+
+    // Store row migration runs AFTER the tracker is armed; its only job is to
+    // make reload/getHistory + the self-wrap dedup resolve by rumor id, none of
+    // which races the live receipt. Failures are logged, not fatal.
+    try {
+      // Re-key the stored row app id → rumor id (in place; preserves the mid).
+      await getMessageStore().reKeyEventId(appMessageId, rumorId);
+    } catch(err: any) {
+      this.log.warn('[ChatAPI] flush re-key failed:', err?.message);
     }
   }
 

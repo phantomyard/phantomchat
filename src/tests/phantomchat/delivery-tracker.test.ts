@@ -124,6 +124,52 @@ describe('DeliveryTracker', () => {
 
   // ─── markSent ───────────────────────────────────────────────────
 
+  describe('rekey (NIP-17 app id → rumor id)', () => {
+    it('re-keys so a receipt referencing the new (rumor) id marks delivered', () => {
+      const appId = 'chat-7-0';
+      const rumorId = 'rumordeadbeef';
+      tracker.markSending(appId);
+      tracker.rekey(appId, rumorId);
+
+      expect(tracker.getState(appId)).toBeUndefined();
+      expect(tracker.getState(rumorId)?.state).toBe('sending');
+
+      tracker.markSent(rumorId);
+      expect(tracker.getState(rumorId)?.state).toBe('sent');
+
+      // A NIP-17 delivery receipt references the RUMOR id → now resolves.
+      tracker.handleReceipt({
+        kind: 14,
+        content: '',
+        pubkey: 'sender123',
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', rumorId], ['receipt-type', 'delivery']],
+        id: 'receipt-rk1'
+      });
+      expect(tracker.getState(rumorId)?.state).toBe('delivered');
+    });
+
+    it('a receipt for the OLD app id no longer matches after rekey', () => {
+      const appId = 'chat-8-0';
+      const rumorId = 'rumorcafe';
+      tracker.markSending(appId);
+      tracker.rekey(appId, rumorId);
+      tracker.markSent(rumorId);
+
+      tracker.handleReceipt({
+        kind: 14,
+        content: '',
+        pubkey: 'sender123',
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', appId], ['receipt-type', 'delivery']],
+        id: 'receipt-rk2'
+      });
+      // The real message (keyed by the rumor id) must NOT be marked delivered by
+      // a stale app-id receipt — it stays 'sent'.
+      expect(tracker.getState(rumorId)?.state).toBe('sent');
+    });
+  });
+
   describe('markSent', () => {
     it('should transition sending -> sent', () => {
       tracker.markSending('evt-3');

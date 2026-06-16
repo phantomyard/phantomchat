@@ -40,6 +40,25 @@ export interface QueuedMessage {
   relayEventId?: string;
   /** Retry count for exponential backoff */
   retryCount?: number;
+  /**
+   * App message id (`chat-…`) of the local outgoing row this payload belongs
+   * to. Threaded through so that after a flush we can migrate that row + the
+   * delivery tracker from the app id to the canonical rumor id the publish
+   * returns. Absent for callers that don't track a local row.
+   */
+  appMessageId?: string;
+}
+
+/** Emitted for each queued message that successfully flushes to a relay. */
+export interface FlushedMessage {
+  /** App message id the queued payload belonged to (if any). */
+  appMessageId?: string;
+  /** Recipient pubkey. */
+  to: string;
+  /** Canonical 64-hex rumor id the publish produced (if available). */
+  rumorId?: string;
+  /** The rumor, so callers can register a re-wrap retry closure. */
+  rumor?: unknown;
 }
 
 // ─── Exponential Backoff Constants ────────────────────────────────────────
@@ -208,6 +227,18 @@ export class OfflineQueue {
   /** True once IndexedDB restore has completed in constructor */
   private _initialized = false;
 
+  /** Called for each queued message that successfully flushes to a relay. */
+  private _onFlushed: ((info: FlushedMessage) => void) | null = null;
+
+  /**
+   * Register a handler invoked once per queued message that flushes
+   * successfully — used by ChatAPI to migrate the local row + delivery tracker
+   * from the app message id to the canonical rumor id the publish produced.
+   */
+  setOnFlushed(cb: ((info: FlushedMessage) => void) | null): void {
+    this._onFlushed = cb;
+  }
+
   /**
    * Create a new OfflineQueue
    * @param relayPool - NostrRelayPool instance to use for publishing
@@ -252,9 +283,12 @@ export class OfflineQueue {
    *
    * @param recipientPubkey - Recipient's public key
    * @param payload - Plaintext message content
+   * @param appMessageId - Optional app message id (`chat-…`) of the local row
+   *        this payload belongs to, so a later flush can re-key it to the
+   *        canonical rumor id.
    * @returns Generated message ID
    */
-  async queue(recipientPubkey: string, payload: string): Promise<string> {
+  async queue(recipientPubkey: string, payload: string, appMessageId?: string): Promise<string> {
     const messageId = this.generateMessageId();
     const timestamp = Date.now();
 
@@ -285,7 +319,8 @@ export class OfflineQueue {
       to: recipientPubkey,
       payload,
       timestamp,
-      relayEventId
+      relayEventId,
+      ...(appMessageId ? {appMessageId} : {})
     };
 
     const peerQueue = this._queue.get(recipientPubkey) || [];
@@ -344,6 +379,17 @@ export class OfflineQueue {
           deleteFromIndexedDB(msg.id).catch(err => {
             this.log.warn('[OfflineQueue] failed to delete from IndexedDB:', err);
           });
+          // Hand the canonical rumor id back so ChatAPI can migrate the local
+          // row + delivery tracker off the app message id. Without this the
+          // receiver's receipt (which references the rumor id) never matches
+          // the sender's row and the bubble is stuck single-check.
+          if(this._onFlushed) {
+            try {
+              this._onFlushed({appMessageId: msg.appMessageId, to: msg.to, rumorId: result.rumorId, rumor: result.rumor});
+            } catch(e: any) {
+              this.log.warn('[OfflineQueue] onFlushed handler threw:', e?.message);
+            }
+          }
           flushed++;
         } else {
           // All relays failed -- increment retry count with exponential backoff

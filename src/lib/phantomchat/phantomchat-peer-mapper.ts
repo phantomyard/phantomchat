@@ -9,6 +9,8 @@
 import type {User, Chat, Dialog, Message, MessageEntity, Peer, PeerNotifySettings} from '@layer';
 import {PhantomChatBridge} from './phantomchat-bridge';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
+import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
+import {renderMarkdownTables} from '@lib/phantomchat/markdown-tables';
 
 export interface CreateUserOpts {
   peerId: number;
@@ -40,6 +42,15 @@ export interface CreateMessageOpts {
    * mid by chat-api.sendMessage (outgoing).
    */
   replyToMid?: number;
+  /**
+   * Persisted delivery state of an OUTGOING message. Drives the bubble tick at
+   * render time: 'delivered'/'read' → `pFlags.unread = false` → double check
+   * (is-read); anything else → single check (is-sent). Threading it through the
+   * MODEL is what makes the ✓✓ survive re-renders — a DOM-only patch
+   * (applyBubbleState) is wiped the next time tweb re-renders the bubble from
+   * `message.pFlags.unread` (bubbles.ts:8629). Ignored for incoming.
+   */
+  deliveryState?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 }
 
 export interface CreateDialogOpts {
@@ -115,7 +126,14 @@ export class PhantomChatPeerMapper {
     const pFlags: Message.message['pFlags'] = {};
     if(opts.isOutgoing) {
       pFlags.out = true;
-      pFlags.unread = true; // Shows single check (is-sent) instead of double (is-read)
+      // tweb renders the outgoing tick as `pFlags.unread ? 'sent' : 'read'`
+      // (bubbles.ts:8629). `unread` is an MTProto flag — present(=true) or
+      // ABSENT (never literally false). Once the peer has the message
+      // (delivered/read) we OMIT it → double check (is-read), kept across
+      // re-renders; otherwise set it → single check (is-sent).
+      if(!(opts.deliveryState === 'delivered' || opts.deliveryState === 'read')) {
+        pFlags.unread = true;
+      }
     } else {
       pFlags.unread = true;
     }
@@ -145,10 +163,22 @@ export class PhantomChatPeerMapper {
     // native OS glyph until tweb's `saveMessages` later runs
     // `wrapMessageEntities` and populates totalEntities. We replicate
     // that work up-front so first render matches post-reload appearance.
+    // Render Markdown: convert the raw text's Markdown (bold/italic/inline-code/
+    // fenced code blocks/strikethrough/spoiler/links) into MessageEntities so the
+    // bubble renders them richly — Lena (an LLM) emits Markdown, and aligned/0xchat
+    // peers may too. parseMarkdown strips the delimiters and returns the clean
+    // display text + entities; wrapMessageEntities then layers emoji entities on
+    // top. NOTE: tables/lists/headings have no Telegram entity, so they remain raw
+    // (a full Markdown→HTML renderer would be a separate, larger change).
+    let displayText = opts.text;
     let entities: MessageEntity[] | undefined;
     let totalEntities: MessageEntity[] | undefined;
     if(opts.text) {
-      const wrapped = wrapMessageEntities(opts.text, []);
+      // Reflow GFM tables into aligned monospace blocks first (no table entity
+      // exists), then parse the rest of the Markdown into entities.
+      const [mdText, mdEntities] = parseMarkdown(renderMarkdownTables(opts.text));
+      displayText = mdText;
+      const wrapped = wrapMessageEntities(mdText, mdEntities.slice());
       entities = wrapped.totalEntities;
       totalEntities = wrapped.totalEntities;
     }
@@ -165,7 +195,7 @@ export class PhantomChatPeerMapper {
       peer_id,
       ...(from_id ? {from_id} : {}),
       date: opts.date,
-      message: opts.text,
+      message: displayText,
       pFlags,
       ...(entities && entities.length ? {entities} : {}),
       ...(opts.media ? {media: opts.media} : {}),

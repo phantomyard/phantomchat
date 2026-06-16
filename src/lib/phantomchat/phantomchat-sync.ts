@@ -36,30 +36,46 @@ export class PhantomChatSync {
    * a duplicate row that would produce two bubbles with different mids.
    */
   async onIncomingMessage(msg: ChatMessage, senderPubkey: string): Promise<void> {
-    const peerId = await this.mapper.mapPubkey(senderPubkey);
+    // Self-echo: our OWN message arriving back via the NIP-17 self-wrap (the
+    // multi-device sync copy). chat-api-receive's handleSelfEcho has ALREADY
+    // persisted this as an OUTGOING row keyed by the rumor id, so we must NOT
+    // re-persist it here. Doing so wrote an isOutgoing:false row in a self↔self
+    // conversation (own↔own) keyed by the rumor id — a phantom duplicate that
+    // (a) was never the visible bubble and (b) is exactly the row a delivery
+    // receipt resolves to (receipts reference the rumor id), so the delivered
+    // tick landed on a bogus incoming row and the real bubble stayed ✓.
+    // We still dispatch a render event (keyed to the REAL peer = msg.to) so a
+    // genuine cross-device echo paints live; the row itself is owned by
+    // handleSelfEcho. FIND-selfwrap-dup.
+    const isSelfEcho = senderPubkey === this.ownPubkey;
+    const renderPubkey = isSelfEcho ? (msg.to || senderPubkey) : senderPubkey;
+    const peerId = await this.mapper.mapPubkey(renderPubkey);
     const storageEventId = msg.relayEventId || msg.id;
     const mid = await this.mapper.mapEventId(storageEventId, Math.floor(msg.timestamp));
     // msg.timestamp is already in UNIX seconds (from rumor.created_at)
     const timestamp = Math.floor(msg.timestamp);
-    const store = getMessageStore();
-    const conversationId = store.getConversationId(this.ownPubkey, senderPubkey);
 
-    await store.saveMessage({
-      eventId: storageEventId,
-      appMessageId: msg.id,
-      conversationId,
-      senderPubkey,
-      content: msg.content,
-      type: msg.type === 'text' ? 'text' : 'file',
-      timestamp,
-      deliveryState: 'delivered',
-      mid,
-      twebPeerId: peerId,
-      isOutgoing: false,
-      ...(msg.fileMetadata ? {fileMetadata: msg.fileMetadata} : {})
-    });
+    if(!isSelfEcho) {
+      const store = getMessageStore();
+      const conversationId = store.getConversationId(this.ownPubkey, senderPubkey);
 
-    console.log(LOG_PREFIX, 'dispatching phantomchat_new_message', {peerId, mid});
+      await store.saveMessage({
+        eventId: storageEventId,
+        appMessageId: msg.id,
+        conversationId,
+        senderPubkey,
+        content: msg.content,
+        type: msg.type === 'text' ? 'text' : 'file',
+        timestamp,
+        deliveryState: 'delivered',
+        mid,
+        twebPeerId: peerId,
+        isOutgoing: false,
+        ...(msg.fileMetadata ? {fileMetadata: msg.fileMetadata} : {})
+      });
+    }
+
+    console.log(LOG_PREFIX, 'dispatching phantomchat_new_message', {peerId, mid, selfEcho: isSelfEcho});
     this.dispatch('phantomchat_new_message', {peerId, mid, senderPubkey, message: msg, timestamp});
   }
 

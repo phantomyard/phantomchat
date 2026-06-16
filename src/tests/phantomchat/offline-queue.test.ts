@@ -5,6 +5,14 @@
 import '../setup';
 import type {PublishResult} from '@lib/phantomchat/nostr-relay-pool';
 
+// The end-to-end re-key test drives a real DeliveryTracker, whose markSent/
+// handleReceipt dispatch `phantomchat_delivery_update` through rootScope — the
+// real rootScope forwards to MTProtoMessagePort, which isn't initialised here
+// and throws an unhandled rejection. Stub it (same as delivery-tracker.test).
+vi.mock('@lib/rootScope', () => ({
+  default: {dispatchEvent: vi.fn(), addEventListener: vi.fn()}
+}));
+
 // Dynamic import to get a fresh OfflineQueue after clearing IndexedDB.
 // Under isolate:false, relay-failover.test.ts calls vi.resetModules()
 // which resets the offline-queue module's _dbPromise singleton. When
@@ -40,6 +48,8 @@ class MockRelayPool {
     return this._publicKey;
   }
 
+  lastRumorId = '';
+
   async publish(recipientPubkey: string, plaintext: string): Promise<PublishResult> {
     this.publishCalls.push({recipientPubkey, plaintext});
 
@@ -50,9 +60,14 @@ class MockRelayPool {
       };
     }
 
+    // 64-hex rumor id, mirroring the real wrap. This is what a flush hands back
+    // so the sender can migrate its row/tracker off the app message id.
+    this.lastRumorId = this.publishCalls.length.toString(16).padStart(64, '0');
     return {
       successes: [`event-${Date.now()}-${this.publishCalls.length}`],
-      failures: []
+      failures: [],
+      rumorId: this.lastRumorId,
+      rumor: {kind: 14, content: plaintext, pubkey: 'x', created_at: 0, tags: [], id: this.lastRumorId} as any
     };
   }
 
@@ -181,6 +196,133 @@ describe('OfflineQueue', () => {
       expect(queued).toHaveLength(1);
       expect(queued[0].relayEventId).toBeDefined();
       expect(queued[0].relayEventId).toContain('event-');
+    });
+  });
+
+  describe('re-key on flush (NIP-17 offline send → canonical rumor id)', () => {
+    const PEER = 'BBBBBB.CCCCCC.DDDDDD';
+
+    test('queue() persists the app message id on the item', async() => {
+      await queue.queue(PEER, 'offline text', 'chat-123-0');
+      const items = queue.getQueued(PEER) as QueuedMessage[];
+      expect(items).toHaveLength(1);
+      expect(items[0].appMessageId).toBe('chat-123-0');
+    });
+
+    test('flush() emits the flushed rumor id + app message id to the onFlushed handler', async() => {
+      const flushedEvents: any[] = [];
+      queue.setOnFlushed((info: any) => flushedEvents.push(info));
+
+      await queue.queue(PEER, 'offline text', 'chat-123-0');
+      mockRelayPool.simulateConnect();
+      await queue.flush(PEER);
+
+      expect(flushedEvents).toHaveLength(1);
+      expect(flushedEvents[0].appMessageId).toBe('chat-123-0');
+      expect(flushedEvents[0].to).toBe(PEER);
+      expect(flushedEvents[0].rumorId).toBe(mockRelayPool.lastRumorId);
+      expect(flushedEvents[0].rumorId).toMatch(/^[0-9a-f]{64}$/);
+      expect(flushedEvents[0].rumor).toBeDefined();
+    });
+
+    test('end-to-end: a receipt for the FLUSHED rumor id marks the offline-queued message delivered', async() => {
+      // Replicate ChatAPI's wiring: on flush, migrate the delivery tracker from
+      // the app message id onto the canonical rumor id, then markSent. This is
+      // what makes the receiver's receipt (which references the rumor id) flip
+      // the bubble to delivered. Pre-fix, the tracker stayed keyed by the app id
+      // and the receipt never matched.
+      const {DeliveryTracker} = await import('@lib/phantomchat/delivery-tracker');
+      const tracker = new DeliveryTracker({
+        privateKey: new Uint8Array(32).fill(7),
+        publicKey: 'f'.repeat(64),
+        publishFn: async() => {}
+      });
+
+      const APP_ID = 'chat-999-0';
+      tracker.markSending(APP_ID); // ChatAPI marks sending at send time
+
+      queue.setOnFlushed((info: any) => {
+        if(!info.appMessageId || !info.rumorId) return;
+        tracker.rekey(info.appMessageId, info.rumorId);
+        tracker.markSent(info.rumorId);
+      });
+
+      // Send while offline → queued under the app id.
+      await queue.queue(PEER, 'offline text', APP_ID);
+      expect(tracker.getState(APP_ID)?.state).toBe('sending');
+
+      // Reconnect → flush → re-key onto the rumor id.
+      mockRelayPool.simulateConnect();
+      await queue.flush(PEER);
+      const rumorId = mockRelayPool.lastRumorId;
+
+      // Old app-id key no longer tracks; the rumor id is now 'sent'.
+      expect(tracker.getState(APP_ID)).toBeUndefined();
+      expect(tracker.getState(rumorId)?.state).toBe('sent');
+
+      // The receiver's delivery receipt references the FLUSHED rumor id.
+      tracker.handleReceipt({
+        kind: 14,
+        content: '',
+        pubkey: 'sender',
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', rumorId], ['receipt-type', 'delivery']],
+        id: 'receipt-flush-1'
+      });
+
+      expect(tracker.getState(rumorId)?.state).toBe('delivered');
+    });
+
+    test('race-safety: a receipt fired while the store migration is still pending still marks delivered', async() => {
+      // Locks the ordering contract ChatAPI.handleQueueFlushed follows: the
+      // delivery tracker is re-keyed SYNCHRONOUSLY (before the awaited, possibly
+      // slow IndexedDB row migration). A delivery receipt for the rumor id can
+      // arrive the instant flush returns; if arming waited on the store await it
+      // would be dropped. (kaieriksen review.)
+      const {DeliveryTracker} = await import('@lib/phantomchat/delivery-tracker');
+      const tracker = new DeliveryTracker({
+        privateKey: new Uint8Array(32).fill(7),
+        publicKey: 'f'.repeat(64),
+        publishFn: async() => {}
+      });
+
+      const APP_ID = 'chat-race-0';
+      tracker.markSending(APP_ID);
+
+      let resolveStore: () => void = () => {};
+      const storeMigration = new Promise<void>((r) => {resolveStore = r;});
+      let storeSettled = false;
+      void storeMigration.then(() => {storeSettled = true;});
+
+      // Mirror the FIXED ordering: tracker work first, THEN await the (here
+      // artificially slow) store migration.
+      queue.setOnFlushed(async(info: any) => {
+        if(!info.appMessageId || !info.rumorId) return;
+        tracker.rekey(info.appMessageId, info.rumorId);
+        tracker.markSent(info.rumorId);
+        await storeMigration;
+      });
+
+      await queue.queue(PEER, 'offline text', APP_ID);
+      mockRelayPool.simulateConnect();
+      await queue.flush(PEER);
+      const rumorId = mockRelayPool.lastRumorId;
+
+      // Store migration has NOT resolved yet — but the tracker is already armed.
+      expect(storeSettled).toBe(false);
+      expect(tracker.getState(rumorId)?.state).toBe('sent');
+
+      tracker.handleReceipt({
+        kind: 14,
+        content: '',
+        pubkey: 'sender',
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', rumorId], ['receipt-type', 'delivery']],
+        id: 'receipt-race-1'
+      });
+      expect(tracker.getState(rumorId)?.state).toBe('delivered');
+
+      resolveStore();
     });
   });
 

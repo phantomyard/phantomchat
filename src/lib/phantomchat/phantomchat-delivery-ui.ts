@@ -92,7 +92,8 @@ async function refreshDialogPreview(numericPeerId: number): Promise<void> {
     fromPeerId: isOut ? undefined : numericPeerId,
     date: latest.timestamp,
     text: latest.content,
-    isOutgoing: isOut
+    isOutgoing: isOut,
+    deliveryState: latest.deliveryState
   });
 
   const proxy = MOUNT_CLASS_TO.apiManagerProxy;
@@ -119,6 +120,53 @@ async function refreshDialogPreview(numericPeerId: number): Promise<void> {
 export function createDeliveryUI(): DeliveryUIManager {
   // Map from tracker eventId (chat-XXX-N) to the bubble's data-mid.
   const eventIdToBubbleMid = new Map<string, string>();
+
+  // Monotonic delivery order — a receipt must never downgrade a row.
+  const ORDER: Record<string, number> = {sending: 0, failed: 0, sent: 1, delivered: 2, read: 3};
+
+  /**
+   * Make a delivered/read receipt durable:
+   *  1. Persist `deliveryState` on the stored row → a reload renders ✓✓ from
+   *     the model (getHistory → createTwebMessage sets pFlags.unread = false).
+   *  2. Clear `pFlags.unread` on the main-thread message mirror → an in-place
+   *     re-render (e.g. when the peer's reply appends) keeps the ✓✓ instead of
+   *     repainting a single check from the stale model. This is the fix for the
+   *     "second tick flickers away" report.
+   * The live DOM patch (applyBubbleState) still runs for immediacy.
+   */
+  const persistAndMirror = (store: any, stored: any, state: 'delivered' | 'read'): void => {
+    if((ORDER[stored.deliveryState] ?? 0) < ORDER[state]) {
+      if(typeof store.saveMessage === 'function') {
+        store.saveMessage({...stored, deliveryState: state}).catch((e: any) => console.debug('[PhantomChatDeliveryUI] persist failed:', e?.message));
+      }
+    }
+    if(stored.isOutgoing && stored.mid != null && stored.twebPeerId != null) {
+      // THE live fix: feed tweb its NATIVE outgoing-read update. This advances
+      // historyStorage.readOutboxMaxId (worker-side) so tweb repaints the tick
+      // via its own updateUnreadByDialog — flipping ✓ → ✓✓ live AND keeping it
+      // across bubble re-creations (a raw DOM class patch is wiped when tweb
+      // rebuilds the bubble from its internal message cache, which is why the
+      // tick used to flicker back to a single check). readOutboxMaxId is
+      // monotonic, so a delivery receipt marks that message and all earlier
+      // outgoing ones delivered — which is what we want. The receipt resolves
+      // the rumor-id → the outgoing row → its tweb mid; we pass that as max_id.
+      try {
+        rootScope.managers?.apiUpdatesManager?.processLocalUpdate({
+          _: 'updateReadHistoryOutbox',
+          peer: {_: 'peerUser', user_id: stored.twebPeerId},
+          max_id: Number(stored.mid),
+          still_unread_count: 0
+        } as any);
+      } catch(e: any) {
+        console.debug('[PhantomChatDeliveryUI] outbox update failed:', e?.message);
+      }
+      // Also clear the proxy-mirror flag directly as a belt-and-suspenders for
+      // any render that reads the mirror before the worker update round-trips.
+      const proxy = MOUNT_CLASS_TO.apiManagerProxy;
+      const mirrored = proxy?.mirrors?.messages?.[`${stored.twebPeerId}_history`]?.[stored.mid];
+      if(mirrored?.pFlags) delete mirrored.pFlags.unread;
+    }
+  };
 
   const handleSent = async(eventId: string) => {
     const tracked = new Set(eventIdToBubbleMid.values());
@@ -163,28 +211,48 @@ export function createDeliveryUI(): DeliveryUIManager {
   };
 
   const handleDeliveredOrRead = async(eventId: string, state: 'delivered' | 'read') => {
+    const mapHit = eventIdToBubbleMid.has(eventId);
+    // A receipt's eventId is EITHER the rumor id (NIP-17 plain-text sends — the
+    // row's `eventId`) OR the app message id (legacy envelope sends — the row's
+    // `appMessageId`). Look up by both. We fetch the row unconditionally (not
+    // just on a map miss) because we also persist the new state + patch the
+    // main-thread mirror from it — that is what makes the ✓✓ SURVIVE re-renders
+    // and reloads. A DOM-only patch (applyBubbleState) is wiped the next time
+    // tweb re-renders the bubble from `message.pFlags.unread`. FIND-rekey-tick.
+    const {getMessageStore: gms2} = await import('@lib/phantomchat/message-store');
+    const store = gms2();
+    const stored = (await store.getByEventId(eventId)) || (await store.getByAppMessageId(eventId));
+    if(stored) persistAndMirror(store, stored, state);
+
     let mid = eventIdToBubbleMid.get(eventId);
     if(!mid) {
-      const {PhantomChatPeerMapper} = await import('@lib/phantomchat/phantomchat-peer-mapper');
-      const mapper = new PhantomChatPeerMapper();
-      const {getMessageStore: gms2} = await import('@lib/phantomchat/message-store');
-      // Bug #3: receipts carry the app-level messageId (chat-XXX-N). Rows are
-      // now keyed by rumor id (64-hex), so prefer appMessageId lookup; fall
-      // back to direct eventId match for legacy receipts still referencing
-      // the old key scheme.
-      const stored = (await gms2().getByAppMessageId(eventId)) || (await gms2().getByEventId(eventId));
-      const ts = stored?.timestamp ?? Math.floor(Date.now() / 1000);
-      const hashed = await mapper.mapEventId(eventId, ts);
-      if(hashed) mid = String(hashed);
-    }
-    if(!mid) return;
-
-    if(!await applyBubbleState(mid, state)) {
-      for(const delay of [300, 800, 2000]) {
-        await new Promise((r) => setTimeout(r, delay));
-        if(await applyBubbleState(mid, state)) break;
+      // Prefer the row's AUTHORITATIVE `mid`. Re-hashing the eventId is wrong
+      // for rekeyed (rumor-id) receipts: the bubble mid is derived from the APP
+      // message id (chat-api mapEventIdToMid(messageId)), not the rumor id, so
+      // mapEventId(rumorId) would point at a phantom bubble.
+      if(stored?.mid != null) {
+        mid = String(stored.mid);
+      } else {
+        const {PhantomChatPeerMapper} = await import('@lib/phantomchat/phantomchat-peer-mapper');
+        const mapper = new PhantomChatPeerMapper();
+        const ts = stored?.timestamp ?? Math.floor(Date.now() / 1000);
+        const hashed = await mapper.mapEventId(eventId, ts);
+        if(hashed) mid = String(hashed);
       }
     }
+    if(!mid) {
+      console.debug('[PhantomChatDeliveryUI] %s receipt could not resolve a bubble', state, {eventId, mapHit});
+      return;
+    }
+
+    let applied = await applyBubbleState(mid, state);
+    if(!applied) {
+      for(const delay of [300, 800, 2000]) {
+        await new Promise((r) => setTimeout(r, delay));
+        if(await applyBubbleState(mid, state)) {applied = true; break;}
+      }
+    }
+    console.debug('[PhantomChatDeliveryUI] %s receipt → bubble %s (mapHit=%s, applied=%s)', state, mid, mapHit, applied, {eventId});
   };
 
   return {
