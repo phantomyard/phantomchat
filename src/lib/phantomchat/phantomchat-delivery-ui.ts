@@ -140,10 +140,30 @@ export function createDeliveryUI(): DeliveryUIManager {
         store.saveMessage({...stored, deliveryState: state}).catch((e: any) => console.debug('[PhantomChatDeliveryUI] persist failed:', e?.message));
       }
     }
-    if(stored.mid != null && stored.twebPeerId != null) {
+    if(stored.isOutgoing && stored.mid != null && stored.twebPeerId != null) {
+      // THE live fix: feed tweb its NATIVE outgoing-read update. This advances
+      // historyStorage.readOutboxMaxId (worker-side) so tweb repaints the tick
+      // via its own updateUnreadByDialog — flipping ✓ → ✓✓ live AND keeping it
+      // across bubble re-creations (a raw DOM class patch is wiped when tweb
+      // rebuilds the bubble from its internal message cache, which is why the
+      // tick used to flicker back to a single check). readOutboxMaxId is
+      // monotonic, so a delivery receipt marks that message and all earlier
+      // outgoing ones delivered — which is what we want. The receipt resolves
+      // the rumor-id → the outgoing row → its tweb mid; we pass that as max_id.
+      try {
+        rootScope.managers?.apiUpdatesManager?.processLocalUpdate({
+          _: 'updateReadHistoryOutbox',
+          peer: {_: 'peerUser', user_id: stored.twebPeerId},
+          max_id: Number(stored.mid),
+          still_unread_count: 0
+        } as any);
+      } catch(e: any) {
+        console.debug('[PhantomChatDeliveryUI] outbox update failed:', e?.message);
+      }
+      // Also clear the proxy-mirror flag directly as a belt-and-suspenders for
+      // any render that reads the mirror before the worker update round-trips.
       const proxy = MOUNT_CLASS_TO.apiManagerProxy;
       const mirrored = proxy?.mirrors?.messages?.[`${stored.twebPeerId}_history`]?.[stored.mid];
-      // `unread` is an MTProto flag — delete it (not set false) to mean "read".
       if(mirrored?.pFlags) delete mirrored.pFlags.unread;
     }
   };
