@@ -42,6 +42,15 @@ export interface CreateMessageOpts {
    * mid by chat-api.sendMessage (outgoing).
    */
   replyToMid?: number;
+  /**
+   * Persisted delivery state of an OUTGOING message. Drives the bubble tick at
+   * render time: 'delivered'/'read' → `pFlags.unread = false` → double check
+   * (is-read); anything else → single check (is-sent). Threading it through the
+   * MODEL is what makes the ✓✓ survive re-renders — a DOM-only patch
+   * (applyBubbleState) is wiped the next time tweb re-renders the bubble from
+   * `message.pFlags.unread` (bubbles.ts:8629). Ignored for incoming.
+   */
+  deliveryState?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 }
 
 export interface CreateDialogOpts {
@@ -117,7 +126,14 @@ export class PhantomChatPeerMapper {
     const pFlags: Message.message['pFlags'] = {};
     if(opts.isOutgoing) {
       pFlags.out = true;
-      pFlags.unread = true; // Shows single check (is-sent) instead of double (is-read)
+      // tweb renders the outgoing tick as `pFlags.unread ? 'sent' : 'read'`
+      // (bubbles.ts:8629). `unread` is an MTProto flag — present(=true) or
+      // ABSENT (never literally false). Once the peer has the message
+      // (delivered/read) we OMIT it → double check (is-read), kept across
+      // re-renders; otherwise set it → single check (is-sent).
+      if(!(opts.deliveryState === 'delivered' || opts.deliveryState === 'read')) {
+        pFlags.unread = true;
+      }
     } else {
       pFlags.unread = true;
     }

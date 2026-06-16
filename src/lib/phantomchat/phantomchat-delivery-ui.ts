@@ -92,7 +92,8 @@ async function refreshDialogPreview(numericPeerId: number): Promise<void> {
     fromPeerId: isOut ? undefined : numericPeerId,
     date: latest.timestamp,
     text: latest.content,
-    isOutgoing: isOut
+    isOutgoing: isOut,
+    deliveryState: latest.deliveryState
   });
 
   const proxy = MOUNT_CLASS_TO.apiManagerProxy;
@@ -119,6 +120,33 @@ async function refreshDialogPreview(numericPeerId: number): Promise<void> {
 export function createDeliveryUI(): DeliveryUIManager {
   // Map from tracker eventId (chat-XXX-N) to the bubble's data-mid.
   const eventIdToBubbleMid = new Map<string, string>();
+
+  // Monotonic delivery order — a receipt must never downgrade a row.
+  const ORDER: Record<string, number> = {sending: 0, failed: 0, sent: 1, delivered: 2, read: 3};
+
+  /**
+   * Make a delivered/read receipt durable:
+   *  1. Persist `deliveryState` on the stored row → a reload renders ✓✓ from
+   *     the model (getHistory → createTwebMessage sets pFlags.unread = false).
+   *  2. Clear `pFlags.unread` on the main-thread message mirror → an in-place
+   *     re-render (e.g. when the peer's reply appends) keeps the ✓✓ instead of
+   *     repainting a single check from the stale model. This is the fix for the
+   *     "second tick flickers away" report.
+   * The live DOM patch (applyBubbleState) still runs for immediacy.
+   */
+  const persistAndMirror = (store: any, stored: any, state: 'delivered' | 'read'): void => {
+    if((ORDER[stored.deliveryState] ?? 0) < ORDER[state]) {
+      if(typeof store.saveMessage === 'function') {
+        store.saveMessage({...stored, deliveryState: state}).catch((e: any) => console.debug('[PhantomChatDeliveryUI] persist failed:', e?.message));
+      }
+    }
+    if(stored.mid != null && stored.twebPeerId != null) {
+      const proxy = MOUNT_CLASS_TO.apiManagerProxy;
+      const mirrored = proxy?.mirrors?.messages?.[`${stored.twebPeerId}_history`]?.[stored.mid];
+      // `unread` is an MTProto flag — delete it (not set false) to mean "read".
+      if(mirrored?.pFlags) delete mirrored.pFlags.unread;
+    }
+  };
 
   const handleSent = async(eventId: string) => {
     const tracked = new Set(eventIdToBubbleMid.values());
@@ -164,20 +192,24 @@ export function createDeliveryUI(): DeliveryUIManager {
 
   const handleDeliveredOrRead = async(eventId: string, state: 'delivered' | 'read') => {
     const mapHit = eventIdToBubbleMid.has(eventId);
+    // A receipt's eventId is EITHER the rumor id (NIP-17 plain-text sends — the
+    // row's `eventId`) OR the app message id (legacy envelope sends — the row's
+    // `appMessageId`). Look up by both. We fetch the row unconditionally (not
+    // just on a map miss) because we also persist the new state + patch the
+    // main-thread mirror from it — that is what makes the ✓✓ SURVIVE re-renders
+    // and reloads. A DOM-only patch (applyBubbleState) is wiped the next time
+    // tweb re-renders the bubble from `message.pFlags.unread`. FIND-rekey-tick.
+    const {getMessageStore: gms2} = await import('@lib/phantomchat/message-store');
+    const store = gms2();
+    const stored = (await store.getByEventId(eventId)) || (await store.getByAppMessageId(eventId));
+    if(stored) persistAndMirror(store, stored, state);
+
     let mid = eventIdToBubbleMid.get(eventId);
     if(!mid) {
-      const {getMessageStore: gms2} = await import('@lib/phantomchat/message-store');
-      // A receipt's eventId is EITHER the rumor id (NIP-17 plain-text sends —
-      // the row's `eventId`) OR the app message id (legacy envelope sends —
-      // the row's `appMessageId`). Look up by both.
-      const stored = (await gms2().getByEventId(eventId)) || (await gms2().getByAppMessageId(eventId));
       // Prefer the row's AUTHORITATIVE `mid`. Re-hashing the eventId is wrong
       // for rekeyed (rumor-id) receipts: the bubble mid is derived from the APP
       // message id (chat-api mapEventIdToMid(messageId)), not the rumor id, so
-      // mapEventId(rumorId) would point at a phantom bubble and the ✓✓ would
-      // never land. This bites only when the in-memory map misses — e.g. a fast
-      // delivery receipt that races ahead of the 'sent' handler that populates
-      // it. FIND-rekey-tick.
+      // mapEventId(rumorId) would point at a phantom bubble.
       if(stored?.mid != null) {
         mid = String(stored.mid);
       } else {

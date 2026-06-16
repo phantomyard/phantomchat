@@ -34,8 +34,9 @@ vi.mock('@components/icon', () => ({
 // stored mid, the bubble would never be found. FIND-rekey-tick.
 vi.mock('@lib/phantomchat/message-store', () => ({
   getMessageStore: () => ({
-    getByEventId: async(id: string): Promise<{mid: string; timestamp: number} | null> => id === 'rumor-abc' ? {mid: '999000000001', timestamp: 1} : null,
-    getByAppMessageId: async(): Promise<null> => null
+    getByEventId: async(id: string): Promise<{mid: string; timestamp: number; deliveryState: string} | null> => id === 'rumor-abc' ? {mid: '999000000001', timestamp: 1, deliveryState: 'sent'} : null,
+    getByAppMessageId: async(): Promise<null> => null,
+    saveMessage: async(): Promise<void> => undefined
   })
 }));
 

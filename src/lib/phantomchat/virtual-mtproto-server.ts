@@ -863,6 +863,7 @@ export class PhantomChatMTProtoServer {
           text: stored.content,
           isOutgoing,
           media,
+          deliveryState: stored.deliveryState,
           ...(stored.replyToMid !== undefined ? {replyToMid: stored.replyToMid} : {})
         });
         messages.push(msg);
@@ -1019,6 +1020,7 @@ export class PhantomChatMTProtoServer {
           text: stored.content,
           isOutgoing,
           media,
+          deliveryState: stored.deliveryState,
           ...(stored.replyToMid !== undefined ? {replyToMid: stored.replyToMid} : {})
         });
         messages.push(msg);
