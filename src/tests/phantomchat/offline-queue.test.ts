@@ -5,6 +5,14 @@
 import '../setup';
 import type {PublishResult} from '@lib/phantomchat/nostr-relay-pool';
 
+// The end-to-end re-key test drives a real DeliveryTracker, whose markSent/
+// handleReceipt dispatch `phantomchat_delivery_update` through rootScope — the
+// real rootScope forwards to MTProtoMessagePort, which isn't initialised here
+// and throws an unhandled rejection. Stub it (same as delivery-tracker.test).
+vi.mock('@lib/rootScope', () => ({
+  default: {dispatchEvent: vi.fn(), addEventListener: vi.fn()}
+}));
+
 // Dynamic import to get a fresh OfflineQueue after clearing IndexedDB.
 // Under isolate:false, relay-failover.test.ts calls vi.resetModules()
 // which resets the offline-queue module's _dbPromise singleton. When
