@@ -10,6 +10,7 @@ import type {User, Chat, Dialog, Message, MessageEntity, Peer, PeerNotifySetting
 import {PhantomChatBridge} from './phantomchat-bridge';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
+import {renderMarkdownTables} from '@lib/phantomchat/markdown-tables';
 
 export interface CreateUserOpts {
   peerId: number;
@@ -157,7 +158,9 @@ export class PhantomChatPeerMapper {
     let entities: MessageEntity[] | undefined;
     let totalEntities: MessageEntity[] | undefined;
     if(opts.text) {
-      const [mdText, mdEntities] = parseMarkdown(opts.text);
+      // Reflow GFM tables into aligned monospace blocks first (no table entity
+      // exists), then parse the rest of the Markdown into entities.
+      const [mdText, mdEntities] = parseMarkdown(renderMarkdownTables(opts.text));
       displayText = mdText;
       const wrapped = wrapMessageEntities(mdText, mdEntities.slice());
       entities = wrapped.totalEntities;
