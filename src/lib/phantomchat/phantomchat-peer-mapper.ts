@@ -9,6 +9,7 @@
 import type {User, Chat, Dialog, Message, MessageEntity, Peer, PeerNotifySettings} from '@layer';
 import {PhantomChatBridge} from './phantomchat-bridge';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
+import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
 
 export interface CreateUserOpts {
   peerId: number;
@@ -145,10 +146,20 @@ export class PhantomChatPeerMapper {
     // native OS glyph until tweb's `saveMessages` later runs
     // `wrapMessageEntities` and populates totalEntities. We replicate
     // that work up-front so first render matches post-reload appearance.
+    // Render Markdown: convert the raw text's Markdown (bold/italic/inline-code/
+    // fenced code blocks/strikethrough/spoiler/links) into MessageEntities so the
+    // bubble renders them richly — Lena (an LLM) emits Markdown, and aligned/0xchat
+    // peers may too. parseMarkdown strips the delimiters and returns the clean
+    // display text + entities; wrapMessageEntities then layers emoji entities on
+    // top. NOTE: tables/lists/headings have no Telegram entity, so they remain raw
+    // (a full Markdown→HTML renderer would be a separate, larger change).
+    let displayText = opts.text;
     let entities: MessageEntity[] | undefined;
     let totalEntities: MessageEntity[] | undefined;
     if(opts.text) {
-      const wrapped = wrapMessageEntities(opts.text, []);
+      const [mdText, mdEntities] = parseMarkdown(opts.text);
+      displayText = mdText;
+      const wrapped = wrapMessageEntities(mdText, mdEntities.slice());
       entities = wrapped.totalEntities;
       totalEntities = wrapped.totalEntities;
     }
@@ -165,7 +176,7 @@ export class PhantomChatPeerMapper {
       peer_id,
       ...(from_id ? {from_id} : {}),
       date: opts.date,
-      message: opts.text,
+      message: displayText,
       pFlags,
       ...(entities && entities.length ? {entities} : {}),
       ...(opts.media ? {media: opts.media} : {}),

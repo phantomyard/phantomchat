@@ -99,6 +99,35 @@ describe('PhantomChatPeerMapper', () => {
       expect((msg as any).mid).toBe(MID);
     });
 
+    it('renders Markdown (bold + fenced code block) into entities with clean display text', () => {
+      mapper = getMapper();
+      const msg = mapper.createTwebMessage({
+        mid: MID,
+        peerId: SAMPLE_PEER_ID,
+        date: DATE,
+        text: 'Status: **Yes**\n```python\nprint(1)\n```',
+        isOutgoing: false
+      });
+      // Markdown delimiters are stripped from the visible text.
+      expect(msg.message).not.toContain('**');
+      expect(msg.message).toContain('Yes');
+      const types = (msg.entities ?? []).map((e: any) => e._);
+      expect(types).toContain('messageEntityBold');
+      expect(types).toContain('messageEntityPre'); // fenced code block → <pre>
+    });
+
+    it('leaves plain text (no Markdown) unchanged', () => {
+      mapper = getMapper();
+      const msg = mapper.createTwebMessage({
+        mid: MID,
+        peerId: SAMPLE_PEER_ID,
+        date: DATE,
+        text: 'just plain text',
+        isOutgoing: false
+      });
+      expect(msg.message).toBe('just plain text');
+    });
+
     it('creates an incoming message with from_id set', () => {
       mapper = getMapper();
       const FROM_ID = 9876543210987654;
