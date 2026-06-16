@@ -112,16 +112,18 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
         }
       }
 
-      this.showSeed(decryptedData.seed);
+      this.showSeed(decryptedData.seed, decryptedData.nsec);
     } catch(err) {
       toast('Failed to decrypt: ' + (err instanceof Error ? err.message : String(err)));
     }
   }
 
-  private showSeed(seed: string): void {
+  private showSeed(seed: string, nsec: string): void {
     if(!this.gridContainer || !this.revealContainer) return;
 
-    const words = seed.split(' ');
+    // nsec-imported accounts have no BIP-39 mnemonic (seed === '') — show a note
+    // instead of an empty 12-word grid; the nsec section below is their backup.
+    const words = seed ? seed.split(' ') : [];
     this.gridContainer.innerHTML = '';
     this.gridContainer.style.display = 'block';
 
@@ -131,6 +133,13 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
 
     const grid = document.createElement('div');
     grid.classList.add('seed-word-grid');
+
+    if(!words.length) {
+      const note = document.createElement('div');
+      note.style.cssText = 'opacity:0.7;font-size:0.8125rem;text-align:center;padding:0.25rem 0';
+      note.textContent = 'This account was imported from a key, so it has no 12-word recovery phrase. Back it up with the private key (nsec) below.';
+      grid.append(note);
+    }
 
     for(let i = 0; i < words.length; i++) {
       const chip = document.createElement('div');
@@ -152,21 +161,23 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
     const actions = document.createElement('div');
     actions.classList.add('seed-actions');
 
-    const copyBtn = Button('btn-primary btn-color-primary seed-copy-btn');
-    copyBtn.textContent = 'Copy';
-    copyBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(seed).then(() => {
-        copyBtn.textContent = 'Copied!';
-        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
-        toast('Recovery phrase copied');
-      });
-    });
-
     const hideBtn = Button('btn-primary btn-transparent seed-hide-btn');
     hideBtn.textContent = 'Hide';
     hideBtn.addEventListener('click', () => this.hideSeed());
+    actions.append(hideBtn);
 
-    actions.append(hideBtn, copyBtn);
+    if(seed) {
+      const copyBtn = Button('btn-primary btn-color-primary seed-copy-btn');
+      copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(seed).then(() => {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+          toast('Recovery phrase copied');
+        });
+      });
+      actions.append(copyBtn);
+    }
 
     // Countdown bar (visual auto-hide timer)
     const countdownWrap = document.createElement('div');
@@ -181,7 +192,53 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
     this.countdownBar.append(barFill);
     countdownWrap.append(countdownLabel, this.countdownBar);
 
-    this.gridContainer.append(grid, countdownWrap, actions);
+    // --- Private key (nsec) export — lets you import THIS account into another
+    // Nostr app (e.g. 0xchat) so both drive the same npub. Same reveal/PIN gate
+    // and auto-hide as the seed words (it's cleared with the grid on hide).
+    const nsecSection = document.createElement('div');
+    nsecSection.style.cssText = 'margin-top:1rem';
+
+    const nsecLabel = document.createElement('div');
+    nsecLabel.style.cssText = 'font-weight:600';
+    nsecLabel.textContent = 'Private key (nsec)';
+
+    const nsecCaption = document.createElement('div');
+    nsecCaption.style.cssText = 'font-size:0.8125rem;opacity:0.7;margin:0.25rem 0 0.5rem';
+    nsecCaption.textContent = 'Scan or paste this into another Nostr app (e.g. 0xchat) to use the same account. Treat it like a password — never share it.';
+
+    const nsecQr = document.createElement('div');
+    nsecQr.style.cssText = 'display:flex;justify-content:center;width:fit-content;margin:0 auto 0.5rem;background:#fff;padding:8px;border-radius:8px';
+    import('qr-code-styling' as any).then(({default: QRCodeStyling}) => {
+      if(!this.gridContainer || this.gridContainer.style.display === 'none') return; // hidden before render
+      new QRCodeStyling({
+        width: 200,
+        height: 200,
+        data: nsec,
+        qrOptions: {errorCorrectionLevel: 'M'},
+        dotsOptions: {color: '#1a1a2e', type: 'rounded'},
+        cornersSquareOptions: {type: 'extra-rounded'},
+        backgroundOptions: {color: '#ffffff'}
+      }).append(nsecQr);
+    }).catch(() => {});
+
+    const nsecBox = document.createElement('div');
+    nsecBox.style.cssText = 'font-family:monospace;word-break:break-all;background:var(--light-secondary-text-color);padding:0.5rem 0.75rem;border-radius:0.5rem;font-size:0.8125rem;user-select:all';
+    nsecBox.textContent = nsec;
+
+    const nsecCopyBtn = Button('btn-primary btn-color-primary');
+    nsecCopyBtn.style.cssText = 'margin-top:0.5rem';
+    nsecCopyBtn.textContent = 'Copy nsec';
+    nsecCopyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(nsec).then(() => {
+        nsecCopyBtn.textContent = 'Copied!';
+        setTimeout(() => { nsecCopyBtn.textContent = 'Copy nsec'; }, 1500);
+        toast('Private key (nsec) copied');
+      });
+    });
+
+    nsecSection.append(nsecLabel, nsecCaption, nsecQr, nsecBox, nsecCopyBtn);
+
+    this.gridContainer.append(grid, nsecSection, countdownWrap, actions);
 
     // Start auto-hide
     const startedAt = Date.now();

@@ -2,6 +2,7 @@ import {describe, it, expect} from 'vitest';
 import {
   generateNostrIdentity,
   importFromMnemonic,
+  importFromNsec,
   validateMnemonic,
   npubEncode,
   nsecEncode,
@@ -110,5 +111,36 @@ describe('nostr-identity', () => {
       const npub = npubEncode(hex);
       expect(decodePubkey(npub)).toBe(hex);
     });
+  });
+});
+
+describe('importFromNsec (0xchat key portability)', () => {
+  const testMnemonic = 'leader monkey parrot ring guide accident before fence cannon height naive bean';
+  const expectedPrivkeyHex = '7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a';
+  const expectedPubkeyHex = '17162c921dc4d2518f9a101db33695df1afb56ab82f5ff3e5da6eec3ca5cd917';
+
+  it('round-trips an nsec to the same keypair', () => {
+    const fromMnemonic = importFromMnemonic(testMnemonic);
+    const fromNsec = importFromNsec(fromMnemonic.nsec);
+    expect(fromNsec.privateKey).toBe(expectedPrivkeyHex);
+    expect(fromNsec.publicKey).toBe(expectedPubkeyHex);
+    expect(fromNsec.npub).toBe(fromMnemonic.npub);
+    expect(fromNsec.nsec).toBe(fromMnemonic.nsec);
+  });
+
+  it('has no mnemonic (a raw key has no recovery phrase)', () => {
+    const id = importFromNsec(importFromMnemonic(testMnemonic).nsec);
+    expect(id.mnemonic).toBe('');
+  });
+
+  it('accepts a 64-char hex secret key', () => {
+    const id = importFromNsec(expectedPrivkeyHex);
+    expect(id.publicKey).toBe(expectedPubkeyHex);
+  });
+
+  it('rejects garbage / wrong key type', () => {
+    expect(() => importFromNsec('not-a-key')).toThrow();
+    expect(() => importFromNsec('npub1xxxx')).toThrow();
+    expect(() => importFromNsec('')).toThrow();
   });
 });
