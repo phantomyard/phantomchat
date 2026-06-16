@@ -100,6 +100,23 @@ describe('PhantomChatSync', () => {
       expect(saved.twebPeerId).toBe(1000000000000001);
     });
 
+    it('self-echo (senderPubkey === ownPubkey) is NOT re-persisted, but still dispatched', async() => {
+      // The NIP-17 self-wrap echo of our own message. handleSelfEcho already
+      // persisted the OUTGOING row; re-saving here as isOutgoing:false in a
+      // self↔self conversation created the phantom duplicate that broke the
+      // delivered tick. We must skip the save but still dispatch a render keyed
+      // to the real peer (msg.to). FIND-selfwrap-dup.
+      const msg = makeTextMsg();
+      msg.from = OWN_PUBKEY;
+      msg.to = SENDER_PUBKEY; // the real recipient
+      await sync.onIncomingMessage(msg, OWN_PUBKEY);
+
+      expect(storeMock.saveMessage).not.toHaveBeenCalled();
+      expect(dispatch).toHaveBeenCalledOnce();
+      const [eventName] = dispatch.mock.calls[0];
+      expect(eventName).toBe('phantomchat_new_message');
+    });
+
     it('dispatches phantomchat_new_message event with peerId and mid', async() => {
       const msg = makeTextMsg();
       await sync.onIncomingMessage(msg, SENDER_PUBKEY);
