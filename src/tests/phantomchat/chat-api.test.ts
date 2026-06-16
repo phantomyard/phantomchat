@@ -408,15 +408,14 @@ describe('ChatAPI', () => {
       expect(messageId).toBeDefined();
       expect(mockQueue.queueCallCount).toBe(1);
 
-      // FIND-ghost-first-msg: the queued payload MUST be the full wire envelope
-      // (the same bytes the connected path publishes), NOT the raw text — the
-      // receiver JSON.parses the rumor content and drops anything that isn't
-      // {type,content,...}. Queuing raw text here was the cold-start ghost.
+      // The queued payload must be the SAME bytes the connected path would
+      // publish. With NIP-17 alignment a text message goes out as PLAIN content
+      // (not the JSON envelope), and the offline path must match — otherwise a
+      // flushed cold-start message would arrive in a different shape than a live
+      // one. (FIND-ghost-first-msg was the inverse bug: it queued nothing.)
       const queued = mockQueue.queuedMessages[0];
       expect(queued).toBeDefined();
-      const envelope = JSON.parse(queued.payload);
-      expect(envelope.type).toBe('text');
-      expect(envelope.content).toBe('Message while offline');
+      expect(queued.payload).toBe('Message while offline');
     });
 
     test('queues via offlineQueue when all relays fail', async() => {

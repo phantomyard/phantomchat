@@ -630,6 +630,10 @@ export class ChatAPI {
     // strfry to reject e-tags with `unexpected size for fixed-size tag: e`.
     let publishedRumorId: string | undefined;
     let publishSucceeded = false;
+    // Delivery-tracking key. Starts as the app message id; for NIP-17 plain-text
+    // sends it's re-keyed to the rumor id after publish (see below), because the
+    // peer receipts the rumor id, not the envelope's app id.
+    let trackId = messageId;
     // Build the wire envelope ONCE. Both the live publish below AND the
     // offline-queue fallback (queueMessage → offlineQueue → relayPool.publish)
     // must publish this SAME envelope as the rumor content: the receiver does
@@ -647,10 +651,24 @@ export class ChatAPI {
       content,
       timestamp
     });
+    // NIP-17 send: TEXT messages go out as plain rumor content (interops with
+    // 0xchat/Amethyst). Non-text (files) keep the JSON envelope — the receiver
+    // distinguishes a file by its JSON {url,…} content, and stock clients don't
+    // interop on files anyway. metadata the envelope used to carry is native to
+    // the rumor: from=pubkey, to=p-tag, timestamp=created_at, id=rumor id.
+    const wirePayload = type === 'text' ? content : wireEnvelope;
     if(this.relayPool.isConnected()) {
       try {
-        const result: PublishResult = await this.relayPool.publish(peerOwnId!, wireEnvelope, opts?.replyTo);
+        const result: PublishResult = await this.relayPool.publish(peerOwnId!, wirePayload, opts?.replyTo);
         publishedRumorId = result.rumorId;
+
+        // For plain-text sends the peer's delivery receipt references the rumor
+        // id, so re-key delivery tracking from the app id → rumor id; otherwise
+        // the ✓✓ (delivered) tick would never match. Files keep the app id.
+        if(type === 'text' && publishedRumorId) {
+          trackId = publishedRumorId;
+          this.deliveryTracker?.rekey(messageId, trackId);
+        }
 
         // Register a RE-WRAP closure with the delivery tracker so the always-on
         // retry layer can re-publish if no delivery ack comes back. It re-wraps
@@ -663,7 +681,7 @@ export class ChatAPI {
         if(this.deliveryTracker && result.rumor) {
           const rumor = result.rumor;
           const recipient = peerOwnId!;
-          this.deliveryTracker.registerOutgoing(messageId, () => {
+          this.deliveryTracker.registerOutgoing(trackId, () => {
             this.relayPool.rewrapAndPublish(recipient, rumor);
           });
         }
@@ -757,15 +775,15 @@ export class ChatAPI {
       const msg = this.history.find((m) => m.id === messageId);
       if(msg) msg.status = 'sent';
       if(this.deliveryTracker) {
-        this.deliveryTracker.markSent(messageId);
+        this.deliveryTracker.markSent(trackId);
       }
     } else {
-      // Either offline, disconnected, or every relay rejected. Queue the
-      // FULL wire envelope (not the raw content) for later redelivery, so the
-      // flushed rumor parses on the receiver exactly like a live send. The
-      // stored row (if any) has deliveryState='sending' and will transition
-      // when the queue flushes.
-      await this.queueMessage(messageId, wireEnvelope);
+      // Either offline, disconnected, or every relay rejected. Queue the same
+      // wire payload we'd have published (plain text for NIP-17 text, envelope
+      // for files) for later redelivery, so the flushed rumor parses on the
+      // receiver exactly like a live send. The stored row (if any) has
+      // deliveryState='sending' and will transition when the queue flushes.
+      await this.queueMessage(messageId, wirePayload);
     }
 
     return messageId;

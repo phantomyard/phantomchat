@@ -228,6 +228,34 @@ export class DeliveryTracker {
   }
 
   /**
+   * Re-key a tracked message from one event id to another. Used post-publish to
+   * switch from the app message id to the canonical RUMOR id once it's known:
+   * with NIP-17 plain-text sends the peer's delivery receipt references the rumor
+   * id, so the tracker (and the bubble's ✓✓) must be keyed by it. Migrates the
+   * state, the resend thunk + its order slot, and any pending retry timer.
+   */
+  rekey(oldEventId: string, newEventId: string): void {
+    if(!oldEventId || !newEventId || oldEventId === newEventId) return;
+    const info = this.states.get(oldEventId);
+    if(info) {
+      this.states.set(newEventId, info);
+      this.states.delete(oldEventId);
+    }
+    const resend = this.outgoingResend.get(oldEventId);
+    if(resend) {
+      this.outgoingResend.set(newEventId, resend);
+      this.outgoingResend.delete(oldEventId);
+      const idx = this.outgoingOrder.indexOf(oldEventId);
+      if(idx !== -1) this.outgoingOrder[idx] = newEventId;
+    }
+    const timer = this.retryTimers.get(oldEventId);
+    if(timer) {
+      this.retryTimers.set(newEventId, timer);
+      this.retryTimers.delete(oldEventId);
+    }
+  }
+
+  /**
    * Mark a message as sent (relay acknowledged).
    * Only transitions forward (sending -> sent).
    */
