@@ -1818,6 +1818,15 @@ export class PhantomChatMTProtoServer {
             }
           };
         } else {
+          // Determine the tweb document type from the media class so the
+          // bubble renderer (wrappers/document.ts) dispatches to the correct
+          // component — AudioElement for voice/audio, video player for video,
+          // generic file otherwise.  Without this, voice notes rendered as
+          // "Unknown.file" because doc.type was undefined (FIND-voice-unknown).
+          const docType = media.type === 'voice' ? 'voice' :
+            media.type === 'video' ? 'video' :
+            media.mimeType?.startsWith('audio/') ? 'audio' :
+            undefined;
           (msg as any).media = {
             _: 'messageMediaDocument',
             pFlags: {},
@@ -1828,6 +1837,8 @@ export class PhantomChatMTProtoServer {
               size: media.size,
               url: media.objectURL,
               attributes,
+              type: docType,
+              file_name: `file-${mid}`,
               pFlags: {}
             }
           };
