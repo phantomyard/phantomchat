@@ -39,7 +39,7 @@ import {SliceEnd} from '@helpers/slicedArray';
 import PeerTitle from '@components/peerTitle';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import findUpTag from '@helpers/dom/findUpTag';
-import {hideToast, toastNew} from '@components/toast';
+import {hideToast, toast, toastNew} from '@components/toast';
 import {getMiddleware, Middleware} from '@helpers/middleware';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
@@ -1598,10 +1598,16 @@ export default class ChatBubbles {
       bubble.querySelector('.media-upload-retry')?.remove();
     });
 
-    this.listenerSetter.add(rootScope)('phantomchat_file_upload_failed', ({peerId, mid}) => {
+    this.listenerSetter.add(rootScope)('phantomchat_file_upload_failed', ({peerId, mid, error}) => {
       if(peerId !== this.peerId) return;
       const bubble = findBubbleByMid(mid);
-      if(!bubble) return;
+      if(!bubble) {
+        // No bubble exists (VMT guard clause returned before injectBubble).
+        // Surface the failure as a toast so the user knows the send failed.
+        console.error('[PhantomChat.chat] file upload failed, no bubble found:', {peerId, mid, error});
+        toast('Failed to send file. Please try again.');
+        return;
+      }
       bubble.classList.add('upload-failed');
       bubble.querySelector('.media-upload-progress')?.remove();
       if(!bubble.querySelector('.media-upload-retry')) {

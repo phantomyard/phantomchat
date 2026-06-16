@@ -1928,14 +1928,20 @@ export class PhantomChatMTProtoServer {
       seq: 0
     };
 
-    if(!this.chatAPI || !this.ownPubkey) return emptyUpdates;
+    if(!this.chatAPI || !this.ownPubkey) {
+      console.error(LOG_PREFIX, 'phantomchatSendFile: chatAPI or ownPubkey not initialised', {chatAPI: !!this.chatAPI, ownPubkey: !!this.ownPubkey});
+      return emptyUpdates;
+    }
 
     const peerId: number = Number(params?.peerId);
-    if(!peerId) return emptyUpdates;
+    if(!peerId) {
+      console.error(LOG_PREFIX, 'phantomchatSendFile: missing or zero peerId', {params});
+      return emptyUpdates;
+    }
 
     const blob: Blob = params?.blob;
     if(!(blob instanceof Blob) || blob.size === 0) {
-      console.warn(LOG_PREFIX, 'phantomchatSendFile: invalid blob');
+      console.error(LOG_PREFIX, 'phantomchatSendFile: invalid or empty blob', {type: typeof blob, size: blob?.size});
       return emptyUpdates;
     }
 
@@ -1947,13 +1953,27 @@ export class PhantomChatMTProtoServer {
     }
 
     const peerPubkey = await getPubkey(Math.abs(peerId));
-    if(!peerPubkey) return emptyUpdates;
+    if(!peerPubkey) {
+      console.error(LOG_PREFIX, 'phantomchatSendFile: no pubkey mapping for peerId', Math.abs(peerId));
+      return emptyUpdates;
+    }
 
     // Private key is held by the relay pool inside ChatAPI as raw bytes;
     // the orchestrator + blossom-upload-progress expect hex.
-    const privkeyBytes: Uint8Array | null = (this.chatAPI as any)?.relayPool?.getPrivateKey?.() ?? null;
+    // Retry up to 3 times with 500ms delay — the pool may still be
+    // initialising when the user fires a send immediately after open.
+    let privkeyBytes: Uint8Array | null = (this.chatAPI as any)?.relayPool?.getPrivateKey?.() ?? null;
+    for(let attempt = 0; attempt < 3 && (!privkeyBytes || !(privkeyBytes instanceof Uint8Array) || privkeyBytes.length !== 32); attempt++) {
+      console.warn(LOG_PREFIX, `phantomchatSendFile: private key not ready (attempt ${attempt + 1}/3) — retrying in 500ms`);
+      await new Promise(r => setTimeout(r, 500));
+      privkeyBytes = (this.chatAPI as any)?.relayPool?.getPrivateKey?.() ?? null;
+    }
     if(!privkeyBytes || !(privkeyBytes instanceof Uint8Array) || privkeyBytes.length !== 32) {
-      console.warn(LOG_PREFIX, 'phantomchatSendFile: no 32-byte private key on chatAPI.relayPool');
+      console.error(LOG_PREFIX, 'phantomchatSendFile: no 32-byte private key on chatAPI.relayPool after retries', {
+        hasPool: !!(this.chatAPI as any)?.relayPool,
+        keyType: typeof privkeyBytes,
+        keyLen: privkeyBytes?.length
+      });
       return emptyUpdates;
     }
     const {bytesToHex} = await import('./file-crypto');
@@ -2083,7 +2103,10 @@ export class PhantomChatMTProtoServer {
       seq: 0
     };
 
-    if(!this.chatAPI || !this.ownPubkey) return emptyUpdates;
+    if(!this.chatAPI || !this.ownPubkey) {
+      console.error(LOG_PREFIX, 'phantomchatSendFileToGroup: chatAPI or ownPubkey not initialised', {chatAPI: !!this.chatAPI, ownPubkey: !!this.ownPubkey});
+      return emptyUpdates;
+    }
 
     const blob: Blob = params?.blob;
     const type: 'image' | 'video' | 'file' | 'voice' = params?.type || 'file';
@@ -2100,19 +2123,30 @@ export class PhantomChatMTProtoServer {
       const {getGroupStore} = await import('./group-store');
       const rec = await getGroupStore().getByPeerId(peerId);
       if(!rec) {
-        console.warn(LOG_PREFIX, 'phantomchatSendFileToGroup: no group for peerId', peerId);
+        console.error(LOG_PREFIX, 'phantomchatSendFileToGroup: no group for peerId', peerId);
         return emptyUpdates;
       }
       groupId = rec.groupId;
     } catch(err) {
-      console.warn(LOG_PREFIX, 'phantomchatSendFileToGroup: group lookup failed', err);
+      console.error(LOG_PREFIX, 'phantomchatSendFileToGroup: group lookup failed', err);
       return emptyUpdates;
     }
 
     // Get the private key for the Blossom auth header
-    const privkeyBytes: Uint8Array | null = (this.chatAPI as any)?.relayPool?.getPrivateKey?.() ?? null;
+    // Retry up to 3 times with 500ms delay — the pool may still be
+    // initialising when the user fires a send immediately after open.
+    let privkeyBytes: Uint8Array | null = (this.chatAPI as any)?.relayPool?.getPrivateKey?.() ?? null;
+    for(let attempt = 0; attempt < 3 && (!privkeyBytes || !(privkeyBytes instanceof Uint8Array) || privkeyBytes.length !== 32); attempt++) {
+      console.warn(LOG_PREFIX, `phantomchatSendFileToGroup: private key not ready (attempt ${attempt + 1}/3) — retrying in 500ms`);
+      await new Promise(r => setTimeout(r, 500));
+      privkeyBytes = (this.chatAPI as any)?.relayPool?.getPrivateKey?.() ?? null;
+    }
     if(!privkeyBytes || !(privkeyBytes instanceof Uint8Array) || privkeyBytes.length !== 32) {
-      console.warn(LOG_PREFIX, 'phantomchatSendFileToGroup: no 32-byte private key');
+      console.error(LOG_PREFIX, 'phantomchatSendFileToGroup: no 32-byte private key after retries', {
+        hasPool: !!(this.chatAPI as any)?.relayPool,
+        keyType: typeof privkeyBytes,
+        keyLen: privkeyBytes?.length
+      });
       return emptyUpdates;
     }
     const {bytesToHex} = await import('./file-crypto');
