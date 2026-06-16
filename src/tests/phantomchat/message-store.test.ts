@@ -112,6 +112,41 @@ describe('MessageStore', () => {
     });
   });
 
+  describe('reKeyEventId (offline send → canonical rumor id)', () => {
+    it('migrates a row to the new eventId in place, preserving the identity triple', async() => {
+      const APP = 'chat-1700000000000-0';
+      const RUMOR = 'a'.repeat(64);
+      await store.saveMessage(makeMsg({eventId: APP, mid: 555, twebPeerId: 42, isOutgoing: true, content: 'offline text'}));
+
+      const ok = await store.reKeyEventId(APP, RUMOR);
+      expect(ok).toBe(true);
+
+      // Old key gone, new key resolves to the SAME row (mid/twebPeerId intact).
+      expect(await store.getByEventId(APP)).toBeNull();
+      const moved = await store.getByEventId(RUMOR);
+      expect(moved).not.toBeNull();
+      expect(moved!.mid).toBe(555);
+      expect(moved!.twebPeerId).toBe(42);
+      expect(moved!.isOutgoing).toBe(true);
+      expect(moved!.content).toBe('offline text');
+      // The old app id is retained so app-level lookups still resolve.
+      expect(moved!.appMessageId).toBe(APP);
+      expect(await store.getByAppMessageId(APP)).not.toBeNull();
+    });
+
+    it('returns false when the old row is missing', async() => {
+      expect(await store.reKeyEventId('chat-missing-0', 'b'.repeat(64))).toBe(false);
+    });
+
+    it('returns false (no duplicate) when the new key already exists', async() => {
+      await store.saveMessage(makeMsg({eventId: 'chat-x-0', mid: 1}));
+      await store.saveMessage(makeMsg({eventId: 'c'.repeat(64), mid: 2}));
+      expect(await store.reKeyEventId('chat-x-0', 'c'.repeat(64))).toBe(false);
+      // Original still intact under its app id.
+      expect(await store.getByEventId('chat-x-0')).not.toBeNull();
+    });
+  });
+
   describe('getMessages', () => {
     it('returns messages for a conversation sorted by timestamp desc', async() => {
       const convId = uniqueConvId();

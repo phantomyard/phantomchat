@@ -449,6 +449,49 @@ export class MessageStore {
   }
 
   /**
+   * Re-key a stored row's `eventId` IN PLACE (same primary key), preserving the
+   * identity triple (mid/twebPeerId/timestamp) and all other fields. Used after
+   * an OFFLINE text send flushes: the row was written under the app message id
+   * (`chat-…`) because no rumor id was known yet; once the queue publishes and
+   * learns the canonical 64-hex rumor id, we migrate the key so the receiver's
+   * delivery receipt (which references the rumor id) resolves to this row and
+   * the self-wrap echo dedups against it. `appMessageId` is set to the OLD key
+   * so app-level lookups still work. No-op (returns false) if the old row is
+   * gone or the new key already exists.
+   */
+  async reKeyEventId(oldEventId: string, newEventId: string): Promise<boolean> {
+    if(!oldEventId || !newEventId || oldEventId === newEventId) return false;
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const index = store.index('eventId');
+      const keyReq = index.getKey(oldEventId);
+      keyReq.onerror = () => reject(keyReq.error);
+      keyReq.onsuccess = () => {
+        const primaryKey = keyReq.result;
+        if(primaryKey === undefined) {resolve(false); return;}
+        // Bail if a row already exists under the new key (avoid a duplicate).
+        const existsReq = index.getKey(newEventId);
+        existsReq.onerror = () => reject(existsReq.error);
+        existsReq.onsuccess = () => {
+          if(existsReq.result !== undefined) {resolve(false); return;}
+          const readReq = store.get(primaryKey);
+          readReq.onerror = () => reject(readReq.error);
+          readReq.onsuccess = () => {
+            const row = readReq.result as StoredMessage | undefined;
+            if(!row) {resolve(false); return;}
+            const next: StoredMessage = {...row, eventId: newEventId, appMessageId: row.appMessageId ?? oldEventId};
+            const putReq = store.put(next, primaryKey);
+            putReq.onerror = () => reject(putReq.error);
+            putReq.onsuccess = () => resolve(true);
+          };
+        };
+      };
+    });
+  }
+
+  /**
    * Get a deterministic conversation ID from two public keys.
    * Sorts both hex pubkeys alphabetically and joins with ':'.
    */

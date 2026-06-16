@@ -177,6 +177,17 @@ export class ChatAPI {
       this.offlineQueue = new OfflineQueue(this.relayPool);
     }
 
+    // When an offline-queued text send finally flushes, the publish returns the
+    // canonical rumor id. Migrate the local row + delivery tracker off the app
+    // message id onto that rumor id so the receiver's delivery receipt (which
+    // references the rumor id) marks the bubble delivered — mirrors what the
+    // connected send path does inline via publishedRumorId + rekey().
+    if(this.offlineQueue && typeof this.offlineQueue.setOnFlushed === 'function') {
+      this.offlineQueue.setOnFlushed((info) => {
+        void this.handleQueueFlushed(info);
+      });
+    }
+
     // Wire receipt handler from relay pool to delivery tracker
     if(typeof this.relayPool.setOnReceipt === 'function') {
       this.relayPool.setOnReceipt((receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => {
@@ -968,12 +979,46 @@ export class ChatAPI {
     }
 
     try {
-      await this.offlineQueue.queue(peerOwnId, payload);
+      // Pass the app message id so the queue can hand it back on flush and we
+      // can migrate the row + tracker to the canonical rumor id (see
+      // handleQueueFlushed). Without it an offline text send stays single-check.
+      await this.offlineQueue.queue(peerOwnId, payload, messageId);
       this.updateMessageStatus(messageId, 'sent');
       this.log('[ChatAPI] message queued:', messageId);
     } catch(err) {
       this.log.error('[ChatAPI] queue failed:', err);
       this.updateMessageStatus(messageId, 'failed');
+    }
+  }
+
+  /**
+   * Migrate an offline-queued send onto its canonical rumor id once the queue
+   * flushes it to a relay. The local row was written under the app message id
+   * (`chat-…`) because no rumor id existed at queue time; the receiver receipts
+   * the rumor id, so without this migration the bubble stays single-check and
+   * the self-wrap echo can't dedup against the row. Mirrors the connected
+   * path's inline `publishedRumorId` + `rekey()`.
+   */
+  private async handleQueueFlushed(info: {appMessageId?: string; to: string; rumorId?: string; rumor?: unknown}): Promise<void> {
+    const {appMessageId, rumorId, rumor, to} = info;
+    if(!appMessageId || !rumorId || appMessageId === rumorId) return;
+    try {
+      // Re-key the stored row app id → rumor id (in place; preserves the mid).
+      await getMessageStore().reKeyEventId(appMessageId, rumorId);
+    } catch(err: any) {
+      this.log.warn('[ChatAPI] flush re-key failed:', err?.message);
+    }
+    if(this.deliveryTracker) {
+      // Move tracker state (still 'sending' from the offline send) onto the
+      // rumor id, arm the retry re-wrap, then mark sent so a delivery receipt
+      // referencing the rumor id transitions it to 'delivered'.
+      this.deliveryTracker.rekey(appMessageId, rumorId);
+      if(rumor) {
+        this.deliveryTracker.registerOutgoing(rumorId, () => {
+          this.relayPool.rewrapAndPublish(to, rumor as any);
+        });
+      }
+      this.deliveryTracker.markSent(rumorId);
     }
   }
 
