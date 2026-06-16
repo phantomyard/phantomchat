@@ -1002,12 +1002,14 @@ export class ChatAPI {
   private async handleQueueFlushed(info: {appMessageId?: string; to: string; rumorId?: string; rumor?: unknown}): Promise<void> {
     const {appMessageId, rumorId, rumor, to} = info;
     if(!appMessageId || !rumorId || appMessageId === rumorId) return;
-    try {
-      // Re-key the stored row app id → rumor id (in place; preserves the mid).
-      await getMessageStore().reKeyEventId(appMessageId, rumorId);
-    } catch(err: any) {
-      this.log.warn('[ChatAPI] flush re-key failed:', err?.message);
-    }
+
+    // Arm receipt matching FIRST, synchronously — before any await. This handler
+    // is invoked fire-and-forget from OfflineQueue.flush (`void
+    // handleQueueFlushed`), and a delivery receipt for `rumorId` can arrive the
+    // instant flush returns. If the tracker were still keyed by `appMessageId`
+    // at that point (because we were awaiting the async store migration), the
+    // receipt would be dropped. The connected send path re-keys the tracker
+    // synchronously right after publish for exactly this reason.
     if(this.deliveryTracker) {
       // Move tracker state (still 'sending' from the offline send) onto the
       // rumor id, arm the retry re-wrap, then mark sent so a delivery receipt
@@ -1019,6 +1021,16 @@ export class ChatAPI {
         });
       }
       this.deliveryTracker.markSent(rumorId);
+    }
+
+    // Store row migration runs AFTER the tracker is armed; its only job is to
+    // make reload/getHistory + the self-wrap dedup resolve by rumor id, none of
+    // which races the live receipt. Failures are logged, not fatal.
+    try {
+      // Re-key the stored row app id → rumor id (in place; preserves the mid).
+      await getMessageStore().reKeyEventId(appMessageId, rumorId);
+    } catch(err: any) {
+      this.log.warn('[ChatAPI] flush re-key failed:', err?.message);
     }
   }
 

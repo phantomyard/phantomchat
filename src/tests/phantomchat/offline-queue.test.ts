@@ -272,6 +272,58 @@ describe('OfflineQueue', () => {
 
       expect(tracker.getState(rumorId)?.state).toBe('delivered');
     });
+
+    test('race-safety: a receipt fired while the store migration is still pending still marks delivered', async() => {
+      // Locks the ordering contract ChatAPI.handleQueueFlushed follows: the
+      // delivery tracker is re-keyed SYNCHRONOUSLY (before the awaited, possibly
+      // slow IndexedDB row migration). A delivery receipt for the rumor id can
+      // arrive the instant flush returns; if arming waited on the store await it
+      // would be dropped. (kaieriksen review.)
+      const {DeliveryTracker} = await import('@lib/phantomchat/delivery-tracker');
+      const tracker = new DeliveryTracker({
+        privateKey: new Uint8Array(32).fill(7),
+        publicKey: 'f'.repeat(64),
+        publishFn: async() => {}
+      });
+
+      const APP_ID = 'chat-race-0';
+      tracker.markSending(APP_ID);
+
+      let resolveStore: () => void = () => {};
+      const storeMigration = new Promise<void>((r) => {resolveStore = r;});
+      let storeSettled = false;
+      void storeMigration.then(() => {storeSettled = true;});
+
+      // Mirror the FIXED ordering: tracker work first, THEN await the (here
+      // artificially slow) store migration.
+      queue.setOnFlushed(async(info: any) => {
+        if(!info.appMessageId || !info.rumorId) return;
+        tracker.rekey(info.appMessageId, info.rumorId);
+        tracker.markSent(info.rumorId);
+        await storeMigration;
+      });
+
+      await queue.queue(PEER, 'offline text', APP_ID);
+      mockRelayPool.simulateConnect();
+      await queue.flush(PEER);
+      const rumorId = mockRelayPool.lastRumorId;
+
+      // Store migration has NOT resolved yet — but the tracker is already armed.
+      expect(storeSettled).toBe(false);
+      expect(tracker.getState(rumorId)?.state).toBe('sent');
+
+      tracker.handleReceipt({
+        kind: 14,
+        content: '',
+        pubkey: 'sender',
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['e', rumorId], ['receipt-type', 'delivery']],
+        id: 'receipt-race-1'
+      });
+      expect(tracker.getState(rumorId)?.state).toBe('delivered');
+
+      resolveStore();
+    });
   });
 
   describe('flush()', () => {
