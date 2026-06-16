@@ -27,7 +27,38 @@ vi.mock('@components/icon', () => ({
   }
 }));
 
-import {applyBubbleState} from '@lib/phantomchat/phantomchat-delivery-ui';
+// A receipt for a NIP-17 plain-text send references the RUMOR id. The matching
+// row is keyed by that rumor id and carries the authoritative bubble `mid`
+// (999000000001). mapEventId returns a DIFFERENT, wrong value (111111111111) —
+// if handleDeliveredOrRead re-hashed the rumor id instead of trusting the row's
+// stored mid, the bubble would never be found. FIND-rekey-tick.
+vi.mock('@lib/phantomchat/message-store', () => ({
+  getMessageStore: () => ({
+    getByEventId: async(id: string): Promise<{mid: string; timestamp: number} | null> => id === 'rumor-abc' ? {mid: '999000000001', timestamp: 1} : null,
+    getByAppMessageId: async(): Promise<null> => null
+  })
+}));
+
+vi.mock('@lib/phantomchat/phantomchat-peer-mapper', () => ({
+  PhantomChatPeerMapper: class {
+    async mapEventId() {return '111111111111';}
+  }
+}));
+
+// Minimal event emitter — the real rootScope also forwards events to the
+// MTProtoMessagePort, which isn't initialised under jsdom and throws.
+vi.mock('@lib/rootScope', () => {
+  const listeners: Record<string, ((data: any) => void)[]> = {};
+  return {
+    default: {
+      addEventListener: (name: string, cb: (data: any) => void) => {(listeners[name] ||= []).push(cb);},
+      dispatchEvent: (name: string, data: any) => {(listeners[name] || []).forEach((cb) => cb(data));}
+    }
+  };
+});
+
+import {applyBubbleState, createDeliveryUI} from '@lib/phantomchat/phantomchat-delivery-ui';
+import rootScope from '@lib/rootScope';
 
 const MID = '999000000001';
 
@@ -105,5 +136,30 @@ describe('applyBubbleState', () => {
     await applyBubbleState(MID, 'sent');
     expect(b.classList.contains('is-error')).toBe(false);
     expect(b.classList.contains('is-sending')).toBe(false);
+  });
+});
+
+describe('createDeliveryUI delivered receipt resolution (rekeyed rumor id)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('resolves the bubble via the stored row mid when the in-memory map misses', async() => {
+    // Bubble's data-mid is the APP-derived mid (999000000001). The delivery
+    // receipt references the RUMOR id ('rumor-abc'), which is NOT in the
+    // in-memory eventId→mid map (e.g. the receipt raced ahead of the 'sent'
+    // handler that populates it). The fallback must use the stored row's mid,
+    // not a re-hash of the rumor id.
+    const b = makeBubble();
+    const ui = createDeliveryUI();
+    ui.attach();
+
+    rootScope.dispatchEvent('phantomchat_delivery_update' as any, {eventId: 'rumor-abc', state: 'delivered'});
+    // Let the async handler (dynamic imports + store lookup) settle.
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(b.classList.contains('is-read')).toBe(true);
+    const icon = b.querySelector('.time-sending-status') as HTMLElement;
+    expect(icon.dataset.icon).toBe('checks');
   });
 });

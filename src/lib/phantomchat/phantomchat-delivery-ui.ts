@@ -163,28 +163,44 @@ export function createDeliveryUI(): DeliveryUIManager {
   };
 
   const handleDeliveredOrRead = async(eventId: string, state: 'delivered' | 'read') => {
+    const mapHit = eventIdToBubbleMid.has(eventId);
     let mid = eventIdToBubbleMid.get(eventId);
     if(!mid) {
-      const {PhantomChatPeerMapper} = await import('@lib/phantomchat/phantomchat-peer-mapper');
-      const mapper = new PhantomChatPeerMapper();
       const {getMessageStore: gms2} = await import('@lib/phantomchat/message-store');
-      // Bug #3: receipts carry the app-level messageId (chat-XXX-N). Rows are
-      // now keyed by rumor id (64-hex), so prefer appMessageId lookup; fall
-      // back to direct eventId match for legacy receipts still referencing
-      // the old key scheme.
-      const stored = (await gms2().getByAppMessageId(eventId)) || (await gms2().getByEventId(eventId));
-      const ts = stored?.timestamp ?? Math.floor(Date.now() / 1000);
-      const hashed = await mapper.mapEventId(eventId, ts);
-      if(hashed) mid = String(hashed);
-    }
-    if(!mid) return;
-
-    if(!await applyBubbleState(mid, state)) {
-      for(const delay of [300, 800, 2000]) {
-        await new Promise((r) => setTimeout(r, delay));
-        if(await applyBubbleState(mid, state)) break;
+      // A receipt's eventId is EITHER the rumor id (NIP-17 plain-text sends —
+      // the row's `eventId`) OR the app message id (legacy envelope sends —
+      // the row's `appMessageId`). Look up by both.
+      const stored = (await gms2().getByEventId(eventId)) || (await gms2().getByAppMessageId(eventId));
+      // Prefer the row's AUTHORITATIVE `mid`. Re-hashing the eventId is wrong
+      // for rekeyed (rumor-id) receipts: the bubble mid is derived from the APP
+      // message id (chat-api mapEventIdToMid(messageId)), not the rumor id, so
+      // mapEventId(rumorId) would point at a phantom bubble and the ✓✓ would
+      // never land. This bites only when the in-memory map misses — e.g. a fast
+      // delivery receipt that races ahead of the 'sent' handler that populates
+      // it. FIND-rekey-tick.
+      if(stored?.mid != null) {
+        mid = String(stored.mid);
+      } else {
+        const {PhantomChatPeerMapper} = await import('@lib/phantomchat/phantomchat-peer-mapper');
+        const mapper = new PhantomChatPeerMapper();
+        const ts = stored?.timestamp ?? Math.floor(Date.now() / 1000);
+        const hashed = await mapper.mapEventId(eventId, ts);
+        if(hashed) mid = String(hashed);
       }
     }
+    if(!mid) {
+      console.debug('[PhantomChatDeliveryUI] %s receipt could not resolve a bubble', state, {eventId, mapHit});
+      return;
+    }
+
+    let applied = await applyBubbleState(mid, state);
+    if(!applied) {
+      for(const delay of [300, 800, 2000]) {
+        await new Promise((r) => setTimeout(r, delay));
+        if(await applyBubbleState(mid, state)) {applied = true; break;}
+      }
+    }
+    console.debug('[PhantomChatDeliveryUI] %s receipt → bubble %s (mapHit=%s, applied=%s)', state, mid, mapHit, applied, {eventId});
   };
 
   return {
