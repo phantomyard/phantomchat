@@ -502,6 +502,33 @@ describe('ChatAPI', () => {
       expect(messageId).toBeDefined();
       expect(messageId.length).toBeGreaterThan(0);
     });
+
+    test('returns the published rumor id (not the app id) so the media row converges', async() => {
+      // Regression: the file-send orchestrator keys its media store row by this
+      // return value. If it returned the app id while ChatAPI keyed its own row
+      // by the rumor id, the two rows diverged — one carried the raw JSON
+      // envelope with no fileMetadata (rendered as text) and one carried the
+      // media — and BOTH rendered (the "JSON bubble next to the attachment"
+      // bug). Returning the rumor id makes the orchestrator's row MERGE onto
+      // ChatAPI's row (same eventId), leaving a single media row.
+      mockPool.simulateConnect();
+      mockPool.publishResult = {successes: ['event-1'], failures: [], rumorId: 'rumor-deadbeef'} as any;
+      await chatApi.connect(PEER_ID);
+
+      const returned = await chatApi.sendFileMessage(
+        'voice', 'https://blossom.example/v.ogg', 'sha256hash',
+        'keyHex', 'ivHex', 'audio/ogg', 2048, undefined,
+        {duration: 3, mid: 123456, twebPeerId: 9999999999}
+      );
+
+      expect(returned).toBe('rumor-deadbeef');
+      // ChatAPI's own store row is keyed by the same rumor id, so the
+      // orchestrator's later save (same eventId) merges instead of duplicating.
+      const fileRow = messageStoreMocks.saveMessage.mock.calls
+        .map((c: any[]) => c[0])
+        .find((r: any) => r.type === 'file');
+      expect(fileRow?.eventId).toBe('rumor-deadbeef');
+    });
   });
 
   describe('getHistory()', () => {
