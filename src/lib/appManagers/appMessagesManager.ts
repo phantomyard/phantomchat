@@ -1676,11 +1676,11 @@ export class AppMessagesManager extends AppManager {
           // the failure so the UI can notify the user instead of silently
           // swallowing it.
           this.log.error('[PhantomChat.chat] sendFile P2P: VMT returned emptyUpdates (no phantomchatMid)', {peerId, tempMid, type: phantomchatType});
-          this.rootScope.dispatchEvent('phantomchat_file_upload_failed', {peerId: Math.abs(peerId), mid: tempMid, error: 'P2P send failed — VMT returned empty updates'});
+          this.rootScope.dispatchEvent('phantomchat_file_upload_failed', {peerId, mid: tempMid, error: 'P2P send failed — VMT returned empty updates'});
         }
       } catch(err) {
         this.log.error('sendFile P2P shortcut failed:', err);
-        this.rootScope.dispatchEvent('phantomchat_file_upload_failed', {peerId: Math.abs(peerId), mid: tempMid, error: err instanceof Error ? err.message : String(err)});
+        this.rootScope.dispatchEvent('phantomchat_file_upload_failed', {peerId, mid: tempMid, error: err instanceof Error ? err.message : String(err)});
       }
       return;
     }
