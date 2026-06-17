@@ -271,6 +271,15 @@ export default class ChatInput {
   public replyToMonoforumPeerId: MessageSendingParams['replyToMonoforumPeerId'];
   public editMsgId: number;
   public editMessage: Message.message;
+  // Re-entrancy guard for sendMessage(). The method awaits getConfig() (and
+  // slow-mode / payment checks) BEFORE it dispatches sendText() and clears the
+  // input, so a second trigger (double-click — the send button fires on
+  // mousedown — or Enter+click) during that window reads the same un-cleared
+  // input and sends a duplicate. Confirmed live: two sends inside the await
+  // window → 2 messages. The window is widest on the first send after opening a
+  // chat (cold getConfig), which is exactly when it feels laggy and the user
+  // clicks again.
+  private sendingMessage: boolean;
   private noWebPage: true;
   public scheduleDate: number;
   public sendSilent: true;
@@ -3888,6 +3897,23 @@ export default class ChatInput {
       return;
     }
 
+    // Re-entrancy guard (see `sendingMessage`): a second trigger while the
+    // first send is still inside its pre-dispatch awaits (getConfig / slow-mode
+    // / payment) would read the same un-cleared input and send a duplicate.
+    if(this.sendingMessage) {
+      return;
+    }
+
+    this.sendingMessage = true;
+    try {
+      await this.sendMessageInner(force);
+    } finally {
+      this.sendingMessage = false;
+    }
+  }
+
+  private async sendMessageInner(force = false) {
+    const {editMsgId, chat} = this;
     const {peerId} = chat;
     const {noWebPage} = this;
     const sendingParams = this.chat.getMessageSendingParams();
