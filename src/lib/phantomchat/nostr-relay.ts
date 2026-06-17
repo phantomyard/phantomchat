@@ -156,6 +156,15 @@ export class NostrRelay {
   // Receipt handler (delivery/read receipts)
   private onReceiptHandler: ((receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void) | null = null;
 
+  // Pre-decrypt dedup gate. Returns true the FIRST time an event id is seen and
+  // false thereafter. Set by the pool to a SHARED (pool-wide) seen-set so that
+  // the SAME gift-wrap arriving from multiple relays — or replayed on a
+  // reconnect backfill — is verified + NIP-44-decrypted ONCE, not once per
+  // relay. Gift-wrap unwrap is the dominant main-thread cost (secp256k1), so
+  // skipping it for duplicates before any crypto runs is the single biggest
+  // snappiness win. No-op (everything processed) when unset.
+  private claimEvent: ((eventId: string) => boolean) | null = null;
+
   // State change callback — notifies pool when relay connects/disconnects
   public onStateChange: ((state: 'disconnected' | 'connecting' | 'connected' | 'reconnecting') => void) | null = null;
 
@@ -560,6 +569,15 @@ export class NostrRelay {
   }
 
   /**
+   * Install the shared pre-decrypt dedup gate (see `claimEvent`). The pool wires
+   * this to a pool-wide LRU so duplicate wraps across relays/replays skip all
+   * crypto.
+   */
+  setEventDedup(fn: (eventId: string) => boolean): void {
+    this.claimEvent = fn;
+  }
+
+  /**
    * Register a handler for raw (non-giftwrap) events — currently kind-7
    * reactions and kind-5 deletes that the subscription filter admits.
    */
@@ -957,6 +975,16 @@ export class NostrRelay {
     // still has pubkey).
     if(!event.pubkey) {
       this.log.warn('[NostrRelay] received event missing pubkey');
+      return;
+    }
+
+    // Pre-decrypt dedup: the SAME event (gift-wrap OR raw reaction/delete/typing/
+    // presence) is delivered by every connected relay and replayed on reconnect
+    // backfills. Claim its id against the pool-wide seen-set and bail BEFORE the
+    // expensive Schnorr verify + NIP-44 decrypt for any duplicate — one wrap is
+    // unwrapped once, not once per relay. The downstream rumor-id dedup in the
+    // pool still handles the recipient-vs-self double.
+    if(event.id && this.claimEvent && !this.claimEvent(event.id)) {
       return;
     }
 

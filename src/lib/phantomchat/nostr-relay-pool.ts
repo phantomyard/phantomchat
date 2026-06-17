@@ -143,9 +143,18 @@ export class NostrRelayPool {
   private onMessageCb: (msg: DecryptedMessage) => void;
   private onStateChangeCb?: (connectedCount: number, totalCount: number) => void;
 
-  // Dedup LRU
+  // Dedup LRU — keyed by the DECRYPTED rumor/message id (post-unwrap).
   private seenIds: Set<string> = new Set();
   private seenOrder: string[] = [];
+
+  // PRE-decrypt dedup LRU — keyed by the OUTER event id (the gift-wrap / raw
+  // event id, before any crypto). Shared across all relay instances so the same
+  // wrap from multiple relays or a reconnect replay is verified + decrypted
+  // ONCE. This is the main snappiness lever (gift-wrap unwrap = secp256k1 on the
+  // main thread). Separate set from `seenIds` because wrap ids and rumor ids are
+  // different id spaces.
+  private seenWrapIds: Set<string> = new Set();
+  private seenWrapOrder: string[] = [];
 
   // Pool recovery
   private recoveryInterval: ReturnType<typeof setInterval> | null = null;
@@ -825,6 +834,14 @@ export class NostrRelayPool {
   private createRelayEntry(config: RelayConfig): RelayEntry {
     const instance = new NostrRelay(config.url);
 
+    // Pre-decrypt dedup: claim each inbound event id against the pool-wide LRU
+    // before this instance verifies/decrypts it. Returns true the first time an
+    // id is seen (process it) and false for any duplicate (a copy from another
+    // relay, or a reconnect replay) so the expensive unwrap runs at most once.
+    // Optional-call so test mocks without the method don't break (the real
+    // NostrRelay always implements it; nostr-relay.test.ts covers the gate).
+    instance.setEventDedup?.((eventId) => this.claimWrapId(eventId));
+
     // Wire up message handler with dedup
     instance.onMessage((msg: DecryptedMessage) => {
       this.handleIncomingMessage(msg);
@@ -867,6 +884,22 @@ export class NostrRelayPool {
     };
 
     return {config, instance};
+  }
+
+  /**
+   * Pool-wide pre-decrypt dedup. Returns true the FIRST time `eventId` is seen
+   * (caller should process it) and false for every duplicate. Maintains its own
+   * bounded LRU so a long-lived session can't grow it without bound.
+   */
+  private claimWrapId(eventId: string): boolean {
+    if(this.seenWrapIds.has(eventId)) return false;
+    this.seenWrapIds.add(eventId);
+    this.seenWrapOrder.push(eventId);
+    while(this.seenWrapOrder.length > DEDUP_CACHE_MAX) {
+      const evicted = this.seenWrapOrder.shift()!;
+      this.seenWrapIds.delete(evicted);
+    }
+    return true;
   }
 
   private handleIncomingMessage(msg: DecryptedMessage): void {
