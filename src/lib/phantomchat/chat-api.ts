@@ -574,7 +574,21 @@ export class ChatAPI {
       ...(extras?.caption ? {caption: extras.caption} : {})
     });
     const {mid, twebPeerId, timestampSec} = extras || {};
-    return this.sendMessage(type as ChatMessageType, fileContent, {mid, twebPeerId, timestampSec});
+    // Return the canonical rumor id (not the app message id) so the file-send
+    // orchestrator keys its media store row by the SAME id ChatAPI's own row
+    // uses. Otherwise the two rows diverge (rumor-id row = raw JSON envelope,
+    // no fileMetadata → renders as text; app-id row = media) and BOTH render —
+    // the duplicate "JSON bubble next to the real attachment" bug. Falls back
+    // to the app id if publish was skipped (offline), in which case ChatAPI's
+    // row is also app-id keyed, so they still converge.
+    let rumorId: string | undefined;
+    const appId = await this.sendMessage(type as ChatMessageType, fileContent, {
+      mid,
+      twebPeerId,
+      timestampSec,
+      onPublishedRumorId: (id) => { rumorId = id; }
+    });
+    return rumorId || appId;
   }
 
   /**
@@ -583,7 +597,13 @@ export class ChatAPI {
   private async sendMessage(
     type: ChatMessageType,
     content: string,
-    opts?: {mid?: number; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}}
+    // `onPublishedRumorId` lets the file-send path learn the canonical rumor id
+    // (this method returns the app message id, which the text mid path depends
+    // on, so the return value can't change). The file orchestrator keys its
+    // media store row by this rumor id so it MERGES with the row saved here
+    // (also rumor-id keyed) instead of creating a second, fileMetadata-less row
+    // that renders as raw JSON. See sendFileMessage.
+    opts?: {mid?: number; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}; onPublishedRumorId?: (rumorId: string) => void}
   ): Promise<string> {
     const messageId = this.generateMessageId();
     // If caller provided an authoritative seconds-precision timestamp, pin
@@ -654,6 +674,9 @@ export class ChatAPI {
       try {
         const result: PublishResult = await this.relayPool.publish(peerOwnId!, wirePayload, opts?.replyTo);
         publishedRumorId = result.rumorId;
+        if(publishedRumorId) {
+          opts?.onPublishedRumorId?.(publishedRumorId);
+        }
 
         // For plain-text sends the peer's delivery receipt references the rumor
         // id, so re-key delivery tracking from the app id → rumor id; otherwise
