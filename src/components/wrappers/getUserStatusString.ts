@@ -15,6 +15,13 @@ export default function getUserStatusString(user: User.user): HTMLElement {
     return document.createElement('span');
   }
 
+  // PhantomChat has no presence (Telegram-style: no online / last-seen). Peers
+  // are created with `userStatusEmpty`, which means "show no status subtitle"
+  // here — not the stock "last seen a long time ago".
+  if(user.status?._ === 'userStatusEmpty') {
+    return document.createElement('span');
+  }
+
   let key: LangPackKey;
   let args: any[];
 

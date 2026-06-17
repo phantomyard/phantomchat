@@ -510,7 +510,9 @@ export class NostrRelay {
     this.log('[NostrRelay] subscribing to messages');
 
     const filter: Record<string, unknown> = {
-      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING, NOSTR_KIND_PRESENCE],
+      // No NOSTR_KIND_PRESENCE (30315): presence was removed, so we don't ask
+      // relays for peers' status heartbeats — that's wasted bandwidth + crypto.
+      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING],
       '#p': [this.publicKey]
     };
 
@@ -978,8 +980,8 @@ export class NostrRelay {
       return;
     }
 
-    // Pre-decrypt dedup: the SAME event (gift-wrap OR raw reaction/delete/typing/
-    // presence) is delivered by every connected relay and replayed on reconnect
+    // Pre-decrypt dedup: the SAME event (gift-wrap OR raw reaction/delete/typing)
+    // is delivered by every connected relay and replayed on reconnect
     // backfills. Claim its id against the pool-wide seen-set and bail BEFORE the
     // expensive Schnorr verify + NIP-44 decrypt for any duplicate — one wrap is
     // unwrapped once, not once per relay. The downstream rumor-id dedup in the
@@ -993,7 +995,7 @@ export class NostrRelay {
     // through NIP-17 unwrap — they carry their referent in e/p tags. Typing
     // (kind 20001, NIP-16 ephemeral) was being dropped at the gift-wrap-only
     // gate below, so the three-dots indicator never fired.
-    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING || event.kind === NOSTR_KIND_PRESENCE) {
+    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING) {
       if(!verifyEvent(event as any)) {
         this.log.warn('[NostrRelay] dropping non-giftwrap event with invalid signature, kind:', event.kind, 'pubkey:', event.pubkey.slice(0, 8) + '...');
         return;

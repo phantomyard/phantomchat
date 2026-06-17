@@ -42,8 +42,9 @@ describe('PhantomChatPeerMapper', () => {
       expect(user.first_name).toBe('Alice');
       expect(user.pFlags).toEqual({});
       expect(user.access_hash).toBe('0');
-      expect((user.status as any)._).toBe('userStatusRecently');
-      expect((user.status as any).pFlags).toEqual({by_me: true});
+      // Presence removed — users carry userStatusEmpty, which renders no
+      // online/last-seen subtitle (see getUserStatusString).
+      expect((user.status as any)._).toBe('userStatusEmpty');
     });
 
     it('falls back to pubkey prefix when firstName is not provided', () => {

@@ -83,7 +83,10 @@ export class PhantomChatPeerMapper {
       last_name: opts.lastName,
       pFlags: {},
       access_hash: '0',
-      status: {_: 'userStatusRecently', pFlags: {by_me: true}}
+      // No presence in PhantomChat (Telegram-style: we don't show online /
+      // last-seen). userStatusEmpty renders no subtitle — see
+      // getUserStatusString — instead of a misleading "last seen recently".
+      status: {_: 'userStatusEmpty'}
     } as User.user;
 
     // Store pubkey for avatar derivation and relay lookups

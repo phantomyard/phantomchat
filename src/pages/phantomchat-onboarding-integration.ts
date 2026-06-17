@@ -381,14 +381,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
         rootScope.dispatchEvent('dialogs_multiupdate', new Map());
       }, 1000);
 
-      // --- Initialize presence ---
-      try {
-        const {initPresence} = await import('@lib/phantomchat/phantomchat-presence');
-        await initPresence(identity.publicKey, identity.privateKey);
-        console.log('[PhantomChatOnboardingIntegration] presence initialized');
-      } catch(err) {
-        console.warn('[PhantomChatOnboardingIntegration] presence init failed:', err);
-      }
+      // Presence (online / last-seen) was removed — no ping/pong engine to init.
 
       // --- Publish kind 0 metadata (first boot only) ---
       // Historically this republished on every boot with only display_name,

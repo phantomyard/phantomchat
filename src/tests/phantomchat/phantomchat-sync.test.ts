@@ -196,28 +196,4 @@ describe('PhantomChatSync', () => {
       expect(data.displayName).toBeUndefined();
     });
   });
-
-  // ─── onPresenceUpdate ─────────────────────────────────────────────
-
-  describe('onPresenceUpdate', () => {
-    it('dispatches phantomchat_presence_update with status', async() => {
-      await sync.onPresenceUpdate(SENDER_PUBKEY, 'online');
-
-      expect(dispatch).toHaveBeenCalledOnce();
-      const [eventName, data] = dispatch.mock.calls[0];
-      expect(eventName).toBe('phantomchat_presence_update');
-      expect(data.peerId).toBe(1000000000000001);
-      expect(data.pubkey).toBe(SENDER_PUBKEY);
-      expect(data.status).toBe('online');
-    });
-
-    it('passes through offline and recently status values', async() => {
-      await sync.onPresenceUpdate(SENDER_PUBKEY, 'offline');
-      expect(dispatch.mock.calls[0][1].status).toBe('offline');
-
-      dispatch.mockClear();
-      await sync.onPresenceUpdate(SENDER_PUBKEY, 'recently');
-      expect(dispatch.mock.calls[0][1].status).toBe('recently');
-    });
-  });
 });
