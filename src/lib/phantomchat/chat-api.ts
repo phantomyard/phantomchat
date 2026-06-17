@@ -376,32 +376,14 @@ export class ChatAPI {
         });
         return;
       }
-      // NOTE: kind-30315 (NIP-38 one-way presence beacon) is intentionally NOT
-      // handled here anymore. It only ever proved "the peer shouted online",
-      // never "the peer can hear you". It was replaced by the gift-wrapped
-      // ping/pong handshake wired via setOnPresence below, where a returned pong
-      // proves the real message-delivery path is alive.
+      // Presence beacons (NIP-38 kind-30315 and the gift-wrapped ping/pong) are
+      // no longer handled — presence was removed. Inbound presence envelopes are
+      // dropped in the relay pool so they never surface as chat.
     });
 
-    // Presence PING/PONG handshake (replaces the one-way kind-30315 beacon).
-    // A ping from a peer means they can reach us AND are asking if we can reach
-    // them: mark them alive and answer with a pong over the same gift-wrap path.
-    // A pong is the answer to one of OUR pings: the presence engine correlates
-    // it by nonce and flips the peer's badge to a HONEST online.
-    this.relayPool.setOnPresence((presence) => {
-      import('./phantomchat-presence').then((mod) => {
-        if(presence.type === 'ping') {
-          mod.onRemotePing(presence.from);
-          this.relayPool.publishPresence(presence.from, presence.nonce, 'pong').catch(
-            (e) => this.log.debug('[ChatAPI] pong publish failed:', e?.message)
-          );
-        } else {
-          mod.onRemotePong(presence.from, presence.nonce);
-        }
-      }).catch((err) => {
-        this.log.warn('[ChatAPI] presence handler failed:', err);
-      });
-    });
+    // Presence (online / last-seen) was removed — Telegram-style, we don't show
+    // it. The relay pool still silently DROPS any inbound presence envelope
+    // (e.g. from a not-yet-updated bot) so it never renders as a chat bubble.
     phantomchatReactionsReceive.setOwnPubkey(this.ownId);
     phantomchatTypingReceive.setOwnPubkey(this.ownId);
     phantomchatReactionsReceive.setMessageResolver(async(eventId) => {
@@ -1285,13 +1267,6 @@ export class ChatAPI {
    */
   private async handleRelayMessage(msg: DecryptedMessage): Promise<void> {
     this.log('[ChatAPI] received relay message:', msg.id.slice(0, 8) + '...');
-    // Presence: any inbound message is proof the peer is active right now, so
-    // mark them online immediately (don't wait for the next 60s heartbeat).
-    if(msg.from && msg.from !== this.ownId) {
-      import('./phantomchat-presence').then(({onPeerActivity}) => {
-        onPeerActivity(msg.from);
-      }).catch(() => { /* presence is optional */ });
-    }
     try {
       const result = await handleRelayMessageImpl(msg, {
         ownId: this.ownId,

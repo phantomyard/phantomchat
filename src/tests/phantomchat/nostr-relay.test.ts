@@ -8,7 +8,7 @@
 import '../setup';
 import {NostrRelay, createNostrRelay, NOSTR_KIND_GIFTWRAP} from '@lib/phantomchat/nostr-relay';
 import {nip44Encrypt, nip44Decrypt, getConversationKey} from '@lib/phantomchat/nostr-crypto';
-import {generateSecretKey, getPublicKey} from 'nostr-tools/pure';
+import {generateSecretKey, getPublicKey, finalizeEvent} from 'nostr-tools/pure';
 import {bytesToHex} from 'nostr-tools/utils';
 
 // Track last created WebSocket instance for test inspection
@@ -468,6 +468,44 @@ describe('NostrRelay', () => {
       const handler = (msg: any) => {};
       relay.onMessage(handler);
       expect(typeof relay.onMessage).toBe('function');
+    });
+  });
+
+  describe('pre-decrypt dedup gate (setEventDedup)', () => {
+    // Feed a real signed event (kind-5 delete → raw-event path, verified but not
+    // decrypted) twice. With the dedup gate installed, the SECOND copy must be
+    // dropped BEFORE verify, so the handler fires exactly once.
+    function signedDelete() {
+      return finalizeEvent(
+        {kind: 5, created_at: Math.floor(Date.now() / 1000), tags: [['e', 'abc']], content: ''},
+        generateSecretKey(),
+      );
+    }
+
+    test('a duplicate event id is processed once when the gate is installed', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+      const seen = new Set<string>();
+      relay.setEventDedup((id) => (seen.has(id) ? false : (seen.add(id), true)));
+      const raw = vi.fn();
+      relay.onRawEvent(raw);
+      const ev = signedDelete();
+      const ws = getLastMockWs();
+      ws?.simulateMessage(['EVENT', 'live-sub', ev]);
+      ws?.simulateMessage(['EVENT', 'live-sub', ev]); // duplicate (e.g. from another relay)
+      expect(raw).toHaveBeenCalledTimes(1);
+    });
+
+    test('without the gate, both copies are processed (proves the gate is the dedup)', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+      const raw = vi.fn();
+      relay.onRawEvent(raw);
+      const ev = signedDelete();
+      const ws = getLastMockWs();
+      ws?.simulateMessage(['EVENT', 'live-sub', ev]);
+      ws?.simulateMessage(['EVENT', 'live-sub', ev]);
+      expect(raw).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -122,15 +122,4 @@ export class PhantomChatSync {
     console.log(LOG_PREFIX, 'dispatching phantomchat_profile_update', {peerId, pubkey});
     this.dispatch('phantomchat_profile_update', {peerId, pubkey, displayName, about: profile.about, picture: profile.picture});
   }
-
-  /**
-   * Called when a kind 30315 presence heartbeat is received.
-   * Dispatches phantomchat_presence_update event.
-   */
-  async onPresenceUpdate(pubkey: string, status: 'online' | 'offline' | 'recently'): Promise<void> {
-    const peerId = await this.mapper.mapPubkey(pubkey);
-
-    console.log(LOG_PREFIX, 'dispatching phantomchat_presence_update', {peerId, pubkey, status});
-    this.dispatch('phantomchat_presence_update', {peerId, pubkey, status});
-  }
 }

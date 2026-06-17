@@ -321,7 +321,7 @@ describe('NostrRelayPool', () => {
     });
   });
 
-  describe('presence ping/pong interception', () => {
+  describe('presence envelope drop (presence removed)', () => {
     function presenceMsg(id: string, type: 'presence-ping' | 'presence-pong', nonce: string): DecryptedMessage {
       return {
         id,
@@ -331,33 +331,26 @@ describe('NostrRelayPool', () => {
       };
     }
 
-    it('routes a presence ping to the presence callback, NOT onMessage', async() => {
+    it('drops a presence ping — never surfaced to onMessage', async() => {
       const onMessage = vi.fn();
       const pool = new NostrRelayPool({relays: [{url: 'wss://r.test', read: true, write: true}], onMessage});
       await pool.initialize();
       pool.subscribeMessages();
-      const onPresence = vi.fn();
-      pool.setOnPresence(onPresence);
 
       mockRelayInstances[0].simulateMessage(presenceMsg('ping-1', 'presence-ping', 'n-abc'));
 
       expect(onMessage).not.toHaveBeenCalled();
-      expect(onPresence).toHaveBeenCalledTimes(1);
-      expect(onPresence).toHaveBeenCalledWith({type: 'ping', from: 'peer-pubkey-hex', nonce: 'n-abc'});
     });
 
-    it('routes a presence pong to the presence callback', async() => {
+    it('drops a presence pong — never surfaced to onMessage', async() => {
       const onMessage = vi.fn();
       const pool = new NostrRelayPool({relays: [{url: 'wss://r.test', read: true, write: true}], onMessage});
       await pool.initialize();
       pool.subscribeMessages();
-      const onPresence = vi.fn();
-      pool.setOnPresence(onPresence);
 
       mockRelayInstances[0].simulateMessage(presenceMsg('pong-1', 'presence-pong', 'n-xyz'));
 
       expect(onMessage).not.toHaveBeenCalled();
-      expect(onPresence).toHaveBeenCalledWith({type: 'pong', from: 'peer-pubkey-hex', nonce: 'n-xyz'});
     });
 
     it('still delivers a normal text envelope to onMessage', async() => {
@@ -365,7 +358,6 @@ describe('NostrRelayPool', () => {
       const pool = new NostrRelayPool({relays: [{url: 'wss://r.test', read: true, write: true}], onMessage});
       await pool.initialize();
       pool.subscribeMessages();
-      pool.setOnPresence(vi.fn());
 
       const textMsg: DecryptedMessage = {
         id: 'text-1',
@@ -377,24 +369,6 @@ describe('NostrRelayPool', () => {
 
       expect(onMessage).toHaveBeenCalledTimes(1);
       expect(onMessage).toHaveBeenCalledWith(textMsg);
-    });
-
-    it('dedups a presence event across relays (fires the callback once)', async() => {
-      const onMessage = vi.fn();
-      const pool = new NostrRelayPool({relays: [
-        {url: 'wss://r1.test', read: true, write: true},
-        {url: 'wss://r2.test', read: true, write: true}
-      ], onMessage});
-      await pool.initialize();
-      pool.subscribeMessages();
-      const onPresence = vi.fn();
-      pool.setOnPresence(onPresence);
-
-      const ping = presenceMsg('ping-dup', 'presence-ping', 'n-dup');
-      mockRelayInstances[0].simulateMessage(ping);
-      mockRelayInstances[1].simulateMessage(ping);
-
-      expect(onPresence).toHaveBeenCalledTimes(1);
     });
   });
 

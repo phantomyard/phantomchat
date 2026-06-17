@@ -137,6 +137,13 @@ async function clearPhantomChatData(opts: {keepSeed: boolean}): Promise<string[]
     clearConversationKeyCache();
   } catch(e) { logSwallow('Cleanup.clearConvKeyCache', e); }
 
+  // Terminate the gift-wrap unwrap worker — it holds a copy of the recipient
+  // secret key (sent at init) and would otherwise outlive the identity.
+  try {
+    const {disposeNostrUnwrapClient} = await import('./nostr-unwrap-client');
+    disposeNostrUnwrapClient();
+  } catch(e) { logSwallow('Cleanup.disposeUnwrapWorker', e); }
+
   // 1. Close open DB connections held by singletons (none of these touch PhantomChat.chat)
   const closes: Promise<void>[] = [];
   try {
