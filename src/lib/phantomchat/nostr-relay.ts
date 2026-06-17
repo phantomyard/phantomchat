@@ -12,7 +12,8 @@
 
 import {Logger, logger} from '@lib/logger';
 import * as secp256k1 from '@noble/secp256k1';
-import {wrapNip17Message, unwrapNip17Message} from './nostr-crypto';
+import {wrapNip17Message} from './nostr-crypto';
+import {getNostrUnwrapClient} from './nostr-unwrap-client';
 import {finalizeEvent, verifyEvent} from 'nostr-tools/pure';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromMnemonic} from './nostr-identity';
@@ -445,6 +446,7 @@ export class NostrRelay {
 
       this.queryResolvers.set(queryId, {
         events: collected,
+        inflight: [],
         resolve: (events) => {
           clearTimeout(timeout);
           resolve(events);
@@ -836,10 +838,15 @@ export class NostrRelay {
 
   // ==================== Private Methods ====================
 
-  // Pending query resolvers: queryId -> {collected events, resolve fn}
+  // Pending query resolvers: queryId -> {collected events, resolve fn, inflight}
+  // `inflight` holds the per-event unwrap promises: unwrap is now async (worker
+  // offload), so EVENT handlers may still be populating `events` when EOSE
+  // arrives. EOSE awaits these before resolving so a query never returns a
+  // half-decrypted result set.
   private queryResolvers: Map<string, {
     events: DecryptedMessage[];
     resolve: (events: DecryptedMessage[]) => void;
+    inflight: Promise<void>[];
   }> = new Map();
 
   // Pending raw query resolvers (non-giftwrap queries): queryId -> {events, resolve}
@@ -868,7 +875,8 @@ export class NostrRelay {
           const queryResolver = this.queryResolvers.get(subId);
           const rawResolver = this.rawQueryResolvers.get(subId);
           if(queryResolver) {
-            this.collectQueryEvent(event, queryResolver.events);
+            // Track the async unwrap so EOSE can await it (see EOSE handler).
+            queryResolver.inflight.push(this.collectQueryEvent(event, queryResolver.events));
           } else if(rawResolver) {
             rawResolver.events.push(event);
           } else {
@@ -886,7 +894,11 @@ export class NostrRelay {
             // Close the query subscription
             this.safeSend(JSON.stringify(['CLOSE', subId]));
             this.queryResolvers.delete(subId);
-            queryResolver.resolve(queryResolver.events);
+            // Wait for in-flight async unwraps to finish landing in `events`
+            // before resolving — collectQueryEvent is now async (worker
+            // offload). The unwrap promises never reject (errors are caught and
+            // logged inside collectQueryEvent), so Promise.all is safe.
+            Promise.all(queryResolver.inflight).then(() => queryResolver.resolve(queryResolver.events));
           } else if(rawResolver) {
             this.log('[NostrRelay] EOSE received for raw query:', subId, 'with', rawResolver.events.length, 'events');
             this.safeSend(JSON.stringify(['CLOSE', subId]));
@@ -936,15 +948,13 @@ export class NostrRelay {
       return;
     }
 
-    // Verify Schnorr signature on the inbound event before spending crypto
-    // on NIP-44 decryption — drops forgeries from a hostile relay early.
-    if(!verifyEvent(event as any)) {
-      this.log.warn('[NostrRelay] dropping query event with invalid signature, pubkey:', event.pubkey.slice(0, 8) + '...');
-      return;
-    }
-
     try {
-      const rumor = unwrapNip17Message(event as any, this.privateKey);
+      // Unwrap off the main thread when a worker is available. The wrap's
+      // Schnorr signature is verified inside the unwrap (step a) before any
+      // decryption, so the previous main-thread `verifyEvent` pre-check was a
+      // redundant second verify and is gone. A forged wrap rejects and is
+      // caught below.
+      const rumor = await getNostrUnwrapClient().unwrap(event as any, this.privateKey);
 
       // Skip receipt messages for query results
       const receiptTag = rumor.tags?.find((t: string[]) => t[0] === 'receipt-type');
@@ -1023,18 +1033,16 @@ export class NostrRelay {
       return;
     }
 
-    // Verify Schnorr signature on the inbound event before attempting to
-    // decrypt. A hostile relay can otherwise inject forged kind 1059 events
-    // with arbitrary pubkeys; without this check we'd route them into the
-    // unwrap pipeline and potentially surface their payloads to the user.
-    if(!verifyEvent(event as any)) {
-      this.log.warn('[NostrRelay] dropping event with invalid signature, pubkey:', event.pubkey.slice(0, 8) + '...');
-      return;
-    }
-
     try {
-      // Unwrap NIP-17 gift-wrap to get the rumor
-      const rumor = unwrapNip17Message(event as any, this.privateKey);
+      // Unwrap NIP-17 gift-wrap to get the rumor, off the main thread when a
+      // worker is available. The unwrap itself verifies the wrap's Schnorr
+      // signature (step a) before any decryption — a hostile relay's forged
+      // kind-1059 is dropped there (rejects with GiftWrapVerificationError,
+      // caught below) — so the previous main-thread `verifyEvent` pre-check was
+      // a redundant second verify and is gone. The cheap pre-decrypt dedup gate
+      // (claimEvent, above) still runs on this thread so duplicates never reach
+      // the worker.
+      const rumor = await getNostrUnwrapClient().unwrap(event as any, this.privateKey);
 
       // Check if this is a self-sent message (for multi-device sync)
       const isSelfSent = rumor.pubkey === this.publicKey;
