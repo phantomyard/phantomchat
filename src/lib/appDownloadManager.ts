@@ -196,6 +196,26 @@ export class AppDownloadManager {
     if(phantomchatFM?.keyHex && phantomchatFM?.url) {
       const fileName = `phantomchat-${phantomchatFM.sha256 || phantomchatFM.url}`;
       return this.d(fileName, () => (async() => {
+        // Local fast-path: for our OWN sent media (and anything we've already
+        // fetched) the plaintext blob is in the local media store keyed by the
+        // ciphertext sha256. Use it before any network/decrypt so a just-sent
+        // voice note plays instantly and doesn't depend on the background
+        // Blossom upload having finished.
+        if(phantomchatFM.sha256) {
+          try {
+            const {getLocalMedia} = await import('@lib/phantomchat/phantomchat-local-media');
+            const local = await getLocalMedia(phantomchatFM.sha256);
+            if(local) {
+              if(type === 'url') {
+                const url = URL.createObjectURL(local);
+                apiManagerProxy.setLocalMediaUrl(media, url, local.size);
+                return url;
+              }
+              if(type === 'void') return;
+              return local;
+            }
+          } catch{ /* fall through to Blossom fetch */ }
+        }
         const {fetchAndDecryptPhantomChatFile} = await import('@lib/phantomchat/phantomchat-file-fetch');
         const blob = await fetchAndDecryptPhantomChatFile(phantomchatFM.url, phantomchatFM.keyHex, phantomchatFM.ivHex);
         if(type === 'url') {

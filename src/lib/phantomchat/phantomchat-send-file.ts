@@ -207,6 +207,18 @@ export async function sendFileViaPhantomChat(
     keyHex = enc.keyHex;
     ivHex = enc.ivHex;
     sha256Hex = enc.sha256Hex;
+    // Persist the PLAINTEXT blob locally, keyed by the ciphertext sha256 that
+    // travels in fileMetadata. The bubble then plays INSTANTLY from here on
+    // reload / after the optimistic blob URL is gone — never waiting on (or
+    // re-decrypting from) the background Blossom upload. Best-effort: a failure
+    // here only costs the fast path, the send proceeds. Fire-and-forget so it
+    // never adds latency to the upload.
+    void (async() => {
+      try {
+        const {putLocalMedia} = await import('./phantomchat-local-media');
+        await putLocalMedia(sha256Hex, blob);
+      } catch{ /* local fast-path is best-effort */ }
+    })();
   } catch(err) {
     ctx.log.error('[sendFile] encrypt failed:', err);
     ctx.dispatch('phantomchat_file_upload_failed', {peerId, mid: tempMid, error: 'encrypt failed'});
