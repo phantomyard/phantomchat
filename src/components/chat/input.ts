@@ -181,6 +181,12 @@ export type ChatInputReplyTo = Pick<MessageSendingParams, 'replyToMsgId' | 'repl
 
 
 const CLASS_NAME = 'chat-input';
+// PhantomChat: voice recording is temporarily disabled (the recorded-note send
+// pipeline isn't reliable yet). With the recorder not constructed, the send
+// button never enters mic ('record') mode; updateSendBtn also hides the button
+// on an empty input so there's no dead send arrow where the mic used to be.
+// Flip to true to restore voice recording.
+const VOICE_RECORDING_ENABLED = false;
 // Lazy init to avoid circular import: ChatType may be undefined at module eval time
 let _peerExceptions: Set<ChatType>;
 function getPeerExceptions() {
@@ -1343,7 +1349,9 @@ export default class ChatInput {
       this.setChatListeners();
     }
 
-    this.constructRecorder();
+    if(VOICE_RECORDING_ENABLED) {
+      this.constructRecorder();
+    }
 
     this.updateSendBtn();
 
@@ -3664,6 +3672,18 @@ export default class ChatInput {
     ['send', 'record', 'edit', 'schedule', 'forward'].forEach((i) => {
       this.btnSend.classList.toggle(i, icon === i);
     });
+
+    // Voice recording disabled (see VOICE_RECORDING_ENABLED): on an empty input
+    // the button would have been the mic; with the recorder gone it falls back
+    // to a 'send' arrow that does nothing. Hide it entirely in that state so
+    // there's no dead button. (Scheduled shows 'schedule', Stories 'forward',
+    // forwarding/edit/suggested-post all have a real action — leave those.)
+    if(!VOICE_RECORDING_ENABLED) {
+      const wouldBeRecord = isInputEmpty && !this.editMsgId && !this.forwarding &&
+        !this.suggestedPost?.hasMedia &&
+        this.chat.type !== ChatType.Stories && this.chat.type !== ChatType.Scheduled;
+      this.btnSendContainer.style.display = wouldBeRecord ? 'none' : '';
+    }
 
     this.starsState.set({
       hasSendButton: icon === 'send',
