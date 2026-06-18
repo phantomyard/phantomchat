@@ -154,6 +154,19 @@ function createWaveformBars(waveform: Uint8Array, duration: number) {
   return {svg, container, availW};
 }
 
+// A loaded <audio> reports `duration === Infinity` for media whose container
+// has no duration header — notably PhantomChat voice notes, which are
+// opus-recorder Ogg/Opus. `Infinity | 0` is 0, which collapses the time
+// readout to "0:00 / 0:00" and makes `currentTime / duration` 0 (a frozen
+// progress fill + dead scrubbing) the moment playback starts. Fall back to the
+// document's recorded duration in that case. Returns 0 only when neither source
+// is usable. For normal media (finite element duration) this is a no-op.
+function getPlaybackDuration(audio: HTMLMediaElement, doc: MyDocument): number {
+  const elapsed = audio?.duration;
+  if(Number.isFinite(elapsed) && elapsed > 0) return elapsed;
+  return doc?.duration || 0;
+}
+
 async function wrapVoiceMessage(audioEl: AudioElement) {
   audioEl.classList.add('is-voice');
 
@@ -267,7 +280,8 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
 
     const onTimeUpdate = () => {
       if(fakeSvgContainer) {
-        fakeSvgContainer.style.width = (audio.currentTime / audio.duration * 100) + '%';
+        const total = getPlaybackDuration(audio, doc);
+        fakeSvgContainer.style.width = (total ? audio.currentTime / total * 100 : 0) + '%';
       }
     };
 
@@ -323,9 +337,10 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
           offsetX = e.targetTouches[0].pageX - rect.left;
         }
 
-        let scrubTime = offsetX / availW /* width */ * audio.duration;
-        if(audio.duration && scrubTime >= audio.duration) {
-          scrubTime = audio.duration - 0.01;
+        const total = getPlaybackDuration(audio, doc);
+        let scrubTime = offsetX / availW /* width */ * total;
+        if(total && scrubTime >= total) {
+          scrubTime = total - 0.01;
         }
         setCurrentTime(audio, scrubTime);
       }
@@ -544,7 +559,12 @@ export default class AudioElement extends HTMLElement {
     const uploadingFileName = this.uploadingFileName ?? this.message?.uploadingFileName?.[0];
 
     const getDurationStr = () => {
-      const duration = this.audio && this.audio.readyState >= this.audio.HAVE_CURRENT_DATA ? this.audio.duration : doc.duration;
+      // Use the loaded element's duration, falling back to the document's
+      // recorded duration when the element reports a non-finite value (see
+      // getPlaybackDuration) — otherwise an Ogg/Opus voice note with no
+      // duration header renders as "0:00 / 0:00" once playback starts.
+      const loaded = this.audio && this.audio.readyState >= this.audio.HAVE_CURRENT_DATA;
+      const duration = loaded ? getPlaybackDuration(this.audio, doc) : doc.duration;
       return toHHMMSS(duration | 0);
     };
 
