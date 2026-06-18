@@ -181,12 +181,11 @@ export type ChatInputReplyTo = Pick<MessageSendingParams, 'replyToMsgId' | 'repl
 
 
 const CLASS_NAME = 'chat-input';
-// PhantomChat: voice recording is temporarily disabled (the recorded-note send
-// pipeline isn't reliable yet). With the recorder not constructed, the send
-// button never enters mic ('record') mode; updateSendBtn also hides the button
-// on an empty input so there's no dead send arrow where the mic used to be.
-// Flip to true to restore voice recording.
-const VOICE_RECORDING_ENABLED = false;
+// PhantomChat: voice recording toggle. When false the recorder isn't
+// constructed (the send button never enters mic mode) and updateSendBtn hides
+// the button on an empty input. Re-enabled now that the send/receive path works
+// end-to-end (bot-side STT landed); flip to false to disable again if needed.
+const VOICE_RECORDING_ENABLED = true;
 // Lazy init to avoid circular import: ChatType may be undefined at module eval time
 let _peerExceptions: Set<ChatType>;
 function getPeerExceptions() {
