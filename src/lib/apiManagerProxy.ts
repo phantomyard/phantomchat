@@ -1020,6 +1020,28 @@ class ApiManagerProxy extends MTProtoMessagePort {
     return cache?.[thumbSize] || generateEmptyThumb(thumbSize);
   }
 
+  /**
+   * [PhantomChat.chat] Prime a synthetic doc/photo's cache context with an
+   * already-resolved local/decrypted object URL and signal completion.
+   *
+   * The P2P media download short-circuit (`appDownloadManager.downloadMedia`)
+   * fetches + decrypts on the main thread and never goes through
+   * `apiFileManager`, so it normally never stamps the thumb cache nor fires
+   * `document_downloaded`. `appMediaPlaybackController.addMedia` waits on that
+   * event before setting `<audio>.src` — without this a voice note shows a play
+   * button that does nothing (the resolved URL is produced but never reaches the
+   * player). This mirrors `apiFileManager`'s post-download bookkeeping for our
+   * main-thread-only media.
+   */
+  public setLocalMediaUrl(media: ThumbStorageMedia, url: string, downloaded: number) {
+    const key = getThumbKey(media);
+    (this.mirrors.thumbs[key] ??= {})[THUMB_TYPE_FULL] = {downloaded, url, type: THUMB_TYPE_FULL};
+    const id = (media as any)?.id;
+    if(id != null) {
+      rootScope.dispatchEvent('document_downloaded', id);
+    }
+  }
+
   public getStickerCachedThumb(docId: DocId, toneIndex: string | number) {
     const key = getStickerThumbKey(docId, toneIndex);
     return this.mirrors.stickerThumbs[key];

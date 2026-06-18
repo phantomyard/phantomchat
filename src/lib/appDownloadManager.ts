@@ -198,7 +198,13 @@ export class AppDownloadManager {
       return this.d(fileName, () => (async() => {
         const {fetchAndDecryptPhantomChatFile} = await import('@lib/phantomchat/phantomchat-file-fetch');
         const blob = await fetchAndDecryptPhantomChatFile(phantomchatFM.url, phantomchatFM.keyHex, phantomchatFM.ivHex);
-        if(type === 'url') return URL.createObjectURL(blob);
+        if(type === 'url') {
+          const url = URL.createObjectURL(blob);
+          // Stamp the cache context + fire document_downloaded so the media
+          // player (addMedia) actually sets <audio>.src — see setLocalMediaUrl.
+          apiManagerProxy.setLocalMediaUrl(media, url, blob.size);
+          return url;
+        }
         if(type === 'void') return;
         return blob;
       })(), type) as any;
@@ -207,7 +213,13 @@ export class AppDownloadManager {
     if(localBlobUrl) {
       const fileName = `phantomchat-local-${localBlobUrl}`;
       return this.d(fileName, () => (async() => {
-        if(type === 'url') return localBlobUrl;
+        if(type === 'url') {
+          // Optimistic just-recorded/sent bubble: the local blob: URL is the
+          // playable source. Prime the cache context + signal completion so the
+          // media player sets <audio>.src (see setLocalMediaUrl).
+          apiManagerProxy.setLocalMediaUrl(media, localBlobUrl, media?.size || 0);
+          return localBlobUrl;
+        }
         if(type === 'void') return;
         const res = await fetch(localBlobUrl);
         return res.blob();
