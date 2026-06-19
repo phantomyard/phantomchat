@@ -183,6 +183,12 @@ export class NostrRelayPool {
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
 
+  // Debounced state notification — batches multiple relay state changes into
+  // a single dispatch cycle so 5 relays reconnecting don't fire 5+ DOM updates
+  // in quick succession.
+  private notifyStateChangeTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly STATE_DEBOUNCE_MS = 200;
+
   constructor(options: RelayPoolOptions) {
     this.log = logger('NostrRelayPool');
     this.configs = options.relays ? [...options.relays] : [];
@@ -1056,6 +1062,20 @@ export class NostrRelayPool {
   }
 
   private notifyStateChange(): void {
+    // Debounce: batch multiple relay changes into a single dispatch cycle.
+    // Without this, 5 relays each firing a state change produces 5+ separate
+    // `phantomchat_relay_state` event bursts, each triggering DOM updates in
+    // ConnectionStatusComponent — causing UI thrash during chat switches.
+    if(this.notifyStateChangeTimer) {
+      return; // already scheduled
+    }
+    this.notifyStateChangeTimer = setTimeout(() => {
+      this.notifyStateChangeTimer = null;
+      this.flushStateChange();
+    }, NostrRelayPool.STATE_DEBOUNCE_MS);
+  }
+
+  private flushStateChange(): void {
     if(this.onStateChangeCb) {
       this.onStateChangeCb(this.getConnectedCount(), this.relayEntries.length);
     }
@@ -1077,15 +1097,9 @@ export class NostrRelayPool {
    * update). Cheaper than notifyStateChange() when only one value changed.
    */
   private notifyRelayUpdate(url: string): void {
-    const entry = this.relayEntries.find(e => e.config.url === url);
-    if(!entry) return;
-    rootScope.dispatchEvent('phantomchat_relay_state', {
-      url: entry.config.url,
-      connected: entry.instance.getState() === 'connected',
-      latencyMs: entry.instance.getLatency(),
-      read: entry.config.read,
-      write: entry.config.write
-    });
+    // Route through the debounced path so a single relay's latency update
+    // doesn't produce an immediate out-of-band dispatch that bypasses batching.
+    this.notifyStateChange();
   }
 
   private dispatchRelayListChanged(): void {

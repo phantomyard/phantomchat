@@ -4660,6 +4660,14 @@ export default class ChatBubbles {
 
     this.lazyLoadQueue.lock();
 
+    // Layer 1: For new peers, immediately clear the old chat and show a preloader.
+    // This gives instant visual feedback on chat click instead of freezing on the
+    // previous chat until the entire history fetch + finishPeerChange chain completes.
+    if(!samePeer) {
+      this.scrollable.replaceChildren();
+      this.preloader.attach(this.container);
+    }
+
     const canScroll = samePeer && sameSearch;
     // const haveToScrollToBubble = (topMessage && (isJump || samePeer)) || isTarget;
     const haveToScrollToBubble = canScroll || (topMessageFullMid !== EMPTY_FULL_MID && isJump) || isTarget;
@@ -4743,6 +4751,27 @@ export default class ChatBubbles {
       }
     }
 
+    // Layer 2: Build finishPeerChange options early so we can start
+    // finishPeerChange in parallel with the history fetch.
+    const finishPeerChangeOptions: Parameters<Chat['finishPeerChange']>[0] = {
+      peerId,
+      isTarget,
+      isJump,
+      lastMsgId,
+      startParam,
+      middleware,
+      text: options.text,
+      entities: options.entities
+    };
+
+    // Layer 2: Start finishPeerChange in parallel with history fetch.
+    // finishPeerChange rebuilds topbar/input/bubbles UI which doesn't depend
+    // on the history result. Running them concurrently cuts the wait time.
+    let finishPeerChangePromise: Promise<void> | undefined;
+    if(!samePeer) {
+      finishPeerChangePromise = m(this.chat.finishPeerChange(finishPeerChangeOptions));
+    }
+
     let result: Awaited<ReturnType<ChatBubbles['getHistory']>>;
     if(!savedPosition) {
       result = await m(this.getHistory1(
@@ -4761,27 +4790,16 @@ export default class ChatBubbles {
       };
     }
 
+    // Wait for finishPeerChange to complete (it was started in parallel above)
+    if(finishPeerChangePromise) {
+      await finishPeerChangePromise;
+    }
+
     this.setPeerCached = result.cached;
 
     log.warn('got history');// warning
 
     const {promise, cached} = result;
-    const finishPeerChangeOptions: Parameters<Chat['finishPeerChange']>[0] = {
-      peerId,
-      isTarget,
-      isJump,
-      lastMsgId,
-      startParam,
-      middleware,
-      text: options.text,
-      entities: options.entities
-    };
-
-    if(!cached && !samePeer) {
-      await m(this.chat.finishPeerChange(finishPeerChangeOptions));
-      this.scrollable.replaceChildren();
-      this.preloader.attach(this.container);
-    }
 
     animationIntersector.lockGroup(this.chat.animationGroup);
     const setPeerPromise = m(promise).then(async() => {
@@ -9065,17 +9083,27 @@ export default class ChatBubbles {
       }
     }
 
-    let promises: Promise<any>[] = [];
+    // Chunked rendering: process messages in batches of ~8, yielding to the
+    // event loop between chunks. This prevents a single long synchronous DOM
+    // creation burst from blocking the UI when rendering 40+ messages.
+    const RENDER_CHUNK_SIZE = 8;
     if(this.chat.type === ChatType.Search && false) {
       const length = history.length;
-      if(reverse) for(let i = 0; i < length; ++i) promises.push(cb(messages[i]));
-      else for(let i = length - 1; i >= 0; --i) promises.push(cb(messages[i]));
+      const searchPromises: Promise<any>[] = [];
+      if(reverse) for(let i = 0; i < length; ++i) searchPromises.push(cb(messages[i]));
+      else for(let i = length - 1; i >= 0; --i) searchPromises.push(cb(messages[i]));
+      searchPromises.length && await Promise.all(searchPromises);
     } else {
-      promises = messages.map(cb);
+      for(let i = 0; i < messages.length; i += RENDER_CHUNK_SIZE) {
+        const chunk = messages.slice(i, i + RENDER_CHUNK_SIZE);
+        const chunkPromises = chunk.map(cb);
+        chunkPromises.length && await Promise.all(chunkPromises);
+        // Yield between chunks so the browser can paint progressive content
+        if(i + RENDER_CHUNK_SIZE < messages.length) {
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
     }
-
-    // cannot combine them into one promise
-    promises.length && await Promise.all(promises);
     await this.messagesQueuePromise;
 
     // * have to check again, because it can be skipped above
