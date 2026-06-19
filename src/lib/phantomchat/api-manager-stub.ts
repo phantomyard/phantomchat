@@ -219,6 +219,18 @@ export function installApiManagerStub(): boolean {
       };
     }
 
+    // --- messages.getWebPage: return empty (no link previews in P2P mode) ---
+    // Without this, pasting a URL triggers messages.getWebPage which hits the
+    // catch-all reject below, producing an unhandled rejection on every paste.
+    if(method === 'messages.getWebPage') {
+      return {
+        _: 'messages.webPage',
+        webpage: {_: 'webPageEmpty', id: 0},
+        chats: [],
+        users: []
+      };
+    }
+
     // --- ALL other methods: reject (MTProto disabled) ---
     console.warn(`[PhantomChat.chat] MTProto disabled: ${method} rejected`);
     return Promise.reject({

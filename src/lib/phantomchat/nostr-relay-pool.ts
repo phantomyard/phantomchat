@@ -63,6 +63,12 @@ export interface RelayPoolOptions {
   relays?: RelayConfig[];
   onMessage: (msg: DecryptedMessage) => void;
   onStateChange?: (connectedCount: number, totalCount: number) => void;
+  /**
+   * Pre-decrypted identity — when provided, initialize() skips the encrypted
+   * store load + PBKDF2 decrypt (which onboarding already did ~100ms earlier).
+   * publicKey is hex, privateKeyHex is 64-char hex string.
+   */
+  preloadedIdentity?: { publicKey: string; privateKeyHex: string };
 }
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -182,12 +188,14 @@ export class NostrRelayPool {
 
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
+  private _preloadedIdentity?: { publicKey: string; privateKeyHex: string };
 
   constructor(options: RelayPoolOptions) {
     this.log = logger('NostrRelayPool');
     this.configs = options.relays ? [...options.relays] : [];
     this.onMessageCb = options.onMessage;
     this.onStateChangeCb = options.onStateChange;
+    this._preloadedIdentity = options.preloadedIdentity;
   }
 
   // ─── Callback setters (for DI / test path) ─────────────────────
@@ -237,25 +245,36 @@ export class NostrRelayPool {
   async initialize(): Promise<void> {
     this.log('[NostrRelayPool] initializing');
 
-    // Load identity from encrypted store (key-storage)
-    try {
-      const record = await loadEncryptedIdentity();
-      if(record) {
-        const browserKey = await loadBrowserKey();
-        if(browserKey) {
-          const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-          const identity = importFromMnemonic(seed);
-          this.publicKey = identity.publicKey;
-          if(identity.privateKey && identity.privateKey.length === 64) {
-            const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
-            this.privateKeyBytes = h2b(identity.privateKey);
-          }
-        } else {
-          this.log.warn('[NostrRelayPool] no browser key — cannot decrypt identity');
-        }
+    // Use pre-decrypted identity if provided (avoids redundant PBKDF2 on cold
+    // start — onboarding already did this work ~100ms earlier).
+    if(this._preloadedIdentity) {
+      this.publicKey = this._preloadedIdentity.publicKey;
+      if(this._preloadedIdentity.privateKeyHex && this._preloadedIdentity.privateKeyHex.length === 64) {
+        const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
+        this.privateKeyBytes = h2b(this._preloadedIdentity.privateKeyHex);
       }
-    } catch(err) {
-      this.log.warn('[NostrRelayPool] failed to load encrypted identity:', err);
+      this._preloadedIdentity = undefined; // free the reference
+    } else {
+      // Load identity from encrypted store (key-storage)
+      try {
+        const record = await loadEncryptedIdentity();
+        if(record) {
+          const browserKey = await loadBrowserKey();
+          if(browserKey) {
+            const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+            const identity = importFromMnemonic(seed);
+            this.publicKey = identity.publicKey;
+            if(identity.privateKey && identity.privateKey.length === 64) {
+              const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
+              this.privateKeyBytes = h2b(identity.privateKey);
+            }
+          } else {
+            this.log.warn('[NostrRelayPool] no browser key — cannot decrypt identity');
+          }
+        }
+      } catch(err) {
+        this.log.warn('[NostrRelayPool] failed to load encrypted identity:', err);
+      }
     }
 
     // Load relay config from IndexedDB if none provided
