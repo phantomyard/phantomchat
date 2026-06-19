@@ -9,6 +9,7 @@
 import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
 import {wrapNip17Message, wrapNip17Edit, rewrapNip17Message, UnsignedEvent} from './nostr-crypto';
+import {getNostrWrapClient} from './nostr-wrap-client';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromMnemonic} from './nostr-identity';
@@ -377,7 +378,7 @@ export class NostrRelayPool {
         return {successes, failures};
       }
 
-      const wrapped = wrapNip17Message(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
+      const wrapped = await getNostrWrapClient().wrap(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
       wraps = wrapped.wraps as unknown as NostrEvent[];
       rumorId = wrapped.rumorId;
       rumor = wrapped.rumor;

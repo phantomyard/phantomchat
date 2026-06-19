@@ -238,6 +238,19 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
       background-color: var(--secondary-color) !important;
     }
 
+    // Sending state — visual feedback while the message is being encrypted
+    // and published. Prevents the user from thinking the click missed.
+    &.is-sending {
+      opacity: .6 !important;
+      pointer-events: none;
+      animation: btn-send-pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes btn-send-pulse {
+      0%, 100% { opacity: .6; }
+      50% { opacity: 1; }
+    }
+
 		// .tgico-send {
 		// 	color: var(--primary-color) !important;
 		// }
