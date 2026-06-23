@@ -6,7 +6,7 @@
 
 import type {ModifyFunctionsToAsync} from '@types';
 import {type State} from '@config/state';
-import type {Chat, ChatPhoto, Message, MessagePeerReaction, PeerNotifySettings, User, UserProfilePhoto} from '@layer';
+import type {Chat, ChatPhoto, Config, Message, MessagePeerReaction, PeerNotifySettings, User, UserProfilePhoto} from '@layer';
 import type {CryptoMethods} from '@lib/crypto/crypto_methods';
 import type {ThumbStorageMedia} from '@lib/storages/thumbs';
 import type ThumbsStorage from '@lib/storages/thumbs';
@@ -151,6 +151,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
   };
 
   private appConfig: MaybePromise<MTAppConfig>;
+  private config: MaybePromise<Config>;
 
   private closeMTProtoWorker = noop;
 
@@ -1190,6 +1191,31 @@ class ApiManagerProxy extends MTProtoMessagePort {
     }
 
     return this.appConfig;
+  }
+
+  /**
+   * Cached getConfig — avoids a Worker bridge round-trip on every send.
+   * The config is static stub data in PhantomChat (never changes from the
+   * server), so caching the first fetch on the main thread is safe.
+   */
+  public getConfig(overwrite?: boolean) {
+    if(overwrite) {
+      this.config = undefined;
+    }
+
+    if(!this.config) {
+      const promise = rootScope.managers.apiManager.getConfig().then((config) => {
+        if(this.config === promise) {
+          this.config = config;
+        }
+
+        return config;
+      });
+
+      return this.config = promise;
+    }
+
+    return this.config;
   }
 
   public isPremiumFeaturesHidden(): MaybePromise<boolean> {

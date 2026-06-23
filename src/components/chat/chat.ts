@@ -1216,16 +1216,15 @@ export default class Chat extends EventListenerBase<{
 
     const sharedMediaTab = this.sharedMediaTab;
 
+    // Critical path: topbar, input, bubbles — these are visible immediately
+    // and must complete before first paint.
     const callbacksObj = await namedPromises({
       topbar: this.topbar?.finishPeerChange(options),
       bubbles: this.bubbles?.finishPeerChange(),
-      input: this.input?.finishPeerChange(options),
-      sharedMedia: sharedMediaTab?.fillProfileElements(),
-      backgrounds: this.handleBackgrounds()
+      input: this.input?.finishPeerChange(options)
     }, this.log);
 
     const callbacks = Object.values(callbacksObj);
-    sharedMediaTab?.loadSidebarMedia(true);
 
     if(!middleware()) {
       return;
@@ -1235,10 +1234,21 @@ export default class Chat extends EventListenerBase<{
       callback?.();
     });
 
-    if(sharedMediaTab) {
-      appSidebarRight.replaceSharedMediaTab(sharedMediaTab);
-      this.sharedMediaTabs.filter((tab) => tab !== sharedMediaTab).forEach((tab) => this.destroySharedMediaTab(tab));
-    }
+    // Deferred path: shared media and backgrounds are NOT visible on first
+    // paint (shared media is in the right sidebar, backgrounds are cosmetic).
+    // Fire them in the background so they don't block chat rendering.
+    Promise.all([
+      sharedMediaTab?.fillProfileElements(),
+      this.handleBackgrounds()
+    ]).then(([sharedMediaCallback]) => {
+      if(!middleware()) return;
+      sharedMediaTab?.loadSidebarMedia(true);
+      sharedMediaCallback?.();
+      if(sharedMediaTab) {
+        appSidebarRight.replaceSharedMediaTab(sharedMediaTab);
+        this.sharedMediaTabs.filter((tab) => tab !== sharedMediaTab).forEach((tab) => this.destroySharedMediaTab(tab));
+      }
+    });
 
     if(this.container) {
       this.container.dataset.type = this.type === ChatType.Search ? 'chat' : this.type;

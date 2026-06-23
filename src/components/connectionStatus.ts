@@ -41,6 +41,8 @@ export default class ConnectionStatusComponent {
   private managers: AppManagers;
   private inputSearch: InputSearch;
   private rAF: number;
+  private relayStatusDebounce: number | null = null;
+  public static readonly RELAY_STATUS_DEBOUNCE_MS = 200;
 
   public construct(
     managers: AppManagers,
@@ -97,6 +99,19 @@ export default class ConnectionStatusComponent {
       this.setFirstConnectionTimeout = 0;
     }
 
+    // Debounce: multiple relay state events arriving in quick succession
+    // (e.g. 5 relays all dispatching within 200ms) should produce a single
+    // DOM update, not five.
+    if(this.relayStatusDebounce !== null) {
+      return;
+    }
+    this.relayStatusDebounce = window.setTimeout(() => {
+      this.relayStatusDebounce = null;
+      this.doSetRelayConnectionStatus();
+    }, ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS);
+  };
+
+  private doSetRelayConnectionStatus = () => {
     // Per D-05: connected if ANY relay is connected
     // If no relay events received yet, assume not connecting (avoid false "Waiting for network...")
     if(this.relayStates.size === 0) {

@@ -16,7 +16,7 @@
  *
  * The key never leaves the same-origin worker (the page already holds it).
  */
-import {unwrapNip17Message, GiftWrapVerificationError, type NTNostrEvent} from './nostr-crypto';
+import {unwrapNip17Message, unwrapV2, isV2Event, GiftWrapVerificationError, type NTNostrEvent} from './nostr-crypto';
 
 const ctx = self as any as DedicatedWorkerGlobalScope;
 
@@ -40,8 +40,19 @@ ctx.addEventListener('message', (e: MessageEvent) => {
   }
 
   try {
-    const rumor = unwrapNip17Message(event, recipientSk);
-    ctx.postMessage({id, rumor});
+    // Route v2 (AES-256-GCM) vs legacy NIP-17 (NIP-44) based on ['v', 'pc-v2'] tag
+    if(isV2Event(event)) {
+      unwrapV2(event, recipientSk).then(
+        (rumor) => ctx.postMessage({id, rumor}),
+        (err) => {
+          const code = err instanceof GiftWrapVerificationError ? err.code : undefined;
+          ctx.postMessage({id, error: {code, message: (err as Error)?.message || String(err)}});
+        }
+      );
+    } else {
+      const rumor = unwrapNip17Message(event, recipientSk);
+      ctx.postMessage({id, rumor});
+    }
   } catch(err) {
     const code = err instanceof GiftWrapVerificationError ? err.code : undefined;
     ctx.postMessage({id, error: {code, message: (err as Error)?.message || String(err)}});

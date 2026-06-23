@@ -137,8 +137,8 @@ describe('ConnectionStatusComponent relay integration', () => {
     // Dispatch connected relay
     handler({url: 'wss://relay.damus.io', connected: true, latencyMs: 50, read: true, write: true});
 
-    // Advance rAF + state timeout
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    // Advance past debounce + rAF + state timeout
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     // When online, placeholder should be 'Search' and not loading
     expect(inputSearch.isLoading()).toBe(false);
@@ -149,12 +149,12 @@ describe('ConnectionStatusComponent relay integration', () => {
 
     // First connect so hadConnect = true
     handler({url: 'wss://relay.damus.io', connected: true, latencyMs: 50, read: true, write: true});
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     // Now disconnect all
     handler({url: 'wss://relay.damus.io', connected: false, latencyMs: -1, read: true, write: true});
 
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     // Should be in connecting/loading state
     expect(inputSearch.isLoading()).toBe(true);
@@ -165,16 +165,16 @@ describe('ConnectionStatusComponent relay integration', () => {
 
     // Connect first
     handler({url: 'wss://relay1.example.com', connected: true, latencyMs: 50, read: true, write: true});
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     // All relays down
     handler({url: 'wss://relay1.example.com', connected: false, latencyMs: -1, read: true, write: true});
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
     expect(inputSearch.isLoading()).toBe(true);
 
     // One relay comes back
     handler({url: 'wss://relay1.example.com', connected: true, latencyMs: 30, read: true, write: true});
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
     expect(inputSearch.isLoading()).toBe(false);
   });
 
@@ -183,14 +183,14 @@ describe('ConnectionStatusComponent relay integration', () => {
 
     // Simulate connect
     handler({url: 'wss://relay.damus.io', connected: true, latencyMs: 50, read: true, write: true});
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     // Simulate disconnect then reconnect
     handler({url: 'wss://relay.damus.io', connected: false, latencyMs: -1, read: true, write: true});
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     handler({url: 'wss://relay.damus.io', connected: true, latencyMs: 30, read: true, write: true});
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     expect(rootScope.managers.apiUpdatesManager.forceGetDifference).not.toHaveBeenCalled();
   });
@@ -199,7 +199,7 @@ describe('ConnectionStatusComponent relay integration', () => {
     const handler = registeredEvents.get('phantomchat_relay_state')!;
 
     handler({url: 'wss://relay.damus.io', connected: true, latencyMs: 50, read: true, write: true});
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     expect(rootScope.managers.apiManager.getBaseDcId).not.toHaveBeenCalled();
   });
@@ -211,7 +211,7 @@ describe('ConnectionStatusComponent relay integration', () => {
     handler({url: 'wss://relay1.example.com', connected: true, latencyMs: 50, read: true, write: true});
     handler({url: 'wss://relay2.example.com', connected: false, latencyMs: -1, read: true, write: true});
 
-    vi.advanceTimersByTime(ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
 
     // Should be online (at least 1 connected)
     expect(inputSearch.isLoading()).toBe(false);

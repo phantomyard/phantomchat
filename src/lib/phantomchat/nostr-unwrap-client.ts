@@ -17,7 +17,7 @@
  * This is the lesson from cryptoMessagePort: an invoke that posts to a port with
  * no listener hangs forever. Here there is always a synchronous floor.
  */
-import {unwrapNip17Message, GiftWrapVerificationError, type NTNostrEvent} from './nostr-crypto';
+import {unwrapNip17Message, unwrapV2, isV2Event, GiftWrapVerificationError, type NTNostrEvent} from './nostr-crypto';
 
 type Rumor = {kind: number; content: string; pubkey: string; created_at: number; tags: string[][]; id: string};
 
@@ -110,10 +110,18 @@ class NostrUnwrapClient {
     this.pending.clear();
     for(const entry of entries) {
       clearTimeout(entry.timer);
-      try {
-        entry.resolve(unwrapNip17Message(entry.event, entry.sk));
-      } catch(err) {
-        entry.reject(err as Error);
+      // Route v2 vs legacy in synchronous fallback
+      if(isV2Event(entry.event)) {
+        unwrapV2(entry.event, entry.sk).then(
+          (rumor) => entry.resolve(rumor as Rumor),
+          (err) => entry.reject(err as Error)
+        );
+      } else {
+        try {
+          entry.resolve(unwrapNip17Message(entry.event, entry.sk));
+        } catch(err) {
+          entry.reject(err as Error);
+        }
       }
     }
   }
@@ -127,6 +135,10 @@ class NostrUnwrapClient {
     this.ensure(sk);
 
     if(!this.workerUsable || !this.worker) {
+      // Synchronous fallback — route v2 vs legacy
+      if(isV2Event(event)) {
+        return unwrapV2(event, sk) as Promise<Rumor>;
+      }
       try {
         return Promise.resolve(unwrapNip17Message(event, sk));
       } catch(err) {
@@ -142,10 +154,17 @@ class NostrUnwrapClient {
         this.pending.delete(id);
         // Worker too slow / lost this request — unwrap synchronously now and
         // ignore any late reply for this id.
-        try {
-          entry.resolve(unwrapNip17Message(entry.event, entry.sk));
-        } catch(err) {
-          entry.reject(err as Error);
+        if(isV2Event(entry.event)) {
+          unwrapV2(entry.event, entry.sk).then(
+            (rumor) => entry.resolve(rumor as Rumor),
+            (err) => entry.reject(err as Error)
+          );
+        } else {
+          try {
+            entry.resolve(unwrapNip17Message(entry.event, entry.sk));
+          } catch(err) {
+            entry.reject(err as Error);
+          }
         }
       }, UNWRAP_TIMEOUT_MS);
 

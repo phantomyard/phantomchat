@@ -3939,10 +3939,18 @@ export default class ChatInput {
     }
 
     this.sendingMessage = true;
+    if(this.btnSend) {
+      this.btnSend.disabled = true;
+      this.btnSend.classList.add('is-sending');
+    }
     try {
       await this.sendMessageInner(force);
     } finally {
       this.sendingMessage = false;
+      if(this.btnSend) {
+        this.btnSend.disabled = false;
+        this.btnSend.classList.remove('is-sending');
+      }
     }
   }
 
@@ -3963,7 +3971,9 @@ export default class ChatInput {
         }
       }
 
-      const config = await this.managers.apiManager.getConfig();
+      // Use the main-thread cached config (apiManagerProxy) instead of a
+      // Worker bridge round-trip — the config is static stub data.
+      const config = await apiManagerProxy.getConfig();
       const MAX_LENGTH = config.message_length_max;
       const textOverflow = value.length > MAX_LENGTH;
 
@@ -4020,10 +4030,14 @@ export default class ChatInput {
         clearDraft: true
       });
 
+      // Clear input immediately for ALL chat types — the text is already
+      // captured in the sendText() call above, so clearing the input here
+      // (before the sendingMessage guard releases) prevents a second click
+      // from reading the same text and sending a duplicate.
       if(PEER_EXCEPTIONS.has(this.chat.type)) {
         this.onMessageSent(true);
       } else {
-        this.onMessageSent(false, false);
+        this.onMessageSent(true, false);
       }
       if(this.suggestedPost) this.clearHelper();
       // this.onMessageSent();

@@ -8,7 +8,8 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
-import {wrapNip17Message, wrapNip17Edit, rewrapNip17Message, UnsignedEvent} from './nostr-crypto';
+import {wrapNip17Message, wrapEditV2, wrapNip17Edit, rewrapNip17Message, rewrapV2, isLegacyWrap, UnsignedEvent} from './nostr-crypto';
+import {getNostrWrapClient} from './nostr-wrap-client';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromMnemonic} from './nostr-identity';
@@ -189,6 +190,12 @@ export class NostrRelayPool {
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
   private _preloadedIdentity?: { publicKey: string; privateKeyHex: string };
+
+  // Debounced state notification — batches multiple relay state changes into
+  // a single dispatch cycle so 5 relays reconnecting don't fire 5+ DOM updates
+  // in quick succession.
+  private notifyStateChangeTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly STATE_DEBOUNCE_MS = 200;
 
   constructor(options: RelayPoolOptions) {
     this.log = logger('NostrRelayPool');
@@ -390,7 +397,7 @@ export class NostrRelayPool {
         return {successes, failures};
       }
 
-      const wrapped = wrapNip17Message(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
+      const wrapped = await getNostrWrapClient().wrap(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
       wraps = wrapped.wraps as unknown as NostrEvent[];
       rumorId = wrapped.rumorId;
       rumor = wrapped.rumor;
@@ -428,22 +435,29 @@ export class NostrRelayPool {
    * which a verbatim resend of the original wrap cannot do. Returns the freshly
    * minted wraps (mainly for tests/inspection). Best-effort per relay.
    */
-  rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): NostrEvent[] {
+  async rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): Promise<NostrEvent[]> {
     if(!this.privateKeyBytes) return [];
-    const wraps = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent[];
+
+    // Use v2 re-wrap (AES-256-GCM) with fallback to legacy NIP-17
+    let wrap: NostrEvent;
+    try {
+      wrap = await rewrapV2(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
+    } catch{
+      // Fallback to legacy NIP-17 re-wrap
+      wrap = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
+    }
+
     const writeEntries = this.relayEntries.filter(e =>
       e.config.write && this.enabled.get(e.config.url) !== false
     );
     for(const entry of writeEntries) {
       try {
-        for(const wrap of wraps) {
-          entry.instance.publishRawEvent(wrap);
-        }
+        entry.instance.publishRawEvent(wrap);
       } catch{
         // best-effort per relay; the retry schedule will try again
       }
     }
-    return wraps;
+    return [wrap];
   }
 
   /**
@@ -467,12 +481,19 @@ export class NostrRelayPool {
 
     let wraps: NostrEvent[];
     try {
-      wraps = wrapNip17Edit(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext) as unknown as NostrEvent[];
-    } catch(err) {
-      return {
-        successes: [],
-        failures: [{url: 'wrap', error: err instanceof Error ? err.message : String(err)}]
-      };
+      // Use v2 (AES-256-GCM) with legacy fallback
+      const v2Event = await wrapEditV2(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext);
+      wraps = [v2Event] as unknown as NostrEvent[];
+    } catch{
+      // Fallback to legacy NIP-17 edit wrap
+      try {
+        wraps = wrapNip17Edit(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext) as unknown as NostrEvent[];
+      } catch(err) {
+        return {
+          successes: [],
+          failures: [{url: 'wrap', error: err instanceof Error ? err.message : String(err)}]
+        };
+      }
     }
 
     const successes: string[] = [];
@@ -1075,6 +1096,20 @@ export class NostrRelayPool {
   }
 
   private notifyStateChange(): void {
+    // Debounce: batch multiple relay changes into a single dispatch cycle.
+    // Without this, 5 relays each firing a state change produces 5+ separate
+    // `phantomchat_relay_state` event bursts, each triggering DOM updates in
+    // ConnectionStatusComponent — causing UI thrash during chat switches.
+    if(this.notifyStateChangeTimer) {
+      return; // already scheduled
+    }
+    this.notifyStateChangeTimer = setTimeout(() => {
+      this.notifyStateChangeTimer = null;
+      this.flushStateChange();
+    }, NostrRelayPool.STATE_DEBOUNCE_MS);
+  }
+
+  private flushStateChange(): void {
     if(this.onStateChangeCb) {
       this.onStateChangeCb(this.getConnectedCount(), this.relayEntries.length);
     }
@@ -1096,15 +1131,9 @@ export class NostrRelayPool {
    * update). Cheaper than notifyStateChange() when only one value changed.
    */
   private notifyRelayUpdate(url: string): void {
-    const entry = this.relayEntries.find(e => e.config.url === url);
-    if(!entry) return;
-    rootScope.dispatchEvent('phantomchat_relay_state', {
-      url: entry.config.url,
-      connected: entry.instance.getState() === 'connected',
-      latencyMs: entry.instance.getLatency(),
-      read: entry.config.read,
-      write: entry.config.write
-    });
+    // Route through the debounced path so a single relay's latency update
+    // doesn't produce an immediate out-of-band dispatch that bypasses batching.
+    this.notifyStateChange();
   }
 
   private dispatchRelayListChanged(): void {

@@ -233,6 +233,8 @@ describe('Relay Pool Failover', () => {
   describe('relay state events', () => {
     it('emits phantomchat_relay_state events on state change', async() => {
       await pool.initialize();
+      // State events are debounced (200ms) — wait for the flush
+      await new Promise(r => setTimeout(r, 300));
 
       const relayStateEvents = dispatchedEvents.filter(e => e.name === 'phantomchat_relay_state');
       // Should have dispatched state events during connectAll
