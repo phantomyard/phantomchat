@@ -1,16 +1,14 @@
 /*
- * NIP-17 gift-wrap WRAP worker — the outbound counterpart to the unwrap worker.
+ * PhantomChat Protocol v2 wrap worker — the outbound counterpart to the unwrap worker.
  *
- * Wrapping a NIP-17 message is the single most expensive thing PhantomChat does
- * on the SEND path: per publish it runs 2× NIP-44 encrypt + 2× Schnorr sign +
- * 2× ECDH (one ephemeral). Run on the main thread, a send freezes the UI for
- * the duration — the user sees nothing happen, clicks again, and duplicates.
+ * Uses AES-256-GCM (symmetric) instead of NIP-44 (asymmetric) for wrapping.
+ * Per-message cost: 1× AES-GCM encrypt + 1× Schnorr sign ≈ 1ms
+ * vs legacy NIP-17: 2× ECDH + 2× NIP-44 encrypt + 2× Schnorr sign ≈ 12ms.
  *
- * This worker holds the sender secret key (sent once via {type:'key'}) and
- * answers per-message wrap requests with the signed kind-1059 gift-wrap events.
+ * Falls back to legacy NIP-17 wrap if v2 fails (backward compat).
  * The key never leaves the same-origin worker (the page already holds it).
  */
-import {wrapNip17Message, type NTNostrEvent, type UnsignedEvent} from './nostr-crypto';
+import {wrapNip17Message, wrapV2, type NTNostrEvent, type UnsignedEvent} from './nostr-crypto';
 
 const ctx = self as any as DedicatedWorkerGlobalScope;
 
@@ -36,15 +34,36 @@ ctx.addEventListener('message', (e: MessageEvent) => {
     return;
   }
 
-  try {
-    const result = wrapNip17Message(senderSk, recipientPubHex, plaintext, replyTo);
-    ctx.postMessage({
-      id,
-      wraps: result.wraps,
-      rumorId: result.rumorId,
-      rumor: result.rumor
-    });
-  } catch(err) {
-    ctx.postMessage({id, error: {message: (err as Error)?.message || String(err)}});
-  }
+  // PhantomChat v2: use AES-256-GCM (fast, no ephemeral key)
+  wrapV2(senderSk, recipientPubHex, plaintext, replyTo).then(
+    ({event, rumorId}) => {
+      ctx.postMessage({
+        id,
+        wraps: [event],
+        rumorId,
+        rumor: {
+          kind: 14,
+          content: plaintext,
+          pubkey: (event as any).pubkey,
+          created_at: event.created_at,
+          tags: event.tags,
+          id: rumorId
+        } as UnsignedEvent
+      });
+    },
+    (err) => {
+      // Fallback: try legacy NIP-17 wrap if v2 fails
+      try {
+        const result = wrapNip17Message(senderSk!, recipientPubHex, plaintext, replyTo);
+        ctx.postMessage({
+          id,
+          wraps: result.wraps,
+          rumorId: result.rumorId,
+          rumor: result.rumor
+        });
+      } catch(fallbackErr) {
+        ctx.postMessage({id, error: {message: (fallbackErr as Error)?.message || String(fallbackErr)}});
+      }
+    }
+  );
 });

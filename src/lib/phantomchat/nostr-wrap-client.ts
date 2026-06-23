@@ -14,7 +14,7 @@
  *
  * `wrapNip17Message` is a pure function, so re-running it is safe.
  */
-import {wrapNip17Message, type NTNostrEvent, type UnsignedEvent} from './nostr-crypto';
+import {wrapNip17Message, wrapV2, type NTNostrEvent, type UnsignedEvent} from './nostr-crypto';
 
 type WrapResult = {
   wraps: NTNostrEvent[];
@@ -111,12 +111,25 @@ class NostrWrapClient {
   }
 
   private wrapSync(entry: PendingEntry): void {
-    try {
-      const result = wrapNip17Message(entry.sk, entry.recipientPubHex, entry.plaintext, entry.replyTo);
-      entry.resolve(result);
-    } catch(err) {
-      entry.reject(err as Error);
-    }
+    // Use v2 (AES-256-GCM) with fallback to legacy NIP-17
+    wrapV2(entry.sk, entry.recipientPubHex, entry.plaintext, entry.replyTo).then(
+      ({event, rumorId}) => {
+        entry.resolve({
+          wraps: [event] as unknown as NTNostrEvent[],
+          rumorId,
+          rumor: {kind: 14, content: entry.plaintext, pubkey: (event as any).pubkey, created_at: event.created_at, tags: event.tags, id: rumorId}
+        });
+      },
+      () => {
+        // Fallback to legacy NIP-17 if v2 fails
+        try {
+          const result = wrapNip17Message(entry.sk, entry.recipientPubHex, entry.plaintext, entry.replyTo);
+          entry.resolve(result);
+        } catch(err) {
+          entry.reject(err as Error);
+        }
+      }
+    );
   }
 
   /**
@@ -132,11 +145,22 @@ class NostrWrapClient {
     this.ensure(sk);
 
     if(!this.workerUsable || !this.worker) {
-      try {
-        return Promise.resolve(wrapNip17Message(sk, recipientPubHex, plaintext, replyTo));
-      } catch(err) {
-        return Promise.reject(err);
-      }
+      // No worker — use v2 directly with legacy fallback
+      return wrapV2(sk, recipientPubHex, plaintext, replyTo).then(
+        ({event, rumorId}) => ({
+          wraps: [event] as unknown as NTNostrEvent[],
+          rumorId,
+          rumor: {kind: 14, content: plaintext, pubkey: (event as any).pubkey, created_at: event.created_at, tags: event.tags, id: rumorId}
+        }),
+        () => {
+          // Fallback to legacy NIP-17 if v2 fails
+          try {
+            return Promise.resolve(wrapNip17Message(sk, recipientPubHex, plaintext, replyTo));
+          } catch(err) {
+            return Promise.reject(err);
+          }
+        }
+      );
     }
 
     const id = ++this.seq;

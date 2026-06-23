@@ -8,7 +8,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
-import {wrapNip17Message, wrapNip17Edit, rewrapNip17Message, UnsignedEvent} from './nostr-crypto';
+import {wrapNip17Message, wrapEditV2, wrapNip17Edit, rewrapNip17Message, rewrapV2, isLegacyWrap, UnsignedEvent} from './nostr-crypto';
 import {getNostrWrapClient} from './nostr-wrap-client';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
@@ -416,22 +416,29 @@ export class NostrRelayPool {
    * which a verbatim resend of the original wrap cannot do. Returns the freshly
    * minted wraps (mainly for tests/inspection). Best-effort per relay.
    */
-  rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): NostrEvent[] {
+  async rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): Promise<NostrEvent[]> {
     if(!this.privateKeyBytes) return [];
-    const wraps = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent[];
+
+    // Use v2 re-wrap (AES-256-GCM) with fallback to legacy NIP-17
+    let wrap: NostrEvent;
+    try {
+      wrap = await rewrapV2(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
+    } catch{
+      // Fallback to legacy NIP-17 re-wrap
+      wrap = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
+    }
+
     const writeEntries = this.relayEntries.filter(e =>
       e.config.write && this.enabled.get(e.config.url) !== false
     );
     for(const entry of writeEntries) {
       try {
-        for(const wrap of wraps) {
-          entry.instance.publishRawEvent(wrap);
-        }
+        entry.instance.publishRawEvent(wrap);
       } catch{
         // best-effort per relay; the retry schedule will try again
       }
     }
-    return wraps;
+    return [wrap];
   }
 
   /**
@@ -455,12 +462,19 @@ export class NostrRelayPool {
 
     let wraps: NostrEvent[];
     try {
-      wraps = wrapNip17Edit(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext) as unknown as NostrEvent[];
-    } catch(err) {
-      return {
-        successes: [],
-        failures: [{url: 'wrap', error: err instanceof Error ? err.message : String(err)}]
-      };
+      // Use v2 (AES-256-GCM) with legacy fallback
+      const v2Event = await wrapEditV2(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext);
+      wraps = [v2Event] as unknown as NostrEvent[];
+    } catch{
+      // Fallback to legacy NIP-17 edit wrap
+      try {
+        wraps = wrapNip17Edit(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext) as unknown as NostrEvent[];
+      } catch(err) {
+        return {
+          successes: [],
+          failures: [{url: 'wrap', error: err instanceof Error ? err.message : String(err)}]
+        };
+      }
     }
 
     const successes: string[] = [];
