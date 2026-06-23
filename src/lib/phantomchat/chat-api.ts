@@ -126,8 +126,10 @@ export class ChatAPI {
   /**
    * Create a new ChatAPI instance
    * @param ownId - The user's public key
+   * @param privateKeyHex - Optional 64-char hex private key. When provided,
+   *   the relay pool skips redundant identity decryption at initialize() time.
    */
-  constructor(ownId: string);
+  constructor(ownId: string, privateKeyHex?: string);
 
   /**
    * Create a new ChatAPI instance with dependency injection (for testing)
@@ -143,7 +145,7 @@ export class ChatAPI {
 
   constructor(
     ownId: string,
-    relayPool?: NostrRelayPool,
+    relayPool?: NostrRelayPool | string,
     offlineQueue?: OfflineQueue | null
   ) {
     this.ownId = ownId;
@@ -152,7 +154,7 @@ export class ChatAPI {
     this.log('[ChatAPI] initializing with ownId:', ownId.slice(0, 8) + '...');
 
     // Use injected dependencies or create real ones
-    if(relayPool && offlineQueue) {
+    if(relayPool && typeof relayPool === 'object' && offlineQueue) {
       this.relayPool = relayPool;
       this.offlineQueue = offlineQueue;
 
@@ -166,13 +168,18 @@ export class ChatAPI {
         });
       }
     } else {
+      // privateKeyHex may be passed as the 2nd arg (string) to skip redundant
+      // identity decryption in the relay pool.
+      const privateKeyHex = typeof relayPool === 'string' ? relayPool : undefined;
+
       // Create real NostrRelayPool
       this.relayPool = new NostrRelayPool({
         relays: [...DEFAULT_RELAYS],
         onMessage: (msg: DecryptedMessage) => this.handleRelayMessage(msg),
         onStateChange: (connectedCount: number, _totalCount: number) => {
           this.handlePoolStateChange(connectedCount);
-        }
+        },
+        ...(privateKeyHex ? {preloadedIdentity: {publicKey: ownId, privateKeyHex}} : {})
       });
       this.offlineQueue = new OfflineQueue(this.relayPool);
     }

@@ -266,6 +266,7 @@ export default class ChatInput {
   private forwardWasDroppingAuthor: boolean;
 
   private getWebPagePromise: Promise<void>;
+  private processWebPageDebounced: (richValue: string, entities: MessageEntity[]) => void;
   public willSendWebPage: WebPage = null;
   public webPageOptions: Parameters<AppMessagesManager['sendText']>[0]['webPageOptions'] = {};
   private forwarding: {[fromPeerId: PeerId]: number[]};
@@ -1375,6 +1376,16 @@ export default class ChatInput {
     attachClickEvent(this.btnSend, this.onBtnSendClick, {listenerSetter: this.listenerSetter, touchMouseDown: true});
 
     this.saveDraftDebounced = debounce(() => this.saveDraft(), 2500, false, true);
+
+    // Debounce URL preview fetching so typing/pasting a URL doesn't fire
+    // messages.getWebPage on every keystroke. 300ms is enough to coalesce
+    // rapid typing while still feeling responsive on paste.
+    this.processWebPageDebounced = debounce(
+      (richValue: string, entities: MessageEntity[]) => this.processWebPage(richValue, entities),
+      300,
+      false,
+      true
+    );
 
     const makeControlButton = (langKey: LangPackKey | HTMLElement) => {
       const button = Button('btn-primary btn-transparent text-bold chat-input-control-button');
@@ -2767,7 +2778,7 @@ export default class ChatInput {
 
     maybeClearUndoHistory(this.messageInput);
 
-    this.processWebPage(richValue, entities);
+    this.processWebPageDebounced(richValue, entities);
 
     const isEmpty = !richValue.trim();
     if(isEmpty) {
@@ -2912,6 +2923,10 @@ export default class ChatInput {
       } else if(this.willSendWebPage) {
         this.onHelperCancel();
       }
+    }).catch(() => {
+      // Swallow rejection (e.g. MTProto disabled in P2P mode) — just clear
+      // the pending promise so the next URL can be processed.
+      if(this.getWebPagePromise === promise) this.getWebPagePromise = undefined;
     });
   }
 
