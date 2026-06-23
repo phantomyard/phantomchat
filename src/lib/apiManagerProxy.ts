@@ -1210,6 +1210,11 @@ class ApiManagerProxy extends MTProtoMessagePort {
         }
 
         return config;
+      }).catch((err) => {
+        if(this.config === promise) {
+          this.config = undefined; // allow retry on next call
+        }
+        throw err;
       });
 
       return this.config = promise;

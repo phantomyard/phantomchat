@@ -299,6 +299,15 @@ export async function unwrapV2(
     );
   }
 
+  // Verify rumor.id matches canonical content hash (prevents dedup/receipt poisoning)
+  const expectedId = getEventHash(rumor as any);
+  if(rumor.id !== expectedId) {
+    throw new GiftWrapVerificationError(
+      'rumor_id',
+      `v2 rumor.id (${rumor.id?.slice(0, 8)}...) does not match canonical hash (${expectedId.slice(0, 8)}...)`
+    );
+  }
+
   return rumor as {kind: number; content: string; pubkey: string; created_at: number; tags: string[][]; id: string};
 }
 
