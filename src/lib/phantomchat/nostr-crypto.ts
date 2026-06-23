@@ -110,9 +110,13 @@ export async function getSymmetricKey(
   const peerPubBytes = new Uint8Array([0x02, ...secpEtc.hexToBytes(peerPubHex)]);
   const sharedSecret = getSharedSecret(localSk, peerPubBytes);
 
-  // HKDF-SHA256 → 32-byte symmetric key with domain-separated info label
+  // HKDF-SHA256 → 32-byte symmetric key. getSharedSecret returns a 33-byte
+  // compressed point (02/03 prefix + x-coordinate). The prefix byte differs
+  // depending on which side computes ECDH, so we MUST use only the 32-byte
+  // x-coordinate (shared_secret_x) to ensure both sides derive the same key.
+  const sharedSecretX = sharedSecret.slice(1);
   const info = new TextEncoder().encode('pc-v2');
-  const rawKey = hkdf(sha256, sharedSecret, undefined, info, 32);
+  const rawKey = hkdf(sha256, sharedSecretX, undefined, info, 32);
 
   // Import as AES-GCM CryptoKey (extractable so we can cache raw bytes if needed later)
   const key = await crypto.subtle.importKey(
@@ -122,6 +126,47 @@ export async function getSymmetricKey(
 
   symmetricKeyCache.set(cacheKey, key);
   return {raw: rawKey, key};
+}
+
+/**
+ * Pre-derive and cache AES-256-GCM symmetric keys for a list of known peers.
+ * Call at startup (before subscription) so inbound v2 messages can be decrypted
+ * even though the sender used ephemeral envelope signing (event.pubkey is a
+ * throwaway key, so we can't derive from the event alone).
+ *
+ * Each peer is one ECDH + HKDF + importKey (~2ms). For 50 peers ≈ 100ms.
+ */
+export async function warmSymmetricKeyCache(
+  localSk: Uint8Array,
+  peerPubHexes: string[]
+): Promise<void> {
+  await Promise.all(
+    peerPubHexes.map((peerPubHex) => getSymmetricKey(localSk, peerPubHex))
+  );
+}
+
+/**
+ * Try to decrypt ciphertext with every cached symmetric key. AES-GCM auth
+ * tag rejection is instant (~µs) so even 50+ cached keys is sub-millisecond.
+ *
+ * Returns the plaintext + the cache key (sorted pubkey pair) on success,
+ * or null if no key matched.
+ *
+ * Used by unwrapV2 because ephemeral envelope signing means event.pubkey
+ * is a throwaway key — we can't derive the symmetric key from it directly.
+ */
+async function decryptWithAnyCachedKey(
+  ciphertext: string
+): Promise<{plaintext: string; cacheKey: string} | null> {
+  for(const [cacheKey, symmetricKey] of symmetricKeyCache) {
+    try {
+      const plaintext = await decryptV2(ciphertext, symmetricKey);
+      return {plaintext, cacheKey};
+    } catch{
+      // Wrong key — AES-GCM auth tag mismatch, try next
+    }
+  }
+  return null;
 }
 
 /**
@@ -236,17 +281,24 @@ export async function wrapV2(
   // Derive shared symmetric key (cached after first call per peer)
   const {key: symmetricKey} = await getSymmetricKey(senderSk, recipientPubHex);
 
-  // Encrypt rumor JSON with AES-256-GCM
-  const encryptedContent = await encryptV2(JSON.stringify(rumor), symmetricKey);
+  // Assign id after hashing
+  const rumorWithId = {...rumor, id: rumorId};
 
-  // Sign as kind-1059 with sender's real key (no ephemeral key)
+  // Encrypt rumor JSON with AES-256-GCM
+  const encryptedContent = await encryptV2(JSON.stringify(rumorWithId), symmetricKey);
+
+  // Sign outer event with a FRESH EPHEMERAL keypair per message (NIP-17
+  // parity). This prevents relays from building an A→B social graph from
+  // signed event.pubkey edges. Sender authenticity lives inside the encrypted
+  // rumor (rumor.pubkey), verified on unwrap via getEventHash + cache key.
+  const ephemeralSk = generateSecretKey();
   const eventTemplate = {
     kind: 1059,
     created_at: Math.floor(Date.now() / 1000),
     tags,
     content: encryptedContent
   };
-  const event = finalizeEvent(eventTemplate, senderSk) as unknown as NTNostrEvent;
+  const event = finalizeEvent(eventTemplate, ephemeralSk) as unknown as NTNostrEvent;
 
   return {event, rumorId};
 }
@@ -263,39 +315,39 @@ export async function wrapV2(
  */
 export async function unwrapV2(
   event: NTNostrEvent,
-  recipientSk: Uint8Array
+  _recipientSk: Uint8Array
 ): Promise<{kind: number; content: string; pubkey: string; created_at: number; tags: string[][]; id: string}> {
   // Verify kind-1059 Schnorr signature
   if(!verifyEvent(event as any)) {
     throw new GiftWrapVerificationError('wrap_sig', 'v2 event signature invalid');
   }
 
-  // Derive shared symmetric key (cached after first call per peer)
-  // If we're the sender (event.pubkey === our pubkey), use the recipient from the p tag
-  const myPubkey = getPublicKey(recipientSk);
-  let counterpartyPubHex: string;
-  if(event.pubkey === myPubkey) {
-    // We're the sender (self-send / multi-device) — use the p tag recipient
-    const pTag = event.tags?.find((t: string[]) => t[0] === 'p');
-    if(!pTag) {
-      throw new GiftWrapVerificationError('pubkey_binding', 'v2 self-send event missing p tag');
-    }
-    counterpartyPubHex = pTag[1];
-  } else {
-    // We're the recipient — use the sender's pubkey
-    counterpartyPubHex = event.pubkey;
+  // Ephemeral envelope signing: event.pubkey is a throwaway key, not the
+  // real sender. We can't use it for key derivation. Instead, try all cached
+  // symmetric keys until one decrypts successfully (AES-GCM auth tag rejects
+  // wrong keys instantly). The cache key is the sorted pubkey pair, so after
+  // decrypt we verify rumor.pubkey matches one of them.
+  const result = await decryptWithAnyCachedKey(event.content);
+  if(!result) {
+    throw new GiftWrapVerificationError(
+      'no_matching_key',
+      'v2: no cached symmetric key could decrypt the content'
+    );
   }
-  const {key: symmetricKey} = await getSymmetricKey(recipientSk, counterpartyPubHex);
-
-  // Decrypt rumor JSON
-  const rumorJson = await decryptV2(event.content, symmetricKey);
+  const {plaintext: rumorJson, cacheKey} = result;
   const rumor = JSON.parse(rumorJson);
 
-  // Verify rumor pubkey matches event pubkey (anti-impersonation)
-  if(rumor.pubkey !== event.pubkey) {
+  // Anti-impersonation: rumor.pubkey must be the counterparty (the other
+  // party in the shared-key pair) or our own pubkey for a genuine self-send.
+  // Binding to just the counterparty (not "either key") closes the window
+  // where a contact could craft rumor.pubkey = myPubkey for self-attribution.
+  const myPubHex = getPublicKey(_recipientSk);
+  const [pk1, pk2] = cacheKey.split(':');
+  const counterparty = pk1 === myPubHex ? pk2 : pk1;
+  if(rumor.pubkey !== counterparty && rumor.pubkey !== myPubHex) {
     throw new GiftWrapVerificationError(
       'pubkey_binding',
-      `v2 rumor.pubkey (${rumor.pubkey?.slice(0, 8)}...) does not match event.pubkey (${event.pubkey?.slice(0, 8)}...)`
+      `v2 rumor.pubkey (${rumor.pubkey?.slice(0, 8)}...) does not match counterparty or self`
     );
   }
 
@@ -354,14 +406,15 @@ export async function rewrapV2(
   // Re-encrypt the same rumor JSON with a fresh IV
   const encryptedContent = await encryptV2(JSON.stringify(rumor), symmetricKey);
 
-  // Sign as kind-1059 with sender's real key
+  // Sign outer event with a fresh ephemeral keypair per message
+  const ephemeralSk = generateSecretKey();
   const eventTemplate = {
     kind: 1059,
     created_at: Math.floor(Date.now() / 1000),
     tags,
     content: encryptedContent
   };
-  return finalizeEvent(eventTemplate, senderSk) as unknown as NTNostrEvent;
+  return finalizeEvent(eventTemplate, ephemeralSk) as unknown as NTNostrEvent;
 }
 
 // ==================== NIP-44 Conversation Key (legacy, used by NIP-17 path) ====================
@@ -508,8 +561,8 @@ function sealAndWrapRumor(
  * Callers can distinguish verification drops from transport/parse errors.
  */
 export class GiftWrapVerificationError extends Error {
-  readonly code: 'wrap_sig' | 'seal_sig' | 'pubkey_binding' | 'rumor_id';
-  constructor(code: 'wrap_sig' | 'seal_sig' | 'pubkey_binding' | 'rumor_id', message: string) {
+  readonly code: 'wrap_sig' | 'seal_sig' | 'pubkey_binding' | 'rumor_id' | 'no_matching_key';
+  constructor(code: 'wrap_sig' | 'seal_sig' | 'pubkey_binding' | 'rumor_id' | 'no_matching_key', message: string) {
     super(message);
     this.name = 'GiftWrapVerificationError';
     this.code = code;
@@ -657,14 +710,15 @@ export async function wrapEditV2(
   // Encrypt rumor JSON with AES-256-GCM
   const encryptedContent = await encryptV2(JSON.stringify(rumor), symmetricKey);
 
-  // Sign as kind-1059
+  // Sign outer event with a fresh ephemeral keypair per message
+  const ephemeralSk = generateSecretKey();
   const eventTemplate = {
     kind: 1059,
     created_at: Math.floor(Date.now() / 1000),
     tags,
     content: encryptedContent
   };
-  return finalizeEvent(eventTemplate, senderSk) as unknown as NTNostrEvent;
+  return finalizeEvent(eventTemplate, ephemeralSk) as unknown as NTNostrEvent;
 }
 
 /**
@@ -744,14 +798,15 @@ export async function wrapReceiptV2(
   // Encrypt rumor JSON with AES-256-GCM
   const encryptedContent = await encryptV2(JSON.stringify(rumor), symmetricKey);
 
-  // Sign as kind-1059
+  // Sign outer event with a fresh ephemeral keypair per message
+  const ephemeralSk = generateSecretKey();
   const eventTemplate = {
     kind: 1059,
     created_at: Math.floor(Date.now() / 1000),
     tags,
     content: encryptedContent
   };
-  return finalizeEvent(eventTemplate, senderSk) as unknown as NTNostrEvent;
+  return finalizeEvent(eventTemplate, ephemeralSk) as unknown as NTNostrEvent;
 }
 
 // ==================== Legacy NIP-17 API (deprecated) ====================
