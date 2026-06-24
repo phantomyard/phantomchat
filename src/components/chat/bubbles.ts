@@ -67,6 +67,7 @@ import ReactionsElement, {REACTIONS_ELEMENTS} from '@components/chat/reactions';
 import type ReactionElement from '@components/chat/reaction';
 import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
 import pause from '@helpers/schedulers/pause';
+import yieldToMainThread from '@helpers/schedulers/yieldToMainThread';
 import ScrollSaver from '@helpers/scrollSaver';
 import getObjectKeysAndSort from '@helpers/object/getObjectKeysAndSort';
 import forEachReverse from '@helpers/array/forEachReverse';
@@ -4660,13 +4661,11 @@ export default class ChatBubbles {
 
     this.lazyLoadQueue.lock();
 
-    // Layer 1: For new peers, immediately clear the old chat and show a preloader.
-    // This gives instant visual feedback on chat click instead of freezing on the
-    // previous chat until the entire history fetch + finishPeerChange chain completes.
-    if(!samePeer) {
-      this.scrollable.replaceChildren();
-      this.preloader.attach(this.container);
-    }
+    // NOTE: the old-chat clear + preloader is attached further down, gated on the
+    // real `!cached` flag (see "Layer 1" below). It must NOT fire here for every
+    // non-same-peer switch: a cached chat renders synchronously, so blanking the
+    // bubbles and flashing a spinner before the instant re-render is a visible
+    // regression in the common warm-switch path this perf work is speeding up.
 
     const canScroll = samePeer && sameSearch;
     // const haveToScrollToBubble = (topMessage && (isJump || samePeer)) || isTarget;
@@ -4800,6 +4799,16 @@ export default class ChatBubbles {
     log.warn('got history');// warning
 
     const {promise, cached} = result;
+
+    // Layer 1: clear the old chat and show a preloader ONLY for non-cached peers.
+    // finishPeerChange already ran in parallel above, and getHistory1 has now
+    // resolved so `cached` is known. A cached chat renders synchronously from
+    // here, so it skips the blank+spinner flash; a non-cached chat shows the
+    // preloader right before we await its (slow) render promise.
+    if(!cached && !samePeer) {
+      this.scrollable.replaceChildren();
+      this.preloader.attach(this.container);
+    }
 
     animationIntersector.lockGroup(this.chat.animationGroup);
     const setPeerPromise = m(promise).then(async() => {
@@ -9083,24 +9092,35 @@ export default class ChatBubbles {
       }
     }
 
-    // Chunked rendering: process messages in batches of ~8, yielding to the
-    // event loop between chunks. This prevents a single long synchronous DOM
-    // creation burst from blocking the UI when rendering 40+ messages.
+    // Chunked rendering applies ONLY to large history-backfill pages: process
+    // messages in batches of ~8, yielding to the event loop between chunks so a
+    // single long synchronous DOM-creation burst doesn't block the UI when
+    // rendering 40+ messages. Small opens and live single-message appends
+    // (history.length is 1-2, e.g. _renderNewMessage / send) render in one pass
+    // — chunking them just adds per-message scheduler latency to the exact path
+    // that should be a clean 1-2 bubble append.
     const RENDER_CHUNK_SIZE = 8;
+    const RENDER_CHUNK_THRESHOLD = 16; // anything that fits a screen renders in one pass
     if(this.chat.type === ChatType.Search && false) {
       const length = history.length;
       const searchPromises: Promise<any>[] = [];
       if(reverse) for(let i = 0; i < length; ++i) searchPromises.push(cb(messages[i]));
       else for(let i = length - 1; i >= 0; --i) searchPromises.push(cb(messages[i]));
       searchPromises.length && await Promise.all(searchPromises);
+    } else if(messages.length <= RENDER_CHUNK_THRESHOLD) {
+      const promises = messages.map(cb);
+      promises.length && await Promise.all(promises);
     } else {
       for(let i = 0; i < messages.length; i += RENDER_CHUNK_SIZE) {
         const chunk = messages.slice(i, i + RENDER_CHUNK_SIZE);
         const chunkPromises = chunk.map(cb);
         chunkPromises.length && await Promise.all(chunkPromises);
-        // Yield between chunks so the browser can paint progressive content
+        // Yield a real macro-task between chunks so the browser can paint
+        // progressive content. MessageChannel, not setTimeout(0): a nested
+        // timer is clamped to ~4ms and throttled to 1000ms+ in background tabs,
+        // which would make an unfocused backfill crawl.
         if(i + RENDER_CHUNK_SIZE < messages.length) {
-          await new Promise(r => setTimeout(r, 0));
+          await yieldToMainThread();
         }
       }
     }
