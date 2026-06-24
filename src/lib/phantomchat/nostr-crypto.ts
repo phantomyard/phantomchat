@@ -260,7 +260,7 @@ export async function wrapV2(
   recipientPubHex: string,
   content: string,
   replyTo?: {eventId: string; relayUrl?: string}
-): Promise<{event: NTNostrEvent; rumorId: string}> {
+): Promise<{event: NTNostrEvent; rumorId: string; senderPubkey: string}> {
   const senderPubHex = getPublicKey(senderSk);
   const tags: string[][] = [['p', recipientPubHex], ['v', 'pc-v2']];
   if(replyTo) {
@@ -300,7 +300,13 @@ export async function wrapV2(
   };
   const event = finalizeEvent(eventTemplate, ephemeralSk) as unknown as NTNostrEvent;
 
-  return {event, rumorId};
+  // Return the REAL sender pubkey alongside the event + rumor id. The outer
+  // event is signed with a throwaway ephemeral key (envelope privacy), so
+  // `event.pubkey` is NOT the sender. Callers that reconstruct a synthetic
+  // rumor for the delivery-retry layer MUST use this `senderPubkey`, otherwise
+  // the receiver's counterparty binding check rejects the rewrapped rumor
+  // (Bug: worker cache isolation / wrong rumor pubkey).
+  return {event, rumorId, senderPubkey: senderPubHex};
 }
 
 /**

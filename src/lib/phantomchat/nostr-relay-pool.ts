@@ -8,8 +8,9 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
-import {wrapNip17Message, wrapEditV2, wrapNip17Edit, rewrapNip17Message, rewrapV2, isLegacyWrap, UnsignedEvent} from './nostr-crypto';
+import {wrapNip17Message, wrapEditV2, wrapNip17Edit, rewrapNip17Message, rewrapV2, isLegacyWrap, warmSymmetricKeyCache, UnsignedEvent} from './nostr-crypto';
 import {getNostrWrapClient} from './nostr-wrap-client';
+import {getMessageStore} from './message-store';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromMnemonic} from './nostr-identity';
@@ -290,6 +291,16 @@ export class NostrRelayPool {
       this.configs = stored.length > 0 ? stored : [...DEFAULT_RELAYS];
     }
 
+    // Pre-warm the v2 symmetric key cache for every known peer. The unwrap
+    // worker runs in its own isolate with an EMPTY symmetricKeyCache — only
+    // the main thread's cache is warmed — so inbound v2 events rely on the
+    // main thread having derived keys for each contact ahead of time. Ephemeral
+    // envelope signing means event.pubkey is a throwaway key, so we cannot
+    // derive the symmetric key from the event alone; the cache MUST be warmed
+    // per-peer at startup. Deriving is ~2ms/peer; failures are swallowed so a
+    // store/identity quirk never blocks connectivity.
+    await this.warmV2KeyCache();
+
     // Load lastSeenTimestamp
     const storedTs = localStorage.getItem(LS_LAST_SEEN_KEY);
     if(storedTs) {
@@ -319,6 +330,32 @@ export class NostrRelayPool {
     // Start the catch-up poll — the delivery backbone that no longer relies on
     // relays pushing live events reliably.
     this.startBackfillPoll();
+  }
+
+  /**
+   * Pre-derive + cache v2 AES-256-GCM symmetric keys for every known peer.
+   *
+   * Known peers are recovered from the message store's conversation IDs
+   * (`<pkA>:<pkB>` sorted pairs) — each conversation's non-own pubkey is a
+   * peer we may receive a v2 gift-wrap from. Best-effort: a store/identity
+   * quirk never blocks connectivity (the cache also warms lazily on first
+   * encrypt/decrypt per peer).
+   */
+  private async warmV2KeyCache(): Promise<void> {
+    if(!this.privateKeyBytes || !this.publicKey) return;
+    try {
+      const conversationIds = await getMessageStore().getAllConversationIds();
+      const peerPubkeys = new Set<string>();
+      for(const convId of conversationIds) {
+        const [a, b] = convId.split(':');
+        if(a && a !== this.publicKey) peerPubkeys.add(a);
+        if(b && b !== this.publicKey) peerPubkeys.add(b);
+      }
+      if(peerPubkeys.size === 0) return;
+      await warmSymmetricKeyCache(this.privateKeyBytes, [...peerPubkeys]);
+    } catch(err) {
+      this.log.warn('[NostrRelayPool] warmV2KeyCache failed (non-fatal):', err);
+    }
   }
 
   disconnect(): void {

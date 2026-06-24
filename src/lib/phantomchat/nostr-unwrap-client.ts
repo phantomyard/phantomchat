@@ -90,14 +90,38 @@ class NostrUnwrapClient {
     const {id, rumor, error} = e.data as {id: number; rumor?: Rumor; error?: {code?: string; message: string}};
     const entry = this.pending.get(id);
     if(!entry) return; // already resolved via timeout fallback — ignore late reply
-    clearTimeout(entry.timer);
-    this.pending.delete(id);
     if(error) {
+      // Bug (worker cache isolation): the unwrap worker runs in a separate
+      // Web Worker isolate with its OWN empty `symmetricKeyCache`. The main
+      // thread warms the cache (warmSymmetricKeyCache / lazy getSymmetricKey),
+      // but only `{type:'key', sk}` is ever posted to the worker — the warmed
+      // CryptoKeys never cross the isolate boundary. So for a v2 event the
+      // worker iterates an empty cache, fails fast with `no_matching_key`, and
+      // would reject here — cancelling the 8s timeout fallback that would
+      // otherwise retry synchronously on the main thread (where the cache IS
+      // warm) and silently dropping the message.
+      //
+      // Fix: for a v2 `no_matching_key`, retry synchronously on the main
+      // thread (warm cache) before rejecting. Only reject if the main-thread
+      // retry also fails.
+      if(error.code === 'no_matching_key' && isV2Event(entry.event)) {
+        this.pending.delete(id);
+        clearTimeout(entry.timer);
+        unwrapV2(entry.event, entry.sk).then(
+          (r) => entry.resolve(r as Rumor),
+          (err) => entry.reject(err as Error)
+        );
+        return;
+      }
+      clearTimeout(entry.timer);
+      this.pending.delete(id);
       entry.reject(error.code ?
         new GiftWrapVerificationError(error.code as any, error.message) :
         new Error(error.message));
       return;
     }
+    clearTimeout(entry.timer);
+    this.pending.delete(id);
     entry.resolve(rumor as Rumor);
   }
 

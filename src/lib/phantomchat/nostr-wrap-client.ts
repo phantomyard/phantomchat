@@ -113,11 +113,14 @@ class NostrWrapClient {
   private wrapSync(entry: PendingEntry): void {
     // Use v2 (AES-256-GCM) with fallback to legacy NIP-17
     wrapV2(entry.sk, entry.recipientPubHex, entry.plaintext, entry.replyTo).then(
-      ({event, rumorId}) => {
+      ({event, rumorId, senderPubkey}) => {
         entry.resolve({
           wraps: [event] as unknown as NTNostrEvent[],
           rumorId,
-          rumor: {kind: 14, content: entry.plaintext, pubkey: (event as any).pubkey, created_at: event.created_at, tags: event.tags, id: rumorId}
+          // Use the REAL sender pubkey, NOT event.pubkey (ephemeral throwaway).
+          // The delivery-retry layer rewraps this rumor; the receiver binds
+          // rumor.pubkey to the expected counterparty.
+          rumor: {kind: 14, content: entry.plaintext, pubkey: senderPubkey, created_at: event.created_at, tags: event.tags, id: rumorId}
         });
       },
       () => {
@@ -147,10 +150,11 @@ class NostrWrapClient {
     if(!this.workerUsable || !this.worker) {
       // No worker — use v2 directly with legacy fallback
       return wrapV2(sk, recipientPubHex, plaintext, replyTo).then(
-        ({event, rumorId}) => ({
+        ({event, rumorId, senderPubkey}) => ({
           wraps: [event] as unknown as NTNostrEvent[],
           rumorId,
-          rumor: {kind: 14, content: plaintext, pubkey: (event as any).pubkey, created_at: event.created_at, tags: event.tags, id: rumorId}
+          // Use the REAL sender pubkey, NOT event.pubkey (ephemeral throwaway).
+          rumor: {kind: 14, content: plaintext, pubkey: senderPubkey, created_at: event.created_at, tags: event.tags, id: rumorId}
         }),
         () => {
           // Fallback to legacy NIP-17 if v2 fails
