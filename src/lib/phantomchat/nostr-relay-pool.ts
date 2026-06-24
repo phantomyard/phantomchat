@@ -10,6 +10,7 @@ import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
 import {wrapNip17Message, wrapEditV2, wrapNip17Edit, rewrapNip17Message, rewrapV2, isLegacyWrap, warmSymmetricKeyCache, UnsignedEvent} from './nostr-crypto';
 import {getNostrWrapClient} from './nostr-wrap-client';
+import {getNostrUnwrapClient} from './nostr-unwrap-client';
 import {getMessageStore} from './message-store';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
@@ -369,7 +370,13 @@ export class NostrRelayPool {
         if(b && b !== this.publicKey) peerPubkeys.add(b);
       }
       if(peerPubkeys.size === 0) return;
-      await warmSymmetricKeyCache(this.privateKeyBytes, [...peerPubkeys]);
+      const peers = [...peerPubkeys];
+      // Warm BOTH caches: the main thread's (for the sync-fallback path) AND the
+      // unwrap worker's. The worker cache is the one that keeps cold-load
+      // backfill crypto off the main thread — without it every v2 unwrap bounces
+      // back to a synchronous main-thread unwrapV2 and freezes the UI.
+      await warmSymmetricKeyCache(this.privateKeyBytes, peers);
+      getNostrUnwrapClient().warm(this.privateKeyBytes, peers);
     } catch(err) {
       this.log.warn('[NostrRelayPool] warmV2KeyCache failed (non-fatal):', err);
     }

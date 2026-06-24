@@ -108,7 +108,17 @@ class NostrUnwrapClient {
         this.pending.delete(id);
         clearTimeout(entry.timer);
         unwrapV2(entry.event, entry.sk).then(
-          (r) => entry.resolve(r as Rumor),
+          (r) => {
+            // Self-heal: the worker missed because its cache lacked this peer
+            // (a new conversation, or a warm that hadn't landed yet). Teach it
+            // the real sender so the NEXT message from them unwraps in-worker
+            // instead of bouncing to the main thread again.
+            const pubkey = (r as Rumor)?.pubkey;
+            if(pubkey && this.workerUsable && this.worker) {
+              this.worker.postMessage({type: 'warm', peers: [pubkey]});
+            }
+            entry.resolve(r as Rumor);
+          },
           (err) => entry.reject(err as Error)
         );
         return;
@@ -195,6 +205,22 @@ class NostrUnwrapClient {
       this.pending.set(id, {resolve, reject, event, sk, timer});
       this.worker!.postMessage({id, event});
     });
+  }
+
+  /**
+   * Pre-warm the worker's symmetric-key cache for known peers so v2 unwraps run
+   * IN the worker. Without this, every v2 gift-wrap misses the worker's empty
+   * cache, bounces back to a synchronous main-thread unwrapV2, and a cold-load
+   * backfill of that crypto freezes the UI for seconds. No-op in sync-fallback
+   * mode (no worker) — there the main-thread cache, warmed separately, is the
+   * one that matters.
+   */
+  warm(sk: Uint8Array, peers: string[]): void {
+    if(!peers.length) return;
+    this.ensure(sk); // spawns + keys the worker if needed (key lands before warm)
+    if(this.workerUsable && this.worker) {
+      this.worker.postMessage({type: 'warm', peers});
+    }
   }
 
   /** Terminate the worker and clear state (call on logout/lock). */
