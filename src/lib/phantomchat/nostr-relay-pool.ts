@@ -118,6 +118,17 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 
 const DEDUP_CACHE_MAX = 10_000;
 const POOL_RECOVERY_INTERVAL_MS = 60_000;
+// Relay health / cooldown. A relay that keeps dropping shortly after it connects
+// (a "flap") burns CPU + bandwidth: every reconnect re-arms the subscription and
+// fires a since-backfill query, and the relay's own auto-reconnect loop keeps
+// retrying forever. After RELAY_FLAP_THRESHOLD flaps we stop its self-reconnect
+// and skip it in the pool recovery sweep for an exponentially growing cooldown,
+// so a single sick relay can't churn the pool. The other relays carry delivery
+// in the meantime (publish is fire-and-forget across connected relays).
+const RELAY_FLAP_WINDOW_MS = 30_000;       // connected < this before dropping = a flap
+const RELAY_FLAP_THRESHOLD = 3;            // consecutive flaps before cooldown kicks in
+const RELAY_COOLDOWN_BASE_MS = 60_000;     // first cooldown span
+const RELAY_COOLDOWN_MAX_MS = 15 * 60_000; // cap so a relay is always eventually retried
 // Gift-wrap (kind 1059) outer created_at is now the REAL send time — backdating
 // was removed (see nostr-crypto.createGiftWrap) because it was the root cause of
 // the "first message ghosts" bug: a relay applies a subscription's `since` to
@@ -184,6 +195,12 @@ export class NostrRelayPool {
   // connect (startup — covered by initialize()'s global backfill) from a
   // RE-connect (recovers the idle gap via backfillRelay). Keyed by relay url.
   private relayHasConnected: Set<string> = new Set();
+
+  // Per-relay health for flap detection / cooldown. Keyed by url so it survives
+  // RelayEntry recreation across connectAll(). `cooldownUntil` is a Date.now()
+  // ms deadline; while it's in the future the pool recovery sweep skips the
+  // relay and its self-reconnect has been stopped via disconnect().
+  private relayHealth: Map<string, {connectedAt: number; flaps: number; cooldownUntil: number; lastState: string}> = new Map();
 
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
@@ -892,6 +909,7 @@ export class NostrRelayPool {
           );
         }
       }
+      this.trackRelayHealth(config.url, instance.getState());
       this.notifyStateChange();
     };
 
@@ -1117,19 +1135,79 @@ export class NostrRelayPool {
   }
 
   private recoverFailedRelays(): void {
+    const now = Date.now();
     for(const entry of this.relayEntries) {
-      if(entry.instance.getState() === 'disconnected') {
-        this.log('[NostrRelayPool] pool recovery: retrying', entry.config.url);
-        entry.instance.initialize().then(() => {
-          if(this.isSubscribedFlag && entry.config.read) {
-            entry.instance.pendingSubscribe = true;
-          }
-          entry.instance.connect();
-        }).catch((err) => {
-          this.log.error('[NostrRelayPool] pool recovery failed for:', entry.config.url, err);
-        });
-      }
+      if(entry.instance.getState() !== 'disconnected') continue;
+
+      // Skip relays still serving a flap cooldown — retrying now would just
+      // re-arm a subscription that drops again within seconds.
+      const health = this.relayHealth.get(entry.config.url);
+      if(health && health.cooldownUntil > now) continue;
+
+      this.log('[NostrRelayPool] pool recovery: retrying', entry.config.url);
+      entry.instance.initialize().then(() => {
+        if(this.isSubscribedFlag && entry.config.read) {
+          entry.instance.pendingSubscribe = true;
+        }
+        entry.instance.connect();
+      }).catch((err) => {
+        this.log.error('[NostrRelayPool] pool recovery failed for:', entry.config.url, err);
+      });
     }
+  }
+
+  /**
+   * Flap detection. Called on every relay state transition. A relay that stays
+   * connected past RELAY_FLAP_WINDOW_MS is healthy and resets its flap counter;
+   * one that drops sooner counts as a flap. After RELAY_FLAP_THRESHOLD
+   * consecutive flaps we set an exponentially-growing cooldown AND call
+   * disconnect() to stop the instance's own forever-retry loop, so the relay
+   * goes quiet until the next recovery sweep past `cooldownUntil` revives it.
+   *
+   * Side effects (disconnect) run AFTER all health fields are updated so the
+   * re-entrant onStateChange('disconnected') disconnect triggers is a no-op.
+   */
+  private trackRelayHealth(url: string, state: string): void {
+    let health = this.relayHealth.get(url);
+    if(!health) {
+      health = {connectedAt: -1, flaps: 0, cooldownUntil: 0, lastState: 'disconnected'};
+      this.relayHealth.set(url, health);
+    }
+
+    const now = Date.now();
+    const wasConnected = health.lastState === 'connected';
+    health.lastState = state;
+
+    if(state === 'connected') {
+      health.connectedAt = now;
+      return;
+    }
+
+    // Only a transition out of a real connected session is a candidate flap.
+    // connectedAt uses a -1 sentinel (0 is a valid timestamp under fake clocks).
+    if(!wasConnected || health.connectedAt < 0) return;
+    const connectedFor = now - health.connectedAt;
+    health.connectedAt = -1;
+
+    if(connectedFor >= RELAY_FLAP_WINDOW_MS) {
+      health.flaps = 0; // healthy session — clear the streak
+      return;
+    }
+
+    health.flaps++;
+    if(health.flaps < RELAY_FLAP_THRESHOLD) return;
+
+    const backoff = Math.min(
+      RELAY_COOLDOWN_BASE_MS * 2 ** (health.flaps - RELAY_FLAP_THRESHOLD),
+      RELAY_COOLDOWN_MAX_MS
+    );
+    health.cooldownUntil = now + backoff;
+    this.log(
+      '[NostrRelayPool] relay flapping — cooling down', url,
+      'for', Math.round(backoff / 1000), 's (flaps:', health.flaps + ')'
+    );
+    // Stop the instance's own auto-reconnect for the cooldown window.
+    this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
   }
 
   private notifyStateChange(): void {
