@@ -440,6 +440,7 @@ describe('PhantomChatMTProtoServer', () => {
     const mockChatAPI = {
       getActivePeer: vi.fn().mockReturnValue('differentPeer'),
       connect: vi.fn().mockResolvedValue(undefined),
+      allocateMessageId: vi.fn().mockReturnValue('eventId123'),
       sendText: vi.fn().mockResolvedValue('eventId123')
     };
 
@@ -447,6 +448,7 @@ describe('PhantomChatMTProtoServer', () => {
       server.setChatAPI(mockChatAPI);
       mockChatAPI.getActivePeer.mockReturnValue('differentPeer');
       mockChatAPI.connect.mockResolvedValue(undefined);
+      mockChatAPI.allocateMessageId.mockReturnValue('eventId123');
       mockChatAPI.sendText.mockResolvedValue('eventId123');
 
       mockStore.saveMessage = vi.fn().mockResolvedValue(undefined);

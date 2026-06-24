@@ -526,7 +526,7 @@ export class ChatAPI {
    *   IDB row (FIND-e49755c1 residual).
    * @returns The generated message ID
    */
-  async sendText(content: string, opts?: {mid?: number; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}}): Promise<string> {
+  async sendText(content: string, opts?: {mid?: number; messageId?: string; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}}): Promise<string> {
     return this.sendMessage('text', content, opts);
   }
 
@@ -610,9 +610,12 @@ export class ChatAPI {
     // media store row by this rumor id so it MERGES with the row saved here
     // (also rumor-id keyed) instead of creating a second, fileMetadata-less row
     // that renders as raw JSON. See sendFileMessage.
-    opts?: {mid?: number; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}; onPublishedRumorId?: (rumorId: string) => void}
+    opts?: {mid?: number; messageId?: string; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}; onPublishedRumorId?: (rumorId: string) => void}
   ): Promise<string> {
-    const messageId = this.generateMessageId();
+    // The caller (VMT) may pre-allocate the id so it can render the optimistic
+    // outgoing bubble BEFORE this publish/save runs — the row's mid (derived
+    // from messageId + timestamp) then matches the already-painted bubble.
+    const messageId = opts?.messageId ?? this.generateMessageId();
     // If caller provided an authoritative seconds-precision timestamp, pin
     // the internal timestamp to it so the partial IDB row's timestamp
     // matches whatever VMT will later stamp on its authoritative save. See
@@ -1329,6 +1332,16 @@ export class ChatAPI {
    */
   private generateMessageId(): string {
     return `chat-${Date.now()}-${this.messageIdCounter++}`;
+  }
+
+  /**
+   * Pre-allocate the next message id WITHOUT sending. Lets the caller compute
+   * the bubble mid and render the optimistic outgoing bubble before publish,
+   * then pass the same id back into `sendText({messageId})` so the persisted
+   * row keys to the same mid (no duplicate / re-keyed row).
+   */
+  public allocateMessageId(): string {
+    return this.generateMessageId();
   }
 
   /**

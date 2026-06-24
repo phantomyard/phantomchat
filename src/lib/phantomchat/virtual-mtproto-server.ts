@@ -1342,10 +1342,6 @@ export class PhantomChatMTProtoServer {
     if(!peerPubkey) return emptyUpdates;
 
     try {
-      if(this.chatAPI.getActivePeer() !== peerPubkey) {
-        await this.chatAPI.connect(peerPubkey);
-      }
-
       // ChatAPI.sendText is the SINGLE writer for the IDB row. It carries the
       // full identity triple (mid + twebPeerId + isOutgoing) AND keys the row
       // by `eventId = publishedRumorId` (64-hex), which is the only form
@@ -1385,16 +1381,21 @@ export class PhantomChatMTProtoServer {
         }
       }
 
-      const messageId: string = await this.chatAPI.sendText(text, {twebPeerId, timestampSec: now, replyTo});
-      // mapEventId hashes `messageId + timestamp` into a tweb mid the same
-      // way ChatAPI does on its row save (see chat-api.ts:615), so the value
-      // we use for `injectOutgoingBubble` matches the row's `mid`.
+      // Optimistic local echo: pre-allocate the message id and paint the
+      // outgoing bubble BEFORE connect()/encrypt/publish. The bubble's mid is
+      // derived purely from (messageId, now) — neither needs relays — so on a
+      // cold first send the user's own message appears instantly instead of
+      // waiting ~300-700ms for the relay-pool dial + identity decrypt. The same
+      // id is then handed to sendText() so the persisted row keys to the same
+      // mid. (mapEventId hashes `messageId + timestamp` into a tweb mid the same
+      // way ChatAPI does on its row save — see chat-api.ts allocateMessageId.)
+      const messageId = this.chatAPI.allocateMessageId();
       const mid = await this.mapper.mapEventId(messageId, now);
 
-      // Inject the outgoing bubble directly into the main-thread bubble
-      // pipeline. This is the ONLY history_append dispatch path for P2P
-      // sends — beforeMessageSending on the Worker side is skipped for
-      // P2P peers to avoid duplicate renders.
+      // This is the ONLY history_append dispatch path for P2P sends —
+      // beforeMessageSending on the Worker side is skipped for P2P peers to
+      // avoid duplicate renders. The 1:1 path now mirrors the group path
+      // (sendGroupMessage), which already renders optimistically before return.
       await this.injectOutgoingBubble({
         peerId: Math.abs(peerId),
         mid,
@@ -1403,6 +1404,16 @@ export class PhantomChatMTProtoServer {
         senderPubkey: this.ownPubkey,
         ...(replyToMid !== undefined ? {replyToMid} : {})
       });
+
+      // Now do the (possibly slow) connect + encrypt + publish + persist in the
+      // background of the already-visible bubble. Awaited so the Worker's P2P
+      // shortcut still gets {phantomchatMid, phantomchatEventId} to rename the
+      // temp mid and so publish failures fall through to the offline queue. The
+      // delivery tick (✓ → ✓✓) updates asynchronously from receipts regardless.
+      if(this.chatAPI.getActivePeer() !== peerPubkey) {
+        await this.chatAPI.connect(peerPubkey);
+      }
+      await this.chatAPI.sendText(text, {messageId, twebPeerId, timestampSec: now, replyTo});
 
       // Return the mid and date so the Worker's P2P shortcut can
       // re-assign the message's id from the temp value (0.0001) to the

@@ -384,6 +384,33 @@ describe('ChatAPI', () => {
       expect(messageId).toBeDefined();
     });
 
+    // Optimistic local echo (#1): VMT pre-allocates the id, paints the bubble,
+    // then hands the SAME id to sendText so the persisted row keys to the mid
+    // the bubble already used. These two invariants make that safe.
+    test('allocateMessageId() returns fresh unique ids without sending', async() => {
+      const a = chatApi.allocateMessageId();
+      const b = chatApi.allocateMessageId();
+      expect(typeof a).toBe('string');
+      expect(a).not.toBe(b);
+      // allocating must not push anything to history (no send happened)
+      expect(chatApi.getHistory()).toHaveLength(0);
+    });
+
+    test('sendText honors a caller-provided messageId (row keys to the same id)', async() => {
+      mockPool.simulateConnect();
+      await chatApi.connect(PEER_ID);
+
+      const preAllocated = chatApi.allocateMessageId();
+      const returned = await chatApi.sendText('Hi Lena can you read this?', {messageId: preAllocated});
+
+      // The send must reuse the pre-allocated id, not mint a new one — otherwise
+      // the optimistic bubble's mid and the persisted row's mid would diverge.
+      expect(returned).toBe(preAllocated);
+      const history = chatApi.getHistory();
+      expect(history).toHaveLength(1);
+      expect(history[0].id).toBe(preAllocated);
+    });
+
     test('allows empty content - returns messageId', async() => {
       mockPool.simulateConnect();
 
