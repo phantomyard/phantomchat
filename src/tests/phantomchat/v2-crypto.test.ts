@@ -121,6 +121,44 @@ describe('PhantomChat Protocol v2 (AES-256-GCM)', () => {
       expect(rumor.id).toBe(rumorId);
     });
 
+    it('returns the exact rumor hashed into rumorId, even when the outer envelope timestamp differs (retry passthrough)', async() => {
+      const {skA, pkA, skB, pkB} = freshKeys();
+      // wrapV2 calls Date.now() twice: once for the inner rumor's created_at
+      // (which rumorId is hashed over) and once, later, for the outer envelope.
+      // Force every call into a distinct second so the two timestamps differ —
+      // exactly the race that broke the delivery-retry layer.
+      const realDateNow = Date.now;
+      let call = 0;
+      Date.now = () => 1_700_000_000_000 + (call++) * 1500;
+      let event, rumorId, rumor;
+      try {
+        ({event, rumorId, rumor} = await wrapV2(skA, pkB, 'retry passthrough'));
+      } finally {
+        Date.now = realDateNow;
+      }
+
+      // The returned rumor IS the object that was hashed into rumorId.
+      expect(rumor).toBeDefined();
+      expect(rumor.id).toBe(rumorId);
+      expect(getEventHash(rumor as any)).toBe(rumorId);
+      expect(rumor.pubkey).toBe(pkA); // real sender, not the ephemeral outer key
+
+      // Regression guard: the outer envelope carries a DIFFERENT timestamp, so a
+      // rumor reconstructed from event.created_at (the old bug) hashes wrong.
+      expect(event.created_at).not.toBe(rumor.created_at);
+      const reconstructedFromOuter = {
+        kind: 14, content: 'retry passthrough', pubkey: pkA,
+        created_at: event.created_at, tags: event.tags, id: rumorId
+      };
+      expect(getEventHash(reconstructedFromOuter as any)).not.toBe(rumorId);
+
+      // The verbatim rumor survives a retry re-wrap and unwraps to the same id.
+      const rewrapped = await rewrapV2(skA, pkB, rumor as any);
+      const out = await unwrapV2(rewrapped, skB);
+      expect(out.id).toBe(rumorId);
+      expect(out.content).toBe('retry passthrough');
+    });
+
     it('sender can unwrap (self-send)', async() => {
       const {skA, pkA, skB, pkB} = freshKeys();
       // Pre-derive the symmetric key so it's in cache for self-send unwrap
