@@ -260,7 +260,7 @@ export async function wrapV2(
   recipientPubHex: string,
   content: string,
   replyTo?: {eventId: string; relayUrl?: string}
-): Promise<{event: NTNostrEvent; rumorId: string; senderPubkey: string}> {
+): Promise<{event: NTNostrEvent; rumorId: string; senderPubkey: string; rumor: UnsignedEvent}> {
   const senderPubHex = getPublicKey(senderSk);
   const tags: string[][] = [['p', recipientPubHex], ['v', 'pc-v2']];
   if(replyTo) {
@@ -300,13 +300,16 @@ export async function wrapV2(
   };
   const event = finalizeEvent(eventTemplate, ephemeralSk) as unknown as NTNostrEvent;
 
-  // Return the REAL sender pubkey alongside the event + rumor id. The outer
-  // event is signed with a throwaway ephemeral key (envelope privacy), so
-  // `event.pubkey` is NOT the sender. Callers that reconstruct a synthetic
-  // rumor for the delivery-retry layer MUST use this `senderPubkey`, otherwise
-  // the receiver's counterparty binding check rejects the rewrapped rumor
-  // (Bug: worker cache isolation / wrong rumor pubkey).
-  return {event, rumorId, senderPubkey: senderPubHex};
+  // Return the REAL sender pubkey AND the exact rumor that was hashed into
+  // `rumorId`. The outer event is signed with a throwaway ephemeral key
+  // (envelope privacy), so `event.pubkey` is NOT the sender. Crucially, the
+  // outer event also carries its OWN `created_at` (a second `Date.now()` call),
+  // which can differ from the inner rumor's timestamp by a second or more. The
+  // delivery-retry layer must pass `rumor` through verbatim — reconstructing it
+  // from `event.created_at` would change the timestamp, so `getEventHash(rumor)`
+  // would no longer equal `rumorId` and the receiver's recompute check (unwrapV2)
+  // would reject the retried message.
+  return {event, rumorId, senderPubkey: senderPubHex, rumor: rumorWithId};
 }
 
 /**

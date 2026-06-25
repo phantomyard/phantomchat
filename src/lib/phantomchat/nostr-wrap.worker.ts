@@ -36,23 +36,16 @@ ctx.addEventListener('message', (e: MessageEvent) => {
 
   // PhantomChat v2: use AES-256-GCM (fast, no ephemeral key)
   wrapV2(senderSk, recipientPubHex, plaintext, replyTo).then(
-    ({event, rumorId, senderPubkey}) => {
+    ({event, rumorId, rumor}) => {
       ctx.postMessage({
         id,
         wraps: [event],
         rumorId,
-        rumor: {
-          kind: 14,
-          content: plaintext,
-          // Use the REAL sender pubkey, NOT event.pubkey (which is the
-          // throwaway ephemeral signing key). The delivery-retry layer
-          // rewraps this rumor; the receiver binds rumor.pubkey to the
-          // expected counterparty, so an ephemeral pubkey would be rejected.
-          pubkey: senderPubkey,
-          created_at: event.created_at,
-          tags: event.tags,
-          id: rumorId
-        } as UnsignedEvent
+        // Pass the EXACT rumor that was hashed into rumorId through verbatim.
+        // Reconstructing it from event.created_at (a separate Date.now() call)
+        // would change the inner timestamp, so getEventHash(rumor) !== rumorId
+        // and the receiver's recompute check (unwrapV2) rejects the retry.
+        rumor: rumor as UnsignedEvent
       });
     },
     (err) => {
