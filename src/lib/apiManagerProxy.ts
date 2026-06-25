@@ -6,7 +6,7 @@
 
 import type {ModifyFunctionsToAsync} from '@types';
 import {type State} from '@config/state';
-import type {Chat, ChatPhoto, Message, MessagePeerReaction, PeerNotifySettings, User, UserProfilePhoto} from '@layer';
+import type {Chat, ChatPhoto, Config, Message, MessagePeerReaction, PeerNotifySettings, User, UserProfilePhoto} from '@layer';
 import type {CryptoMethods} from '@lib/crypto/crypto_methods';
 import type {ThumbStorageMedia} from '@lib/storages/thumbs';
 import type ThumbsStorage from '@lib/storages/thumbs';
@@ -151,6 +151,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
   };
 
   private appConfig: MaybePromise<MTAppConfig>;
+  private config: MaybePromise<Config>;
 
   private closeMTProtoWorker = noop;
 
@@ -1020,6 +1021,28 @@ class ApiManagerProxy extends MTProtoMessagePort {
     return cache?.[thumbSize] || generateEmptyThumb(thumbSize);
   }
 
+  /**
+   * [PhantomChat.chat] Prime a synthetic doc/photo's cache context with an
+   * already-resolved local/decrypted object URL and signal completion.
+   *
+   * The P2P media download short-circuit (`appDownloadManager.downloadMedia`)
+   * fetches + decrypts on the main thread and never goes through
+   * `apiFileManager`, so it normally never stamps the thumb cache nor fires
+   * `document_downloaded`. `appMediaPlaybackController.addMedia` waits on that
+   * event before setting `<audio>.src` — without this a voice note shows a play
+   * button that does nothing (the resolved URL is produced but never reaches the
+   * player). This mirrors `apiFileManager`'s post-download bookkeeping for our
+   * main-thread-only media.
+   */
+  public setLocalMediaUrl(media: ThumbStorageMedia, url: string, downloaded: number) {
+    const key = getThumbKey(media);
+    (this.mirrors.thumbs[key] ??= {})[THUMB_TYPE_FULL] = {downloaded, url, type: THUMB_TYPE_FULL};
+    const id = (media as any)?.id;
+    if(id != null) {
+      rootScope.dispatchEvent('document_downloaded', id);
+    }
+  }
+
   public getStickerCachedThumb(docId: DocId, toneIndex: string | number) {
     const key = getStickerThumbKey(docId, toneIndex);
     return this.mirrors.stickerThumbs[key];
@@ -1168,6 +1191,36 @@ class ApiManagerProxy extends MTProtoMessagePort {
     }
 
     return this.appConfig;
+  }
+
+  /**
+   * Cached getConfig — avoids a Worker bridge round-trip on every send.
+   * The config is static stub data in PhantomChat (never changes from the
+   * server), so caching the first fetch on the main thread is safe.
+   */
+  public getConfig(overwrite?: boolean) {
+    if(overwrite) {
+      this.config = undefined;
+    }
+
+    if(!this.config) {
+      const promise = rootScope.managers.apiManager.getConfig().then((config) => {
+        if(this.config === promise) {
+          this.config = config;
+        }
+
+        return config;
+      }).catch((err) => {
+        if(this.config === promise) {
+          this.config = undefined; // allow retry on next call
+        }
+        throw err;
+      });
+
+      return this.config = promise;
+    }
+
+    return this.config;
   }
 
   public isPremiumFeaturesHidden(): MaybePromise<boolean> {

@@ -150,6 +150,7 @@ describe('VMT sendMessage: outgoing dialog bump (regression)', () => {
     server.setChatAPI({
       getActivePeer: vi.fn().mockReturnValue(PEER_PUBKEY),
       connect: vi.fn().mockResolvedValue(undefined),
+      allocateMessageId: vi.fn().mockReturnValue('event-abc-1'),
       sendText: vi.fn().mockResolvedValue('event-abc-1')
     });
   });

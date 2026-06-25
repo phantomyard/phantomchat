@@ -24,7 +24,8 @@ const PHANTOMCHAT_DB_NAMES = [
   'phantomchat-reactions',
   'PhantomChatPool',
   'PhantomChat.chat',
-  'phantomchat-push'
+  'phantomchat-push',
+  'phantomchat-local-media'
 ];
 
 // All PhantomChat localStorage keys
@@ -143,6 +144,10 @@ async function clearPhantomChatData(opts: {keepSeed: boolean}): Promise<string[]
     const {disposeNostrUnwrapClient} = await import('./nostr-unwrap-client');
     disposeNostrUnwrapClient();
   } catch(e) { logSwallow('Cleanup.disposeUnwrapWorker', e); }
+  // NB: the local media store ('phantomchat-local-media', own voice notes /
+  // images held for instant playback) is wiped via PHANTOMCHAT_DB_NAMES below
+  // — deleteDB handles it without opening a connection (which could hang on a
+  // version-change block).
 
   // 1. Close open DB connections held by singletons (none of these touch PhantomChat.chat)
   const closes: Promise<void>[] = [];

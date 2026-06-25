@@ -17,7 +17,7 @@
  * This is the lesson from cryptoMessagePort: an invoke that posts to a port with
  * no listener hangs forever. Here there is always a synchronous floor.
  */
-import {unwrapNip17Message, GiftWrapVerificationError, type NTNostrEvent} from './nostr-crypto';
+import {unwrapNip17Message, unwrapV2, isV2Event, GiftWrapVerificationError, type NTNostrEvent} from './nostr-crypto';
 
 type Rumor = {kind: number; content: string; pubkey: string; created_at: number; tags: string[][]; id: string};
 
@@ -90,14 +90,48 @@ class NostrUnwrapClient {
     const {id, rumor, error} = e.data as {id: number; rumor?: Rumor; error?: {code?: string; message: string}};
     const entry = this.pending.get(id);
     if(!entry) return; // already resolved via timeout fallback — ignore late reply
-    clearTimeout(entry.timer);
-    this.pending.delete(id);
     if(error) {
+      // Bug (worker cache isolation): the unwrap worker runs in a separate
+      // Web Worker isolate with its OWN empty `symmetricKeyCache`. The main
+      // thread warms the cache (warmSymmetricKeyCache / lazy getSymmetricKey),
+      // but only `{type:'key', sk}` is ever posted to the worker — the warmed
+      // CryptoKeys never cross the isolate boundary. So for a v2 event the
+      // worker iterates an empty cache, fails fast with `no_matching_key`, and
+      // would reject here — cancelling the 8s timeout fallback that would
+      // otherwise retry synchronously on the main thread (where the cache IS
+      // warm) and silently dropping the message.
+      //
+      // Fix: for a v2 `no_matching_key`, retry synchronously on the main
+      // thread (warm cache) before rejecting. Only reject if the main-thread
+      // retry also fails.
+      if(error.code === 'no_matching_key' && isV2Event(entry.event)) {
+        this.pending.delete(id);
+        clearTimeout(entry.timer);
+        unwrapV2(entry.event, entry.sk).then(
+          (r) => {
+            // Self-heal: the worker missed because its cache lacked this peer
+            // (a new conversation, or a warm that hadn't landed yet). Teach it
+            // the real sender so the NEXT message from them unwraps in-worker
+            // instead of bouncing to the main thread again.
+            const pubkey = (r as Rumor)?.pubkey;
+            if(pubkey && this.workerUsable && this.worker) {
+              this.worker.postMessage({type: 'warm', peers: [pubkey]});
+            }
+            entry.resolve(r as Rumor);
+          },
+          (err) => entry.reject(err as Error)
+        );
+        return;
+      }
+      clearTimeout(entry.timer);
+      this.pending.delete(id);
       entry.reject(error.code ?
         new GiftWrapVerificationError(error.code as any, error.message) :
         new Error(error.message));
       return;
     }
+    clearTimeout(entry.timer);
+    this.pending.delete(id);
     entry.resolve(rumor as Rumor);
   }
 
@@ -110,10 +144,18 @@ class NostrUnwrapClient {
     this.pending.clear();
     for(const entry of entries) {
       clearTimeout(entry.timer);
-      try {
-        entry.resolve(unwrapNip17Message(entry.event, entry.sk));
-      } catch(err) {
-        entry.reject(err as Error);
+      // Route v2 vs legacy in synchronous fallback
+      if(isV2Event(entry.event)) {
+        unwrapV2(entry.event, entry.sk).then(
+          (rumor) => entry.resolve(rumor as Rumor),
+          (err) => entry.reject(err as Error)
+        );
+      } else {
+        try {
+          entry.resolve(unwrapNip17Message(entry.event, entry.sk));
+        } catch(err) {
+          entry.reject(err as Error);
+        }
       }
     }
   }
@@ -127,6 +169,10 @@ class NostrUnwrapClient {
     this.ensure(sk);
 
     if(!this.workerUsable || !this.worker) {
+      // Synchronous fallback — route v2 vs legacy
+      if(isV2Event(event)) {
+        return unwrapV2(event, sk) as Promise<Rumor>;
+      }
       try {
         return Promise.resolve(unwrapNip17Message(event, sk));
       } catch(err) {
@@ -142,16 +188,39 @@ class NostrUnwrapClient {
         this.pending.delete(id);
         // Worker too slow / lost this request — unwrap synchronously now and
         // ignore any late reply for this id.
-        try {
-          entry.resolve(unwrapNip17Message(entry.event, entry.sk));
-        } catch(err) {
-          entry.reject(err as Error);
+        if(isV2Event(entry.event)) {
+          unwrapV2(entry.event, entry.sk).then(
+            (rumor) => entry.resolve(rumor as Rumor),
+            (err) => entry.reject(err as Error)
+          );
+        } else {
+          try {
+            entry.resolve(unwrapNip17Message(entry.event, entry.sk));
+          } catch(err) {
+            entry.reject(err as Error);
+          }
         }
       }, UNWRAP_TIMEOUT_MS);
 
       this.pending.set(id, {resolve, reject, event, sk, timer});
       this.worker!.postMessage({id, event});
     });
+  }
+
+  /**
+   * Pre-warm the worker's symmetric-key cache for known peers so v2 unwraps run
+   * IN the worker. Without this, every v2 gift-wrap misses the worker's empty
+   * cache, bounces back to a synchronous main-thread unwrapV2, and a cold-load
+   * backfill of that crypto freezes the UI for seconds. No-op in sync-fallback
+   * mode (no worker) — there the main-thread cache, warmed separately, is the
+   * one that matters.
+   */
+  warm(sk: Uint8Array, peers: string[]): void {
+    if(!peers.length) return;
+    this.ensure(sk); // spawns + keys the worker if needed (key lands before warm)
+    if(this.workerUsable && this.worker) {
+      this.worker.postMessage({type: 'warm', peers});
+    }
   }
 
   /** Terminate the worker and clear state (call on logout/lock). */

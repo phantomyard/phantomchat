@@ -141,6 +141,9 @@ describe('FIND-e49755c1 — mirror/IDB coherence', () => {
     const mockChatAPI = {
       getActivePeer: vi.fn().mockReturnValue(PEER_PUBKEY),
       connect: vi.fn().mockResolvedValue(undefined),
+      // Must return the SAME id the sendText mock keys its row by, so VMT's
+      // optimistic bubble mid (mapEventId(messageId, now)) matches the row mid.
+      allocateMessageId: vi.fn().mockReturnValue('ev_send_001'),
       // Simulates ChatAPI's authoritative save: full identity triple
       // (mid + twebPeerId + isOutgoing) computed via PhantomChatBridge — exactly
       // what `chat-api.ts:607-635` does in production. VMT no longer

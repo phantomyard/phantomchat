@@ -249,6 +249,11 @@ export class PhantomChatMTProtoServer {
   private ownPubkey: string | null;
   private chatAPI: any | null;
   private deps: PhantomChatMTProtoServerDeps;
+
+  // Layer 5: In-memory pubkey cache (peerId → pubkey). Eliminates a redundant
+  // IndexedDB read on every getHistory call for known peers. Populated lazily
+  // on first lookup, never invalidated (mappings are write-once).
+  private pubkeyCache = new Map<number, string>();
   // FIND-0ed3a22c: monotonic pts counter for update-bearing responses with
   // pts_count > 0. apiUpdatesManager.processUpdateMessage gates updates with
   // `if(pts > curState.pts) accept; else if(pts_count) drop as duplicate`,
@@ -276,6 +281,24 @@ export class PhantomChatMTProtoServer {
     this.ownPubkey = null;
     this.chatAPI = null;
     this.deps = deps;
+  }
+
+  /**
+   * Layer 5: Cached reverse lookup (peerId → pubkey).
+   * Wraps the IndexedDB `getPubkey` with an in-memory Map so repeat history
+   * fetches skip the IDB read entirely. Mappings are write-once (a peerId
+   * never changes its pubkey), so the cache never needs invalidation.
+   */
+  private async cachedGetPubkey(peerId: number): Promise<string | null> {
+    const absPeerId = Math.abs(peerId);
+    if(this.pubkeyCache.has(absPeerId)) {
+      return this.pubkeyCache.get(absPeerId)!;
+    }
+    const pubkey = await getPubkey(absPeerId);
+    if(pubkey) {
+      this.pubkeyCache.set(absPeerId, pubkey);
+    }
+    return pubkey;
   }
 
   // Seed the pts high-water-mark from persisted state so a returning user's
@@ -817,7 +840,7 @@ export class PhantomChatMTProtoServer {
     }
 
     const absPeerId = Math.abs(peerId);
-    const pubkey = await getPubkey(absPeerId);
+    const pubkey = await this.cachedGetPubkey(absPeerId);
 
     if(!pubkey) {
       console.warn(LOG_PREFIX, 'getHistory: no pubkey for peerId', absPeerId);
@@ -1205,7 +1228,7 @@ export class PhantomChatMTProtoServer {
         const peerId = extractPeerId(input) ?? (typeof input?.user_id !== 'undefined' ? Number(input.user_id) : null);
         if(peerId === null || peerId <= 0) continue;
 
-        const pubkey = await getPubkey(Math.abs(peerId));
+        const pubkey = await this.cachedGetPubkey(Math.abs(peerId));
         if(!pubkey) {
           console.warn(LOG_PREFIX, 'deleteContacts: no pubkey for peerId', peerId);
           continue;
@@ -1247,7 +1270,7 @@ export class PhantomChatMTProtoServer {
     }
 
     const absPeerId = Math.abs(peerId);
-    const pubkey = await getPubkey(absPeerId) ?? '';
+    const pubkey = await this.cachedGetPubkey(absPeerId) ?? '';
     const mapping = await getMapping(pubkey);
     const user = this.mapper.createTwebUser({peerId: absPeerId, firstName: mapping?.displayName, pubkey});
 
@@ -1284,7 +1307,7 @@ export class PhantomChatMTProtoServer {
     for(const inputUser of ids) {
       const userId = inputUser?.user_id ?? inputUser;
       if(!userId) continue;
-      const pubkey = await getPubkey(userId);
+      const pubkey = await this.cachedGetPubkey(userId);
       if(!pubkey) continue;
       const userMapping = await getMapping(pubkey);
       const user = this.mapper.createTwebUser({peerId: userId, firstName: userMapping?.displayName, pubkey});
@@ -1315,14 +1338,10 @@ export class PhantomChatMTProtoServer {
       return this.sendGroupMessage(peerId, params);
     }
 
-    const peerPubkey = await getPubkey(Math.abs(peerId));
+    const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));
     if(!peerPubkey) return emptyUpdates;
 
     try {
-      if(this.chatAPI.getActivePeer() !== peerPubkey) {
-        await this.chatAPI.connect(peerPubkey);
-      }
-
       // ChatAPI.sendText is the SINGLE writer for the IDB row. It carries the
       // full identity triple (mid + twebPeerId + isOutgoing) AND keys the row
       // by `eventId = publishedRumorId` (64-hex), which is the only form
@@ -1362,16 +1381,21 @@ export class PhantomChatMTProtoServer {
         }
       }
 
-      const messageId: string = await this.chatAPI.sendText(text, {twebPeerId, timestampSec: now, replyTo});
-      // mapEventId hashes `messageId + timestamp` into a tweb mid the same
-      // way ChatAPI does on its row save (see chat-api.ts:615), so the value
-      // we use for `injectOutgoingBubble` matches the row's `mid`.
+      // Optimistic local echo: pre-allocate the message id and paint the
+      // outgoing bubble BEFORE connect()/encrypt/publish. The bubble's mid is
+      // derived purely from (messageId, now) — neither needs relays — so on a
+      // cold first send the user's own message appears instantly instead of
+      // waiting ~300-700ms for the relay-pool dial + identity decrypt. The same
+      // id is then handed to sendText() so the persisted row keys to the same
+      // mid. (mapEventId hashes `messageId + timestamp` into a tweb mid the same
+      // way ChatAPI does on its row save — see chat-api.ts allocateMessageId.)
+      const messageId = this.chatAPI.allocateMessageId();
       const mid = await this.mapper.mapEventId(messageId, now);
 
-      // Inject the outgoing bubble directly into the main-thread bubble
-      // pipeline. This is the ONLY history_append dispatch path for P2P
-      // sends — beforeMessageSending on the Worker side is skipped for
-      // P2P peers to avoid duplicate renders.
+      // This is the ONLY history_append dispatch path for P2P sends —
+      // beforeMessageSending on the Worker side is skipped for P2P peers to
+      // avoid duplicate renders. The 1:1 path now mirrors the group path
+      // (sendGroupMessage), which already renders optimistically before return.
       await this.injectOutgoingBubble({
         peerId: Math.abs(peerId),
         mid,
@@ -1380,6 +1404,16 @@ export class PhantomChatMTProtoServer {
         senderPubkey: this.ownPubkey,
         ...(replyToMid !== undefined ? {replyToMid} : {})
       });
+
+      // Now do the (possibly slow) connect + encrypt + publish + persist in the
+      // background of the already-visible bubble. Awaited so the Worker's P2P
+      // shortcut still gets {phantomchatMid, phantomchatEventId} to rename the
+      // temp mid and so publish failures fall through to the offline queue. The
+      // delivery tick (✓ → ✓✓) updates asynchronously from receipts regardless.
+      if(this.chatAPI.getActivePeer() !== peerPubkey) {
+        await this.chatAPI.connect(peerPubkey);
+      }
+      await this.chatAPI.sendText(text, {messageId, twebPeerId, timestampSec: now, replyTo});
 
       // Return the mid and date so the Worker's P2P shortcut can
       // re-assign the message's id from the temp value (0.0001) to the
@@ -1570,7 +1604,7 @@ export class PhantomChatMTProtoServer {
       return this.editGroupMessage(peerId, params);
     }
 
-    const peerPubkey = await getPubkey(Math.abs(peerId));
+    const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));
     if(!peerPubkey) return emptyUpdates;
 
     const mid: number = params?.id;
@@ -1963,7 +1997,7 @@ export class PhantomChatMTProtoServer {
       return this.phantomchatSendFileToGroup(peerId, params);
     }
 
-    const peerPubkey = await getPubkey(Math.abs(peerId));
+    const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));
     if(!peerPubkey) {
       console.error(LOG_PREFIX, 'phantomchatSendFile: no pubkey mapping for peerId', Math.abs(peerId));
       return emptyUpdates;
@@ -2325,7 +2359,7 @@ export class PhantomChatMTProtoServer {
         for(const mid of mids) {
           const row = await store.getByMid(mid).catch((): null => null);
           if(!row?.eventId) continue;
-          const peerPubkey = await getPubkey(Math.abs(row.twebPeerId)).catch((): null => null);
+          const peerPubkey = await this.cachedGetPubkey(Math.abs(row.twebPeerId)).catch((): null => null);
           if(!peerPubkey) continue;
           const arr = perPeer.get(peerPubkey) ?? [];
           arr.push(row.eventId);
@@ -2402,7 +2436,7 @@ export class PhantomChatMTProtoServer {
         const group = await getGroupStore().getByPeerId(peerId);
         if(group) convId = `group:${group.groupId}`;
       } else if(this.ownPubkey) {
-        const pubkey = await getPubkey(Math.abs(peerId));
+        const pubkey = await this.cachedGetPubkey(Math.abs(peerId));
         if(pubkey) convId = store.getConversationId(this.ownPubkey, pubkey);
       }
 
@@ -2430,7 +2464,7 @@ export class PhantomChatMTProtoServer {
     if(peerId !== null && maxId > 0 && this.ownPubkey) {
       try {
         const absPeerId = Math.abs(peerId);
-        const pubkey = await getPubkey(absPeerId);
+        const pubkey = await this.cachedGetPubkey(absPeerId);
         if(pubkey) {
           const store = getMessageStore();
           const convId = store.getConversationId(this.ownPubkey, pubkey);
@@ -2458,7 +2492,7 @@ export class PhantomChatMTProtoServer {
       const groupStore = getGroupStore();
       const memberPubkeys: string[] = [];
       for(const uid of userIds) {
-        const pk = await getPubkey(uid);
+        const pk = await this.cachedGetPubkey(uid);
         if(pk) memberPubkeys.push(pk);
       }
       if(this.ownPubkey) memberPubkeys.unshift(this.ownPubkey);
@@ -2511,7 +2545,7 @@ export class PhantomChatMTProtoServer {
         return wrap();
       }
       for(const uid of userIds) {
-        const pk = await getPubkey(uid);
+        const pk = await this.cachedGetPubkey(uid);
         if(pk && !group.members.includes(pk)) {
           group.members.push(pk);
         }

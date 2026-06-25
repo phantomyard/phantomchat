@@ -181,6 +181,11 @@ export type ChatInputReplyTo = Pick<MessageSendingParams, 'replyToMsgId' | 'repl
 
 
 const CLASS_NAME = 'chat-input';
+// PhantomChat: voice recording toggle. When false the recorder isn't
+// constructed (the send button never enters mic mode) and updateSendBtn hides
+// the button on an empty input. Disabled again — voice recording is still too
+// buggy; to be revisited later. Flip to true to re-enable.
+const VOICE_RECORDING_ENABLED = false;
 // Lazy init to avoid circular import: ChatType may be undefined at module eval time
 let _peerExceptions: Set<ChatType>;
 function getPeerExceptions() {
@@ -261,6 +266,7 @@ export default class ChatInput {
   private forwardWasDroppingAuthor: boolean;
 
   private getWebPagePromise: Promise<void>;
+  private processWebPageDebounced: (richValue: string, entities: MessageEntity[]) => void;
   public willSendWebPage: WebPage = null;
   public webPageOptions: Parameters<AppMessagesManager['sendText']>[0]['webPageOptions'] = {};
   private forwarding: {[fromPeerId: PeerId]: number[]};
@@ -1343,7 +1349,9 @@ export default class ChatInput {
       this.setChatListeners();
     }
 
-    this.constructRecorder();
+    if(VOICE_RECORDING_ENABLED) {
+      this.constructRecorder();
+    }
 
     this.updateSendBtn();
 
@@ -1368,6 +1376,16 @@ export default class ChatInput {
     attachClickEvent(this.btnSend, this.onBtnSendClick, {listenerSetter: this.listenerSetter, touchMouseDown: true});
 
     this.saveDraftDebounced = debounce(() => this.saveDraft(), 2500, false, true);
+
+    // Debounce URL preview fetching so typing/pasting a URL doesn't fire
+    // messages.getWebPage on every keystroke. 300ms is enough to coalesce
+    // rapid typing while still feeling responsive on paste.
+    this.processWebPageDebounced = debounce(
+      (richValue: string, entities: MessageEntity[]) => this.processWebPage(richValue, entities),
+      300,
+      false,
+      true
+    );
 
     const makeControlButton = (langKey: LangPackKey | HTMLElement) => {
       const button = Button('btn-primary btn-transparent text-bold chat-input-control-button');
@@ -2760,7 +2778,7 @@ export default class ChatInput {
 
     maybeClearUndoHistory(this.messageInput);
 
-    this.processWebPage(richValue, entities);
+    this.processWebPageDebounced(richValue, entities);
 
     const isEmpty = !richValue.trim();
     if(isEmpty) {
@@ -2905,6 +2923,10 @@ export default class ChatInput {
       } else if(this.willSendWebPage) {
         this.onHelperCancel();
       }
+    }).catch(() => {
+      // Swallow rejection (e.g. MTProto disabled in P2P mode) — just clear
+      // the pending promise so the next URL can be processed.
+      if(this.getWebPagePromise === promise) this.getWebPagePromise = undefined;
     });
   }
 
@@ -3665,6 +3687,18 @@ export default class ChatInput {
       this.btnSend.classList.toggle(i, icon === i);
     });
 
+    // Voice recording disabled (see VOICE_RECORDING_ENABLED): on an empty input
+    // the button would have been the mic; with the recorder gone it falls back
+    // to a 'send' arrow that does nothing. Hide it entirely in that state so
+    // there's no dead button. (Scheduled shows 'schedule', Stories 'forward',
+    // forwarding/edit/suggested-post all have a real action — leave those.)
+    if(!VOICE_RECORDING_ENABLED) {
+      const wouldBeRecord = isInputEmpty && !this.editMsgId && !this.forwarding &&
+        !this.suggestedPost?.hasMedia &&
+        this.chat.type !== ChatType.Stories && this.chat.type !== ChatType.Scheduled;
+      this.btnSendContainer.style.display = wouldBeRecord ? 'none' : '';
+    }
+
     this.starsState.set({
       hasSendButton: icon === 'send',
       forwarding: accumulate(Object.values(this.forwarding || {}).map(messages => messages.length), 0)
@@ -3905,10 +3939,18 @@ export default class ChatInput {
     }
 
     this.sendingMessage = true;
+    if(this.btnSend) {
+      this.btnSend.disabled = true;
+      this.btnSend.classList.add('is-sending');
+    }
     try {
       await this.sendMessageInner(force);
     } finally {
       this.sendingMessage = false;
+      if(this.btnSend) {
+        this.btnSend.disabled = false;
+        this.btnSend.classList.remove('is-sending');
+      }
     }
   }
 
@@ -3929,7 +3971,9 @@ export default class ChatInput {
         }
       }
 
-      const config = await this.managers.apiManager.getConfig();
+      // Use the main-thread cached config (apiManagerProxy) instead of a
+      // Worker bridge round-trip — the config is static stub data.
+      const config = await apiManagerProxy.getConfig();
       const MAX_LENGTH = config.message_length_max;
       const textOverflow = value.length > MAX_LENGTH;
 
@@ -3986,10 +4030,14 @@ export default class ChatInput {
         clearDraft: true
       });
 
+      // Clear input immediately for ALL chat types — the text is already
+      // captured in the sendText() call above, so clearing the input here
+      // (before the sendingMessage guard releases) prevents a second click
+      // from reading the same text and sending a duplicate.
       if(PEER_EXCEPTIONS.has(this.chat.type)) {
         this.onMessageSent(true);
       } else {
-        this.onMessageSent(false, false);
+        this.onMessageSent(true, false);
       }
       if(this.suggestedPost) this.clearHelper();
       // this.onMessageSent();

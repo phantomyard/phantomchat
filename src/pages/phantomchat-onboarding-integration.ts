@@ -159,7 +159,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       });
 
       // --- Initialize ChatAPI ---
-      const chatAPI = new ChatAPI(identity.publicKey);
+      const chatAPI = new ChatAPI(identity.publicKey, identity.privateKey);
       window.__phantomchatChatAPI = chatAPI;
       server.setChatAPI(chatAPI);
       console.log('[PhantomChatOnboardingIntegration] ChatAPI initialized');

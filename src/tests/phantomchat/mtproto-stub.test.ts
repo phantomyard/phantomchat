@@ -101,6 +101,14 @@ describe('api-manager-stub MTProto rejection', () => {
         type: 'MTPROTO_DISABLED'
       });
   });
+
+  it('returns webPageEmpty for messages.getWebPage (no rejection)', async() => {
+    const result = await stubbedInvokeApi('messages.getWebPage', {url: 'https://example.com'});
+    expect(result).toMatchObject({
+      _: 'messages.webPage',
+      webpage: {_: 'webPageEmpty'}
+    });
+  });
 });
 
 // ---- NetworkerFactory stub tests ----

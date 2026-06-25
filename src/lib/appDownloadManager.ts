@@ -196,9 +196,35 @@ export class AppDownloadManager {
     if(phantomchatFM?.keyHex && phantomchatFM?.url) {
       const fileName = `phantomchat-${phantomchatFM.sha256 || phantomchatFM.url}`;
       return this.d(fileName, () => (async() => {
+        // Local fast-path: for our OWN sent media (and anything we've already
+        // fetched) the plaintext blob is in the local media store keyed by the
+        // ciphertext sha256. Use it before any network/decrypt so a just-sent
+        // voice note plays instantly and doesn't depend on the background
+        // Blossom upload having finished.
+        if(phantomchatFM.sha256) {
+          try {
+            const {getLocalMedia} = await import('@lib/phantomchat/phantomchat-local-media');
+            const local = await getLocalMedia(phantomchatFM.sha256);
+            if(local) {
+              if(type === 'url') {
+                const url = URL.createObjectURL(local);
+                apiManagerProxy.setLocalMediaUrl(media, url, local.size);
+                return url;
+              }
+              if(type === 'void') return;
+              return local;
+            }
+          } catch{ /* fall through to Blossom fetch */ }
+        }
         const {fetchAndDecryptPhantomChatFile} = await import('@lib/phantomchat/phantomchat-file-fetch');
         const blob = await fetchAndDecryptPhantomChatFile(phantomchatFM.url, phantomchatFM.keyHex, phantomchatFM.ivHex);
-        if(type === 'url') return URL.createObjectURL(blob);
+        if(type === 'url') {
+          const url = URL.createObjectURL(blob);
+          // Stamp the cache context + fire document_downloaded so the media
+          // player (addMedia) actually sets <audio>.src — see setLocalMediaUrl.
+          apiManagerProxy.setLocalMediaUrl(media, url, blob.size);
+          return url;
+        }
         if(type === 'void') return;
         return blob;
       })(), type) as any;
@@ -207,7 +233,13 @@ export class AppDownloadManager {
     if(localBlobUrl) {
       const fileName = `phantomchat-local-${localBlobUrl}`;
       return this.d(fileName, () => (async() => {
-        if(type === 'url') return localBlobUrl;
+        if(type === 'url') {
+          // Optimistic just-recorded/sent bubble: the local blob: URL is the
+          // playable source. Prime the cache context + signal completion so the
+          // media player sets <audio>.src (see setLocalMediaUrl).
+          apiManagerProxy.setLocalMediaUrl(media, localBlobUrl, media?.size || 0);
+          return localBlobUrl;
+        }
         if(type === 'void') return;
         const res = await fetch(localBlobUrl);
         return res.blob();

@@ -126,8 +126,10 @@ export class ChatAPI {
   /**
    * Create a new ChatAPI instance
    * @param ownId - The user's public key
+   * @param privateKeyHex - Optional 64-char hex private key. When provided,
+   *   the relay pool skips redundant identity decryption at initialize() time.
    */
-  constructor(ownId: string);
+  constructor(ownId: string, privateKeyHex?: string);
 
   /**
    * Create a new ChatAPI instance with dependency injection (for testing)
@@ -143,7 +145,7 @@ export class ChatAPI {
 
   constructor(
     ownId: string,
-    relayPool?: NostrRelayPool,
+    relayPool?: NostrRelayPool | string,
     offlineQueue?: OfflineQueue | null
   ) {
     this.ownId = ownId;
@@ -152,7 +154,7 @@ export class ChatAPI {
     this.log('[ChatAPI] initializing with ownId:', ownId.slice(0, 8) + '...');
 
     // Use injected dependencies or create real ones
-    if(relayPool && offlineQueue) {
+    if(relayPool && typeof relayPool === 'object' && offlineQueue) {
       this.relayPool = relayPool;
       this.offlineQueue = offlineQueue;
 
@@ -166,13 +168,18 @@ export class ChatAPI {
         });
       }
     } else {
+      // privateKeyHex may be passed as the 2nd arg (string) to skip redundant
+      // identity decryption in the relay pool.
+      const privateKeyHex = typeof relayPool === 'string' ? relayPool : undefined;
+
       // Create real NostrRelayPool
       this.relayPool = new NostrRelayPool({
         relays: [...DEFAULT_RELAYS],
         onMessage: (msg: DecryptedMessage) => this.handleRelayMessage(msg),
         onStateChange: (connectedCount: number, _totalCount: number) => {
           this.handlePoolStateChange(connectedCount);
-        }
+        },
+        ...(privateKeyHex ? {preloadedIdentity: {publicKey: ownId, privateKeyHex}} : {})
       });
       this.offlineQueue = new OfflineQueue(this.relayPool);
     }
@@ -519,7 +526,7 @@ export class ChatAPI {
    *   IDB row (FIND-e49755c1 residual).
    * @returns The generated message ID
    */
-  async sendText(content: string, opts?: {mid?: number; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}}): Promise<string> {
+  async sendText(content: string, opts?: {mid?: number; messageId?: string; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}}): Promise<string> {
     return this.sendMessage('text', content, opts);
   }
 
@@ -603,9 +610,12 @@ export class ChatAPI {
     // media store row by this rumor id so it MERGES with the row saved here
     // (also rumor-id keyed) instead of creating a second, fileMetadata-less row
     // that renders as raw JSON. See sendFileMessage.
-    opts?: {mid?: number; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}; onPublishedRumorId?: (rumorId: string) => void}
+    opts?: {mid?: number; messageId?: string; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}; onPublishedRumorId?: (rumorId: string) => void}
   ): Promise<string> {
-    const messageId = this.generateMessageId();
+    // The caller (VMT) may pre-allocate the id so it can render the optimistic
+    // outgoing bubble BEFORE this publish/save runs — the row's mid (derived
+    // from messageId + timestamp) then matches the already-painted bubble.
+    const messageId = opts?.messageId ?? this.generateMessageId();
     // If caller provided an authoritative seconds-precision timestamp, pin
     // the internal timestamp to it so the partial IDB row's timestamp
     // matches whatever VMT will later stamp on its authoritative save. See
@@ -1322,6 +1332,16 @@ export class ChatAPI {
    */
   private generateMessageId(): string {
     return `chat-${Date.now()}-${this.messageIdCounter++}`;
+  }
+
+  /**
+   * Pre-allocate the next message id WITHOUT sending. Lets the caller compute
+   * the bubble mid and render the optimistic outgoing bubble before publish,
+   * then pass the same id back into `sendText({messageId})` so the persisted
+   * row keys to the same mid (no duplicate / re-keyed row).
+   */
+  public allocateMessageId(): string {
+    return this.generateMessageId();
   }
 
   /**

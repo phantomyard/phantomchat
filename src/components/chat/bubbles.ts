@@ -67,6 +67,7 @@ import ReactionsElement, {REACTIONS_ELEMENTS} from '@components/chat/reactions';
 import type ReactionElement from '@components/chat/reaction';
 import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
 import pause from '@helpers/schedulers/pause';
+import yieldToMainThread from '@helpers/schedulers/yieldToMainThread';
 import ScrollSaver from '@helpers/scrollSaver';
 import getObjectKeysAndSort from '@helpers/object/getObjectKeysAndSort';
 import forEachReverse from '@helpers/array/forEachReverse';
@@ -4660,6 +4661,12 @@ export default class ChatBubbles {
 
     this.lazyLoadQueue.lock();
 
+    // NOTE: the old-chat clear + preloader is attached further down, gated on the
+    // real `!cached` flag (see "Layer 1" below). It must NOT fire here for every
+    // non-same-peer switch: a cached chat renders synchronously, so blanking the
+    // bubbles and flashing a spinner before the instant re-render is a visible
+    // regression in the common warm-switch path this perf work is speeding up.
+
     const canScroll = samePeer && sameSearch;
     // const haveToScrollToBubble = (topMessage && (isJump || samePeer)) || isTarget;
     const haveToScrollToBubble = canScroll || (topMessageFullMid !== EMPTY_FULL_MID && isJump) || isTarget;
@@ -4743,6 +4750,27 @@ export default class ChatBubbles {
       }
     }
 
+    // Layer 2: Build finishPeerChange options early so we can start
+    // finishPeerChange in parallel with the history fetch.
+    const finishPeerChangeOptions: Parameters<Chat['finishPeerChange']>[0] = {
+      peerId,
+      isTarget,
+      isJump,
+      lastMsgId,
+      startParam,
+      middleware,
+      text: options.text,
+      entities: options.entities
+    };
+
+    // Layer 2: Start finishPeerChange in parallel with history fetch.
+    // finishPeerChange rebuilds topbar/input/bubbles UI which doesn't depend
+    // on the history result. Running them concurrently cuts the wait time.
+    let finishPeerChangePromise: Promise<void> | undefined;
+    if(!samePeer) {
+      finishPeerChangePromise = m(this.chat.finishPeerChange(finishPeerChangeOptions));
+    }
+
     let result: Awaited<ReturnType<ChatBubbles['getHistory']>>;
     if(!savedPosition) {
       result = await m(this.getHistory1(
@@ -4761,24 +4789,23 @@ export default class ChatBubbles {
       };
     }
 
+    // Wait for finishPeerChange to complete (it was started in parallel above)
+    if(finishPeerChangePromise) {
+      await finishPeerChangePromise;
+    }
+
     this.setPeerCached = result.cached;
 
     log.warn('got history');// warning
 
     const {promise, cached} = result;
-    const finishPeerChangeOptions: Parameters<Chat['finishPeerChange']>[0] = {
-      peerId,
-      isTarget,
-      isJump,
-      lastMsgId,
-      startParam,
-      middleware,
-      text: options.text,
-      entities: options.entities
-    };
 
+    // Layer 1: clear the old chat and show a preloader ONLY for non-cached peers.
+    // finishPeerChange already ran in parallel above, and getHistory1 has now
+    // resolved so `cached` is known. A cached chat renders synchronously from
+    // here, so it skips the blank+spinner flash; a non-cached chat shows the
+    // preloader right before we await its (slow) render promise.
     if(!cached && !samePeer) {
-      await m(this.chat.finishPeerChange(finishPeerChangeOptions));
       this.scrollable.replaceChildren();
       this.preloader.attach(this.container);
     }
@@ -9065,17 +9092,38 @@ export default class ChatBubbles {
       }
     }
 
-    let promises: Promise<any>[] = [];
+    // Chunked rendering applies ONLY to large history-backfill pages: process
+    // messages in batches of ~8, yielding to the event loop between chunks so a
+    // single long synchronous DOM-creation burst doesn't block the UI when
+    // rendering 40+ messages. Small opens and live single-message appends
+    // (history.length is 1-2, e.g. _renderNewMessage / send) render in one pass
+    // — chunking them just adds per-message scheduler latency to the exact path
+    // that should be a clean 1-2 bubble append.
+    const RENDER_CHUNK_SIZE = 8;
+    const RENDER_CHUNK_THRESHOLD = 16; // anything that fits a screen renders in one pass
     if(this.chat.type === ChatType.Search && false) {
       const length = history.length;
-      if(reverse) for(let i = 0; i < length; ++i) promises.push(cb(messages[i]));
-      else for(let i = length - 1; i >= 0; --i) promises.push(cb(messages[i]));
+      const searchPromises: Promise<any>[] = [];
+      if(reverse) for(let i = 0; i < length; ++i) searchPromises.push(cb(messages[i]));
+      else for(let i = length - 1; i >= 0; --i) searchPromises.push(cb(messages[i]));
+      searchPromises.length && await Promise.all(searchPromises);
+    } else if(messages.length <= RENDER_CHUNK_THRESHOLD) {
+      const promises = messages.map(cb);
+      promises.length && await Promise.all(promises);
     } else {
-      promises = messages.map(cb);
+      for(let i = 0; i < messages.length; i += RENDER_CHUNK_SIZE) {
+        const chunk = messages.slice(i, i + RENDER_CHUNK_SIZE);
+        const chunkPromises = chunk.map(cb);
+        chunkPromises.length && await Promise.all(chunkPromises);
+        // Yield a real macro-task between chunks so the browser can paint
+        // progressive content. MessageChannel, not setTimeout(0): a nested
+        // timer is clamped to ~4ms and throttled to 1000ms+ in background tabs,
+        // which would make an unfocused backfill crawl.
+        if(i + RENDER_CHUNK_SIZE < messages.length) {
+          await yieldToMainThread();
+        }
+      }
     }
-
-    // cannot combine them into one promise
-    promises.length && await Promise.all(promises);
     await this.messagesQueuePromise;
 
     // * have to check again, because it can be skipped above

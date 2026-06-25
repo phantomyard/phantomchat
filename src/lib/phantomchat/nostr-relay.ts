@@ -12,7 +12,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import * as secp256k1 from '@noble/secp256k1';
-import {wrapNip17Message} from './nostr-crypto';
+import {wrapV2, wrapNip17Message, isV2Event} from './nostr-crypto';
 import {getNostrUnwrapClient} from './nostr-unwrap-client';
 import {finalizeEvent, verifyEvent} from 'nostr-tools/pure';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
@@ -385,8 +385,15 @@ export class NostrRelay {
     this.log('[NostrRelay] storing gift-wrapped message for:', recipientPubkey.slice(0, 8) + '...');
 
     try {
-      // Create NIP-17 gift-wrap events (recipient + self-send)
-      const {wraps} = wrapNip17Message(this.privateKey, recipientPubkey, plaintext);
+      // Use v2 (AES-256-GCM) with legacy fallback
+      let wraps;
+      try {
+        const {event} = await wrapV2(this.privateKey, recipientPubkey, plaintext);
+        wraps = [event];
+      } catch{
+        // Fallback to legacy NIP-17 wrap
+        wraps = wrapNip17Message(this.privateKey, recipientPubkey, plaintext).wraps;
+      }
 
       // Publish ALL wraps to relay (self-send + recipient)
       for(const wrap of wraps) {

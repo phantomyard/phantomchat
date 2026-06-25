@@ -10,7 +10,7 @@
  * Pitfall 7: Read receipts respect privacy setting (no-op if disabled).
  */
 
-import {wrapNip17Receipt} from './nostr-crypto';
+import {wrapNip17Receipt, wrapReceiptV2} from './nostr-crypto';
 import rootScope from '@lib/rootScope';
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -317,8 +317,14 @@ export class DeliveryTracker {
    * Send a delivery receipt for a received message.
    */
   async sendDeliveryReceipt(originalEventId: string, senderPubkey: string): Promise<void> {
-    const wraps = wrapNip17Receipt(this.privateKey, senderPubkey, originalEventId, 'delivery');
-    await this.publishFn(wraps);
+    try {
+      const wrap = await wrapReceiptV2(this.privateKey, senderPubkey, originalEventId, 'delivery');
+      await this.publishFn([wrap]);
+    } catch{
+      // Fallback to legacy NIP-17 receipt
+      const wraps = wrapNip17Receipt(this.privateKey, senderPubkey, originalEventId, 'delivery');
+      await this.publishFn(wraps);
+    }
   }
 
   /**
@@ -327,8 +333,14 @@ export class DeliveryTracker {
    */
   async sendReadReceipt(originalEventId: string, senderPubkey: string): Promise<void> {
     if(!this.readReceiptsEnabled) return;
-    const wraps = wrapNip17Receipt(this.privateKey, senderPubkey, originalEventId, 'read');
-    await this.publishFn(wraps);
+    try {
+      const wrap = await wrapReceiptV2(this.privateKey, senderPubkey, originalEventId, 'read');
+      await this.publishFn([wrap]);
+    } catch{
+      // Fallback to legacy NIP-17 receipt
+      const wraps = wrapNip17Receipt(this.privateKey, senderPubkey, originalEventId, 'read');
+      await this.publishFn(wraps);
+    }
   }
 
   /**

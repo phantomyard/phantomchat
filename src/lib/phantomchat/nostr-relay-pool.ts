@@ -8,7 +8,10 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
-import {wrapNip17Message, wrapNip17Edit, rewrapNip17Message, UnsignedEvent} from './nostr-crypto';
+import {wrapNip17Message, wrapEditV2, wrapNip17Edit, rewrapNip17Message, rewrapV2, isLegacyWrap, warmSymmetricKeyCache, UnsignedEvent} from './nostr-crypto';
+import {getNostrWrapClient} from './nostr-wrap-client';
+import {getNostrUnwrapClient} from './nostr-unwrap-client';
+import {getMessageStore} from './message-store';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromMnemonic} from './nostr-identity';
@@ -63,6 +66,12 @@ export interface RelayPoolOptions {
   relays?: RelayConfig[];
   onMessage: (msg: DecryptedMessage) => void;
   onStateChange?: (connectedCount: number, totalCount: number) => void;
+  /**
+   * Pre-decrypted identity — when provided, initialize() skips the encrypted
+   * store load + PBKDF2 decrypt (which onboarding already did ~100ms earlier).
+   * publicKey is hex, privateKeyHex is 64-char hex string.
+   */
+  preloadedIdentity?: { publicKey: string; privateKeyHex: string };
 }
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -110,6 +119,17 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 
 const DEDUP_CACHE_MAX = 10_000;
 const POOL_RECOVERY_INTERVAL_MS = 60_000;
+// Relay health / cooldown. A relay that keeps dropping shortly after it connects
+// (a "flap") burns CPU + bandwidth: every reconnect re-arms the subscription and
+// fires a since-backfill query, and the relay's own auto-reconnect loop keeps
+// retrying forever. After RELAY_FLAP_THRESHOLD flaps we stop its self-reconnect
+// and skip it in the pool recovery sweep for an exponentially growing cooldown,
+// so a single sick relay can't churn the pool. The other relays carry delivery
+// in the meantime (publish is fire-and-forget across connected relays).
+const RELAY_FLAP_WINDOW_MS = 30_000;       // connected < this before dropping = a flap
+const RELAY_FLAP_THRESHOLD = 3;            // consecutive flaps before cooldown kicks in
+const RELAY_COOLDOWN_BASE_MS = 60_000;     // first cooldown span
+const RELAY_COOLDOWN_MAX_MS = 15 * 60_000; // cap so a relay is always eventually retried
 // Gift-wrap (kind 1059) outer created_at is now the REAL send time — backdating
 // was removed (see nostr-crypto.createGiftWrap) because it was the root cause of
 // the "first message ghosts" bug: a relay applies a subscription's `since` to
@@ -177,17 +197,31 @@ export class NostrRelayPool {
   // RE-connect (recovers the idle gap via backfillRelay). Keyed by relay url.
   private relayHasConnected: Set<string> = new Set();
 
+  // Per-relay health for flap detection / cooldown. Keyed by url so it survives
+  // RelayEntry recreation across connectAll(). `cooldownUntil` is a Date.now()
+  // ms deadline; while it's in the future the pool recovery sweep skips the
+  // relay and its self-reconnect has been stopped via disconnect().
+  private relayHealth: Map<string, {connectedAt: number; flaps: number; cooldownUntil: number; lastState: string}> = new Map();
+
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
 
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
+  private _preloadedIdentity?: { publicKey: string; privateKeyHex: string };
+
+  // Debounced state notification — batches multiple relay state changes into
+  // a single dispatch cycle so 5 relays reconnecting don't fire 5+ DOM updates
+  // in quick succession.
+  private notifyStateChangeTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly STATE_DEBOUNCE_MS = 200;
 
   constructor(options: RelayPoolOptions) {
     this.log = logger('NostrRelayPool');
     this.configs = options.relays ? [...options.relays] : [];
     this.onMessageCb = options.onMessage;
     this.onStateChangeCb = options.onStateChange;
+    this._preloadedIdentity = options.preloadedIdentity;
   }
 
   // ─── Callback setters (for DI / test path) ─────────────────────
@@ -237,25 +271,36 @@ export class NostrRelayPool {
   async initialize(): Promise<void> {
     this.log('[NostrRelayPool] initializing');
 
-    // Load identity from encrypted store (key-storage)
-    try {
-      const record = await loadEncryptedIdentity();
-      if(record) {
-        const browserKey = await loadBrowserKey();
-        if(browserKey) {
-          const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-          const identity = importFromMnemonic(seed);
-          this.publicKey = identity.publicKey;
-          if(identity.privateKey && identity.privateKey.length === 64) {
-            const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
-            this.privateKeyBytes = h2b(identity.privateKey);
-          }
-        } else {
-          this.log.warn('[NostrRelayPool] no browser key — cannot decrypt identity');
-        }
+    // Use pre-decrypted identity if provided (avoids redundant PBKDF2 on cold
+    // start — onboarding already did this work ~100ms earlier).
+    if(this._preloadedIdentity) {
+      this.publicKey = this._preloadedIdentity.publicKey;
+      if(this._preloadedIdentity.privateKeyHex && this._preloadedIdentity.privateKeyHex.length === 64) {
+        const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
+        this.privateKeyBytes = h2b(this._preloadedIdentity.privateKeyHex);
       }
-    } catch(err) {
-      this.log.warn('[NostrRelayPool] failed to load encrypted identity:', err);
+      this._preloadedIdentity = undefined; // free the reference
+    } else {
+      // Load identity from encrypted store (key-storage)
+      try {
+        const record = await loadEncryptedIdentity();
+        if(record) {
+          const browserKey = await loadBrowserKey();
+          if(browserKey) {
+            const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+            const identity = importFromMnemonic(seed);
+            this.publicKey = identity.publicKey;
+            if(identity.privateKey && identity.privateKey.length === 64) {
+              const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
+              this.privateKeyBytes = h2b(identity.privateKey);
+            }
+          } else {
+            this.log.warn('[NostrRelayPool] no browser key — cannot decrypt identity');
+          }
+        }
+      } catch(err) {
+        this.log.warn('[NostrRelayPool] failed to load encrypted identity:', err);
+      }
     }
 
     // Load relay config from IndexedDB if none provided
@@ -263,6 +308,16 @@ export class NostrRelayPool {
       const stored = await this.loadRelayConfig();
       this.configs = stored.length > 0 ? stored : [...DEFAULT_RELAYS];
     }
+
+    // Pre-warm the v2 symmetric key cache for every known peer. The unwrap
+    // worker runs in its own isolate with an EMPTY symmetricKeyCache — only
+    // the main thread's cache is warmed — so inbound v2 events rely on the
+    // main thread having derived keys for each contact ahead of time. Ephemeral
+    // envelope signing means event.pubkey is a throwaway key, so we cannot
+    // derive the symmetric key from the event alone; the cache MUST be warmed
+    // per-peer at startup. Deriving is ~2ms/peer; failures are swallowed so a
+    // store/identity quirk never blocks connectivity.
+    await this.warmV2KeyCache();
 
     // Load lastSeenTimestamp
     const storedTs = localStorage.getItem(LS_LAST_SEEN_KEY);
@@ -293,6 +348,38 @@ export class NostrRelayPool {
     // Start the catch-up poll — the delivery backbone that no longer relies on
     // relays pushing live events reliably.
     this.startBackfillPoll();
+  }
+
+  /**
+   * Pre-derive + cache v2 AES-256-GCM symmetric keys for every known peer.
+   *
+   * Known peers are recovered from the message store's conversation IDs
+   * (`<pkA>:<pkB>` sorted pairs) — each conversation's non-own pubkey is a
+   * peer we may receive a v2 gift-wrap from. Best-effort: a store/identity
+   * quirk never blocks connectivity (the cache also warms lazily on first
+   * encrypt/decrypt per peer).
+   */
+  private async warmV2KeyCache(): Promise<void> {
+    if(!this.privateKeyBytes || !this.publicKey) return;
+    try {
+      const conversationIds = await getMessageStore().getAllConversationIds();
+      const peerPubkeys = new Set<string>();
+      for(const convId of conversationIds) {
+        const [a, b] = convId.split(':');
+        if(a && a !== this.publicKey) peerPubkeys.add(a);
+        if(b && b !== this.publicKey) peerPubkeys.add(b);
+      }
+      if(peerPubkeys.size === 0) return;
+      const peers = [...peerPubkeys];
+      // Warm BOTH caches: the main thread's (for the sync-fallback path) AND the
+      // unwrap worker's. The worker cache is the one that keeps cold-load
+      // backfill crypto off the main thread — without it every v2 unwrap bounces
+      // back to a synchronous main-thread unwrapV2 and freezes the UI.
+      await warmSymmetricKeyCache(this.privateKeyBytes, peers);
+      getNostrUnwrapClient().warm(this.privateKeyBytes, peers);
+    } catch(err) {
+      this.log.warn('[NostrRelayPool] warmV2KeyCache failed (non-fatal):', err);
+    }
   }
 
   disconnect(): void {
@@ -371,7 +458,7 @@ export class NostrRelayPool {
         return {successes, failures};
       }
 
-      const wrapped = wrapNip17Message(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
+      const wrapped = await getNostrWrapClient().wrap(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
       wraps = wrapped.wraps as unknown as NostrEvent[];
       rumorId = wrapped.rumorId;
       rumor = wrapped.rumor;
@@ -409,22 +496,29 @@ export class NostrRelayPool {
    * which a verbatim resend of the original wrap cannot do. Returns the freshly
    * minted wraps (mainly for tests/inspection). Best-effort per relay.
    */
-  rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): NostrEvent[] {
+  async rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): Promise<NostrEvent[]> {
     if(!this.privateKeyBytes) return [];
-    const wraps = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent[];
+
+    // Use v2 re-wrap (AES-256-GCM) with fallback to legacy NIP-17
+    let wrap: NostrEvent;
+    try {
+      wrap = await rewrapV2(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
+    } catch{
+      // Fallback to legacy NIP-17 re-wrap
+      wrap = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
+    }
+
     const writeEntries = this.relayEntries.filter(e =>
       e.config.write && this.enabled.get(e.config.url) !== false
     );
     for(const entry of writeEntries) {
       try {
-        for(const wrap of wraps) {
-          entry.instance.publishRawEvent(wrap);
-        }
+        entry.instance.publishRawEvent(wrap);
       } catch{
         // best-effort per relay; the retry schedule will try again
       }
     }
-    return wraps;
+    return [wrap];
   }
 
   /**
@@ -448,12 +542,19 @@ export class NostrRelayPool {
 
     let wraps: NostrEvent[];
     try {
-      wraps = wrapNip17Edit(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext) as unknown as NostrEvent[];
-    } catch(err) {
-      return {
-        successes: [],
-        failures: [{url: 'wrap', error: err instanceof Error ? err.message : String(err)}]
-      };
+      // Use v2 (AES-256-GCM) with legacy fallback
+      const v2Event = await wrapEditV2(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext);
+      wraps = [v2Event] as unknown as NostrEvent[];
+    } catch{
+      // Fallback to legacy NIP-17 edit wrap
+      try {
+        wraps = wrapNip17Edit(this.privateKeyBytes, recipientPubkey, originalAppMessageId, newPlaintext) as unknown as NostrEvent[];
+      } catch(err) {
+        return {
+          successes: [],
+          failures: [{url: 'wrap', error: err instanceof Error ? err.message : String(err)}]
+        };
+      }
     }
 
     const successes: string[] = [];
@@ -815,6 +916,7 @@ export class NostrRelayPool {
           );
         }
       }
+      this.trackRelayHealth(config.url, instance.getState());
       this.notifyStateChange();
     };
 
@@ -1040,22 +1142,96 @@ export class NostrRelayPool {
   }
 
   private recoverFailedRelays(): void {
+    const now = Date.now();
     for(const entry of this.relayEntries) {
-      if(entry.instance.getState() === 'disconnected') {
-        this.log('[NostrRelayPool] pool recovery: retrying', entry.config.url);
-        entry.instance.initialize().then(() => {
-          if(this.isSubscribedFlag && entry.config.read) {
-            entry.instance.pendingSubscribe = true;
-          }
-          entry.instance.connect();
-        }).catch((err) => {
-          this.log.error('[NostrRelayPool] pool recovery failed for:', entry.config.url, err);
-        });
-      }
+      if(entry.instance.getState() !== 'disconnected') continue;
+
+      // Skip relays still serving a flap cooldown — retrying now would just
+      // re-arm a subscription that drops again within seconds.
+      const health = this.relayHealth.get(entry.config.url);
+      if(health && health.cooldownUntil > now) continue;
+
+      this.log('[NostrRelayPool] pool recovery: retrying', entry.config.url);
+      entry.instance.initialize().then(() => {
+        if(this.isSubscribedFlag && entry.config.read) {
+          entry.instance.pendingSubscribe = true;
+        }
+        entry.instance.connect();
+      }).catch((err) => {
+        this.log.error('[NostrRelayPool] pool recovery failed for:', entry.config.url, err);
+      });
     }
   }
 
+  /**
+   * Flap detection. Called on every relay state transition. A relay that stays
+   * connected past RELAY_FLAP_WINDOW_MS is healthy and resets its flap counter;
+   * one that drops sooner counts as a flap. After RELAY_FLAP_THRESHOLD
+   * consecutive flaps we set an exponentially-growing cooldown AND call
+   * disconnect() to stop the instance's own forever-retry loop, so the relay
+   * goes quiet until the next recovery sweep past `cooldownUntil` revives it.
+   *
+   * Side effects (disconnect) run AFTER all health fields are updated so the
+   * re-entrant onStateChange('disconnected') disconnect triggers is a no-op.
+   */
+  private trackRelayHealth(url: string, state: string): void {
+    let health = this.relayHealth.get(url);
+    if(!health) {
+      health = {connectedAt: -1, flaps: 0, cooldownUntil: 0, lastState: 'disconnected'};
+      this.relayHealth.set(url, health);
+    }
+
+    const now = Date.now();
+    const wasConnected = health.lastState === 'connected';
+    health.lastState = state;
+
+    if(state === 'connected') {
+      health.connectedAt = now;
+      return;
+    }
+
+    // Only a transition out of a real connected session is a candidate flap.
+    // connectedAt uses a -1 sentinel (0 is a valid timestamp under fake clocks).
+    if(!wasConnected || health.connectedAt < 0) return;
+    const connectedFor = now - health.connectedAt;
+    health.connectedAt = -1;
+
+    if(connectedFor >= RELAY_FLAP_WINDOW_MS) {
+      health.flaps = 0; // healthy session — clear the streak
+      return;
+    }
+
+    health.flaps++;
+    if(health.flaps < RELAY_FLAP_THRESHOLD) return;
+
+    const backoff = Math.min(
+      RELAY_COOLDOWN_BASE_MS * 2 ** (health.flaps - RELAY_FLAP_THRESHOLD),
+      RELAY_COOLDOWN_MAX_MS
+    );
+    health.cooldownUntil = now + backoff;
+    this.log(
+      '[NostrRelayPool] relay flapping — cooling down', url,
+      'for', Math.round(backoff / 1000), 's (flaps:', health.flaps + ')'
+    );
+    // Stop the instance's own auto-reconnect for the cooldown window.
+    this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
+  }
+
   private notifyStateChange(): void {
+    // Debounce: batch multiple relay changes into a single dispatch cycle.
+    // Without this, 5 relays each firing a state change produces 5+ separate
+    // `phantomchat_relay_state` event bursts, each triggering DOM updates in
+    // ConnectionStatusComponent — causing UI thrash during chat switches.
+    if(this.notifyStateChangeTimer) {
+      return; // already scheduled
+    }
+    this.notifyStateChangeTimer = setTimeout(() => {
+      this.notifyStateChangeTimer = null;
+      this.flushStateChange();
+    }, NostrRelayPool.STATE_DEBOUNCE_MS);
+  }
+
+  private flushStateChange(): void {
     if(this.onStateChangeCb) {
       this.onStateChangeCb(this.getConnectedCount(), this.relayEntries.length);
     }
@@ -1077,15 +1253,9 @@ export class NostrRelayPool {
    * update). Cheaper than notifyStateChange() when only one value changed.
    */
   private notifyRelayUpdate(url: string): void {
-    const entry = this.relayEntries.find(e => e.config.url === url);
-    if(!entry) return;
-    rootScope.dispatchEvent('phantomchat_relay_state', {
-      url: entry.config.url,
-      connected: entry.instance.getState() === 'connected',
-      latencyMs: entry.instance.getLatency(),
-      read: entry.config.read,
-      write: entry.config.write
-    });
+    // Route through the debounced path so a single relay's latency update
+    // doesn't produce an immediate out-of-band dispatch that bypasses batching.
+    this.notifyStateChange();
   }
 
   private dispatchRelayListChanged(): void {

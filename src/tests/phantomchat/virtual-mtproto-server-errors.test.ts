@@ -217,6 +217,7 @@ describe('PhantomChatMTProtoServer — error + malformed input paths', () => {
     const mockChatAPI = {
       getActivePeer: vi.fn().mockReturnValue(PEER_PUBKEY),
       connect: vi.fn().mockResolvedValue(undefined),
+      allocateMessageId: vi.fn().mockReturnValue('evEmpty'),
       sendText: vi.fn().mockResolvedValue('evEmpty')
     };
     server.setChatAPI(mockChatAPI);
@@ -238,6 +239,7 @@ describe('PhantomChatMTProtoServer — error + malformed input paths', () => {
     const mockChatAPI = {
       getActivePeer: vi.fn().mockReturnValue(PEER_PUBKEY),
       connect: vi.fn().mockResolvedValue(undefined),
+      allocateMessageId: vi.fn().mockReturnValue('evUndef'),
       sendText: vi.fn().mockResolvedValue('evUndef')
     };
     server.setChatAPI(mockChatAPI);
