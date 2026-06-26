@@ -34,13 +34,35 @@ interface PendingEntry {
 // if the worker dies silently.
 const UNWRAP_TIMEOUT_MS = 8000;
 
+// Worker-death recovery. Previously a single `worker.onerror` wedged the client
+// in synchronous-fallback mode for the life of the tab — every later unwrap ran
+// on the main thread, which is exactly the freeze we're hunting. Instead we let
+// the worker be respawned, but bounded: at most MAX_WORKER_RESPAWNS fresh spawns,
+// and never within RESPAWN_COOLDOWN_MS of the last crash so a crash-looping
+// worker can't thrash the main thread. Past the cap we stay synchronous for good.
+const MAX_WORKER_RESPAWNS = 3;
+const RESPAWN_COOLDOWN_MS = 30000;
+
 class NostrUnwrapClient {
   private worker: Worker | null = null;
   private workerUsable = false;
   private triedSpawn = false;
   private workerKey: Uint8Array | null = null;
   private seq = 0;
+  private lastDegradeAt = 0;
+  private degradeCount = 0;
   private readonly pending = new Map<number, PendingEntry>();
+
+  // Dev/prod breadcrumb: which fallback paths actually fire in the wild. Read
+  // live via `window.__unwrapStats()`. Cheap counters — no logging on the hot
+  // per-message path; only the rare bad paths (degrade, timeout) console.warn.
+  readonly stats = {
+    syncFallback: 0,   // unwrap ran on the main thread (no usable worker)
+    timeout: 0,        // worker round-trip blew past UNWRAP_TIMEOUT_MS
+    degrade: 0,        // worker errored and was dropped
+    respawn: 0,        // a fresh worker was spawned after a death
+    cacheMissBounce: 0 // v2 no_matching_key retried on the main thread
+  };
 
   private sameKey(a: Uint8Array | null, b: Uint8Array | null): boolean {
     if(a === b) return true;
@@ -66,6 +88,16 @@ class NostrUnwrapClient {
       }
       return;
     }
+
+    // Respawn path: degrade() cleared triedSpawn after a worker death. Hold off
+    // until the cooldown elapses (stay synchronous meanwhile so we don't thrash),
+    // and give up spawning entirely once we've burned through the respawn cap.
+    if(this.degradeCount > 0) {
+      if(this.degradeCount > MAX_WORKER_RESPAWNS) return;
+      if(Date.now() - this.lastDegradeAt < RESPAWN_COOLDOWN_MS) return;
+      this.stats.respawn++;
+    }
+
     this.triedSpawn = true;
 
     if(typeof Worker === 'undefined') {
@@ -105,6 +137,7 @@ class NostrUnwrapClient {
       // thread (warm cache) before rejecting. Only reject if the main-thread
       // retry also fails.
       if(error.code === 'no_matching_key' && isV2Event(entry.event)) {
+        this.stats.cacheMissBounce++;
         this.pending.delete(id);
         clearTimeout(entry.timer);
         unwrapV2(entry.event, entry.sk).then(
@@ -136,8 +169,16 @@ class NostrUnwrapClient {
   }
 
   // Worker died: stop using it and resolve everything in flight synchronously.
+  // Clearing triedSpawn lets ensure() respawn a fresh worker (bounded by
+  // MAX_WORKER_RESPAWNS + cooldown) instead of pinning every later unwrap to the
+  // main thread for the life of the tab — the permanent-degrade freeze.
   private degrade(): void {
     this.workerUsable = false;
+    this.stats.degrade++;
+    this.lastDegradeAt = Date.now();
+    this.degradeCount++;
+    this.triedSpawn = false;
+    console.warn('[unwrap] worker degraded → synchronous fallback', {...this.stats});
     try { this.worker?.terminate(); } catch{ /* ignore */ }
     this.worker = null;
     const entries = [...this.pending.values()];
@@ -170,6 +211,7 @@ class NostrUnwrapClient {
 
     if(!this.workerUsable || !this.worker) {
       // Synchronous fallback — route v2 vs legacy
+      this.stats.syncFallback++;
       if(isV2Event(event)) {
         return unwrapV2(event, sk) as Promise<Rumor>;
       }
@@ -186,6 +228,8 @@ class NostrUnwrapClient {
         const entry = this.pending.get(id);
         if(!entry) return;
         this.pending.delete(id);
+        this.stats.timeout++;
+        console.warn('[unwrap] worker round-trip exceeded timeout → synchronous fallback', {...this.stats});
         // Worker too slow / lost this request — unwrap synchronously now and
         // ignore any late reply for this id.
         if(isV2Event(entry.event)) {
@@ -230,6 +274,8 @@ class NostrUnwrapClient {
     this.workerUsable = false;
     this.triedSpawn = false;
     this.workerKey = null;
+    this.lastDegradeAt = 0;
+    this.degradeCount = 0;
     for(const entry of this.pending.values()) {
       clearTimeout(entry.timer);
     }
@@ -242,6 +288,11 @@ let singleton: NostrUnwrapClient | null = null;
 export function getNostrUnwrapClient(): NostrUnwrapClient {
   if(!singleton) {
     singleton = new NostrUnwrapClient();
+    // Live breadcrumb readable from the prod console during a freeze:
+    //   window.__unwrapStats()  →  {syncFallback, timeout, degrade, respawn, cacheMissBounce}
+    if(typeof window !== 'undefined') {
+      (window as any).__unwrapStats = () => singleton!.stats;
+    }
   }
   return singleton;
 }
