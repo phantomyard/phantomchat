@@ -366,7 +366,10 @@ export class AppMediaPlaybackController extends EventListenerBase<{
 
   private onMediaDocumentLoad = async(media: HTMLMediaElement) => {
     const details = this.mediaDetails.get(media);
-    const doc = await this.managers.appDocsManager.getDoc(details.docId);
+    // P2P synthetic voice/audio docs are never registered worker-side, so getDoc()
+    // returns undefined. Fall back to the in-hand doc the bubble already gave us —
+    // its blob URL lives in the cache context, which is what playback needs.
+    const doc = (await this.managers.appDocsManager.getDoc(details.docId)) || details.doc;
     if(doc.type === 'audio' && doc.supportsStreaming && SHOULD_USE_SAFARI_FIX) {
       this.handleSafariStreamable(media);
     }
