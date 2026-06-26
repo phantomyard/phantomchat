@@ -476,6 +476,47 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result.full_user.bot_info).toBeUndefined();
       expect(result.full_user.about).toBe('just a person');
     });
+
+    it('returns a valid empty botInfo for a bot with no commands (no crash path)', async () => {
+      // The bot flag is set but the kind-0 advertises no commands. bot_info must
+      // still be a real botInfo (never undefined) so the upstream
+      // processPeerFullForCommands' `[].concat(full.bot_info)` doesn't crash.
+      loadCachedPeerProfileMock.mockReturnValueOnce({
+        profile: {bot: true},
+        created_at: 100
+      });
+
+      const result = await server.handleMethod('users.getFullUser', {
+        id: {user_id: PEER_ID}
+      });
+
+      expect(result.users[0].pFlags.bot).toBe(true);
+      expect(result.full_user.bot_info._).toBe('botInfo');
+      expect(result.full_user.bot_info.commands).toEqual([]);
+    });
+
+    it('drops malformed command names from a hostile kind-0', async () => {
+      loadCachedPeerProfileMock.mockReturnValueOnce({
+        profile: {
+          bot: true,
+          commands: [
+            {command: 'help', description: 'ok'},
+            {command: 'has space', description: 'bad name'},
+            {command: 'x'.repeat(40), description: 'too long'},
+            {command: 'rm-rf', description: 'dash not allowed'},
+            {command: 'status', description: 'ok'}
+          ]
+        },
+        created_at: 100
+      });
+
+      const result = await server.handleMethod('users.getFullUser', {
+        id: {user_id: PEER_ID}
+      });
+
+      // Only the well-formed names survive.
+      expect(result.full_user.bot_info.commands.map((c: any) => c.command)).toEqual(['help', 'status']);
+    });
   });
 
   // ─── Write path ───────────────────────────────────────────────────

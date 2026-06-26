@@ -233,6 +233,10 @@ function extractPeerId(peer: any): number | null {
   return null;
 }
 
+// A well-formed Telegram-style command name: 1-32 chars, letters/digits/_.
+// Anything else in a (relay-sourced, possibly hostile) kind-0 is dropped.
+const VALID_BOT_COMMAND = /^[a-zA-Z0-9_]{1,32}$/;
+
 /**
  * Build the single `userFull.bot_info` object from a peer's kind-0 profile.
  * Returns `undefined` for a non-bot (and isBot is false there, so the command
@@ -240,10 +244,21 @@ function extractPeerId(peer: any): number | null {
  * `commands` array — because the upstream processPeerFullForCommands does
  * `[].concat(full.bot_info)` and would crash on `undefined`. The botInfo /
  * botCommand shape mirrors Telegram's so that code consumes it unchanged.
+ *
+ * Commands come from another peer's kind-0 (relay-sourced, untrusted), so the
+ * names are sanitized to the Telegram command grammar and descriptions are
+ * length-capped — a malformed/abusive entry is skipped rather than rendered
+ * into the user's input typeahead.
  */
 function buildBotInfo(peerId: number, profile?: {bot?: boolean; commands?: NostrBotCommand[]}): any {
   if(!profile?.bot) return undefined;
-  const commands = (profile.commands ?? []).map((c) => ({_: 'botCommand', command: c.command, description: c.description}));
+  const commands = (profile.commands ?? [])
+  .filter((c) => c && typeof c.command === 'string' && VALID_BOT_COMMAND.test(c.command))
+  .map((c) => ({
+    _: 'botCommand',
+    command: c.command,
+    description: typeof c.description === 'string' ? c.description.slice(0, 256) : ''
+  }));
   return {_: 'botInfo', pFlags: {}, user_id: peerId, commands};
 }
 
