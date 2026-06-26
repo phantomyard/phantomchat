@@ -100,6 +100,10 @@ export function buildPhantomChatMedia(mid: number, fm: PhantomChatFileMetadata):
       phantomchatFileMetadata: fm,
       attributes,
       type: docType,
+      // Top-level duration mirrors appDocsManager.saveDoc — the P2P shape
+      // bypasses saveDoc, so without it AudioElement's waveform renderer hits
+      // clamp(undefined/60*maxW) → NaN width → empty bubble (FIND-voice-empty).
+      ...(typeof fm.duration === 'number' ? {duration: fm.duration} : {}),
       file_name: `file-${mid}`,
       pFlags: {}
     }

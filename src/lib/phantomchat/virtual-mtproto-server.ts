@@ -1914,6 +1914,12 @@ export class PhantomChatMTProtoServer {
               url: media.objectURL,
               attributes,
               type: docType,
+              // Top-level duration mirrors what appDocsManager.saveDoc would set
+              // for a normal tweb document. The P2P shape-builder bypasses
+              // saveDoc, so without this the AudioElement waveform renderer
+              // computes clamp(undefined/60*maxW) → NaN width → zero bars and
+              // the voice note collapses to an empty bubble (FIND-voice-empty).
+              ...(typeof media.duration === 'number' ? {duration: media.duration} : {}),
               file_name: `file-${mid}`,
               pFlags: {}
             }
