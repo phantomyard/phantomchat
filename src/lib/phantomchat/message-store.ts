@@ -133,6 +133,70 @@ export function getMessageStore(): MessageStore {
 export class MessageStore {
   private dbPromise: Promise<IDBDatabase> | null = null;
 
+  // ─── Per-message read caches (perf, Phase 2) ────────────────────────
+  // getTombstone + the getByEventId dedup run on EVERY incoming message. Both
+  // are served from memory so a reply burst from one peer doesn't re-hit IDB
+  // per message (the main-thread backlog the user's own send queues behind).
+
+  // conversationId → deletion watermark. Written only by set/clearTombstone, so
+  // it is owner-contained; a BroadcastChannel propagates deletes across tabs so
+  // the "delete boomerang" suppression never goes stale (mirrors the
+  // message-requests block cache; listener activated on the READ path).
+  private tombstoneCache = new Map<string, number>();
+  private tsChannel: BroadcastChannel | null = null;
+  private tsChannelInit = false;
+
+  private getTsChannel(): BroadcastChannel | null {
+    if(!this.tsChannelInit) {
+      this.tsChannelInit = true;
+      if(typeof BroadcastChannel !== 'undefined') {
+        try {
+          this.tsChannel = new BroadcastChannel('phantomchat-tombstones');
+          this.tsChannel.onmessage = (e) => {
+            const d = e.data as {conversationId?: string; deletedAt?: number};
+            if(typeof d?.conversationId !== 'string' || typeof d.deletedAt !== 'number') return;
+            if(d.deletedAt === 0) this.tombstoneCache.delete(d.conversationId); // cross-tab clear
+            else this.tombstoneCache.set(d.conversationId, Math.max(this.tombstoneCache.get(d.conversationId) ?? 0, d.deletedAt));
+          };
+        } catch{
+          this.tsChannel = null;
+        }
+      }
+    }
+    return this.tsChannel;
+  }
+
+  // Bounded set of eventIds known to be in IDB — a fast path for the receive
+  // dedup so same-session relay replays skip the IDB read. Populated ONLY after
+  // a confirmed write / read hit (never speculatively), so a hit always means
+  // "definitely persisted" — no false-positive that could drop a real message.
+  // Eviction is safe: an evicted id just falls back to the IDB dedup on replay.
+  private static readonly SEEN_CAP = 10000;
+  private seenEventIds = new Set<string>();
+
+  private markSeen(eventId: string): void {
+    if(!eventId || this.seenEventIds.has(eventId)) return;
+    this.seenEventIds.add(eventId);
+    if(this.seenEventIds.size > MessageStore.SEEN_CAP) {
+      const drop = Math.floor(MessageStore.SEEN_CAP * 0.1);
+      let i = 0;
+      for(const k of this.seenEventIds) { this.seenEventIds.delete(k); if(++i >= drop) break; }
+    }
+  }
+
+  /** Sync dedup fast path: true ⇒ this eventId is definitely already persisted. */
+  hasSeenEventId(eventId: string): boolean {
+    return this.seenEventIds.has(eventId);
+  }
+
+  /** Update the tombstone cache after a local write and tell other tabs.
+   *  Monotonic: the watermark only ever moves forward. */
+  private setTombstoneCache(conversationId: string, deletedAt: number): void {
+    const next = Math.max(this.tombstoneCache.get(conversationId) ?? 0, deletedAt);
+    this.tombstoneCache.set(conversationId, next);
+    this.getTsChannel()?.postMessage({conversationId, deletedAt: next});
+  }
+
   /**
    * Get or open the IndexedDB database.
    */
@@ -227,14 +291,14 @@ export class MessageStore {
             if(existing?.editedAt && !msg.editedAt) merged.editedAt = existing.editedAt;
             const putReq = store.put(merged, getReq.result);
             putReq.onerror = () => reject(putReq.error);
-            putReq.onsuccess = () => resolve();
+            putReq.onsuccess = () => { this.markSeen(msg.eventId); resolve(); };
           };
           readReq.onerror = () => reject(readReq.error);
         } else {
           // Insert new
           const addReq = store.add(msg);
           addReq.onerror = () => reject(addReq.error);
-          addReq.onsuccess = () => resolve();
+          addReq.onsuccess = () => { this.markSeen(msg.eventId); resolve(); };
         }
       };
       getReq.onerror = () => reject(getReq.error);
@@ -444,7 +508,11 @@ export class MessageStore {
       const index = store.index('eventId');
       const request = index.get(eventId);
       request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result ?? null);
+      request.onsuccess = () => {
+        const row = (request.result as StoredMessage | undefined) ?? null;
+        if(row) this.markSeen(eventId); // confirmed in IDB → fast-path future dedups
+        resolve(row);
+      };
     });
   }
 
@@ -576,17 +644,21 @@ export class MessageStore {
    * conversation has never been deleted.
    */
   async getTombstone(conversationId: string): Promise<number> {
+    // Activate the cross-tab listener before the first cache read so a delete in
+    // another tab is never missed (the #29 read-path lesson). Then serve from
+    // memory — this runs on every incoming message (and every saveMessage).
+    this.getTsChannel();
+    const cached = this.tombstoneCache.get(conversationId);
+    if(cached !== undefined) return cached;
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
+    const deletedAt = await new Promise<number>((resolve, reject) => {
       const tx = db.transaction(TOMBSTONE_STORE, 'readonly');
-      const store = tx.objectStore(TOMBSTONE_STORE);
-      const req = store.get(conversationId);
+      const req = tx.objectStore(TOMBSTONE_STORE).get(conversationId);
       req.onerror = () => reject(req.error);
-      req.onsuccess = () => {
-        const row = req.result as {conversationId: string; deletedAt: number} | undefined;
-        resolve(row?.deletedAt ?? 0);
-      };
+      req.onsuccess = () => resolve((req.result as {deletedAt: number} | undefined)?.deletedAt ?? 0);
     });
+    this.tombstoneCache.set(conversationId, deletedAt);
+    return deletedAt;
   }
 
   /**
@@ -607,12 +679,13 @@ export class MessageStore {
       getReq.onsuccess = () => {
         const existing = getReq.result as {conversationId: string; deletedAt: number} | undefined;
         if(existing && existing.deletedAt >= deletedAt) {
+          this.setTombstoneCache(conversationId, existing.deletedAt); // keep cache fresh
           resolve();
           return;
         }
         const putReq = store.put({conversationId, deletedAt});
         putReq.onerror = () => reject(putReq.error);
-        putReq.onsuccess = () => resolve();
+        putReq.onsuccess = () => { this.setTombstoneCache(conversationId, deletedAt); resolve(); };
       };
     });
   }
@@ -629,7 +702,11 @@ export class MessageStore {
       const store = tx.objectStore(TOMBSTONE_STORE);
       const req = store.delete(conversationId);
       req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve();
+      req.onsuccess = () => {
+        this.tombstoneCache.delete(conversationId);
+        this.getTsChannel()?.postMessage({conversationId, deletedAt: 0}); // cross-tab clear
+        resolve();
+      };
     });
   }
 
