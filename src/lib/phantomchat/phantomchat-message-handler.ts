@@ -51,13 +51,45 @@ const lastDialogs = new Map<number, any>();
   } catch(e) { logSwallow('MessageHandler.loadUnreadCounts', e); }
 })();
 
-function persistUnreadCounts(): void {
+let unreadFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushUnreadCounts(): void {
+  if(unreadFlushTimer !== null) { clearTimeout(unreadFlushTimer); unreadFlushTimer = null; }
   try {
     if(typeof localStorage === 'undefined') return;
     const obj: Record<string, number> = {};
     unreadCounts.forEach((v, k) => { if(v > 0) obj[k] = v; });
     localStorage.setItem(UNREAD_STORAGE_KEY, JSON.stringify(obj));
   } catch(e) { logSwallow('MessageHandler.persistUnreadCounts', e); }
+}
+
+/**
+ * Debounce the synchronous localStorage write off the per-message path. The
+ * in-memory `unreadCounts` map is authoritative and already updated by the
+ * caller; only the blocking serialize-and-write is coalesced, so a burst of N
+ * incoming messages does ONE write instead of N (AGENTS.md principle #5: no
+ * sync localStorage on a per-message path). Flushed eagerly on page hide so a
+ * reload never loses the latest counts.
+ */
+// 300ms: long enough to coalesce a rapid reply burst into one write, short
+// enough that a reload shortly after the last message still persists the
+// latest counts (page-hide also force-flushes, so a real close never loses).
+const UNREAD_FLUSH_DEBOUNCE_MS = 300;
+
+function persistUnreadCounts(): void {
+  if(unreadFlushTimer !== null) return; // a flush is already scheduled
+  if(typeof setTimeout === 'undefined') { flushUnreadCounts(); return; }
+  unreadFlushTimer = setTimeout(flushUnreadCounts, UNREAD_FLUSH_DEBOUNCE_MS);
+}
+
+// Durability: flush any pending counts before the tab is hidden/unloaded.
+if(typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'hidden' && unreadFlushTimer !== null) flushUnreadCounts();
+  });
+}
+if(typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('pagehide', () => { if(unreadFlushTimer !== null) flushUnreadCounts(); });
 }
 
 function isChatOpenFor(peerId: number): boolean {

@@ -409,7 +409,13 @@ export async function handleRelayMessage(
   // messages. Look up the rumor id in the persistent store before proceeding.
   try {
     const store = getMessageStore();
-    const existing = await store.getByEventId(msg.id);
+    // Fast path: an eventId already persisted THIS session is a relay replay —
+    // skip the IDB read entirely (this is the hot path under a reply burst). A
+    // miss falls back to the authoritative IDB lookup for cold cross-session
+    // replays; getByEventId records its hits, so the next replay is a fast hit.
+    // N.B. `existing` is boolean | StoredMessage | null — only its truthiness is
+    // used (hasSeenEventId true ⇒ replay; else the row, or null when genuinely new).
+    const existing = store.hasSeenEventId?.(msg.id) || (await store.getByEventId(msg.id));
     if(existing) {
       if(ctx.offlineQueue) ctx.offlineQueue.acknowledge(chatMessage.id);
       ctx.history.push(chatMessage);
