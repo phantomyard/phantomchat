@@ -74,4 +74,24 @@ describe('MessageRequestStore status cache', () => {
     expect(await store.isBlocked(pk)).toBe(false);
     expect(await store.isKnownContact(pk)).toBe(false);
   });
+
+  // Regression (review #29): the cross-tab listener must be live on the READ
+  // path, not just after a local mutation — otherwise a read-only tab caches
+  // 'none' and never hears another tab block the sender, serving a stale
+  // not-blocked. A reader that only ever read must still get the block update.
+  it('a read-only store still receives a cross-tab block update', async() => {
+    if(typeof BroadcastChannel === 'undefined') return; // env without BroadcastChannel
+    const pk = PK('6');
+    const reader = new MessageRequestStore(); // only ever reads
+    const writer = new MessageRequestStore();
+    try {
+      expect(await reader.isBlocked(pk)).toBe(false); // cold → caches 'none' + activates listener
+      await writer.rejectRequest(pk); // another tab blocks → broadcasts
+      await new Promise((r) => setTimeout(r, 30)); // let the channel message deliver
+      expect(await reader.isBlocked(pk)).toBe(true); // cache updated cross-tab, not stale
+    } finally {
+      await reader.destroy().catch(() => {});
+      await writer.destroy().catch(() => {});
+    }
+  });
 });

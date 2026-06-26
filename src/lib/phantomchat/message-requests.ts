@@ -90,6 +90,14 @@ export class MessageRequestStore {
    * memoizes — including 'none' for "no row", so negatives are O(1) too.
    */
   private async getStatus(pubkey: string): Promise<MessageRequest['status'] | 'none'> {
+    // Ensure the cross-tab listener is live BEFORE the first cache read. The
+    // listener was previously only wired in setStatus() (a local mutation), so a
+    // read-only tab — the common case, since isBlocked runs on every incoming
+    // message — never listened and could serve a stale 'none' after another tab
+    // blocked the sender. Activating it here (before anything is ever cached)
+    // closes that hole: any value we cache is cached with the listener already
+    // active, so a later cross-tab mutation always lands. (No-op once wired.)
+    this.getChannel();
     const cached = this.statusCache.get(pubkey);
     if(cached !== undefined) return cached;
     const db = await this.getDB();
