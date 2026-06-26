@@ -182,6 +182,16 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
 
   const {svg, container: svgContainer, availW} = createWaveformBars(waveform, doc.duration);
 
+  // [VoiceDiag] The suspect math: NaN availW → zero bars → empty player.
+  console.debug('[VoiceDiag] wrapVoiceMessage bars:', {
+    duration: (doc as any)?.duration,
+    waveformLen: waveform?.length,
+    availW,
+    availWisNaN: Number.isNaN(availW),
+    hasSvgContainer: !!svgContainer,
+    mid: audioEl.message?.mid
+  });
+
   let fakeSvgContainer: HTMLElement;
   if(svgContainer) {
     fakeSvgContainer = svgContainer.cloneNode(true) as HTMLElement;
@@ -555,6 +565,14 @@ export default class AudioElement extends HTMLElement {
     const doc = getMediaFromMessage(this.message) as MyDocument;
     const isRealVoice = doc.type === 'voice';
     const isVoice = !this.voiceAsMusic && isRealVoice;
+    // [VoiceDiag] AudioElement.render reached — what does it have to work with?
+    console.debug('[VoiceDiag] AudioElement.render:', {
+      docType: doc?.type,
+      duration: (doc as any)?.duration,
+      isVoice,
+      hasAudioAttr: !!doc?.attributes?.find?.((a: any) => a._ === 'documentAttributeAudio'),
+      mid: this.message?.mid
+    });
     const isOutgoing = this.message.pFlags.is_outgoing;
     const uploadingFileName = this.uploadingFileName ?? this.message?.uploadingFileName?.[0];
 

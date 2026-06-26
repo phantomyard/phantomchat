@@ -7576,6 +7576,17 @@ export default class ChatBubbles {
         case 'messageMediaDocument': {
           const doc = context.messageMedia.document as MyDocument;
 
+          // [VoiceDiag] Does the bubble route this message as a document, and
+          // what type does it see? (voice → wrapGroupedDocuments → AudioElement)
+          console.debug('[VoiceDiag] bubble messageMediaDocument:', {
+            docType: doc?.type,
+            duration: (doc as any)?.duration,
+            hasAudioAttr: !!doc?.attributes?.find?.((a: any) => a._ === 'documentAttributeAudio'),
+            mime: doc?.mime_type,
+            mid: message.mid,
+            out: (message as any)?.pFlags?.out
+          });
+
           if(doc.sticker/*  && doc.size <= 1e6 */) {
             this.wrapSticker(context, {doc, container: context.attachmentDiv});
           } else if(doc.type === 'video' || doc.type === 'gif' || doc.type === 'round'/*  && doc.size <= 20e6 */) {

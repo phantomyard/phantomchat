@@ -100,6 +100,14 @@ export default async function wrapDocument({
 
   const doc = ((message.media as MessageMedia.messageMediaDocument).document || ((message.media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage).document) as MyDocument;
   uploadingFileName ??= message?.uploadingFileName?.[0];
+  // [VoiceDiag] Does wrapDocument route to the AudioElement player, or fall
+  // through to the generic-file path? (the latter = no waveform/play button)
+  console.debug('[VoiceDiag] wrapDocument:', {
+    docType: doc?.type,
+    duration: (doc as any)?.duration,
+    routesToAudio: doc?.type === 'audio' || doc?.type === 'voice' || doc?.type === 'round',
+    mid: message?.mid
+  });
   if(doc.type === 'audio' || doc.type === 'voice' || doc.type === 'round') {
     const audioElement = new AudioElement();
     audioElement.withTime = withTime;
@@ -126,7 +134,14 @@ export default async function wrapDocument({
     audioElement.dataset.fontSize = '' + fontSize;
     audioElement.dataset.sizeType = sizeType;
     if(isOut) audioElement.classList.add('is-out');
-    await audioElement.render();
+    // [VoiceDiag] Surface a render throw — a silent throw here leaves the
+    // bubble with no player chrome at all (the empty time+ticks bubble).
+    try {
+      await audioElement.render();
+    } catch(err) {
+      console.error('[VoiceDiag] AudioElement.render threw:', err);
+      throw err;
+    }
     return audioElement;
   }
 
