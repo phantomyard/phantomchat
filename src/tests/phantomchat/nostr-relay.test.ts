@@ -507,6 +507,49 @@ describe('NostrRelay', () => {
       ws?.simulateMessage(['EVENT', 'live-sub', ev]);
       expect(raw).toHaveBeenCalledTimes(2);
     });
+
+    // Regression (FIND-poll-reunwrap): the QUERY path (getMessages →
+    // collectQueryEvent) must consult the SAME gate as the live path. Before the
+    // fix only handleEvent() checked it, so the catch-up poll + reconnect
+    // backfills re-unwrapped the entire recent window every tick — the crypto
+    // storm that saturated the unwrap worker and froze the UI.
+    test('query-path gift-wraps consult the dedup gate (no re-unwrap on backfill)', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Gate that claims an id the first time and rejects it thereafter.
+      const seen = new Set<string>();
+      const gate = vi.fn((id: string) => (seen.has(id) ? false : (seen.add(id), true)));
+      relay.setEventDedup(gate);
+
+      // A real signed kind-1059 gift-wrap. We never need it to decrypt — the gate
+      // is consulted BEFORE unwrap, which is the contract under test.
+      const wrap = finalizeEvent(
+        {kind: NOSTR_KIND_GIFTWRAP, created_at: Math.floor(Date.now() / 1000), tags: [], content: 'x'},
+        generateSecretKey()
+      );
+
+      const ws = getLastMockWs();
+      const origSend = ws!.send.bind(ws);
+      ws!.send = (data: string) => {
+        origSend(data);
+        const parsed = JSON.parse(data);
+        if(parsed[0] === 'REQ' && parsed[1]?.startsWith('phantomchat-query-')) {
+          // Deliver the SAME wrap twice (e.g. two poll ticks) then EOSE.
+          ws!.simulateMessage(['EVENT', parsed[1], wrap]);
+          ws!.simulateMessage(['EVENT', parsed[1], wrap]);
+          setTimeout(() => ws!.simulateMessage(['EOSE', parsed[1]]), 10);
+        }
+      };
+
+      await relay.getMessages();
+
+      // The gate saw the wrap id, and the duplicate was rejected — proving the
+      // query path now dedups instead of re-unwrapping.
+      expect(gate).toHaveBeenCalledWith(wrap.id);
+      const calls = gate.mock.results.filter((r) => r.value === false).length;
+      expect(calls).toBeGreaterThanOrEqual(1);
+    });
   });
 
   describe('error handling', () => {
