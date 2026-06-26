@@ -2240,13 +2240,20 @@ export default class AppMediaViewerBase<
             }
           });
 
-          Promise.all([onAnimationEnd, cancellablePromise]).then(async() => {
+          Promise.all([onAnimationEnd, cancellablePromise]).then(async([, downloadedUrl]) => {
             if(this.tempId !== tempId) {
               this.log.warn('media viewer changed photo');
               return;
             }
 
-            const url = (await getCacheContext()).url;
+            // [PhantomChat.chat] P2P photos resolve+decrypt on the main thread
+            // (appDownloadManager short-circuit) and stamp the URL into the
+            // main-thread mirror via setLocalMediaUrl, but getCacheContext here
+            // reads the Worker-side thumbsStorage under the photoSize type — so
+            // it comes back empty and renderImageFromUrl logs "no url?". The
+            // download promise already resolved to the usable object URL, so
+            // fall back to it when the cache context has nothing.
+            const url = (await getCacheContext()).url || downloadedUrl;
             if(target instanceof SVGSVGElement) {
               this.updateMediaSource(target, url, 'img');
               this.updateMediaSource(mover, url, 'img');
