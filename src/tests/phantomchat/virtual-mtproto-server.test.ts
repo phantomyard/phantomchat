@@ -108,6 +108,7 @@ vi.mock('@lib/phantomchat/phantomchat-bridge', () => ({
 let PhantomChatMTProtoServer: any;
 let getMessageStore: any;
 let getPubkey: any;
+let loadCachedPeerProfileMock: any;
 
 beforeAll(async() => {
   // Re-register mocks via doMock to override any contamination from
@@ -164,6 +165,9 @@ beforeAll(async() => {
 
   const peersMod = await import('@lib/phantomchat/virtual-peers-db');
   getPubkey = peersMod.getPubkey;
+
+  const ppcMod = await import('@lib/phantomchat/peer-profile-cache');
+  loadCachedPeerProfileMock = ppcMod.loadCachedPeerProfile;
 });
 
 afterAll(() => {
@@ -431,6 +435,87 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result._).toBe('users.userFull');
       expect(Array.isArray(result.users)).toBe(true);
       expect(result.full_user._).toBe('userFull');
+    });
+
+    it('emits bot_info + the bot flag when the cached kind-0 advertises commands', async () => {
+      loadCachedPeerProfileMock.mockReturnValueOnce({
+        profile: {
+          bot: true,
+          commands: [
+            {command: 'help', description: 'Show this command list'},
+            {command: 'stop', description: 'Abort the current turn'}
+          ]
+        },
+        created_at: 100
+      });
+
+      const result = await server.handleMethod('users.getFullUser', {
+        id: {user_id: PEER_ID}
+      });
+
+      // User flagged as a bot → isBot true → the "/" command menu unlocks.
+      expect(result.users[0].pFlags.bot).toBe(true);
+      // A single botInfo (Telegram shape) carrying the advertised commands.
+      const botInfo = result.full_user.bot_info;
+      expect(botInfo._).toBe('botInfo');
+      expect(botInfo.commands[0]._).toBe('botCommand');
+      expect(botInfo.commands.map((c: any) => c.command)).toEqual(['help', 'stop']);
+    });
+
+    it('omits bot_info + the bot flag for a non-bot profile', async () => {
+      loadCachedPeerProfileMock.mockReturnValueOnce({
+        profile: {about: 'just a person'},
+        created_at: 100
+      });
+
+      const result = await server.handleMethod('users.getFullUser', {
+        id: {user_id: PEER_ID}
+      });
+
+      expect(result.users[0].pFlags.bot).toBeUndefined();
+      expect(result.full_user.bot_info).toBeUndefined();
+      expect(result.full_user.about).toBe('just a person');
+    });
+
+    it('returns a valid empty botInfo for a bot with no commands (no crash path)', async () => {
+      // The bot flag is set but the kind-0 advertises no commands. bot_info must
+      // still be a real botInfo (never undefined) so the upstream
+      // processPeerFullForCommands' `[].concat(full.bot_info)` doesn't crash.
+      loadCachedPeerProfileMock.mockReturnValueOnce({
+        profile: {bot: true},
+        created_at: 100
+      });
+
+      const result = await server.handleMethod('users.getFullUser', {
+        id: {user_id: PEER_ID}
+      });
+
+      expect(result.users[0].pFlags.bot).toBe(true);
+      expect(result.full_user.bot_info._).toBe('botInfo');
+      expect(result.full_user.bot_info.commands).toEqual([]);
+    });
+
+    it('drops malformed command names from a hostile kind-0', async () => {
+      loadCachedPeerProfileMock.mockReturnValueOnce({
+        profile: {
+          bot: true,
+          commands: [
+            {command: 'help', description: 'ok'},
+            {command: 'has space', description: 'bad name'},
+            {command: 'x'.repeat(40), description: 'too long'},
+            {command: 'rm-rf', description: 'dash not allowed'},
+            {command: 'status', description: 'ok'}
+          ]
+        },
+        created_at: 100
+      });
+
+      const result = await server.handleMethod('users.getFullUser', {
+        id: {user_id: PEER_ID}
+      });
+
+      // Only the well-formed names survive.
+      expect(result.full_user.bot_info.commands.map((c: any) => c.command)).toEqual(['help', 'status']);
     });
   });
 

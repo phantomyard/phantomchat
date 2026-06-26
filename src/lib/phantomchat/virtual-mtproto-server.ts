@@ -11,6 +11,7 @@
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
 import {loadCachedPeerProfile, refreshPeerProfileFromRelays} from './peer-profile-cache';
+import type {NostrBotCommand} from './nostr-profile';
 import {buildPhantomChatMedia} from './phantomchat-media-shape';
 import {getPubkey, getMapping, removeMapping} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
@@ -230,6 +231,35 @@ function extractPeerId(peer: any): number | null {
   // inputPeerChannel / channel_id
   if(peer.channel_id !== undefined) return -Math.abs(Number(peer.channel_id));
   return null;
+}
+
+// A well-formed Telegram-style command name: 1-32 chars, letters/digits/_.
+// Anything else in a (relay-sourced, possibly hostile) kind-0 is dropped.
+const VALID_BOT_COMMAND = /^[a-zA-Z0-9_]{1,32}$/;
+
+/**
+ * Build the single `userFull.bot_info` object from a peer's kind-0 profile.
+ * Returns `undefined` for a non-bot (and isBot is false there, so the command
+ * menu never runs). For a bot it always returns a botInfo — even with an empty
+ * `commands` array — because the upstream processPeerFullForCommands does
+ * `[].concat(full.bot_info)` and would crash on `undefined`. The botInfo /
+ * botCommand shape mirrors Telegram's so that code consumes it unchanged.
+ *
+ * Commands come from another peer's kind-0 (relay-sourced, untrusted), so the
+ * names are sanitized to the Telegram command grammar and descriptions are
+ * length-capped — a malformed/abusive entry is skipped rather than rendered
+ * into the user's input typeahead.
+ */
+function buildBotInfo(peerId: number, profile?: {bot?: boolean; commands?: NostrBotCommand[]}): any {
+  if(!profile?.bot) return undefined;
+  const commands = (profile.commands ?? [])
+  .filter((c) => c && typeof c.command === 'string' && VALID_BOT_COMMAND.test(c.command))
+  .map((c) => ({
+    _: 'botCommand',
+    command: c.command,
+    description: typeof c.description === 'string' ? c.description.slice(0, 256) : ''
+  }));
+  return {_: 'botInfo', pFlags: {}, user_id: peerId, commands};
 }
 
 // ─── Server ──────────────────────────────────────────────────────────
@@ -1272,18 +1302,22 @@ export class PhantomChatMTProtoServer {
     const absPeerId = Math.abs(peerId);
     const pubkey = await this.cachedGetPubkey(absPeerId) ?? '';
     const mapping = await getMapping(pubkey);
-    const user = this.mapper.createTwebUser({peerId: absPeerId, firstName: mapping?.displayName, pubkey});
 
-    // Hydrate `about` from cache and fire background refresh. The refresh
-    // lands via phantomchat_peer_profile_updated and is consumed by the
+    // Hydrate `about` (+ the bot flag / advertised commands) from the cached
+    // kind-0, then fire a background refresh. The refresh lands via
+    // phantomchat_peer_profile_updated and is consumed by the
     // peerPhantomChatProfile store, which drives the User Info rows directly.
+    const profile = pubkey ? loadCachedPeerProfile(pubkey)?.profile : undefined;
     let about = '';
     if(pubkey) {
-      const cached = loadCachedPeerProfile(pubkey);
-      if(cached?.profile.about) about = cached.profile.about;
+      if(profile?.about) about = profile.about;
       // Fire-and-forget — do NOT await; UI updates via rootScope event.
       refreshPeerProfileFromRelays(pubkey, absPeerId as unknown as PeerId).catch(swallowHandler('VirtualMTProto.refreshPeerProfile'));
     }
+
+    // `bot: true` flips pFlags.bot so appUsersManager.isBot returns true, which
+    // is what unlocks the chat input's "/" command menu (CommandsHelper).
+    const user = this.mapper.createTwebUser({peerId: absPeerId, firstName: mapping?.displayName, pubkey, bot: !!profile?.bot});
 
     return {
       _: 'users.userFull',
@@ -1296,7 +1330,11 @@ export class PhantomChatMTProtoServer {
         profile_photo: {_: 'photoEmpty', id: 0},
         notify_settings: {_: 'peerNotifySettings', pFlags: {}},
         common_chats_count: 0,
-        about
+        about,
+        // bot_info carries the advertised slash commands so CommandsHelper can
+        // render the "/" typeahead. The botInfo shape mirrors Telegram's, so
+        // upstream processPeerFullForCommands consumes it unchanged.
+        bot_info: buildBotInfo(absPeerId, profile)
       }
     };
   }
@@ -1310,7 +1348,11 @@ export class PhantomChatMTProtoServer {
       const pubkey = await this.cachedGetPubkey(userId);
       if(!pubkey) continue;
       const userMapping = await getMapping(pubkey);
-      const user = this.mapper.createTwebUser({peerId: userId, firstName: userMapping?.displayName, pubkey});
+      // Carry the bot flag from the cached kind-0 so isBot stays true whenever a
+      // user is re-materialized (e.g. on user_update after a profile refresh) —
+      // not just on the getFullUser path.
+      const bot = !!loadCachedPeerProfile(pubkey)?.profile.bot;
+      const user = this.mapper.createTwebUser({peerId: userId, firstName: userMapping?.displayName, pubkey, bot});
       users.push(user);
     }
     return users;

@@ -15,6 +15,12 @@ const DEFAULT_RELAY_URLS = DEFAULT_RELAYS.map((r) => r.url);
 
 const LOG_PREFIX = '[NostrProfile]';
 
+/** A bot's advertised slash command — bare name (no leading slash) + blurb. */
+export interface NostrBotCommand {
+  command: string;
+  description: string;
+}
+
 export interface NostrProfile {
   name?: string;
   display_name?: string;
@@ -24,6 +30,15 @@ export interface NostrProfile {
   website?: string;
   lud16?: string;
   banner?: string;
+  /** NIP-24: the account is (partly) automated. PhantomChat bots set this. */
+  bot?: boolean;
+  /**
+   * Slash commands the bot advertises, published in its kind-0 content
+   * (phantombot's setMyCommands analogue). Drives the chat input's "/" command
+   * menu. A PhantomChat-specific extension; non-bot / other-client profiles
+   * simply omit it.
+   */
+  commands?: NostrBotCommand[];
 }
 
 /** NostrProfile + the kind 0 event metadata required for conflict resolution. */

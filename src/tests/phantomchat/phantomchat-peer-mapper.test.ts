@@ -70,6 +70,28 @@ describe('PhantomChatPeerMapper', () => {
       expect(user.first_name).toBe('Bob');
       expect(user.last_name).toBe('Smith');
     });
+
+    it('sets pFlags.bot when bot is true (unlocks isBot + the / menu)', () => {
+      mapper = getMapper();
+      const user = mapper.createTwebUser({
+        peerId: SAMPLE_PEER_ID,
+        firstName: 'Lena',
+        pubkey: SAMPLE_PUBKEY,
+        bot: true
+      });
+
+      expect(user.pFlags.bot).toBe(true);
+    });
+
+    it('omits the bot flag when bot is absent/false', () => {
+      mapper = getMapper();
+      expect(
+        mapper.createTwebUser({peerId: SAMPLE_PEER_ID, pubkey: SAMPLE_PUBKEY}).pFlags.bot
+      ).toBeUndefined();
+      expect(
+        mapper.createTwebUser({peerId: SAMPLE_PEER_ID, pubkey: SAMPLE_PUBKEY, bot: false}).pFlags.bot
+      ).toBeUndefined();
+    });
   });
 
   // ─── createTwebMessage ───────────────────────────────────────────
