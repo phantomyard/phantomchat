@@ -202,6 +202,38 @@ Nostr Relays (direct wss://)
   Solid.js UI
 ```
 
+### Threading model
+
+| Concern | Where it runs |
+|---|---|
+| UI (Solid.js), ChatAPI, relay pool, **Virtual MTProto Server** | **Main thread** |
+| `appManagers` (messages, dialogs, peers, …) | **SharedWorker** (via the `apiManagerProxy` MessagePort bridge) |
+| NIP-44 / gift-wrap encryption + Schnorr sign/verify | **Dedicated wrap/unwrap workers** |
+
+## Design principles (hard rules)
+
+PhantomChat lives or dies by **perceived responsiveness**, so the codebase is
+**allergic to synchronous work and to "waiting on waiting."** These rules are
+non-negotiable on any message send/receive, chat-switch, storage, or worker
+path. The full rationale, the threading model, and a review checklist live in
+**[AGENTS.md](AGENTS.md)** — read it before changing a hot path.
+
+1. **The user's own action renders optimistically on the main thread** — never
+   gated on the worker, network, or IndexedDB. Optimistic UI first; persistence,
+   encryption, and relay publish reconcile in the background.
+2. **Cache key-lookups in memory; IndexedDB is the cold tier**, never a
+   per-message dependency.
+3. **Independent awaits go in `Promise.all`** — never `await` inside a `for`
+   loop over a batch.
+4. **High-frequency events coalesce per animation frame**; `rootScope`
+   listeners stay cheap (dispatch is synchronous fan-out).
+5. **No synchronous `localStorage` on render / scroll / drag / per-message
+   paths** — read into memory at boot, write through a debounced flusher.
+6. **Index what you look up; seek + limit** — never `openCursor()`-scan a whole
+   store.
+7. **Retain expensive DOM (chat views) and re-attach** — don't rebuild on every
+   switch.
+
 ## Getting Started
 
 ### Browser support

@@ -34,6 +34,7 @@ const MID = 999000000001;
 
 const dispatchEventSpy = vi.fn();
 const dispatchEventSingleSpy = vi.fn();
+const setMessageToStorageMock = vi.fn().mockResolvedValue(undefined);
 
 const apiProxyStub: any = {mirrors: {messages: {}, dialogs: {}, peers: {}}};
 
@@ -54,7 +55,7 @@ beforeAll(async() => {
       addEventListener: vi.fn(),
       managers: {
         appMessagesManager: {
-          setMessageToStorage: vi.fn().mockResolvedValue(undefined),
+          setMessageToStorage: setMessageToStorageMock,
           invalidateHistoryCache: vi.fn().mockResolvedValue(undefined)
         }
       }
@@ -142,6 +143,8 @@ describe('VMT sendMessage: outgoing dialog bump (regression)', () => {
   beforeEach(() => {
     dispatchEventSpy.mockClear();
     dispatchEventSingleSpy.mockClear();
+    setMessageToStorageMock.mockClear();
+    setMessageToStorageMock.mockResolvedValue(undefined);
     for(const k of Object.keys(apiProxyStub.mirrors.dialogs)) delete apiProxyStub.mirrors.dialogs[k];
     for(const k of Object.keys(apiProxyStub.mirrors.messages)) delete apiProxyStub.mirrors.messages[k];
 
@@ -214,5 +217,26 @@ describe('VMT sendMessage: outgoing dialog bump (regression)', () => {
     expect(dialog).toBeTruthy();
     expect(dialog.top_message).toBe(MID);
     expect(dialog.unread_count).toBe(0);
+  });
+
+  // Perf regression (Phase 1 — optimistic bubble must never wait on a worker
+  // round-trip). The worker's setMessageToStorage write is fire-and-forget; the
+  // history_append paint must fire even if that write never resolves (the
+  // "saturated worker" case that stalled the user's own bubble for seconds).
+  it('paints the bubble even when the worker storage write never resolves', async() => {
+    setMessageToStorageMock.mockReturnValueOnce(new Promise(() => {})); // hangs forever
+
+    await server.handleMethod('messages.sendMessage', {
+      peer: {user_id: PEER_ID},
+      message: 'paint-first',
+      random_id: BigInt(4)
+    });
+
+    const appendCalls = await waitFor(() => {
+      const calls = dispatchEventSingleSpy.mock.calls.filter(c => c[0] === 'history_append');
+      return calls.length >= 1 ? calls : undefined;
+    });
+    expect(appendCalls.length).toBeGreaterThanOrEqual(1);
+    expect(appendCalls[0][1].message.message).toBe('paint-first');
   });
 });
