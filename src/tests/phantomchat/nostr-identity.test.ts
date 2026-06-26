@@ -3,6 +3,7 @@ import {
   generateNostrIdentity,
   importFromMnemonic,
   importFromNsec,
+  importFromStored,
   validateMnemonic,
   npubEncode,
   nsecEncode,
@@ -142,5 +143,37 @@ describe('importFromNsec (0xchat key portability)', () => {
     expect(() => importFromNsec('not-a-key')).toThrow();
     expect(() => importFromNsec('npub1xxxx')).toThrow();
     expect(() => importFromNsec('')).toThrow();
+  });
+});
+
+describe('importFromStored (reload from key-storage)', () => {
+  const testMnemonic = 'leader monkey parrot ring guide accident before fence cannon height naive bean';
+  const expectedPrivkeyHex = '7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a';
+
+  it('reconstructs a generated account from its stored seed', () => {
+    const {seed, nsec} = {seed: testMnemonic, nsec: importFromMnemonic(testMnemonic).nsec};
+    const id = importFromStored({seed, nsec});
+    expect(id.privateKey).toBe(expectedPrivkeyHex);
+  });
+
+  it('reconstructs an nsec-imported account whose stored seed is empty', () => {
+    // An account adopted via nsec has no mnemonic — key-storage persists
+    // {seed: '', nsec: 'nsec1…'}. This is the regression: routing through
+    // importFromMnemonic('') threw "Invalid mnemonic phrase".
+    const nsec = importFromMnemonic(testMnemonic).nsec;
+    const id = importFromStored({seed: '', nsec});
+    expect(id.privateKey).toBe(expectedPrivkeyHex);
+    expect(id.mnemonic).toBe('');
+  });
+
+  it('treats a whitespace-only seed as no seed and falls back to nsec', () => {
+    const nsec = importFromMnemonic(testMnemonic).nsec;
+    const id = importFromStored({seed: '   ', nsec});
+    expect(id.privateKey).toBe(expectedPrivkeyHex);
+  });
+
+  it('throws when neither seed nor nsec is present', () => {
+    expect(() => importFromStored({seed: '', nsec: ''})).toThrow();
+    expect(() => importFromStored({})).toThrow();
   });
 });

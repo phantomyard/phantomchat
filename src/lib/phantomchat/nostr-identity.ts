@@ -73,6 +73,28 @@ export function importFromNsec(nsecOrHex: string): NostrIdentity {
 }
 
 /**
+ * Reconstruct an identity from the material key-storage persisted.
+ *
+ * Accounts generated in-app keep a BIP-39 `seed` (mnemonic); accounts adopted
+ * from another Nostr client via `nsec` have an empty `seed` and only a raw
+ * `nsec`. Prefer the mnemonic route only when a non-empty seed is present,
+ * otherwise fall back to the nsec route. This is the single entry point every
+ * caller that loads `{seed, nsec}` from storage should use — calling
+ * `importFromMnemonic` directly breaks nsec-imported accounts, since
+ * `validateMnemonic('')` throws "Invalid mnemonic phrase".
+ */
+export function importFromStored(stored: {seed?: string; nsec?: string}): NostrIdentity {
+  const seed = stored.seed?.trim();
+  if(seed) {
+    return importFromMnemonic(seed);
+  }
+  if(stored.nsec?.trim()) {
+    return importFromNsec(stored.nsec);
+  }
+  throw new Error('No stored identity material — expected a seed or nsec');
+}
+
+/**
  * Encode a hex public key as npub (bech32).
  */
 export function npubEncode(pubkeyHex: string): string {

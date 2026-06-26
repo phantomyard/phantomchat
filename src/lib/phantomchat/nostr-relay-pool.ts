@@ -14,7 +14,7 @@ import {getNostrUnwrapClient} from './nostr-unwrap-client';
 import {getMessageStore} from './message-store';
 import {buildNip65Event} from './nip65';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
-import {importFromMnemonic} from './nostr-identity';
+import {importFromStored} from './nostr-identity';
 import rootScope from '@lib/rootScope';
 import {swallowHandler} from './log-swallow';
 
@@ -287,8 +287,8 @@ export class NostrRelayPool {
         if(record) {
           const browserKey = await loadBrowserKey();
           if(browserKey) {
-            const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-            const identity = importFromMnemonic(seed);
+            const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+            const identity = importFromStored({seed, nsec});
             this.publicKey = identity.publicKey;
             if(identity.privateKey && identity.privateKey.length === 64) {
               const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);

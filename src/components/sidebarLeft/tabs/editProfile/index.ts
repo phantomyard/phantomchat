@@ -21,7 +21,7 @@ import {publishKind0Metadata} from '@lib/phantomchat/nostr-relay';
 import {uploadToBlossom} from '@lib/phantomchat/blossom-upload';
 import {saveOwnProfileLocal} from '@lib/phantomchat/own-profile-sync';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from '@lib/phantomchat/key-storage';
-import {importFromMnemonic} from '@lib/phantomchat/nostr-identity';
+import {importFromStored} from '@lib/phantomchat/nostr-identity';
 import {createBasicInfoSection, type BasicInfoSection} from './basic-info-section';
 import {createNip05Section, type Nip05Section} from './nip05-section';
 
@@ -152,8 +152,8 @@ export default class AppEditProfileTab extends SliderSuperTab {
       if(!record) return '';
       const browserKey = await loadBrowserKey();
       if(!browserKey) return '';
-      const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-      const id = importFromMnemonic(seed);
+      const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+      const id = importFromStored({seed, nsec});
       npub = id.npub;
       rootScope.dispatchEvent('phantomchat_identity_loaded', {
         npub: id.npub,
@@ -228,8 +228,8 @@ export default class AppEditProfileTab extends SliderSuperTab {
       const record = await loadEncryptedIdentity();
       const browserKey = await loadBrowserKey();
       if(!record || !browserKey) throw new Error('no identity loaded');
-      const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-      const id = importFromMnemonic(seed);
+      const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+      const id = importFromStored({seed, nsec});
       const {url} = await uploadToBlossom(this.editPeer.lastAvatarBlob, id.privateKey);
       return url;
     } catch(err) {

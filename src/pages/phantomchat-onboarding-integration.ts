@@ -13,7 +13,7 @@
 
 import App from '../config/app';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from '../lib/phantomchat/key-storage';
-import {importFromMnemonic} from '../lib/phantomchat/nostr-identity';
+import {importFromStored} from '../lib/phantomchat/nostr-identity';
 import {PhantomChatBridge} from '../lib/phantomchat/phantomchat-bridge';
 import {PhantomChatOnboarding} from './phantomchat/onboarding';
 import {ChatAPI} from '../lib/phantomchat/chat-api';
@@ -70,8 +70,8 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
         console.error('[PhantomChatOnboardingIntegration] browser key missing');
         return;
       }
-      const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-      const identity = importFromMnemonic(seed);
+      const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+      const identity = importFromStored({seed, nsec});
 
       // Populate phantomchatIdentity store
       rootScope.dispatchEvent('phantomchat_identity_loaded', {
@@ -410,14 +410,14 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
 
             const {finalizeEvent} = await import('nostr-tools/pure');
             const {loadEncryptedIdentity: loadEI, loadBrowserKey: loadBK, decryptKeys: dK} = await import('../lib/phantomchat/key-storage');
-            const {importFromMnemonic: iFM} = await import('../lib/phantomchat/nostr-identity');
+            const {importFromStored: iFS} = await import('../lib/phantomchat/nostr-identity');
             const {hexToBytes} = await import('nostr-tools/utils');
 
             const encRecord = await loadEI();
             const bk = await loadBK();
             if(!encRecord || !bk) throw new Error('No encrypted identity');
-            const {seed: s} = await dK(encRecord.iv, encRecord.encryptedKeys, bk);
-            const id = iFM(s);
+            const {seed: s, nsec: ns} = await dK(encRecord.iv, encRecord.encryptedKeys, bk);
+            const id = iFS({seed: s, nsec: ns});
             const sk = hexToBytes(id.privateKey);
 
             // Merge cached profile fields so we don't clobber picture/about/

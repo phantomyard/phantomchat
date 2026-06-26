@@ -12,7 +12,7 @@ import KeyExchange from '@components/phantomchat/KeyExchange';
 import usePhantomChatIdentity from '@stores/phantomchatIdentity';
 import rootScope from '@lib/rootScope';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from '@lib/phantomchat/key-storage';
-import {importFromMnemonic} from '@lib/phantomchat/nostr-identity';
+import {importFromStored} from '@lib/phantomchat/nostr-identity';
 
 export default class AppPhantomChatQRTab extends SliderSuperTab {
   private dispose?: () => void;
@@ -40,8 +40,8 @@ export default class AppPhantomChatQRTab extends SliderSuperTab {
       if(!record) return;
       const browserKey = await loadBrowserKey();
       if(!browserKey) return;
-      const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-      const id = importFromMnemonic(seed);
+      const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+      const id = importFromStored({seed, nsec});
       rootScope.dispatchEvent('phantomchat_identity_loaded', {
         npub: id.npub,
         displayName: record.displayName || null,
