@@ -1930,23 +1930,15 @@ export class PhantomChatMTProtoServer {
         apiProxy.mirrors.messages[storageKey][mid] = msg;
       }
 
-      // Push to the Worker's history storage so bubbles.ts lookups by mid
-      // succeed and subsequent getHistory calls include the message.
-      try {
-        const rs: any = (await import('@lib/rootScope')).default;
-        await rs.managers.appMessagesManager.setMessageToStorage(
-          `${peerId}_history` as any,
-          msg
-        );
-      } catch(e: any) { console.debug(LOG_PREFIX, 'setMessageToStorage failed:', e?.message); }
+      const rs: any = (await import('@lib/rootScope')).default;
 
-      // Dispatch history_append on the main-thread rootScope. We use
-      // dispatchEventSingle to fire the event LOCALLY without the
-      // MessagePort forwarding (which fails in test environments where
-      // the port is not initialized). bubbles.ts dedups by fullMid so
-      // repeated dispatches are idempotent.
+      // PAINT FIRST — the user's own bubble must never wait on a worker
+      // round-trip. The synchronous main-thread mirror write above already
+      // satisfies immediate bubbles.ts lookups, so the history_append render
+      // fires right now. dispatchEventSingle fires LOCALLY (no MessagePort
+      // forward — also keeps tests working where the port is uninitialized);
+      // bubbles.ts dedups by fullMid so repeated dispatches are idempotent.
       try {
-        const rs: any = (await import('@lib/rootScope')).default;
         if(typeof rs.dispatchEventSingle === 'function') {
           rs.dispatchEventSingle('history_append', {
             storageKey: `${peerId}_history`,
@@ -1955,6 +1947,16 @@ export class PhantomChatMTProtoServer {
           });
         }
       } catch(e: any) { console.debug(LOG_PREFIX, 'history_append dispatch failed:', e?.message); }
+
+      // THEN push to the Worker's history storage (so later getHistory calls
+      // include the message) — but FIRE-AND-FORGET. Under incoming-message load
+      // the worker queue backs up; AWAITING this write here is what stalled the
+      // user's own bubble for seconds, because it sat between the mirror write
+      // and the paint above. It is a best-effort cache push (ChatAPI.sendText is
+      // the authoritative persister), so a failure was already swallowed.
+      void Promise.resolve(
+        rs.managers.appMessagesManager.setMessageToStorage(`${peerId}_history` as any, msg)
+      ).catch((e: any) => console.debug(LOG_PREFIX, 'setMessageToStorage failed:', e?.message));
 
       // Bump (or create) the sidebar dialog for the outgoing message.
       // Without this dispatch the chat list never reflects a live send —
