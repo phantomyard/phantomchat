@@ -71,10 +71,15 @@ function flushUnreadCounts(): void {
  * sync localStorage on a per-message path). Flushed eagerly on page hide so a
  * reload never loses the latest counts.
  */
+// 300ms: long enough to coalesce a rapid reply burst into one write, short
+// enough that a reload shortly after the last message still persists the
+// latest counts (page-hide also force-flushes, so a real close never loses).
+const UNREAD_FLUSH_DEBOUNCE_MS = 300;
+
 function persistUnreadCounts(): void {
   if(unreadFlushTimer !== null) return; // a flush is already scheduled
   if(typeof setTimeout === 'undefined') { flushUnreadCounts(); return; }
-  unreadFlushTimer = setTimeout(flushUnreadCounts, 300);
+  unreadFlushTimer = setTimeout(flushUnreadCounts, UNREAD_FLUSH_DEBOUNCE_MS);
 }
 
 // Durability: flush any pending counts before the tab is hidden/unloaded.

@@ -151,6 +151,7 @@ export class MessageStore {
       this.tsChannelInit = true;
       if(typeof BroadcastChannel !== 'undefined') {
         try {
+          // Lives for the page lifetime; closed in destroy() (logout/cleanup).
           this.tsChannel = new BroadcastChannel('phantomchat-tombstones');
           this.tsChannel.onmessage = (e) => {
             const d = e.data as {conversationId?: string; deletedAt?: number};
@@ -178,6 +179,9 @@ export class MessageStore {
     if(!eventId || this.seenEventIds.has(eventId)) return;
     this.seenEventIds.add(eventId);
     if(this.seenEventIds.size > MessageStore.SEEN_CAP) {
+      // Drop the oldest ~10% (Set preserves insertion order). Deleting during
+      // for…of is safe — Set iterators skip entries removed after they're
+      // visited (ECMAScript Set iteration spec).
       const drop = Math.floor(MessageStore.SEEN_CAP * 0.1);
       let i = 0;
       for(const k of this.seenEventIds) { this.seenEventIds.delete(k); if(++i >= drop) break; }
@@ -738,6 +742,13 @@ export class MessageStore {
       db.close();
     }
     this.dbPromise = null;
+    // Mirror the IDB close: drop the cross-tab channel + in-memory caches so a
+    // post-logout singleton starts clean (review #30).
+    try { this.tsChannel?.close(); } catch{ /* ignore */ }
+    this.tsChannel = null;
+    this.tsChannelInit = false;
+    this.tombstoneCache.clear();
+    this.seenEventIds.clear();
     _instance = null;
   }
 }
