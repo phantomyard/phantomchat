@@ -267,6 +267,20 @@ export class PhantomChatBridge {
    * 4. result = VIRTUAL_PEER_BASE + (hash_value % VIRTUAL_PEER_RANGE)
    * 5. Convert to Number for tweb compatibility
    */
+  /**
+   * Synchronous "is this pubkey already a known peer" check, served purely
+   * from the in-memory pubkeyCache (preloaded with every mapping at init,
+   * line ~107). A fast path for hot per-message gates (e.g. isKnownContact)
+   * that would otherwise hit IndexedDB on every incoming message. A miss falls
+   * back to the authoritative DB read at the call site, so this is only ever a
+   * speedup — never the source of truth. (Deleted mappings are not evicted, so
+   * at worst this over-reports "known", which only relaxes the auto-add gate,
+   * never the block gate.)
+   */
+  hasPeerMapping(pubkey: string): boolean {
+    return this.pubkeyCache.has(pubkey);
+  }
+
   async mapPubkeyToPeerId(pubkey: string): Promise<number> {
     // Defense-in-depth: reject non-pubkey inputs loudly rather than letting
     // `hexToBytes(undefined)` fail with `Cannot read properties of undefined
