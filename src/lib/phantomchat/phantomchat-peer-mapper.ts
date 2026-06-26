@@ -17,6 +17,13 @@ export interface CreateUserOpts {
   firstName?: string;
   lastName?: string;
   pubkey: string;
+  /**
+   * Mark the user as a bot (sets `pFlags.bot`, so `appUsersManager.isBot`
+   * returns true). Resolved from the peer's kind-0 `bot` flag by the caller
+   * (virtual-mtproto-server). Drives the bot badge and unlocks the "/" command
+   * menu in the chat input.
+   */
+  bot?: boolean;
 }
 
 export interface CreateChatOpts {
@@ -81,7 +88,8 @@ export class PhantomChatPeerMapper {
       id: opts.peerId,
       first_name: displayName,
       last_name: opts.lastName,
-      pFlags: {},
+      // `bot` flips the bot badge + unlocks the "/" command menu (see isBot).
+      pFlags: opts.bot ? {bot: true} : {},
       access_hash: '0',
       // No presence in PhantomChat (Telegram-style: we don't show online /
       // last-seen). userStatusEmpty renders no subtitle — see
