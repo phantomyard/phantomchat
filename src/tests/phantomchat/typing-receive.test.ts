@@ -84,6 +84,47 @@ describe('phantomchatTypingReceive', () => {
     expect(calls).toEqual([{peerId: 4242, isStop: false, isRecording: true}]);
   });
 
+  it('ensures the sender User is injected BEFORE dispatching a 1:1 typing tick', async() => {
+    // Regression guard: the inherited tweb onUpdateUserTyping only fires
+    // peer_typings (which renders the dots) when the peer's User is loaded.
+    // For a 1:1 tick there is no group-branch fallback to load+re-dispatch, so
+    // if we dispatch without ensuring the User, a cold peer silently shows no
+    // indicator. This locks in that ensureUser runs, with the right args, and
+    // strictly before the dispatch.
+    const order: string[] = [];
+    let ensuredWith: {pubkey: string, peerId: number} | null = null;
+    typing.setUserEnsurer(async(pubkey: string, peerId: number) => {
+      ensuredWith = {pubkey, peerId};
+      order.push('ensure');
+    });
+    typing.setTypingDispatcher((peerId: number) => {
+      order.push('dispatch');
+      dispatched.push(peerId);
+    });
+
+    await typing.onTyping(makeEvent());
+
+    expect(ensuredWith).toEqual({pubkey: PEER, peerId: 4242});
+    expect(order).toEqual(['ensure', 'dispatch']);
+    expect(dispatched).toEqual([4242]);
+  });
+
+  it('still dispatches the 1:1 tick even if ensureUser rejects (non-critical)', async() => {
+    typing.setUserEnsurer(async() => { throw new Error('inject failed'); });
+    await expect(typing.onTyping(makeEvent())).resolves.toBeUndefined();
+    expect(dispatched).toEqual([4242]);
+  });
+
+  it('skips user-ensure on a 1:1 stop tick (nothing to label when clearing)', async() => {
+    let ensured = false;
+    const calls: Array<{peerId: number, isStop?: boolean}> = [];
+    typing.setUserEnsurer(async() => { ensured = true; });
+    typing.setTypingDispatcher((peerId: number, isStop?: boolean) => calls.push({peerId, isStop}));
+    await typing.onTyping(makeEvent({content: 'stop'}));
+    expect(ensured).toBe(false);
+    expect(calls).toEqual([{peerId: 4242, isStop: true}]);
+  });
+
   it('routes a group-tagged event to the GROUP dispatcher with chat id + sender', async() => {
     const groupCalls: Array<{chatId: number, from: number, isStop?: boolean}> = [];
     let ensured = false;
