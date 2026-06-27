@@ -1822,14 +1822,16 @@ export class PhantomChatMTProtoServer {
     try {
       const {peerId, mid, date, text, media, replyToMid, groupedId} = params;
 
-      // For group bubbles (negative peerId) the bubble's name pill is
-      // visible and reads `message.fromId`. Without stamping it the
-      // bubble renders "Deleted Account" / `data-peer-id="0"` until the
-      // relay echo arrives ~0.5–2 s later and the receive path overwrites
-      // the row (FIND-01e78a01 #3). For DM `is-out` bubbles the pill is
-      // CSS-hidden so leaving fromPeerId undefined is harmless.
+      // Stamp `fromPeerId` to ourselves for every outgoing bubble. For group
+      // bubbles the name pill is visible and reads `message.fromId` — without
+      // this it renders "Deleted Account" / `data-peer-id="0"` until the relay
+      // echo arrives ~0.5–2 s later (FIND-01e78a01 #3). For DM bubbles the text
+      // pill is CSS-hidden, but the VOICE-note player header is NOT — it reads
+      // `fromId` to label the sender, so an unstamped DM voice note shows
+      // "Deleted Account" in the player chrome (FIND-voice-deleted-account).
+      // Mapping to self is correct and harmless in every case.
       let fromPeerId: number | undefined;
-      if(isGroupPeer(peerId) && this.ownPubkey) {
+      if(this.ownPubkey) {
         try {
           fromPeerId = await this.mapper.mapPubkey(this.ownPubkey);
         } catch(err) {
@@ -1914,6 +1916,12 @@ export class PhantomChatMTProtoServer {
               url: media.objectURL,
               attributes,
               type: docType,
+              // Top-level duration mirrors what appDocsManager.saveDoc would set
+              // for a normal tweb document. The P2P shape-builder bypasses
+              // saveDoc, so without this the AudioElement waveform renderer
+              // computes clamp(undefined/60*maxW) → NaN width → zero bars and
+              // the voice note collapses to an empty bubble (FIND-voice-empty).
+              ...(typeof media.duration === 'number' ? {duration: media.duration} : {}),
               file_name: `file-${mid}`,
               pFlags: {}
             }

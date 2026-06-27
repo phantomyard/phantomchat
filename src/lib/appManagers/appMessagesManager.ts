@@ -10619,8 +10619,14 @@ export class AppMessagesManager extends AppManager {
 
       this.appPeersManager.saveApiPeers(sponsoredMessages);
 
-      const sponsoredMessage = sponsoredMessages.messages.shift();
-      sponsoredMessages.messages.push(sponsoredMessage);
+      // * rotate the first sponsored message to the end — but only when the list
+      // * is non-empty. On P2P peers the server returns an empty `messages` array,
+      // * and an unguarded shift()/push() injects `undefined` into the array, which
+      // * then crashes the forEach below on `.photo` (reading of undefined).
+      if(sponsoredMessages.messages.length) {
+        const sponsoredMessage = sponsoredMessages.messages.shift();
+        sponsoredMessages.messages.push(sponsoredMessage);
+      }
 
       sponsoredMessages.messages.forEach((sponsoredMessage) => {
         if(sponsoredMessage.photo) {

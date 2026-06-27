@@ -89,6 +89,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
   constructor(protected local?: boolean, sponsored?: boolean) {
     super(new SearchListLoader({
       processItem: (item) => {
+        if(!item) return;
         const isForDocument = this.searchContext.inputFilter._ === 'inputMessagesFilterDocument';
         const {mid, peerId} = item;
         const media = getMediaFromMessage(item, true);

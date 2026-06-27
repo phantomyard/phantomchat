@@ -65,13 +65,19 @@ export default async function wrapGroupedDocuments({
 }) {
   let nameContainer: HTMLElement;
   const {peerId} = message;
-  const mids = albumMustBeRenderedFull ? await chat.getMidsByMid(message.peerId, message.mid) : [message.mid];
+  // Keep the message the bubble already handed us. P2P-injected messages use
+  // synthetic negative mids that the by-mid storage lookup below can miss, so
+  // we fall back to this known-good object rather than rendering an empty doc.
+  const rootMessage = message as Message.message;
+  let mids = albumMustBeRenderedFull ? await chat.getMidsByMid(message.peerId, message.mid) : [message.mid];
+  // If the album lookup comes back empty, render at least this message's own doc.
+  if(!mids?.length) mids = [message.mid];
   /* if(isPending) {
     mids.reverse();
   } */
 
   const promises = mids.map(async(mid, idx, arr) => {
-    const message = chat.getMessageByPeer(peerId, mid) as Message.message;
+    const message = (chat.getMessageByPeer(peerId, mid) as Message.message) || rootMessage;
     const div = await wrapDocument({
       message,
       middleware,
