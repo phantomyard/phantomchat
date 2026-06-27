@@ -228,6 +228,21 @@ class PhantomChatTypingReceive {
       return;
     }
 
+    // Ensure the sender has a User loaded BEFORE dispatching. The inherited
+    // tweb `onUpdateUserTyping` only fires `peer_typings` (which renders the
+    // dots) when the User is present — for a 1:1 tick there is no group-branch
+    // fallback to load+re-dispatch, so a cold/un-injected peer silently shows
+    // nothing. That's the intermittent "sometimes I see the indicator, sometimes
+    // not" bug: it depended on whether the peer's User happened to be cached.
+    // ensureSenderUserInjected is idempotent and cheap (early-returns if present).
+    // Skip on stop — there's nothing to label when clearing.
+    if(!isStop) {
+      try {
+        await this.ensureUser(event.pubkey, senderPeerId);
+      } catch(err) {
+        console.debug(LOG_PREFIX, 'ensureUser non-critical:', (err as Error)?.message);
+      }
+    }
     console.log(`${LOG_PREFIX} → 1:1 route: peer=${senderPeerId} stop=${!!isStop}`);
     this.dispatcher(senderPeerId, isStop, isRecording);
   }
