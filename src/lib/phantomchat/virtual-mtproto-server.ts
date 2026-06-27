@@ -1861,17 +1861,6 @@ export class PhantomChatMTProtoServer {
       }
 
       if(media) {
-        // [VoiceDiag] What does the P2P layer actually receive for this send?
-        console.debug('[VoiceDiag] VMT injectOutgoingBubble media in:', {
-          type: media.type,
-          duration: media.duration,
-          durationType: typeof media.duration,
-          hasWaveform: media.waveform != null,
-          waveformType: typeof media.waveform,
-          mimeType: media.mimeType,
-          size: media.size,
-          mid
-        });
         const attributes: any[] = [];
         if(media.type === 'voice' && typeof media.duration === 'number') {
           attributes.push({
@@ -1937,18 +1926,6 @@ export class PhantomChatMTProtoServer {
               pFlags: {}
             }
           };
-        }
-        // [VoiceDiag] What document shape did we actually build for the bubble?
-        if(media.type === 'voice') {
-          const builtDoc = (msg as any).media?.document;
-          console.debug('[VoiceDiag] VMT built voice doc:', {
-            mediaKind: (msg as any).media?._,
-            docType: builtDoc?.type,
-            duration: builtDoc?.duration,
-            attrs: builtDoc?.attributes,
-            mime: builtDoc?.mime_type,
-            hasUrl: !!builtDoc?.url
-          });
         }
         (msg as any).phantomchatUploading = media.uploading;
       }

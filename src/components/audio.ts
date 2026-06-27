@@ -182,16 +182,6 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
 
   const {svg, container: svgContainer, availW} = createWaveformBars(waveform, doc.duration);
 
-  // [VoiceDiag] The suspect math: NaN availW → zero bars → empty player.
-  console.debug('[VoiceDiag] wrapVoiceMessage bars:', {
-    duration: (doc as any)?.duration,
-    waveformLen: waveform?.length,
-    availW,
-    availWisNaN: Number.isNaN(availW),
-    hasSvgContainer: !!svgContainer,
-    mid: audioEl.message?.mid
-  });
-
   let fakeSvgContainer: HTMLElement;
   if(svgContainer) {
     fakeSvgContainer = svgContainer.cloneNode(true) as HTMLElement;
@@ -521,11 +511,17 @@ export const findMediaTargets = (anchor: HTMLElement, anchorMid: number/* , useS
   }
   // }
 
-  if((next.length && next[0].mid < anchorMid) || (prev.length && prev[prev.length - 1].mid > anchorMid)) {
+  // Reverse only for the search-results view, which renders media
+  // newest-first so DOM order is the opposite of playback order. In the
+  // bubbles view DOM order is already chronological and authoritative, so we
+  // must NOT second-guess it from mids: P2P (PhantomChat) message ids are
+  // `timestampSec * 1e6 + hash` (see phantomchat-bridge), so two voice notes
+  // received in the same second sort by a random hash, not send order. The old
+  // unconditional mid check then flipped prev/next ~half the time, emptying the
+  // auto-advance queue — a finished voice note wouldn't play the next one.
+  if(!isBubbles && ((next.length && next[0].mid < anchorMid) || (prev.length && prev[prev.length - 1].mid > anchorMid))) {
     [prev, next] = [next.reverse(), prev.reverse()];
   }
-
-  // prev = next = undefined;
 
   return [prev, next];
 };
@@ -565,14 +561,6 @@ export default class AudioElement extends HTMLElement {
     const doc = getMediaFromMessage(this.message) as MyDocument;
     const isRealVoice = doc.type === 'voice';
     const isVoice = !this.voiceAsMusic && isRealVoice;
-    // [VoiceDiag] AudioElement.render reached — what does it have to work with?
-    console.debug('[VoiceDiag] AudioElement.render:', {
-      docType: doc?.type,
-      duration: (doc as any)?.duration,
-      isVoice,
-      hasAudioAttr: !!doc?.attributes?.find?.((a: any) => a._ === 'documentAttributeAudio'),
-      mid: this.message?.mid
-    });
     const isOutgoing = this.message.pFlags.is_outgoing;
     const uploadingFileName = this.uploadingFileName ?? this.message?.uploadingFileName?.[0];
 
