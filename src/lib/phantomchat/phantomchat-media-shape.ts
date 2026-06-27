@@ -9,6 +9,8 @@
  * sidecar carries key/iv so AppDownloadManager can fetch+decrypt on demand.
  */
 
+import base64ToBytes from '@helpers/string/base64ToBytes';
+
 export interface PhantomChatFileMetadata {
   url: string;
   sha256: string;
@@ -75,11 +77,24 @@ export function buildPhantomChatMedia(mid: number, fm: PhantomChatFileMetadata):
 
   const attributes: any[] = [];
   if(isVoice) {
+    // The sender ships `waveform` as a base64 string (5-bit Telegram packing),
+    // but tweb's AudioElement feeds it straight into `decodeWaveform`, which
+    // expects packed *bytes* — a string decodes to all-zero (flat, no bars).
+    // Decode here so the bubble draws the amplitude bars. Omit on failure so a
+    // bad blob never throws the whole media-shape build (bubble still plays).
+    let waveform: Uint8Array | undefined;
+    if(fm.waveform) {
+      try {
+        waveform = base64ToBytes(fm.waveform);
+      } catch{
+        waveform = undefined;
+      }
+    }
     attributes.push({
       _: 'documentAttributeAudio',
       pFlags: {voice: true},
       duration: fm.duration,
-      waveform: fm.waveform
+      waveform
     });
   }
 

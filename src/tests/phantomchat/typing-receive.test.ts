@@ -76,6 +76,14 @@ describe('phantomchatTypingReceive', () => {
     expect(calls).toEqual([{peerId: 4242, isStop: true}]);
   });
 
+  it('flags a recording-marked DM event so the record-audio action renders', async() => {
+    const calls: Array<{peerId: number, isStop?: boolean, isRecording?: boolean}> = [];
+    typing.setTypingDispatcher((peerId: number, isStop?: boolean, isRecording?: boolean) =>
+      calls.push({peerId, isStop, isRecording}));
+    await typing.onTyping(makeEvent({content: 'recording'}));
+    expect(calls).toEqual([{peerId: 4242, isStop: false, isRecording: true}]);
+  });
+
   it('routes a group-tagged event to the GROUP dispatcher with chat id + sender', async() => {
     const groupCalls: Array<{chatId: number, from: number, isStop?: boolean}> = [];
     let ensured = false;
