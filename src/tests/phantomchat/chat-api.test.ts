@@ -55,6 +55,7 @@ vi.mock('@lib/rootScope', () => ({
 }));
 
 import {ChatAPI, createChatAPI, ChatMessage, ChatState} from '@lib/phantomchat/chat-api';
+import rootScope from '@lib/rootScope';
 import {DecryptedMessage} from '@lib/phantomchat/nostr-relay';
 import type {PublishResult, RelayConfig, NostrRelayPool} from '@lib/phantomchat/nostr-relay-pool';
 import type {OfflineQueue} from '@lib/phantomchat/offline-queue';
@@ -789,6 +790,7 @@ describe('ChatAPI', () => {
     beforeEach(() => {
       bridgeMocks.mapPubkeyToPeerId.mockClear();
       bridgeMocks.storePeerMapping.mockClear();
+      (rootScope.dispatchEvent as ReturnType<typeof vi.fn>).mockClear();
       messageRequestMocks.isKnownContact.mockResolvedValue(true);
     });
 
@@ -830,7 +832,7 @@ describe('ChatAPI', () => {
       expect(receivedMessage!.content).toBe('Hello from stranger');
     });
 
-    test('does not auto-add known senders', async() => {
+    test('persists the peer mapping for a known sender but raises no message request', async() => {
       // Default mock returns isKnownContact = true
       await chatApi.connect(PEER_ID);
 
@@ -852,8 +854,16 @@ describe('ChatAPI', () => {
       mockPool.simulateMessage(relayMsg);
       await flush();
 
-      // Bridge should NOT have been called for a known sender
-      expect(bridgeMocks.storePeerMapping).not.toHaveBeenCalled();
+      // The mapping IS persisted now — every inbound sender must reach
+      // IndexedDB so the Virtual MTProto send path can resolve the recipient
+      // ("VMT returned no phantomchatMid" bug). Receiving used to be the only
+      // path that skipped persistence for known peers.
+      expect(bridgeMocks.storePeerMapping).toHaveBeenCalledWith(knownSenderPubkey, 9999999999);
+
+      // ...but a *known* sender must not raise a message-request prompt.
+      const requestDispatched = (rootScope.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls
+        .some((call) => call[0] === 'phantomchat_message_request');
+      expect(requestDispatched).toBe(false);
     });
   });
 
