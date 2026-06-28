@@ -200,6 +200,20 @@ export default class FiltersStorage extends AppManager {
     this.getDialogFilters(true).then((filters) => {
       for(const _filterId in oldFilters) {
         const filterId = +_filterId;
+        // PhantomChat: the virtual MTProto server is NOT authoritative for
+        // custom folders. messages.getDialogFilters returns only the locally
+        // seeded system folders ([], prepended to All/Groups/Archive), because
+        // user folders live in local state and sync cross-device over Nostr via
+        // FoldersSync — never through the (stubbed) Telegram filter API. Without
+        // this guard, every boot-time updateDialogFilters reconcile saw each
+        // custom folder (id >= START_LOCAL_ID) missing from the empty server
+        // response and deleted it, wiping user folders on restart. Deletions of
+        // custom folders flow through the explicit single-filter updateDialogFilter
+        // path (user action) / FoldersSync instead, so skip them here.
+        if(filterId >= START_LOCAL_ID) {
+          continue;
+        }
+
         if(!filters.find((filter) => filter.id === filterId)) { // * deleted
           this.onUpdateDialogFilter({_: 'updateDialogFilter', id: filterId});
         }
