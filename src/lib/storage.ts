@@ -18,8 +18,7 @@ import throttleWith from '@helpers/schedulers/throttleWith';
 // import { WorkerTaskTemplate } from "@types";
 import IDBStorage from '@lib/files/idb';
 import {logger} from '@lib/logger';
-import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
-import EncryptedStorageLayer, {StorageLayer} from '@lib/encryptedStorageLayer';
+import {StorageLayer} from '@lib/encryptedStorageLayer';
 
 function noop() {}
 
@@ -67,9 +66,6 @@ export default class AppStorage<
   private deleteThrottled: () => void;
   private deleteDeferred: CancellablePromise<void>;
 
-  private isEncryptable: boolean;
-  private encryptedStoreName?: T['stores'][number]['encryptedName'];
-
   private log: ReturnType<typeof logger>;
 
   constructor(private db: T, private storeName: T['stores'][number]['name']) {
@@ -81,10 +77,6 @@ export default class AppStorage<
     this.saveDeferred = deferredPromise();
     this.keysToDelete = new Set();
     this.deleteDeferred = deferredPromise();
-
-    const store = db.stores.find(store => store.name === storeName);
-    this.isEncryptable = !!store?.encryptedName;
-    this.encryptedStoreName = store?.encryptedName;
 
     if(AppStorage.STORAGES.length) {
       this.useStorage = AppStorage.STORAGES[0].useStorage;
@@ -105,17 +97,14 @@ export default class AppStorage<
   private async getStorage(): Promise<StorageLayer> {
     if(this.storage) return this.storage;
 
-    const isEncryptable = this.isEncryptable ?
-      await DeferredIsUsingPasscode.isUsingPasscode() :
-      false;
-
-    const storage = this.storage = isEncryptable ?
-      EncryptedStorageLayer.getInstance(this.db, this.encryptedStoreName) :
-      new IDBStorage(this.db, this.storeName);
-
-    if(storage instanceof EncryptedStorageLayer) storage.loadEncrypted();
-
-    return storage;
+    // PhantomChat uses a single, unencrypted store per name. The at-rest
+    // passcode-encryption switch (tweb's `__encrypted` store variants) is
+    // deliberately removed: the passcode UI is unreachable in this fork and
+    // the per-instance `isUsingPasscode()` resolution raced reads against
+    // writes, intermittently routing a boot read to the empty encrypted store
+    // and wiping local-only state (folders) on restart. One store, no switch,
+    // no race. If a real lock feature is ever wanted, build it deliberately.
+    return this.storage = new IDBStorage(this.db, this.storeName);
   }
 
   private _save = async() => {
@@ -361,20 +350,10 @@ export default class AppStorage<
       }
     }
 
-    try
-    {
+    try {
       const currentStorage = await this.getStorage();
       await currentStorage.clear();
-
-      if(currentStorage instanceof EncryptedStorageLayer) {
-        const otherStorage = new IDBStorage(this.db, this.storeName);
-        await otherStorage.clear();
-      } else if(this.isEncryptable) {
-        const otherStorage = EncryptedStorageLayer.getInstance(this.db, this.encryptedStoreName);
-        await otherStorage.clear();
-      }
-    }
-    catch{}
+    } catch{}
   }
 
   public async unfreezeAsync(callback: () => Promise<unknown>) {
@@ -429,53 +408,6 @@ export default class AppStorage<
       console.error('freezeSavingAsync callback error:', err);
     }
     this.STORAGES.forEach((storage) => storage.savingFreezed = false);
-  }
-
-  private async toggleEncrypted(shouldEncrypt: boolean) {
-    if(!this.isEncryptable) return;
-
-    const isEncrypted = this.storage instanceof EncryptedStorageLayer;
-    if(shouldEncrypt === isEncrypted) return;
-
-    const entries = await this.getAllEntries();
-
-    await this.storage.clear();
-
-    if(shouldEncrypt) {
-      const storage = this.storage = EncryptedStorageLayer.getInstance(this.db, this.encryptedStoreName);
-      const data = Object.fromEntries(entries);
-
-      await storage.loadDecrypted(data);
-    } else {
-      const storage = this.storage = new IDBStorage(this.db, this.storeName);
-      const keys = entries.map(entry => entry[0] as string);
-      const values = entries.map(entry => entry[1]);
-
-      await storage.save(keys, values);
-    }
-  }
-
-  private async reEncrypt() {
-    if(!(this.storage instanceof EncryptedStorageLayer)) return;
-
-    await this.storage.reEncrypt();
-  }
-
-  public static async toggleEncryptedForAll(shouldEncrypt: boolean) {
-    // this.freezeSaving()
-    this.freezeSavingAsync(async() => {
-      await Promise.all(
-        this.STORAGES.map((storage) => storage.toggleEncrypted(shouldEncrypt))
-      );
-    });
-  }
-
-  public static async reEncryptEncrypted() {
-    this.freezeSavingAsync(async() => {
-      await Promise.all(
-        this.STORAGES.map((storage) => storage.reEncrypt())
-      );
-    });
   }
 
   /* public deleteDatabase() {
