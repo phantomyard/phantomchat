@@ -63,7 +63,16 @@ export function initVirtualPeersDB(): Promise<IDBDatabase> {
 
 /**
  * Store or update a pubkey ↔ peerId mapping.
- * Uses put() for upsert semantics.
+ *
+ * Read-modify-write upsert: when {@link displayName} or {@link nostrProfile}
+ * are omitted (undefined), any value already stored on the record is
+ * PRESERVED rather than overwritten with undefined. This matters because
+ * the idempotent persistence paths added in #35 — `storePeerMapping` on
+ * every inbound message and `backfillPeerMappingsFromHistory` on every
+ * identity load — call this with only `(pubkey, peerId)`. A blind `put()`
+ * would rewrite the record with `displayName: undefined` on every message,
+ * silently wiping a user-set name. Passing an explicit value still
+ * overwrites, so the profile/rename paths are unaffected.
  */
 export async function storeMapping(
   pubkey: string,
@@ -75,15 +84,22 @@ export async function storeMapping(
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    const request = store.put({
-      pubkey,
-      peerId,
-      displayName,
-      nostrProfile,
-      addedAt: Date.now()
-    } satisfies VirtualPeerMapping);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
+    const getReq = store.get(pubkey);
+    getReq.onerror = () => reject(getReq.error);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as VirtualPeerMapping | undefined;
+      const record: VirtualPeerMapping = {
+        pubkey,
+        peerId,
+        // Preserve prior values when the caller doesn't supply them.
+        displayName: displayName ?? existing?.displayName,
+        nostrProfile: nostrProfile ?? existing?.nostrProfile,
+        addedAt: Date.now()
+      };
+      const putReq = store.put(record);
+      putReq.onerror = () => reject(putReq.error);
+      putReq.onsuccess = () => resolve();
+    };
   });
 }
 
