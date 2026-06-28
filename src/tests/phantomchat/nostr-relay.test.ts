@@ -582,6 +582,67 @@ describe('NostrRelay', () => {
     });
   });
 
+  describe('zombie-socket recycle (latency-ping liveness)', () => {
+    const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Connect, reach 'connected', and shrink the ping timeout so a probe with
+    // no EOSE reply fails in 20ms instead of the production 5s.
+    async function connectedRelay(): Promise<MockWebSocket> {
+      relay.connect();
+      await wait(50);
+      expect(relay.getState()).toBe('connected');
+      (relay as any).latencyPingTimeoutMs = 20;
+      return getLastMockWs()!;
+    }
+
+    test('a single ping timeout does NOT recycle the socket', async() => {
+      await connectedRelay();
+      // MockWebSocket.send records the ping REQ but never replies EOSE → timeout.
+      await (relay as any).measureLatency();
+      expect(relay.getState()).toBe('connected');
+    });
+
+    test('two consecutive ping timeouts recycle the silently-dead socket', async() => {
+      await connectedRelay();
+      await (relay as any).measureLatency(); // failure 1
+      await (relay as any).measureLatency(); // failure 2 → recycle
+      expect(relay.getState()).toBe('reconnecting');
+    });
+
+    test('a successful ping resets the streak, preventing a premature recycle', async() => {
+      const ws = await connectedRelay();
+      const origSend = ws.send.bind(ws);
+      const answerPings = (data: string) => {
+        origSend(data);
+        try {
+          const parsed = JSON.parse(data);
+          if(parsed[0] === 'REQ' && String(parsed[1]).startsWith('ping-')) {
+            setTimeout(() => ws.simulateMessage(['EOSE', parsed[1]]), 5);
+          }
+        } catch{ /* ignore */ }
+      };
+
+      await (relay as any).measureLatency(); // failure 1 (no auto-answer yet)
+      ws.send = answerPings;
+      await (relay as any).measureLatency(); // success → streak reset to 0
+      ws.send = origSend;
+      await (relay as any).measureLatency(); // failure 1 again, NOT a recycle
+      expect(relay.getState()).toBe('connected');
+    });
+
+    test('recycle arms pendingSubscribe and detaches the dead socket', async() => {
+      const dead = await connectedRelay();
+      (relay as any).isSubscribed = true; // pool wanted a live subscription
+      await (relay as any).measureLatency();
+      await (relay as any).measureLatency(); // recycle
+      expect(relay.getState()).toBe('reconnecting');
+      // Next onopen must send a FRESH REQ (incl. kind 20001 typing).
+      expect((relay as any).pendingSubscribe).toBe(true);
+      // Dead socket's handlers detached so a late close can't double-fire.
+      expect(dead.onclose).toBeNull();
+    });
+  });
+
   describe('createNostrRelay factory', () => {
     test('creates NostrRelay instance', () => {
       const r = createNostrRelay();
