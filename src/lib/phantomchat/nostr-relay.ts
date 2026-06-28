@@ -189,6 +189,25 @@ export class NostrRelay {
   private readonly reconnectBackoffMs: number = 10000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
+  // Zombie-socket detection. A half-open TCP socket (laptop sleep/resume, NAT
+  // rebind, flaky wifi) can leave the WebSocket in readyState OPEN with onclose
+  // NEVER firing — the relay believes it is 'connected' while no bytes flow.
+  // Normal DMs are gift-wrapped/backfilled so they recover, but typing/presence
+  // are NIP-16 ephemeral (kind 20000–29999): no storage, no replay. A deaf
+  // socket silently drops every tick until something external forces a reload —
+  // exactly the "typing suddenly started working after a refresh" symptom.
+  // The 60s latency ping is our liveness probe: count its consecutive timeouts
+  // while state is 'connected' and recycle the socket after maxLatencyFailures
+  // so onopen re-arms a FRESH REQ (incl. kind 20001). Gated at 2 so a single
+  // slow ping never causes needless reconnect churn / status-dot flicker. This
+  // lives entirely on the existing background interval — nowhere near the
+  // message-render or chat-switch path, so UI snappiness is untouched.
+  private consecutiveLatencyFailures: number = 0;
+  private readonly maxLatencyFailures: number = 2;
+  // Ping timeout (ms) before a latency probe is counted as failed. Field (not
+  // an inline literal) so tests can shrink it without waiting the full 5s.
+  private latencyPingTimeoutMs: number = 5000;
+
   // Outbound publish buffer (FIND-3786a35f / double-message fix). A DM sent
   // while the socket is still mid-connect (cold page load — the SW reconnects
   // every relay WS and presence beats only start landing once they're OPEN)
@@ -771,10 +790,23 @@ export class NostrRelay {
         } catch(e) { logSwallow('NostrRelay.measureLatency.closePing', e); }
         if(latency >= 0) this.directLatencyMs = latency;
         this.setLatency(latency);
+        // Zombie-socket liveness accounting. A good ping clears the streak; a
+        // timeout while we still believe we're 'connected' means the socket may
+        // be silently dead, so recycle after maxLatencyFailures consecutive
+        // misses to re-arm typing/presence (see field docs above).
+        if(latency >= 0) {
+          this.consecutiveLatencyFailures = 0;
+        } else if(this.connectionState === 'connected') {
+          this.consecutiveLatencyFailures++;
+          if(this.consecutiveLatencyFailures >= this.maxLatencyFailures) {
+            this.consecutiveLatencyFailures = 0;
+            this.recycleDeadSocket();
+          }
+        }
         resolve(latency);
       };
 
-      const timeout = setTimeout(() => cleanup(-1), 5000);
+      const timeout = setTimeout(() => cleanup(-1), this.latencyPingTimeoutMs);
 
       const wrapper = (event: MessageEvent) => {
         try {
@@ -1120,6 +1152,33 @@ export class NostrRelay {
   /**
    * Handle disconnection and initiate reconnection if needed
    */
+  /**
+   * Force-recycle a socket that looks alive (readyState OPEN, state 'connected')
+   * but has gone silent — repeated latency-ping timeouts with no onclose. We
+   * detach the dead socket's handlers and close it BEFORE routing through
+   * handleDisconnect, so a late onclose from the zombie can't double-fire a
+   * disconnect on the fresh socket that the reconnect spins up. handleDisconnect
+   * then arms pendingSubscribe + schedules reconnect, and the next onopen sends
+   * a fresh REQ (incl. kind 20001 typing).
+   */
+  private recycleDeadSocket(): void {
+    this.log('[NostrRelay] latency ping timed out', this.maxLatencyFailures,
+      'times — recycling silently-dead socket');
+    const dead = this.ws;
+    if(dead) {
+      dead.onclose = null;
+      dead.onmessage = null;
+      dead.onopen = null;
+      dead.onerror = null;
+      try {
+        dead.close();
+      } catch(e) {
+        logSwallow('NostrRelay.recycleDeadSocket.close', e);
+      }
+    }
+    this.handleDisconnect();
+  }
+
   private handleDisconnect(): void {
     if(this.connectionState === 'disconnected') {
       return;
