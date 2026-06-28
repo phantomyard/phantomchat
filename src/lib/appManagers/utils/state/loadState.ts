@@ -52,8 +52,12 @@ const COMMON_KEYS = Object.keys(COMMON_STATE_INIT) as any as Array<keyof StateCo
 const REFRESH_KEYS: Array<keyof State> = [
   'contactsListCachedTime',
   'stateCreatedTime',
-  'maxSeenMsgId',
-  'filtersArr'
+  'maxSeenMsgId'
+  // NOTE: 'filtersArr' deliberately removed. Upstream tweb refreshed filters
+  // daily because they were re-fetched from the Telegram server. In PhantomChat
+  // folders are LOCAL-ONLY (Nostr folder sync is disabled), so there is nothing
+  // to re-derive them from — a daily REFRESH would silently wipe custom folders
+  // every 24h. See fix for folder-wipe-on-restart.
 ];
 
 const RESET_WITH_BUILD: Array<keyof State> = [
@@ -436,8 +440,29 @@ async function moveStoragesToMultiAccountFormat() {
   ]);
 }
 
-async function checkIfHasMultiAccount() {
-  return !!(await AccountController.get(1))[`dc${App.baseDcId}_auth_key`];
+export async function checkIfHasMultiAccount() {
+  // Original tweb check: account 1 holds a Telegram MTProto DC auth key, which
+  // means it's already in the multi-account storage format (so the legacy
+  // single→multi migration should be skipped).
+  //
+  // PhantomChat (P2P) NEVER creates Telegram DC auth keys, so this was ALWAYS
+  // false — forcing the legacy migration (loadOldState + moveStoragesTo
+  // MultiAccountFormat + deleteOldDatabase) to run on EVERY boot. That path
+  // reloads account 1's state from the old/empty `tweb` database and then
+  // overwrites tweb-account-1, clobbering local-only state (custom folders) on
+  // every restart. See fix for folder-wipe-on-restart.
+  const accountData = await AccountController.get(1);
+  if(accountData[`dc${App.baseDcId}_auth_key`]) {
+    return true;
+  }
+
+  // P2P signal that account 1 is already established in the new-format storage:
+  // `stateCreatedTime` is persisted the first time account 1's state is saved.
+  // Its presence means there's nothing to migrate from the old DB, so we take
+  // the non-destructive loadStateForAccount(1) path. The legacy migration thus
+  // runs at most once (a genuinely fresh profile) and never again.
+  const stateCreatedTime = await new StateStorage(1).get('stateCreatedTime');
+  return !!stateCreatedTime;
 }
 
 function deleteOldDatabase() {
