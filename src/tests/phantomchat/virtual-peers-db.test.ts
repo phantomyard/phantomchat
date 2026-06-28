@@ -637,6 +637,43 @@ describe('storeMapping / getMapping round-trip', () => {
     expect(result!.displayName).toBeUndefined();
   });
 
+  // Regression (#35): the idempotent persistence paths — storePeerMapping on
+  // every inbound message and backfillPeerMappingsFromHistory on identity load
+  // — call storeMapping(pubkey, peerId) with no name. A blind put() rewrote the
+  // record with displayName: undefined on every message, wiping a user-set name
+  // (the "losing the set name on my bots" bug). storeMapping must now preserve
+  // an existing name when none is supplied.
+  test('storeMapping without displayName preserves an existing name', async() => {
+    const pubkey = '7'.repeat(64);
+    await storeMapping(pubkey, 700, 'MyBot');
+    // Simulate an inbound-message re-persist that omits the name.
+    await storeMapping(pubkey, 700);
+
+    const result = await getMapping(pubkey);
+    expect(result!.displayName).toBe('MyBot');
+  });
+
+  test('storeMapping without nostrProfile preserves an existing profile', async() => {
+    const pubkey = '8'.repeat(64);
+    const profile = {name: 'bot', display_name: 'MyBot', picture: 'https://example.com/bot.jpg'};
+    await storeMapping(pubkey, 701, 'MyBot', profile);
+    // Nameless, profileless re-persist (the backfill path).
+    await storeMapping(pubkey, 701);
+
+    const result = await getMapping(pubkey);
+    expect(result!.displayName).toBe('MyBot');
+    expect(result!.nostrProfile).toEqual(profile);
+  });
+
+  test('storeMapping still overwrites the name when one is explicitly supplied', async() => {
+    const pubkey = '9'.repeat(64);
+    await storeMapping(pubkey, 702, 'Original');
+    await storeMapping(pubkey, 702, 'Renamed');
+
+    const result = await getMapping(pubkey);
+    expect(result!.displayName).toBe('Renamed');
+  });
+
   // WU-2 #10: a contact's kind:0 rebrand must update the stored displayName.
   // Old guard (!existing.displayName) only set it when empty, so a rename was
   // dropped forever. New rule: overwrite when the existing name was kind:0-
