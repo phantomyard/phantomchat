@@ -109,7 +109,7 @@ function AnyStateWriter<S>(log: ReturnType<typeof logger>, keys: string[], init:
   };
 }
 
-function StateWriter(log: ReturnType<typeof logger>) {
+export function StateWriter(log: ReturnType<typeof logger>) {
   const w = AnyStateWriter<State>(log, ALL_KEYS, STATE_INIT);
 
   const resetStorages: Map<keyof StoragesResults, []> = new Map();
@@ -158,7 +158,7 @@ function CommonStateWriter(log: ReturnType<typeof logger>) {
   return w;
 }
 
-const STATE_STEPS = {
+export const STATE_STEPS = {
   REFRESH: (writer: ReturnType<typeof StateWriter>) => {
     const time = Date.now();
     if((writer.state.stateCreatedTime + REFRESH_EVERY) < time) {
@@ -186,11 +186,13 @@ const STATE_STEPS = {
   VERSION: (writer: ReturnType<typeof StateWriter>) => {
     let newVersion: string, oldVersion: string;
     if(writer.state.version !== STATE_VERSION || writer.state.build !== BUILD/*  || true */) {
-      if(writer.state.build < 526) { // * drop all previous migrations
-        writer.reset();
-      } else if(writer.state.build < 562) { // * drop filtersArr
-        writer.push('filtersArr', copy(STATE_INIT.filtersArr));
-      }
+      // NOTE: the `build < 526` (full reset) and `build < 562` (drop filtersArr)
+      // branches below are *upstream Telegram-tweb* build milestones. PhantomChat
+      // versions as 1.0.<run_number> (build numbers in the low hundreds), which is
+      // ALWAYS below those thresholds — so leaving them in wipes local-only state
+      // (custom folders / filtersArr) on every build change. PhantomChat never had
+      // tweb builds 526/562, so these migrations are meaningless here and removed.
+      // Folder persistence relies on this; see fix for folder-wipe-on-restart.
 
       if(compareVersion(writer.state.version, STATE_VERSION) !== 0) {
         newVersion = STATE_VERSION;

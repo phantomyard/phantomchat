@@ -308,15 +308,12 @@ export class AppImManager extends EventListenerBase<{
 
     themeController.AppBackgroundTab = AppBackgroundTab;
 
-    if(IS_FIREFOX && apiManagerProxy.oldVersion && compareVersion(apiManagerProxy.oldVersion, '1.4.3') === -1) {
-      this.deleteFilesIterative((response) => {
-        return response.headers.get('Content-Type') === 'image/svg+xml';
-      }).then(() => {
-        this.applyCurrentTheme({noSetTheme: true});
-      });
-    } else {
-      this.applyCurrentTheme({noSetTheme: true});
-    }
+    // NOTE: an upstream Telegram-tweb migration used to wipe the Firefox SVG cache
+    // for any client upgrading from below build 1.4.3. PhantomChat versions as
+    // 1.0.<run_number>, so compareVersion(oldVersion, '1.4.3') is ALWAYS -1 — meaning
+    // every Firefox user re-wiped their SVG cache on *every* version bump, forever.
+    // That tweb milestone never applied to this fork, so the migration is removed.
+    this.applyCurrentTheme({noSetTheme: true});
 
     // * fix simultaneous opened both sidebars, can happen when floating sidebar is opened with left sidebar
     mediaSizes.addEventListener('changeScreen', (from, to) => {
