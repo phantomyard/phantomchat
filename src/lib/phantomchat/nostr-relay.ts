@@ -16,7 +16,7 @@ import {wrapV2, wrapNip17Message, isV2Event} from './nostr-crypto';
 import {getNostrUnwrapClient} from './nostr-unwrap-client';
 import {finalizeEvent, verifyEvent} from 'nostr-tools/pure';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
-import {importFromMnemonic} from './nostr-identity';
+import {importFromStored} from './nostr-identity';
 import {logSwallow, swallowHandler} from './log-swallow';
 
 // Use the etc namespace for utility functions
@@ -243,8 +243,8 @@ export class NostrRelay {
         throw new Error('Browser key missing — cannot decrypt identity.');
       }
 
-      const {seed} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-      const identity = importFromMnemonic(seed);
+      const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+      const identity = importFromStored({seed, nsec});
 
       this.ownId = identity.npub;
 
