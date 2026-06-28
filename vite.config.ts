@@ -19,6 +19,12 @@ const pkgVersion = JSON.parse(readFileSync(path.join(rootDir, 'package.json'), '
 // package.json version. This single value feeds the in-app version, the /version and
 // /version.json endpoints, and the sidebar update-available poll.
 const appVersion = process.env.APP_VERSION || pkgVersion;
+// Build number = the trailing segment of the 1.0.<build_number> scheme. This feeds
+// App.build (import.meta.env.VITE_BUILD). It MUST be a finite integer: the state
+// migration in loadState.ts compares state.build against this, and an undefined/NaN
+// value makes that comparison always-true, re-running the migration (and wiping
+// local-only state like filtersArr/folders) on every single boot.
+const buildNumber = parseInt(appVersion.split('.').pop(), 10) || 0;
 const certsDir = path.join(rootDir, 'certs');
 const ENV_LOCAL_FILE_PATH = path.join(rootDir, '.env.local');
 const LANG_PACK_LOCAL_FILE_PATH = path.join(rootDir, 'src', 'langPackLocalVersion.ts');
@@ -110,6 +116,7 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_VERSION': JSON.stringify(appVersion),
     'import.meta.env.VITE_VERSION_FULL': JSON.stringify(appVersion),
+    'import.meta.env.VITE_BUILD': JSON.stringify(buildNumber),
     '__BUILD_VERSION__': JSON.stringify(appVersion)
   },
   plugins: [
