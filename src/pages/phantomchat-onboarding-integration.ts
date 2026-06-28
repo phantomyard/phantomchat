@@ -337,13 +337,18 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // Delivery status UI
       deliveryUI.attach();
 
-      // --- Folders sync (kind 30078) — DISABLED: folders are LOCAL-ONLY per client ---
-      // The actual folder-persistence bug was a boot-time state migration (see
-      // loadState.ts / VITE_BUILD fix), NOT this sync. But by product decision
-      // folders are kept local to each client: the cross-device reconcile (remote-
-      // wins) and publish paths are disabled to remove a whole class of clobber
-      // risk. The FoldersSync class is retained should sync ever be re-enabled.
-      const FOLDERS_SYNC_ENABLED = false;
+      // --- Folders sync (kind 30078) — cross-device folder reconcile + publish ---
+      // The folder-persistence wipe was NOT this sync. The real root cause was the
+      // boot-time single→multi-account migration: checkIfHasMultiAccount() gated it
+      // on a Telegram MTProto DC auth key, which this P2P fork never has, so the
+      // migration ran every boot and reloaded account 1 from the old/empty `tweb`
+      // DB — clobbering tweb-account-1 and wiping custom folders (see loadState.ts
+      // fix). With that fixed (and verified live: create folder → restart → folder
+      // persists), cross-device folder sync is re-enabled: a bounded remote-wins
+      // reconcile on boot and a debounced publish on filter changes. The reconcile
+      // only wins when the remote snapshot is genuinely newer than local
+      // (decideMerge), so it does not clobber freshly-created local folders.
+      const FOLDERS_SYNC_ENABLED = true;
       if(FOLDERS_SYNC_ENABLED) {
         try {
           const privKeyBytes = new Uint8Array(

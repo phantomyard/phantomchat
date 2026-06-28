@@ -22,7 +22,6 @@ import Modes from '@config/modes';
 import {ActiveAccountNumber} from '@lib/accounts/types';
 import commonStateStorage from '@lib/commonStateStorage';
 import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
-import AppStorage from '@lib/storage';
 import EncryptionKeyStore from '@lib/passcode/keyStore';
 import sessionStorage from '@lib/sessionStorage';
 import CacheStorageController from '@lib/files/cacheStorage';
@@ -148,12 +147,9 @@ port.addMultipleEventsListeners({
     DeferredIsUsingPasscode.resolveDeferred(payload.isUsingPasscode);
     EncryptionKeyStore.save(payload.encryptionKey);
 
-    await Promise.all([
-      AppStorage.toggleEncryptedForAll(payload.isUsingPasscode),
-      payload.isUsingPasscode ?
-        sessionStorage.encryptEncryptable() :
-        sessionStorage.decryptEncryptable()
-    ]);
+    await (payload.isUsingPasscode ?
+      sessionStorage.encryptEncryptable() :
+      sessionStorage.decryptEncryptable());
 
     pushSingleManager.registerAgain();
 
@@ -166,10 +162,7 @@ port.addMultipleEventsListeners({
     await commonStateStorage.set({passcode: toStore});
 
     EncryptionKeyStore.save(encryptionKey);
-    await Promise.all([
-      AppStorage.reEncryptEncrypted(),
-      sessionStorage.reEncryptEncryptable()
-    ]);
+    await sessionStorage.reEncryptEncryptable();
 
     await port.invokeExceptSourceAsync('saveEncryptionKey', encryptionKey, source);
   },
