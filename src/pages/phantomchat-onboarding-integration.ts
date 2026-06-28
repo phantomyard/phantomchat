@@ -98,6 +98,17 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       await bridge.storePeerMapping(identity.publicKey, ownPeerId, record.displayName || 'Me');
       console.log('[PhantomChatOnboardingIntegration] own mapping stored: peerId', ownPeerId);
 
+      // Heal peer mappings missing from IndexedDB (e.g. peers we only ever
+      // received from on a previous session, or after an identity reload).
+      // Without this the send path drops silently at the `!peerPubkey` guard
+      // ("VMT returned no phantomchatMid") until a fresh inbound message
+      // happens to re-persist the mapping. Best-effort — never blocks load.
+      try {
+        await bridge.backfillPeerMappingsFromHistory(identity.publicKey);
+      } catch(err) {
+        console.warn('[PhantomChatOnboardingIntegration] peer-mapping backfill failed (non-fatal):', err);
+      }
+
       // --- Initialize Virtual MTProto Server ---
       const server = new PhantomChatMTProtoServer();
       server.setOwnPubkey(identity.publicKey);

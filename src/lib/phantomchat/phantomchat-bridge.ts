@@ -369,6 +369,62 @@ export class PhantomChatBridge {
   }
 
   /**
+   * Rebuild the pubkey↔peerId reverse-mapping from locally stored message
+   * history. Heals installs whose mappings never reached IndexedDB — e.g. a
+   * peer we only ever *received* from (before the receive-path persistence
+   * fix), or an account reloaded from a stored identity. Without this, the
+   * Virtual MTProto send path drops silently at its `!peerPubkey` guard
+   * ("VMT returned no phantomchatMid") for every such peer, while receiving
+   * keeps working because the pubkey comes straight off the inbound event.
+   *
+   * Conversation IDs are `[pubkeyA, pubkeyB].sort().join(':')` (see
+   * MessageStore.getConversationId), so each 1:1 id carries exactly two
+   * 64-hex pubkeys. We split, drop our own pubkey, and persist a mapping for
+   * every remaining peer not already cached. Anything that isn't two
+   * colon-joined 64-hex pubkeys (e.g. group-conv ids) is skipped. Wholly
+   * best-effort — a single failure never blocks identity load.
+   *
+   * @returns the number of mappings newly persisted.
+   */
+  async backfillPeerMappingsFromHistory(ownPubkey: string): Promise<number> {
+    let restored = 0;
+    try {
+      const {getMessageStore} = await import('./message-store');
+      const conversationIds = await getMessageStore().getAllConversationIds();
+      const seen = new Set<string>();
+
+      for(const conversationId of conversationIds) {
+        const parts = conversationId.split(':');
+        // Only 1:1 conversations encode exactly two pubkeys. Skip the rest.
+        if(parts.length !== 2) continue;
+
+        for(const pubkey of parts) {
+          if(pubkey === ownPubkey || seen.has(pubkey)) continue;
+          seen.add(pubkey);
+          if(!/^[0-9a-f]{64}$/i.test(pubkey)) continue;
+          // Already mapped (init pre-loaded IndexedDB into pubkeyCache).
+          if(this.pubkeyCache.has(pubkey)) continue;
+
+          try {
+            const peerId = await this.mapPubkeyToPeerId(pubkey);
+            await this.storePeerMapping(pubkey, peerId);
+            restored++;
+          } catch(err) {
+            console.warn('[PhantomChatBridge] backfill mapping failed for peer:', err);
+          }
+        }
+      }
+    } catch(err) {
+      console.warn('[PhantomChatBridge] backfillPeerMappingsFromHistory failed (non-fatal):', err);
+    }
+
+    if(restored > 0) {
+      console.log('[PhantomChatBridge] backfilled', restored, 'peer mapping(s) from message history');
+    }
+    return restored;
+  }
+
+  /**
    * Derive a deterministic CSS gradient avatar from a Nostr pubkey.
    * Uses the first 6 hex chars of SHA-256(pubkey) as the HSL hue.
    * Returns a valid CSS linear-gradient string.

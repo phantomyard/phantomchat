@@ -351,18 +351,31 @@ export async function handleRelayMessage(
     ctx.log.warn('[ChatAPI] tombstone gate check failed:', err);
   }
 
-  // 5. Auto-add unknown senders
-  const isKnown = await requestStore.isKnownContact(msg.from).catch(() => true);
-  if(!isKnown && msg.from !== ctx.ownId) {
-    ctx.log('[ChatAPI] auto-adding unknown sender:', msg.from.slice(0, 8) + '...');
+  // 5. Persist the pubkey↔peerId mapping for EVERY inbound sender.
+  // The Virtual MTProto send path resolves the recipient strictly from the
+  // IndexedDB reverse-mapping (getPubkey). If a peer was only ever *received*
+  // from — never explicitly added as a contact — the mapping never reached
+  // IndexedDB, so sending silently dropped at the `!peerPubkey` guard with
+  // "VMT returned no phantomchatMid" (receiving still worked because the
+  // pubkey comes straight off the inbound event). Previously this ran only
+  // inside the auto-add branch below, so known senders skipped persistence.
+  // storePeerMapping is idempotent (IDB put + cache set), so persisting on
+  // every inbound message is safe and cheap.
+  if(msg.from !== ctx.ownId) {
     try {
       const {PhantomChatBridge} = await import('./phantomchat-bridge');
       const bridge = PhantomChatBridge.getInstance();
       const peerId = await bridge.mapPubkeyToPeerId(msg.from);
       await bridge.storePeerMapping(msg.from, peerId);
     } catch(err) {
-      ctx.log.warn('[ChatAPI] failed to auto-add unknown sender:', err);
+      ctx.log.warn('[ChatAPI] failed to persist peer mapping:', err);
     }
+  }
+
+  // 6. Auto-add unknown senders (message request)
+  const isKnown = await requestStore.isKnownContact(msg.from).catch(() => true);
+  if(!isKnown && msg.from !== ctx.ownId) {
+    ctx.log('[ChatAPI] auto-adding unknown sender:', msg.from.slice(0, 8) + '...');
 
     let firstMsg = msg.content;
     try {
@@ -375,7 +388,7 @@ export async function handleRelayMessage(
     rootScope.dispatchEvent('phantomchat_message_request', {pubkey: msg.from, firstMessage: firstMsg});
   }
 
-  // 6. Parse content
+  // 7. Parse content
   const parsed = parseMessageContent(msg.content);
   let msgType: ChatMessageType = (parsed.type || 'text') as ChatMessageType;
   const fileMetadata = extractFileMetadata(parsed, msg.rumorKind);
@@ -396,7 +409,7 @@ export async function handleRelayMessage(
     fileMetadata
   };
 
-  // 7. Dedup check
+  // 8. Dedup check
   if(isDuplicate(ctx.history, msg, chatMessage.id)) {
     if(ctx.offlineQueue) ctx.offlineQueue.acknowledge(chatMessage.id);
     return {action: 'duplicate', id: chatMessage.id};
@@ -425,7 +438,7 @@ export async function handleRelayMessage(
     ctx.log.warn('[ChatAPI] persistent dedup lookup failed:', err);
   }
 
-  // 8. Acknowledge, add to history, persist
+  // 9. Acknowledge, add to history, persist
   if(ctx.offlineQueue) ctx.offlineQueue.acknowledge(chatMessage.id);
   ctx.history.push(chatMessage);
 
@@ -508,14 +521,14 @@ export async function handleRelayMessage(
     ctx.log.warn('[ChatAPI] message store error:', err);
   }
 
-  // 9. Send delivery receipt
+  // 10. Send delivery receipt
   if(ctx.deliveryTracker && msg.from !== ctx.ownId) {
     ctx.deliveryTracker.sendDeliveryReceipt(chatMessage.id, msg.from).catch((err) => {
       ctx.log.warn('[ChatAPI] delivery receipt failed:', err);
     });
   }
 
-  // 10. Notify callback
+  // 11. Notify callback
   if(ctx.onMessage) {
     ctx.onMessage(chatMessage);
   }
