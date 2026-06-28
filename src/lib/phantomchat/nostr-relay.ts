@@ -955,6 +955,20 @@ export class NostrRelay {
       return;
     }
 
+    // Pre-decrypt dedup — the same gate handleEvent() uses, applied to the QUERY
+    // path. The catch-up poll (backfillRecent) and reconnect backfills re-query
+    // the same recent window every tick; without this gate every tick re-ran the
+    // expensive Schnorr verify + NIP-44 unwrap on wraps we had already decrypted.
+    // The downstream rumor-id dedup only stops re-DISPATCH, not the crypto, so a
+    // long session piled up hundreds of thousands of redundant unwraps that
+    // saturated the unwrap worker, blew past its 8s timeout, and dumped a storm
+    // of synchronous unwrapV2 onto the main thread — the freeze. A wrap the live
+    // push genuinely dropped was never claimed, so it still passes here and gets
+    // recovered; only already-unwrapped wraps are skipped. (FIND-poll-reunwrap)
+    if(event.id && this.claimEvent && !this.claimEvent(event.id)) {
+      return;
+    }
+
     try {
       // Unwrap off the main thread when a worker is available. The wrap's
       // Schnorr signature is verified inside the unwrap (step a) before any

@@ -511,11 +511,17 @@ export const findMediaTargets = (anchor: HTMLElement, anchorMid: number/* , useS
   }
   // }
 
-  if((next.length && next[0].mid < anchorMid) || (prev.length && prev[prev.length - 1].mid > anchorMid)) {
+  // Reverse only for the search-results view, which renders media
+  // newest-first so DOM order is the opposite of playback order. In the
+  // bubbles view DOM order is already chronological and authoritative, so we
+  // must NOT second-guess it from mids: P2P (PhantomChat) message ids are
+  // `timestampSec * 1e6 + hash` (see phantomchat-bridge), so two voice notes
+  // received in the same second sort by a random hash, not send order. The old
+  // unconditional mid check then flipped prev/next ~half the time, emptying the
+  // auto-advance queue — a finished voice note wouldn't play the next one.
+  if(!isBubbles && ((next.length && next[0].mid < anchorMid) || (prev.length && prev[prev.length - 1].mid > anchorMid))) {
     [prev, next] = [next.reverse(), prev.reverse()];
   }
-
-  // prev = next = undefined;
 
   return [prev, next];
 };

@@ -40,6 +40,21 @@ const STALE_SECONDS = 30;
  */
 const TYPING_STOP = 'stop';
 
+/**
+ * Content marker for a "recording voice" tick. phantombot emits this (instead of
+ * the empty start marker) while it synthesizes a voice reply, so we render the
+ * native `sendMessageRecordAudioAction` ("recording voice") activity rather than
+ * the generic typing dots — mirroring Telegram.
+ */
+const TYPING_RECORDING = 'recording';
+
+/** Maps the tick lifecycle to the native MTProto send-message action type. */
+function typingActionType(isStop?: boolean, isRecording?: boolean): string {
+  if(isStop) return 'sendMessageCancelAction';
+  if(isRecording) return 'sendMessageRecordAudioAction';
+  return 'sendMessageTypingAction';
+}
+
 interface NostrEventLite {
   id: string;
   kind: number;
@@ -60,7 +75,7 @@ type GroupResolver = (groupId: string) => Promise<number>;
  * Injects a 1:1 typing update into tweb. `isStop` true cancels the indicator.
  * Default → apiUpdatesManager `updateUserTyping`.
  */
-type TypingDispatcher = (peerId: number, isStop?: boolean) => void;
+type TypingDispatcher = (peerId: number, isStop?: boolean, isRecording?: boolean) => void;
 
 /**
  * Injects a GROUP typing update into tweb. `chatId` is the positive chat id,
@@ -68,7 +83,7 @@ type TypingDispatcher = (peerId: number, isStop?: boolean) => void;
  * apiUpdatesManager `updateChatUserTyping` (which natively renders the member's
  * name and aggregates "Lena and Kai are typing…").
  */
-type GroupTypingDispatcher = (chatId: number, fromUserPeerId: number, isStop?: boolean) => void;
+type GroupTypingDispatcher = (chatId: number, fromUserPeerId: number, isStop?: boolean, isRecording?: boolean) => void;
 
 /** Ensures a User exists for a pubkey so the group typing name renders. */
 type UserEnsurer = (pubkey: string, peerId: number) => Promise<void>;
@@ -91,7 +106,7 @@ class PhantomChatTypingReceive {
   private ensureUser: UserEnsurer = async(pubkey, peerId) => {
     await ensureSenderUserInjected({senderPubkey: pubkey, peerId, logPrefix: LOG_PREFIX});
   };
-  private dispatcher: TypingDispatcher = (peerId, isStop) => {
+  private dispatcher: TypingDispatcher = (peerId, isStop, isRecording) => {
     // Native path: a local `updateUserTyping` populates appProfileManager's
     // typingsInPeer store (which the topbar reads back via getPeerTypings) AND
     // dispatches `peer_typings`, AND arms the 6s auto-expiry. We never await —
@@ -100,13 +115,13 @@ class PhantomChatTypingReceive {
       rootScope.managers.apiUpdatesManager.processLocalUpdate({
         _: 'updateUserTyping',
         user_id: peerId,
-        action: {_: isStop ? 'sendMessageCancelAction' : 'sendMessageTypingAction'}
+        action: {_: typingActionType(isStop, isRecording)}
       } as any)
     ).catch((err) => {
       console.debug(LOG_PREFIX, 'processLocalUpdate failed:', err?.message);
     });
   };
-  private groupDispatcher: GroupTypingDispatcher = (chatId, fromUserPeerId, isStop) => {
+  private groupDispatcher: GroupTypingDispatcher = (chatId, fromUserPeerId, isStop, isRecording) => {
     // `updateChatUserTyping` routes the dots into the group chat. tweb resolves
     // the typing member from `from_id` and renders their name, aggregating
     // multiple typers natively — so a group reply-in-progress shows "Lena is
@@ -116,7 +131,7 @@ class PhantomChatTypingReceive {
         _: 'updateChatUserTyping',
         chat_id: chatId,
         from_id: {_: 'peerUser', user_id: fromUserPeerId},
-        action: {_: isStop ? 'sendMessageCancelAction' : 'sendMessageTypingAction'}
+        action: {_: typingActionType(isStop, isRecording)}
       } as any)
     ).catch((err) => {
       console.debug(LOG_PREFIX, 'group processLocalUpdate failed:', err?.message);
@@ -174,8 +189,9 @@ class PhantomChatTypingReceive {
     }
 
     // 'stop' marker → cancel the indicator immediately instead of letting it
-    // ride the 6s auto-expiry.
+    // ride the 6s auto-expiry. 'recording' → native "recording voice" activity.
     const isStop = event.content === TYPING_STOP;
+    const isRecording = event.content === TYPING_RECORDING;
 
     let senderPeerId: number;
     try {
@@ -208,12 +224,27 @@ class PhantomChatTypingReceive {
       }
       // groupPeerId is negative (peerChat); chat_id is the positive chat id.
       console.log(`${LOG_PREFIX} → GROUP route: chat_id=${-groupPeerId} member=${senderPeerId} stop=${!!isStop}`);
-      this.groupDispatcher(-groupPeerId, senderPeerId, isStop);
+      this.groupDispatcher(-groupPeerId, senderPeerId, isStop, isRecording);
       return;
     }
 
+    // Ensure the sender has a User loaded BEFORE dispatching. The inherited
+    // tweb `onUpdateUserTyping` only fires `peer_typings` (which renders the
+    // dots) when the User is present — for a 1:1 tick there is no group-branch
+    // fallback to load+re-dispatch, so a cold/un-injected peer silently shows
+    // nothing. That's the intermittent "sometimes I see the indicator, sometimes
+    // not" bug: it depended on whether the peer's User happened to be cached.
+    // ensureSenderUserInjected is idempotent and cheap (early-returns if present).
+    // Skip on stop — there's nothing to label when clearing.
+    if(!isStop) {
+      try {
+        await this.ensureUser(event.pubkey, senderPeerId);
+      } catch(err) {
+        console.debug(LOG_PREFIX, 'ensureUser non-critical:', (err as Error)?.message);
+      }
+    }
     console.log(`${LOG_PREFIX} → 1:1 route: peer=${senderPeerId} stop=${!!isStop}`);
-    this.dispatcher(senderPeerId, isStop);
+    this.dispatcher(senderPeerId, isStop, isRecording);
   }
 }
 

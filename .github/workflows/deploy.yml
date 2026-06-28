@@ -5,15 +5,15 @@ name: deploy
 # certificate once DNS resolves — no Terraform/ACM, the same pattern as
 # phantombot.bot.
 #
-# TEMPORARY (dogfood, 2026-06-14): deploys on a push to ANY branch, not just
-# main, so every commit on an open PR ships to the single live Pages target and
-# Andrew's test clients auto-update (APP_VERSION = 1.0.<run_number> bumps every
-# run → new service worker → clients refresh on reload). No real users yet — the
-# phantombot repo isn't merged. REVERT to `branches: [main]` once phantomchat is
-# stable enough to call production.
+# Deploy policy (2026-06-27): auto-deploy ONLY on merge to main. PR branches run
+# tests/checks (ci.yml) but never auto-ship to the live Pages target. To deploy a
+# feature branch on demand, use the manual "Run workflow" button (workflow_dispatch)
+# in the Actions tab and pick the branch — gated by repo write access, so only
+# collaborators (Andrew, Robbie, Kai, Lena) can trigger it. APP_VERSION =
+# 1.0.<run_number> still bumps each run → new service worker → clients refresh.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   workflow_dispatch:
 
 # Least-privilege: Pages deploys need pages:write + id-token:write for the

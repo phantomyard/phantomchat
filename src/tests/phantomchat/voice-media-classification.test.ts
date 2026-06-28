@@ -59,6 +59,21 @@ describe('buildPhantomChatMedia voice classification', () => {
     expect(media._).toBe('messageMediaDocument');
     expect(media.document.type).toBe('voice');
   });
+
+  it('decodes the base64 waveform string into packed bytes for the renderer', () => {
+    // 'q80=' is base64 for [0xAB, 0xCD]. The bubble's decodeWaveform needs the
+    // packed *bytes* — handed the raw string it decodes to all-zero (flat bars).
+    const media = buildPhantomChatMedia(6, baseFm({mediaType: 'voice', duration: 4, waveform: 'q80='}));
+    const audio = media.document.attributes.find((a: any) => a._ === 'documentAttributeAudio');
+    expect(audio.waveform).toBeInstanceOf(Uint8Array);
+    expect(Array.from(audio.waveform as Uint8Array)).toEqual([0xab, 0xcd]);
+  });
+
+  it('omits the waveform when absent (length-only bubble, no crash)', () => {
+    const media = buildPhantomChatMedia(7, baseFm({mediaType: 'voice', duration: 4}));
+    const audio = media.document.attributes.find((a: any) => a._ === 'documentAttributeAudio');
+    expect(audio.waveform).toBeUndefined();
+  });
 });
 
 describe('extractFileMetadata mediaType wire field', () => {

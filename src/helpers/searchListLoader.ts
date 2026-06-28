@@ -59,13 +59,23 @@ export default class SearchListLoader<Item extends {mid: number, peerId: PeerId}
           }
 
           if(!value.messages) {
-            value.messages = value.history.map((mid) => apiManagerProxy.getMessageByPeer(peerId, mid));
+            // Some mids may not be in storage yet (e.g. P2P messages not yet
+            // persisted Worker-side) — getMessageByPeer returns undefined for
+            // those. Drop them so the carousel never gets a sparse array, which
+            // would crash processItem reading `.mid` off undefined.
+            value.messages = value.history
+            .map((mid) => apiManagerProxy.getMessageByPeer(peerId, mid))
+            .filter(Boolean);
           }
 
           return {count: value.count, items: value.messages};
         });
       },
       processItem: async(message) => {
+        if(!message) {
+          return;
+        }
+
         const filtered = await this.filterMids([message.mid]);
         if(!filtered.length) {
           return;
