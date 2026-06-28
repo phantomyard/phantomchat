@@ -27,6 +27,7 @@ import {createReadReceiptSender} from '@lib/phantomchat/phantomchat-read-receipt
 import {createDeliveryUI} from '@lib/phantomchat/phantomchat-delivery-ui';
 import {FoldersSync} from '@lib/phantomchat/folders-sync';
 import {setLastModifiedAt} from '@lib/phantomchat/folders-sync-state';
+import {FOLDER_SYNC_TRIGGER_EVENTS} from '@lib/phantomchat/folders-sync-types';
 import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/nostr-crypto';
 import {toast} from '@components/toast';
 import I18n from '@lib/langPack';
@@ -379,9 +380,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           }, 2000);
         };
 
-        rootScope.addEventListener('filter_update', schedulePublish);
-        rootScope.addEventListener('filter_delete', schedulePublish);
-        rootScope.addEventListener('filter_order', schedulePublish);
+        for(const event of FOLDER_SYNC_TRIGGER_EVENTS) {
+          rootScope.addEventListener(event, schedulePublish);
+        }
         console.log('[PhantomChatOnboardingIntegration] FoldersSync wired');
       } catch(err) {
         console.warn('[PhantomChatOnboardingIntegration] FoldersSync init failed:', err);
