@@ -103,6 +103,25 @@ describe('onUpdateDialogFilters — custom folder survival', () => {
     }
   });
 
+  it('advances localId past a surviving custom folder so the next folder cannot collide', async () => {
+    // Survivor sits at a localId ABOVE the system folders. onUpdateDialogFilterOrder
+    // resets localId to START_LOCAL_ID and only walks the server-returned order
+    // (system folders), so without the extra pass the counter never advances past
+    // the survivor → the next created folder reuses its localId → duplicate localId.
+    const survivor = mkCustom(START_LOCAL_ID, 'Work');
+    const survivorLocalId = (START_LOCAL_ID + 4) as MyDialogFilter['localId'];
+    survivor.localId = survivorLocalId;
+    const fs = makeStorage([survivor]);
+
+    await (fs as any).onUpdateDialogFilters({_: 'updateDialogFilters'});
+    await flushMicrotasks();
+
+    // Counter must be strictly past the survivor's localId.
+    expect((fs as any).localId).toBeGreaterThan(survivorLocalId);
+    // And the survivor must keep its localId (no clobber).
+    expect((fs as any).filters[START_LOCAL_ID].localId).toBe(survivorLocalId);
+  });
+
   it('still deletes a system folder the server omits (real reconcile intact)', async () => {
     // A custom folder is present; assert the guard targets only custom ids, not
     // a wholesale disable of the reconcile.

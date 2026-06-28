@@ -238,6 +238,19 @@ export default class FiltersStorage extends AppManager {
       this.setLocalId(filter);
     });
 
+    // Custom folders (id >= START_LOCAL_ID) survive the deletion guard in
+    // onUpdateDialogFilters but are NOT present in the server-supplied order,
+    // so the loop above never walks them. Advance the counter past their
+    // localIds too, otherwise the next folder creation reuses a localId that
+    // a surviving custom folder already holds → duplicate localId → ambiguous
+    // sort order (see sorts at lines ~449/~576) and broken positioning.
+    for(const filterId in this.filters) {
+      const filter = this.filters[filterId];
+      if(filter.localId !== undefined && filter.localId >= this.localId) {
+        this.localId = filter.localId + 1;
+      }
+    }
+
     this.rootScope.dispatchEvent('filter_order', order);
 
     this.pushToState();
