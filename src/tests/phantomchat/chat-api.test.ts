@@ -36,6 +36,7 @@ vi.mock('@lib/phantomchat/phantomchat-bridge', () => ({
 
 const messageStoreMocks = {
   saveMessage: vi.fn().mockResolvedValue(undefined),
+  reKeyEventId: vi.fn().mockResolvedValue(true),
   getConversationId: vi.fn().mockReturnValue('conv-1'),
   getAllConversationIds: vi.fn().mockResolvedValue([]),
   getMessages: vi.fn().mockResolvedValue([]),
@@ -412,6 +413,50 @@ describe('ChatAPI', () => {
       expect(history[0].id).toBe(preAllocated);
     });
 
+    // FIND-msg-disappear: durable-write-first. The row must be persisted to the
+    // message store (keyed by the app messageId, deliveryState 'sending') BEFORE
+    // the network publish resolves — otherwise switching chats during a slow
+    // publish/upload re-reads getHistory from the store, finds nothing, and the
+    // optimistic bubble vanishes until the self-echo lands ("disappears on chat
+    // switch, reappears seconds later").
+    test('persists the row before publish resolves, then re-keys to the rumor id', async() => {
+      messageStoreMocks.saveMessage.mockClear();
+      messageStoreMocks.reKeyEventId.mockClear();
+      mockPool.simulateConnect();
+      await chatApi.connect(PEER_ID);
+
+      // Gate publish so we can inspect the store while it is still in flight.
+      let releasePublish!: (r: PublishResult) => void;
+      const publishGate = new Promise<PublishResult>((res) => { releasePublish = res; });
+      mockPool.publish = vi.fn((recipientPubkey: string, plaintext: string) => {
+        mockPool.publishCalls.push({recipientPubkey, plaintext});
+        return publishGate;
+      }) as any;
+
+      const mid = 424242;
+      const twebPeerId = 777;
+      const sendPromise = chatApi.sendText('hold me', {messageId: 'chat-disappear-1', mid, twebPeerId});
+
+      // Pre-publish save lands while publish is still pending.
+      await vi.waitFor(() => expect(messageStoreMocks.saveMessage).toHaveBeenCalled());
+      const firstSave = messageStoreMocks.saveMessage.mock.calls[0][0];
+      expect(firstSave.eventId).toBe('chat-disappear-1');
+      expect(firstSave.mid).toBe(mid);
+      expect(firstSave.twebPeerId).toBe(twebPeerId);
+      expect(firstSave.isOutgoing).toBe(true);
+      expect(firstSave.deliveryState).toBe('sending');
+
+      // Now resolve publish with a canonical rumor id.
+      releasePublish({successes: ['relay-1'], failures: [], rumorId: 'rumorhex01'} as any);
+      await sendPromise;
+
+      // Row re-keyed messageId -> rumorId and transitioned to 'sent'.
+      expect(messageStoreMocks.reKeyEventId).toHaveBeenCalledWith('chat-disappear-1', 'rumorhex01');
+      const lastSave = messageStoreMocks.saveMessage.mock.calls.at(-1)![0];
+      expect(lastSave.eventId).toBe('rumorhex01');
+      expect(lastSave.deliveryState).toBe('sent');
+    });
+
     test('allows empty content - returns messageId', async() => {
       mockPool.simulateConnect();
 
@@ -539,6 +584,8 @@ describe('ChatAPI', () => {
       // media — and BOTH rendered (the "JSON bubble next to the attachment"
       // bug). Returning the rumor id makes the orchestrator's row MERGE onto
       // ChatAPI's row (same eventId), leaving a single media row.
+      messageStoreMocks.saveMessage.mockClear();
+      messageStoreMocks.reKeyEventId.mockClear();
       mockPool.simulateConnect();
       mockPool.publishResult = {successes: ['event-1'], failures: [], rumorId: 'rumor-deadbeef'} as any;
       await chatApi.connect(PEER_ID);
@@ -550,12 +597,19 @@ describe('ChatAPI', () => {
       );
 
       expect(returned).toBe('rumor-deadbeef');
-      // ChatAPI's own store row is keyed by the same rumor id, so the
-      // orchestrator's later save (same eventId) merges instead of duplicating.
-      const fileRow = messageStoreMocks.saveMessage.mock.calls
+      // Durable-write-first (FIND-msg-disappear): the row is first persisted
+      // keyed by the app id, then re-keyed to the rumor id once publish returns.
+      // The re-key happens INSIDE sendMessage, before sendFileMessage returns —
+      // so the orchestrator's later media-row save (which uses the returned
+      // rumor id) merges onto this same row instead of duplicating.
+      const reKeyedToRumor = messageStoreMocks.reKeyEventId.mock.calls.some((c: any[]) => c[1] === 'rumor-deadbeef');
+      expect(reKeyedToRumor).toBe(true);
+      // ChatAPI's own store row CONVERGES on the rumor id (final state).
+      const fileRows = messageStoreMocks.saveMessage.mock.calls
         .map((c: any[]) => c[0])
-        .find((r: any) => r.type === 'file');
-      expect(fileRow?.eventId).toBe('rumor-deadbeef');
+        .filter((r: any) => r.type === 'file');
+      expect(fileRows.at(-1)?.eventId).toBe('rumor-deadbeef');
+      expect(fileRows.at(-1)?.deliveryState).toBe('sent');
     });
   });
 

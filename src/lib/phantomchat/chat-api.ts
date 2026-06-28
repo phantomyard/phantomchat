@@ -645,12 +645,79 @@ export class ChatAPI {
       this.deliveryTracker.markSending(messageId);
     }
 
-    // Publish first so we can capture the canonical rumor id. The sender row
-    // MUST be keyed by that rumor id so kind-7 reactions / kind-5 deletions
-    // carry a 64-hex `e` tag accepted by NIP-01 relays, and so the receiver's
-    // store (which also keys by rumor id) resolves references bilaterally.
-    // See Bug #3 (FIND-4e18d35d) — the prior `eventId = messageId` key caused
-    // strfry to reject e-tags with `unexpected size for fixed-size tag: e`.
+    // DURABLE-WRITE-FIRST (FIND-msg-disappear): persist the row to the message
+    // store BEFORE the network publish, keyed by the stable app `messageId`
+    // with deliveryState 'sending'. Previously the row was saved only AFTER
+    // publish (keyed by rumorId), so re-entering the chat during the
+    // multi-second publish/Blossom-upload window made getHistory re-read the
+    // store, find nothing, and the optimistic bubble vanished until the
+    // self-echo or the late save landed — the "message disappears on chat
+    // switch, reappears a few seconds later" bug. We re-key messageId ->
+    // rumorId after publish (below), exactly like the offline-queue flush
+    // (handleQueueFlushed), so the end state is identical to before: the row is
+    // keyed by the rumor id that reactions / deletions / receipts reference.
+    let storedRow: StoredMessage | undefined;
+    try {
+      const store = getMessageStore();
+      const conversationId = store.getConversationId(this.ownId, peerOwnId || '');
+      const timestampSec = Math.floor(timestamp / 1000);
+
+      let rowMid: number | undefined = opts?.mid;
+      const twebPeerId = opts?.twebPeerId;
+      if(rowMid === undefined && twebPeerId !== undefined) {
+        try {
+          const {PhantomChatBridge} = await import('./phantomchat-bridge');
+          // Bridge hashes eventId+timestamp into a tweb mid. We key by messageId
+          // (not rumorId) to preserve the mid value VMT computed for the painted
+          // optimistic bubble so getHistory/getDialogs mirror coherence holds.
+          rowMid = await PhantomChatBridge.getInstance().mapEventIdToMid(messageId, timestampSec);
+        } catch(e: any) {
+          this.log.warn('[ChatAPI] mid compute failed:', e?.message);
+        }
+      }
+
+      if(rowMid !== undefined && twebPeerId !== undefined) {
+        // Resolve replyTo eventId → mid so the sender-side row carries the same
+        // identifier the bubble renderer wants (messageReplyHeader.reply_to_msg_id
+        // is a tweb mid, not a Nostr event id).
+        let replyToMid: number | undefined;
+        if(opts?.replyTo?.eventId) {
+          try {
+            const original = await store.getByEventId(opts.replyTo.eventId);
+            if(original) replyToMid = original.mid;
+          } catch(e: any) {
+            this.log.warn('[ChatAPI] reply_to mid resolve failed:', e?.message);
+          }
+        }
+        storedRow = {
+          eventId: messageId,
+          conversationId,
+          senderPubkey: this.ownId,
+          content,
+          type: type === 'text' ? 'text' : 'file',
+          timestamp: timestampSec,
+          deliveryState: 'sending',
+          mid: rowMid,
+          twebPeerId,
+          isOutgoing: true,
+          appMessageId: messageId,
+          ...(replyToMid !== undefined ? {replyToMid} : {})
+        };
+        await store.saveMessage(storedRow);
+      } else {
+        this.log.warn('[ChatAPI] skipping partial send save — caller did not supply identity triple', {messageId});
+      }
+    } catch(err) {
+      this.log.warn('[ChatAPI] failed to pre-save to message store:', err);
+    }
+
+    // The sender row MUST end up keyed by the canonical rumor id so kind-7
+    // reactions / kind-5 deletions carry a 64-hex `e` tag accepted by NIP-01
+    // relays, and so the receiver's store (which also keys by rumor id)
+    // resolves references bilaterally. See Bug #3 (FIND-4e18d35d) — the prior
+    // `eventId = messageId` key caused strfry to reject e-tags with
+    // `unexpected size for fixed-size tag: e`. We publish, capture the rumor id,
+    // then re-key the pre-saved row below.
     let publishedRumorId: string | undefined;
     let publishSucceeded = false;
     // Delivery-tracking key. Starts as the app message id; for NIP-17 plain-text
@@ -725,74 +792,29 @@ export class ChatAPI {
       this.log('[ChatAPI] relay pool not connected, queueing message');
     }
 
-    // Save to message store after publish so the row can be keyed by rumorId.
-    //
-    // Identity-triple contract (Phase 2b.1, FIND-e49755c1): every first-write
-    // row MUST carry mid + twebPeerId + timestamp computed ONCE at creation.
-    // When VMT passes `{twebPeerId, timestampSec}` we compute mid locally via
-    // the bridge so the row is authoritative from the first save — no more
-    // partial row that later reads would fall back to recompute against.
-    //
-    // Legacy callers (tests, non-VMT send paths) that don't supply the triple
-    // are skipped here; they don't have a coherent mid to store anyway. The
-    // relay publish still happens so cross-device self-echo can save the row
-    // later with full identity.
-    try {
-      const store = getMessageStore();
-      const conversationId = store.getConversationId(this.ownId, peerOwnId || '');
-      const timestampSec = Math.floor(timestamp / 1000);
-
-      // Prefer the canonical rumor id; fall back to the messageId if publish
-      // was skipped (offline/no-pool) so the row still has a stable key.
-      const rowEventId = publishedRumorId || messageId;
-
-      let rowMid: number | undefined = opts?.mid;
-      const twebPeerId = opts?.twebPeerId;
-      if(rowMid === undefined && twebPeerId !== undefined) {
-        try {
-          const {PhantomChatBridge} = await import('./phantomchat-bridge');
-          // Bridge hashes eventId+timestamp into a tweb mid. We key by messageId
-          // here (not rumorId) to preserve the mid value VMT previously computed
-          // so getHistory/getDialogs mirror coherence is unchanged.
-          rowMid = await PhantomChatBridge.getInstance().mapEventIdToMid(messageId, timestampSec);
-        } catch(e: any) {
-          this.log.warn('[ChatAPI] mid compute failed:', e?.message);
+    // Re-key the pre-saved row messageId -> rumorId now that publish captured
+    // the canonical rumor id, and transition deliveryState to 'sent'. This
+    // mirrors the offline-queue flush (handleQueueFlushed) and leaves the store
+    // in the exact end state the old save-after-publish path produced — a row
+    // keyed by the rumor id — but without the disappear window, because the row
+    // already existed (keyed by messageId) throughout the publish. The self
+    // gift-wrap echo arrives only AFTER publish resolves, by which point the
+    // re-key below has already run in this synchronous continuation, so the
+    // echo's rumorId save merges into this row rather than inserting a dup.
+    if(storedRow) {
+      try {
+        const store = getMessageStore();
+        if(publishedRumorId && publishedRumorId !== storedRow.eventId) {
+          await store.reKeyEventId(storedRow.eventId, publishedRumorId);
+          storedRow = {...storedRow, eventId: publishedRumorId, appMessageId: messageId};
         }
-      }
-
-      if(rowMid !== undefined && twebPeerId !== undefined) {
-        // Resolve replyTo eventId → mid so the sender-side row carries the
-        // same identifier the bubble renderer wants (messageReplyHeader.
-        // reply_to_msg_id is a tweb mid, not a Nostr event id).
-        let replyToMid: number | undefined;
-        if(opts?.replyTo?.eventId) {
-          try {
-            const original = await store.getByEventId(opts.replyTo.eventId);
-            if(original) replyToMid = original.mid;
-          } catch(e: any) {
-            this.log.warn('[ChatAPI] reply_to mid resolve failed:', e?.message);
-          }
+        if(publishSucceeded && storedRow.deliveryState !== 'sent') {
+          storedRow = {...storedRow, deliveryState: 'sent'};
+          await store.saveMessage(storedRow);
         }
-        const row: StoredMessage = {
-          eventId: rowEventId,
-          conversationId,
-          senderPubkey: this.ownId,
-          content,
-          type: type === 'text' ? 'text' : 'file',
-          timestamp: timestampSec,
-          deliveryState: publishSucceeded ? 'sent' : 'sending',
-          mid: rowMid,
-          twebPeerId,
-          isOutgoing: true,
-          appMessageId: messageId,
-          ...(replyToMid !== undefined ? {replyToMid} : {})
-        };
-        await store.saveMessage(row);
-      } else {
-        this.log.warn('[ChatAPI] skipping partial send save — caller did not supply identity triple', {messageId});
+      } catch(err) {
+        this.log.warn('[ChatAPI] failed to finalize message store row:', err);
       }
-    } catch(err) {
-      this.log.warn('[ChatAPI] failed to save to message store:', err);
     }
 
     if(publishSucceeded) {

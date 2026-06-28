@@ -5,6 +5,18 @@ export const FOLDERS_SYNC_VERSION = 1;
 export const FOLDERS_SYNC_D_TAG = 'phantomchat.chat/folders';
 export const FOLDERS_SYNC_KIND = 30078;
 
+// rootScope events that must mark folders as locally modified + schedule a
+// publish. MUST include 'filter_new' — a freshly created folder dispatches
+// only 'filter_new' (filters.ts saveDialogFilter), so omitting it meant new
+// folders never bumped localModifiedAt nor published, and a stale remote
+// snapshot wiped them on the next boot (reconcile -> remote-wins).
+export const FOLDER_SYNC_TRIGGER_EVENTS = [
+  'filter_new',
+  'filter_update',
+  'filter_delete',
+  'filter_order'
+] as const;
+
 export type FolderTitle = DialogFilter.dialogFilter['title'];
 
 export type FolderSnapshot = {
