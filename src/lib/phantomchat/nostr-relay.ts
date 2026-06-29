@@ -196,17 +196,37 @@ export class NostrRelay {
   // are NIP-16 ephemeral (kind 20000–29999): no storage, no replay. A deaf
   // socket silently drops every tick until something external forces a reload —
   // exactly the "typing suddenly started working after a refresh" symptom.
-  // The 60s latency ping is our liveness probe: count its consecutive timeouts
-  // while state is 'connected' and recycle the socket after maxLatencyFailures
-  // so onopen re-arms a FRESH REQ (incl. kind 20001). Gated at 2 so a single
-  // slow ping never causes needless reconnect churn / status-dot flicker. This
-  // lives entirely on the existing background interval — nowhere near the
-  // message-render or chat-switch path, so UI snappiness is untouched.
+  // The periodic latency ping is our liveness probe: count its consecutive
+  // timeouts while state is 'connected' and recycle the socket after
+  // maxLatencyFailures so onopen re-arms a FRESH REQ (incl. kind 20001). Gated
+  // at 2 so a single slow ping never causes needless reconnect churn /
+  // status-dot flicker on the periodic path. This lives entirely on the
+  // background interval — nowhere near the message-render or chat-switch path,
+  // so UI snappiness is untouched.
+  //
+  // The interval alone is too slow for the case that actually bites: a
+  // long-lived PWA whose machine sleeps / switches Wi-Fi. The browser FREEZES
+  // background timers during sleep, so on resume the 20s interval may not have
+  // fired for minutes, and onclose never fires for a half-open socket — typing
+  // stays dead the whole time. So we ALSO probe on-demand the instant the tab
+  // becomes visible again or the OS regains connectivity (checkHealthNow), and
+  // there we recycle on the FIRST miss: a just-resumed socket that can't answer
+  // a limit:0 REQ within the timeout is conclusively dead.
   private consecutiveLatencyFailures: number = 0;
   private readonly maxLatencyFailures: number = 2;
   // Ping timeout (ms) before a latency probe is counted as failed. Field (not
   // an inline literal) so tests can shrink it without waiting the full 5s.
   private latencyPingTimeoutMs: number = 5000;
+  // Timestamp of the last inbound frame (any relay message). Used by the
+  // event-driven health check as a fast-path: if a frame arrived within
+  // healthyInboundWindowMs the read channel is provably live, so we skip the
+  // probe (avoids a REQ storm when every tab focus would otherwise ping).
+  private lastInboundAt: number = 0;
+  private readonly healthyInboundWindowMs: number = 5000;
+  // Bound document/window listeners for on-demand health checks; held so they
+  // can be detached in disconnect(). Null until registerHealthTriggers() runs.
+  private boundOnVisible: (() => void) | null = null;
+  private boundOnOnline: (() => void) | null = null;
 
   // Outbound publish buffer (FIND-3786a35f / double-message fix). A DM sent
   // while the socket is still mid-connect (cold page load — the SW reconnects
@@ -227,7 +247,11 @@ export class NostrRelay {
   private latencyMs: number = -1;
   public directLatencyMs: number = -1;
   private latencyInterval: ReturnType<typeof setInterval> | null = null;
-  private readonly latencyRefreshMs: number = 60000;
+  // 20s (was 60s): the slower cadence meant a silently-dead socket took up to
+  // ~2 min (2 misses × 60s) to recycle — minutes of dead typing/reactions on a
+  // long-lived session. 20s bounds steady-state detection to ~40s, and the
+  // visibility/online triggers handle the sleep/wake case instantly.
+  private readonly latencyRefreshMs: number = 20000;
 
   /**
    * Create a new NostrRelay
@@ -276,6 +300,11 @@ export class NostrRelay {
       // Register as active relay for publishEvent/publishKind0Metadata
       activeRelay = this;
 
+      // Arm the on-demand health triggers (visibility/online) once we have an
+      // identity. connect() runs after initialize, so this is in place before
+      // the first socket opens.
+      this.registerHealthTriggers();
+
       this.log('[NostrRelay] initialized for npub:', this.ownId.slice(0, 12) + '...', 'pubkey:', this.publicKey.slice(0, 8) + '...');
     } catch(err) {
       this.log.error('[NostrRelay] initialization failed:', err);
@@ -302,6 +331,9 @@ export class NostrRelay {
         this.log('[NostrRelay] connected to relay');
         this.setConnectionState('connected');
         this.reconnectAttempts = 0;
+        // Fresh socket — treat as just-heard-from so the first health check
+        // doesn't probe a socket we know is alive.
+        this.lastInboundAt = Date.now();
 
         // Subscribe if we were subscribed before OR if pool wants subscription
         if(this.isSubscribed || this.pendingSubscribe) {
@@ -360,6 +392,7 @@ export class NostrRelay {
   disconnect(): void {
     this.log('[NostrRelay] disconnecting');
 
+    this.unregisterHealthTriggers();
     this.stopLatencyRefresh();
     this.setLatency(-1);
 
@@ -898,6 +931,9 @@ export class NostrRelay {
    * Handle incoming WebSocket messages
    */
   private handleMessage(data: string): void {
+    // Any inbound frame proves the read channel is live — stamp it for the
+    // event-driven health-check fast-path.
+    this.lastInboundAt = Date.now();
     try {
       const message = JSON.parse(data);
 
@@ -1146,6 +1182,80 @@ export class NostrRelay {
     } catch(err) {
       this.log.error('[NostrRelay] failed to unwrap gift-wrap:', err);
       // Don't throw - just log the error and skip this message
+    }
+  }
+
+  /**
+   * Register document/window listeners that trigger an on-demand health check.
+   * Idempotent — safe to call more than once. Guarded for non-DOM (worker/test)
+   * contexts. The phantomchat stack runs main-thread, so `document`/`window`
+   * are present in production.
+   */
+  private registerHealthTriggers(): void {
+    if(this.boundOnVisible) return; // already registered
+    if(typeof document === 'undefined' && typeof window === 'undefined') return;
+
+    this.boundOnVisible = () => {
+      if(typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      this.checkHealthNow('visibilitychange').catch(swallowHandler('NostrRelay.checkHealthNow.visible'));
+    };
+    this.boundOnOnline = () => {
+      this.checkHealthNow('online').catch(swallowHandler('NostrRelay.checkHealthNow.online'));
+    };
+
+    if(typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.boundOnVisible);
+    }
+    if(typeof window !== 'undefined') {
+      window.addEventListener('online', this.boundOnOnline);
+    }
+  }
+
+  private unregisterHealthTriggers(): void {
+    if(this.boundOnVisible && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.boundOnVisible);
+    }
+    if(this.boundOnOnline && typeof window !== 'undefined') {
+      window.removeEventListener('online', this.boundOnOnline);
+    }
+    this.boundOnVisible = null;
+    this.boundOnOnline = null;
+  }
+
+  /**
+   * On-demand liveness check — fired the instant the tab becomes visible or the
+   * OS regains connectivity, the two events that overwhelmingly produce a
+   * half-open socket on a long-lived PWA. Unlike the periodic interval (which is
+   * frozen during sleep and gated at 2 misses), this recycles on the FIRST
+   * conclusive signal, because the resume context makes a single miss decisive.
+   */
+  private async checkHealthNow(reason: string): Promise<void> {
+    // Only meaningful while we believe we're connected. If we're already
+    // reconnecting/disconnected the existing backoff path owns recovery.
+    if(this.connectionState !== 'connected' || !this.ws) return;
+
+    // onclose never fires for a half-open socket, so readyState can still read
+    // OPEN on a dead one — but if it reads anything else, it's unambiguously
+    // gone and we recycle immediately.
+    if(this.ws.readyState !== WebSocket.OPEN) {
+      this.log('[NostrRelay] health check (' + reason + '): socket not OPEN — recycling');
+      this.recycleDeadSocket();
+      return;
+    }
+
+    // Fast-path: a frame arrived moments ago, so the read channel is provably
+    // live — skip the probe (avoids a REQ on every single tab focus).
+    if(Date.now() - this.lastInboundAt < this.healthyInboundWindowMs) {
+      this.consecutiveLatencyFailures = 0;
+      return;
+    }
+
+    // Actively probe and recycle on the first miss (resume context = decisive).
+    const latency = await this.measureLatency();
+    if(latency < 0 && this.connectionState === 'connected') {
+      this.log('[NostrRelay] health check (' + reason + '): ping failed — recycling');
+      this.consecutiveLatencyFailures = 0;
+      this.recycleDeadSocket();
     }
   }
 

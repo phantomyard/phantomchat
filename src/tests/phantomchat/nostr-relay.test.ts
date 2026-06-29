@@ -643,6 +643,61 @@ describe('NostrRelay', () => {
     });
   });
 
+  describe('on-demand health check (checkHealthNow — visibility/online triggers)', () => {
+    const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    async function connectedRelay(): Promise<MockWebSocket> {
+      relay.connect();
+      await wait(50);
+      expect(relay.getState()).toBe('connected');
+      (relay as any).latencyPingTimeoutMs = 20;
+      return getLastMockWs()!;
+    }
+
+    test('recycles on the FIRST ping miss (resume context is decisive, unlike the 2-strike interval)', async() => {
+      await connectedRelay();
+      (relay as any).lastInboundAt = 0; // force the probe (no recent frame)
+      await (relay as any).checkHealthNow('test');
+      expect(relay.getState()).toBe('reconnecting');
+    });
+
+    test('recycles immediately when readyState is not OPEN (a zombie onclose never reported)', async() => {
+      const ws = await connectedRelay();
+      ws.readyState = MockWebSocket.CLOSING; // half-open: looked OPEN, now isn't
+      await (relay as any).checkHealthNow('test');
+      expect(relay.getState()).toBe('reconnecting');
+    });
+
+    test('fast-path: a frame within the healthy window skips the probe entirely', async() => {
+      const ws = await connectedRelay();
+      (relay as any).lastInboundAt = Date.now(); // just heard from the relay
+      const before = ws.sentMessages.length;
+      await (relay as any).checkHealthNow('test');
+      expect(relay.getState()).toBe('connected');
+      // No ping REQ was sent — the live read channel was trusted.
+      expect(ws.sentMessages.length).toBe(before);
+    });
+
+    test('is a no-op while not connected (the backoff path owns recovery there)', async() => {
+      await connectedRelay();
+      relay.disconnect();
+      expect(relay.getState()).toBe('disconnected');
+      await (relay as any).checkHealthNow('test'); // must not throw / re-arm
+      expect(relay.getState()).toBe('disconnected');
+    });
+
+    test('registerHealthTriggers is idempotent and unregister clears the handlers', () => {
+      (relay as any).registerHealthTriggers();
+      (relay as any).registerHealthTriggers(); // second call must not double-bind
+      if(typeof document !== 'undefined') {
+        expect((relay as any).boundOnVisible).not.toBeNull();
+      }
+      (relay as any).unregisterHealthTriggers();
+      expect((relay as any).boundOnVisible).toBeNull();
+      expect((relay as any).boundOnOnline).toBeNull();
+    });
+  });
+
   describe('createNostrRelay factory', () => {
     test('creates NostrRelay instance', () => {
       const r = createNostrRelay();
