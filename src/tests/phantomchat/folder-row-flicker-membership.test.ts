@@ -32,7 +32,7 @@ import FiltersStorage, {type MyDialogFilter} from '@lib/storages/filters';
 import {buildLocalFilter} from '@lib/storages/filtersLocal';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
-import {FOLDER_ID_ALL, FOLDER_ID_GROUPS, FOLDER_ID_ARCHIVE, START_LOCAL_ID} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_GROUPS, FOLDER_ID_ARCHIVE, REAL_FOLDERS, START_LOCAL_ID} from '@appManagers/constants';
 
 function mkDialog(peerId: number, overrides: Record<string, unknown> = {}) {
   return {_: 'dialog', peerId, folder_id: FOLDER_ID_ALL, unread_count: 0, ...overrides} as any;
@@ -67,6 +67,15 @@ function makeStorage(custom: MyDialogFilter, existing: Map<number, any>) {
   // testDialogForFilter consults getDialogOnly only as an existence gate for a
   // custom folder; include/exclude membership comes from the filter rules.
   (fs as any).appMessagesManager = {getDialogOnly: (pid: number) => existing.get(pid)};
+  // Groups (system folder) matches via pFlags.groups + isAnyGroup. Model chat
+  // peers as negative ids; the broadcast channel (-300) is a chat but NOT a
+  // group, so Groups must exclude it.
+  (fs as any).appPeersManager = {
+    isAnyChat: (pid: number) => pid < 0,
+    isAnyGroup: (pid: number) => pid < 0 && pid !== -300,
+    isBroadcast: (pid: number) => pid === -300
+  };
+  (fs as any).appUsersManager = {isBot: () => false, isContact: () => false};
   return fs;
 }
 
@@ -97,5 +106,41 @@ describe('folder membership is index-independent (row-flicker guard)', () => {
     existing.set(103, outsider);
 
     expect(fs.testDialogForFilterId(outsider, custom.id)).toBe(false);
+  });
+
+  // Kai's #46 blocker: Groups (3) is a REAL_FOLDER but does NOT key on a stable
+  // dialog.folder_id — it uses the same transient per-filter index as custom
+  // folders, so the row-delete guard must NOT trust the sync test for Groups
+  // (it must run the authoritative confirmation). These two assertions pin the
+  // invariant that lets the fix do that safely: a Groups member is classified
+  // correctly by the index-independent predicate even mid-reindex.
+  it('Groups is a REAL_FOLDER yet matches members by rule, not by stable folder_id', () => {
+    expect(REAL_FOLDERS.has(FOLDER_ID_GROUPS)).toBe(true);
+    // testDialogForFilter only short-circuits on folder_id for All/Archive.
+    expect(FOLDER_ID_GROUPS).not.toBe(FOLDER_ID_ALL);
+    expect(FOLDER_ID_GROUPS).not.toBe(FOLDER_ID_ARCHIVE);
+  });
+
+  it('classifies a Groups member correctly even when its per-filter index is undefined', () => {
+    const custom = mkCustom();
+    const existing = new Map<number, any>();
+    const fs = makeStorage(custom, existing);
+
+    // A chat peer (peerId < 0) belongs in the Groups system folder.
+    const groupMember = mkDialog(-200);
+    existing.set(-200, groupMember);
+
+    // Mid-reindex window: no per-filter index for the Groups folder.
+    const indexKey = getDialogIndexKey(FOLDER_ID_GROUPS);
+    expect(getDialogIndex(groupMember, indexKey)).toBeUndefined();
+
+    // The authoritative predicate must still report it as a Groups member, so
+    // the guard keeps the row instead of deleting it on the transient signal.
+    expect(fs.testDialogForFilterId(groupMember, FOLDER_ID_GROUPS)).toBe(true);
+
+    // And a broadcast channel (a chat, but not a group) must NOT be pinned.
+    const broadcast = mkDialog(-300);
+    existing.set(-300, broadcast);
+    expect(fs.testDialogForFilterId(broadcast, FOLDER_ID_GROUPS)).toBe(false);
   });
 });

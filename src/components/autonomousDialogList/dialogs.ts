@@ -237,12 +237,21 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     return {scrollable, list: sortedDialogList.list};
   }
 
+  /**
+   * Only All Chats (0) and Archive (1) key membership on the stable
+   * `dialog.folder_id`. Every other tab — custom filters AND the locally-seeded
+   * system folders Persons (2) / Groups (3), which no dialog carries a folder_id
+   * for — tests membership via the transient per-filter index (`index_<localId>`),
+   * so it is exposed to the saveDialogs reindex race. NOTE: this is a strict
+   * subset of REAL_FOLDERS (which also includes Groups) — do not conflate them,
+   * or Groups gets the unsafe sync-delete path it can't actually tolerate.
+   */
+  private get keysOnStableFolderId() {
+    return this.filterId === FOLDER_ID_ALL || this.filterId === FOLDER_ID_ARCHIVE;
+  }
+
   public testDialogForFilter(dialog: Dialog) {
-    // Persons (2) / Groups (3) are locally-seeded system folders — no dialog
-    // carries folder_id 2 or 3, so treat them like custom filters and use the
-    // per-filter index key for membership.
-    const isTgFolder = this.filterId === FOLDER_ID_ALL || this.filterId === FOLDER_ID_ARCHIVE;
-    if(!isTgFolder ? getDialogIndex(dialog, this.indexKey) === undefined : this.filterId !== dialog.folder_id) {
+    if(!this.keysOnStableFolderId ? getDialogIndex(dialog, this.indexKey) === undefined : this.filterId !== dialog.folder_id) {
       return false;
     }
 
@@ -316,9 +325,11 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
   private confirmDialogExcludedFromFilter(dialog: Dialog) {
     const peerId = dialog.peerId;
 
-    // Real folders (All Chats / Archive) key on the stable `folder_id`, so the
-    // sync test is already authoritative — trust it.
-    if(REAL_FOLDERS.has(this.filterId)) {
+    // All Chats / Archive key on the stable `folder_id`, so the sync test is
+    // already authoritative — trust it. Groups (a REAL_FOLDER) is deliberately
+    // NOT trusted here: it uses the same transient per-filter index as custom
+    // filters, so it must go through the authoritative confirmation below.
+    if(this.keysOnStableFolderId) {
       this.deleteDialog(dialog);
       return;
     }
