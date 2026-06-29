@@ -8589,7 +8589,6 @@ export default class ChatBubbles {
       if(topicNameButtonContainer && context.isStandaloneMedia) {
         if(!context.attachmentDiv) {
           this.log.error('no attachment div?', bubble, message);
-          debugger;
         } else {
           context.attachmentDiv.after(topicNameButtonContainer);
         }

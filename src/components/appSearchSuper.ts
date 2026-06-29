@@ -1224,9 +1224,6 @@ export default class AppSearchSuper {
       const threadId = isSaved ? this.searchContext.peerId : undefined;
       elemsToAppend.forEach((details) => {
         const {element, message} = details;
-        if(!message) {
-          debugger;
-        }
 
         const monthContainer = this.getMonthContainerByTimestamp(groupByMonth ? message.date : 0, inputFilter);
         element.classList.add('search-super-item');

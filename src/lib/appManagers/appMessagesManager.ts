@@ -6810,7 +6810,6 @@ export class AppMessagesManager extends AppManager {
         const message = this.getMessageByPeer(peerId, mid);
         if(!message) {
           this.log.error('no message from historyStorage?', peerId, historyStorage, slice, mid);
-          debugger;
           continue;
         }
 
