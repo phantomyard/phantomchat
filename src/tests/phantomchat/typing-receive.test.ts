@@ -143,6 +143,26 @@ describe('phantomchatTypingReceive', () => {
     expect(ensured).toBe(true);
   });
 
+  it('suppresses incoming typing when read receipts are OFF (WhatsApp reciprocity)', async() => {
+    localStorage.setItem('phantomchat:read-receipts-enabled', 'false');
+    try {
+      await typing.onTyping(makeEvent());
+      expect(dispatched).toEqual([]);
+    } finally {
+      localStorage.removeItem('phantomchat:read-receipts-enabled');
+    }
+  });
+
+  it('still shows incoming typing when read receipts are ON', async() => {
+    localStorage.setItem('phantomchat:read-receipts-enabled', 'true');
+    try {
+      await typing.onTyping(makeEvent());
+      expect(dispatched).toEqual([4242]);
+    } finally {
+      localStorage.removeItem('phantomchat:read-receipts-enabled');
+    }
+  });
+
   it('group stop dispatches a group CANCEL and skips user-ensure', async() => {
     const groupCalls: Array<{chatId: number, from: number, isStop?: boolean}> = [];
     let ensured = false;

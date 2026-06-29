@@ -887,7 +887,11 @@ export class ApiManager extends ApiManagerMethods {
     // Privacy rules: VMT persists via localStorage so the round-trip works
     // across reload. Worker → bridge → VMT for both read/write.
     'account.getPrivacy',
-    'account.setPrivacy'
+    'account.setPrivacy',
+    // Typing / recording indicators: VMT (main thread) publishes the kind-20001
+    // ephemeral over the relay layer. Without this the call hits the worker's
+    // `.set` action-prefix no-op and the indicator never reaches the peer.
+    'messages.setTyping'
   ]);
 
   private static _invariantsChecked = false;

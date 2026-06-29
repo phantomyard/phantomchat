@@ -26,6 +26,7 @@ import {verifyEvent} from 'nostr-tools/pure';
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {groupIdToPeerId} from './group-types';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
+import {getReadReceiptsEnabled} from './read-receipts-setting';
 
 const LOG_PREFIX = '[PhantomChatTypingReceive]';
 
@@ -155,6 +156,13 @@ class PhantomChatTypingReceive {
 
   async onTyping(event: NostrEventLite): Promise<void> {
     if(event.kind !== 20001) return;
+
+    // WhatsApp-style reciprocity: if the user turned read receipts (and thus
+    // typing indicators) OFF, we don't send our own indicators AND we don't
+    // show others' — so a user who opts out of the social-signalling layer
+    // opts out of both halves of it. The emit side is gated symmetrically in
+    // virtual-mtproto-server.ts setTyping().
+    if(!getReadReceiptsEnabled()) return;
 
     // Never show a typing indicator for ourselves.
     if(this.ownPubkey && event.pubkey === this.ownPubkey) return;
