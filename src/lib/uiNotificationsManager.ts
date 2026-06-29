@@ -45,6 +45,15 @@ import AudioAssetPlayer from '@helpers/audioAssetPlayer';
 import {createEffect, createRoot, on} from 'solid-js';
 import appNavigationController from '@components/appNavigationController';
 
+// PhantomChat: the tab-title / favicon unread COUNT is currently unreliable —
+// it only zeroes on window-refocus and is not decremented when a message is read
+// via the push / service-worker path (key mismatch), so it lingers and lies
+// (e.g. "PhantomChat - 31 notifications" when nothing is unread). Rather than ship
+// a wrong number to users, suppress the numeric badge until the count is made
+// authoritative. Sound + desktop notifications are unaffected. Flip back to `true`
+// once the count is trustworthy.
+const SHOW_TITLE_NOTIFICATION_COUNT = false;
+
 type MyNotification = Notification & {
   hidden?: boolean,
   show?: () => void,
@@ -539,6 +548,13 @@ export class UiNotificationsManager {
     }
 
     if(!count || titleChanged) {
+      return;
+    }
+
+    // PhantomChat: suppress the (currently-unreliable) numeric unread badge in the
+    // tab title and favicon. The reset path above still runs, so any previously
+    // painted title is cleared. See SHOW_TITLE_NOTIFICATION_COUNT.
+    if(!SHOW_TITLE_NOTIFICATION_COUNT) {
       return;
     }
 
