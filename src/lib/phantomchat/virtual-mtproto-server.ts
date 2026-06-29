@@ -16,6 +16,7 @@ import {buildPhantomChatMedia} from './phantomchat-media-shape';
 import {getPubkey, getMapping, removeMapping} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
 import {isGroupPeer} from './group-types';
+import {getReadReceiptsEnabled} from './read-receipts-setting';
 // Lazy imports for group-store / group-api so test files that never hit the
 // group branch don't drag phantomchat-groups-sync into their module graph. Each
 // test file mocks `@config/debug`'s MOUNT_CLASS_TO with its own proxy; a
@@ -42,6 +43,40 @@ function isOneToOneConvId(convId: string): boolean {
 // strfry would reject the kind-7 with "unexpected size for fixed-size
 // tag: e" and the user would see the reaction silently fail.
 const RUMOR_ID_RE = /^[0-9a-f]{64}$/i;
+
+// Kind-20001 typing indicator (NIP-16 ephemeral). Duplicated from
+// nostr-relay.ts's NOSTR_KIND_TYPING as a plain literal so this module's graph
+// stays decoupled from the relay transport (same approach as P2P_PEER_ID_MIN in
+// bridge-invariants.ts). Keep the two in sync. Also mirrors phantombot.
+const KIND_TYPING = 20001;
+
+// Content markers on a kind-20001 event — MUST match the receiver
+// (phantomchat-typing-receive.ts): '' = typing now (start/refresh),
+// 'recording' = recording voice, 'stop' = stopped (clear immediately).
+const TYPING_CONTENT_START = '';
+const TYPING_CONTENT_RECORDING = 'recording';
+const TYPING_CONTENT_STOP = 'stop';
+
+/**
+ * Maps a tweb `SendMessageAction._` to the kind-20001 content marker we relay,
+ * or `null` for actions we deliberately don't broadcast (e.g. upload-progress
+ * actions like sendMessageUploadDocumentAction — those are local UI only and
+ * would just be noise on the wire).
+ */
+function typingContentForAction(actionType: string): string | null {
+  switch(actionType) {
+    case 'sendMessageTypingAction':
+      return TYPING_CONTENT_START;
+    case 'sendMessageRecordAudioAction':
+    case 'sendMessageRecordRoundAction':
+    case 'sendMessageRecordVideoAction':
+      return TYPING_CONTENT_RECORDING;
+    case 'sendMessageCancelAction':
+      return TYPING_CONTENT_STOP;
+    default:
+      return null;
+  }
+}
 
 // ─── Action method patterns ──────────────────────────────────────────
 
@@ -493,6 +528,9 @@ export class PhantomChatMTProtoServer {
 
       case 'messages.editChatTitle':
         return this.editChatTitle(params);
+
+      case 'messages.setTyping':
+        return this.setTyping(params);
 
       default:
         return this.fallback(method, params);
@@ -1550,6 +1588,69 @@ export class PhantomChatMTProtoServer {
     } catch(err) {
       console.warn(LOG_PREFIX, 'sendGroupMessage: GroupAPI.sendMessage failed', err);
       return emptyUpdates;
+    }
+  }
+
+  /**
+   * Emit a typing / recording indicator over the relay layer (kind-20001,
+   * NIP-16 ephemeral). This is the handler for `messages.setTyping`, which used
+   * to fall through to the action-prefix no-op (returns `true`, dropped on the
+   * floor) — so the local UI detected typing but nothing ever reached the peer.
+   *
+   * WhatsApp-style privacy coupling: gated on the read-receipts toggle. When the
+   * user has read receipts OFF we publish nothing (and the receive side
+   * suppresses incoming indicators too — see phantomchat-typing-receive.ts).
+   *
+   * Always returns `true` (the MTProto contract for messages.setTyping) — a
+   * typing tick is fire-and-forget; a publish failure must never surface as a
+   * send error in the UI.
+   */
+  private async setTyping(params: any): Promise<boolean> {
+    // Privacy gate — suppress emission entirely when read receipts are off.
+    if(!getReadReceiptsEnabled()) return true;
+    if(!this.chatAPI || !this.ownPubkey) return true;
+
+    const peerId = extractPeerId(params?.peer);
+    if(peerId === null) return true;
+
+    const actionType: string = params?.action?._ ?? '';
+    const content = typingContentForAction(actionType);
+    // Actions we don't relay (upload progress, etc.) → no-op.
+    if(content === null) return true;
+
+    const now = Math.floor(Date.now() / 1000);
+
+    try {
+      // GROUP tick: tag the group id (so the receiver routes the dots into the
+      // group chat, not the sender's DM) and p-tag every other member so their
+      // subscription filter matches. Mirrors how group messages address members.
+      if(isGroupPeer(peerId)) {
+        const {getGroupStore} = await import('./group-store');
+        const rec = await getGroupStore().getByPeerId(peerId);
+        if(!rec) return true;
+        const tags: string[][] = [['group', rec.groupId]];
+        for(const member of rec.members) {
+          if(member && member !== this.ownPubkey) tags.push(['p', member]);
+        }
+        // A group with no other members yet — nothing to notify.
+        if(tags.length === 1) return true;
+        await this.chatAPI.publishEvent({kind: KIND_TYPING, created_at: now, tags, content});
+        return true;
+      }
+
+      // 1:1 tick: p-tag the single recipient.
+      const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));
+      if(!peerPubkey) return true;
+      await this.chatAPI.publishEvent({
+        kind: KIND_TYPING,
+        created_at: now,
+        tags: [['p', peerPubkey]],
+        content
+      });
+      return true;
+    } catch(err) {
+      console.warn(LOG_PREFIX, 'setTyping: publish failed', err);
+      return true;
     }
   }
 

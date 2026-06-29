@@ -302,6 +302,10 @@ export default class ChatInput {
   private recordStartTime = 0;
   private recordingOverlayListener: Listener;
   private recordingNavigationItem: NavigationItem;
+  // Keeps the peer's "recording voice…" indicator alive: the receiver
+  // auto-expires it ~6s after the last tick, so we refresh on an interval while
+  // recording and clear it when recording ends. See setRecording().
+  private recordingTypingInterval: number = 0;
 
   // private scrollTop = 0;
   // private scrollOffsetTop = 0;
@@ -1993,6 +1997,10 @@ export default class ChatInput {
   public destroy() {
     // this.chat.log.error('Input destroying');
 
+    if(this.recordingTypingInterval) {
+      clearInterval(this.recordingTypingInterval);
+      this.recordingTypingInterval = 0;
+    }
     this.autocompleteHelperController.destroy();
     this.placeholderParamsMiddlewareHelper.destroy();
     appNavigationController.removeItem(this.inputHelperNavigationItem);
@@ -3211,6 +3219,34 @@ export default class ChatInput {
     this.setShrinking(this.recording, ['is-recording']);
     this.updateSendBtn();
     this.onRecording?.(value);
+    this.updateRecordingTypingIndicator(value);
+  }
+
+  // Broadcasts the native "recording voice" activity to the peer while a voice
+  // message is being recorded (and cancels it when recording stops). Mirrors how
+  // the text input emits sendMessageTypingAction. The relay emission +
+  // read-receipts privacy gate live downstream in the virtual MTProto server, so
+  // here we just drive the native action on the existing setTyping path.
+  private updateRecordingTypingIndicator(isRecording: boolean) {
+    if(this.recordingTypingInterval) {
+      clearInterval(this.recordingTypingInterval);
+      this.recordingTypingInterval = 0;
+    }
+
+    const peerId = this.chat?.peerId;
+    if(!peerId) return;
+    const threadId = this.chat?.threadId;
+
+    if(isRecording) {
+      const emit = () => {
+        this.managers.appMessagesManager.setTyping(peerId, {_: 'sendMessageRecordAudioAction'}, true, threadId);
+      };
+      emit();
+      // Refresh well within the receiver's ~6s auto-expiry window.
+      this.recordingTypingInterval = window.setInterval(emit, 3000);
+    } else {
+      this.managers.appMessagesManager.setTyping(peerId, {_: 'sendMessageCancelAction'}, undefined, threadId);
+    }
   }
 
   public setShrinking(value?: boolean, classNames?: string[]) {
