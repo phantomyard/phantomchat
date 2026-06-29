@@ -1717,17 +1717,26 @@ export default class DialogsStorage extends AppManager {
       }
 
       const folder = this.getFolder(filterId);
-      // Groups (3) is a pFlags-driven local system folder: no dialog has
-      // folder_id 3, so getTopMessages returns the global folder count, not
-      // the filtered subset. Using result.count would make the virtual list
-      // allocate skeleton rows for non-existent dialogs.
+      // Client-side filtered folders — Groups (3) and custom filter folders
+      // (id >= START_LOCAL_ID) — are pFlags/filter-driven views over the
+      // global dialog set: no dialog carries folder_id === filterId, so
+      // getTopMessages returns the GLOBAL folder count, not the filtered
+      // subset. Using result.count for these makes the virtual list allocate
+      // skeleton ("ghost") rows for non-existent dialogs (issue #42). Their
+      // authoritative count is the locally-filtered dialog list length.
+      // FOLDER_ID_ALL (0) and FOLDER_ID_ARCHIVE (1) are real server folders
+      // whose result.count is correct, and virtual filters (forum/saved)
+      // carry their own counts, so both are excluded.
       const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS;
+      const isLocallyFilteredFolder = !isVirtualFilter &&
+        filterId !== FOLDER_ID_ALL &&
+        filterId !== FOLDER_ID_ARCHIVE;
 
       if(skipMigrated) {
         curDialogStorage = this.getFolderDialogs(filterId, skipMigrated);
       }
 
-      folder.count = isLocalSystemFolder ? curDialogStorage.length : result.count;
+      folder.count = isLocallyFilteredFolder ? curDialogStorage.length : result.count;
 
       offset = 0;
       if(offsetIndex > 0) {
@@ -1743,7 +1752,7 @@ export default class DialogsStorage extends AppManager {
       const dialogs = curDialogStorage.slice(offset, offset + limit);
       return {
         dialogs,
-        count: isLocalSystemFolder ? curDialogStorage.length : (result.count ?? curDialogStorage.length),
+        count: isLocallyFilteredFolder ? curDialogStorage.length : (result.count ?? curDialogStorage.length),
         isTopEnd: curDialogStorage.length && ((dialogs[0] && dialogs[0] === curDialogStorage[0]) || this.getDialogIndex(curDialogStorage[0], indexKey) < offsetIndex),
         // isEnd: this.isDialogsLoaded(realFolderId) && (offset + limit) >= curDialogStorage.length
         isEnd: isLocalSystemFolder || (result.isEnd && curDialogStorage[curDialogStorage.length - 1] === dialogs[dialogs.length - 1])
