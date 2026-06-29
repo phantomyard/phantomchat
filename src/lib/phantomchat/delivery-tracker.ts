@@ -12,6 +12,7 @@
 
 import {wrapNip17Receipt, wrapReceiptV2} from './nostr-crypto';
 import rootScope from '@lib/rootScope';
+import {getReadReceiptsEnabled, setReadReceiptsEnabledSetting} from './read-receipts-setting';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -45,9 +46,9 @@ const STATE_ORDER: Record<DeliveryState, number> = {
   'read': 3
 };
 
-// ─── localStorage key for read receipts toggle ───────────────────
-
-const READ_RECEIPTS_KEY = 'phantomchat:read-receipts-enabled';
+// ─── Read-receipts toggle ────────────────────────────────────────
+// Single source of truth lives in read-receipts-setting.ts (shared with the
+// typing emit/receive gates so the WhatsApp-style coupling stays consistent).
 
 // ─── Static helpers ──────────────────────────────────────────────
 
@@ -133,15 +134,11 @@ export class DeliveryTracker {
     this.publishFn = options.publishFn;
     this.resendFn = options.resendFn;
 
-    // Load read receipts setting from localStorage (defaults to true).
-    // NOTE: this toggle governs READ-receipt (blue "seen") send/display ONLY.
-    // The delivery-receipt + retry mechanism below ignores it entirely.
-    if(typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem(READ_RECEIPTS_KEY);
-      this.readReceiptsEnabled = stored !== 'false';
-    } else {
-      this.readReceiptsEnabled = true;
-    }
+    // Load read receipts setting from the shared source of truth (defaults to
+    // true). NOTE: this toggle governs READ-receipt (blue "seen") send/display
+    // AND typing/recording indicators (see read-receipts-setting.ts). The
+    // delivery-receipt + retry mechanism below ignores it entirely.
+    this.readReceiptsEnabled = getReadReceiptsEnabled();
   }
 
   /**
@@ -356,9 +353,7 @@ export class DeliveryTracker {
    */
   setReadReceiptsEnabled(enabled: boolean): void {
     this.readReceiptsEnabled = enabled;
-    if(typeof localStorage !== 'undefined') {
-      localStorage.setItem(READ_RECEIPTS_KEY, String(enabled));
-    }
+    setReadReceiptsEnabledSetting(enabled);
   }
 
   /**

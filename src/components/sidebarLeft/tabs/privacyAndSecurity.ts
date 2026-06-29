@@ -11,6 +11,7 @@ import rootScope from '@lib/rootScope';
 import CheckboxField from '@components/checkboxField';
 import AppPhantomChatSecurityTab from '@components/sidebarLeft/tabs/phantomchatSecurity';
 import AppPhantomChatSeedPhraseTab from '@components/sidebarLeft/tabs/phantomchatSeedPhrase';
+import {getReadReceiptsEnabled, setReadReceiptsEnabledSetting} from '@lib/phantomchat/read-receipts-setting';
 
 export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
   public static getInitArgs(fromTab: SliderSuperTab) {
@@ -58,7 +59,11 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
 
     const readReceiptsRow = new Row({
       title: 'Read Receipts',
-      subtitle: 'Let others know when you read their messages',
+      // WhatsApp-style coupling: this single switch governs read receipts AND
+      // typing/recording indicators, in both directions. Off → you send only a
+      // single "sent" tick, no typing indicator, and you don't see others'
+      // typing indicators either.
+      subtitle: 'Send read receipts and typing indicators. If off, you won\'t send them — and you won\'t see others\' typing.',
       icon: 'readchats',
       checkboxField: new CheckboxField({
         toggle: true,
@@ -68,16 +73,22 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
 
     readReceiptsRow.checkboxField.input.addEventListener('change', () => {
       const enabled = readReceiptsRow.checkboxField.checked;
+      // Persist to the shared source of truth so the typing emit/receive gates
+      // and the delivery-tracker all read a consistent value (previously this
+      // toggle dispatched an event nobody listened to and never persisted, so
+      // it was a no-op).
+      setReadReceiptsEnabledSetting(enabled);
       rootScope.dispatchEvent('phantomchat_read_receipts_toggle', enabled);
+      // Live-update the already-constructed delivery tracker so read receipts
+      // take effect without a reload (it caches the value at construction).
+      try {
+        const chatAPI = (window as any).__phantomchatChatAPI;
+        chatAPI?.getDeliveryTracker?.()?.setReadReceiptsEnabled?.(enabled);
+      } catch{}
     });
 
-    // Check current state from localStorage
-    try {
-      const stored = localStorage.getItem('phantomchat:read-receipts-enabled');
-      if(stored === 'false') {
-        readReceiptsRow.checkboxField.checked = false;
-      }
-    } catch{}
+    // Reflect the persisted state in the checkbox.
+    readReceiptsRow.checkboxField.checked = getReadReceiptsEnabled();
 
     const relayPrivacyRow = new Row({
       title: 'Relay Privacy',
