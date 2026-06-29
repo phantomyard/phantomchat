@@ -237,12 +237,21 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     return {scrollable, list: sortedDialogList.list};
   }
 
+  /**
+   * Only All Chats (0) and Archive (1) key membership on the stable
+   * `dialog.folder_id`. Every other tab — custom filters AND the locally-seeded
+   * system folders Persons (2) / Groups (3), which no dialog carries a folder_id
+   * for — tests membership via the transient per-filter index (`index_<localId>`),
+   * so it is exposed to the saveDialogs reindex race. NOTE: this is a strict
+   * subset of REAL_FOLDERS (which also includes Groups) — do not conflate them,
+   * or Groups gets the unsafe sync-delete path it can't actually tolerate.
+   */
+  private get keysOnStableFolderId() {
+    return this.filterId === FOLDER_ID_ALL || this.filterId === FOLDER_ID_ARCHIVE;
+  }
+
   public testDialogForFilter(dialog: Dialog) {
-    // Persons (2) / Groups (3) are locally-seeded system folders — no dialog
-    // carries folder_id 2 or 3, so treat them like custom filters and use the
-    // per-filter index key for membership.
-    const isTgFolder = this.filterId === FOLDER_ID_ALL || this.filterId === FOLDER_ID_ARCHIVE;
-    if(!isTgFolder ? getDialogIndex(dialog, this.indexKey) === undefined : this.filterId !== dialog.folder_id) {
+    if(!this.keysOnStableFolderId ? getDialogIndex(dialog, this.indexKey) === undefined : this.filterId !== dialog.folder_id) {
       return false;
     }
 
@@ -294,13 +303,64 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
   public updateDialog(dialog: Dialog) {
     if(!this.testDialogForFilter(dialog)) {
       if(this.getDialogElement(dialog.peerId)) {
-        this.deleteDialog(dialog);
+        // A custom folder tests membership via the per-filter index
+        // (`index_<localId>`). DialogsStorage.saveDialogs wipes every `index_N`
+        // and regenerates them on each save, so a `dialogs_multiupdate`
+        // snapshot captured mid-reindex can momentarily lack the index and make
+        // testDialogForFilter report a genuine member as excluded. Removing the
+        // row on that transient signal — then re-adding it a tick later when the
+        // index is back — is what makes rows bounce/vanish inside folders (All
+        // Chats is immune: it keys on the stable `dialog.folder_id`). Before
+        // yanking a shown row, confirm exclusion against the authoritative,
+        // index-independent rule check.
+        this.confirmDialogExcludedFromFilter(dialog);
       }
 
       return;
     }
 
     return super.updateDialog(dialog);
+  }
+
+  private confirmDialogExcludedFromFilter(dialog: Dialog) {
+    const peerId = dialog.peerId;
+
+    // All Chats / Archive key on the stable `folder_id`, so the sync test is
+    // already authoritative — trust it. Groups (a REAL_FOLDER) is deliberately
+    // NOT trusted here: it uses the same transient per-filter index as custom
+    // filters, so it must go through the authoritative confirmation below.
+    if(this.keysOnStableFolderId) {
+      this.deleteDialog(dialog);
+      return;
+    }
+
+    (async() => {
+      // Re-fetch the canonical dialog (indices regenerated) and re-test against
+      // the rule-based predicate, which never reads the transient index.
+      const fresh = await this.managers.appMessagesManager.getDialogOnly(peerId);
+      if(!this.isActive || !this.getDialogElement(peerId)) {
+        return;
+      }
+
+      // Dialog gone entirely — `dialog_drop` owns that removal; don't race it.
+      if(!fresh) {
+        return;
+      }
+
+      const stillMember = await this.managers.filtersStorage.testDialogForFilterId(fresh, this.filterId);
+      if(!this.isActive || !this.getDialogElement(peerId)) {
+        return;
+      }
+
+      if(stillMember) {
+        // False alarm from the reindex race — reposition with the fresh dialog
+        // (correct index + unread state) instead of removing the row.
+        super.updateDialog(fresh);
+        return;
+      }
+
+      this.deleteDialog(fresh);
+    })();
   }
 
   public setCallStatus(dom: DialogDom, visible: boolean) {
