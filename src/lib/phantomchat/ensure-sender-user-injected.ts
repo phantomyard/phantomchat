@@ -105,7 +105,8 @@ function scheduleKind0Upgrade(
 /**
  * Ensure a User object exists in main-thread mirrors and the Worker's
  * appUsersManager for the given senderPubkey/peerId. Idempotent: returns
- * `{isNewPeer: false}` immediately if the peer is already present.
+ * `{isNewPeer: false}` immediately if the peer is already present in BOTH
+ * the mirror and the worker's users map.
  */
 export async function ensureSenderUserInjected(
   opts: EnsureSenderUserInjectedOpts
@@ -115,7 +116,37 @@ export async function ensureSenderUserInjected(
   const proxy = MOUNT_CLASS_TO.apiManagerProxy;
 
   if(!proxy?.mirrors?.peers) return {isNewPeer: false};
-  if(proxy.mirrors.peers[peerId]) return {isNewPeer: false};
+
+  // ── Fast path: mirror already has the peer ──────────────────────────
+  // Check the worker's users map too, not just the mirror. The mirror can
+  // be populated without injectP2PUser having completed (prior failure,
+  // bridge race, etc.), which silently kills 1:1 typing indicators: tweb's
+  // onUpdateUserTyping drops the tick when hasUser() returns false, and
+  // (unlike groups) 1:1 has no fallback to load+re-dispatch.
+  if(proxy.mirrors.peers[peerId]) {
+    let workerHasUser = false;
+    try {
+      workerHasUser = await rootScope.managers.appUsersManager.hasUser(peerId);
+    } catch(_e: any) {
+      // Bridge not ready — fall through to full inject below
+    }
+    if(workerHasUser) return {isNewPeer: false};
+
+    // Mirror has the peer but the worker doesn't have the user. Re-inject
+    // into the worker using the existing mirror entry — don't clobber the
+    // mirror or re-fetch kind 0 (the name may have been upgraded already).
+    const existing = proxy.mirrors.peers[peerId];
+    try {
+      const {PhantomChatBridge} = await import('@lib/phantomchat/phantomchat-bridge');
+      const bridge = PhantomChatBridge.getInstance();
+      const avatar = bridge.deriveAvatarFromPubkeySync(senderPubkey);
+      const name = existing.first_name || ('npub...' + senderPubkey.slice(0, 8));
+      await rootScope.managers.appUsersManager.injectP2PUser(senderPubkey, peerId, name, avatar);
+    } catch(e: any) {
+      console.debug(logPrefix, 'injectP2PUser (worker re-sync) non-critical:', e?.message);
+    }
+    return {isNewPeer: false};
+  }
 
   const displayName = await resolveInitialDisplayName(senderPubkey, logPrefix);
 
