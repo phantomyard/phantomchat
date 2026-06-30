@@ -69,16 +69,22 @@ jobs:
   # phantombot's release-tagging. Scoped contents:write only on this job.
   tag:
     needs: deploy
-    # Only cut release tags from main — dogfood commits on feature branches
-    # still deploy + bump the in-bundle version, they just don't litter tags.
-    if: github.ref == 'refs/heads/main'
+    # Tag every released build so the live version always maps back to a commit:
+    #   - auto-deploys from main (push), and
+    #   - on-demand feature-branch deploys via the manual "Run workflow" button
+    #     (workflow_dispatch) — these ship live without merging, so they MUST be
+    #     tagged too, otherwise the deployed 1.0.<run_number> bundle has no commit
+    #     marker. The tag is annotated with the source ref for provenance.
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      # Default checkout ref is the dispatched/pushed branch, so the tag lands on
+      # exactly the commit that was built and deployed above.
       - uses: actions/checkout@v4
       - name: Create and push version tag
         run: |
           VERSION="v1.0.${{ github.run_number }}"
-          git tag "$VERSION"
+          git tag -a "$VERSION" -m "Release $VERSION from ${{ github.ref_name }} (${{ github.sha }})"
           git push origin "$VERSION"
