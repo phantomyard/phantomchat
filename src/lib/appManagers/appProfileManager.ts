@@ -1109,6 +1109,21 @@ export class AppProfileManager extends AppManager {
             }
           });
         }
+      } else if(update._ === 'updateUserTyping') {
+        // [PhantomChat.chat] 1:1 parity with the group branch above. A typing
+        // tick can land before the sender's synthetic P2P User has been injected
+        // into the Worker (cold peer / inject race). The group branch self-heals
+        // via getChatFull(); 1:1 had no equivalent, so the tick was silently
+        // dropped — peer_typings only fires when hasUser is true. getProfile()
+        // routes through the Virtual MTProto server's users.getFullUser, which
+        // reconstructs the user from the cached pubkey mapping; saveApiUsers then
+        // injects it (hasUser → true) and we re-dispatch, exactly mirroring the
+        // group fallback's load-then-redispatch.
+        Promise.resolve(this.getProfile(fromId)).then(() => {
+          if(typing.timeout !== undefined && this.appUsersManager.hasUser(fromId)) {
+            this.rootScope.dispatchEvent('peer_typings', {peerId, threadId, typings});
+          }
+        });
       }
 
       // return;
