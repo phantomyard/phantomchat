@@ -442,6 +442,50 @@ export class ChatAPI {
   }
 
   /**
+   * Publish a typing indicator as a NIP-17 gift-wrap (kind-1059).
+   *
+   * Wraps the typing tick inside a kind-14 rumor → kind-13 seal → kind-1059
+   * gift-wrap envelope. The relay never sees the inner kind or typing content;
+   * only the outer kind-1059 + ephemeral pubkey are visible. This avoids kind
+   * collisions (the old kind-30001 collides with NIP-51) and prevents the relay
+   * from building a sender→recipient social graph.
+   *
+   * Best-effort: typing ticks fire every ~2s; a failed publish must never throw.
+   */
+  async publishTypingGiftWrap(recipientPubHex: string, content: string, conversationId: string): Promise<void> {
+    const sk = this.relayPool.getPrivateKey?.();
+    if(!sk) return;
+    try {
+      const {wrapTypingGiftWrap} = await import('./nostr-crypto');
+      const wrap = wrapTypingGiftWrap(sk, recipientPubHex, content, conversationId);
+      await this.relayPool.publishRawEvent(wrap);
+    } catch(err) {
+      this.log.warn('[ChatAPI] publishTypingGiftWrap failed:', err);
+    }
+  }
+
+  /**
+   * Publish a group typing indicator as NIP-17 gift-wraps (kind-1059).
+   *
+   * Creates one kind-1059 gift-wrap per member, each with its own ephemeral
+   * signing key. The rumor inside is shared across all wraps (same content,
+   * same ['d', groupId] and ['group', groupId] tags).
+   */
+  async publishGroupTypingGiftWrap(memberPubHexes: string[], content: string, groupId: string): Promise<void> {
+    const sk = this.relayPool.getPrivateKey?.();
+    if(!sk) return;
+    try {
+      const {wrapGroupTypingGiftWrap} = await import('./nostr-crypto');
+      const wraps = wrapGroupTypingGiftWrap(sk, memberPubHexes, content, groupId);
+      for(const wrap of wraps) {
+        await this.relayPool.publishRawEvent(wrap);
+      }
+    } catch(err) {
+      this.log.warn('[ChatAPI] publishGroupTypingGiftWrap failed:', err);
+    }
+  }
+
+  /**
    * Query relays for the single latest event matching a filter, ordered
    * by created_at descending. Returns null if no events match.
    *

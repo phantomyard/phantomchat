@@ -1,19 +1,20 @@
 /**
- * Typing-indicator receiver — handles kind-20001 (NIP-16 ephemeral) events.
+ * Typing-indicator receiver — handles gift-wrapped (kind-1059 → kind-14 rumor)
+ * and legacy kind-20001 typing events.
  *
- * A peer (phantombot, or another PhantomChat client) publishes a kind-30001
- * (NIP-33 parameterized replaceable) event p-tagged to us roughly every couple
- * of seconds while it is composing a reply. We translate each one into a NATIVE
- * tweb `updateUserTyping` local update, which `appProfileManager.onUpdateUserTyping`
- * turns into the inherited three-dots indicator AND auto-expires after 6s.
+ * A peer (phantombot, or another PhantomChat client) gift-wraps a kind-14 rumor
+ * with typing content ('' = typing, 'stop' = stopped, 'recording' = voice) and
+ * a ['d', conversationId] tag. The nostr-relay.ts unwrap handler detects the
+ * typing content and routes it here via onRawEventHandler with a synthetic
+ * kind-20001 event.
  *
- * Migration note: the old kind-20001 (NIP-16 ephemeral) is accepted as a
- * backward-compat fallback during the transition. Once all clients emit
- * kind-30001, the kind-20001 branch can be removed.
+ * Backward compat: the old bare kind-20001 (NIP-16 ephemeral) is still accepted
+ * for bots that haven't migrated to gift-wrapped typing yet.
  *
  * Why this is safe / cheap:
- *   - Parameterized replaceable (kind 30000–39999): relays store it, so late
- *     reconnects replay the latest typing state — no silent loss.
+ *   - Gift-wrapped (kind 1059): relays store it, so late reconnects replay the
+ *     latest typing state — no silent loss. The relay only sees kind-1059 +
+ *     an ephemeral pubkey — no social graph leak, no kind collision.
  *   - We still drop events older than STALE_MS defensively, in case a relay
  *     redelivers one, and verify the Schnorr signature so a hostile relay can't
  *     forge a spurious indicator from someone else's pubkey.

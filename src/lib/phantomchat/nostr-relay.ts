@@ -45,18 +45,17 @@ export const NOSTR_KIND_DELETE = 5;
 /**
  * Typing indicator (kind 20001) — a NIP-16 EPHEMERAL event (range 20000–29999).
  * Relays do NOT store ephemeral events; they only fan them out to connected
- * subscribers. That makes typing perfect as a transient signal: it cannot be
- * replayed on reconnect and self-expires the instant nobody is listening. The
- * sender (phantombot, or any PhantomChat peer) p-tags the recipient; the
- * recipient injects a native `updateUserTyping` (three-dots, 6s auto-expiry).
- * Must match phantombot's `NOSTR_KIND_TYPING`.
+ * subscribers. Typing ticks are now gift-wrapped (kind-1059 → kind-14 rumor)
+ * for privacy + collision avoidance. The relay only sees kind-1059 + an
+ * ephemeral pubkey — no social graph leak, no kind collision. This constant
+ * is retained as a reference but no longer used on the wire.
  */
 export const NOSTR_KIND_TYPING = 30001;
 
 /**
  * Legacy ephemeral typing kind (NIP-16, kind-20001). Accepted on the receive
- * side for backward compatibility during the migration to kind-30001. Once all
- * clients emit kind-30001 this can be removed.
+ * side for backward compatibility with bots that haven't migrated to
+ * gift-wrapped typing yet. Can be removed once all bots are updated.
  */
 export const NOSTR_KIND_TYPING_LEGACY = 20001;
 
@@ -599,7 +598,10 @@ export class NostrRelay {
     const filter: Record<string, unknown> = {
       // No NOSTR_KIND_PRESENCE (30315): presence was removed, so we don't ask
       // relays for peers' status heartbeats — that's wasted bandwidth + crypto.
-      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING, NOSTR_KIND_TYPING_LEGACY],
+      // NOSTR_KIND_TYPING (30001) removed: typing ticks are now gift-wrapped
+      // (kind-1059) for privacy + collision avoidance. Legacy kind-20001 kept
+      // for backward compat with bots that haven't updated yet.
+      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING_LEGACY],
       '#p': [this.publicKey],
       // Bound the initial replay. Without a limit a relay replays the entire
       // gift-wrap history on every (re)connect/recycle (the kind-1059 firehose).
@@ -1133,7 +1135,10 @@ export class NostrRelay {
     // through NIP-17 unwrap — they carry their referent in e/p tags. Typing
     // (kind 20001, NIP-16 ephemeral) was being dropped at the gift-wrap-only
     // gate below, so the three-dots indicator never fired.
-    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING || event.kind === NOSTR_KIND_TYPING_LEGACY) {
+    // Route plaintext non-giftwrap kinds (reactions, deletes, legacy typing)
+    // through the raw-event handler. kind-20001 is the legacy ephemeral typing
+    // kind — kept for backward compat during the gift-wrap migration.
+    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING_LEGACY) {
       if(!verifyEvent(event as any)) {
         this.log.warn('[NostrRelay] dropping non-giftwrap event with invalid signature, kind:', event.kind, 'pubkey:', event.pubkey.slice(0, 8) + '...');
         return;
@@ -1191,6 +1196,30 @@ export class NostrRelay {
             type: receiptTag[1] as 'delivery' | 'read',
             from: rumor.pubkey
           });
+        }
+        return;
+      }
+
+      // Typing indicator: kind-14 rumor with a ['d', ...] tag and typing
+      // content ('' = typing, 'stop' = stopped, 'recording' = voice).
+      // Gift-wrapped typing ticks (kind-1059 → kind-14 rumor) replaced the old
+      // bare kind-30001 / kind-20001 events for privacy + collision avoidance.
+      const dTag = rumor.tags?.find((t: string[]) => t[0] === 'd');
+      if(dTag && (rumor.content === '' || rumor.content === 'stop' || rumor.content === 'recording')) {
+        if(this.onRawEventHandler) {
+          try {
+            // Adapt to the typing receiver's expected shape (synthetic kind-20001)
+            this.onRawEventHandler({
+              kind: 20001,
+              pubkey: rumor.pubkey,
+              content: rumor.content,
+              created_at: rumor.created_at,
+              tags: rumor.tags,
+              id: rumor.id || event.id || ''
+            } as any);
+          } catch(err) {
+            this.log.error('[NostrRelay] typing handler threw:', err);
+          }
         }
         return;
       }

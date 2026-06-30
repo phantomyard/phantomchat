@@ -44,11 +44,10 @@ function isOneToOneConvId(convId: string): boolean {
 // tag: e" and the user would see the reaction silently fail.
 const RUMOR_ID_RE = /^[0-9a-f]{64}$/i;
 
-// Kind-30001 typing indicator (NIP-33 parameterized replaceable). Duplicated
-// from nostr-relay.ts's NOSTR_KIND_TYPING as a plain literal so this module's
-// graph stays decoupled from the relay transport (same approach as P2P_PEER_ID_MIN in
-// bridge-invariants.ts). Keep the two in sync. Also mirrors phantombot.
-const KIND_TYPING = 30001;
+// Typing indicators are now gift-wrapped (kind-1059) for privacy. The inner
+// kind-14 rumor carries the typing content and ['d', conversationId] tag.
+// The outer kind-1059 is signed with an ephemeral key (NIP-17 parity).
+// See chat-api.publishTypingGiftWrap / publishGroupTypingGiftWrap.
 
 // Content markers on a kind-30001 event — MUST match the receiver
 // (phantomchat-typing-receive.ts): '' = typing now (start/refresh),
@@ -1592,17 +1591,18 @@ export class PhantomChatMTProtoServer {
   }
 
   /**
-   * Emit a typing / recording indicator over the relay layer (kind-30001,
-   * NIP-33 parameterized replaceable). This is the handler for `messages.setTyping`,
-   * which used to fall through to the action-prefix no-op (returns `true`,
-   * dropped on the floor) — so the local UI detected typing but nothing ever
-   * reached the peer.
+   * Emit a typing / recording indicator over the relay layer as a NIP-17
+   * gift-wrap (kind-1059). This is the handler for `messages.setTyping`, which
+   * used to fall through to the action-prefix no-op (returns `true`, dropped on
+   * the floor) — so the local UI detected typing but nothing ever reached the
+   * peer.
    *
-   * kind-30001 replaces the old kind-20001 (NIP-16 ephemeral) so relays store
-   * the latest typing state per sender+conversation. Late reconnects now replay
-   * instead of silently losing typing ticks. A `d` tag (conversation identifier)
-   * ensures only the latest state is kept, and an `expiration` tag (NIP-40,
-   * ~30s TTL) auto-prunes stale events if the sender crashes.
+   * The typing tick is wrapped inside a kind-14 rumor → kind-13 seal → kind-1059
+   * gift-wrap envelope. The relay only sees kind-1059 + an ephemeral pubkey —
+   * no kind collision risk (the old kind-30001 collides with NIP-51), no social
+   * graph leak (metadata hidden behind NIP-44 encryption). Late reconnects
+   * replay via backfill (relays store kind-1059 events), and client-side 6s
+   * auto-expiry handles stale indicator cleanup.
    *
    * WhatsApp-style privacy coupling: gated on the read-receipts toggle. When the
    * user has read receipts OFF we publish nothing (and the receive side
@@ -1628,40 +1628,23 @@ export class PhantomChatMTProtoServer {
     const now = Math.floor(Date.now() / 1000);
 
     try {
-      // GROUP tick: tag the group id (so the receiver routes the dots into the
-      // group chat, not the sender's DM) and p-tag every other member so their
-      // subscription filter matches. Mirrors how group messages address members.
-      // The `d` tag (group id) serializes the replaceable event per-group, and
-      // the `expiration` tag (~30s) auto-prunes stale ticks.
+      // GROUP tick: gift-wrap the typing rumor for each group member. Each
+      // member gets their own kind-1059 envelope (NIP-17 parity) so the relay
+      // never sees the inner kind, group ID, or member list.
       if(isGroupPeer(peerId)) {
         const {getGroupStore} = await import('./group-store');
         const rec = await getGroupStore().getByPeerId(peerId);
         if(!rec) return true;
-        const tags: string[][] = [
-          ['d', rec.groupId],
-          ['group', rec.groupId],
-          ['expiration', String(now + 30)]
-        ];
-        for(const member of rec.members) {
-          if(member && member !== this.ownPubkey) tags.push(['p', member]);
-        }
-        // A group with no other members yet — nothing to notify.
-        if(tags.length === 3) return true;
-        await this.chatAPI.publishEvent({kind: KIND_TYPING, created_at: now, tags, content});
+        const members = rec.members.filter(m => m && m !== this.ownPubkey);
+        if(members.length === 0) return true;
+        await this.chatAPI.publishGroupTypingGiftWrap(members, content, rec.groupId);
         return true;
       }
 
-      // 1:1 tick: p-tag the single recipient. The `d` tag (recipient pubkey)
-      // serializes the replaceable event per-conversation, and the `expiration`
-      // tag (~30s) auto-prunes stale ticks.
+      // 1:1 tick: gift-wrap the typing rumor for the single recipient.
       const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));
       if(!peerPubkey) return true;
-      await this.chatAPI.publishEvent({
-        kind: KIND_TYPING,
-        created_at: now,
-        tags: [['d', peerPubkey], ['p', peerPubkey], ['expiration', String(now + 30)]],
-        content
-      });
+      await this.chatAPI.publishTypingGiftWrap(peerPubkey, content, peerPubkey);
       return true;
     } catch(err) {
       console.warn(LOG_PREFIX, 'setTyping: publish failed', err);
