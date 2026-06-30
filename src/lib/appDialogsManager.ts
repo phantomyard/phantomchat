@@ -2606,6 +2606,21 @@ export class AppDialogsManager {
         dialogElement: dialogElement,
         isBatch: options.isBatch,
         setUnread: true
+      }).then(async() => {
+        // Re-apply active typing state on (re)mount. The virtual list evicts
+        // off-window rows (deferredSortedVirtualList shrink), so a peer_typings
+        // event that fired while this row was unmounted never reached it and
+        // setLastMessage just overwrote lastMessageSpan with the last message.
+        // Restore the indicator here — same pattern as the online-status
+        // re-apply above — so typing survives scroll eviction in long lists
+        // (notably "All Chats", which holds every dialog).
+        const dom = dialogElement.dom;
+        if(dom.lastMessageSpan.querySelector('.peer-typing-container')) return;
+        const typingElement = await appImManager.getPeerTyping(peerId, undefined, options.threadId);
+        if(typingElement) {
+          replaceContent(dom.lastMessageSpan, typingElement);
+          dom.lastMessageSpan.classList.add('user-typing');
+        }
       }));
 
       return Promise.all(promises);
