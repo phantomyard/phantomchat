@@ -1,20 +1,17 @@
 /**
- * Typing-indicator receiver — handles gift-wrapped (kind-1059 → kind-14 rumor)
- * and legacy kind-20001 typing events.
+ * Typing-indicator receiver — handles kind-20001 (NIP-16 ephemeral) events.
  *
- * A peer (phantombot, or another PhantomChat client) gift-wraps a kind-14 rumor
- * with typing content ('' = typing, 'stop' = stopped, 'recording' = voice) and
- * a ['d', conversationId] tag. The nostr-relay.ts unwrap handler detects the
- * typing content and routes it here via onRawEventHandler with a synthetic
- * kind-20001 event.
- *
- * Backward compat: the old bare kind-20001 (NIP-16 ephemeral) is still accepted
- * for bots that haven't migrated to gift-wrapped typing yet.
+ * A peer (phantombot, or another PhantomChat client) publishes a kind-20001
+ * event p-tagged to us roughly every couple of seconds while it is composing a
+ * reply. We translate each one into a NATIVE tweb `updateUserTyping` local
+ * update, which `appProfileManager.onUpdateUserTyping` turns into the inherited
+ * three-dots indicator AND auto-expires after 6s. Because the sender re-emits
+ * every ~2s, the 6s timer keeps resetting while it works and the dots vanish a
+ * few seconds after it stops — identical to Signal / native Telegram.
  *
  * Why this is safe / cheap:
- *   - Gift-wrapped (kind 1059): relays store it, so late reconnects replay the
- *     latest typing state — no silent loss. The relay only sees kind-1059 +
- *     an ephemeral pubkey — no social graph leak, no kind collision.
+ *   - Ephemeral (kind 20000–29999): relays don't store it, so there is nothing
+ *     to replay on reconnect — no stale "ghost typing".
  *   - We still drop events older than STALE_MS defensively, in case a relay
  *     redelivers one, and verify the Schnorr signature so a hostile relay can't
  *     forge a spurious indicator from someone else's pubkey.
@@ -67,14 +64,6 @@ interface NostrEventLite {
   tags: any[][];
   content: string;
   sig?: string;
-  // Set by the relay layer when this typing event was synthesized from an
-  // already-authenticated NIP-59 gift-wrap unwrap (kind-1059 → kind-13 seal →
-  // kind-14 rumor). The seal's Schnorr signature is verified during unwrap and
-  // the sender pubkey is taken from the verified seal, so the synthesized event
-  // carries NO raw `sig` of its own — re-running verifyEvent() on it would
-  // (correctly) fail. When this flag is set, skip the raw signature re-check;
-  // authenticity is already established upstream.
-  giftUnwrapped?: boolean;
 }
 
 /** Maps a 64-hex pubkey to the deterministic virtual peerId. */
@@ -166,7 +155,7 @@ class PhantomChatTypingReceive {
   setSignatureVerifier(v: SignatureVerifier) { this.verify = v; }
 
   async onTyping(event: NostrEventLite): Promise<void> {
-    if(event.kind !== 20001 && event.kind !== 30001) return;
+    if(event.kind !== 20001) return;
 
     // WhatsApp-style reciprocity: if the user turned read receipts (and thus
     // typing indicators) OFF, we don't send our own indicators AND we don't
@@ -202,13 +191,7 @@ class PhantomChatTypingReceive {
     if(ageSeconds > STALE_SECONDS) return;
 
     // Verify the signature so a hostile relay can't forge an indicator.
-    // EXCEPTION: gift-wrapped ticks (kind-1059 → seal → kind-14 rumor) arrive as
-    // a synthetic event with no raw `sig` — the sender was already authenticated
-    // by the seal's Schnorr verification during unwrap, and rumor.pubkey is taken
-    // from that verified seal. Re-running verifyEvent() here would drop every
-    // gift-wrapped tick (no sig to check). Skip the raw re-check for that path;
-    // keep it for legacy bare kind-20001 events from not-yet-updated senders.
-    if(!event.giftUnwrapped && !this.verify(event)) {
+    if(!this.verify(event)) {
       console.debug(LOG_PREFIX, 'dropping unverifiable typing event from', event.pubkey?.slice(0, 8));
       return;
     }
