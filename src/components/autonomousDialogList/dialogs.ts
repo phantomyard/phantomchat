@@ -1,5 +1,5 @@
 import {Dialog} from '@appManagers/appMessagesManager';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS, REAL_FOLDER_ID} from '@appManagers/constants';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {isDialog, isForumTopic} from '@appManagers/utils/dialogs/isDialog';
@@ -209,7 +209,15 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     const scrollable = new Scrollable(null, 'CL', 500);
     scrollable.container.dataset.filterId = '' + filterId;
 
-    const indexKey = getDialogIndexKey(filter.localId);
+    // Real/system folders (All=0, Archive=1, Groups=3) are indexed in storage
+    // by their folder id (getDialogIndexKeyByFilterId), NOT by filter.localId.
+    // Groups carries id=3 but localId=5, so using localId here built `index_5`
+    // while the dialog only ever has `index_3` — every update then read an
+    // undefined index, failed testDialogForFilter, and evicted the row (which
+    // flashed the empty-folder placeholder/edit-folder screen). Mirror storage.
+    const indexKey = REAL_FOLDERS.has(filterId) ?
+      getDialogIndexKey(filterId as REAL_FOLDER_ID) :
+      getDialogIndexKey(filter.localId);
     const sortedDialogList = new SortedDialogList({
       appDialogsManager: this.appDialogsManager,
       managers: rootScope.managers,
