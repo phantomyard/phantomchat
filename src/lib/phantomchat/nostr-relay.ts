@@ -65,6 +65,14 @@ export const NOSTR_KIND_TYPING = 20001;
 export const NOSTR_KIND_PRESENCE = 30315;
 
 /**
+ * Hard cap on the initial replay a REQ pulls before going live. Per NIP-01
+ * `limit` applies only to the stored-event phase; live events still stream
+ * afterwards. Bounds the gift-wrap firehose on (re)connect even when a `since`
+ * watermark is absent (cold client) or very old.
+ */
+export const SUBSCRIBE_REPLAY_LIMIT = 100;
+
+/**
  * Decrypted message structure returned by getMessages.
  * After NIP-17 migration, includes rumor kind and tags for routing.
  */
@@ -175,8 +183,17 @@ export class NostrRelay {
 
   // Subscription management
   private subscriptionId: string = '';
-  private isSubscribed: boolean = false;
+  // Intent flag: true once a live REQ has been written to the socket and not
+  // torn down. It tracks *intent*, NOT wire state — the pool's catch-up poll
+  // and reconnect re-arm can briefly diverge from it. Named accordingly so it
+  // isn't mistaken for "events are physically streaming right now".
+  private liveReqArmed: boolean = false;
   public pendingSubscribe: boolean = false;
+  // Watermark provider for the live subscription's `since`. Set by the pool to
+  // its catch-up watermark (lastSeen − fuzz). Without it the live REQ is naked
+  // and the relay replays the ENTIRE gift-wrap history on every (re)connect.
+  // Called at REQ time so onopen re-arms always use a fresh watermark.
+  public liveSubscribeSince: (() => number | undefined) | null = null;
   // WU-3: resolves when the relay sends EOSE for the message subscription
   // (the "live from here" marker). null until subscribeMessages() arms it.
   private subscriptionReady: {promise: Promise<boolean>; resolve: (v: boolean) => void} | null = null;
@@ -336,7 +353,7 @@ export class NostrRelay {
         this.lastInboundAt = Date.now();
 
         // Subscribe if we were subscribed before OR if pool wants subscription
-        if(this.isSubscribed || this.pendingSubscribe) {
+        if(this.liveReqArmed || this.pendingSubscribe) {
           this.pendingSubscribe = false;
           this.subscribeMessages();
         }
@@ -408,7 +425,7 @@ export class NostrRelay {
     }
 
     this.setConnectionState('disconnected');
-    this.isSubscribed = false;
+    this.liveReqArmed = false;
     this.subscriptionReady?.resolve(false);
     this.subscriptionReady = null;
 
@@ -483,7 +500,9 @@ export class NostrRelay {
     // Build filter for kind 1059 gift-wrap events
     const filter: Record<string, unknown> = {
       'kinds': [NOSTR_KIND_GIFTWRAP],
-      '#p': [this.publicKey]
+      '#p': [this.publicKey],
+      // Cap the backfill so a stale/absent `since` can't pull full history.
+      'limit': SUBSCRIBE_REPLAY_LIMIT
     };
 
     if(since) {
@@ -558,7 +577,7 @@ export class NostrRelay {
    * in real-time as they arrive on the relay.
    */
   subscribeMessages(): void {
-    if(this.isSubscribed) {
+    if(this.liveReqArmed) {
       this.log('[NostrRelay] already subscribed to messages');
       return;
     }
@@ -574,8 +593,21 @@ export class NostrRelay {
       // No NOSTR_KIND_PRESENCE (30315): presence was removed, so we don't ask
       // relays for peers' status heartbeats — that's wasted bandwidth + crypto.
       'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING],
-      '#p': [this.publicKey]
+      '#p': [this.publicKey],
+      // Bound the initial replay. Without a limit a relay replays the entire
+      // gift-wrap history on every (re)connect/recycle (the kind-1059 firehose).
+      'limit': SUBSCRIBE_REPLAY_LIMIT
     };
+
+    // Seed `since` from the pool's catch-up watermark so the relay only replays
+    // events since we last saw one (minus a fuzz window for clock skew), not the
+    // whole archive. Missing/old watermark falls back to the limit cap above.
+    // Anything that landed while fully offline is still recovered by the pool's
+    // reconnect since-backfill, so this loses no messages.
+    const liveSince = this.liveSubscribeSince?.();
+    if(liveSince) {
+      filter.since = liveSince;
+    }
 
     // WU-3: arm the readiness barrier BEFORE sending REQ, and only mark
     // subscribed if the REQ actually went out. Previously isSubscribed was set
@@ -587,7 +619,7 @@ export class NostrRelay {
       this.log.warn('[NostrRelay] subscribeMessages: REQ not sent (socket not open); will retry');
       return;
     }
-    this.isSubscribed = true;
+    this.liveReqArmed = true;
   }
 
   /** WU-3: (re)arm the EOSE readiness deferred. */
@@ -603,7 +635,7 @@ export class NostrRelay {
    * subscribed. Never rejects or hangs — safe to await on the boot path.
    */
   whenSubscribed(timeoutMs = 8000): Promise<boolean> {
-    if(!this.subscriptionReady) return Promise.resolve(this.isSubscribed);
+    if(!this.subscriptionReady) return Promise.resolve(this.liveReqArmed);
     return Promise.race([
       this.subscriptionReady.promise,
       new Promise<boolean>((r) => setTimeout(() => r(false), timeoutMs))
@@ -614,14 +646,14 @@ export class NostrRelay {
    * Unsubscribe from messages
    */
   unsubscribeMessages(): void {
-    if(!this.isSubscribed) {
+    if(!this.liveReqArmed) {
       return;
     }
 
     this.log('[NostrRelay] unsubscribing from messages');
 
     this.safeSend(JSON.stringify(['CLOSE', this.subscriptionId]));
-    this.isSubscribed = false;
+    this.liveReqArmed = false;
   }
 
   /**
@@ -1297,7 +1329,7 @@ export class NostrRelay {
     // The socket is gone, and any REQ subscription on the relay died with it.
     // Clear isSubscribed and arm pendingSubscribe so the NEXT onopen sends a
     // FRESH REQ. Previously isSubscribed stayed true across a reconnect, so
-    // onopen's `subscribeMessages()` hit the `if(this.isSubscribed) return`
+    // onopen's `subscribeMessages()` hit the `if(this.liveReqArmed) return`
     // guard and never re-sent the REQ — after an idle disconnect the client
     // believed it was subscribed but no live subscription existed on the new
     // socket, so inbound DMs silently stopped until a full page reload. This
@@ -1306,8 +1338,8 @@ export class NostrRelay {
     // are gift-wrapped per-member across all relays, so the dead sub was
     // invisible on group chats.) The pool runs a since-backfill on reconnect
     // to recover anything that landed during the dead window.
-    if(this.isSubscribed || this.pendingSubscribe) {
-      this.isSubscribed = false;
+    if(this.liveReqArmed || this.pendingSubscribe) {
+      this.liveReqArmed = false;
       this.pendingSubscribe = true;
     }
     // A pending readiness barrier can never resolve on a dead socket — settle
