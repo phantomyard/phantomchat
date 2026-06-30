@@ -51,7 +51,14 @@ export const NOSTR_KIND_DELETE = 5;
  * recipient injects a native `updateUserTyping` (three-dots, 6s auto-expiry).
  * Must match phantombot's `NOSTR_KIND_TYPING`.
  */
-export const NOSTR_KIND_TYPING = 20001;
+export const NOSTR_KIND_TYPING = 30001;
+
+/**
+ * Legacy ephemeral typing kind (NIP-16, kind-20001). Accepted on the receive
+ * side for backward compatibility during the migration to kind-30001. Once all
+ * clients emit kind-30001 this can be removed.
+ */
+export const NOSTR_KIND_TYPING_LEGACY = 20001;
 
 /**
  * NIP-38 user-status / presence (kind 30315, parameterized-replaceable). A peer
@@ -592,7 +599,7 @@ export class NostrRelay {
     const filter: Record<string, unknown> = {
       // No NOSTR_KIND_PRESENCE (30315): presence was removed, so we don't ask
       // relays for peers' status heartbeats — that's wasted bandwidth + crypto.
-      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING],
+      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING, NOSTR_KIND_TYPING_LEGACY],
       '#p': [this.publicKey],
       // Bound the initial replay. Without a limit a relay replays the entire
       // gift-wrap history on every (re)connect/recycle (the kind-1059 firehose).
@@ -1126,7 +1133,7 @@ export class NostrRelay {
     // through NIP-17 unwrap — they carry their referent in e/p tags. Typing
     // (kind 20001, NIP-16 ephemeral) was being dropped at the gift-wrap-only
     // gate below, so the three-dots indicator never fired.
-    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING) {
+    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING || event.kind === NOSTR_KIND_TYPING_LEGACY) {
       if(!verifyEvent(event as any)) {
         this.log.warn('[NostrRelay] dropping non-giftwrap event with invalid signature, kind:', event.kind, 'pubkey:', event.pubkey.slice(0, 8) + '...');
         return;

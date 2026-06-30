@@ -7,7 +7,7 @@ const PEER = 'b'.repeat(64);
 function makeEvent(over: Partial<any> = {}): any {
   return {
     id: 'evt-' + Math.random().toString(36).slice(2),
-    kind: 20001,
+    kind: 30001,
     pubkey: PEER,
     created_at: Math.floor(Date.now() / 1000),
     tags: [['p', OWN]],
@@ -50,6 +50,11 @@ describe('phantomchatTypingReceive', () => {
   it('ignores non-typing kinds', async() => {
     await typing.onTyping(makeEvent({kind: 7}));
     expect(dispatched).toEqual([]);
+  });
+
+  it('accepts legacy kind-20001 for backward compatibility', async() => {
+    await typing.onTyping(makeEvent({kind: 20001}));
+    expect(dispatched).toEqual([4242]);
   });
 
   it('drops stale redeliveries (created_at well in the past)', async() => {

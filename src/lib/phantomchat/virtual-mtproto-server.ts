@@ -44,13 +44,13 @@ function isOneToOneConvId(convId: string): boolean {
 // tag: e" and the user would see the reaction silently fail.
 const RUMOR_ID_RE = /^[0-9a-f]{64}$/i;
 
-// Kind-20001 typing indicator (NIP-16 ephemeral). Duplicated from
-// nostr-relay.ts's NOSTR_KIND_TYPING as a plain literal so this module's graph
-// stays decoupled from the relay transport (same approach as P2P_PEER_ID_MIN in
+// Kind-30001 typing indicator (NIP-33 parameterized replaceable). Duplicated
+// from nostr-relay.ts's NOSTR_KIND_TYPING as a plain literal so this module's
+// graph stays decoupled from the relay transport (same approach as P2P_PEER_ID_MIN in
 // bridge-invariants.ts). Keep the two in sync. Also mirrors phantombot.
-const KIND_TYPING = 20001;
+const KIND_TYPING = 30001;
 
-// Content markers on a kind-20001 event — MUST match the receiver
+// Content markers on a kind-30001 event — MUST match the receiver
 // (phantomchat-typing-receive.ts): '' = typing now (start/refresh),
 // 'recording' = recording voice, 'stop' = stopped (clear immediately).
 const TYPING_CONTENT_START = '';
@@ -58,7 +58,7 @@ const TYPING_CONTENT_RECORDING = 'recording';
 const TYPING_CONTENT_STOP = 'stop';
 
 /**
- * Maps a tweb `SendMessageAction._` to the kind-20001 content marker we relay,
+ * Maps a tweb `SendMessageAction._` to the kind-30001 content marker we relay,
  * or `null` for actions we deliberately don't broadcast (e.g. upload-progress
  * actions like sendMessageUploadDocumentAction — those are local UI only and
  * would just be noise on the wire).
@@ -1592,10 +1592,17 @@ export class PhantomChatMTProtoServer {
   }
 
   /**
-   * Emit a typing / recording indicator over the relay layer (kind-20001,
-   * NIP-16 ephemeral). This is the handler for `messages.setTyping`, which used
-   * to fall through to the action-prefix no-op (returns `true`, dropped on the
-   * floor) — so the local UI detected typing but nothing ever reached the peer.
+   * Emit a typing / recording indicator over the relay layer (kind-30001,
+   * NIP-33 parameterized replaceable). This is the handler for `messages.setTyping`,
+   * which used to fall through to the action-prefix no-op (returns `true`,
+   * dropped on the floor) — so the local UI detected typing but nothing ever
+   * reached the peer.
+   *
+   * kind-30001 replaces the old kind-20001 (NIP-16 ephemeral) so relays store
+   * the latest typing state per sender+conversation. Late reconnects now replay
+   * instead of silently losing typing ticks. A `d` tag (conversation identifier)
+   * ensures only the latest state is kept, and an `expiration` tag (NIP-40,
+   * ~30s TTL) auto-prunes stale events if the sender crashes.
    *
    * WhatsApp-style privacy coupling: gated on the read-receipts toggle. When the
    * user has read receipts OFF we publish nothing (and the receive side
@@ -1624,27 +1631,35 @@ export class PhantomChatMTProtoServer {
       // GROUP tick: tag the group id (so the receiver routes the dots into the
       // group chat, not the sender's DM) and p-tag every other member so their
       // subscription filter matches. Mirrors how group messages address members.
+      // The `d` tag (group id) serializes the replaceable event per-group, and
+      // the `expiration` tag (~30s) auto-prunes stale ticks.
       if(isGroupPeer(peerId)) {
         const {getGroupStore} = await import('./group-store');
         const rec = await getGroupStore().getByPeerId(peerId);
         if(!rec) return true;
-        const tags: string[][] = [['group', rec.groupId]];
+        const tags: string[][] = [
+          ['d', rec.groupId],
+          ['group', rec.groupId],
+          ['expiration', String(now + 30)]
+        ];
         for(const member of rec.members) {
           if(member && member !== this.ownPubkey) tags.push(['p', member]);
         }
         // A group with no other members yet — nothing to notify.
-        if(tags.length === 1) return true;
+        if(tags.length === 3) return true;
         await this.chatAPI.publishEvent({kind: KIND_TYPING, created_at: now, tags, content});
         return true;
       }
 
-      // 1:1 tick: p-tag the single recipient.
+      // 1:1 tick: p-tag the single recipient. The `d` tag (recipient pubkey)
+      // serializes the replaceable event per-conversation, and the `expiration`
+      // tag (~30s) auto-prunes stale ticks.
       const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));
       if(!peerPubkey) return true;
       await this.chatAPI.publishEvent({
         kind: KIND_TYPING,
         created_at: now,
-        tags: [['p', peerPubkey]],
+        tags: [['d', peerPubkey], ['p', peerPubkey], ['expiration', String(now + 30)]],
         content
       });
       return true;

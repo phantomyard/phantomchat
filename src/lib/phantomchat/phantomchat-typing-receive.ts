@@ -1,17 +1,19 @@
 /**
  * Typing-indicator receiver — handles kind-20001 (NIP-16 ephemeral) events.
  *
- * A peer (phantombot, or another PhantomChat client) publishes a kind-20001
- * event p-tagged to us roughly every couple of seconds while it is composing a
- * reply. We translate each one into a NATIVE tweb `updateUserTyping` local
- * update, which `appProfileManager.onUpdateUserTyping` turns into the inherited
- * three-dots indicator AND auto-expires after 6s. Because the sender re-emits
- * every ~2s, the 6s timer keeps resetting while it works and the dots vanish a
- * few seconds after it stops — identical to Signal / native Telegram.
+ * A peer (phantombot, or another PhantomChat client) publishes a kind-30001
+ * (NIP-33 parameterized replaceable) event p-tagged to us roughly every couple
+ * of seconds while it is composing a reply. We translate each one into a NATIVE
+ * tweb `updateUserTyping` local update, which `appProfileManager.onUpdateUserTyping`
+ * turns into the inherited three-dots indicator AND auto-expires after 6s.
+ *
+ * Migration note: the old kind-20001 (NIP-16 ephemeral) is accepted as a
+ * backward-compat fallback during the transition. Once all clients emit
+ * kind-30001, the kind-20001 branch can be removed.
  *
  * Why this is safe / cheap:
- *   - Ephemeral (kind 20000–29999): relays don't store it, so there is nothing
- *     to replay on reconnect — no stale "ghost typing".
+ *   - Parameterized replaceable (kind 30000–39999): relays store it, so late
+ *     reconnects replay the latest typing state — no silent loss.
  *   - We still drop events older than STALE_MS defensively, in case a relay
  *     redelivers one, and verify the Schnorr signature so a hostile relay can't
  *     forge a spurious indicator from someone else's pubkey.
@@ -155,7 +157,7 @@ class PhantomChatTypingReceive {
   setSignatureVerifier(v: SignatureVerifier) { this.verify = v; }
 
   async onTyping(event: NostrEventLite): Promise<void> {
-    if(event.kind !== 20001) return;
+    if(event.kind !== 20001 && event.kind !== 30001) return;
 
     // WhatsApp-style reciprocity: if the user turned read receipts (and thus
     // typing indicators) OFF, we don't send our own indicators AND we don't

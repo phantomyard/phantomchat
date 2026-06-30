@@ -376,8 +376,10 @@ export class ChatAPI {
         });
         return;
       }
-      if(event.kind === 20001) {
-        // NIP-16 ephemeral typing indicator → native three-dots.
+      if(event.kind === 20001 || event.kind === 30001) {
+        // NIP-16/NIP-33 typing indicator → native three-dots.
+        // Accept both legacy kind-20001 (ephemeral) and new kind-30001
+        // (parameterized replaceable) during the migration period.
         phantomchatTypingReceive.onTyping(event as any).catch((err) => {
           this.log.warn('[ChatAPI] typing onTyping failed:', err);
         });

@@ -18,12 +18,12 @@ import {describe, it, expect, vi} from 'vitest';
 import {generateSecretKey, getPublicKey, finalizeEvent} from 'nostr-tools/pure';
 import {NostrRelay, NOSTR_KIND_TYPING} from '@lib/phantomchat/nostr-relay';
 
-describe('relay dispatcher: typing (kind 20001) forwarding', () => {
-  it('exports NOSTR_KIND_TYPING as 20001', () => {
-    expect(NOSTR_KIND_TYPING).toBe(20001);
+describe('relay dispatcher: typing (kind 30001) forwarding', () => {
+  it('exports NOSTR_KIND_TYPING as 30001', () => {
+    expect(NOSTR_KIND_TYPING).toBe(30001);
   });
 
-  it('forwards a validly-signed kind 20001 event to the raw-event handler', async() => {
+  it('forwards a validly-signed kind 30001 event to the raw-event handler', async() => {
     const relay = new NostrRelay('wss://example.invalid');
     const recipientSk = generateSecretKey();
     (relay as any).privateKey = recipientSk;
@@ -37,16 +37,16 @@ describe('relay dispatcher: typing (kind 20001) forwarding', () => {
       kind: NOSTR_KIND_TYPING,
       content: '',
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['p', (relay as any).publicKey]]
+      tags: [['d', (relay as any).publicKey], ['p', (relay as any).publicKey]]
     }, senderSk);
 
     await (relay as any).handleEvent(typingEvent);
 
     expect(onRaw).toHaveBeenCalledTimes(1);
-    expect(onRaw.mock.calls[0][0].kind).toBe(20001);
+    expect(onRaw.mock.calls[0][0].kind).toBe(30001);
   });
 
-  it('drops a kind 20001 event with a tampered signature', async() => {
+  it('drops a kind 30001 event with a tampered signature', async() => {
     const relay = new NostrRelay('wss://example.invalid');
     const recipientSk = generateSecretKey();
     (relay as any).privateKey = recipientSk;
@@ -60,7 +60,7 @@ describe('relay dispatcher: typing (kind 20001) forwarding', () => {
       kind: NOSTR_KIND_TYPING,
       content: '',
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['p', (relay as any).publicKey]]
+      tags: [['d', (relay as any).publicKey], ['p', (relay as any).publicKey]]
     }, senderSk);
 
     // JSON-roundtrip strips nostr-tools' verifiedSymbol cache, then tamper.

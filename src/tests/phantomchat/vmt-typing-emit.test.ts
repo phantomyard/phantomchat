@@ -80,7 +80,7 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
     if(typeof localStorage !== 'undefined') localStorage.removeItem(READ_RECEIPTS_KEY);
   });
 
-  it('publishes a kind-20001 with empty content (start) for a 1:1 typing action', async() => {
+  it('publishes a kind-30001 with empty content (start) for a 1:1 typing action', async() => {
     const result = await server.handleMethod('messages.setTyping', {
       peer: {user_id: PEER_ID},
       action: {_: 'sendMessageTypingAction'}
@@ -89,9 +89,16 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
     expect(result).toBe(true);
     expect(publishEvent).toHaveBeenCalledTimes(1);
     const ev = publishEvent.mock.calls[0][0];
-    expect(ev.kind).toBe(20001);
+    expect(ev.kind).toBe(30001);
     expect(ev.content).toBe('');
-    expect(ev.tags).toEqual([['p', PEER_PUBKEY]]);
+    expect(ev.tags).toContainEqual(['d', PEER_PUBKEY]);
+    expect(ev.tags).toContainEqual(['p', PEER_PUBKEY]);
+    // Must have an expiration tag (~30s TTL)
+    const expTag = ev.tags.find((t: string[]) => t[0] === 'expiration');
+    expect(expTag).toBeDefined();
+    const expTs = Number(expTag[1]);
+    expect(expTs).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(expTs).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 31);
   });
 
   it('maps record-audio action to the "recording" content marker', async() => {
@@ -148,7 +155,7 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
     expect(result).toBe(true);
   });
 
-  it('group tick carries the group tag and p-tags other members (excluding self)', async() => {
+  it('group tick carries the d tag, group tag and p-tags other members (excluding self)', async() => {
     groupState.record = {groupId: 'abc123groupid', members: [OWN_PUBKEY, MEMBER_A, MEMBER_B]};
 
     await server.handleMethod('messages.setTyping', {
@@ -158,10 +165,13 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
 
     expect(publishEvent).toHaveBeenCalledTimes(1);
     const ev = publishEvent.mock.calls[0][0];
-    expect(ev.kind).toBe(20001);
+    expect(ev.kind).toBe(30001);
+    expect(ev.tags).toContainEqual(['d', 'abc123groupid']);
     expect(ev.tags).toContainEqual(['group', 'abc123groupid']);
     expect(ev.tags).toContainEqual(['p', MEMBER_A]);
     expect(ev.tags).toContainEqual(['p', MEMBER_B]);
+    // Must have an expiration tag
+    expect(ev.tags.some((t: string[]) => t[0] === 'expiration')).toBe(true);
     // Own pubkey must NOT be p-tagged.
     expect(ev.tags).not.toContainEqual(['p', OWN_PUBKEY]);
   });
