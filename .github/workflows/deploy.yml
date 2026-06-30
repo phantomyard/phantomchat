@@ -33,13 +33,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Full history so `generate-changelog` (part of `pnpm run build`)
           # can read tags/commits.
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
@@ -51,7 +51,7 @@ jobs:
       - run: pnpm run build
         env:
           APP_VERSION: 1.0.${{ github.run_number }}
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
@@ -63,7 +63,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   # Tag the released build v1.0.<build_number> after a successful deploy, mirroring
   # phantombot's release-tagging. Scoped contents:write only on this job.
@@ -82,9 +82,14 @@ jobs:
     steps:
       # Default checkout ref is the dispatched/pushed branch, so the tag lands on
       # exactly the commit that was built and deployed above.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Create and push version tag
         run: |
+          # Annotated tags need a committer identity; the runner has none by
+          # default (fatal: empty ident name → exit 128). Use the github-actions
+          # bot identity so the tag is attributable to the workflow.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           VERSION="v1.0.${{ github.run_number }}"
           git tag -a "$VERSION" -m "Release $VERSION from ${{ github.ref_name }} (${{ github.sha }})"
           git push origin "$VERSION"
