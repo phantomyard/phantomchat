@@ -1,9 +1,9 @@
 /**
  * Tests for PhantomChatMTProtoServer.setTyping (messages.setTyping handler).
  *
- * Covers the emit side of issue #43: a typing / recording action from the UI is
- * translated into a kind-20001 (NIP-16 ephemeral) event and published over the
- * relay layer — gated, WhatsApp-style, on the read-receipts toggle.
+ * Covers the emit side: a typing / recording action from the UI is translated
+ * into a NIP-17 gift-wrapped (kind-1059) typing indicator and published over
+ * the relay layer — gated, WhatsApp-style, on the read-receipts toggle.
  *
  * Regression guard: messages.setTyping used to fall through to the action-prefix
  * no-op (returned `true`, dropped on the floor), so typing was never sent.
@@ -62,7 +62,8 @@ import {PhantomChatMTProtoServer} from '@lib/phantomchat/virtual-mtproto-server'
 
 describe('PhantomChatMTProtoServer.setTyping', () => {
   let server: any;
-  let publishEvent: ReturnType<typeof vi.fn>;
+  let publishTypingGiftWrap: ReturnType<typeof vi.fn>;
+  let publishGroupTypingGiftWrap: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -70,28 +71,29 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
     groupState.record = null;
     mockGetPubkey.mockResolvedValue(PEER_PUBKEY);
 
-    publishEvent = vi.fn().mockResolvedValue(undefined);
+    publishTypingGiftWrap = vi.fn().mockResolvedValue(undefined);
+    publishGroupTypingGiftWrap = vi.fn().mockResolvedValue(undefined);
     server = new PhantomChatMTProtoServer();
     server.setOwnPubkey(OWN_PUBKEY);
-    server.setChatAPI({publishEvent});
+    server.setChatAPI({publishTypingGiftWrap, publishGroupTypingGiftWrap});
   });
 
   afterEach(() => {
     if(typeof localStorage !== 'undefined') localStorage.removeItem(READ_RECEIPTS_KEY);
   });
 
-  it('publishes a kind-20001 with empty content (start) for a 1:1 typing action', async() => {
+  it('publishes a gift-wrapped typing tick for a 1:1 typing action', async() => {
     const result = await server.handleMethod('messages.setTyping', {
       peer: {user_id: PEER_ID},
       action: {_: 'sendMessageTypingAction'}
     });
 
     expect(result).toBe(true);
-    expect(publishEvent).toHaveBeenCalledTimes(1);
-    const ev = publishEvent.mock.calls[0][0];
-    expect(ev.kind).toBe(20001);
-    expect(ev.content).toBe('');
-    expect(ev.tags).toEqual([['p', PEER_PUBKEY]]);
+    expect(publishTypingGiftWrap).toHaveBeenCalledTimes(1);
+    const [recipientHex, content, conversationId] = publishTypingGiftWrap.mock.calls[0];
+    expect(recipientHex).toBe(PEER_PUBKEY);
+    expect(content).toBe('');
+    expect(conversationId).toBe(PEER_PUBKEY);
   });
 
   it('maps record-audio action to the "recording" content marker', async() => {
@@ -99,7 +101,7 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
       peer: {user_id: PEER_ID},
       action: {_: 'sendMessageRecordAudioAction'}
     });
-    expect(publishEvent.mock.calls[0][0].content).toBe('recording');
+    expect(publishTypingGiftWrap.mock.calls[0][1]).toBe('recording');
   });
 
   it('maps cancel action to the "stop" content marker', async() => {
@@ -107,7 +109,7 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
       peer: {user_id: PEER_ID},
       action: {_: 'sendMessageCancelAction'}
     });
-    expect(publishEvent.mock.calls[0][0].content).toBe('stop');
+    expect(publishTypingGiftWrap.mock.calls[0][1]).toBe('stop');
   });
 
   it('does NOT publish for non-relayed actions (e.g. upload progress)', async() => {
@@ -116,7 +118,7 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
       action: {_: 'sendMessageUploadDocumentAction', progress: 42}
     });
     expect(result).toBe(true);
-    expect(publishEvent).not.toHaveBeenCalled();
+    expect(publishTypingGiftWrap).not.toHaveBeenCalled();
   });
 
   it('suppresses emission when read receipts are OFF (WhatsApp coupling)', async() => {
@@ -126,7 +128,7 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
       action: {_: 'sendMessageTypingAction'}
     });
     expect(result).toBe(true);
-    expect(publishEvent).not.toHaveBeenCalled();
+    expect(publishTypingGiftWrap).not.toHaveBeenCalled();
   });
 
   it('still emits when read receipts are explicitly ON', async() => {
@@ -135,7 +137,7 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
       peer: {user_id: PEER_ID},
       action: {_: 'sendMessageTypingAction'}
     });
-    expect(publishEvent).toHaveBeenCalledTimes(1);
+    expect(publishTypingGiftWrap).toHaveBeenCalledTimes(1);
   });
 
   it('returns true (never throws) when chatAPI is not wired', async() => {
@@ -148,7 +150,7 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
     expect(result).toBe(true);
   });
 
-  it('group tick carries the group tag and p-tags other members (excluding self)', async() => {
+  it('group tick gift-wraps for each member (excluding self)', async() => {
     groupState.record = {groupId: 'abc123groupid', members: [OWN_PUBKEY, MEMBER_A, MEMBER_B]};
 
     await server.handleMethod('messages.setTyping', {
@@ -156,14 +158,13 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
       action: {_: 'sendMessageTypingAction'}
     });
 
-    expect(publishEvent).toHaveBeenCalledTimes(1);
-    const ev = publishEvent.mock.calls[0][0];
-    expect(ev.kind).toBe(20001);
-    expect(ev.tags).toContainEqual(['group', 'abc123groupid']);
-    expect(ev.tags).toContainEqual(['p', MEMBER_A]);
-    expect(ev.tags).toContainEqual(['p', MEMBER_B]);
-    // Own pubkey must NOT be p-tagged.
-    expect(ev.tags).not.toContainEqual(['p', OWN_PUBKEY]);
+    expect(publishGroupTypingGiftWrap).toHaveBeenCalledTimes(1);
+    const [members, content, groupId] = publishGroupTypingGiftWrap.mock.calls[0];
+    expect(members).toContainEqual(MEMBER_A);
+    expect(members).toContainEqual(MEMBER_B);
+    expect(members).not.toContainEqual(OWN_PUBKEY);
+    expect(content).toBe('');
+    expect(groupId).toBe('abc123groupid');
   });
 
   it('group tick with no other members publishes nothing', async() => {
@@ -173,6 +174,6 @@ describe('PhantomChatMTProtoServer.setTyping', () => {
       action: {_: 'sendMessageTypingAction'}
     });
     expect(result).toBe(true);
-    expect(publishEvent).not.toHaveBeenCalled();
+    expect(publishGroupTypingGiftWrap).not.toHaveBeenCalled();
   });
 });

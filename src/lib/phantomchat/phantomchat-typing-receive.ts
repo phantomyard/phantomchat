@@ -1,17 +1,20 @@
 /**
- * Typing-indicator receiver — handles kind-20001 (NIP-16 ephemeral) events.
+ * Typing-indicator receiver — handles gift-wrapped (kind-1059 → kind-14 rumor)
+ * and legacy kind-20001 typing events.
  *
- * A peer (phantombot, or another PhantomChat client) publishes a kind-20001
- * event p-tagged to us roughly every couple of seconds while it is composing a
- * reply. We translate each one into a NATIVE tweb `updateUserTyping` local
- * update, which `appProfileManager.onUpdateUserTyping` turns into the inherited
- * three-dots indicator AND auto-expires after 6s. Because the sender re-emits
- * every ~2s, the 6s timer keeps resetting while it works and the dots vanish a
- * few seconds after it stops — identical to Signal / native Telegram.
+ * A peer (phantombot, or another PhantomChat client) gift-wraps a kind-14 rumor
+ * with typing content ('' = typing, 'stop' = stopped, 'recording' = voice) and
+ * a ['d', conversationId] tag. The nostr-relay.ts unwrap handler detects the
+ * typing content and routes it here via onRawEventHandler with a synthetic
+ * kind-20001 event.
+ *
+ * Backward compat: the old bare kind-20001 (NIP-16 ephemeral) is still accepted
+ * for bots that haven't migrated to gift-wrapped typing yet.
  *
  * Why this is safe / cheap:
- *   - Ephemeral (kind 20000–29999): relays don't store it, so there is nothing
- *     to replay on reconnect — no stale "ghost typing".
+ *   - Gift-wrapped (kind 1059): relays store it, so late reconnects replay the
+ *     latest typing state — no silent loss. The relay only sees kind-1059 +
+ *     an ephemeral pubkey — no social graph leak, no kind collision.
  *   - We still drop events older than STALE_MS defensively, in case a relay
  *     redelivers one, and verify the Schnorr signature so a hostile relay can't
  *     forge a spurious indicator from someone else's pubkey.
@@ -155,7 +158,7 @@ class PhantomChatTypingReceive {
   setSignatureVerifier(v: SignatureVerifier) { this.verify = v; }
 
   async onTyping(event: NostrEventLite): Promise<void> {
-    if(event.kind !== 20001) return;
+    if(event.kind !== 20001 && event.kind !== 30001) return;
 
     // WhatsApp-style reciprocity: if the user turned read receipts (and thus
     // typing indicators) OFF, we don't send our own indicators AND we don't
