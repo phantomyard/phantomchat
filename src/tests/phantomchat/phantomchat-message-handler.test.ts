@@ -93,6 +93,7 @@ const mockSetMessageToStorage = vi.fn().mockResolvedValue(undefined);
 const mockInvalidateHistoryCache = vi.fn().mockResolvedValue(undefined);
 const mockSetDialogTopMessage = vi.fn().mockResolvedValue(undefined);
 const mockInjectP2PUser = vi.fn().mockResolvedValue(undefined);
+const mockHasUser = vi.fn().mockResolvedValue(true);
 
 vi.mock('@lib/rootScope', () => ({
   default: {
@@ -104,7 +105,8 @@ vi.mock('@lib/rootScope', () => ({
         setDialogTopMessage: (...args: any[]) => mockSetDialogTopMessage(...args)
       },
       appUsersManager: {
-        injectP2PUser: (...args: any[]) => mockInjectP2PUser(...args)
+        injectP2PUser: (...args: any[]) => mockInjectP2PUser(...args),
+        hasUser: (...args: any[]) => mockHasUser(...args)
       }
     }
   }
@@ -220,6 +222,34 @@ describe('phantomchat-message-handler', () => {
 
       expect(result.isNewPeer).toBe(false);
       expect(mockCreateTwebUser).not.toHaveBeenCalled();
+    });
+
+    it('re-injects into worker when mirror has peer but hasUser is false', async() => {
+      // Regression for the 1:1 typing indicator bug: the mirror can be
+      // populated without injectP2PUser having completed. tweb's
+      // onUpdateUserTyping silently drops the tick when hasUser() is false
+      // (1:1 has no group-branch fallback). ensureSenderUserInjected must
+      // detect this gap and re-inject into the worker.
+      MOUNT_CLASS_TO.apiManagerProxy.mirrors.peers[PEER_ID] = {
+        _: 'user',
+        id: PEER_ID,
+        first_name: 'Bot Alice',
+        p2pPubkey: SENDER_PUBKEY
+      };
+      mockHasUser.mockResolvedValueOnce(false); // worker doesn't have user
+      const msg = {mid: 2000000001, id: 2000000001};
+      const result = await injectIntoMirrors(PEER_ID, msg, SENDER_PUBKEY);
+
+      expect(result.isNewPeer).toBe(false);
+      // Must NOT clobber the mirror with a fresh hex-fallback name
+      expect(mockCreateTwebUser).not.toHaveBeenCalled();
+      // Must re-inject into the worker using the existing mirror name
+      expect(mockInjectP2PUser).toHaveBeenCalledWith(
+        SENDER_PUBKEY,
+        PEER_ID,
+        'Bot Alice',
+        expect.any(String)
+      );
     });
   });
 
