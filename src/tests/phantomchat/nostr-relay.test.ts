@@ -7,7 +7,7 @@
 
 import '../setup';
 import {NostrRelay, createNostrRelay, NOSTR_KIND_GIFTWRAP, SUBSCRIBE_REPLAY_LIMIT} from '@lib/phantomchat/nostr-relay';
-import {nip44Encrypt, nip44Decrypt, getConversationKey} from '@lib/phantomchat/nostr-crypto';
+import {nip44Encrypt, nip44Decrypt, getConversationKey, createRumor, createSeal, createGiftWrap} from '@lib/phantomchat/nostr-crypto';
 import {generateSecretKey, getPublicKey, finalizeEvent} from 'nostr-tools/pure';
 import {bytesToHex} from 'nostr-tools/utils';
 
@@ -528,6 +528,64 @@ describe('NostrRelay', () => {
       });
       const parsed = JSON.parse(queryMessage!);
       expect(parsed[2].limit).toBe(SUBSCRIBE_REPLAY_LIMIT);
+    });
+
+    // Regression (FIND-typing-backfill-leak): gift-wrapped typing ticks
+    // (kind-1059 → kind-14 rumor, ['d', ...] tag, content ''/'stop'/'recording')
+    // are handled by the LIVE path but the catch-up/backfill poll re-queries the
+    // same recent kind-1059 window each tick. Without a guard on the QUERY path,
+    // a replayed 'stop' tick was collected as a DM and rendered as a "Stopped"
+    // bubble. Build a REAL gift-wrap to the relay's pubkey and assert getMessages
+    // drops the typing ticks while still returning a genuine text rumor.
+    test('query/backfill path drops gift-wrapped typing ticks (no "Stopped" bubble)', async() => {
+      // The relay normally loads its identity from IndexedDB via initialize();
+      // unit tests skip that, so inject a known keypair so the gift-wrap actually
+      // unwraps (the contract under test is the post-unwrap typing guard).
+      const recipientSk = generateSecretKey();
+      const recipientPub = getPublicKey(recipientSk);
+      (relay as any).privateKey = recipientSk;
+      (relay as any).publicKey = recipientPub;
+
+      relay.connect();
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const senderSk = generateSecretKey();
+      const convId = recipientPub;
+      const wrapTyping = (content: string) => {
+        const rumor = createRumor(content, senderSk, [['d', convId]]);
+        const seal = createSeal(rumor, senderSk, recipientPub);
+        return createGiftWrap(seal, recipientPub);
+      };
+      // A genuine text DM (kind-14, no 'd' tag) must still come through.
+      const realRumor = createRumor('hello there', senderSk, []);
+      const realSeal = createSeal(realRumor, senderSk, recipientPub);
+      const realWrap = createGiftWrap(realSeal, recipientPub);
+
+      const stopWrap = wrapTyping('stop');
+      const recordingWrap = wrapTyping('recording');
+      const startWrap = wrapTyping('');
+
+      const mockWs = getLastMockWs();
+      const origSend = mockWs!.send.bind(mockWs);
+      mockWs!.send = (data: string) => {
+        origSend(data);
+        const parsed = JSON.parse(data);
+        if(parsed[0] === 'REQ' && parsed[1]?.startsWith('phantomchat-query-')) {
+          mockWs!.simulateMessage(['EVENT', parsed[1], stopWrap]);
+          mockWs!.simulateMessage(['EVENT', parsed[1], recordingWrap]);
+          mockWs!.simulateMessage(['EVENT', parsed[1], startWrap]);
+          mockWs!.simulateMessage(['EVENT', parsed[1], realWrap]);
+          setTimeout(() => mockWs!.simulateMessage(['EOSE', parsed[1]]), 10);
+        }
+      };
+
+      const messages = await relay.getMessages();
+
+      // None of the typing ticks leak into the message results...
+      expect(messages.some(m => m.content === 'stop')).toBe(false);
+      expect(messages.some(m => m.content === 'recording')).toBe(false);
+      // ...but the real text DM is preserved.
+      expect(messages.some(m => m.content === 'hello there')).toBe(true);
     });
   });
 

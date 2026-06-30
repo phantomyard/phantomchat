@@ -79,6 +79,27 @@ export const NOSTR_KIND_PRESENCE = 30315;
 export const SUBSCRIBE_REPLAY_LIMIT = 100;
 
 /**
+ * Content markers carried by a gift-wrapped typing tick's inner kind-14 rumor:
+ * '' = typing/refresh, 'stop' = stopped, 'recording' = recording voice. Must
+ * mirror phantombot's transport (TYPING_CONTENT_*).
+ */
+const TYPING_RUMOR_CONTENTS = ['', 'stop', 'recording'];
+
+/**
+ * True when an unwrapped rumor is a gift-wrapped typing tick (a ['d', ...] tag
+ * plus a typing content marker) rather than a real DM. Both unwrap paths — the
+ * live subscription (handleEvent) AND the catch-up/backfill query
+ * (collectQueryEvent) — must consult this so a replayed typing tick is never
+ * rendered as a "stop"/"Stopped" message bubble. (The live path routes these to
+ * the typing receiver; the query path drops them, since stale typing must not
+ * surface.)
+ */
+function isTypingRumor(rumor: {content?: string; tags?: string[][]}): boolean {
+  const hasDTag = !!rumor.tags?.some((t: string[]) => t[0] === 'd');
+  return hasDTag && TYPING_RUMOR_CONTENTS.includes(rumor.content);
+}
+
+/**
  * Decrypted message structure returned by getMessages.
  * After NIP-17 migration, includes rumor kind and tags for routing.
  */
@@ -1090,6 +1111,15 @@ export class NostrRelay {
       const receiptTag = rumor.tags?.find((t: string[]) => t[0] === 'receipt-type');
       if(receiptTag) return;
 
+      // Skip gift-wrapped typing ticks. The live subscription (handleEvent)
+      // routes these to the typing receiver, but the catch-up/backfill poll
+      // re-queries the same recent kind-1059 window every tick — without this
+      // guard a replayed 'stop' tick is collected as a DM and rendered as a
+      // "Stopped" bubble (start ticks have empty content so they were silently
+      // dropped, which is why only 'stop' leaked). Stale typing must not
+      // surface, so drop rather than re-route. (FIND-typing-backfill-leak)
+      if(isTypingRumor(rumor)) return;
+
       collected.push({
         id: rumor.id || event.id || '',
         from: rumor.pubkey,
@@ -1204,8 +1234,7 @@ export class NostrRelay {
       // content ('' = typing, 'stop' = stopped, 'recording' = voice).
       // Gift-wrapped typing ticks (kind-1059 → kind-14 rumor) replaced the old
       // bare kind-30001 / kind-20001 events for privacy + collision avoidance.
-      const dTag = rumor.tags?.find((t: string[]) => t[0] === 'd');
-      if(dTag && (rumor.content === '' || rumor.content === 'stop' || rumor.content === 'recording')) {
+      if(isTypingRumor(rumor)) {
         if(this.onRawEventHandler) {
           try {
             // Adapt to the typing receiver's expected shape (synthetic kind-20001).
