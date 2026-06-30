@@ -24,6 +24,25 @@ export interface SignedEvent extends UnsignedEvent {
 }
 
 /**
+ * Inner rumor kind for gift-wrapped typing / voice indicators.
+ *
+ * Typing ticks are gift-wrapped (NIP-59 / kind-1059) for privacy exactly like
+ * DMs, but the INNER rumor MUST NOT reuse the message kind-14: doing so made a
+ * tick indistinguishable from a chat message except by sniffing its content
+ * ('stop' / 'recording' / ''), so any code path that read a kind-14 rumor could
+ * mis-render a tick as a "Stopped" message bubble (and the bot could reply to
+ * it). Giving typing its own kind makes the distinction STRUCTURAL: receivers
+ * route on `rumor.kind`, never on content.
+ *
+ * 1414 is a regular (non-ephemeral, range 1000–9999) kind — it survives relay
+ * storage so a tick still arrives on reconnect within the wrap's 30s expiry —
+ * and is unassigned by any NIP. Because it only ever exists ENCRYPTED inside a
+ * kind-1059 wrap, the value is private to our protocol; relays only see 1059.
+ * phantombot's `NOSTR_KIND_TYPING_RUMOR` MUST stay in lockstep with this.
+ */
+export const NOSTR_KIND_TYPING_RUMOR = 1414;
+
+/**
  * In-memory conversation key cache.
  *
  * Two layers to avoid leaking the raw private-key hex into a Map key string
@@ -829,11 +848,12 @@ export async function wrapReceiptV2(
 export function createRumor(
   content: string,
   senderSk: Uint8Array,
-  tags?: string[][]
+  tags?: string[][],
+  kind: number = 14
 ): UnsignedEvent {
   const pubkey = getPublicKey(senderSk);
   const event = {
-    kind: 14,
+    kind,
     created_at: Math.floor(Date.now() / 1000),
     tags: tags || [],
     content,
@@ -1013,7 +1033,7 @@ export function wrapTypingGiftWrap(
   content: string,
   conversationId: string,
 ): NTNostrEvent {
-  const rumor = createRumor(content, senderSk, [['d', conversationId]]);
+  const rumor = createRumor(content, senderSk, [['d', conversationId]], NOSTR_KIND_TYPING_RUMOR);
   const seal = createSeal(rumor, senderSk, recipientPubHex);
 
   const ephemeralSk = generateSecretKey();
@@ -1049,7 +1069,7 @@ export function wrapGroupTypingGiftWrap(
   content: string,
   groupId: string,
 ): NTNostrEvent[] {
-  const rumor = createRumor(content, senderSk, [['d', groupId], ['group', groupId]]);
+  const rumor = createRumor(content, senderSk, [['d', groupId], ['group', groupId]], NOSTR_KIND_TYPING_RUMOR);
   const now = Math.floor(Date.now() / 1000);
 
   return memberPubkeys.map(recipientPk => {

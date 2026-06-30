@@ -12,7 +12,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import * as secp256k1 from '@noble/secp256k1';
-import {wrapV2, wrapNip17Message, isV2Event} from './nostr-crypto';
+import {wrapV2, wrapNip17Message, isV2Event, NOSTR_KIND_TYPING_RUMOR} from './nostr-crypto';
 import {getNostrUnwrapClient} from './nostr-unwrap-client';
 import {finalizeEvent, verifyEvent} from 'nostr-tools/pure';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
@@ -79,24 +79,34 @@ export const NOSTR_KIND_PRESENCE = 30315;
 export const SUBSCRIBE_REPLAY_LIMIT = 100;
 
 /**
- * Content markers carried by a gift-wrapped typing tick's inner kind-14 rumor:
+ * Lifecycle markers carried in a typing tick's inner rumor `content`:
  * '' = typing/refresh, 'stop' = stopped, 'recording' = recording voice. Must
  * mirror phantombot's transport (TYPING_CONTENT_*).
  */
 const TYPING_RUMOR_CONTENTS = ['', 'stop', 'recording'];
 
 /**
- * True when an unwrapped rumor is a gift-wrapped typing tick (a ['d', ...] tag
- * plus a typing content marker) rather than a real DM. Both unwrap paths — the
- * live subscription (handleEvent) AND the catch-up/backfill query
- * (collectQueryEvent) — must consult this so a replayed typing tick is never
+ * True when an unwrapped rumor is a gift-wrapped typing / voice tick rather than
+ * a real DM. Both unwrap paths — the live subscription (handleEvent) AND the
+ * catch-up/backfill query (collectQueryEvent) — consult this so a tick is never
  * rendered as a "stop"/"Stopped" message bubble. (The live path routes these to
  * the typing receiver; the query path drops them, since stale typing must not
  * surface.)
+ *
+ * PRIMARY (structural): the inner rumor's kind IS the dedicated typing kind
+ * (NOSTR_KIND_TYPING_RUMOR). This is unambiguous — a tick can never collide with
+ * a real message (kind 14 / file 15) regardless of its content.
+ *
+ * LEGACY (transitional): pre-cutover senders gift-wrapped typing on the kind-14
+ * MESSAGE rumor, distinguished only by a ['d', ...] tag + a lifecycle content
+ * marker. We keep recognizing that shape so a not-yet-updated sender's ticks
+ * neither break nor leak as bubbles. It's safe because BOTH unwrap paths guard
+ * on this. Remove once all senders emit NOSTR_KIND_TYPING_RUMOR.
  */
-function isTypingRumor(rumor: {content?: string; tags?: string[][]}): boolean {
+function isTypingRumor(rumor: {kind?: number; content?: string; tags?: string[][]}): boolean {
+  if(rumor.kind === NOSTR_KIND_TYPING_RUMOR) return true;
   const hasDTag = !!rumor.tags?.some((t: string[]) => t[0] === 'd');
-  return hasDTag && TYPING_RUMOR_CONTENTS.includes(rumor.content);
+  return rumor.kind === 14 && hasDTag && TYPING_RUMOR_CONTENTS.includes(rumor.content);
 }
 
 /**
@@ -1230,10 +1240,13 @@ export class NostrRelay {
         return;
       }
 
-      // Typing indicator: kind-14 rumor with a ['d', ...] tag and typing
-      // content ('' = typing, 'stop' = stopped, 'recording' = voice).
-      // Gift-wrapped typing ticks (kind-1059 → kind-14 rumor) replaced the old
-      // bare kind-30001 / kind-20001 events for privacy + collision avoidance.
+      // Typing / voice indicator: a gift-wrapped tick (kind-1059 →
+      // NOSTR_KIND_TYPING_RUMOR inner rumor) carrying a lifecycle content marker
+      // ('' = typing, 'stop' = stopped, 'recording' = voice). Routed by inner
+      // kind (see isTypingRumor) so it can never be confused with a real message
+      // — this is what stops 'stop' ticks rendering as "Stopped" bubbles.
+      // Gift-wrapped for privacy + collision avoidance vs the old bare
+      // kind-30001 / kind-20001 events.
       if(isTypingRumor(rumor)) {
         if(this.onRawEventHandler) {
           try {

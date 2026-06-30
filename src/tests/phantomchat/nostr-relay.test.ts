@@ -7,7 +7,7 @@
 
 import '../setup';
 import {NostrRelay, createNostrRelay, NOSTR_KIND_GIFTWRAP, SUBSCRIBE_REPLAY_LIMIT} from '@lib/phantomchat/nostr-relay';
-import {nip44Encrypt, nip44Decrypt, getConversationKey, createRumor, createSeal, createGiftWrap} from '@lib/phantomchat/nostr-crypto';
+import {nip44Encrypt, nip44Decrypt, getConversationKey, createRumor, createSeal, createGiftWrap, wrapTypingGiftWrap, NOSTR_KIND_TYPING_RUMOR} from '@lib/phantomchat/nostr-crypto';
 import {generateSecretKey, getPublicKey, finalizeEvent} from 'nostr-tools/pure';
 import {bytesToHex} from 'nostr-tools/utils';
 
@@ -551,19 +551,24 @@ describe('NostrRelay', () => {
 
       const senderSk = generateSecretKey();
       const convId = recipientPub;
-      const wrapTyping = (content: string) => {
-        const rumor = createRumor(content, senderSk, [['d', convId]]);
+      // PRIMARY: the real production send path — wrapTypingGiftWrap stamps the
+      // inner rumor with NOSTR_KIND_TYPING_RUMOR, so the query path drops it by
+      // kind, not by content-sniffing.
+      const stopWrap = wrapTypingGiftWrap(senderSk, recipientPub, 'stop', convId);
+      const recordingWrap = wrapTypingGiftWrap(senderSk, recipientPub, 'recording', convId);
+      const startWrap = wrapTypingGiftWrap(senderSk, recipientPub, '', convId);
+      // LEGACY: a pre-cutover sender gift-wrapped typing on the kind-14 message
+      // rumor (['d', ...] tag + lifecycle content). The guarded content-sniff
+      // fallback must still drop it so old senders never leak a "Stopped" bubble.
+      const legacyStopWrap = (() => {
+        const rumor = createRumor('stop', senderSk, [['d', convId]]); // kind-14
         const seal = createSeal(rumor, senderSk, recipientPub);
         return createGiftWrap(seal, recipientPub);
-      };
+      })();
       // A genuine text DM (kind-14, no 'd' tag) must still come through.
       const realRumor = createRumor('hello there', senderSk, []);
       const realSeal = createSeal(realRumor, senderSk, recipientPub);
       const realWrap = createGiftWrap(realSeal, recipientPub);
-
-      const stopWrap = wrapTyping('stop');
-      const recordingWrap = wrapTyping('recording');
-      const startWrap = wrapTyping('');
 
       const mockWs = getLastMockWs();
       const origSend = mockWs!.send.bind(mockWs);
@@ -574,6 +579,7 @@ describe('NostrRelay', () => {
           mockWs!.simulateMessage(['EVENT', parsed[1], stopWrap]);
           mockWs!.simulateMessage(['EVENT', parsed[1], recordingWrap]);
           mockWs!.simulateMessage(['EVENT', parsed[1], startWrap]);
+          mockWs!.simulateMessage(['EVENT', parsed[1], legacyStopWrap]);
           mockWs!.simulateMessage(['EVENT', parsed[1], realWrap]);
           setTimeout(() => mockWs!.simulateMessage(['EOSE', parsed[1]]), 10);
         }
@@ -581,11 +587,24 @@ describe('NostrRelay', () => {
 
       const messages = await relay.getMessages();
 
-      // None of the typing ticks leak into the message results...
+      // None of the typing ticks (new-kind OR legacy) leak into the messages...
       expect(messages.some(m => m.content === 'stop')).toBe(false);
       expect(messages.some(m => m.content === 'recording')).toBe(false);
       // ...but the real text DM is preserved.
       expect(messages.some(m => m.content === 'hello there')).toBe(true);
+    });
+
+    // Locks the send→wire contract: the dedicated typing kind never reuses the
+    // message kind, so receivers can discriminate structurally.
+    test('wrapTypingGiftWrap stamps the dedicated inner kind (not message kind 14)', () => {
+      const senderSk = generateSecretKey();
+      const recipientSk = generateSecretKey();
+      const recipientPub = getPublicKey(recipientSk);
+      const wrap = wrapTypingGiftWrap(senderSk, recipientPub, 'stop', recipientPub);
+      expect(wrap.kind).toBe(NOSTR_KIND_GIFTWRAP); // relay only sees 1059
+      expect(NOSTR_KIND_TYPING_RUMOR).not.toBe(14);
+      expect(NOSTR_KIND_TYPING_RUMOR).not.toBe(15);
+      // Inner kind verified end-to-end in the backfill-drop test above.
     });
   });
 
