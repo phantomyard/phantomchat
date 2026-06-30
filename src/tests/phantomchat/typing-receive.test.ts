@@ -68,6 +68,29 @@ describe('phantomchatTypingReceive', () => {
     expect(dispatched).toEqual([]);
   });
 
+  it('dispatches a gift-unwrapped tick (no sig) WITHOUT running the raw verifier', async() => {
+    // Regression for the gift-wrap receive seam: kind-1059 typing wraps are
+    // unwrapped by the relay layer into a synthetic kind-20001 event that has
+    // NO `sig` (the sender was authenticated by the NIP-59 seal during unwrap).
+    // verifyEvent() on that synthetic event always fails for lack of a sig, so
+    // before the `giftUnwrapped` bypass EVERY gift-wrapped tick was dropped here
+    // and no indicator ever rendered. Lock in that the flagged path skips the
+    // raw re-check and still dispatches.
+    let verifierCalled = false;
+    typing.setSignatureVerifier(() => { verifierCalled = true; return false; });
+    await typing.onTyping(makeEvent({kind: 20001, sig: undefined, giftUnwrapped: true}));
+    expect(dispatched).toEqual([4242]);
+    expect(verifierCalled).toBe(false);
+  });
+
+  it('still verifies legacy bare kind-20001 ticks (no giftUnwrapped flag)', async() => {
+    // The bypass must NOT weaken the legacy path: a bare kind-20001 from a
+    // not-yet-updated sender carries a real sig and must still be verified.
+    typing.setSignatureVerifier(() => false);
+    await typing.onTyping(makeEvent({kind: 20001}));
+    expect(dispatched).toEqual([]);
+  });
+
   it('does not throw if the peer resolver rejects', async() => {
     typing.setPeerResolver(async() => { throw new Error('bad pubkey'); });
     await expect(typing.onTyping(makeEvent())).resolves.toBeUndefined();

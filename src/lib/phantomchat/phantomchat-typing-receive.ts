@@ -67,6 +67,14 @@ interface NostrEventLite {
   tags: any[][];
   content: string;
   sig?: string;
+  // Set by the relay layer when this typing event was synthesized from an
+  // already-authenticated NIP-59 gift-wrap unwrap (kind-1059 → kind-13 seal →
+  // kind-14 rumor). The seal's Schnorr signature is verified during unwrap and
+  // the sender pubkey is taken from the verified seal, so the synthesized event
+  // carries NO raw `sig` of its own — re-running verifyEvent() on it would
+  // (correctly) fail. When this flag is set, skip the raw signature re-check;
+  // authenticity is already established upstream.
+  giftUnwrapped?: boolean;
 }
 
 /** Maps a 64-hex pubkey to the deterministic virtual peerId. */
@@ -194,7 +202,13 @@ class PhantomChatTypingReceive {
     if(ageSeconds > STALE_SECONDS) return;
 
     // Verify the signature so a hostile relay can't forge an indicator.
-    if(!this.verify(event)) {
+    // EXCEPTION: gift-wrapped ticks (kind-1059 → seal → kind-14 rumor) arrive as
+    // a synthetic event with no raw `sig` — the sender was already authenticated
+    // by the seal's Schnorr verification during unwrap, and rumor.pubkey is taken
+    // from that verified seal. Re-running verifyEvent() here would drop every
+    // gift-wrapped tick (no sig to check). Skip the raw re-check for that path;
+    // keep it for legacy bare kind-20001 events from not-yet-updated senders.
+    if(!event.giftUnwrapped && !this.verify(event)) {
       console.debug(LOG_PREFIX, 'dropping unverifiable typing event from', event.pubkey?.slice(0, 8));
       return;
     }

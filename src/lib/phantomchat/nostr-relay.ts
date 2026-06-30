@@ -1208,14 +1208,20 @@ export class NostrRelay {
       if(dTag && (rumor.content === '' || rumor.content === 'stop' || rumor.content === 'recording')) {
         if(this.onRawEventHandler) {
           try {
-            // Adapt to the typing receiver's expected shape (synthetic kind-20001)
+            // Adapt to the typing receiver's expected shape (synthetic kind-20001).
+            // This synthetic event has NO `sig` — the sender was authenticated by
+            // the NIP-59 seal's Schnorr signature during unwrap above, and
+            // rumor.pubkey comes from that verified seal. Flag it `giftUnwrapped`
+            // so the receiver skips its raw signature re-check (which would
+            // otherwise drop every tick for lack of a sig).
             this.onRawEventHandler({
               kind: 20001,
               pubkey: rumor.pubkey,
               content: rumor.content,
               created_at: rumor.created_at,
               tags: rumor.tags,
-              id: rumor.id || event.id || ''
+              id: rumor.id || event.id || '',
+              giftUnwrapped: true
             } as any);
           } catch(err) {
             this.log.error('[NostrRelay] typing handler threw:', err);
