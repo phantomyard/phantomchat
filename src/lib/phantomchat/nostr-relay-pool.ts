@@ -884,6 +884,11 @@ export class NostrRelayPool {
     // NostrRelay always implements it; nostr-relay.test.ts covers the gate).
     instance.setEventDedup?.((eventId) => this.claimWrapId(eventId));
 
+    // Feed the live subscription a `since` watermark so each (re)connect only
+    // replays events since we last saw one — not the entire gift-wrap history.
+    // Called at REQ time (incl. onopen re-arm) so it's always fresh.
+    instance.liveSubscribeSince = () => this.catchUpSince();
+
     // Wire up message handler with dedup
     instance.onMessage((msg: DecryptedMessage) => {
       this.handleIncomingMessage(msg);

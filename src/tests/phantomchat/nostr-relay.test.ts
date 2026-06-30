@@ -6,7 +6,7 @@
  */
 
 import '../setup';
-import {NostrRelay, createNostrRelay, NOSTR_KIND_GIFTWRAP} from '@lib/phantomchat/nostr-relay';
+import {NostrRelay, createNostrRelay, NOSTR_KIND_GIFTWRAP, SUBSCRIBE_REPLAY_LIMIT} from '@lib/phantomchat/nostr-relay';
 import {nip44Encrypt, nip44Decrypt, getConversationKey} from '@lib/phantomchat/nostr-crypto';
 import {generateSecretKey, getPublicKey, finalizeEvent} from 'nostr-tools/pure';
 import {bytesToHex} from 'nostr-tools/utils';
@@ -355,6 +355,50 @@ describe('NostrRelay', () => {
       // Should not throw, just warn
       expect(relay.getState()).toBe('disconnected');
     });
+
+    test('bounds the initial replay with a limit (firehose guard)', async() => {
+      relay.connect();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const mockWs = getLastMockWs()!;
+
+      relay.subscribeMessages();
+
+      const req = mockWs.sentMessages
+      .map(m => JSON.parse(m))
+      .find(p => p[0] === 'REQ' && p[2]?.kinds?.includes(1059));
+      expect(req).toBeDefined();
+      expect(req[2].limit).toBe(SUBSCRIBE_REPLAY_LIMIT);
+    });
+
+    test('seeds `since` from liveSubscribeSince watermark when provided', async() => {
+      relay.connect();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const mockWs = getLastMockWs()!;
+
+      const watermark = 1_700_000_000;
+      relay.liveSubscribeSince = () => watermark;
+      relay.subscribeMessages();
+
+      const req = mockWs.sentMessages
+      .map(m => JSON.parse(m))
+      .find(p => p[0] === 'REQ' && p[2]?.kinds?.includes(1059));
+      expect(req[2].since).toBe(watermark);
+    });
+
+    test('omits `since` when watermark provider returns undefined (cold client)', async() => {
+      relay.connect();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const mockWs = getLastMockWs()!;
+
+      relay.liveSubscribeSince = () => undefined;
+      relay.subscribeMessages();
+
+      const req = mockWs.sentMessages
+      .map(m => JSON.parse(m))
+      .find(p => p[0] === 'REQ' && p[2]?.kinds?.includes(1059));
+      expect(req[2].since).toBeUndefined();
+      expect(req[2].limit).toBe(SUBSCRIBE_REPLAY_LIMIT); // limit still caps replay
+    });
   });
 
   describe('whenSubscribed (WU-3 cold-start barrier)', () => {
@@ -460,6 +504,30 @@ describe('NostrRelay', () => {
       expect(queryMessage).toBeDefined();
       const parsed = JSON.parse(queryMessage!);
       expect(parsed[2].since).toBe(since);
+    });
+
+    test('caps the backfill query with a limit', async() => {
+      relay.connect();
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const mockWs = getLastMockWs();
+      const origSend = mockWs!.send.bind(mockWs);
+      mockWs!.send = (data: string) => {
+        origSend(data);
+        const parsed = JSON.parse(data);
+        if(parsed[0] === 'REQ' && parsed[1]?.startsWith('phantomchat-query-')) {
+          setTimeout(() => mockWs!.simulateMessage(['EOSE', parsed[1]]), 10);
+        }
+      };
+
+      await relay.getMessages();
+
+      const queryMessage = mockWs!.sentMessages.find(msg => {
+        const parsed = JSON.parse(msg);
+        return parsed[0] === 'REQ' && parsed[1]?.startsWith('phantomchat-query-');
+      });
+      const parsed = JSON.parse(queryMessage!);
+      expect(parsed[2].limit).toBe(SUBSCRIBE_REPLAY_LIMIT);
     });
   });
 
@@ -632,7 +700,7 @@ describe('NostrRelay', () => {
 
     test('recycle arms pendingSubscribe and detaches the dead socket', async() => {
       const dead = await connectedRelay();
-      (relay as any).isSubscribed = true; // pool wanted a live subscription
+      (relay as any).liveReqArmed = true; // pool wanted a live subscription
       await (relay as any).measureLatency();
       await (relay as any).measureLatency(); // recycle
       expect(relay.getState()).toBe('reconnecting');
