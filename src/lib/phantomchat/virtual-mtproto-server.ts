@@ -44,12 +44,13 @@ function isOneToOneConvId(convId: string): boolean {
 // tag: e" and the user would see the reaction silently fail.
 const RUMOR_ID_RE = /^[0-9a-f]{64}$/i;
 
-// Typing indicators are now gift-wrapped (kind-1059) for privacy. The inner
-// kind-14 rumor carries the typing content and ['d', conversationId] tag.
-// The outer kind-1059 is signed with an ephemeral key (NIP-17 parity).
-// See chat-api.publishTypingGiftWrap / publishGroupTypingGiftWrap.
+// Kind-20001 typing indicator (NIP-16 ephemeral). Duplicated from
+// nostr-relay.ts's NOSTR_KIND_TYPING as a plain literal so this module's graph
+// stays decoupled from the relay transport (same approach as P2P_PEER_ID_MIN in
+// bridge-invariants.ts). Keep the two in sync. Also mirrors phantombot.
+const KIND_TYPING = 20001;
 
-// Content markers on a kind-30001 event — MUST match the receiver
+// Content markers on a kind-20001 event — MUST match the receiver
 // (phantomchat-typing-receive.ts): '' = typing now (start/refresh),
 // 'recording' = recording voice, 'stop' = stopped (clear immediately).
 const TYPING_CONTENT_START = '';
@@ -57,7 +58,7 @@ const TYPING_CONTENT_RECORDING = 'recording';
 const TYPING_CONTENT_STOP = 'stop';
 
 /**
- * Maps a tweb `SendMessageAction._` to the kind-30001 content marker we relay,
+ * Maps a tweb `SendMessageAction._` to the kind-20001 content marker we relay,
  * or `null` for actions we deliberately don't broadcast (e.g. upload-progress
  * actions like sendMessageUploadDocumentAction — those are local UI only and
  * would just be noise on the wire).
@@ -1591,18 +1592,10 @@ export class PhantomChatMTProtoServer {
   }
 
   /**
-   * Emit a typing / recording indicator over the relay layer as a NIP-17
-   * gift-wrap (kind-1059). This is the handler for `messages.setTyping`, which
-   * used to fall through to the action-prefix no-op (returns `true`, dropped on
-   * the floor) — so the local UI detected typing but nothing ever reached the
-   * peer.
-   *
-   * The typing tick is wrapped inside a kind-14 rumor → kind-13 seal → kind-1059
-   * gift-wrap envelope. The relay only sees kind-1059 + an ephemeral pubkey —
-   * no kind collision risk (the old kind-30001 collides with NIP-51), no social
-   * graph leak (metadata hidden behind NIP-44 encryption). Late reconnects
-   * replay via backfill (relays store kind-1059 events), and client-side 6s
-   * auto-expiry handles stale indicator cleanup.
+   * Emit a typing / recording indicator over the relay layer (kind-20001,
+   * NIP-16 ephemeral). This is the handler for `messages.setTyping`, which used
+   * to fall through to the action-prefix no-op (returns `true`, dropped on the
+   * floor) — so the local UI detected typing but nothing ever reached the peer.
    *
    * WhatsApp-style privacy coupling: gated on the read-receipts toggle. When the
    * user has read receipts OFF we publish nothing (and the receive side
@@ -1628,23 +1621,32 @@ export class PhantomChatMTProtoServer {
     const now = Math.floor(Date.now() / 1000);
 
     try {
-      // GROUP tick: gift-wrap the typing rumor for each group member. Each
-      // member gets their own kind-1059 envelope (NIP-17 parity) so the relay
-      // never sees the inner kind, group ID, or member list.
+      // GROUP tick: tag the group id (so the receiver routes the dots into the
+      // group chat, not the sender's DM) and p-tag every other member so their
+      // subscription filter matches. Mirrors how group messages address members.
       if(isGroupPeer(peerId)) {
         const {getGroupStore} = await import('./group-store');
         const rec = await getGroupStore().getByPeerId(peerId);
         if(!rec) return true;
-        const members = rec.members.filter(m => m && m !== this.ownPubkey);
-        if(members.length === 0) return true;
-        await this.chatAPI.publishGroupTypingGiftWrap(members, content, rec.groupId);
+        const tags: string[][] = [['group', rec.groupId]];
+        for(const member of rec.members) {
+          if(member && member !== this.ownPubkey) tags.push(['p', member]);
+        }
+        // A group with no other members yet — nothing to notify.
+        if(tags.length === 1) return true;
+        await this.chatAPI.publishEvent({kind: KIND_TYPING, created_at: now, tags, content});
         return true;
       }
 
-      // 1:1 tick: gift-wrap the typing rumor for the single recipient.
+      // 1:1 tick: p-tag the single recipient.
       const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));
       if(!peerPubkey) return true;
-      await this.chatAPI.publishTypingGiftWrap(peerPubkey, content, peerPubkey);
+      await this.chatAPI.publishEvent({
+        kind: KIND_TYPING,
+        created_at: now,
+        tags: [['p', peerPubkey]],
+        content
+      });
       return true;
     } catch(err) {
       console.warn(LOG_PREFIX, 'setTyping: publish failed', err);
