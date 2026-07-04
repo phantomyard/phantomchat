@@ -630,8 +630,6 @@ describe('storeMapping / getMapping round-trip', () => {
     expect(result!.displayName).toBe('Updated');
   });
 
-  // Regression: message-receive / backfill paths call storeMapping without
-  // a displayName. A prior manual rename must survive these calls.
   test('storeMapping without displayName preserves existing nickname', async() => {
     const pubkey = 'd'.repeat(64);
     await storeMapping(pubkey, 200, 'Alice');
@@ -639,22 +637,6 @@ describe('storeMapping / getMapping round-trip', () => {
 
     const result = await getMapping(pubkey);
     expect(result!.displayName).toBe('Alice');
-  });
-
-  // Regression (#35): the idempotent persistence paths — storePeerMapping on
-  // every inbound message and backfillPeerMappingsFromHistory on identity load
-  // — call storeMapping(pubkey, peerId) with no name. A blind put() rewrote the
-  // record with displayName: undefined on every message, wiping a user-set name
-  // (the "losing the set name on my bots" bug). storeMapping must now preserve
-  // an existing name when none is supplied.
-  test('storeMapping without displayName preserves an existing name', async() => {
-    const pubkey = '7'.repeat(64);
-    await storeMapping(pubkey, 700, 'MyBot');
-    // Simulate an inbound-message re-persist that omits the name.
-    await storeMapping(pubkey, 700);
-
-    const result = await getMapping(pubkey);
-    expect(result!.displayName).toBe('MyBot');
   });
 
   test('storeMapping without nostrProfile preserves an existing profile', async() => {

@@ -39,6 +39,7 @@ export async function renameP2PContact(
 ): Promise<RenameP2PContactResult> {
   const first = (firstName || '').trim();
   const last = (lastName || '').trim();
+  const peerIdTweb = peerId.toPeerId(false);
   const displayName = [first, last].filter(Boolean).join(' ');
 
   // 1. Persist to IndexedDB (force-write over the npub placeholder). Prefer
@@ -48,7 +49,6 @@ export async function renameP2PContact(
   let persisted = false;
   try {
     const {getPubkey, storeMapping} = await import('./virtual-peers-db');
-    const peerIdTweb = peerId.toPeerId(false);
     const liveUser = rootScope.managers.appUsersManager.getUser(peerId as any) as any;
     const proxyUser = MOUNT_CLASS_TO.apiManagerProxy?.mirrors?.peers?.[peerIdTweb] as any;
     const hexPubkey = await getPubkey(peerId) || liveUser?.p2pPubkey || proxyUser?.p2pPubkey;
@@ -70,7 +70,6 @@ export async function renameP2PContact(
 
   // 3. Update the main-thread mirror + Solid store so the UI reflects it
   //    without a reload.
-  const peerIdTweb = peerId.toPeerId(false);
   const proxyRef = MOUNT_CLASS_TO.apiManagerProxy;
   if(proxyRef?.mirrors?.peers?.[peerIdTweb]) {
     proxyRef.mirrors.peers[peerIdTweb].first_name = first;
