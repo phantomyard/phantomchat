@@ -27,9 +27,14 @@ describe('renameP2PContact — helper', () => {
     expect(helperSrc).toMatch(/export async function renameP2PContact/);
   });
 
-  it('resolves the pubkey via getPubkey and force-writes via setMappingDisplayName', () => {
+  it('resolves the pubkey via reverse lookup or live P2P user fallback', () => {
     expect(helperSrc).toMatch(/getPubkey/);
-    expect(helperSrc).toMatch(/setMappingDisplayName/);
+    expect(helperSrc).toMatch(/liveUser\?\.p2pPubkey/);
+    expect(helperSrc).toMatch(/proxyUser\?\.p2pPubkey/);
+  });
+
+  it('creates or updates the mapping with the manual display name', () => {
+    expect(helperSrc).toMatch(/storeMapping\(hexPubkey,\s*peerId,\s*displayName\)/);
   });
 
   it('updates the live synthetic Worker user with first + last name', () => {

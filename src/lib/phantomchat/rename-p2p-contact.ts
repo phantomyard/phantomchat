@@ -8,7 +8,8 @@
  * next render. This helper drives the working primitives instead:
  *
  *   1. persist the user-supplied name to the virtual-peers IndexedDB
- *      (so it survives reload), force-writing over the npub placeholder;
+ *      (so it survives reload), creating a missing mapping if needed and
+ *      force-writing over the npub placeholder;
  *   2. update the live synthetic Worker user (first + last name);
  *   3. update the main-thread peer mirror + Solid store;
  *   4. dispatch `peer_title_edit` so chat-list + topbar refresh imperatively.
@@ -40,13 +41,19 @@ export async function renameP2PContact(
   const last = (lastName || '').trim();
   const displayName = [first, last].filter(Boolean).join(' ');
 
-  // 1. Persist to IndexedDB (force-write over the npub placeholder).
+  // 1. Persist to IndexedDB (force-write over the npub placeholder). Prefer
+  //    the reverse mapping, but fall back to the live synthetic user/mirror:
+  //    older sessions can have a rendered P2P user before the reverse mapping
+  //    is present, and a rename that only updates memory is lost on reload.
   let persisted = false;
   try {
-    const {getPubkey, setMappingDisplayName} = await import('./virtual-peers-db');
-    const hexPubkey = await getPubkey(peerId);
+    const {getPubkey, storeMapping} = await import('./virtual-peers-db');
+    const peerIdTweb = peerId.toPeerId(false);
+    const liveUser = rootScope.managers.appUsersManager.getUser(peerId as any) as any;
+    const proxyUser = MOUNT_CLASS_TO.apiManagerProxy?.mirrors?.peers?.[peerIdTweb] as any;
+    const hexPubkey = await getPubkey(peerId) || liveUser?.p2pPubkey || proxyUser?.p2pPubkey;
     if(hexPubkey && displayName) {
-      await setMappingDisplayName(hexPubkey, displayName);
+      await storeMapping(hexPubkey, peerId, displayName);
       persisted = true;
     }
   } catch(err) {

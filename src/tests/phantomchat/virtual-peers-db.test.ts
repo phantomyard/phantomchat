@@ -369,11 +369,12 @@ describe('VirtualPeersDB', () => {
       expect(record).toBeNull();
     });
 
-    test('putPeer without displayName stores undefined displayName', async() => {
-      await db.putPeer(TEST_PUBKEY_1, TEST_PEER_ID_1);
+    test('putPeer without displayName preserves existing name', async() => {
+      await db.putPeer(TEST_PUBKEY_1, TEST_PEER_ID_1, 'Alice');
+      await db.putPeer(TEST_PUBKEY_1, TEST_PEER_ID_1); // no displayName
 
       const record = await db.getByPubkey(TEST_PUBKEY_1);
-      expect(record!.displayName).toBeUndefined();
+      expect(record!.displayName).toBe('Alice');
     });
   });
 
@@ -629,12 +630,15 @@ describe('storeMapping / getMapping round-trip', () => {
     expect(result!.displayName).toBe('Updated');
   });
 
-  test('storeMapping without displayName stores undefined', async() => {
+  // Regression: message-receive / backfill paths call storeMapping without
+  // a displayName. A prior manual rename must survive these calls.
+  test('storeMapping without displayName preserves existing nickname', async() => {
     const pubkey = 'd'.repeat(64);
-    await storeMapping(pubkey, 200);
+    await storeMapping(pubkey, 200, 'Alice');
+    await storeMapping(pubkey, 200); // backfill path – no name supplied
 
     const result = await getMapping(pubkey);
-    expect(result!.displayName).toBeUndefined();
+    expect(result!.displayName).toBe('Alice');
   });
 
   // Regression (#35): the idempotent persistence paths — storePeerMapping on
