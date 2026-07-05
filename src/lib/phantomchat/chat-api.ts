@@ -28,6 +28,16 @@ import {handleRelayMessage as handleRelayMessageImpl, IncomingEdit} from './chat
 import {phantomchatReactionsReceive} from './phantomchat-reactions-receive';
 import {phantomchatTypingReceive} from './phantomchat-typing-receive';
 import {setChatAPI as setReactionsChatAPI} from './phantomchat-reactions-publish';
+import {swallowHandler} from './log-swallow';
+
+/**
+ * Optional P2P fast-path (issue #61). Implemented by TransportSelector; kept as
+ * a minimal structural type here so ChatAPI stays decoupled from the transport
+ * module. `tryDeliver` is fire-and-forget and never throws.
+ */
+export interface P2PFastPath {
+  tryDeliver(recipientPubkey: string, wirePayload: string): Promise<unknown>;
+}
 
 /**
  * Message types supported in chat
@@ -107,6 +117,13 @@ export class ChatAPI {
   private relayPool: NostrRelayPool;
   private offlineQueue: OfflineQueue | null;
   private deliveryTracker: DeliveryTracker | null = null;
+
+  // Optional P2P fast-path (issue #61). Wired by the bridge after construction.
+  // When set AND the recipient has advertised P2P capability, a live copy of the
+  // outgoing payload is pushed over the fastest direct transport, IN PARALLEL
+  // with — never replacing — the relay publish. Null (a pure no-op) for every
+  // existing user until phantombot#258 ships and peers advertise capability.
+  transportSelector: P2PFastPath | null = null;
 
   // Connection state
   private state: ChatState = 'disconnected';
@@ -747,6 +764,17 @@ export class ChatAPI {
     // interop on files anyway. metadata the envelope used to carry is native to
     // the rumor: from=pubkey, to=p-tag, timestamp=created_at, id=rumor id.
     const wirePayload = type === 'text' ? content : wireEnvelope;
+
+    // Additive P2P fast-path (issue #61, phase 1). Fire-and-forget: when the
+    // recipient has advertised P2P capability this pushes a live copy over the
+    // fastest direct transport (localhost ws → LAN WebRTC → DHT), in PARALLEL
+    // with the relay publish below. It never replaces the relay path — the relay
+    // copy remains the source of truth for receipts, retries and offline. The
+    // gate is closed for every peer until phantombot#258 ships, so this resolves
+    // instantly with no transport touched and relay-only behaviour is unchanged.
+    this.transportSelector?.tryDeliver(peerOwnId!, wirePayload)
+    .catch(swallowHandler('ChatAPI.p2pFastPath'));
+
     if(this.relayPool.isConnected()) {
       try {
         const result: PublishResult = await this.relayPool.publish(peerOwnId!, wirePayload, opts?.replyTo);

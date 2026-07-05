@@ -28,6 +28,32 @@ export function getRtcConfig(turnOverride?: TurnServerConfig): RTCConfiguration 
   };
 }
 
+/**
+ * Direct, TURN-free RTC config for the capability-gated P2P ladder (issue #61).
+ *
+ * The default `getRtcConfig()` forces `iceTransportPolicy: 'relay'` — every
+ * candidate goes through the third-party TURN server `turn.phantomchat.chat`.
+ * That is deliberate for the privacy/Tor posture (it never exposes host IPs) but
+ * it CANNOT satisfy the #61 constraint of "only the GitHub Pages PWA + selected
+ * Nostr relays, no other infra": a TURN-relayed channel still depends on a
+ * third-party box and never gives a true direct LAN hop.
+ *
+ * This config uses `iceTransportPolicy: 'all'` with NO ICE servers, so ICE
+ * gathers host (and mDNS) candidates only and two peers on the same LAN connect
+ * directly, node-to-node, with zero third-party infrastructure. The trade-off is
+ * explicit and intended: a direct P2P channel reveals local network candidates
+ * to the (already trusted, contact-listed) peer. It is only used for peers that
+ * advertised P2P capability, never for the default relay path.
+ */
+export function getRtcConfigDirect(): RTCConfiguration {
+  return {
+    iceServers: [],
+    iceTransportPolicy: 'all',
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require'
+  };
+}
+
 export const DATA_CHANNEL_NAME = 'nostr-relay';
 
 export const DATA_CHANNEL_OPTIONS: RTCDataChannelInit = {

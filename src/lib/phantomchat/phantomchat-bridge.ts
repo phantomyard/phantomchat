@@ -15,6 +15,10 @@ import {OfflineQueue} from './offline-queue';
 import {MeshManager} from '@lib/phantomchat/mesh-manager';
 import {MessageRouter} from '@lib/phantomchat/message-router';
 import {isSignalKind} from '@lib/phantomchat/mesh-signaling';
+import {getRtcConfigDirect} from '@lib/phantomchat/webrtc-config';
+import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
+import {LocalWsTransport} from '@lib/phantomchat/transport/local-ws-transport';
+import {TransportSelector} from '@lib/phantomchat/transport/transport-selector';
 import rootScope from '@lib/rootScope';
 import {swallowHandler} from '@lib/phantomchat/log-swallow';
 
@@ -173,7 +177,15 @@ export class PhantomChatBridge {
         miniRelayWorker.postMessage({type: 'update-contacts', contactPubkeys: contacts});
       });
 
-      // Initialize mesh manager
+      // Per-peer P2P capability registry — THE GATE for the #61 ladder. Empty
+      // until a peer advertises P2P (needs phantombot#258), so every tier below
+      // stays dormant and sends fall straight through to the relay path.
+      const capability = new PeerCapabilityRegistry();
+      (window as any).__phantomchatCapability = capability;
+
+      // Initialize mesh manager. Uses the direct (host-candidate, no third-party
+      // TURN) RTC config so capability-gated peers connect node-to-node on the
+      // LAN — satisfying #61's "only Pages + relays, no other infra" constraint.
       const meshManager = new MeshManager({
         sendSignal: async(recipientPubkey, signal) => {
           const chatAPI = (window as any).__phantomchatChatAPI;
@@ -192,7 +204,7 @@ export class PhantomChatBridge {
           miniRelayWorker.postMessage({type: 'peer-disconnected', peerId: pubkey});
           rootScope.dispatchEvent('phantomchat_mesh_peer_disconnected', {pubkey});
         }
-      });
+      }, getRtcConfigDirect);
 
       // Initialize message router
       const messageRouter = new MessageRouter({
@@ -214,9 +226,32 @@ export class PhantomChatBridge {
         }
       });
 
+      // Tiered transport selector (#61): localhost ws → LAN/remote WebRTC → DHT
+      // stub → relay floor. Attached to ChatAPI as the fire-and-forget P2P
+      // fast-path. Gated by `capability`, so it is a no-op until peers advertise.
+      const localTransport = new LocalWsTransport();
+      const transportSelector = new TransportSelector({
+        capability,
+        mesh: meshManager,
+        local: localTransport
+      });
+
+      // Attach the selector to ChatAPI. ChatAPI exposes itself on
+      // window.__phantomchatChatAPI in its constructor; it may be built before
+      // OR after the bridge, so wire it now if present and again on backfill
+      // (a real event that always fires once ChatAPI is live). Until attached,
+      // ChatAPI.transportSelector stays null → pure relay, no regression.
+      const attachSelector = () => {
+        const api = (window as any).__phantomchatChatAPI;
+        if(api && !api.transportSelector) api.transportSelector = transportSelector;
+      };
+      attachSelector();
+      rootScope.addEventListener('phantomchat_backfill_complete', attachSelector);
+
       // Expose for debugging
       (window as any).__phantomchatMeshManager = meshManager;
       (window as any).__phantomchatMessageRouter = messageRouter;
+      (window as any).__phantomchatTransportSelector = transportSelector;
 
       // Handle incoming signals from gift-wrap messages
       rootScope.addEventListener('phantomchat_new_message', (e) => {
@@ -226,10 +261,15 @@ export class PhantomChatBridge {
         }
       });
 
-      // Auto-connect to contacts after backfill
+      // Auto-connect to contacts after backfill — GATED by capability (#61).
+      // Previously this fired a WebRTC offer at EVERY contact unconditionally.
+      // Now a peer is only dialed if it has advertised P2P capability, so no
+      // signaling traffic or connection attempt happens for the all-relay peers
+      // that make up 100% of the network until phantombot#258 ships.
       rootScope.addEventListener('phantomchat_backfill_complete', () => {
         const contacts = (window as any).__phantomchatContacts || [];
         for(const pubkey of contacts) {
+          if(!capability.has(pubkey)) continue;
           setTimeout(() => {
             meshManager.connect(pubkey).catch(swallowHandler('PhantomChatBridge.autoConnectMesh'));
           }, Math.random() * 5000);

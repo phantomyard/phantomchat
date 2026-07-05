@@ -33,9 +33,15 @@ interface PeerState {
 export class MeshManager {
   private peers: Map<string, PeerState> = new Map();
   private callbacks: MeshCallbacks;
+  // Factory for the RTCConfiguration used on every peer connection. Defaults to
+  // the TURN-relay privacy config. The #61 ladder passes getRtcConfigDirect so
+  // capability-gated peers connect directly (host candidates, no third-party
+  // TURN) — required by the "only Pages + relays, no other infra" constraint.
+  private rtcConfig: () => RTCConfiguration;
 
-  constructor(callbacks: MeshCallbacks) {
+  constructor(callbacks: MeshCallbacks, rtcConfig: () => RTCConfiguration = getRtcConfig) {
     this.callbacks = callbacks;
+    this.rtcConfig = rtcConfig;
   }
 
   async connect(pubkey: string): Promise<void> {
@@ -49,7 +55,7 @@ export class MeshManager {
     }
 
     const sessionId = `${pubkey}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const pc = new RTCPeerConnection(getRtcConfig());
+    const pc = new RTCPeerConnection(this.rtcConfig());
     const dc = pc.createDataChannel(DATA_CHANNEL_NAME, DATA_CHANNEL_OPTIONS);
 
     const state: PeerState = {
@@ -98,7 +104,7 @@ export class MeshManager {
   private async handleOffer(fromPubkey: string, signal: SignalMessage): Promise<void> {
     if(this.peers.size >= MAX_CONNECTIONS) return;
 
-    const pc = new RTCPeerConnection(getRtcConfig());
+    const pc = new RTCPeerConnection(this.rtcConfig());
 
     const state: PeerState = {
       pc,
