@@ -42,26 +42,32 @@ export async function renameP2PContact(
   const peerIdTweb = peerId.toPeerId(false);
   const displayName = [first, last].filter(Boolean).join(' ');
 
-  // 1. Persist to IndexedDB (force-write over the npub placeholder). Prefer
-  //    in-memory pubkey sources first so the UI path isn't stalled on IDB;
-  //    fall back to reverse lookup only when the live user/mirror has not
-  //    cached the pubkey yet. The write itself is fire-and-forget because this
-  //    helper is awaited by the Edit Contact Save handler.
+  // 1. Resolve in-memory pubkey synchronously so we know persistence is
+  //    possible without touching IndexedDB. The actual IDB work (module import,
+  //    optional reverse lookup, and storeMapping) is wrapped in a
+  //    fire-and-forget IIFE so the Edit Contact Save handler isn't gated.
+  const liveUser = rootScope.managers.appUsersManager.getUser(peerId as any) as any;
+  const proxyUser = MOUNT_CLASS_TO.apiManagerProxy?.mirrors?.peers?.[peerIdTweb] as any;
+  const inMemoryPubkey = liveUser?.p2pPubkey || proxyUser?.p2pPubkey;
+
   let persisted = false;
-  try {
-    const {getPubkey, storeMapping} = await import('./virtual-peers-db');
-    const liveUser = rootScope.managers.appUsersManager.getUser(peerId as any) as any;
-    const proxyUser = MOUNT_CLASS_TO.apiManagerProxy?.mirrors?.peers?.[peerIdTweb] as any;
-    const hexPubkey = liveUser?.p2pPubkey || proxyUser?.p2pPubkey || await getPubkey(peerId);
-    if(hexPubkey && displayName) {
-      storeMapping(hexPubkey, peerId, displayName).catch((err: any) => {
-        console.warn('[renameP2PContact] storeMapping failed:', err);
-      });
-      persisted = true;
-    }
-  } catch(err) {
-    console.warn('[renameP2PContact] persist failed:', err);
+  if(inMemoryPubkey && displayName) {
+    persisted = true;
   }
+
+  (async() => {
+    try {
+      const {getPubkey, storeMapping} = await import('./virtual-peers-db');
+      const hexPubkey = inMemoryPubkey || await getPubkey(peerId);
+      if(hexPubkey && displayName) {
+        storeMapping(hexPubkey, peerId, displayName).catch((err: any) => {
+          console.warn('[renameP2PContact] storeMapping failed:', err);
+        });
+      }
+    } catch(err) {
+      console.warn('[renameP2PContact] persist failed:', err);
+    }
+  })();
 
   // 2. Update the live synthetic Worker user (first + last name). Passing
   //    `last` (a string, possibly empty) lets the user clear a surname.
