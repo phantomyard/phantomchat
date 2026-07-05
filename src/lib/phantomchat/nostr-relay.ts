@@ -673,6 +673,19 @@ export class NostrRelay {
   }
 
   /**
+   * Ingest an event that arrived OUT-OF-BAND (not over this relay's socket) —
+   * e.g. a gift-wrap copy delivered directly over a P2P transport (issue #61).
+   * It runs the identical path a relay-delivered event takes: the shared
+   * pre-decrypt dedup gate (so a copy the relay ALSO delivers is unwrapped once),
+   * NIP-17 unwrap, and dispatch to the same onMessage/onReceipt/onRawEvent
+   * handlers. That reuse is the whole point — the direct copy inherits every
+   * crypto, dedup and routing guarantee the relay path already has.
+   */
+  ingestExternalEvent(event: NostrEvent): Promise<void> {
+    return this.handleEvent(event);
+  }
+
+  /**
    * Register a handler for raw (non-giftwrap) events — currently kind-7
    * reactions and kind-5 deletes that the subscription filter admits.
    */

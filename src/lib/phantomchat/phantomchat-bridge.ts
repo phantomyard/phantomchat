@@ -14,7 +14,7 @@ import {NostrRelayPool, DEFAULT_RELAYS, loadCanonicalRelays, RelayConfig} from '
 import {OfflineQueue} from './offline-queue';
 import {MeshManager} from '@lib/phantomchat/mesh-manager';
 import {MessageRouter} from '@lib/phantomchat/message-router';
-import {isSignalKind} from '@lib/phantomchat/mesh-signaling';
+import {isSignalKind, parseSignalContent} from '@lib/phantomchat/mesh-signaling';
 import {getRtcConfigDirect} from '@lib/phantomchat/webrtc-config';
 import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
 import {LocalWsTransport} from '@lib/phantomchat/transport/local-ws-transport';
@@ -195,6 +195,20 @@ export class PhantomChatBridge {
         },
         onPeerMessage: (pubkey, message) => {
           miniRelayWorker.postMessage({type: 'peer-message', peerId: pubkey, data: message});
+          // #61: a P2P-delivered message is a standard `["EVENT", wrap]` frame.
+          // Feed the wrap through the SAME relay-pool ingest a relay message
+          // takes so it unwraps, dedups (against the relay copy) and renders
+          // through one code path. Non-EVENT frames (mesh control) are ignored
+          // here and handled by the mini-relay worker above.
+          try {
+            const frame = JSON.parse(message);
+            if(Array.isArray(frame) && frame[0] === 'EVENT' && frame[1]) {
+              const pool = (window as any).__phantomchatPool;
+              pool?.ingestP2PEvent?.(frame[1]);
+            }
+          } catch(err) {
+            swallowHandler('PhantomChatBridge.onPeerMessage')(err);
+          }
         },
         onPeerConnected: (pubkey) => {
           miniRelayWorker.postMessage({type: 'peer-connected', peerId: pubkey, pubkey});
@@ -257,6 +271,16 @@ export class PhantomChatBridge {
       rootScope.addEventListener('phantomchat_new_message', (e) => {
         const msg = e.message as any;
         if(msg?.rumorKind && isSignalKind(msg.rumorKind)) {
+          // #61 rollout safety: only accept an incoming OFFER from a peer that
+          // has advertised P2P capability. During a mixed-version rollout an
+          // un-upgraded peer still dials ungated with TURN-relay ICE candidates;
+          // answering with our host-only direct config yields no candidate pairs
+          // and would silently kill that pair's existing direct-mesh fast path.
+          // Answers/ICE for a session WE initiated are unaffected (we only gate
+          // offers). No peer advertises until phantombot#258, so today every
+          // inbound offer is ignored — matching current relay-only behaviour.
+          const signal = parseSignalContent(msg.content);
+          if(signal?.action === 'offer' && !capability.has(e.senderPubkey)) return;
           meshManager.handleSignal(e.senderPubkey, msg.content);
         }
       });

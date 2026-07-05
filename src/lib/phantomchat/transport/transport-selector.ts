@@ -20,12 +20,33 @@
  * copy alongside the relay publish; it never replaces it. The relay copy stays
  * the source of truth for delivery receipts, retries, the offline queue and
  * multi-device. When a direct tier is live the peer simply renders whichever
- * copy lands first and dedups the other by rumor id. That keeps every existing
- * reliability guarantee intact while removing the relay hop from the perceived
- * latency once a peer is P2P-capable.
+ * copy lands first and dedups the other. That keeps every existing reliability
+ * guarantee intact while removing the relay hop from the perceived latency once
+ * a peer is P2P-capable.
+ *
+ * THE FRAME. We do NOT invent a bespoke P2P envelope. `tryDeliver` is handed the
+ * EXACT kind-1059 gift-wrap events the relay publish just built, and ships the
+ * recipient-addressed wrap over the direct transport as a standard Nostr relay
+ * wire frame: `["EVENT", wrap]`. The receiver feeds that straight into the same
+ * relay-pool ingest a real relay message takes (see NostrRelayPool.ingestP2PEvent):
+ *   - the OUTER wrap id is IDENTICAL to the relay copy, so the pool's pre-decrypt
+ *     dedup drops whichever arrives second before it even unwraps — cheapest layer;
+ *   - the INNER rumor id is identical too, so the post-unwrap dedup is a second
+ *     safety net. The gift-wrap is self-describing (recipient in the p-tag, sender
+ *     + rumor id revealed on unwrap), so no sidecar pubkey/rumor-id fields are
+ *     needed. Reusing the wrap means the P2P copy inherits every existing crypto,
+ *     signature-verify, presence-filter, receipt and dispatch guarantee for free.
+ *
+ * FIRE-AND-FORGET (review flag). Delivery is best-effort: there is no app-level
+ * ack, so a `delivered` tier here is "handed to the transport", not "confirmed
+ * rendered". The relay copy is the guaranteed floor, so a silently-dropped P2P
+ * copy is invisible to the user (the relay copy still lands). If field data shows
+ * the P2P path dropping copies often enough to matter, revisit this with a tiny
+ * PC-P2P-ACK{rumorId} round-trip so `delivered` becomes truthful. Tracked in #61.
  */
 
 import {logSwallow, swallowHandler} from '@lib/phantomchat/log-swallow';
+import {NostrEvent} from '@lib/phantomchat/nostr-relay';
 import {PeerCapabilityRegistry, hasAnyCapability} from '@lib/phantomchat/transport/capability';
 import {LocalWsTransport} from '@lib/phantomchat/transport/local-ws-transport';
 
@@ -73,11 +94,14 @@ export class TransportSelector {
   }
 
   /**
-   * Try to push a live copy of `wirePayload` over the fastest direct transport.
-   * Fire-and-forget from the caller's perspective: never throws, and returns the
-   * tier it used (or `relay` when it declined). Safe to `void`.
+   * Try to push a live copy of an already-built gift-wrap over the fastest
+   * direct transport. `wraps` are the kind-1059 events the relay publish just
+   * produced (recipient + self); we ship the recipient-addressed one as an
+   * `["EVENT", wrap]` frame. Fire-and-forget from the caller's perspective:
+   * never throws, and returns the tier it used (or `relay` when it declined).
+   * Safe to `void`.
    */
-  async tryDeliver(recipientPubkey: string, wirePayload: string): Promise<DeliveryResult> {
+  async tryDeliver(recipientPubkey: string, wraps: NostrEvent[]): Promise<DeliveryResult> {
     try {
       const caps = this.deps.capability.get(recipientPubkey);
 
@@ -86,7 +110,14 @@ export class TransportSelector {
         return {tier: 'relay', delivered: false};
       }
 
-      const frame = JSON.stringify(['PC-P2P', wirePayload]);
+      // Ship the wrap ADDRESSED TO THE RECIPIENT (p-tag === recipient). The self
+      // wrap is encrypted to our own key and the peer could never unwrap it.
+      const wrap = this.pickRecipientWrap(wraps, recipientPubkey);
+      if(!wrap) {
+        return {tier: 'relay', delivered: false};
+      }
+
+      const frame = JSON.stringify(['EVENT', wrap]);
 
       // Tier 1: same-machine ws://localhost.
       if(caps.localWs && this.deps.local) {
@@ -121,6 +152,21 @@ export class TransportSelector {
       logSwallow('TransportSelector.tryDeliver', e);
       return {tier: 'relay', delivered: false};
     }
+  }
+
+  /**
+   * Choose the gift-wrap addressed to `recipientPubkey` (its p-tag holds the
+   * recipient). `publish()` returns both the recipient wrap and a self wrap for
+   * multi-device sync; only the recipient wrap is decryptable by the peer. Falls
+   * back to a single wrap when there is exactly one (legacy/no self-wrap).
+   */
+  private pickRecipientWrap(wraps: NostrEvent[], recipientPubkey: string): NostrEvent | null {
+    if(!Array.isArray(wraps) || wraps.length === 0) return null;
+    const match = wraps.find((w) =>
+      Array.isArray(w?.tags) && w.tags.some((t) => t[0] === 'p' && t[1] === recipientPubkey)
+    );
+    if(match) return match;
+    return wraps.length === 1 ? wraps[0] : null;
   }
 
   /**

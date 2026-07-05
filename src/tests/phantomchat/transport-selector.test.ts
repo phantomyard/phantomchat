@@ -4,6 +4,26 @@ import {TransportSelector} from '@lib/phantomchat/transport/transport-selector';
 import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
 
 const PK = 'b'.repeat(64);
+const SELF = 'c'.repeat(64);
+
+// A kind-1059 gift-wrap addressed to `recipient` via its p-tag — the shape the
+// selector receives from NostrRelayPool.publish() and ships as ['EVENT', wrap].
+function makeWrap(recipient = PK, id = 'wrap-recipient') {
+  return {
+    id,
+    kind: 1059,
+    pubkey: 'e'.repeat(64), // ephemeral wrap key
+    created_at: 1,
+    content: 'ciphertext',
+    tags: [['p', recipient]],
+    sig: 'f'.repeat(128)
+  };
+}
+
+// The publish() result: a recipient wrap plus a self wrap (multi-device sync).
+function makeWraps(recipient = PK) {
+  return [makeWrap(recipient, 'wrap-recipient'), makeWrap(SELF, 'wrap-self')];
+}
 
 function makeMesh(overrides = {}) {
   return {
@@ -31,7 +51,7 @@ describe('TransportSelector — the gate (regression guarantee)', () => {
     const local = makeLocal();
     const sel = new TransportSelector({capability, mesh, local});
 
-    const res = await sel.tryDeliver(PK, 'hello');
+    const res = await sel.tryDeliver(PK, makeWraps());
 
     expect(res).toEqual({tier: 'relay', delivered: false});
     // The whole point: the relay path is left to the caller, nothing probed.
@@ -42,14 +62,73 @@ describe('TransportSelector — the gate (regression guarantee)', () => {
     expect(mesh.send).not.toHaveBeenCalled();
   });
 
+  it('advertised but no wraps → declines to relay (nothing to ship)', async() => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {localWs: true, webrtc: true});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
+    const local = makeLocal();
+    const sel = new TransportSelector({capability, mesh, local});
+
+    const res = await sel.tryDeliver(PK, []);
+
+    expect(res).toEqual({tier: 'relay', delivered: false});
+    expect(local.send).not.toHaveBeenCalled();
+    expect(mesh.send).not.toHaveBeenCalled();
+  });
+
   it('never throws even if a transport blows up — always returns a result', async() => {
     const capability = new PeerCapabilityRegistry();
     capability.set(PK, {webrtc: true});
     const mesh = makeMesh({getStatus: vi.fn(() => { throw new Error('boom'); })});
     const sel = new TransportSelector({capability, mesh, local: null});
 
-    const res = await sel.tryDeliver(PK, 'hi');
+    const res = await sel.tryDeliver(PK, makeWraps());
     expect(res).toEqual({tier: 'relay', delivered: false});
+  });
+});
+
+describe('TransportSelector — frame + recipient wrap selection', () => {
+  it('ships the RECIPIENT-addressed wrap as an ["EVENT", wrap] frame', async() => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {localWs: true, webrtc: true});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
+    const local = makeLocal();
+    const sel = new TransportSelector({capability, mesh, local});
+
+    const res = await sel.tryDeliver(PK, makeWraps());
+
+    expect(res.tier).toBe('local-ws');
+    const frame = JSON.parse(local.send.mock.calls[0][0]);
+    expect(frame[0]).toBe('EVENT');
+    // The wrap addressed to PK (not the self wrap) is the one that ships.
+    expect(frame[1].id).toBe('wrap-recipient');
+    expect(frame[1].tags).toContainEqual(['p', PK]);
+  });
+
+  it('single wrap (no self wrap) → ships it as the recipient wrap', async() => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {webrtc: true});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
+    const sel = new TransportSelector({capability, mesh, local: null});
+
+    const res = await sel.tryDeliver(PK, [makeWrap(PK, 'only')]);
+
+    expect(res.tier).toBe('webrtc');
+    const frame = JSON.parse(mesh.send.mock.calls[0][1]);
+    expect(frame[1].id).toBe('only');
+  });
+
+  it('no wrap addressed to the recipient (only a self wrap) → declines to relay', async() => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {webrtc: true});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
+    const sel = new TransportSelector({capability, mesh, local: null});
+
+    // Two wraps, neither addressed to PK → cannot pick, declines.
+    const res = await sel.tryDeliver(PK, [makeWrap(SELF, 'a'), makeWrap('d'.repeat(64), 'b')]);
+
+    expect(res).toEqual({tier: 'relay', delivered: false});
+    expect(mesh.send).not.toHaveBeenCalled();
   });
 });
 
@@ -61,12 +140,10 @@ describe('TransportSelector — tier ordering', () => {
     const local = makeLocal();
     const sel = new TransportSelector({capability, mesh, local});
 
-    const res = await sel.tryDeliver(PK, 'payload');
+    const res = await sel.tryDeliver(PK, makeWraps());
 
     expect(res.tier).toBe('local-ws');
     expect(local.send).toHaveBeenCalledTimes(1);
-    // frame is ['PC-P2P', payload]
-    expect(JSON.parse(local.send.mock.calls[0][0])).toEqual(['PC-P2P', 'payload']);
     expect(mesh.send).not.toHaveBeenCalled();
   });
 
@@ -77,7 +154,7 @@ describe('TransportSelector — tier ordering', () => {
     const local = makeLocal();
     const sel = new TransportSelector({capability, mesh, local});
 
-    const res = await sel.tryDeliver(PK, 'payload');
+    const res = await sel.tryDeliver(PK, makeWraps());
 
     expect(res.tier).toBe('webrtc');
     expect(local.ensureConnected).not.toHaveBeenCalled();
@@ -90,7 +167,7 @@ describe('TransportSelector — tier ordering', () => {
     const mesh = makeMesh();
     const sel = new TransportSelector({capability, mesh, local: null});
 
-    const res = await sel.tryDeliver(PK, 'payload');
+    const res = await sel.tryDeliver(PK, makeWraps());
     expect(res).toEqual({tier: 'relay', delivered: false});
     expect(mesh.connect).not.toHaveBeenCalled();
   });
@@ -108,7 +185,7 @@ describe('TransportSelector — fast-fail down the chain', () => {
     const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
     const sel = new TransportSelector({capability, mesh, local, localTimeoutMs: 80});
 
-    const p = sel.tryDeliver(PK, 'payload');
+    const p = sel.tryDeliver(PK, makeWraps());
     await vi.advanceTimersByTimeAsync(80);
     const res = await p;
 
@@ -127,7 +204,7 @@ describe('TransportSelector — fast-fail down the chain', () => {
     });
     const sel = new TransportSelector({capability, mesh, local: null, rtcConnectTimeoutMs: 300, rtcPollMs: 50});
 
-    const p = sel.tryDeliver(PK, 'payload');
+    const p = sel.tryDeliver(PK, makeWraps());
     await vi.advanceTimersByTimeAsync(400);
     const res = await p;
 
@@ -146,7 +223,7 @@ describe('TransportSelector — fast-fail down the chain', () => {
     });
     const sel = new TransportSelector({capability, mesh, local: null, rtcConnectTimeoutMs: 500, rtcPollMs: 50});
 
-    const p = sel.tryDeliver(PK, 'payload');
+    const p = sel.tryDeliver(PK, makeWraps());
     // Simulate the channel opening after ~100ms.
     await vi.advanceTimersByTimeAsync(100);
     status = 'connected';
