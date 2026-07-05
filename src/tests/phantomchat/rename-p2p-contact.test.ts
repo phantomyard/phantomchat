@@ -27,13 +27,19 @@ describe('renameP2PContact — helper', () => {
     expect(helperSrc).toMatch(/export async function renameP2PContact/);
   });
 
-  it('resolves the pubkey via getPubkey and force-writes via setMappingDisplayName', () => {
+  it('resolves the pubkey via reverse lookup or live P2P user fallback', () => {
     expect(helperSrc).toMatch(/getPubkey/);
-    expect(helperSrc).toMatch(/setMappingDisplayName/);
+    expect(helperSrc).toMatch(/liveUser\?\.p2pPubkey/);
+    expect(helperSrc).toMatch(/proxyUser\?\.p2pPubkey/);
   });
 
-  it('updates the live synthetic Worker user with first + last name', () => {
+  it('creates or updates the mapping with the manual display name', () => {
+    expect(helperSrc).toMatch(/storeMapping\(hexPubkey,\s*peerId,\s*displayName\)/);
+  });
+
+  it('updates the live synthetic Worker user with first + last name (fire-and-forget)', () => {
     expect(helperSrc).toMatch(/updateP2PUserName\(peerId,\s*first,\s*last\)/);
+    expect(helperSrc).toMatch(/updateP2PUserName\([^)]+\)\.catch\(/);
   });
 
   it('updates the main-thread peer mirror (first_name + last_name) and reconciles the store', () => {
@@ -48,6 +54,29 @@ describe('renameP2PContact — helper', () => {
 
   it('combines first + last into a trimmed display name', () => {
     expect(helperSrc).toMatch(/\[first,\s*last\]\.filter\(Boolean\)\.join\(' '\)/);
+  });
+
+  it('prefers in-memory pubkey sources before an IndexedDB reverse lookup', () => {
+    const idxLive = helperSrc.search(/liveUser\?\.p2pPubkey/);
+    const idxProxy = helperSrc.search(/proxyUser\?\.p2pPubkey/);
+    const idxGet = helperSrc.search(/await getPubkey\(peerId\)/);
+    // All three expressions must exist …
+    expect(idxLive).toBeGreaterThan(-1);
+    expect(idxProxy).toBeGreaterThan(-1);
+    expect(idxGet).toBeGreaterThan(-1);
+    // … and the in-memory checks must appear before the IndexedDB fallback.
+    expect(idxLive).toBeLessThan(idxGet);
+    expect(idxProxy).toBeLessThan(idxGet);
+  });
+
+  it('fires the persistence write without blocking the UI on IndexedDB', () => {
+    // storeMapping is fire-and-forget so the Edit Contact Save handler
+    // re-enables promptly. Errors are handled via .catch().
+    expect(helperSrc).toMatch(/storeMapping\(hexPubkey,\s*peerId,\s*displayName\)[^;]*\.catch\(/);
+  });
+
+  it('reports persisted: true whenever a display name is entered (does not depend on in-memory pubkey)', () => {
+    expect(helperSrc).toMatch(/const\s+persisted\s*=\s*!!displayName/);
   });
 });
 

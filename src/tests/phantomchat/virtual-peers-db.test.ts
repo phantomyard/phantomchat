@@ -369,11 +369,12 @@ describe('VirtualPeersDB', () => {
       expect(record).toBeNull();
     });
 
-    test('putPeer without displayName stores undefined displayName', async() => {
-      await db.putPeer(TEST_PUBKEY_1, TEST_PEER_ID_1);
+    test('putPeer without displayName preserves existing name', async() => {
+      await db.putPeer(TEST_PUBKEY_1, TEST_PEER_ID_1, 'Alice');
+      await db.putPeer(TEST_PUBKEY_1, TEST_PEER_ID_1); // no displayName
 
       const record = await db.getByPubkey(TEST_PUBKEY_1);
-      expect(record!.displayName).toBeUndefined();
+      expect(record!.displayName).toBe('Alice');
     });
   });
 
@@ -629,28 +630,13 @@ describe('storeMapping / getMapping round-trip', () => {
     expect(result!.displayName).toBe('Updated');
   });
 
-  test('storeMapping without displayName stores undefined', async() => {
+  test('storeMapping without displayName preserves existing nickname', async() => {
     const pubkey = 'd'.repeat(64);
-    await storeMapping(pubkey, 200);
+    await storeMapping(pubkey, 200, 'Alice');
+    await storeMapping(pubkey, 200); // backfill path – no name supplied
 
     const result = await getMapping(pubkey);
-    expect(result!.displayName).toBeUndefined();
-  });
-
-  // Regression (#35): the idempotent persistence paths — storePeerMapping on
-  // every inbound message and backfillPeerMappingsFromHistory on identity load
-  // — call storeMapping(pubkey, peerId) with no name. A blind put() rewrote the
-  // record with displayName: undefined on every message, wiping a user-set name
-  // (the "losing the set name on my bots" bug). storeMapping must now preserve
-  // an existing name when none is supplied.
-  test('storeMapping without displayName preserves an existing name', async() => {
-    const pubkey = '7'.repeat(64);
-    await storeMapping(pubkey, 700, 'MyBot');
-    // Simulate an inbound-message re-persist that omits the name.
-    await storeMapping(pubkey, 700);
-
-    const result = await getMapping(pubkey);
-    expect(result!.displayName).toBe('MyBot');
+    expect(result!.displayName).toBe('Alice');
   });
 
   test('storeMapping without nostrProfile preserves an existing profile', async() => {
