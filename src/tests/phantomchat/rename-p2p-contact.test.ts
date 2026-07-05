@@ -37,8 +37,9 @@ describe('renameP2PContact — helper', () => {
     expect(helperSrc).toMatch(/storeMapping\(hexPubkey,\s*peerId,\s*displayName\)/);
   });
 
-  it('updates the live synthetic Worker user with first + last name', () => {
+  it('updates the live synthetic Worker user with first + last name (fire-and-forget)', () => {
     expect(helperSrc).toMatch(/updateP2PUserName\(peerId,\s*first,\s*last\)/);
+    expect(helperSrc).toMatch(/updateP2PUserName\([^)]+\)\.catch\(/);
   });
 
   it('updates the main-thread peer mirror (first_name + last_name) and reconciles the store', () => {
@@ -72,6 +73,10 @@ describe('renameP2PContact — helper', () => {
     // storeMapping is fire-and-forget so the Edit Contact Save handler
     // re-enables promptly. Errors are handled via .catch().
     expect(helperSrc).toMatch(/storeMapping\(hexPubkey,\s*peerId,\s*displayName\)[^;]*\.catch\(/);
+  });
+
+  it('reports persisted: true whenever a display name is entered (does not depend on in-memory pubkey)', () => {
+    expect(helperSrc).toMatch(/const\s+persisted\s*=\s*!!displayName/);
   });
 });
 

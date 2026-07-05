@@ -50,10 +50,7 @@ export async function renameP2PContact(
   const proxyUser = MOUNT_CLASS_TO.apiManagerProxy?.mirrors?.peers?.[peerIdTweb] as any;
   const inMemoryPubkey = liveUser?.p2pPubkey || proxyUser?.p2pPubkey;
 
-  let persisted = false;
-  if(inMemoryPubkey && displayName) {
-    persisted = true;
-  }
+  const persisted = !!displayName;
 
   (async() => {
     try {
@@ -71,11 +68,9 @@ export async function renameP2PContact(
 
   // 2. Update the live synthetic Worker user (first + last name). Passing
   //    `last` (a string, possibly empty) lets the user clear a surname.
-  try {
-    await rootScope.managers.appUsersManager.updateP2PUserName(peerId, first, last);
-  } catch(err) {
+  rootScope.managers.appUsersManager.updateP2PUserName(peerId, first, last).catch((err: any) => {
     console.warn('[renameP2PContact] updateP2PUserName failed:', err);
-  }
+  });
 
   // 3. Update the main-thread mirror + Solid store so the UI reflects it
   //    without a reload.
