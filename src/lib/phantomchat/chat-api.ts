@@ -16,7 +16,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelayPool, PublishResult, DEFAULT_RELAYS} from './nostr-relay-pool';
-import {DecryptedMessage} from './nostr-relay';
+import {DecryptedMessage, NostrEvent} from './nostr-relay';
 import {OfflineQueue} from './offline-queue';
 import {getMessageStore, StoredMessage} from './message-store';
 import {DeliveryTracker} from './delivery-tracker';
@@ -28,6 +28,18 @@ import {handleRelayMessage as handleRelayMessageImpl, IncomingEdit} from './chat
 import {phantomchatReactionsReceive} from './phantomchat-reactions-receive';
 import {phantomchatTypingReceive} from './phantomchat-typing-receive';
 import {setChatAPI as setReactionsChatAPI} from './phantomchat-reactions-publish';
+import {swallowHandler} from './log-swallow';
+
+/**
+ * Optional P2P fast-path (issue #61). Implemented by TransportSelector; kept as
+ * a minimal structural type here so ChatAPI stays decoupled from the transport
+ * module. It is handed the SAME gift-wraps the relay publish just built (so the
+ * direct copy shares the relay copy's outer wrap id and inner rumor id, and the
+ * two dedup against each other on the receiver). Fire-and-forget; never throws.
+ */
+export interface P2PFastPath {
+  tryDeliver(recipientPubkey: string, wraps: NostrEvent[]): Promise<unknown>;
+}
 
 /**
  * Message types supported in chat
@@ -107,6 +119,13 @@ export class ChatAPI {
   private relayPool: NostrRelayPool;
   private offlineQueue: OfflineQueue | null;
   private deliveryTracker: DeliveryTracker | null = null;
+
+  // Optional P2P fast-path (issue #61). Wired by the bridge after construction.
+  // When set AND the recipient has advertised P2P capability, a live copy of the
+  // outgoing payload is pushed over the fastest direct transport, IN PARALLEL
+  // with — never replacing — the relay publish. Null (a pure no-op) for every
+  // existing user until phantombot#258 ships and peers advertise capability.
+  transportSelector: P2PFastPath | null = null;
 
   // Connection state
   private state: ChatState = 'disconnected';
@@ -747,12 +766,30 @@ export class ChatAPI {
     // interop on files anyway. metadata the envelope used to carry is native to
     // the rumor: from=pubkey, to=p-tag, timestamp=created_at, id=rumor id.
     const wirePayload = type === 'text' ? content : wireEnvelope;
+
     if(this.relayPool.isConnected()) {
       try {
         const result: PublishResult = await this.relayPool.publish(peerOwnId!, wirePayload, opts?.replyTo);
         publishedRumorId = result.rumorId;
         if(publishedRumorId) {
           opts?.onPublishedRumorId?.(publishedRumorId);
+        }
+
+        // Additive P2P fast-path (issue #61, phase 1). Fire-and-forget: when the
+        // recipient has advertised P2P capability, push a live copy of the SAME
+        // gift-wrap the relay publish just built over the fastest direct transport
+        // (localhost ws → LAN WebRTC → DHT). Reusing `result.wraps` keeps the outer
+        // wrap id (and inner rumor id) identical to the relay copy, so the receiver
+        // dedups whichever lands second for free. It never replaces the relay path —
+        // the relay copy stays the source of truth for receipts, retries and offline.
+        // The gate is closed for every peer until phantombot#258 ships, so this
+        // resolves instantly with no transport touched and relay-only behaviour is
+        // unchanged. `publishRawEvent` does not await relay acks, so `publish()`
+        // returns as soon as the wrap is built — the direct copy is not delayed by
+        // relay round-trips.
+        if(this.transportSelector && result.wraps?.length) {
+          this.transportSelector.tryDeliver(peerOwnId!, result.wraps)
+          .catch(swallowHandler('ChatAPI.p2pFastPath'));
         }
 
         // For plain-text sends the peer's delivery receipt references the rumor

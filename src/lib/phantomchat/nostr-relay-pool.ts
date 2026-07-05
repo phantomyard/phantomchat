@@ -489,6 +489,32 @@ export class NostrRelayPool {
   }
 
   /**
+   * Ingest a gift-wrap that arrived over a DIRECT P2P transport (issue #61)
+   * rather than a relay socket. The frame is a standard `["EVENT", wrap]`; the
+   * caller passes the raw wrap here and we run it through the identical ingest a
+   * relay-delivered event takes — the shared pre-decrypt dedup gate, NIP-17
+   * unwrap, and dispatch to the registered onMessage/onReceipt/onRawEvent
+   * handlers. Because the pool's dedup is keyed by the OUTER wrap id and the
+   * INNER rumor id — both identical to the relay copy — whichever copy (relay or
+   * P2P) arrives second is dropped for free. Any initialised relay entry works:
+   * they all share this pool's dedup gate, message handler and identity. No-ops
+   * (and stays silent) if the pool has no initialised relay yet. Never throws.
+   */
+  async ingestP2PEvent(rawEvent: NostrEvent): Promise<void> {
+    try {
+      if(!rawEvent || typeof rawEvent !== 'object' || !rawEvent.id) return;
+      // Pick any relay whose identity is loaded (non-empty pubkey) — it can
+      // unwrap. All entries share the pool-wide dedup + onMessage handler, so
+      // routing through one dispatches exactly once pool-wide.
+      const entry = this.relayEntries.find(e => e.instance.getPublicKey?.());
+      if(!entry) return;
+      await entry.instance.ingestExternalEvent(rawEvent);
+    } catch(err) {
+      swallowHandler('NostrRelayPool.ingestP2PEvent')(err);
+    }
+  }
+
+  /**
    * Re-wrap a previously-published rumor in a FRESH outer gift-wrap and publish
    * it to all write relays. Used by the delivery-retry layer: the rumor id is
    * preserved (receiver dedups → no double message) but the outer kind-1059

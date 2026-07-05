@@ -620,6 +620,53 @@ describe('NostrRelay', () => {
     });
   });
 
+  // Issue #61: a gift-wrap copy delivered over a direct P2P transport is fed to
+  // ingestExternalEvent, which must run the IDENTICAL path a relay-socket event
+  // takes — same dedup gate, same handler dispatch — so the P2P and relay copies
+  // dedup against each other and the P2P copy renders through one code path.
+  describe('ingestExternalEvent (direct P2P copy)', () => {
+    function signedDelete() {
+      return finalizeEvent(
+        {kind: 5, created_at: Math.floor(Date.now() / 1000), tags: [['e', 'abc']], content: ''},
+        generateSecretKey(),
+      );
+    }
+
+    test('an out-of-band event dispatches to the same handler a relay event would', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+      const raw = vi.fn();
+      relay.onRawEvent(raw);
+
+      await relay.ingestExternalEvent(signedDelete());
+
+      expect(raw).toHaveBeenCalledTimes(1);
+    });
+
+    test('a relay copy then a P2P copy of the SAME event dispatch once (shared dedup)', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+      const seen = new Set<string>();
+      relay.setEventDedup((id) => (seen.has(id) ? false : (seen.add(id), true)));
+      const raw = vi.fn();
+      relay.onRawEvent(raw);
+
+      const ev = signedDelete();
+      // Relay socket delivers it first…
+      getLastMockWs()?.simulateMessage(['EVENT', 'live-sub', ev]);
+      // …then the direct P2P transport delivers the same wrap — must be deduped.
+      await relay.ingestExternalEvent(ev);
+
+      expect(raw).toHaveBeenCalledTimes(1);
+    });
+
+    test('a malformed external event never throws', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+      await expect(relay.ingestExternalEvent({} as any)).resolves.toBeUndefined();
+    });
+  });
+
   describe('error handling', () => {
     test('handles WebSocket error gracefully', async() => {
       relay.connect();
