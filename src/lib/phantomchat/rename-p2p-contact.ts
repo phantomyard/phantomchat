@@ -43,17 +43,20 @@ export async function renameP2PContact(
   const displayName = [first, last].filter(Boolean).join(' ');
 
   // 1. Persist to IndexedDB (force-write over the npub placeholder). Prefer
-  //    the reverse mapping, but fall back to the live synthetic user/mirror:
-  //    older sessions can have a rendered P2P user before the reverse mapping
-  //    is present, and a rename that only updates memory is lost on reload.
+  //    in-memory pubkey sources first so the UI path isn't stalled on IDB;
+  //    fall back to reverse lookup only when the live user/mirror has not
+  //    cached the pubkey yet. The write itself is fire-and-forget because this
+  //    helper is awaited by the Edit Contact Save handler.
   let persisted = false;
   try {
     const {getPubkey, storeMapping} = await import('./virtual-peers-db');
     const liveUser = rootScope.managers.appUsersManager.getUser(peerId as any) as any;
     const proxyUser = MOUNT_CLASS_TO.apiManagerProxy?.mirrors?.peers?.[peerIdTweb] as any;
-    const hexPubkey = await getPubkey(peerId) || liveUser?.p2pPubkey || proxyUser?.p2pPubkey;
+    const hexPubkey = liveUser?.p2pPubkey || proxyUser?.p2pPubkey || await getPubkey(peerId);
     if(hexPubkey && displayName) {
-      await storeMapping(hexPubkey, peerId, displayName);
+      storeMapping(hexPubkey, peerId, displayName).catch((err: any) => {
+        console.warn('[renameP2PContact] storeMapping failed:', err);
+      });
       persisted = true;
     }
   } catch(err) {

@@ -54,6 +54,25 @@ describe('renameP2PContact — helper', () => {
   it('combines first + last into a trimmed display name', () => {
     expect(helperSrc).toMatch(/\[first,\s*last\]\.filter\(Boolean\)\.join\(' '\)/);
   });
+
+  it('prefers in-memory pubkey sources before an IndexedDB reverse lookup', () => {
+    const idxLive = helperSrc.search(/liveUser\?\.p2pPubkey/);
+    const idxProxy = helperSrc.search(/proxyUser\?\.p2pPubkey/);
+    const idxGet = helperSrc.search(/await getPubkey\(peerId\)/);
+    // All three expressions must exist …
+    expect(idxLive).toBeGreaterThan(-1);
+    expect(idxProxy).toBeGreaterThan(-1);
+    expect(idxGet).toBeGreaterThan(-1);
+    // … and the in-memory checks must appear before the IndexedDB fallback.
+    expect(idxLive).toBeLessThan(idxGet);
+    expect(idxProxy).toBeLessThan(idxGet);
+  });
+
+  it('fires the persistence write without blocking the UI on IndexedDB', () => {
+    // storeMapping is fire-and-forget so the Edit Contact Save handler
+    // re-enables promptly. Errors are handled via .catch().
+    expect(helperSrc).toMatch(/storeMapping\(hexPubkey,\s*peerId,\s*displayName\)[^;]*\.catch\(/);
+  });
 });
 
 describe('Edit Contact routes P2P peers through renameP2PContact', () => {
