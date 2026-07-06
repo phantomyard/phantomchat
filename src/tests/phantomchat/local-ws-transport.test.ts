@@ -77,4 +77,45 @@ describe('LocalWsTransport — same-machine ws://localhost tier', () => {
     expect(t.send('hello')).toBe(true);
     expect(sockets[0].send).toHaveBeenCalledWith('hello');
   });
+
+  describe('setPort — discovered ephemeral port', () => {
+    it('dials the newly-set port on the next probe', async() => {
+      const t = new LocalWsTransport();
+      t.setPort(52345);
+      expect(t.getPort()).toBe(52345);
+      t.ensureConnected();
+      expect(sockets[0].url).toBe('ws://localhost:52345');
+    });
+
+    it('is a no-op for an unchanged, zero, or negative port', () => {
+      const t = new LocalWsTransport(50000);
+      t.setPort(50000);
+      t.setPort(0);
+      t.setPort(-5);
+      expect(t.getPort()).toBe(50000);
+    });
+
+    it('drops an existing connection so the next send re-probes the new port', async() => {
+      const t = new LocalWsTransport(50000);
+      const p = t.ensureConnected();
+      fireOpen(sockets[0]);
+      await p;
+      expect(t.isConnected()).toBe(true);
+
+      t.setPort(50001);
+      expect(t.isConnected()).toBe(false); // old socket dropped
+      t.ensureConnected();
+      expect(sockets[1].url).toBe('ws://localhost:50001');
+    });
+
+    it('discards an in-flight probe whose port changed mid-connect (stale gen)', async() => {
+      const t = new LocalWsTransport(50000);
+      const p = t.ensureConnected(); // probing :50000
+      t.setPort(50001); // port changes before the socket opens
+      fireOpen(sockets[0]); // the stale :50000 socket finally opens
+      expect(await p).toBe(false); // discarded, not cached
+      expect(sockets[0].close).toHaveBeenCalled();
+      expect(t.isConnected()).toBe(false);
+    });
+  });
 });

@@ -507,6 +507,25 @@ export class ChatAPI {
   }
 
   /**
+   * This user's own public key (hex). Used by local-node discovery to query and
+   * self-decrypt its OWN capability advert (phantomchat#61 / phantombot#258).
+   */
+  getOwnId(): string {
+    return this.ownId;
+  }
+
+  /**
+   * This user's own Nostr secret key (32 bytes), or null before an identity is
+   * loaded. Used only to self-decrypt the reachability blob in our OWN capability
+   * advert (the local node's ephemeral loopback port), which the node encrypts to
+   * our own pubkey so it never leaks over a relay. Same key already reachable via
+   * the relay pool; this is a convenience accessor for that self-decryption path.
+   */
+  getSecretKey(): Uint8Array | null {
+    return this.relayPool.getPrivateKey?.() ?? null;
+  }
+
+  /**
    * Disconnect from the current peer
    */
   disconnect(): void {
