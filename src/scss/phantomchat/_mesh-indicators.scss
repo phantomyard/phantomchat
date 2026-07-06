@@ -47,3 +47,57 @@
   font-size: 11px;
   font-weight: 500;
 }
+
+/*
+ * P2P transport badge (#52) — a small green square "chip" with the letters
+ * "P2P" inside, styled like a DTS / Dolby logo mark. Rendered next to the chat
+ * top-bar status and on each contact row. ALWAYS VISIBLE with two states so the
+ * user can always tell "on P2P" from "relay-only" (not "P2P" from "missing"):
+ *   - default (relay): muted grey chip;
+ *   - `.is-p2p`: solid green chip (a direct transport is available/was used).
+ * The JS toggles `.is-p2p`; the chip keeps its footprint either way so the
+ * status text never shifts when a peer flips between relay and P2P.
+ */
+.p2p-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 30px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 3px;
+  // Relay-only (default) — muted grey so it reads as "not on P2P".
+  border: 1px solid var(--secondary-text-color, #707579);
+  background: var(--secondary-text-color, #707579);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  user-select: none;
+  opacity: 0.6;
+  transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+
+  // Connected over a direct P2P transport — light it up green.
+  &.is-p2p {
+    border-color: var(--green);
+    background: var(--green);
+    opacity: 1;
+  }
+
+  // In the chat top bar the badge sits before the Online/last-seen text.
+  &.p2p-badge--topbar {
+    margin-inline-end: 6px;
+  }
+
+  // On a dialog/contact row the badge sits after the peer name.
+  &.p2p-badge--row {
+    margin-inline-start: 6px;
+    // Nudge to optically align with the title baseline.
+    position: relative;
+    top: -1px;
+  }
+}

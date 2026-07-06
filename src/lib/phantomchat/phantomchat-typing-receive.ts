@@ -94,6 +94,8 @@ type SignatureVerifier = (event: NostrEventLite) => boolean;
 
 class PhantomChatTypingReceive {
   private ownPubkey = '';
+  /** Last logged tick per peer+group, so we log start/stop edges only (not every re-assert). */
+  private lastTickLog = new Map<string, string>();
   private mapper = new PhantomChatPeerMapper();
   private resolver: PeerResolver = (pubkey) => this.mapper.mapPubkey(pubkey);
   private groupResolver: GroupResolver = (groupId) => groupIdToPeerId(groupId);
@@ -174,7 +176,14 @@ class PhantomChatTypingReceive {
     // routing below mishandled it (receiver bug).
     {
       const gTag = event.tags.find((t) => t[0] === 'group' && typeof t[1] === 'string' && t[1].length > 0);
-      console.log(`${LOG_PREFIX} tick from ${String(event.pubkey).slice(0, 8)} content="${event.content || 'start'}" groupTag=${gTag ? gTag[1] : 'NONE'}`);
+      // Persistent typing re-asserts the same content many times/sec; only log the
+      // start<->stop EDGE, not every re-assert, so the console stays auditable.
+      const peerKey = `${String(event.pubkey).slice(0, 8)}:${gTag ? gTag[1] : 'NONE'}`;
+      const content = event.content || 'start';
+      if(this.lastTickLog.get(peerKey) !== content) {
+        this.lastTickLog.set(peerKey, content);
+        console.log(`${LOG_PREFIX} ${content} from ${String(event.pubkey).slice(0, 8)} groupTag=${gTag ? gTag[1] : 'NONE'}`);
+      }
     }
 
     // Defensive #p check — subscription already filters, but a permissive
