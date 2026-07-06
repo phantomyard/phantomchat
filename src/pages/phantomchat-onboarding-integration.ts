@@ -406,7 +406,15 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
         rootScope.dispatchEvent('dialogs_multiupdate', new Map());
       }, 1000);
 
-      // Presence (online / last-seen) was removed — no ping/pong engine to init.
+      // --- Initialize presence (#52): honest online / last-seen via the
+      // gift-wrapped ping/pong handshake. ---
+      try {
+        const {initPresence} = await import('@lib/phantomchat/phantomchat-presence');
+        await initPresence(identity.publicKey, identity.privateKey);
+        console.log('[PhantomChatOnboardingIntegration] presence initialized');
+      } catch(err) {
+        console.warn('[PhantomChatOnboardingIntegration] presence init failed:', err);
+      }
 
       // --- Publish kind 0 metadata (first boot only) ---
       // Historically this republished on every boot with only display_name,

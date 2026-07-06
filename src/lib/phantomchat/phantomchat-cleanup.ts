@@ -144,6 +144,13 @@ async function clearPhantomChatData(opts: {keepSeed: boolean}): Promise<string[]
     const {disposeNostrUnwrapClient} = await import('./nostr-unwrap-client');
     disposeNostrUnwrapClient();
   } catch(e) { logSwallow('Cleanup.disposeUnwrapWorker', e); }
+
+  // Tear down presence (#52): stop the ping / stale-check / sweep timers and
+  // clear tracked liveness so a logout doesn't leak intervals or state.
+  try {
+    const {destroyPresence} = await import('./phantomchat-presence');
+    destroyPresence();
+  } catch(e) { logSwallow('Cleanup.destroyPresence', e); }
   // NB: the local media store ('phantomchat-local-media', own voice notes /
   // images held for instant playback) is wiped via PHANTOMCHAT_DB_NAMES below
   // — deleteDB handles it without opening a connection (which could hang on a

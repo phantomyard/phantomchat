@@ -11,6 +11,7 @@ import type {State} from '@config/state';
 import type {AnyDialog} from '@lib/storages/dialogs';
 import type {CustomEmojiRendererElement} from '@customEmoji/renderer';
 import PopupElement from '@components/popups';
+import {createP2PBadge} from '@components/phantomchat/p2pBadge';
 import DialogsContextMenu from '@components/dialogsContextMenu';
 import {horizontalMenu, horizontalMenuObjArgs} from '@components/horizontalMenu';
 import ripple from '@components/ripple';
@@ -316,6 +317,12 @@ export class DialogElement extends Row {
 
     loadPromises?.push(peerTitlePromise);
     titleSpanContainer.append(peerTitle.element);
+
+    // P2P badge (#52): a green "P2P" chip after the contact name, shown only when
+    // this peer is reachable over a direct transport. Hidden (display:none) for
+    // relay-only / non-1:1 peers, so it costs nothing on those rows. Self-manages
+    // its own state and reaps itself when the row is torn down.
+    titleSpanContainer.append(createP2PBadge(peerId, 'p2p-badge--row'));
 
     // const titleIconsPromise = generateTitleIcons(peerId).then((elements) => {
     //   titleSpanContainer.append(...elements);

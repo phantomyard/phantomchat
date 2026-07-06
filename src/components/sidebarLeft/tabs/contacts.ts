@@ -207,6 +207,10 @@ export default class AppContactsTab extends SliderSuperTab {
       const {reconcilePeer} = await import('@stores/peers');
       const rootScope = (await import('@lib/rootScope')).default;
 
+      // Presence (#52): register each contact so an inbound ping/pong resolves
+      // to the right peer and drives a REAL online / "last seen at HH:MM" status.
+      const {trackPeerPresence} = await import('@lib/phantomchat/phantomchat-presence');
+
       const peerIds: PeerId[] = [];
       for(const m of filtered) {
         const displayName = m.displayName || 'npub...' + m.pubkey.slice(0, 16);
@@ -220,6 +224,8 @@ export default class AppContactsTab extends SliderSuperTab {
         if(proxy?.mirrors?.peers) proxy.mirrors.peers[m.peerId.toPeerId(false)] = user;
         reconcilePeer(m.peerId.toPeerId(false), user);
         peerIds.push(m.peerId.toPeerId(false));
+        // Wire this contact into presence tracking (idempotent).
+        try { trackPeerPresence(m.pubkey, m.peerId); } catch(err) { /* presence is optional */ }
       }
 
       if(!middleware()) return;
