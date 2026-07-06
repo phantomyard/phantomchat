@@ -3,9 +3,8 @@
  *
  * A small green "P2P" chip (DTS/Dolby-logo style) that marks a contact whose
  * conversation can go over a DIRECT transport (local-ws / WebRTC / DHT) instead
- * of falling through to the Nostr relay. Rendered in two places:
- *   - the chat top bar, next to the Online / last-seen status; and
- *   - each contact/dialog row in the chat list.
+ * of falling through to the Nostr relay. Rendered on each contact/dialog row
+ * in the chat list.
  *
  * DATA SOURCE. The verdict comes from `TransportStatus.stateFor(pubkey)`, which
  * folds the two P2P signals: a peer that advertised capability
@@ -134,32 +133,4 @@ export function createP2PBadge(peerId: number | string, extraClass?: string): HT
   });
 
   return el;
-}
-
-/**
- * Re-point an existing badge element at a different peer. Used by the chat top
- * bar, which reuses one badge element across peer switches. Resets to the hidden
- * `relay` state immediately (so a stale badge from the previous peer never
- * lingers) and re-resolves the new peer's pubkey.
- */
-export function retargetP2PBadge(el: HTMLElement, peerId: number | string): void {
-  let badge: MountedBadge | undefined;
-  for(const b of mounted) {
-    if(b.el === el) { badge = b; break; }
-  }
-  if(!badge) {
-    // Element was reaped (detached) — nothing to retarget.
-    return;
-  }
-
-  badge.label = String(peerId);
-  badge.pubkey = null;
-  badge.state = 'relay';
-  applyState(el, 'relay');
-
-  void resolvePubkey(peerId).then((pk) => {
-    if(!mounted.has(badge!)) return;
-    badge!.pubkey = pk;
-    evaluate(badge!);
-  });
 }

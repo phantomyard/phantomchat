@@ -34,7 +34,6 @@ import AppEditContactTab from '@components/sidebarRight/tabs/editContact';
 import IS_GROUP_CALL_SUPPORTED from '@environment/groupCallSupport';
 import IS_CALL_SUPPORTED from '@environment/callSupport';
 import {CallType} from '@lib/calls/types';
-import {createP2PBadge, retargetP2PBadge} from '@components/phantomchat/p2pBadge';
 import PopupMute from '@components/popups/mute';
 import {AppManagers} from '@lib/managers';
 import hasRights from '@appManagers/utils/chats/hasRights';
@@ -102,7 +101,6 @@ export default class ChatTopbar {
   private avatarMiddlewareHelper: MiddlewareHelper;
   private title: HTMLDivElement;
   private subtitle: HTMLDivElement;
-  private p2pBadge: HTMLElement;
   private chatUtils: HTMLDivElement;
   private btnJoin: HTMLButtonElement;
   private btnPinned: HTMLButtonElement;
@@ -186,13 +184,7 @@ export default class ChatTopbar {
     bottom.classList.add('bottom');
 
     if(this.subtitle) {
-      // P2P badge (#52): a green "P2P" chip shown just before the Online /
-      // last-seen text when this peer is reachable over a direct transport. It
-      // lives as a SIBLING of the subtitle (not inside it) because setPeerStatus
-      // replaceContent()s the subtitle on every status refresh, which would wipe
-      // a child badge. Rendered order: [P2P] + Online/last-seen.
-      this.p2pBadge = createP2PBadge(this.peerId, 'p2p-badge--topbar');
-      bottom.append(this.p2pBadge, this.subtitle);
+      bottom.append(this.subtitle);
     }
 
     content.append(top, bottom);
@@ -1280,12 +1272,6 @@ export default class ChatTopbar {
 
     this.status?.destroy();
     const status = this.status = this.createStatus();
-
-    // Re-point the P2P badge (#52) at the newly-opened peer. Non-1:1 peers
-    // resolve to no pubkey and the badge simply stays hidden.
-    if(this.p2pBadge) {
-      retargetP2PBadge(this.p2pBadge, peerId);
-    }
 
     const promises = [
       this.managers.appPeersManager.isBroadcast(peerId),

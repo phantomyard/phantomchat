@@ -85,11 +85,6 @@
     opacity: 1;
   }
 
-  // In the chat top bar the badge sits before the Online/last-seen text.
-  &.p2p-badge--topbar {
-    margin-inline-end: 6px;
-  }
-
   // On a dialog/contact row the badge sits after the peer name.
   &.p2p-badge--row {
     margin-inline-start: 6px;
