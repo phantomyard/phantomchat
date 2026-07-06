@@ -7,9 +7,10 @@
  * in the chat list.
  *
  * DATA SOURCE. The verdict comes from `TransportStatus.stateFor(pubkey)`, which
- * folds the two P2P signals: a peer that advertised capability
- * (window.__phantomchatCapability) OR a peer our last real delivery reached over
- * a direct tier. See transport-status.ts.
+ * is 'p2p' ONLY when our last real delivery to that peer actually landed on a
+ * direct tier (local-ws / WebRTC / DHT). Advertised capability alone does NOT
+ * light the badge — green means an ESTABLISHED direct connection, not merely a
+ * peer that runs a node. See transport-status.ts.
  *
  * REACTIVITY WITHOUT PLUMBING. Capability is filled asynchronously by the
  * ingestor (no change event) and delivery tiers land on sends. Rather than

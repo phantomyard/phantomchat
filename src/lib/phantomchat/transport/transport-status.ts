@@ -8,13 +8,13 @@
  * a peer is reachable over a direct transport (local-ws / WebRTC / DHT) versus
  * falling through to the Nostr relay.
  *
- * TWO SIGNALS, ONE VERDICT. A peer counts as "P2P" for the badge when EITHER:
- *   - it has ADVERTISED capability (window.__phantomchatCapability.has) — i.e. it
- *     runs a phantombot P2P node we ingested an advert for; or
- *   - our last real delivery to it actually landed on a direct tier.
- * The advert is the steady-state signal (present before we've sent anything);
- * the last-delivery tier is the confirmation. Either is enough to say "this
- * conversation can go direct", which is what the badge communicates.
+ * ONE SIGNAL: ESTABLISHED, NOT POSSIBLE. A peer counts as "P2P" for the badge
+ * ONLY when our last real delivery to it actually landed on a direct tier
+ * (local-ws / WebRTC / DHT). Advertised capability alone is NOT enough — a peer
+ * that runs a phantombot node but that every send still falls back to relay for
+ * is NOT shown as P2P. The green chip therefore means "this conversation IS
+ * going direct right now", never "could in theory". A peer we've never actually
+ * reached directly shows no badge at all.
  *
  * AUDIT LOGGING. Every recorded tier and every state flip is logged under the
  * `[p2p]` tag so a session can be audited/debugged after the fact — deliberately
@@ -76,19 +76,16 @@ export class TransportStatus {
   }
 
   /**
-   * The badge verdict for a peer: 'p2p' when it advertised capability OR our
-   * last delivery went direct; 'relay' otherwise. Reads the capability registry
-   * live so a freshly-ingested advert flips the badge without us plumbing an
-   * event through the ingestor.
+   * The badge verdict for a peer: 'p2p' ONLY when our last real delivery to it
+   * actually landed on a direct tier (local-ws / WebRTC / DHT); 'relay'
+   * otherwise. Advertised capability is deliberately NOT enough — a peer running
+   * a P2P node but that we've never actually reached directly (relay fallback)
+   * is NOT "P2P" for the badge. Green means the connection is ESTABLISHED, not
+   * merely possible. A peer we've never sent to reads 'relay' (no badge).
    */
   stateFor(pubkey: string): P2PState {
     if(!pubkey) return 'relay';
-    if(this.deliveredDirect(pubkey)) return 'p2p';
-    try {
-      const cap = (typeof window !== 'undefined') ? (window as any).__phantomchatCapability : null;
-      if(cap && typeof cap.has === 'function' && cap.has(pubkey)) return 'p2p';
-    } catch{ /* registry not ready — treat as relay */ }
-    return 'relay';
+    return this.deliveredDirect(pubkey) ? 'p2p' : 'relay';
   }
 
   /** Subscribe to state flips (delivery tier crossing the direct/relay line).

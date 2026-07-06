@@ -1,7 +1,8 @@
 /*
  * Unit tests for the P2P badge data source (#52): TransportStatus.stateFor.
- * Guards both directions of the badge verdict — a peer that advertised
- * capability OR whose last delivery went direct is 'p2p'; everyone else 'relay'.
+ * Guards the badge verdict — ONLY a peer whose last delivery actually landed on
+ * a direct tier is 'p2p'. Advertised capability alone is NOT enough (green means
+ * ESTABLISHED, not merely possible); everyone else is 'relay'.
  */
 
 import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
@@ -43,10 +44,15 @@ describe('TransportStatus (P2P badge verdict)', () => {
     }
   });
 
-  it('is p2p when the peer advertised capability, even before any delivery', () => {
+  it('is NOT p2p on advertised capability alone — established delivery required', () => {
+    // A peer that advertised a P2P node but we have never actually reached over a
+    // direct tier must stay relay (no badge). Capability != established.
     (globalThis as any).__phantomchatCapability = {has: (pk: string) => pk === PEER};
+    expect(ts.stateFor(PEER)).toBe('relay');
+
+    // ...and it only flips to p2p once a real delivery lands on a direct tier.
+    ts.record(PEER, 'webrtc');
     expect(ts.stateFor(PEER)).toBe('p2p');
-    expect(ts.stateFor('b'.repeat(64))).toBe('relay');
   });
 
   it('notifies subscribers only when a delivery crosses the direct/relay line', () => {

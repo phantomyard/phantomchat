@@ -32,7 +32,7 @@
   border-radius: 50%;
   flex-shrink: 0;
 
-  &--online { background: var(--green); }
+  &--online { background: var(--green-color); }
   &--offline { background: var(--secondary-text-color); opacity: 0.3; }
 }
 
@@ -42,8 +42,8 @@
   gap: 4px;
   padding: 2px 8px;
   border-radius: 10px;
-  background: rgba(var(--green-rgb), 0.15);
-  color: var(--green);
+  background: rgba(var(--green-color-rgb), 0.15);
+  color: var(--green-color);
   font-size: 11px;
   font-weight: 500;
 }
@@ -80,8 +80,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--green);
-    background: var(--green);
+    border: 1px solid var(--green-color);
+    background: var(--green-color);
     opacity: 1;
   }
 
