@@ -119,10 +119,15 @@ export class TransportSelector {
 
       const frame = JSON.stringify(['EVENT', wrap]);
 
-      // Tier 1: same-machine ws://localhost.
-      if(caps.localWs && this.deps.local) {
-        const up = await this.withTimeout(this.deps.local.ensureConnected(), this.localTimeoutMs, false);
-        if(up && this.deps.local.send(frame)) {
+      // Tier 1: same-machine ws://localhost to the RECIPIENT's own node, on the
+      // port it advertised (each node binds its own OS-ephemeral port). Skip when
+      // no usable port was advertised — we can't dial an unknown port.
+      const localPort = caps.localWsPort ?? 0;
+      if(caps.localWs && localPort > 0 && this.deps.local) {
+        const up = await this.withTimeout(
+          this.deps.local.ensureConnected(localPort), this.localTimeoutMs, false
+        );
+        if(up && this.deps.local.send(localPort, frame)) {
           return {tier: 'local-ws', delivered: true};
         }
       }

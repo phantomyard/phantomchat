@@ -1,104 +1,97 @@
 /*
  * PhantomChat.chat — same-machine transport over ws://localhost (issue #61)
  *
- * Tier 1 of the transport ladder. When the PWA and a phantombot node run on the
- * SAME machine, the browser can open a plain WebSocket to the node on loopback
- * with zero signaling and zero Nostr round-trip — the connection is a single WS
- * upgrade and steady-state latency is ~1ms.
+ * Tier 1 of the transport ladder. When the PWA and a RECIPIENT's phantombot node
+ * run on the SAME machine, the browser opens a plain WebSocket to that node on
+ * loopback with zero signaling and zero Nostr round-trip — a single WS upgrade,
+ * steady-state latency ~1ms — and hands it the recipient-addressed gift-wrap.
+ *
+ * PER-PEER PORTS. Each phantombot node binds its OWN OS-ephemeral loopback port
+ * and advertises it (plaintext) in its capability advert; the ingestor stores it
+ * as `PeerCapabilities.localWsPort`. So there is no single "the local node" — a
+ * box may run several nodes (max, lena, …) each on a different port. This
+ * transport therefore keys its cached sockets BY PORT: `ensureConnected(port)`
+ * dials/reuses the socket for that recipient's node, and the selector passes the
+ * recipient's advertised port straight through.
  *
  * `localhost` is a secure context, so an HTTPS-served PWA is allowed to open
  * `ws://localhost` (this is NOT blocked as mixed content the way `ws://<LAN-IP>`
  * would be). If nothing is listening the browser fails with an immediate
  * connection-refused — there is no TCP timeout to wait on — so the fast-fail
- * cost of probing this tier is effectively zero. The explicit timeout below only
+ * cost of probing a port is effectively zero. The explicit timeout below only
  * fires in the pathological "socket accepted but never opens" case.
  */
 
 import {logSwallow} from '@lib/phantomchat/log-swallow';
 
 /**
- * Default loopback port the local phantombot node exposes for the ws bridge.
- * MUST stay in sync with the port chosen in phantomyard/phantombot#258.
- */
-export const DEFAULT_LOCAL_NODE_PORT = 47100;
-
-/**
- * Fast-fail budget for the localhost probe. Kept aggressive on purpose: a
+ * Fast-fail budget for a localhost probe. Kept aggressive on purpose: a
  * same-machine node connects in ~1ms and a missing node refuses instantly, so
  * this only bounds the rare "listening but stuck" case. Short enough that a peer
- * which advertised P2P but has no local node drops to the WebRTC tier with no
- * perceptible stall.
+ * which advertised P2P but has no reachable local node drops to the WebRTC tier
+ * with no perceptible stall.
  */
 export const LOCAL_PROBE_TIMEOUT_MS = 80;
 
+/** A cached socket + its in-flight probe for one loopback port. */
+interface PortEntry {
+  socket: WebSocket | null;
+  connecting: Promise<WebSocket | null> | null;
+}
+
 /**
- * A cached WebSocket connection to a same-machine phantombot node. Lazily
- * connects on first use, reuses an open socket, and drops it on close so the
- * next attempt re-probes cleanly.
+ * A pool of cached WebSocket connections to same-machine phantombot nodes, keyed
+ * by loopback port. Each recipient's node lives on its own OS-ephemeral port; the
+ * pool lazily connects per port on first use, reuses an open socket, and drops it
+ * on close so the next attempt re-probes cleanly.
  */
 export class LocalWsTransport {
-  private port: number;
   private timeoutMs: number;
-  private socket: WebSocket | null = null;
-  private connecting: Promise<WebSocket | null> | null = null;
-  /** Bumped on every port change so an in-flight probe for a stale port is
-   * discarded rather than cached (see probe's open handler). */
-  private portGen = 0;
+  private ports = new Map<number, PortEntry>();
 
-  constructor(port: number = DEFAULT_LOCAL_NODE_PORT, timeoutMs: number = LOCAL_PROBE_TIMEOUT_MS) {
-    this.port = port;
+  constructor(timeoutMs: number = LOCAL_PROBE_TIMEOUT_MS) {
     this.timeoutMs = timeoutMs;
   }
 
-  /** The loopback port this transport currently dials. */
-  getPort(): number {
-    return this.port;
+  private entry(port: number): PortEntry {
+    let e = this.ports.get(port);
+    if(!e) {
+      e = {socket: null, connecting: null};
+      this.ports.set(port, e);
+    }
+    return e;
+  }
+
+  /** Is there an open loopback socket to `port` right now? */
+  isConnected(port: number): boolean {
+    const e = this.ports.get(port);
+    return !!e && e.socket !== null && e.socket.readyState === WebSocket.OPEN;
   }
 
   /**
-   * Point the transport at a newly-discovered loopback port (the local node's
-   * OS-ephemeral port, learned from our own self-encrypted capability advert —
-   * phantombot#258). No-op if unchanged. On a change, drops any cached/in-flight
-   * socket so the next probe dials the new port cleanly.
+   * Ensure a loopback socket to `port` is open, probing with the fast-fail
+   * budget. Resolves true if a socket is ready, false if nothing is listening
+   * (or the probe timed out / the port is invalid). Never throws.
    */
-  setPort(port: number): void {
-    if(!Number.isInteger(port) || port <= 0 || port === this.port) return;
-    this.port = port;
-    this.portGen++;
-    this.close();
-    this.connecting = null;
-  }
+  async ensureConnected(port: number): Promise<boolean> {
+    if(!Number.isInteger(port) || port <= 0) return false;
+    if(this.isConnected(port)) return true;
+    const e = this.entry(port);
+    if(e.connecting) return (await e.connecting) !== null;
 
-  /** Is there an open loopback socket right now? */
-  isConnected(): boolean {
-    return this.socket !== null && this.socket.readyState === WebSocket.OPEN;
-  }
-
-  /**
-   * Ensure a loopback socket is open, probing with the fast-fail budget.
-   * Resolves true if a socket is ready, false if nothing is listening (or the
-   * probe timed out). Never throws.
-   */
-  async ensureConnected(): Promise<boolean> {
-    if(this.isConnected()) return true;
-    if(this.connecting) return (await this.connecting) !== null;
-
-    this.connecting = this.probe();
-    const sock = await this.connecting;
-    this.connecting = null;
+    e.connecting = this.probe(port);
+    const sock = await e.connecting;
+    e.connecting = null;
     return sock !== null;
   }
 
-  private probe(): Promise<WebSocket | null> {
+  private probe(port: number): Promise<WebSocket | null> {
     return new Promise<WebSocket | null>((resolve) => {
       let settled = false;
       let ws: WebSocket;
-      // Snapshot the port generation: if setPort() runs mid-probe, this socket
-      // is for a stale port and must be discarded, not cached.
-      const gen = this.portGen;
 
       try {
-        ws = new WebSocket(`ws://localhost:${this.port}`);
+        ws = new WebSocket(`ws://localhost:${port}`);
       } catch(e) {
         logSwallow('LocalWsTransport.construct', e);
         resolve(null);
@@ -118,18 +111,10 @@ export class LocalWsTransport {
         if(settled) return;
         settled = true;
         clearTimeout(timer);
-        // The port changed while this probe was in flight — this socket is for a
-        // stale port. Drop it so the next attempt re-probes the current port.
-        if(gen !== this.portGen) {
-          try {
-            ws.close();
-          } catch(e) { logSwallow('LocalWsTransport.staleProbeClose', e); }
-          resolve(null);
-          return;
-        }
-        this.socket = ws;
+        const e = this.entry(port);
+        e.socket = ws;
         ws.addEventListener('close', () => {
-          if(this.socket === ws) this.socket = null;
+          if(e.socket === ws) e.socket = null;
         });
         resolve(ws);
       });
@@ -144,26 +129,37 @@ export class LocalWsTransport {
   }
 
   /**
-   * Send a payload over the open loopback socket. Returns false if not
+   * Send a payload over the open loopback socket to `port`. Returns false if not
    * connected or the send fails; the caller then drops to the next tier.
    */
-  send(payload: string): boolean {
-    if(!this.isConnected() || !this.socket) return false;
+  send(port: number, payload: string): boolean {
+    const e = this.ports.get(port);
+    if(!e || !this.isConnected(port) || !e.socket) return false;
     try {
-      this.socket.send(payload);
+      e.socket.send(payload);
       return true;
-    } catch(e) {
-      logSwallow('LocalWsTransport.send', e);
+    } catch(err) {
+      logSwallow('LocalWsTransport.send', err);
       return false;
     }
   }
 
-  close(): void {
-    if(this.socket) {
-      try {
-        this.socket.close();
-      } catch(e) { logSwallow('LocalWsTransport.close', e); }
-      this.socket = null;
+  /** Close one port's socket, or all of them when `port` is omitted. */
+  close(port?: number): void {
+    const closeEntry = (e: PortEntry) => {
+      if(e.socket) {
+        try {
+          e.socket.close();
+        } catch(err) { logSwallow('LocalWsTransport.close', err); }
+        e.socket = null;
+      }
+    };
+    if(port === undefined) {
+      for(const e of this.ports.values()) closeEntry(e);
+      this.ports.clear();
+      return;
     }
+    const e = this.ports.get(port);
+    if(e) closeEntry(e);
   }
 }

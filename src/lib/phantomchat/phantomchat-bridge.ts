@@ -18,7 +18,6 @@ import {isSignalKind, parseSignalContent} from '@lib/phantomchat/mesh-signaling'
 import {getRtcConfigDirect} from '@lib/phantomchat/webrtc-config';
 import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
 import {CapabilityIngestor} from '@lib/phantomchat/transport/capability-ingest';
-import {LocalNodeDiscovery} from '@lib/phantomchat/transport/local-node-discovery';
 import {LocalWsTransport} from '@lib/phantomchat/transport/local-ws-transport';
 import {TransportSelector} from '@lib/phantomchat/transport/transport-selector';
 import rootScope from '@lib/rootScope';
@@ -281,30 +280,14 @@ export class PhantomChatBridge {
       // Tiered transport selector (#61): localhost ws → LAN/remote WebRTC → DHT
       // stub → relay floor. Attached to ChatAPI as the fire-and-forget P2P
       // fast-path. Gated by `capability`, so it is a no-op until peers advertise.
+      //
+      // The localhost tier dials the RECIPIENT's node on the loopback port that
+      // node advertised (each node binds its own OS-ephemeral port, published
+      // plaintext in its capability advert and ingested into `capability` as
+      // PeerCapabilities.localWsPort). No self-advert decryption, no hardcoded
+      // 47100 — the selector passes each recipient's advertised port straight
+      // through to the per-port socket pool.
       const localTransport = new LocalWsTransport();
-
-      // Discover OUR OWN local node's loopback port (phantombot#258). The node
-      // now binds an OS-ephemeral port and publishes it self-encrypted in its
-      // capability advert; we read our own advert, decrypt the port, and point
-      // the loopback transport at it — no more hardcoded 47100. Falls back to the
-      // default port until an advert is discovered; refreshed on backfill + timer
-      // to follow a node restart onto a new ephemeral port.
-      const localNodeDiscovery = new LocalNodeDiscovery({
-        getChatAPI: () => (window as any).__phantomchatChatAPI,
-        getOwnKeys: () => {
-          const api = (window as any).__phantomchatChatAPI;
-          const secretKey = api?.getSecretKey?.();
-          const pubkey = api?.getOwnId?.();
-          if(!secretKey || !pubkey) return null;
-          return {pubkey, secretKey};
-        },
-        setPort: (port) => localTransport.setPort(port)
-      });
-      (window as any).__phantomchatLocalNodeDiscovery = localNodeDiscovery;
-      rootScope.addEventListener('phantomchat_backfill_complete', () => {
-        localNodeDiscovery.refresh().catch(swallowHandler('PhantomChatBridge.localNodeDiscovery'));
-      });
-      localNodeDiscovery.start();
 
       const transportSelector = new TransportSelector({
         capability,

@@ -12,14 +12,13 @@
  * A node publishes a NIP-78 addressable app-data event under the persona pubkey:
  *   - kind    30078
  *   - `d` tag "phantomchat-p2p"
- *   - content JSON {localWs, webrtc, dht, enc}
- * The capability BOOLEANS ({localWs, webrtc, dht}) are PUBLIC — we must read them
- * before any encrypted channel exists, and they're not a secret. The concrete
- * reachability (the bound loopback PORT + LAN IPs) is NOT here; it lives in the
- * self-encrypted `enc` field, readable only by the node's OWN PWA (see
- * `local-node-discovery.ts`). This ingestor is contact-facing and needs only the
- * booleans. The event is REPLACEABLE (re-published on each node start supersedes
- * the previous) and stamped with `created_at` at publish time.
+ *   - content JSON {localWs, localWsPort, webrtc, dht}
+ * All fields are PLAINTEXT. The booleans gate the ladder; `localWsPort` is the
+ * node's OS-ephemeral loopback port — a `127.0.0.1`-only port reachable solely
+ * from that machine, so it is not a secret. A same-machine PWA reads the port
+ * here and dials `ws://localhost:<port>` straight to that recipient's node (the
+ * selector's tier 1). The event is REPLACEABLE (re-published on each node start
+ * supersedes the previous) and stamped with `created_at` at publish time.
  *
  * EXPIRY. phantombot publishes the advert ONCE per node start and does not
  * re-advertise on a timer, so a node that ran and then died leaves its advert on
