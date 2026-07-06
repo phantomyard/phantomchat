@@ -209,6 +209,35 @@ describe('CapabilityIngestor.refreshAll', () => {
     const authorsQueried = api.queryLatestEvent.mock.calls.map((c) => c[0].authors[0]);
     expect(authorsQueried.filter((a) => a === PEER).length).toBe(1);
   });
+
+  it('accepts an ASYNC contact source (the real bridge reads getAllMappings)', async() => {
+    const reg = new PeerCapabilityRegistry();
+    const api = makeChatAPI({[PEER]: makeAdvert({webrtc: true})});
+    // Mirror the bridge: contacts come from an async store (IndexedDB mapping).
+    const ing = new CapabilityIngestor({
+      registry: reg,
+      getChatAPI: () => api,
+      getContacts: async() => [PEER],
+      now: () => NOW
+    });
+
+    await ing.refreshAll();
+    expect(reg.has(PEER)).toBe(true);
+  });
+
+  it('a throwing contact source is swallowed — the poll no-ops, never rejects', async() => {
+    const reg = new PeerCapabilityRegistry();
+    const api = makeChatAPI({[PEER]: makeAdvert({webrtc: true})});
+    const ing = new CapabilityIngestor({
+      registry: reg,
+      getChatAPI: () => api,
+      getContacts: async() => { throw new Error('mapping store not ready'); },
+      now: () => NOW
+    });
+
+    await expect(ing.refreshAll()).resolves.toBeUndefined();
+    expect(reg.has(PEER)).toBe(false);
+  });
 });
 
 // The point of the whole PR: prove the gate opens AND stays shut end-to-end,

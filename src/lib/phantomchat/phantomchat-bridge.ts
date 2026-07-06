@@ -194,7 +194,24 @@ export class PhantomChatBridge {
       const capabilityIngestor = new CapabilityIngestor({
         registry: capability,
         getChatAPI: () => (window as any).__phantomchatChatAPI,
-        getContacts: () => (window as any).__phantomchatContacts || []
+        // Source contacts from the AUTHORITATIVE mapping store (getAllMappings) —
+        // the same one presence uses — not window.__phantomchatContacts, which is
+        // populated only from the Contacts UI render and is empty on load. That
+        // mismatch meant the ingestor had nobody to poll, so the registry never
+        // filled and every send fell through to relay. Read live on each poll so
+        // contacts added mid-session are picked up automatically.
+        getContacts: async() => {
+          try {
+            const {getAllMappings} = await import('@lib/phantomchat/virtual-peers-db');
+            const all = await getAllMappings();
+            return all
+            .map((m) => m.pubkey)
+            .filter((pk): pk is string => typeof pk === 'string' && pk.length === 64);
+          } catch(err) {
+            swallowHandler('PhantomChatBridge.capabilityContacts')(err);
+            return [];
+          }
+        }
       });
       (window as any).__phantomchatCapabilityIngestor = capabilityIngestor;
       // Refresh once the contact list is known, then on a timer to pick up node

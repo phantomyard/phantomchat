@@ -149,8 +149,10 @@ export interface CapabilityIngestorDeps {
    * read on each poll rather than captured once. Returns null until it exists. */
   getChatAPI: () => CapabilityChatAPI | null | undefined;
   /** Current contact pubkeys (hex). Only contacts are polled — we never scan
-   * strangers. */
-  getContacts: () => string[];
+   * strangers. May be async: the authoritative source is the IndexedDB mapping
+   * store (getAllMappings), read live on each poll so contacts added mid-session
+   * are picked up without extra event plumbing. */
+  getContacts: () => string[] | Promise<string[]>;
   /** Clock, injectable for tests. Defaults to Date.now. */
   now?: () => number;
   /** Advert TTL. Defaults to CAPABILITY_TTL_MS. */
@@ -211,7 +213,7 @@ export class CapabilityIngestor {
 
   /** Refresh every current contact. Best-effort and fully concurrent. */
   async refreshAll(): Promise<void> {
-    const contacts = this.dedupeContacts();
+    const contacts = await this.dedupeContacts();
     if(contacts.length === 0) return;
     await Promise.allSettled(contacts.map((pk) => this.refreshPeer(pk)));
   }
@@ -238,10 +240,19 @@ export class CapabilityIngestor {
     }
   }
 
-  private dedupeContacts(): string[] {
+  private async dedupeContacts(): Promise<string[]> {
     const out: string[] = [];
     const seen = new Set<string>();
-    for(const pk of this.deps.getContacts()) {
+    let contacts: string[];
+    try {
+      contacts = await this.deps.getContacts();
+    } catch(err) {
+      // A failed contact lookup must never break the poll — treat as "no
+      // contacts this round" and let the next tick retry.
+      logSwallow('CapabilityIngestor.dedupeContacts', err);
+      return out;
+    }
+    for(const pk of contacts) {
       if(typeof pk !== 'string' || !HEX64.test(pk) || seen.has(pk)) continue;
       seen.add(pk);
       out.push(pk);

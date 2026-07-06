@@ -61,10 +61,19 @@ async function resolvePubkey(peerId: number | string): Promise<string | null> {
 
 function applyState(el: HTMLElement, state: P2PState): void {
   const isP2P = state === 'p2p';
+  // Only two visible outcomes: a GREEN chip when the peer is on a direct P2P
+  // transport, or NO chip at all otherwise. `.is-p2p` both colours the chip
+  // green and un-hides it (the base `.p2p-badge` rule is `display:none`), so a
+  // relay-only peer shows nothing rather than a muted grey badge.
   el.classList.toggle('is-p2p', isP2P);
-  const title = isP2P ? 'Connected over a direct P2P transport' : 'Relay only — no direct P2P transport';
-  el.title = title;
-  el.setAttribute('aria-label', isP2P ? 'P2P transport connected' : 'P2P transport unavailable, relay only');
+  if(isP2P) {
+    el.title = 'Connected over a direct P2P transport';
+    el.setAttribute('aria-label', 'P2P transport connected');
+  } else {
+    // Hidden — clear a11y so a screen reader doesn't announce an invisible chip.
+    el.removeAttribute('title');
+    el.removeAttribute('aria-label');
+  }
 }
 
 function evaluate(b: MountedBadge): void {
@@ -99,12 +108,13 @@ function stopEngine(): void {
 }
 
 /**
- * Create a P2P badge element and keep it live for `peerId`. The chip is ALWAYS
- * visible in one of two states — muted grey (relay only) or green (`.is-p2p`,
- * direct transport available/used) — so the user can always distinguish "on
- * P2P" from "relay", not "P2P" from "missing". Append the returned element
- * wherever you want the chip; it self-manages its own state and reaps itself
- * once detached from the DOM. Returns the element.
+ * Create a P2P badge element and keep it live for `peerId`. The chip renders in
+ * exactly one of two ways — a GREEN "P2P" chip when the peer is reachable over a
+ * direct transport, or NOTHING at all otherwise (relay-only peers show no
+ * badge). Starts hidden so there's never a flash of a chip before the pubkey
+ * resolves. Append the returned element wherever you want the chip; it
+ * self-manages its own state and reaps itself once detached from the DOM.
+ * Returns the element.
  */
 export function createP2PBadge(peerId: number | string, extraClass?: string): HTMLElement {
   const el = document.createElement('span');
