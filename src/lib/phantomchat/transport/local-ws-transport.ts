@@ -41,10 +41,32 @@ export class LocalWsTransport {
   private timeoutMs: number;
   private socket: WebSocket | null = null;
   private connecting: Promise<WebSocket | null> | null = null;
+  /** Bumped on every port change so an in-flight probe for a stale port is
+   * discarded rather than cached (see probe's open handler). */
+  private portGen = 0;
 
   constructor(port: number = DEFAULT_LOCAL_NODE_PORT, timeoutMs: number = LOCAL_PROBE_TIMEOUT_MS) {
     this.port = port;
     this.timeoutMs = timeoutMs;
+  }
+
+  /** The loopback port this transport currently dials. */
+  getPort(): number {
+    return this.port;
+  }
+
+  /**
+   * Point the transport at a newly-discovered loopback port (the local node's
+   * OS-ephemeral port, learned from our own self-encrypted capability advert —
+   * phantombot#258). No-op if unchanged. On a change, drops any cached/in-flight
+   * socket so the next probe dials the new port cleanly.
+   */
+  setPort(port: number): void {
+    if(!Number.isInteger(port) || port <= 0 || port === this.port) return;
+    this.port = port;
+    this.portGen++;
+    this.close();
+    this.connecting = null;
   }
 
   /** Is there an open loopback socket right now? */
@@ -71,6 +93,9 @@ export class LocalWsTransport {
     return new Promise<WebSocket | null>((resolve) => {
       let settled = false;
       let ws: WebSocket;
+      // Snapshot the port generation: if setPort() runs mid-probe, this socket
+      // is for a stale port and must be discarded, not cached.
+      const gen = this.portGen;
 
       try {
         ws = new WebSocket(`ws://localhost:${this.port}`);
@@ -93,6 +118,15 @@ export class LocalWsTransport {
         if(settled) return;
         settled = true;
         clearTimeout(timer);
+        // The port changed while this probe was in flight — this socket is for a
+        // stale port. Drop it so the next attempt re-probes the current port.
+        if(gen !== this.portGen) {
+          try {
+            ws.close();
+          } catch(e) { logSwallow('LocalWsTransport.staleProbeClose', e); }
+          resolve(null);
+          return;
+        }
         this.socket = ws;
         ws.addEventListener('close', () => {
           if(this.socket === ws) this.socket = null;
