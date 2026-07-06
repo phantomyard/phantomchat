@@ -17,6 +17,7 @@ import {MessageRouter} from '@lib/phantomchat/message-router';
 import {isSignalKind, parseSignalContent} from '@lib/phantomchat/mesh-signaling';
 import {getRtcConfigDirect} from '@lib/phantomchat/webrtc-config';
 import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
+import {CapabilityIngestor} from '@lib/phantomchat/transport/capability-ingest';
 import {LocalWsTransport} from '@lib/phantomchat/transport/local-ws-transport';
 import {TransportSelector} from '@lib/phantomchat/transport/transport-selector';
 import rootScope from '@lib/rootScope';
@@ -177,11 +178,30 @@ export class PhantomChatBridge {
         miniRelayWorker.postMessage({type: 'update-contacts', contactPubkeys: contacts});
       });
 
-      // Per-peer P2P capability registry — THE GATE for the #61 ladder. Empty
-      // until a peer advertises P2P (needs phantombot#258), so every tier below
-      // stays dormant and sends fall straight through to the relay path.
+      // Per-peer P2P capability registry — THE GATE for the #61 ladder. Starts
+      // empty; the CapabilityIngestor below is what fills it, by reading each
+      // contact's kind-30078 advert (phantombot#258). Until an advert lands the
+      // gate stays closed and sends fall straight through to the relay path.
       const capability = new PeerCapabilityRegistry();
       (window as any).__phantomchatCapability = capability;
+
+      // Client-side capability INGESTION (phantomchat#61 companion to
+      // phantombot#258). Polls each contact's replaceable capability advert off
+      // the relays and populates the registry above, activating the ladder for
+      // peers that run a phantombot P2P node. ChatAPI may not exist yet (built
+      // before OR after the bridge), so it is resolved lazily on each poll.
+      const capabilityIngestor = new CapabilityIngestor({
+        registry: capability,
+        getChatAPI: () => (window as any).__phantomchatChatAPI,
+        getContacts: () => (window as any).__phantomchatContacts || []
+      });
+      (window as any).__phantomchatCapabilityIngestor = capabilityIngestor;
+      // Refresh once the contact list is known, then on a timer to pick up node
+      // restarts and expire stale adverts. Backfill fires after contacts load.
+      rootScope.addEventListener('phantomchat_backfill_complete', () => {
+        capabilityIngestor.refreshAll().catch(swallowHandler('PhantomChatBridge.capabilityRefresh'));
+      });
+      capabilityIngestor.start();
 
       // Initialize mesh manager. Uses the direct (host-candidate, no third-party
       // TURN) RTC config so capability-gated peers connect node-to-node on the
