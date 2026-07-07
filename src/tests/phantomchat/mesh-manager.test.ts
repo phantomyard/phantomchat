@@ -211,11 +211,13 @@ describe('MeshManager', () => {
     );
   });
 
-  it('handleSignal with candidate adds it to the peer connection', async() => {
+  it('handleSignal with candidate adds it once the remote description is set', async() => {
     const callbacks = makeCallbacks();
     const manager = new MeshManager(callbacks, undefined, '');
 
-    await manager.connect('bob');
+    await manager.connect('bob'); // initiator: local offer set, remote not yet
+    // Answer sets the remote description → candidates may now be applied.
+    await manager.handleSignal('bob', {t: 'answer', sdp: 'v=0\r\nanswer-from-bob'});
 
     await manager.handleSignal('bob', {
       t: 'candidate',
@@ -226,6 +228,53 @@ describe('MeshManager', () => {
 
     expect(mockPC.addIceCandidate).toHaveBeenCalledWith(
       expect.objectContaining({candidate: expect.stringContaining('candidate:1'), sdpMid: '0', sdpMLineIndex: 0})
+    );
+  });
+
+  it('buffers a candidate that arrives before any peer exists, then flushes it on the offer', async() => {
+    const callbacks = makeCallbacks();
+    // Responder role: no PC exists until the offer lands. A candidate that beats
+    // the offer must be buffered, not dropped.
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {
+      t: 'candidate',
+      candidate: 'candidate:early 1 UDP 1 10.0.0.1 40000 typ host',
+      sdpMid: '0',
+      sdpMLineIndex: 0
+    });
+
+    // Not applied yet — no peer, no remote description.
+    expect(mockPC.addIceCandidate).not.toHaveBeenCalled();
+
+    // Offer arrives → setRemoteDescription → buffered candidate is flushed.
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+
+    expect(mockPC.addIceCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({candidate: expect.stringContaining('candidate:early')})
+    );
+  });
+
+  it('buffers a candidate that arrives before the answer, then flushes it', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, ''); // initiator
+
+    await manager.connect('bob'); // PC exists, remote description NOT set yet
+
+    await manager.handleSignal('bob', {
+      t: 'candidate',
+      candidate: 'candidate:pre-answer 1 UDP 1 10.0.0.2 40001 typ host',
+      sdpMid: '0',
+      sdpMLineIndex: 0
+    });
+
+    // Peer exists but no remote description → still buffered, not applied.
+    expect(mockPC.addIceCandidate).not.toHaveBeenCalled();
+
+    await manager.handleSignal('bob', {t: 'answer', sdp: 'v=0\r\nanswer-from-bob'});
+
+    expect(mockPC.addIceCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({candidate: expect.stringContaining('candidate:pre-answer')})
     );
   });
 

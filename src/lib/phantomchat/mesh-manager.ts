@@ -31,10 +31,20 @@ interface PeerState {
   lastPongTime: number;
   latency: number;
   pingSentTime: number;
+  // True once setRemoteDescription has resolved for this peer. ICE candidates
+  // may only be applied after the remote description exists, so candidates that
+  // arrive earlier are buffered (see pendingCandidates) and flushed here.
+  remoteDescriptionSet: boolean;
 }
 
 export class MeshManager {
   private peers: Map<string, PeerState> = new Map();
+  // Per-peer ICE candidates that arrived before the peer existed or before its
+  // remote description was set. Relays can reorder kind-21050 events, so a
+  // candidate can land ahead of the offer/answer. We buffer here (mirroring the
+  // phantombot node) and flush after setRemoteDescription — without this, early
+  // candidates are dropped or applied too soon and the connection goes flaky.
+  private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
   private callbacks: MeshCallbacks;
   // Factory for the RTCConfiguration used on every peer connection. Defaults to
   // the TURN-relay privacy config. The #61 ladder passes getRtcConfigDirect so
@@ -105,7 +115,8 @@ export class MeshManager {
       pingTimeoutTimer: null,
       lastPongTime: 0,
       latency: -1,
-      pingSentTime: 0
+      pingSentTime: 0,
+      remoteDescriptionSet: false
     };
 
     this.peers.set(pubkey, state);
@@ -156,7 +167,8 @@ export class MeshManager {
       pingTimeoutTimer: null,
       lastPongTime: 0,
       latency: -1,
-      pingSentTime: 0
+      pingSentTime: 0,
+      remoteDescriptionSet: false
     };
 
     this.peers.set(fromPubkey, state);
@@ -170,6 +182,9 @@ export class MeshManager {
     this.setupPeerConnection(fromPubkey, pc);
 
     await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: signal.sdp}));
+    state.remoteDescriptionSet = true;
+    await this.flushPendingCandidates(fromPubkey);
+
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
@@ -181,17 +196,52 @@ export class MeshManager {
     if(!state) return;
 
     await state.pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: signal.sdp}));
+    state.remoteDescriptionSet = true;
+    await this.flushPendingCandidates(fromPubkey);
   }
 
   private async handleIceCandidate(fromPubkey: string, signal: SignalMessage & {t: 'candidate'}): Promise<void> {
-    const state = this.peers.get(fromPubkey);
-    if(!state || !signal.candidate) return;
+    if(!signal.candidate) return;
 
-    await state.pc.addIceCandidate({
+    const init: RTCIceCandidateInit = {
       candidate: signal.candidate,
       sdpMid: signal.sdpMid ?? undefined,
       sdpMLineIndex: signal.sdpMLineIndex ?? undefined
-    });
+    };
+
+    const state = this.peers.get(fromPubkey);
+
+    // Buffer until the peer exists AND its remote description is set — relays can
+    // deliver a candidate before the offer/answer. Applying it early either
+    // throws (no remote description) or is lost (no peer). Flushed on
+    // setRemoteDescription in the offer/answer paths.
+    if(!state || !state.remoteDescriptionSet) {
+      const pending = this.pendingCandidates.get(fromPubkey) ?? [];
+      pending.push(init);
+      this.pendingCandidates.set(fromPubkey, pending);
+      return;
+    }
+
+    try {
+      await state.pc.addIceCandidate(init);
+    } catch(e) { logSwallow('MeshManager.addIceCandidate', e); }
+  }
+
+  /** Apply and clear any candidates buffered before the remote description existed. */
+  private async flushPendingCandidates(pubkey: string): Promise<void> {
+    const pending = this.pendingCandidates.get(pubkey);
+    if(!pending || pending.length === 0) return;
+
+    this.pendingCandidates.delete(pubkey);
+
+    const state = this.peers.get(pubkey);
+    if(!state) return;
+
+    for(const init of pending) {
+      try {
+        await state.pc.addIceCandidate(init);
+      } catch(e) { logSwallow('MeshManager.flushPendingCandidates', e); }
+    }
   }
 
   private setupDataChannel(pubkey: string, dc: RTCDataChannel): void {
@@ -347,6 +397,7 @@ export class MeshManager {
 
       current.reconnectAttempts++;
       this.peers.delete(pubkey);
+      this.pendingCandidates.delete(pubkey);
 
       try {
         await this.connect(pubkey);
@@ -381,6 +432,7 @@ export class MeshManager {
 
     state.status = 'disconnected';
     this.peers.delete(pubkey);
+    this.pendingCandidates.delete(pubkey);
   }
 
   disconnectAll(): void {
