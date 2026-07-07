@@ -17,7 +17,6 @@ import {MessageRouter} from '@lib/phantomchat/message-router';
 import {getRtcConfigDirect} from '@lib/phantomchat/webrtc-config';
 import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
 import {CapabilityIngestor} from '@lib/phantomchat/transport/capability-ingest';
-import {LocalWsTransport} from '@lib/phantomchat/transport/local-ws-transport';
 import {TransportSelector} from '@lib/phantomchat/transport/transport-selector';
 import {getTransportStatus} from '@lib/phantomchat/transport/transport-status';
 import rootScope from '@lib/rootScope';
@@ -257,6 +256,13 @@ export class PhantomChatBridge {
         onPeerDisconnected: (pubkey) => {
           miniRelayWorker.postMessage({type: 'peer-disconnected', peerId: pubkey});
           rootScope.dispatchEvent('phantomchat_mesh_peer_disconnected', {pubkey});
+          // Channel dropped — repaint the badge so it goes dark immediately (#61 R3).
+          getTransportStatus().notify();
+        },
+        onPeerVerified: (_pubkey) => {
+          // First PONG proved the channel live — repaint so the badge turns green
+          // the instant the connection is rock-solid, not on the next poll (#61 R3).
+          getTransportStatus().notify();
         }
       }, getRtcConfigDirect, this._userPubkey ?? '');
 
@@ -280,22 +286,13 @@ export class PhantomChatBridge {
         }
       });
 
-      // Tiered transport selector (#61): localhost ws → LAN/remote WebRTC → DHT
-      // stub → relay floor. Attached to ChatAPI as the fire-and-forget P2P
-      // fast-path. Gated by `capability`, so it is a no-op until peers advertise.
-      //
-      // The localhost tier dials the RECIPIENT's node on the loopback port that
-      // node advertised (each node binds its own OS-ephemeral port, published
-      // plaintext in its capability advert and ingested into `capability` as
-      // PeerCapabilities.localWsPort). No self-advert decryption, no hardcoded
-      // 47100 — the selector passes each recipient's advertised port straight
-      // through to the per-port socket pool.
-      const localTransport = new LocalWsTransport();
-
+      // Direct-transport selector (#61): WebRTC (NAT-traversed via ICE) with the
+      // Nostr relay as the floor. Attached to ChatAPI as the fire-and-forget P2P
+      // fast-path. Gated by `capability`, so it is a no-op until peers advertise
+      // WebRTC support. The former localhost + DHT tiers were removed.
       const transportSelector = new TransportSelector({
         capability,
-        mesh: meshManager,
-        local: localTransport
+        mesh: meshManager
       });
 
       // Attach the selector to ChatAPI. ChatAPI exposes itself on
@@ -315,11 +312,11 @@ export class PhantomChatBridge {
       (window as any).__phantomchatMessageRouter = messageRouter;
       (window as any).__phantomchatTransportSelector = transportSelector;
 
-      // Drive the P2P badge off LIVE connection state: green only while a direct
-      // channel to the peer is actually open right now (open WebRTC data channel
-      // or open loopback socket). The badge polls this, so the chip appears when
-      // a channel comes up and disappears the moment it drops — never a stale
-      // green from an old send.
+      // Drive the P2P badge off LIVE connection state: green only while a
+      // VERIFIED WebRTC data channel to the peer is open right now (open + a
+      // PING/PONG round-trip proven). The badge polls this and is also nudged on
+      // verify/disconnect, so the chip appears when a channel is proven live and
+      // disappears the moment it drops — never a stale or optimistic green.
       getTransportStatus().setLiveProbe((pubkey) => transportSelector.liveDirectTier(pubkey));
 
       // Handle incoming WebRTC signals (kind 21050). ChatAPI decrypts the

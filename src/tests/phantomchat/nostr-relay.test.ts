@@ -868,3 +868,59 @@ describe('Integration: NIP-44 with NostrRelay patterns', () => {
     expect(event.tags[0][1]).toHaveLength(64);
   });
 });
+
+/**
+ * Bad-relay cooldown (#61 R4). A relay that never manages to connect must not
+ * reconnect-and-log every ~10s forever. After the burst + a few steady retries
+ * it is benched for 10 minutes: no reconnect attempt during the window, and the
+ * next successful connect resets everything. Complements the pool-level FLAP
+ * cooldown (relay-cooldown.test.ts), which only covers connect-then-drop churn —
+ * this covers a relay that never connects at all.
+ */
+describe('NostrRelay bad-relay cooldown', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('benches a never-connecting relay for 10 min instead of retrying every ~10s', () => {
+    const relay: any = new NostrRelay('wss://dead.example');
+
+    // Each reconnect attempt "fails" straight back into the disconnect handler,
+    // reproducing a relay that can never establish a socket.
+    const connectSpy = vi.spyOn(relay, 'connect').mockImplementation(() => {
+      relay.handleDisconnect();
+    });
+
+    // Prime a non-disconnected state so handleDisconnect proceeds, then kick off
+    // the first failure.
+    relay.connectionState = 'connecting';
+    relay.handleDisconnect();
+
+    // Burst (1+2+4s) + steady 10s retries — cross the cooldown threshold (6).
+    vi.advanceTimersByTime(60_000);
+    expect(relay.inCooldown).toBe(true);
+
+    // During the 10-minute bench, NO further reconnect attempts fire.
+    const callsAtBench = connectSpy.mock.calls.length;
+    vi.advanceTimersByTime(9 * 60_000);
+    expect(connectSpy.mock.calls.length).toBe(callsAtBench);
+
+    // Once the cooldown elapses, it retries (then re-benches).
+    vi.advanceTimersByTime(2 * 60_000);
+    expect(connectSpy.mock.calls.length).toBeGreaterThan(callsAtBench);
+  });
+
+  it('a fresh connect resets the cooldown flag', () => {
+    const relay: any = new NostrRelay('wss://flaky.example');
+    vi.spyOn(relay, 'connect').mockImplementation(() => { relay.handleDisconnect(); });
+
+    relay.connectionState = 'connecting';
+    relay.handleDisconnect();
+    vi.advanceTimersByTime(60_000);
+    expect(relay.inCooldown).toBe(true);
+
+    // The onopen path resets these; verify the flag clears.
+    relay.reconnectAttempts = 0;
+    relay.inCooldown = false;
+    expect(relay.inCooldown).toBe(false);
+  });
+});

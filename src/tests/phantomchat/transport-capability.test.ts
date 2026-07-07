@@ -22,7 +22,7 @@ describe('PeerCapabilityRegistry (the #61 gate)', () => {
 
   it('treats an all-false capability record as no-P2P (gate stays closed)', () => {
     const reg = new PeerCapabilityRegistry();
-    reg.set(PK, {localWs: false, webrtc: false, dht: false});
+    reg.set(PK, {webrtc: false});
     expect(reg.has(PK)).toBe(false);
   });
 
@@ -37,7 +37,6 @@ describe('PeerCapabilityRegistry (the #61 gate)', () => {
     expect(hasAnyCapability(undefined)).toBe(false);
     expect(hasAnyCapability({})).toBe(false);
     expect(hasAnyCapability({webrtc: true})).toBe(true);
-    expect(hasAnyCapability({localWs: true})).toBe(true);
-    expect(hasAnyCapability({dht: true})).toBe(true);
+    expect(hasAnyCapability({webrtc: false})).toBe(false);
   });
 });
