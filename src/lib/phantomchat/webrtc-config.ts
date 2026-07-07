@@ -38,16 +38,27 @@ export function getRtcConfig(turnOverride?: TurnServerConfig): RTCConfiguration 
  * Nostr relays, no other infra": a TURN-relayed channel still depends on a
  * third-party box and never gives a true direct LAN hop.
  *
- * This config uses `iceTransportPolicy: 'all'` with NO ICE servers, so ICE
- * gathers host (and mDNS) candidates only and two peers on the same LAN connect
- * directly, node-to-node, with zero third-party infrastructure. The trade-off is
- * explicit and intended: a direct P2P channel reveals local network candidates
- * to the (already trusted, contact-listed) peer. It is only used for peers that
- * advertised P2P capability, never for the default relay path.
+ * This config uses `iceTransportPolicy: 'all'` with public STUN servers, so ICE
+ * gathers host candidates (same-LAN direct hop) AND server-reflexive candidates
+ * (public IP:port discovered via STUN) for remote-NAT traversal — with zero
+ * third-party *relaying* of data (STUN only reflects an address; the media/data
+ * still flows peer-to-peer). This matches the phantombot node's ICE config
+ * (`stun.l.google.com` in the node's src/config.ts) so a browser PWA and a node
+ * negotiate a common candidate. The trade-off is explicit and intended: a direct
+ * P2P channel reveals local + reflexive candidates to the (already trusted,
+ * contact-listed) peer. It is only used for peers that advertised P2P
+ * capability, never for the default relay path.
+ *
+ * STUN-only (no TURN) means a symmetric-NAT pair with no host route can still
+ * fail to connect — those correctly fall back to the relay floor. LAN peers
+ * (host candidates) and most home-NAT pairs (srflx) connect directly.
  */
 export function getRtcConfigDirect(): RTCConfiguration {
   return {
-    iceServers: [],
+    iceServers: [
+      {urls: 'stun:stun.l.google.com:19302'},
+      {urls: 'stun:stun1.l.google.com:19302'}
+    ],
     iceTransportPolicy: 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require'
@@ -60,13 +71,34 @@ export const DATA_CHANNEL_OPTIONS: RTCDataChannelInit = {
   ordered: true
 };
 
-// Signaling kind inside gift-wrap rumor
-export const SIGNAL_KIND = 29001;
+/**
+ * WebRTC signaling Nostr kind. MUST equal phantombot's `NOSTR_KIND_P2P_SIGNAL`
+ * (see the node's src/p2p/signaling.ts) — a dedicated ephemeral kind (20000–29999)
+ * carrying NIP-44-direct-encrypted offer/answer/ICE. NOT a gift-wrap (1059): the
+ * two planes stay separate so the chat subscription never tries to unwrap a
+ * signal, and relays don't persist stale offers. Signed with the node's/peer's
+ * REAL key (both sides already know each other's pubkey), so the recipient
+ * derives the NIP-44 conversation key from `event.pubkey`.
+ *
+ * Was 29001-inside-a-gift-wrap on the PWA side, which NO node ever spoke — that
+ * mismatch is exactly why PWA↔node WebRTC signaling never fired. Now unified
+ * onto the node's 21050 protocol.
+ */
+export const SIGNAL_KIND = 21050;
 
-export interface SignalMessage {
-  type: 'webrtc-signal';
-  action: 'offer' | 'answer' | 'ice-candidate';
-  sdp?: string;
-  candidate?: RTCIceCandidateInit;
-  sessionId: string;
-}
+/**
+ * A WebRTC signaling message. Wire-compatible with phantombot's `SignalMessage`
+ * (node's src/p2p/signaling.ts) — the PWA and the node exchange these verbatim.
+ *
+ *  - offer/answer carry an SDP blob.
+ *  - candidate is a single trickled ICE candidate.
+ *  - hello is a glare-avoidance nudge: only the peer with the SMALLER pubkey ever
+ *    offers; the larger-pubkey side sends `hello` to ask the initiator to offer.
+ *  - bye tears a half-open negotiation down.
+ */
+export type SignalMessage =
+  | {t: 'offer'; sdp: string}
+  | {t: 'answer'; sdp: string}
+  | {t: 'candidate'; candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null}
+  | {t: 'hello'}
+  | {t: 'bye'};

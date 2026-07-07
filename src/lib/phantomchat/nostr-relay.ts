@@ -54,6 +54,17 @@ export const NOSTR_KIND_DELETE = 5;
 export const NOSTR_KIND_TYPING = 20001;
 
 /**
+ * WebRTC P2P signaling (kind 21050) — a NIP-16 EPHEMERAL event carrying a
+ * NIP-44-direct-encrypted offer/answer/ICE-candidate/hello/bye. Signed with the
+ * peer's REAL key so the recipient derives the conversation key from
+ * `event.pubkey`. Distinct from chat gift-wraps (1059) so the chat pipeline
+ * never tries to unwrap a signal, and ephemeral so stale offers aren't stored.
+ * ChatAPI does the decrypt + routes to the mesh. Must match phantombot's
+ * `NOSTR_KIND_P2P_SIGNAL`.
+ */
+export const NOSTR_KIND_P2P_SIGNAL = 21050;
+
+/**
  * NIP-38 user-status / presence (kind 30315, parameterized-replaceable). A peer
  * (phantombot, or any PhantomChat client) republishes one of these on a ~60s
  * heartbeat, p-tagged to us and carrying `["status","online"]`. We treat each as
@@ -592,7 +603,7 @@ export class NostrRelay {
     const filter: Record<string, unknown> = {
       // No NOSTR_KIND_PRESENCE (30315): presence was removed, so we don't ask
       // relays for peers' status heartbeats — that's wasted bandwidth + crypto.
-      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING],
+      'kinds': [NOSTR_KIND_GIFTWRAP, NOSTR_KIND_REACTION, NOSTR_KIND_DELETE, NOSTR_KIND_TYPING, NOSTR_KIND_P2P_SIGNAL],
       '#p': [this.publicKey],
       // Bound the initial replay. Without a limit a relay replays the entire
       // gift-wrap history on every (re)connect/recycle (the kind-1059 firehose).
@@ -1139,7 +1150,7 @@ export class NostrRelay {
     // through NIP-17 unwrap — they carry their referent in e/p tags. Typing
     // (kind 20001, NIP-16 ephemeral) was being dropped at the gift-wrap-only
     // gate below, so the three-dots indicator never fired.
-    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING) {
+    if(event.kind === NOSTR_KIND_REACTION || event.kind === NOSTR_KIND_DELETE || event.kind === NOSTR_KIND_TYPING || event.kind === NOSTR_KIND_P2P_SIGNAL) {
       if(!verifyEvent(event as any)) {
         this.log.warn('[NostrRelay] dropping non-giftwrap event with invalid signature, kind:', event.kind, 'pubkey:', event.pubkey.slice(0, 8) + '...');
         return;

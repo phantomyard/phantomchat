@@ -1,5 +1,4 @@
 import {getRtcConfig, DATA_CHANNEL_NAME, DATA_CHANNEL_OPTIONS, SignalMessage} from '@lib/phantomchat/webrtc-config';
-import {createSignalEvent, parseSignalContent} from '@lib/phantomchat/mesh-signaling';
 import {logSwallow} from '@lib/phantomchat/log-swallow';
 
 const MAX_CONNECTIONS = 50;
@@ -10,7 +9,11 @@ const RECONNECT_DELAYS = [1000, 2000, 4000, 10000];
 export type PeerStatus = 'connected' | 'connecting' | 'disconnected';
 
 export interface MeshCallbacks {
-  sendSignal: (recipientPubkey: string, signal: {kind: number; content: string}) => Promise<void>;
+  /**
+   * Publish a WebRTC signal to a peer. Wire-compatible with phantombot's node:
+   * ChatAPI.publishSignal NIP-44-encrypts + signs it as a kind-21050 event.
+   */
+  sendSignal: (recipientPubkey: string, signal: SignalMessage) => Promise<void>;
   onPeerMessage: (pubkey: string, message: string) => void;
   onPeerConnected: (pubkey: string) => void;
   onPeerDisconnected: (pubkey: string) => void;
@@ -28,22 +31,48 @@ interface PeerState {
   lastPongTime: number;
   latency: number;
   pingSentTime: number;
+  // True once setRemoteDescription has resolved for this peer. ICE candidates
+  // may only be applied after the remote description exists, so candidates that
+  // arrive earlier are buffered (see pendingCandidates) and flushed here.
+  remoteDescriptionSet: boolean;
 }
 
 export class MeshManager {
   private peers: Map<string, PeerState> = new Map();
+  // Per-peer ICE candidates that arrived before the peer existed or before its
+  // remote description was set. Relays can reorder kind-21050 events, so a
+  // candidate can land ahead of the offer/answer. We buffer here (mirroring the
+  // phantombot node) and flush after setRemoteDescription — without this, early
+  // candidates are dropped or applied too soon and the connection goes flaky.
+  private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
   private callbacks: MeshCallbacks;
   // Factory for the RTCConfiguration used on every peer connection. Defaults to
   // the TURN-relay privacy config. The #61 ladder passes getRtcConfigDirect so
-  // capability-gated peers connect directly (host candidates, no third-party
-  // TURN) — required by the "only Pages + relays, no other infra" constraint.
+  // capability-gated peers connect directly (host + STUN-reflexive candidates,
+  // no third-party TURN relay) — matching the phantombot node's ICE config.
   private rtcConfig: () => RTCConfiguration;
+  // Our own pubkey (hex), lowercased. Decides the initiator/responder role per
+  // peer, IDENTICALLY to the node (src/p2p/node.ts amInitiator): the peer with
+  // the SMALLER pubkey is the sole offerer. Without this glare rule a PWA and a
+  // node could both offer (or both wait), and no connection ever forms.
+  private readonly ourPubkey: string;
 
-  constructor(callbacks: MeshCallbacks, rtcConfig: () => RTCConfiguration = getRtcConfig) {
+  constructor(callbacks: MeshCallbacks, rtcConfig: () => RTCConfiguration = getRtcConfig, ourPubkey = '') {
     this.callbacks = callbacks;
     this.rtcConfig = rtcConfig;
+    this.ourPubkey = (ourPubkey || '').toLowerCase();
   }
 
+  /** True when WE are the sole initiator for this peer (smaller pubkey offers). */
+  private amInitiator(peerPubkey: string): boolean {
+    return this.ourPubkey < peerPubkey.toLowerCase();
+  }
+
+  /**
+   * Begin negotiation with a peer. Glare-free (mirrors the node): the initiator
+   * (smaller pubkey) creates the offer; the responder (larger pubkey) can't
+   * offer, so it nudges the initiator with a `hello` and waits for the offer.
+   */
   async connect(pubkey: string): Promise<void> {
     if(this.peers.has(pubkey)) {
       const existing = this.peers.get(pubkey);
@@ -52,6 +81,23 @@ export class MeshManager {
 
     if(this.peers.size >= MAX_CONNECTIONS) {
       throw new Error(`Max connections (${MAX_CONNECTIONS}) reached`);
+    }
+
+    // Responder role: we don't create the PeerConnection here — we ask the
+    // initiator to offer and let handleOffer() build the PC when the offer lands.
+    if(!this.amInitiator(pubkey)) {
+      await this.callbacks.sendSignal(pubkey, {t: 'hello'});
+      return;
+    }
+
+    await this.startOffer(pubkey);
+  }
+
+  /** Initiator path: build the PC + data channel and publish the offer. */
+  private async startOffer(pubkey: string): Promise<void> {
+    if(this.peers.has(pubkey)) {
+      const existing = this.peers.get(pubkey);
+      if(existing.status === 'connected' || existing.status === 'connecting') return;
     }
 
     const sessionId = `${pubkey}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -69,7 +115,8 @@ export class MeshManager {
       pingTimeoutTimer: null,
       lastPongTime: 0,
       latency: -1,
-      pingSentTime: 0
+      pingSentTime: 0,
+      remoteDescriptionSet: false
     };
 
     this.peers.set(pubkey, state);
@@ -79,29 +126,32 @@ export class MeshManager {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    const signal = createSignalEvent({
-      action: 'offer',
-      sdp: pc.localDescription.sdp,
-      sessionId
-    });
-
-    await this.callbacks.sendSignal(pubkey, signal);
+    await this.callbacks.sendSignal(pubkey, {t: 'offer', sdp: pc.localDescription.sdp});
   }
 
-  async handleSignal(fromPubkey: string, content: string): Promise<void> {
-    const signal = parseSignalContent(content);
+  async handleSignal(fromPubkey: string, signal: SignalMessage): Promise<void> {
     if(!signal) return;
 
-    if(signal.action === 'offer') {
+    if(signal.t === 'hello') {
+      // We were nudged to initiate. Only act if we are in fact the initiator.
+      if(this.amInitiator(fromPubkey)) {
+        await this.startOffer(fromPubkey).catch((e) => logSwallow('MeshManager.helloOffer', e));
+      }
+      return;
+    }
+
+    if(signal.t === 'offer') {
       await this.handleOffer(fromPubkey, signal);
-    } else if(signal.action === 'answer') {
+    } else if(signal.t === 'answer') {
       await this.handleAnswer(fromPubkey, signal);
-    } else if(signal.action === 'ice-candidate') {
+    } else if(signal.t === 'candidate') {
       await this.handleIceCandidate(fromPubkey, signal);
+    } else if(signal.t === 'bye') {
+      this.disconnect(fromPubkey);
     }
   }
 
-  private async handleOffer(fromPubkey: string, signal: SignalMessage): Promise<void> {
+  private async handleOffer(fromPubkey: string, signal: SignalMessage & {t: 'offer'}): Promise<void> {
     if(this.peers.size >= MAX_CONNECTIONS) return;
 
     const pc = new RTCPeerConnection(this.rtcConfig());
@@ -110,14 +160,15 @@ export class MeshManager {
       pc,
       dc: null,
       status: 'connecting',
-      sessionId: signal.sessionId,
+      sessionId: `${fromPubkey}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       reconnectAttempts: 0,
       reconnectTimer: null,
       pingTimer: null,
       pingTimeoutTimer: null,
       lastPongTime: 0,
       latency: -1,
-      pingSentTime: 0
+      pingSentTime: 0,
+      remoteDescriptionSet: false
     };
 
     this.peers.set(fromPubkey, state);
@@ -131,30 +182,66 @@ export class MeshManager {
     this.setupPeerConnection(fromPubkey, pc);
 
     await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: signal.sdp}));
+    state.remoteDescriptionSet = true;
+    await this.flushPendingCandidates(fromPubkey);
+
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    const responseSignal = createSignalEvent({
-      action: 'answer',
-      sdp: pc.localDescription.sdp,
-      sessionId: signal.sessionId
-    });
-
-    await this.callbacks.sendSignal(fromPubkey, responseSignal);
+    await this.callbacks.sendSignal(fromPubkey, {t: 'answer', sdp: pc.localDescription.sdp});
   }
 
-  private async handleAnswer(fromPubkey: string, signal: SignalMessage): Promise<void> {
+  private async handleAnswer(fromPubkey: string, signal: SignalMessage & {t: 'answer'}): Promise<void> {
     const state = this.peers.get(fromPubkey);
     if(!state) return;
 
     await state.pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: signal.sdp}));
+    state.remoteDescriptionSet = true;
+    await this.flushPendingCandidates(fromPubkey);
   }
 
-  private async handleIceCandidate(fromPubkey: string, signal: SignalMessage): Promise<void> {
-    const state = this.peers.get(fromPubkey);
-    if(!state || !signal.candidate) return;
+  private async handleIceCandidate(fromPubkey: string, signal: SignalMessage & {t: 'candidate'}): Promise<void> {
+    if(!signal.candidate) return;
 
-    await state.pc.addIceCandidate(signal.candidate);
+    const init: RTCIceCandidateInit = {
+      candidate: signal.candidate,
+      sdpMid: signal.sdpMid ?? undefined,
+      sdpMLineIndex: signal.sdpMLineIndex ?? undefined
+    };
+
+    const state = this.peers.get(fromPubkey);
+
+    // Buffer until the peer exists AND its remote description is set — relays can
+    // deliver a candidate before the offer/answer. Applying it early either
+    // throws (no remote description) or is lost (no peer). Flushed on
+    // setRemoteDescription in the offer/answer paths.
+    if(!state || !state.remoteDescriptionSet) {
+      const pending = this.pendingCandidates.get(fromPubkey) ?? [];
+      pending.push(init);
+      this.pendingCandidates.set(fromPubkey, pending);
+      return;
+    }
+
+    try {
+      await state.pc.addIceCandidate(init);
+    } catch(e) { logSwallow('MeshManager.addIceCandidate', e); }
+  }
+
+  /** Apply and clear any candidates buffered before the remote description existed. */
+  private async flushPendingCandidates(pubkey: string): Promise<void> {
+    const pending = this.pendingCandidates.get(pubkey);
+    if(!pending || pending.length === 0) return;
+
+    this.pendingCandidates.delete(pubkey);
+
+    const state = this.peers.get(pubkey);
+    if(!state) return;
+
+    for(const init of pending) {
+      try {
+        await state.pc.addIceCandidate(init);
+      } catch(e) { logSwallow('MeshManager.flushPendingCandidates', e); }
+    }
   }
 
   private setupDataChannel(pubkey: string, dc: RTCDataChannel): void {
@@ -219,14 +306,14 @@ export class MeshManager {
       const state = this.peers.get(pubkey);
       if(!state) return;
 
-      const signal = createSignalEvent({
-        action: 'ice-candidate',
-        candidate: event.candidate.toJSON(),
-        sessionId: state.sessionId
-      });
-
+      const c = event.candidate;
       try {
-        await this.callbacks.sendSignal(pubkey, signal);
+        await this.callbacks.sendSignal(pubkey, {
+          t: 'candidate',
+          candidate: c.candidate,
+          sdpMid: c.sdpMid,
+          sdpMLineIndex: c.sdpMLineIndex
+        });
       } catch(e) { logSwallow('MeshManager.sendIceCandidate', e); }
     });
   }
@@ -310,6 +397,7 @@ export class MeshManager {
 
       current.reconnectAttempts++;
       this.peers.delete(pubkey);
+      this.pendingCandidates.delete(pubkey);
 
       try {
         await this.connect(pubkey);
@@ -344,6 +432,7 @@ export class MeshManager {
 
     state.status = 'disconnected';
     this.peers.delete(pubkey);
+    this.pendingCandidates.delete(pubkey);
   }
 
   disconnectAll(): void {

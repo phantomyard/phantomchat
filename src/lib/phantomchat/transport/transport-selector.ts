@@ -119,10 +119,15 @@ export class TransportSelector {
 
       const frame = JSON.stringify(['EVENT', wrap]);
 
-      // Tier 1: same-machine ws://localhost.
-      if(caps.localWs && this.deps.local) {
-        const up = await this.withTimeout(this.deps.local.ensureConnected(), this.localTimeoutMs, false);
-        if(up && this.deps.local.send(frame)) {
+      // Tier 1: same-machine ws://localhost to the RECIPIENT's own node, on the
+      // port it advertised (each node binds its own OS-ephemeral port). Skip when
+      // no usable port was advertised — we can't dial an unknown port.
+      const localPort = caps.localWsPort ?? 0;
+      if(caps.localWs && localPort > 0 && this.deps.local) {
+        const up = await this.withTimeout(
+          this.deps.local.ensureConnected(localPort), this.localTimeoutMs, false
+        );
+        if(up && this.deps.local.send(localPort, frame)) {
           return {tier: 'local-ws', delivered: true};
         }
       }
@@ -151,6 +156,36 @@ export class TransportSelector {
     } catch(e) {
       logSwallow('TransportSelector.tryDeliver', e);
       return {tier: 'relay', delivered: false};
+    }
+  }
+
+  /**
+   * The LIVE direct-transport state for a peer, right now — not a historical
+   * send. Returns the tier of a currently-open direct channel to the peer
+   * ('webrtc' when the mesh data channel is open, 'local-ws' when a loopback
+   * socket to the peer's advertised node port is open) or null when the only
+   * path right now is relay. The P2P badge reads this so green means "there is
+   * an established direct connection to this peer at this moment", and the chip
+   * disappears the moment that channel drops — never a stale green from a send
+   * that happened minutes ago.
+   */
+  liveDirectTier(recipientPubkey: string): TransportTier | null {
+    try {
+      if(!recipientPubkey) return null;
+      // WebRTC data channel currently open?
+      if(this.deps.mesh && this.deps.mesh.getStatus(recipientPubkey) === 'connected') {
+        return 'webrtc';
+      }
+      // Same-machine loopback socket currently open to the peer's node port?
+      const caps = this.deps.capability.get(recipientPubkey);
+      const port = caps?.localWsPort ?? 0;
+      if(this.deps.local && port > 0 && this.deps.local.isConnected(port)) {
+        return 'local-ws';
+      }
+      return null;
+    } catch(e) {
+      logSwallow('TransportSelector.liveDirectTier', e);
+      return null;
     }
   }
 

@@ -68,9 +68,10 @@ describe('MeshManager', () => {
     expect(manager.getStatus('unknown-pubkey')).toBe('disconnected');
   });
 
-  it('connect() sets status to connecting and sends signal', async() => {
+  it('connect() as initiator sets connecting and sends an offer signal', async() => {
     const callbacks = makeCallbacks();
-    const manager = new MeshManager(callbacks);
+    // ownPubkey '' < 'peer1' → we are the initiator, so we create the offer.
+    const manager = new MeshManager(callbacks, undefined, '');
 
     await manager.connect('peer1');
 
@@ -78,9 +79,29 @@ describe('MeshManager', () => {
     expect(callbacks.sendSignal).toHaveBeenCalledOnce();
     const [recipientPubkey, signal] = callbacks.sendSignal.mock.calls[0];
     expect(recipientPubkey).toBe('peer1');
-    expect(signal.kind).toBeDefined();
-    expect(signal.content).toContain('webrtc-signal');
-    expect(signal.content).toContain('offer');
+    expect(signal.t).toBe('offer');
+    expect(signal.sdp).toContain('v=0');
+  });
+
+  it('connect() as responder sends a hello nudge and creates no PC', async() => {
+    const callbacks = makeCallbacks();
+    // ownPubkey 'zzzz' > 'peer1' → we are the responder: nudge + wait for offer.
+    const manager = new MeshManager(callbacks, undefined, 'zzzz');
+
+    await manager.connect('peer1');
+
+    expect(callbacks.sendSignal).toHaveBeenCalledWith('peer1', {t: 'hello'});
+    expect(globalThis.RTCPeerConnection).not.toHaveBeenCalled();
+  });
+
+  it('handleSignal(hello) makes the initiator send an offer', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, ''); // initiator vs any peer
+
+    await manager.handleSignal('peer1', {t: 'hello'});
+
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalled();
+    expect(callbacks.sendSignal).toHaveBeenCalledWith('peer1', expect.objectContaining({t: 'offer'}));
   });
 
   it('send() returns false for disconnected peer', () => {
@@ -164,71 +185,112 @@ describe('MeshManager', () => {
 
   it('handleSignal with offer creates answer and sends it back', async() => {
     const callbacks = makeCallbacks();
-    const manager = new MeshManager(callbacks);
+    const manager = new MeshManager(callbacks, undefined, '');
 
-    const offerContent = JSON.stringify({
-      type: 'webrtc-signal',
-      action: 'offer',
-      sdp: 'v=0\r\noffer-from-alice',
-      sessionId: 'session-1'
-    });
-
-    await manager.handleSignal('alice', offerContent);
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
 
     expect(globalThis.RTCPeerConnection).toHaveBeenCalled();
     expect(mockPC.setRemoteDescription).toHaveBeenCalled();
     expect(mockPC.createAnswer).toHaveBeenCalled();
     expect(mockPC.setLocalDescription).toHaveBeenCalled();
-    expect(callbacks.sendSignal).toHaveBeenCalledWith('alice', expect.objectContaining({
-      content: expect.stringContaining('answer')
-    }));
+    expect(callbacks.sendSignal).toHaveBeenCalledWith('alice', expect.objectContaining({t: 'answer'}));
     expect(manager.getStatus('alice')).toBe('connecting');
   });
 
   it('handleSignal with answer sets remote description', async() => {
     const callbacks = makeCallbacks();
-    const manager = new MeshManager(callbacks);
+    const manager = new MeshManager(callbacks, undefined, '');
 
-    await manager.connect('bob');
+    await manager.connect('bob'); // initiator → creates PC
     mockPC.setRemoteDescription.mockClear();
 
-    const answerContent = JSON.stringify({
-      type: 'webrtc-signal',
-      action: 'answer',
-      sdp: 'v=0\r\nanswer-from-bob',
-      sessionId: 'ignored'
-    });
-
-    await manager.handleSignal('bob', answerContent);
+    await manager.handleSignal('bob', {t: 'answer', sdp: 'v=0\r\nanswer-from-bob'});
 
     expect(mockPC.setRemoteDescription).toHaveBeenCalledWith(
       expect.objectContaining({type: 'answer', sdp: 'v=0\r\nanswer-from-bob'})
     );
   });
 
-  it('handleSignal with ice-candidate adds to peer connection', async() => {
+  it('handleSignal with candidate adds it once the remote description is set', async() => {
     const callbacks = makeCallbacks();
-    const manager = new MeshManager(callbacks);
+    const manager = new MeshManager(callbacks, undefined, '');
 
-    await manager.connect('bob');
+    await manager.connect('bob'); // initiator: local offer set, remote not yet
+    // Answer sets the remote description → candidates may now be applied.
+    await manager.handleSignal('bob', {t: 'answer', sdp: 'v=0\r\nanswer-from-bob'});
 
-    const candidateContent = JSON.stringify({
-      type: 'webrtc-signal',
-      action: 'ice-candidate',
-      candidate: {candidate: 'candidate:1 1 UDP 2122252543 192.168.1.1 50000 typ relay', sdpMid: '0', sdpMLineIndex: 0},
-      sessionId: 'x'
+    await manager.handleSignal('bob', {
+      t: 'candidate',
+      candidate: 'candidate:1 1 UDP 2122252543 192.168.1.1 50000 typ host',
+      sdpMid: '0',
+      sdpMLineIndex: 0
     });
 
-    await manager.handleSignal('bob', candidateContent);
+    expect(mockPC.addIceCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({candidate: expect.stringContaining('candidate:1'), sdpMid: '0', sdpMLineIndex: 0})
+    );
+  });
+
+  it('buffers a candidate that arrives before any peer exists, then flushes it on the offer', async() => {
+    const callbacks = makeCallbacks();
+    // Responder role: no PC exists until the offer lands. A candidate that beats
+    // the offer must be buffered, not dropped.
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {
+      t: 'candidate',
+      candidate: 'candidate:early 1 UDP 1 10.0.0.1 40000 typ host',
+      sdpMid: '0',
+      sdpMLineIndex: 0
+    });
+
+    // Not applied yet — no peer, no remote description.
+    expect(mockPC.addIceCandidate).not.toHaveBeenCalled();
+
+    // Offer arrives → setRemoteDescription → buffered candidate is flushed.
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
 
     expect(mockPC.addIceCandidate).toHaveBeenCalledWith(
-      expect.objectContaining({candidate: expect.stringContaining('candidate:1')})
+      expect.objectContaining({candidate: expect.stringContaining('candidate:early')})
     );
+  });
+
+  it('buffers a candidate that arrives before the answer, then flushes it', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, ''); // initiator
+
+    await manager.connect('bob'); // PC exists, remote description NOT set yet
+
+    await manager.handleSignal('bob', {
+      t: 'candidate',
+      candidate: 'candidate:pre-answer 1 UDP 1 10.0.0.2 40001 typ host',
+      sdpMid: '0',
+      sdpMLineIndex: 0
+    });
+
+    // Peer exists but no remote description → still buffered, not applied.
+    expect(mockPC.addIceCandidate).not.toHaveBeenCalled();
+
+    await manager.handleSignal('bob', {t: 'answer', sdp: 'v=0\r\nanswer-from-bob'});
+
+    expect(mockPC.addIceCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({candidate: expect.stringContaining('candidate:pre-answer')})
+    );
+  });
+
+  it('handleSignal(bye) disconnects the peer', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.connect('bob');
+    await manager.handleSignal('bob', {t: 'bye'});
+
+    expect(manager.getStatus('bob')).toBe('disconnected');
   });
 
   it('connect() throws when max connections reached', async() => {
     const callbacks = makeCallbacks();
-    const manager = new MeshManager(callbacks);
+    const manager = new MeshManager(callbacks, undefined, ''); // always initiator
 
     for(let i = 0; i < 50; i++) {
       await manager.connect(`peer-${i}`);

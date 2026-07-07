@@ -14,13 +14,12 @@ import {NostrRelayPool, DEFAULT_RELAYS, loadCanonicalRelays, RelayConfig} from '
 import {OfflineQueue} from './offline-queue';
 import {MeshManager} from '@lib/phantomchat/mesh-manager';
 import {MessageRouter} from '@lib/phantomchat/message-router';
-import {isSignalKind, parseSignalContent} from '@lib/phantomchat/mesh-signaling';
 import {getRtcConfigDirect} from '@lib/phantomchat/webrtc-config';
 import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
 import {CapabilityIngestor} from '@lib/phantomchat/transport/capability-ingest';
-import {LocalNodeDiscovery} from '@lib/phantomchat/transport/local-node-discovery';
 import {LocalWsTransport} from '@lib/phantomchat/transport/local-ws-transport';
 import {TransportSelector} from '@lib/phantomchat/transport/transport-selector';
+import {getTransportStatus} from '@lib/phantomchat/transport/transport-status';
 import rootScope from '@lib/rootScope';
 import {swallowHandler} from '@lib/phantomchat/log-swallow';
 
@@ -194,7 +193,24 @@ export class PhantomChatBridge {
       const capabilityIngestor = new CapabilityIngestor({
         registry: capability,
         getChatAPI: () => (window as any).__phantomchatChatAPI,
-        getContacts: () => (window as any).__phantomchatContacts || []
+        // Source contacts from the AUTHORITATIVE mapping store (getAllMappings) —
+        // the same one presence uses — not window.__phantomchatContacts, which is
+        // populated only from the Contacts UI render and is empty on load. That
+        // mismatch meant the ingestor had nobody to poll, so the registry never
+        // filled and every send fell through to relay. Read live on each poll so
+        // contacts added mid-session are picked up automatically.
+        getContacts: async() => {
+          try {
+            const {getAllMappings} = await import('@lib/phantomchat/virtual-peers-db');
+            const all = await getAllMappings();
+            return all
+            .map((m) => m.pubkey)
+            .filter((pk): pk is string => typeof pk === 'string' && pk.length === 64);
+          } catch(err) {
+            swallowHandler('PhantomChatBridge.capabilityContacts')(err);
+            return [];
+          }
+        }
       });
       (window as any).__phantomchatCapabilityIngestor = capabilityIngestor;
       // Refresh once the contact list is known, then on a timer to pick up node
@@ -204,14 +220,17 @@ export class PhantomChatBridge {
       });
       capabilityIngestor.start();
 
-      // Initialize mesh manager. Uses the direct (host-candidate, no third-party
-      // TURN) RTC config so capability-gated peers connect node-to-node on the
-      // LAN — satisfying #61's "only Pages + relays, no other infra" constraint.
+      // Initialize mesh manager. Uses the direct RTC config (host + STUN-srflx
+      // candidates, no third-party TURN relay) so capability-gated peers connect
+      // directly on the LAN or across NAT. The mesh speaks phantombot's kind-21050
+      // signaling protocol verbatim (offer/answer/candidate/hello/bye), so a PWA
+      // and a node negotiate WebRTC directly — the fix for signaling never firing.
+      // ownPubkey drives the glare rule (smaller pubkey offers), identical to the node.
       const meshManager = new MeshManager({
         sendSignal: async(recipientPubkey, signal) => {
           const chatAPI = (window as any).__phantomchatChatAPI;
-          if(chatAPI) {
-            await chatAPI.publishSignal?.(recipientPubkey, signal.content);
+          if(chatAPI?.publishSignal) {
+            await chatAPI.publishSignal(recipientPubkey, signal);
           }
         },
         onPeerMessage: (pubkey, message) => {
@@ -239,7 +258,7 @@ export class PhantomChatBridge {
           miniRelayWorker.postMessage({type: 'peer-disconnected', peerId: pubkey});
           rootScope.dispatchEvent('phantomchat_mesh_peer_disconnected', {pubkey});
         }
-      }, getRtcConfigDirect);
+      }, getRtcConfigDirect, this._userPubkey ?? '');
 
       // Initialize message router
       const messageRouter = new MessageRouter({
@@ -264,30 +283,14 @@ export class PhantomChatBridge {
       // Tiered transport selector (#61): localhost ws → LAN/remote WebRTC → DHT
       // stub → relay floor. Attached to ChatAPI as the fire-and-forget P2P
       // fast-path. Gated by `capability`, so it is a no-op until peers advertise.
+      //
+      // The localhost tier dials the RECIPIENT's node on the loopback port that
+      // node advertised (each node binds its own OS-ephemeral port, published
+      // plaintext in its capability advert and ingested into `capability` as
+      // PeerCapabilities.localWsPort). No self-advert decryption, no hardcoded
+      // 47100 — the selector passes each recipient's advertised port straight
+      // through to the per-port socket pool.
       const localTransport = new LocalWsTransport();
-
-      // Discover OUR OWN local node's loopback port (phantombot#258). The node
-      // now binds an OS-ephemeral port and publishes it self-encrypted in its
-      // capability advert; we read our own advert, decrypt the port, and point
-      // the loopback transport at it — no more hardcoded 47100. Falls back to the
-      // default port until an advert is discovered; refreshed on backfill + timer
-      // to follow a node restart onto a new ephemeral port.
-      const localNodeDiscovery = new LocalNodeDiscovery({
-        getChatAPI: () => (window as any).__phantomchatChatAPI,
-        getOwnKeys: () => {
-          const api = (window as any).__phantomchatChatAPI;
-          const secretKey = api?.getSecretKey?.();
-          const pubkey = api?.getOwnId?.();
-          if(!secretKey || !pubkey) return null;
-          return {pubkey, secretKey};
-        },
-        setPort: (port) => localTransport.setPort(port)
-      });
-      (window as any).__phantomchatLocalNodeDiscovery = localNodeDiscovery;
-      rootScope.addEventListener('phantomchat_backfill_complete', () => {
-        localNodeDiscovery.refresh().catch(swallowHandler('PhantomChatBridge.localNodeDiscovery'));
-      });
-      localNodeDiscovery.start();
 
       const transportSelector = new TransportSelector({
         capability,
@@ -312,23 +315,33 @@ export class PhantomChatBridge {
       (window as any).__phantomchatMessageRouter = messageRouter;
       (window as any).__phantomchatTransportSelector = transportSelector;
 
-      // Handle incoming signals from gift-wrap messages
-      rootScope.addEventListener('phantomchat_new_message', (e) => {
-        const msg = e.message as any;
-        if(msg?.rumorKind && isSignalKind(msg.rumorKind)) {
-          // #61 rollout safety: only accept an incoming OFFER from a peer that
-          // has advertised P2P capability. During a mixed-version rollout an
-          // un-upgraded peer still dials ungated with TURN-relay ICE candidates;
-          // answering with our host-only direct config yields no candidate pairs
-          // and would silently kill that pair's existing direct-mesh fast path.
-          // Answers/ICE for a session WE initiated are unaffected (we only gate
-          // offers). No peer advertises until phantombot#258, so today every
-          // inbound offer is ignored — matching current relay-only behaviour.
-          const signal = parseSignalContent(msg.content);
-          if(signal?.action === 'offer' && !capability.has(e.senderPubkey)) return;
-          meshManager.handleSignal(e.senderPubkey, msg.content);
+      // Drive the P2P badge off LIVE connection state: green only while a direct
+      // channel to the peer is actually open right now (open WebRTC data channel
+      // or open loopback socket). The badge polls this, so the chip appears when
+      // a channel comes up and disappears the moment it drops — never a stale
+      // green from an old send.
+      getTransportStatus().setLiveProbe((pubkey) => transportSelector.liveDirectTier(pubkey));
+
+      // Handle incoming WebRTC signals (kind 21050). ChatAPI decrypts the
+      // NIP-44-direct signal and hands us the decoded `{t}` message. Register
+      // once ChatAPI is live (it may be built before OR after the bridge).
+      const attachSignal = () => {
+        const api = (window as any).__phantomchatChatAPI;
+        if(api?.onSignal && !api.__signalWired) {
+          api.__signalWired = true;
+          api.onSignal((senderPubkey: string, signal: {t: string}) => {
+            // Rollout safety: only ANSWER an inbound OFFER from a peer that has
+            // advertised P2P capability. An un-upgraded/unknown peer offering with
+            // incompatible ICE would yield no candidate pairs; we stay on relay.
+            // Answers/ICE/hello for a session WE initiated are unaffected — we
+            // only gate offers.
+            if(signal?.t === 'offer' && !capability.has(senderPubkey)) return;
+            meshManager.handleSignal(senderPubkey, signal as any);
+          });
         }
-      });
+      };
+      attachSignal();
+      rootScope.addEventListener('phantomchat_backfill_complete', attachSignal);
 
       // Auto-connect to contacts after backfill — GATED by capability (#61).
       // Previously this fired a WebRTC offer at EVERY contact unconditionally.

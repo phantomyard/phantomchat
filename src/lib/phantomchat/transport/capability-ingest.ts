@@ -12,14 +12,13 @@
  * A node publishes a NIP-78 addressable app-data event under the persona pubkey:
  *   - kind    30078
  *   - `d` tag "phantomchat-p2p"
- *   - content JSON {localWs, webrtc, dht, enc}
- * The capability BOOLEANS ({localWs, webrtc, dht}) are PUBLIC — we must read them
- * before any encrypted channel exists, and they're not a secret. The concrete
- * reachability (the bound loopback PORT + LAN IPs) is NOT here; it lives in the
- * self-encrypted `enc` field, readable only by the node's OWN PWA (see
- * `local-node-discovery.ts`). This ingestor is contact-facing and needs only the
- * booleans. The event is REPLACEABLE (re-published on each node start supersedes
- * the previous) and stamped with `created_at` at publish time.
+ *   - content JSON {localWs, localWsPort, webrtc, dht}
+ * All fields are PLAINTEXT. The booleans gate the ladder; `localWsPort` is the
+ * node's OS-ephemeral loopback port — a `127.0.0.1`-only port reachable solely
+ * from that machine, so it is not a secret. A same-machine PWA reads the port
+ * here and dials `ws://localhost:<port>` straight to that recipient's node (the
+ * selector's tier 1). The event is REPLACEABLE (re-published on each node start
+ * supersedes the previous) and stamped with `created_at` at publish time.
  *
  * EXPIRY. phantombot publishes the advert ONCE per node start and does not
  * re-advertise on a timer, so a node that ran and then died leaves its advert on
@@ -149,8 +148,10 @@ export interface CapabilityIngestorDeps {
    * read on each poll rather than captured once. Returns null until it exists. */
   getChatAPI: () => CapabilityChatAPI | null | undefined;
   /** Current contact pubkeys (hex). Only contacts are polled — we never scan
-   * strangers. */
-  getContacts: () => string[];
+   * strangers. May be async: the authoritative source is the IndexedDB mapping
+   * store (getAllMappings), read live on each poll so contacts added mid-session
+   * are picked up without extra event plumbing. */
+  getContacts: () => string[] | Promise<string[]>;
   /** Clock, injectable for tests. Defaults to Date.now. */
   now?: () => number;
   /** Advert TTL. Defaults to CAPABILITY_TTL_MS. */
@@ -211,7 +212,7 @@ export class CapabilityIngestor {
 
   /** Refresh every current contact. Best-effort and fully concurrent. */
   async refreshAll(): Promise<void> {
-    const contacts = this.dedupeContacts();
+    const contacts = await this.dedupeContacts();
     if(contacts.length === 0) return;
     await Promise.allSettled(contacts.map((pk) => this.refreshPeer(pk)));
   }
@@ -238,10 +239,19 @@ export class CapabilityIngestor {
     }
   }
 
-  private dedupeContacts(): string[] {
+  private async dedupeContacts(): Promise<string[]> {
     const out: string[] = [];
     const seen = new Set<string>();
-    for(const pk of this.deps.getContacts()) {
+    let contacts: string[];
+    try {
+      contacts = await this.deps.getContacts();
+    } catch(err) {
+      // A failed contact lookup must never break the poll — treat as "no
+      // contacts this round" and let the next tick retry.
+      logSwallow('CapabilityIngestor.dedupeContacts', err);
+      return out;
+    }
+    for(const pk of contacts) {
       if(typeof pk !== 'string' || !HEX64.test(pk) || seen.has(pk)) continue;
       seen.add(pk);
       out.push(pk);

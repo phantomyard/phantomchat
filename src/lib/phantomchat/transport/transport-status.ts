@@ -8,13 +8,14 @@
  * a peer is reachable over a direct transport (local-ws / WebRTC / DHT) versus
  * falling through to the Nostr relay.
  *
- * TWO SIGNALS, ONE VERDICT. A peer counts as "P2P" for the badge when EITHER:
- *   - it has ADVERTISED capability (window.__phantomchatCapability.has) — i.e. it
- *     runs a phantombot P2P node we ingested an advert for; or
- *   - our last real delivery to it actually landed on a direct tier.
- * The advert is the steady-state signal (present before we've sent anything);
- * the last-delivery tier is the confirmation. Either is enough to say "this
- * conversation can go direct", which is what the badge communicates.
+ * ONE SIGNAL: CONNECTED RIGHT NOW, NOT POSSIBLE, NOT HISTORICAL. A peer counts
+ * as "P2P" for the badge ONLY when there is a LIVE direct channel to it at this
+ * moment — an open WebRTC data channel or an open loopback socket to its node —
+ * as reported by the live probe (registered from the TransportSelector). Neither
+ * advertised capability (a peer can run a node we never reach) NOR "our last send
+ * went direct" (that channel may since have dropped) is enough. The green chip
+ * means "this conversation is going direct RIGHT NOW"; the instant the channel
+ * closes the badge goes dark. A peer with no open direct channel shows no badge.
  *
  * AUDIT LOGGING. Every recorded tier and every state flip is logged under the
  * `[p2p]` tag so a session can be audited/debugged after the fact — deliberately
@@ -46,6 +47,17 @@ type Subscriber = () => void;
 export class TransportStatus {
   private records = new Map<string, PeerRecord>();
   private subscribers = new Set<Subscriber>();
+  /** Live probe: returns a direct tier when a channel to the peer is OPEN right
+   * now, else null. Registered by the bridge from the TransportSelector. When
+   * unset (no selector in this context) the badge simply never lights. */
+  private liveProbe: ((pubkey: string) => string | null) | null = null;
+
+  /** Register the live-connection probe (the bridge wires this to the
+   * TransportSelector's `liveDirectTier`). */
+  setLiveProbe(probe: (pubkey: string) => string | null): void {
+    this.liveProbe = probe;
+    this.notify();
+  }
 
   /** Record the tier a send to `pubkey` used. Logs + notifies only on a flip.
    * Accepts a plain string so callers holding a structural type (ChatAPI's
@@ -76,19 +88,21 @@ export class TransportStatus {
   }
 
   /**
-   * The badge verdict for a peer: 'p2p' when it advertised capability OR our
-   * last delivery went direct; 'relay' otherwise. Reads the capability registry
-   * live so a freshly-ingested advert flips the badge without us plumbing an
-   * event through the ingestor.
+   * The badge verdict for a peer: 'p2p' ONLY when there is a LIVE direct channel
+   * to it right now (an open WebRTC data channel or an open loopback socket to
+   * its node), as reported by the registered live probe. 'relay' otherwise.
+   *
+   * This is deliberately a LIVE check, not a historical one. Advertised
+   * capability is not enough (a peer can run a node we never reach), and neither
+   * is "our last send happened to go direct" (that channel may since have
+   * dropped). Green means the connection is established AT THIS MOMENT; when the
+   * channel closes the badge goes dark on the next evaluation. A peer with no
+   * open direct channel — including one we've never connected to — reads 'relay'
+   * (no badge).
    */
   stateFor(pubkey: string): P2PState {
-    if(!pubkey) return 'relay';
-    if(this.deliveredDirect(pubkey)) return 'p2p';
-    try {
-      const cap = (typeof window !== 'undefined') ? (window as any).__phantomchatCapability : null;
-      if(cap && typeof cap.has === 'function' && cap.has(pubkey)) return 'p2p';
-    } catch{ /* registry not ready — treat as relay */ }
-    return 'relay';
+    if(!pubkey || !this.liveProbe) return 'relay';
+    return this.liveProbe(pubkey) ? 'p2p' : 'relay';
   }
 
   /** Subscribe to state flips (delivery tier crossing the direct/relay line).
