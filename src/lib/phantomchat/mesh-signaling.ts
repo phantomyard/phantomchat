@@ -1,49 +1,48 @@
 import {SIGNAL_KIND, SignalMessage} from '@lib/phantomchat/webrtc-config';
 
-interface SignalEventInput {
-  action: 'offer' | 'answer' | 'ice-candidate';
-  sdp?: string;
-  candidate?: RTCIceCandidateInit;
-  sessionId: string;
+/**
+ * WebRTC signaling encode/decode — wire-compatible with phantombot's node
+ * (src/p2p/signaling.ts). A signal is JSON-serialized into the NIP-44-encrypted
+ * content of a kind-21050 ephemeral event (see SIGNAL_KIND). The NIP-44 crypto
+ * and the Nostr publish/subscribe happen in ChatAPI (which owns the keys); this
+ * module is the pure, unit-testable schema seam.
+ *
+ * Was a gift-wrap-rumor scheme ({type:'webrtc-signal', action, sessionId}) that
+ * no node spoke. Now the `{t}` schema the node encodes/decodes verbatim.
+ */
+
+/** Structural guard for a decoded signal payload. Mirrors the node's guard. */
+export function isSignalMessage(value: unknown): value is SignalMessage {
+  if(!value || typeof value !== 'object') return false;
+  const t = (value as {t?: unknown}).t;
+  if(t === 'offer' || t === 'answer') return typeof (value as {sdp?: unknown}).sdp === 'string';
+  if(t === 'candidate') return typeof (value as {candidate?: unknown}).candidate === 'string';
+  if(t === 'hello' || t === 'bye') return true;
+  return false;
 }
 
 /**
- * Create a Nostr event body for WebRTC signaling.
- * This is the rumor content inside a NIP-17 gift-wrap.
+ * Serialize a signal to the plaintext that gets NIP-44-encrypted into the
+ * kind-21050 event content.
  */
-export function createSignalEvent(input: SignalEventInput): {kind: number; content: string} {
-  const signal: SignalMessage = {
-    type: 'webrtc-signal',
-    action: input.action,
-    sessionId: input.sessionId
-  };
-  if(input.sdp) signal.sdp = input.sdp;
-  if(input.candidate) signal.candidate = input.candidate;
-
-  return {
-    kind: SIGNAL_KIND,
-    content: JSON.stringify(signal)
-  };
+export function encodeSignalPayload(msg: SignalMessage): string {
+  return JSON.stringify(msg);
 }
 
 /**
- * Parse signaling content from a decrypted gift-wrap.
- * Returns null if the content is not a WebRTC signal.
+ * Parse a decrypted kind-21050 signal payload. Returns null if it is not a
+ * valid signal (bad JSON, wrong shape). Never throws.
  */
-export function parseSignalContent(content: string): SignalMessage | null {
+export function decodeSignalPayload(plaintext: string): SignalMessage | null {
   try {
-    const parsed = JSON.parse(content);
-    if(parsed.type !== 'webrtc-signal') return null;
-    if(!parsed.action || !parsed.sessionId) return null;
-    return parsed as SignalMessage;
+    const parsed = JSON.parse(plaintext) as unknown;
+    return isSignalMessage(parsed) ? parsed : null;
   } catch{
     return null;
   }
 }
 
-/**
- * Check if a decrypted rumor kind is a signaling message.
- */
+/** Is this Nostr kind a WebRTC signaling event? */
 export function isSignalKind(kind: number): boolean {
   return kind === SIGNAL_KIND;
 }

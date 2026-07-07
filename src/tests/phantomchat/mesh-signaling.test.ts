@@ -1,83 +1,59 @@
 // @ts-nocheck
 import {describe, it, expect} from 'vitest';
 
-describe('MeshSignaling', () => {
-  it('should create a signal event with correct kind and content', async() => {
-    const {createSignalEvent} = await import('@lib/phantomchat/mesh-signaling');
+describe('MeshSignaling (phantombot-compatible {t} schema, kind 21050)', () => {
+  it('SIGNAL_KIND is 21050 to match phantombot NOSTR_KIND_P2P_SIGNAL', async() => {
     const {SIGNAL_KIND} = await import('@lib/phantomchat/webrtc-config');
+    expect(SIGNAL_KIND).toBe(21050);
+  });
 
-    const signal = createSignalEvent({
-      action: 'offer',
-      sdp: 'v=0\r\no=...',
-      sessionId: 'session-123'
-    });
-
-    expect(signal.kind).toBe(SIGNAL_KIND);
-    const parsed = JSON.parse(signal.content);
-    expect(parsed.type).toBe('webrtc-signal');
-    expect(parsed.action).toBe('offer');
+  it('encodes an offer payload the node can decode verbatim', async() => {
+    const {encodeSignalPayload, decodeSignalPayload} = await import('@lib/phantomchat/mesh-signaling');
+    const payload = encodeSignalPayload({t: 'offer', sdp: 'v=0\r\no=...'});
+    const parsed = JSON.parse(payload);
+    expect(parsed.t).toBe('offer');
     expect(parsed.sdp).toBe('v=0\r\no=...');
-    expect(parsed.sessionId).toBe('session-123');
+    // round-trips through the decoder
+    expect(decodeSignalPayload(payload)).toEqual({t: 'offer', sdp: 'v=0\r\no=...'});
   });
 
-  it('should create ice-candidate signal without sdp', async() => {
-    const {createSignalEvent} = await import('@lib/phantomchat/mesh-signaling');
-
-    const signal = createSignalEvent({
-      action: 'ice-candidate',
-      candidate: {candidate: 'candidate:1 1 UDP 2122252543 192.168.1.1 50000 typ host', sdpMid: '0', sdpMLineIndex: 0},
-      sessionId: 'session-456'
-    });
-
-    const parsed = JSON.parse(signal.content);
-    expect(parsed.action).toBe('ice-candidate');
-    expect(parsed.candidate.candidate).toContain('candidate:1');
-    expect(parsed.sdp).toBeUndefined();
+  it('encodes a candidate payload (node candidate shape)', async() => {
+    const {encodeSignalPayload, decodeSignalPayload} = await import('@lib/phantomchat/mesh-signaling');
+    const msg = {t: 'candidate', candidate: 'candidate:1 1 UDP 2122252543 192.168.1.1 50000 typ host', sdpMid: '0', sdpMLineIndex: 0};
+    const decoded = decodeSignalPayload(encodeSignalPayload(msg));
+    expect(decoded.t).toBe('candidate');
+    expect(decoded.candidate).toContain('candidate:1');
+    expect(decoded.sdpMid).toBe('0');
+    expect(decoded.sdpMLineIndex).toBe(0);
   });
 
-  it('should parse valid signal content', async() => {
-    const {parseSignalContent} = await import('@lib/phantomchat/mesh-signaling');
-
-    const content = JSON.stringify({
-      type: 'webrtc-signal',
-      action: 'answer',
-      sdp: 'v=0\r\no=answer...',
-      sessionId: 'session-789'
-    });
-
-    const signal = parseSignalContent(content);
-    expect(signal).not.toBeNull();
-    expect(signal.action).toBe('answer');
-    expect(signal.sessionId).toBe('session-789');
+  it('encodes hello / bye control signals', async() => {
+    const {encodeSignalPayload, decodeSignalPayload} = await import('@lib/phantomchat/mesh-signaling');
+    expect(decodeSignalPayload(encodeSignalPayload({t: 'hello'}))).toEqual({t: 'hello'});
+    expect(decodeSignalPayload(encodeSignalPayload({t: 'bye'}))).toEqual({t: 'bye'});
   });
 
-  it('should return null for non-signal content', async() => {
-    const {parseSignalContent} = await import('@lib/phantomchat/mesh-signaling');
-    expect(parseSignalContent('just text')).toBeNull();
-    expect(parseSignalContent(JSON.stringify({type: 'other'}))).toBeNull();
-    expect(parseSignalContent(JSON.stringify({type: 'webrtc-signal'}))).toBeNull(); // missing action+sessionId
+  it('decodes an answer payload', async() => {
+    const {decodeSignalPayload} = await import('@lib/phantomchat/mesh-signaling');
+    const decoded = decodeSignalPayload(JSON.stringify({t: 'answer', sdp: 'v=0\r\no=answer...'}));
+    expect(decoded).not.toBeNull();
+    expect(decoded.t).toBe('answer');
+    expect(decoded.sdp).toBe('v=0\r\no=answer...');
   });
 
-  it('should identify signal kind', async() => {
+  it('returns null for non-signal / malformed content', async() => {
+    const {decodeSignalPayload} = await import('@lib/phantomchat/mesh-signaling');
+    expect(decodeSignalPayload('just text')).toBeNull();
+    expect(decodeSignalPayload(JSON.stringify({t: 'other'}))).toBeNull();
+    expect(decodeSignalPayload(JSON.stringify({t: 'offer'}))).toBeNull(); // offer missing sdp
+    expect(decodeSignalPayload(JSON.stringify({t: 'candidate'}))).toBeNull(); // candidate missing candidate
+  });
+
+  it('identifies the signal kind', async() => {
     const {isSignalKind} = await import('@lib/phantomchat/mesh-signaling');
     const {SIGNAL_KIND} = await import('@lib/phantomchat/webrtc-config');
     expect(isSignalKind(SIGNAL_KIND)).toBe(true);
     expect(isSignalKind(1059)).toBe(false);
-    expect(isSignalKind(0)).toBe(false);
-  });
-
-  it('should create answer signal event', async() => {
-    const {createSignalEvent} = await import('@lib/phantomchat/mesh-signaling');
-
-    const signal = createSignalEvent({
-      action: 'answer',
-      sdp: 'v=0\r\nanswer-sdp',
-      sessionId: 'session-abc'
-    });
-
-    const parsed = JSON.parse(signal.content);
-    expect(parsed.action).toBe('answer');
-    expect(parsed.sdp).toBe('v=0\r\nanswer-sdp');
-    expect(parsed.candidate).toBeUndefined();
+    expect(isSignalKind(29001)).toBe(false); // the old, mismatched kind
   });
 });

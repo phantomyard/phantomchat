@@ -14,7 +14,6 @@ import {NostrRelayPool, DEFAULT_RELAYS, loadCanonicalRelays, RelayConfig} from '
 import {OfflineQueue} from './offline-queue';
 import {MeshManager} from '@lib/phantomchat/mesh-manager';
 import {MessageRouter} from '@lib/phantomchat/message-router';
-import {isSignalKind, parseSignalContent} from '@lib/phantomchat/mesh-signaling';
 import {getRtcConfigDirect} from '@lib/phantomchat/webrtc-config';
 import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
 import {CapabilityIngestor} from '@lib/phantomchat/transport/capability-ingest';
@@ -220,14 +219,17 @@ export class PhantomChatBridge {
       });
       capabilityIngestor.start();
 
-      // Initialize mesh manager. Uses the direct (host-candidate, no third-party
-      // TURN) RTC config so capability-gated peers connect node-to-node on the
-      // LAN — satisfying #61's "only Pages + relays, no other infra" constraint.
+      // Initialize mesh manager. Uses the direct RTC config (host + STUN-srflx
+      // candidates, no third-party TURN relay) so capability-gated peers connect
+      // directly on the LAN or across NAT. The mesh speaks phantombot's kind-21050
+      // signaling protocol verbatim (offer/answer/candidate/hello/bye), so a PWA
+      // and a node negotiate WebRTC directly — the fix for signaling never firing.
+      // ownPubkey drives the glare rule (smaller pubkey offers), identical to the node.
       const meshManager = new MeshManager({
         sendSignal: async(recipientPubkey, signal) => {
           const chatAPI = (window as any).__phantomchatChatAPI;
-          if(chatAPI) {
-            await chatAPI.publishSignal?.(recipientPubkey, signal.content);
+          if(chatAPI?.publishSignal) {
+            await chatAPI.publishSignal(recipientPubkey, signal);
           }
         },
         onPeerMessage: (pubkey, message) => {
@@ -255,7 +257,7 @@ export class PhantomChatBridge {
           miniRelayWorker.postMessage({type: 'peer-disconnected', peerId: pubkey});
           rootScope.dispatchEvent('phantomchat_mesh_peer_disconnected', {pubkey});
         }
-      }, getRtcConfigDirect);
+      }, getRtcConfigDirect, this._userPubkey ?? '');
 
       // Initialize message router
       const messageRouter = new MessageRouter({
@@ -312,23 +314,26 @@ export class PhantomChatBridge {
       (window as any).__phantomchatMessageRouter = messageRouter;
       (window as any).__phantomchatTransportSelector = transportSelector;
 
-      // Handle incoming signals from gift-wrap messages
-      rootScope.addEventListener('phantomchat_new_message', (e) => {
-        const msg = e.message as any;
-        if(msg?.rumorKind && isSignalKind(msg.rumorKind)) {
-          // #61 rollout safety: only accept an incoming OFFER from a peer that
-          // has advertised P2P capability. During a mixed-version rollout an
-          // un-upgraded peer still dials ungated with TURN-relay ICE candidates;
-          // answering with our host-only direct config yields no candidate pairs
-          // and would silently kill that pair's existing direct-mesh fast path.
-          // Answers/ICE for a session WE initiated are unaffected (we only gate
-          // offers). No peer advertises until phantombot#258, so today every
-          // inbound offer is ignored — matching current relay-only behaviour.
-          const signal = parseSignalContent(msg.content);
-          if(signal?.action === 'offer' && !capability.has(e.senderPubkey)) return;
-          meshManager.handleSignal(e.senderPubkey, msg.content);
+      // Handle incoming WebRTC signals (kind 21050). ChatAPI decrypts the
+      // NIP-44-direct signal and hands us the decoded `{t}` message. Register
+      // once ChatAPI is live (it may be built before OR after the bridge).
+      const attachSignal = () => {
+        const api = (window as any).__phantomchatChatAPI;
+        if(api?.onSignal && !api.__signalWired) {
+          api.__signalWired = true;
+          api.onSignal((senderPubkey: string, signal: {t: string}) => {
+            // Rollout safety: only ANSWER an inbound OFFER from a peer that has
+            // advertised P2P capability. An un-upgraded/unknown peer offering with
+            // incompatible ICE would yield no candidate pairs; we stay on relay.
+            // Answers/ICE/hello for a session WE initiated are unaffected — we
+            // only gate offers.
+            if(signal?.t === 'offer' && !capability.has(senderPubkey)) return;
+            meshManager.handleSignal(senderPubkey, signal as any);
+          });
         }
-      });
+      };
+      attachSignal();
+      rootScope.addEventListener('phantomchat_backfill_complete', attachSignal);
 
       // Auto-connect to contacts after backfill — GATED by capability (#61).
       // Previously this fired a WebRTC offer at EVERY contact unconditionally.

@@ -16,12 +16,14 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelayPool, PublishResult, DEFAULT_RELAYS} from './nostr-relay-pool';
-import {DecryptedMessage, NostrEvent} from './nostr-relay';
+import {DecryptedMessage, NostrEvent, NOSTR_KIND_P2P_SIGNAL} from './nostr-relay';
 import {OfflineQueue} from './offline-queue';
 import {getMessageStore, StoredMessage} from './message-store';
 import {DeliveryTracker} from './delivery-tracker';
 import {getMessageRequestStore} from './message-requests';
-import {wrapNip17Message} from './nostr-crypto';
+import {wrapNip17Message, getConversationKey, nip44Encrypt, nip44Decrypt} from './nostr-crypto';
+import {SignalMessage} from './webrtc-config';
+import {encodeSignalPayload, decodeSignalPayload} from './mesh-signaling';
 import {isControlEvent, getGroupIdFromRumor} from './group-control-messages';
 import rootScope from '@lib/rootScope';
 import {handleRelayMessage as handleRelayMessageImpl, IncomingEdit} from './chat-api-receive';
@@ -141,6 +143,10 @@ export class ChatAPI {
   onMessage: MessageCallback | null = null;
   onEditMessage: ((edit: IncomingEdit) => void) | null = null;
   onStatusChange: StatusChangeCallback | null = null;
+
+  // WebRTC signaling receiver (issue: PWA↔node P2P). Registered by the bridge;
+  // called with a decrypted, decoded kind-21050 signal from a peer.
+  private signalHandler: ((senderPubkey: string, msg: SignalMessage) => void) | null = null;
 
   /**
    * Create a new ChatAPI instance
@@ -402,6 +408,22 @@ export class ChatAPI {
         });
         return;
       }
+      if(event.kind === NOSTR_KIND_P2P_SIGNAL) {
+        // WebRTC signaling (kind 21050): NIP-44-direct, signed with the peer's
+        // real key. Decrypt with the conversation key derived from our secret
+        // key + the event author, then hand the decoded signal to the mesh.
+        // Wire-compatible with phantombot's node (src/p2p/signaling.ts).
+        const sk = this.relayPool.getPrivateKey?.();
+        if(!sk || !this.signalHandler) return;
+        try {
+          const convKey = getConversationKey(sk, event.pubkey);
+          const msg = decodeSignalPayload(nip44Decrypt(event.content, convKey));
+          if(msg) this.signalHandler(event.pubkey, msg);
+        } catch(err) {
+          this.log.debug('[ChatAPI] failed to decode P2P signal:', err);
+        }
+        return;
+      }
       // NOTE: kind-30315 (NIP-38 one-way presence beacon) is intentionally NOT
       // handled here. It only ever proved "the peer shouted online", never "the
       // peer can hear you". It was replaced by the gift-wrapped ping/pong
@@ -475,6 +497,38 @@ export class ChatAPI {
     }, sk);
     await this.relayPool.publishRawEvent(signed as any);
     return signed as any;
+  }
+
+  /**
+   * Register the receiver for inbound WebRTC signals (kind 21050). Called once
+   * by the bridge to route decrypted signals into the mesh manager.
+   */
+  onSignal(handler: (senderPubkey: string, msg: SignalMessage) => void): void {
+    this.signalHandler = handler;
+  }
+
+  /**
+   * Publish a WebRTC signal to a peer — wire-compatible with phantombot's node
+   * (src/p2p/signaling.ts). Encrypts the `{t}` payload with the NIP-44
+   * conversation key (our secret + recipient pubkey) and publishes it as a
+   * kind-21050 ephemeral event signed with our REAL key (so the recipient can
+   * derive the same conversation key from `event.pubkey`), tagged `p` = peer.
+   * Best-effort and never used as the message floor — relay is always the floor.
+   */
+  async publishSignal(recipientPubkey: string, msg: SignalMessage): Promise<void> {
+    const sk = this.relayPool.getPrivateKey?.();
+    if(!sk) {
+      this.log.warn('[ChatAPI] cannot publish signal: relay pool has no private key');
+      return;
+    }
+    const convKey = getConversationKey(sk, recipientPubkey);
+    const content = nip44Encrypt(encodeSignalPayload(msg), convKey);
+    await this.publishEvent({
+      kind: NOSTR_KIND_P2P_SIGNAL,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['p', recipientPubkey]],
+      content
+    });
   }
 
   /**
