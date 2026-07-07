@@ -1,14 +1,16 @@
 /*
  * Unit tests for the P2P badge data source (#52): TransportStatus.stateFor.
- * Guards the badge verdict — ONLY a peer whose last delivery actually landed on
- * a direct tier is 'p2p'. Advertised capability alone is NOT enough (green means
- * ESTABLISHED, not merely possible); everyone else is 'relay'.
+ * Guards the badge verdict — a peer is 'p2p' ONLY while a LIVE direct channel to
+ * it is open right now (as reported by the registered live probe). Advertised
+ * capability is NOT enough, and neither is a past direct delivery — green means
+ * CONNECTED AT THIS MOMENT. Everyone else is 'relay'.
  */
 
 import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
 import {TransportStatus} from '@lib/phantomchat/transport/transport-status';
 
 const PEER = 'a'.repeat(64);
+const OTHER = 'b'.repeat(64);
 
 describe('TransportStatus (P2P badge verdict)', () => {
   let ts: TransportStatus;
@@ -16,46 +18,56 @@ describe('TransportStatus (P2P badge verdict)', () => {
   beforeEach(() => {
     ts = new TransportStatus();
     (globalThis as any).window = globalThis;
-    delete (globalThis as any).__phantomchatCapability;
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete (globalThis as any).__phantomchatCapability;
   });
 
-  it('is relay for an unknown peer (no advert, no delivery)', () => {
-    expect(ts.stateFor(PEER)).toBe('relay');
-    expect(ts.deliveredDirect(PEER)).toBe(false);
-  });
-
-  it('is relay after a relay-tier delivery', () => {
-    ts.record(PEER, 'relay');
+  it('is relay when no live probe is registered', () => {
     expect(ts.stateFor(PEER)).toBe('relay');
   });
 
-  it('flips to p2p after a direct-tier delivery (local-ws / webrtc / dht)', () => {
-    for(const tier of ['local-ws', 'webrtc', 'dht'] as const) {
-      const fresh = new TransportStatus();
-      fresh.record(PEER, tier);
-      expect(fresh.deliveredDirect(PEER)).toBe(true);
-      expect(fresh.stateFor(PEER)).toBe('p2p');
-    }
+  it('is relay when the live probe reports no open channel (null)', () => {
+    ts.setLiveProbe(() => null);
+    expect(ts.stateFor(PEER)).toBe('relay');
   });
 
-  it('is NOT p2p on advertised capability alone — established delivery required', () => {
-    // A peer that advertised a P2P node but we have never actually reached over a
-    // direct tier must stay relay (no badge). Capability != established.
-    (globalThis as any).__phantomchatCapability = {has: (pk: string) => pk === PEER};
+  it('is p2p ONLY while the live probe reports an open direct channel', () => {
+    let live: string | null = null;
+    ts.setLiveProbe((pk) => (pk === PEER ? live : null));
+
+    // No channel yet → relay.
     expect(ts.stateFor(PEER)).toBe('relay');
 
-    // ...and it only flips to p2p once a real delivery lands on a direct tier.
-    ts.record(PEER, 'webrtc');
+    // Channel comes up → p2p.
+    live = 'webrtc';
     expect(ts.stateFor(PEER)).toBe('p2p');
+
+    // A different peer with no channel stays relay.
+    expect(ts.stateFor(OTHER)).toBe('relay');
+
+    // Channel drops → back to relay (no stale green).
+    live = null;
+    expect(ts.stateFor(PEER)).toBe('relay');
   });
 
-  it('notifies subscribers only when a delivery crosses the direct/relay line', () => {
+  it('a past direct delivery does NOT keep the badge green once the channel is gone', () => {
+    // record() is audit-only now; it must NOT drive the verdict.
+    ts.setLiveProbe(() => null); // no live channel
+    ts.record(PEER, 'webrtc');   // we once delivered direct...
+    expect(ts.stateFor(PEER)).toBe('relay'); // ...but the channel is gone → no badge
+  });
+
+  it('setLiveProbe notifies subscribers so mounted badges re-evaluate', () => {
+    const cb = vi.fn();
+    ts.subscribe(cb);
+    ts.setLiveProbe(() => 'local-ws');
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('record still notifies subscribers only when it crosses the direct/relay line', () => {
     const cb = vi.fn();
     ts.subscribe(cb);
 

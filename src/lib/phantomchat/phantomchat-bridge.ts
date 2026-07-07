@@ -19,6 +19,7 @@ import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
 import {CapabilityIngestor} from '@lib/phantomchat/transport/capability-ingest';
 import {LocalWsTransport} from '@lib/phantomchat/transport/local-ws-transport';
 import {TransportSelector} from '@lib/phantomchat/transport/transport-selector';
+import {getTransportStatus} from '@lib/phantomchat/transport/transport-status';
 import rootScope from '@lib/rootScope';
 import {swallowHandler} from '@lib/phantomchat/log-swallow';
 
@@ -313,6 +314,13 @@ export class PhantomChatBridge {
       (window as any).__phantomchatMeshManager = meshManager;
       (window as any).__phantomchatMessageRouter = messageRouter;
       (window as any).__phantomchatTransportSelector = transportSelector;
+
+      // Drive the P2P badge off LIVE connection state: green only while a direct
+      // channel to the peer is actually open right now (open WebRTC data channel
+      // or open loopback socket). The badge polls this, so the chip appears when
+      // a channel comes up and disappears the moment it drops — never a stale
+      // green from an old send.
+      getTransportStatus().setLiveProbe((pubkey) => transportSelector.liveDirectTier(pubkey));
 
       // Handle incoming WebRTC signals (kind 21050). ChatAPI decrypts the
       // NIP-44-direct signal and hands us the decoded `{t}` message. Register

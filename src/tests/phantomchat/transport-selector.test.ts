@@ -252,3 +252,41 @@ describe('TransportSelector — fast-fail down the chain', () => {
     expect(mesh.send).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('TransportSelector.liveDirectTier — the live badge probe', () => {
+  it('null when the peer has no open direct channel', () => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {localWs: true, localWsPort: 33297, webrtc: true});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('disconnected')});
+    const local = makeLocal({isConnected: vi.fn().mockReturnValue(false)});
+    const sel = new TransportSelector({capability, mesh, local});
+    expect(sel.liveDirectTier(PK)).toBeNull();
+  });
+
+  it('webrtc when the mesh data channel is currently connected', () => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {webrtc: true});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
+    const local = makeLocal({isConnected: vi.fn().mockReturnValue(false)});
+    const sel = new TransportSelector({capability, mesh, local});
+    expect(sel.liveDirectTier(PK)).toBe('webrtc');
+  });
+
+  it('local-ws when a loopback socket to the advertised port is open', () => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {localWs: true, localWsPort: 33297, webrtc: true});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('disconnected')});
+    const local = makeLocal({isConnected: vi.fn().mockReturnValue(true)});
+    const sel = new TransportSelector({capability, mesh, local});
+    expect(sel.liveDirectTier(PK)).toBe('local-ws');
+  });
+
+  it('does not treat an advertised-but-portless (localWsPort 0) peer as local-ws', () => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {localWs: true, localWsPort: 0, webrtc: true});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('disconnected')});
+    const local = makeLocal({isConnected: vi.fn().mockReturnValue(true)});
+    const sel = new TransportSelector({capability, mesh, local});
+    expect(sel.liveDirectTier(PK)).toBeNull();
+  });
+});

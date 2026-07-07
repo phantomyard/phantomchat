@@ -160,6 +160,36 @@ export class TransportSelector {
   }
 
   /**
+   * The LIVE direct-transport state for a peer, right now — not a historical
+   * send. Returns the tier of a currently-open direct channel to the peer
+   * ('webrtc' when the mesh data channel is open, 'local-ws' when a loopback
+   * socket to the peer's advertised node port is open) or null when the only
+   * path right now is relay. The P2P badge reads this so green means "there is
+   * an established direct connection to this peer at this moment", and the chip
+   * disappears the moment that channel drops — never a stale green from a send
+   * that happened minutes ago.
+   */
+  liveDirectTier(recipientPubkey: string): TransportTier | null {
+    try {
+      if(!recipientPubkey) return null;
+      // WebRTC data channel currently open?
+      if(this.deps.mesh && this.deps.mesh.getStatus(recipientPubkey) === 'connected') {
+        return 'webrtc';
+      }
+      // Same-machine loopback socket currently open to the peer's node port?
+      const caps = this.deps.capability.get(recipientPubkey);
+      const port = caps?.localWsPort ?? 0;
+      if(this.deps.local && port > 0 && this.deps.local.isConnected(port)) {
+        return 'local-ws';
+      }
+      return null;
+    } catch(e) {
+      logSwallow('TransportSelector.liveDirectTier', e);
+      return null;
+    }
+  }
+
+  /**
    * Choose the gift-wrap addressed to `recipientPubkey` (its p-tag holds the
    * recipient). `publish()` returns both the recipient wrap and a self wrap for
    * multi-device sync; only the recipient wrap is decryptable by the peer. Falls
