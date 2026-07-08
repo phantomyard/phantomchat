@@ -85,6 +85,11 @@ class SendTypingExperiment {
     // Reset any in-flight timers for this peer (no stacking on rapid sends).
     this.clearTimers(peerId);
 
+    // Loud success marker: proves the send-click trigger fired and dispatched a
+    // local typing update. If you see this line but NO dots render, the bug is a
+    // PWA rendering/UX problem — not a relay/transport problem.
+    console.log(`${LOG_PREFIX} FIRED on send-click → dispatching local typing for peer ${peerId}`);
+
     this.dispatcher(peerId, false);
 
     // Recursive setTimeout (not setInterval) so the hard-stop can cancel a
