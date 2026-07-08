@@ -159,6 +159,7 @@ import getDocumentDownloadOptions from '@lib/appManagers/utils/docs/getDocumentD
 import getPhotoDownloadOptions from '@lib/appManagers/utils/photos/getPhotoDownloadOptions';
 import {getFileNameByLocation} from '@helpers/fileName';
 import {Middleware, getMiddleware, MiddlewareHelper} from '@helpers/middleware';
+import {sendTypingExperiment} from '@lib/phantomchat/send-typing-experiment';
 
 // console.log('Recorder', Recorder);
 
@@ -3341,6 +3342,13 @@ export default class ChatInput {
           this.recorder.stop();
         }
       } else {
+        // EXPERIMENT (typing-on-send-click): fire a purely-local typing
+        // indicator for the peer the instant SEND is clicked, to isolate
+        // whether the tweb rendering path works at all. Local-only; nothing
+        // is published to relays. Guarded to user DMs.
+        if(this.chat.peerId.isUser() && this.chat.peerId !== rootScope.myId) {
+          sendTypingExperiment.start(Number(this.chat.peerId.toUserId()));
+        }
         this.sendMessage();
       }
     } else {
