@@ -2905,17 +2905,17 @@ export class AppImManager extends EventListenerBase<{
 
     // EXPERIMENT: gate commented — bot/support wrapper (always attempt typing)
     // if(!user.pFlags.bot && !user.pFlags.support) {
-      let typingEl = await this.getPeerTyping(userId.toPeerId());
-      if(!typingEl && user?.status?._ === 'userStatusOnline') {
-        typingEl = document.createElement('span');
-        typingEl.classList.add('online');
-        typingEl.append(subtitle);
-      }
+    let typingEl = await this.getPeerTyping(userId.toPeerId());
+    if(!typingEl && user?.status?._ === 'userStatusOnline') {
+      typingEl = document.createElement('span');
+      typingEl.classList.add('online');
+      typingEl.append(subtitle);
+    }
 
-      if(typingEl) {
-        result.result = Promise.resolve(typingEl);
-        return result;
-      }
+    if(typingEl) {
+      result.result = Promise.resolve(typingEl);
+      return result;
+    }
     // }
 
     result.result = Promise.resolve(subtitle);

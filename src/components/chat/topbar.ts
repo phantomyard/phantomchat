@@ -1708,7 +1708,7 @@ export default class ChatTopbar {
       listenerSetter.add(rootScope)('peer_typings', ({peerId: _peerId}) => {
         // EXPERIMENT: gate commented — peerId===_peerId match
         // if(peerId === _peerId) {
-          setAuto();
+        setAuto();
         // }
       });
 
