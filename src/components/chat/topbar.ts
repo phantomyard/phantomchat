@@ -1706,9 +1706,10 @@ export default class ChatTopbar {
       const peerId = this.peerId;
 
       listenerSetter.add(rootScope)('peer_typings', ({peerId: _peerId}) => {
-        if(peerId === _peerId) {
+        // EXPERIMENT: gate commented — peerId===_peerId match
+        // if(peerId === _peerId) {
           setAuto();
-        }
+        // }
       });
 
       listenerSetter.add(rootScope)('user_update', (userId) => {
@@ -1739,7 +1740,8 @@ export default class ChatTopbar {
     });
 
     const setAuto = () => {
-      prepare(false).then((callback) => middleware() && callback?.());
+      // EXPERIMENT: gate commented — middleware() paint guard
+      prepare(false).then((callback) => callback?.());
     };
 
     return {

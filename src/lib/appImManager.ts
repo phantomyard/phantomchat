@@ -2718,10 +2718,11 @@ export class AppImManager extends EventListenerBase<{
     // log('getting peer typing');
 
     const isUser = peerId.isUser();
-    if(isUser && await this.managers.appUsersManager.isBot(peerId)) {
-      // log('a bot');
-      return;
-    }
+    // EXPERIMENT: gate commented — isBot
+    // if(isUser && await this.managers.appUsersManager.isBot(peerId)) {
+    //   // log('a bot');
+    //   return;
+    // }
 
     const typings = await this.managers.appProfileManager.getPeerTypings(peerId, threadId);
     if(!typings?.length) {
@@ -2795,11 +2796,12 @@ export class AppImManager extends EventListenerBase<{
       }
     }
 
-    const langPackKey = mapa[action._];
-    if(!langPackKey) {
-      // log('no langPackKey');
-      return;
-    }
+    // EXPERIMENT: gate commented — langPackKey fallback to typing text
+    const langPackKey = mapa[action._] || 'Peer.Activity.User.TypingText';
+    // if(!langPackKey) {
+    //   // log('no langPackKey');
+    //   return;
+    // }
 
     let peerTitlePromise: Promise<any>;
     let args: any[];
@@ -2894,15 +2896,17 @@ export class AppImManager extends EventListenerBase<{
     };
 
     const user = await this.managers.appUsersManager.getUser(userId);
-    if(!user || (user.pFlags.self && !ignoreSelf)) {
-      return result;
-    }
+    // EXPERIMENT: gate commented — !user / self early-return
+    // if(!user || (user.pFlags.self && !ignoreSelf)) {
+    //   return result;
+    // }
 
-    const subtitle = getUserStatusString(user);
+    const subtitle = user ? getUserStatusString(user) : document.createElement('span');
 
-    if(!user.pFlags.bot && !user.pFlags.support) {
+    // EXPERIMENT: gate commented — bot/support wrapper (always attempt typing)
+    // if(!user.pFlags.bot && !user.pFlags.support) {
       let typingEl = await this.getPeerTyping(userId.toPeerId());
-      if(!typingEl && user.status?._ === 'userStatusOnline') {
+      if(!typingEl && user?.status?._ === 'userStatusOnline') {
         typingEl = document.createElement('span');
         typingEl.classList.add('online');
         typingEl.append(subtitle);
@@ -2912,7 +2916,7 @@ export class AppImManager extends EventListenerBase<{
         result.result = Promise.resolve(typingEl);
         return result;
       }
-    }
+    // }
 
     result.result = Promise.resolve(subtitle);
     return result;
@@ -2944,27 +2948,30 @@ export class AppImManager extends EventListenerBase<{
 
     const {peerId, element, needClear, useWhitespace, middleware, ignoreSelf, noTyping} = options;
 
-    if(!needClear) {
-      // * good good good
-      const typingContainer = element.querySelector('.peer-typing-container') as HTMLElement;
-      if(typingContainer && await this.getPeerTyping(peerId, typingContainer)) {
-        // log('already have a status');
-        return;
-      }
-    }
+    // EXPERIMENT: gate commented — "already have status" early-return
+    // if(!needClear) {
+    //   // * good good good
+    //   const typingContainer = element.querySelector('.peer-typing-container') as HTMLElement;
+    //   if(typingContainer && await this.getPeerTyping(peerId, typingContainer)) {
+    //     // log('already have a status');
+    //     return;
+    //   }
+    // }
 
     const result = await this.getPeerStatus(peerId, ignoreSelf, noTyping);
     // log('getPeerStatus result', result);
-    if(!middleware()) {
-      // log.warn('middleware');
-      return;
-    }
+    // EXPERIMENT: gate commented — middleware peer-changed abort
+    // if(!middleware()) {
+    //   // log.warn('middleware');
+    //   return;
+    // }
 
     const set = async() => {
       const subtitle = result && await result.result;
-      if(!middleware()) {
-        return;
-      }
+      // EXPERIMENT: gate commented — middleware peer-changed abort
+      // if(!middleware()) {
+      //   return;
+      // }
 
       return () => replaceContent(element, subtitle || placeholder);
     };
