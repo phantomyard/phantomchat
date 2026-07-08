@@ -1743,10 +1743,15 @@ export default class ChatTopbar {
     });
 
     const setAuto = () => {
-      // No middleware paint guard: P2P peers resolve synchronously, so the
-      // async "peer changed" abort only stranded the typing render on fast
-      // chat switches. Cross-chat safety is the peerId equality check above.
-      prepare(false).then((callback) => callback?.());
+      // P2P peers resolve synchronously, so we don't restore the broad async
+      // abort that stranded the typing render on fast chat switches. But the
+      // status lookup can still resolve after a switch (slow/non-cached path,
+      // 60s interval, user_update), so guard only at the paint point: if the
+      // peer changed before this resolved, drop the stale result.
+      prepare(false).then((callback) => {
+        if(!middleware()) return;
+        callback?.();
+      });
     };
 
     return {
