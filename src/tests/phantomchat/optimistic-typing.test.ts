@@ -10,6 +10,7 @@
 import '../setup';
 import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
 import {optimisticTyping} from '@lib/phantomchat/optimistic-typing';
+import {setReadReceiptsEnabledSetting} from '@lib/phantomchat/read-receipts-setting';
 
 const PEER_PUBKEY = 'aabbcc0011223344aabbcc0011223344aabbcc0011223344aabbcc0011223344';
 const PEER_ID = 1234567890123456;
@@ -21,6 +22,7 @@ describe('OptimisticTyping', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    setReadReceiptsEnabledSetting(true);
     dispatches = [];
     resolver = vi.fn().mockResolvedValue(PEER_ID);
     dispatcher = vi.fn().mockImplementation((peerId: number, isStop: boolean) => {
@@ -196,6 +198,16 @@ describe('OptimisticTyping', () => {
     expect(optimisticTyping.isActive(PEER_PUBKEY)).toBe(false);
 
     // No timers should be running.
+    vi.advanceTimersByTime(15_000);
+    expect(dispatches).toHaveLength(0);
+  });
+
+  it('is disabled when read-receipts / typing privacy toggle is off', async() => {
+    setReadReceiptsEnabledSetting(false);
+    await optimisticTyping.start(PEER_PUBKEY);
+    expect(dispatches).toHaveLength(0);
+    expect(optimisticTyping.isActive(PEER_PUBKEY)).toBe(false);
+
     vi.advanceTimersByTime(15_000);
     expect(dispatches).toHaveLength(0);
   });

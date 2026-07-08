@@ -26,6 +26,7 @@
  */
 
 import rootScope from '@lib/rootScope';
+import {getReadReceiptsEnabled} from './read-receipts-setting';
 
 const LOG_PREFIX = '[OptimisticTyping]';
 
@@ -85,6 +86,11 @@ class OptimisticTypingManager {
    * timers.
    */
   async start(peerPubkey: string): Promise<void> {
+    // Privacy gate — if the user disabled read receipts / typing indicators,
+    // don't even render the local optimistic indicator. WhatsApp-style parity
+    // with the relay typing receiver and the VMT emit side.
+    if(!getReadReceiptsEnabled()) return;
+
     // Claim a new generation token for this peer. If a newer start() arrives
     // while we're awaiting the resolver, our generation will be stale and we
     // abort — preventing orphaned timers.
