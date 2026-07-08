@@ -2718,11 +2718,7 @@ export class AppImManager extends EventListenerBase<{
     // log('getting peer typing');
 
     const isUser = peerId.isUser();
-    // EXPERIMENT: gate commented — isBot
-    // if(isUser && await this.managers.appUsersManager.isBot(peerId)) {
-    //   // log('a bot');
-    //   return;
-    // }
+    // BARE-BONES: no isBot gate — P2P peers are never bots.
 
     const typings = await this.managers.appProfileManager.getPeerTypings(peerId, threadId);
     if(!typings?.length) {
@@ -2796,12 +2792,8 @@ export class AppImManager extends EventListenerBase<{
       }
     }
 
-    // EXPERIMENT: gate commented — langPackKey fallback to typing text
+    // BARE-BONES: no langPackKey bail — always fall back to plain "typing…".
     const langPackKey = mapa[action._] || 'Peer.Activity.User.TypingText';
-    // if(!langPackKey) {
-    //   // log('no langPackKey');
-    //   return;
-    // }
 
     let peerTitlePromise: Promise<any>;
     let args: any[];
@@ -2896,15 +2888,11 @@ export class AppImManager extends EventListenerBase<{
     };
 
     const user = await this.managers.appUsersManager.getUser(userId);
-    // EXPERIMENT: gate commented — !user / self early-return
-    // if(!user || (user.pFlags.self && !ignoreSelf)) {
-    //   return result;
-    // }
-
+    // BARE-BONES: no !user gate. A P2P typing indicator needs no user object,
+    // so we render regardless of whether the synthetic peer is injected yet.
+    // No bot/support wrapper either — P2P peers always show plain typing.
     const subtitle = user ? getUserStatusString(user) : document.createElement('span');
 
-    // EXPERIMENT: gate commented — bot/support wrapper (always attempt typing)
-    // if(!user.pFlags.bot && !user.pFlags.support) {
     let typingEl = await this.getPeerTyping(userId.toPeerId());
     if(!typingEl && user?.status?._ === 'userStatusOnline') {
       typingEl = document.createElement('span');
@@ -2916,7 +2904,6 @@ export class AppImManager extends EventListenerBase<{
       result.result = Promise.resolve(typingEl);
       return result;
     }
-    // }
 
     result.result = Promise.resolve(subtitle);
     return result;
@@ -2946,33 +2933,17 @@ export class AppImManager extends EventListenerBase<{
     // const log = this.log.bindPrefix('status-' + peerId);
     // log('setting status', element);
 
-    const {peerId, element, needClear, useWhitespace, middleware, ignoreSelf, noTyping} = options;
+    const {peerId, element, needClear, useWhitespace, ignoreSelf, noTyping} = options;
 
-    // EXPERIMENT: gate commented — "already have status" early-return
-    // if(!needClear) {
-    //   // * good good good
-    //   const typingContainer = element.querySelector('.peer-typing-container') as HTMLElement;
-    //   if(typingContainer && await this.getPeerTyping(peerId, typingContainer)) {
-    //     // log('already have a status');
-    //     return;
-    //   }
-    // }
+    // BARE-BONES: no "already have status" short-circuit — always re-render.
 
     const result = await this.getPeerStatus(peerId, ignoreSelf, noTyping);
-    // log('getPeerStatus result', result);
-    // EXPERIMENT: gate RE-ADDED (round 1) — middleware peer-changed abort
-    if(!middleware()) {
-      // log.warn('middleware');
-      return;
-    }
+    // BARE-BONES: no middleware peer-changed abort. Cross-chat safety is now
+    // the topbar equality guard (typingPeerId === openPeerId). P2P peers
+    // resolve instantly, so the async abort only stranded fast switches.
 
     const set = async() => {
       const subtitle = result && await result.result;
-      // EXPERIMENT: gate RE-ADDED (round 1) — middleware peer-changed abort
-      if(!middleware()) {
-        return;
-      }
-
       return () => replaceContent(element, subtitle || placeholder);
     };
 

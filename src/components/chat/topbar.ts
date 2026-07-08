@@ -1706,10 +1706,11 @@ export default class ChatTopbar {
       const peerId = this.peerId;
 
       listenerSetter.add(rootScope)('peer_typings', ({peerId: _peerId}) => {
-        // EXPERIMENT: gate commented — peerId===_peerId match
-        // if(peerId === _peerId) {
+        // BARE-BONES guard: only repaint the header if the typing event is
+        // for the chat we're currently viewing. Plain equality — no middleware,
+        // no async abort. Cross-chat bleed is the only thing we guard against.
+        if(_peerId !== peerId) return;
         setAuto();
-        // }
       });
 
       listenerSetter.add(rootScope)('user_update', (userId) => {
