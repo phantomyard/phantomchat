@@ -139,6 +139,13 @@ class OptimisticTypingManager {
    *               to clear stale timers without flickering the dots).
    */
   stop(peerPubkey: string, silent?: boolean): void {
+    // Bump generation so any in-flight start() (awaiting resolver) sees a
+    // mismatch and aborts instead of re-enabling typing after this stop().
+    if(!silent) {
+      const gen = (this.generation.get(peerPubkey) ?? 0) + 1;
+      this.generation.set(peerPubkey, gen);
+    }
+
     const entry = this.active.get(peerPubkey);
     if(entry) {
       clearTimeout(entry.refreshTimer);

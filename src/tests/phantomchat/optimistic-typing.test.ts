@@ -165,4 +165,38 @@ describe('OptimisticTyping', () => {
     expect(dispatches).toHaveLength(3);
     expect(dispatches[2]).toEqual({peerId: PEER_ID, isStop: true});
   });
+
+  it('stop() during an unresolved start() prevents the stale start from dispatching', async() => {
+    // Scenario: start() begins awaiting resolver, then stop() fires (reply
+    // arrives) before the resolver resolves. The stale start() must abort,
+    // NOT re-enable typing after stop() already cleared it.
+    let resolveStart!: () => void;
+    resolver.mockImplementation(() => new Promise<number>((resolve) => {
+      resolveStart = () => resolve(PEER_ID);
+    }));
+
+    // Fire start — it's now awaiting the resolver.
+    const p = optimisticTyping.start(PEER_PUBKEY);
+
+    // No dispatches yet (resolver pending).
+    expect(dispatches).toHaveLength(0);
+    expect(optimisticTyping.isActive(PEER_PUBKEY)).toBe(false);
+
+    // stop() fires while start() is still awaiting. There's no active entry
+    // yet, so no cancel dispatch — but generation is bumped.
+    optimisticTyping.stop(PEER_PUBKEY);
+    expect(dispatches).toHaveLength(0);
+
+    // Now resolve the resolver — the stale start() should see the generation
+    // mismatch and abort WITHOUT dispatching typing.
+    resolveStart();
+    await p;
+
+    expect(dispatches).toHaveLength(0);
+    expect(optimisticTyping.isActive(PEER_PUBKEY)).toBe(false);
+
+    // No timers should be running.
+    vi.advanceTimersByTime(15_000);
+    expect(dispatches).toHaveLength(0);
+  });
 });
