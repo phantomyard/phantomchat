@@ -2960,18 +2960,18 @@ export class AppImManager extends EventListenerBase<{
 
     const result = await this.getPeerStatus(peerId, ignoreSelf, noTyping);
     // log('getPeerStatus result', result);
-    // EXPERIMENT: gate commented — middleware peer-changed abort
-    // if(!middleware()) {
-    //   // log.warn('middleware');
-    //   return;
-    // }
+    // EXPERIMENT: gate RE-ADDED (round 1) — middleware peer-changed abort
+    if(!middleware()) {
+      // log.warn('middleware');
+      return;
+    }
 
     const set = async() => {
       const subtitle = result && await result.result;
-      // EXPERIMENT: gate commented — middleware peer-changed abort
-      // if(!middleware()) {
-      //   return;
-      // }
+      // EXPERIMENT: gate RE-ADDED (round 1) — middleware peer-changed abort
+      if(!middleware()) {
+        return;
+      }
 
       return () => replaceContent(element, subtitle || placeholder);
     };
