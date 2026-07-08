@@ -1455,18 +1455,6 @@ export class ChatAPI {
       import('./phantomchat-presence').then(({onPeerActivity}) => {
         onPeerActivity(msg.from);
       }).catch(() => { /* presence is optional */ });
-
-      // EXPERIMENT (typing-on-send-click): a reply arrived from the peer —
-      // clear the optimistic send-click typing indicator immediately rather
-      // than waiting for its 10s hard-stop. Resolve pubkey → tweb peerId the
-      // same way the typing receiver does. Non-fatal if it fails.
-      Promise.all([
-        import('./phantomchat-bridge'),
-        import('./send-typing-experiment')
-      ]).then(async([{PhantomChatBridge}, {sendTypingExperiment}]) => {
-        const peerId = await PhantomChatBridge.getInstance().mapPubkeyToPeerId(msg.from);
-        sendTypingExperiment.stop(peerId);
-      }).catch(() => { /* experiment stop is best-effort */ });
     }
 
     try {
