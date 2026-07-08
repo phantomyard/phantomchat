@@ -68,6 +68,7 @@ interface ActiveTimer {
 
 class OptimisticTypingManager {
   private active = new Map<string, ActiveTimer>();
+  private generation = new Map<string, number>();
   private resolver: PeerResolver = defaultResolver;
   private dispatcher: TypingDispatcher = defaultDispatcher;
 
@@ -84,6 +85,12 @@ class OptimisticTypingManager {
    * timers.
    */
   async start(peerPubkey: string): Promise<void> {
+    // Claim a new generation token for this peer. If a newer start() arrives
+    // while we're awaiting the resolver, our generation will be stale and we
+    // abort — preventing orphaned timers.
+    const gen = (this.generation.get(peerPubkey) ?? 0) + 1;
+    this.generation.set(peerPubkey, gen);
+
     // Clear any existing timers for this peer first.
     this.stop(peerPubkey, true);
 
@@ -94,6 +101,9 @@ class OptimisticTypingManager {
       console.debug(LOG_PREFIX, 'peer resolve failed:', (err as Error)?.message);
       return;
     }
+
+    // Abort if a newer start() superseded us while awaiting.
+    if(this.generation.get(peerPubkey) !== gen) return;
 
     // Fire immediately.
     this.dispatcher(peerId, false);
@@ -130,13 +140,13 @@ class OptimisticTypingManager {
    */
   stop(peerPubkey: string, silent?: boolean): void {
     const entry = this.active.get(peerPubkey);
-    if(!entry) return;
+    if(entry) {
+      clearTimeout(entry.refreshTimer);
+      clearTimeout(entry.hardStopTimer);
+      this.active.delete(peerPubkey);
+    }
 
-    clearTimeout(entry.refreshTimer);
-    clearTimeout(entry.hardStopTimer);
-    this.active.delete(peerPubkey);
-
-    if(!silent) {
+    if(!silent && entry) {
       this.dispatcher(entry.peerId, true);
     }
   }

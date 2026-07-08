@@ -125,4 +125,44 @@ describe('OptimisticTyping', () => {
     expect(dispatches).toHaveLength(0);
     expect(optimisticTyping.isActive(PEER_PUBKEY)).toBe(false);
   });
+
+  it('overlapping async start() calls do not orphan timers', async() => {
+    // Make the resolver resolve on the next tick so both starts overlap.
+    let resolveA!: () => void;
+    let resolveB!: () => void;
+    let callCount = 0;
+    resolver.mockImplementation(() => {
+      callCount++;
+      return new Promise<number>((resolve) => {
+        if(callCount === 1) resolveA = () => resolve(PEER_ID);
+        else resolveB = () => resolve(PEER_ID);
+      });
+    });
+
+    // Fire both starts — neither resolves yet.
+    const p1 = optimisticTyping.start(PEER_PUBKEY);
+    const p2 = optimisticTyping.start(PEER_PUBKEY);
+
+    // Both are awaiting the resolver. Only one active entry should exist.
+    // Resolve the second start first (simulating rapid sends).
+    resolveB();
+    await p2;
+
+    // Second start dispatched typing. First start hasn't resolved yet.
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]).toEqual({peerId: PEER_ID, isStop: false});
+    expect(optimisticTyping.isActive(PEER_PUBKEY)).toBe(true);
+
+    // Now resolve the first (older) start — it should abort, not dispatch.
+    resolveA();
+    await p1;
+
+    expect(dispatches).toHaveLength(1); // No extra dispatch from the stale call
+
+    // Verify only one set of timers is active — advance to 10s, expect:
+    // dispatch 1: typing at t=0, dispatch 2: refresh at t=5s, dispatch 3: stop at t=10s.
+    vi.advanceTimersByTime(10_000);
+    expect(dispatches).toHaveLength(3);
+    expect(dispatches[2]).toEqual({peerId: PEER_ID, isStop: true});
+  });
 });
