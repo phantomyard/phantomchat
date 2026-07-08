@@ -22,10 +22,10 @@ describe('OptimisticTyping', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     dispatches = [];
-    resolver = vi.fn().mockResolvedValue(PEER_ID);
+    resolver = vi.fn().mockResolvedValue(PEER_ID) as any;
     dispatcher = vi.fn().mockImplementation((peerId: number, isStop: boolean) => {
       dispatches.push({peerId, isStop});
-    });
+    }) as any;
     optimisticTyping.setPeerResolver(resolver);
     optimisticTyping.setTypingDispatcher(dispatcher);
   });
