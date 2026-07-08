@@ -27,6 +27,7 @@
 
 import rootScope from '@lib/rootScope';
 import {getReadReceiptsEnabled} from './read-receipts-setting';
+import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 
 const LOG_PREFIX = '[OptimisticTyping]';
 
@@ -110,6 +111,27 @@ class OptimisticTypingManager {
 
     // Abort if a newer start() superseded us while awaiting.
     if(this.generation.get(peerPubkey) !== gen) return;
+
+    // Ensure the peer's User exists in the main-thread mirror and the Worker
+    // before dispatching updateUserTyping. Without this, tweb's
+    // onUpdateUserTyping handler can drop the tick because hasUser() returns
+    // false and the fallback profile load can't resolve a virtual peerId back
+    // to a pubkey.
+    await ensureSenderUserInjected({
+      senderPubkey: peerPubkey,
+      peerId,
+      logPrefix: LOG_PREFIX
+    }).catch((err: any) => {
+      console.warn(LOG_PREFIX, 'peer injection failed:', err?.message);
+    });
+
+    // Re-check generation: stop() may have fired while we were injecting.
+    if(this.generation.get(peerPubkey) !== gen) {
+      console.log(LOG_PREFIX, 'start superseded by stop after injection');
+      return;
+    }
+
+    console.log(LOG_PREFIX, 'start peerId=', peerId);
 
     // Fire immediately.
     this.dispatcher(peerId, false);

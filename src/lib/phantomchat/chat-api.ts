@@ -746,6 +746,12 @@ export class ChatAPI {
       this.deliveryTracker.markSending(messageId);
     }
 
+    // Optimistic typing: show "typing…" for the peer immediately on send,
+    // before any network round-trip. Cleared on reply or after 10s.
+    if(peerOwnId && peerOwnId !== this.ownId) {
+      optimisticTyping.start(peerOwnId).catch(() => {/* non-fatal */});
+    }
+
     // DURABLE-WRITE-FIRST (FIND-msg-disappear): persist the row to the message
     // store BEFORE the network publish, keyed by the stable app `messageId`
     // with deliveryState 'sending'. Previously the row was saved only AFTER
@@ -959,12 +965,6 @@ export class ChatAPI {
       // receiver exactly like a live send. The stored row (if any) has
       // deliveryState='sending' and will transition when the queue flushes.
       await this.queueMessage(messageId, wirePayload);
-    }
-
-    // Optimistic typing: immediately show "typing…" for the peer so the user
-    // sees feedback while waiting for a reply. Cleared on reply or after 10s.
-    if(peerOwnId && peerOwnId !== this.ownId) {
-      optimisticTyping.start(peerOwnId).catch(() => {/* non-fatal */});
     }
 
     return messageId;
