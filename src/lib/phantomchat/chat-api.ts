@@ -29,6 +29,7 @@ import rootScope from '@lib/rootScope';
 import {handleRelayMessage as handleRelayMessageImpl, IncomingEdit} from './chat-api-receive';
 import {phantomchatReactionsReceive} from './phantomchat-reactions-receive';
 import {phantomchatTypingReceive} from './phantomchat-typing-receive';
+import {optimisticTyping} from './optimistic-typing';
 import {setChatAPI as setReactionsChatAPI} from './phantomchat-reactions-publish';
 import {swallowHandler} from './log-swallow';
 
@@ -960,6 +961,12 @@ export class ChatAPI {
       await this.queueMessage(messageId, wirePayload);
     }
 
+    // Optimistic typing: immediately show "typing…" for the peer so the user
+    // sees feedback while waiting for a reply. Cleared on reply or after 10s.
+    if(peerOwnId && peerOwnId !== this.ownId) {
+      optimisticTyping.start(peerOwnId).catch(() => {/* non-fatal */});
+    }
+
     return messageId;
   }
 
@@ -1455,6 +1462,10 @@ export class ChatAPI {
       import('./phantomchat-presence').then(({onPeerActivity}) => {
         onPeerActivity(msg.from);
       }).catch(() => { /* presence is optional */ });
+
+      // Optimistic typing: a reply arrived from the peer — clear the indicator
+      // immediately (don't wait for the 10s timeout).
+      optimisticTyping.stop(msg.from);
     }
 
     try {
