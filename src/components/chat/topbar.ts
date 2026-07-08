@@ -1706,9 +1706,13 @@ export default class ChatTopbar {
       const peerId = this.peerId;
 
       listenerSetter.add(rootScope)('peer_typings', ({peerId: _peerId}) => {
-        if(peerId === _peerId) {
-          setAuto();
-        }
+        // Only repaint the header when the typing event is for the chat we're
+        // currently viewing. Plain equality — the single cross-chat guard.
+        // (Upstream also wrapped setAuto in a middleware "peer changed" abort;
+        // that aborted legitimate renders on fast switches between P2P peers,
+        // which resolve synchronously, so it has been removed. See setAuto.)
+        if(_peerId !== peerId) return;
+        setAuto();
       });
 
       listenerSetter.add(rootScope)('user_update', (userId) => {
@@ -1739,7 +1743,15 @@ export default class ChatTopbar {
     });
 
     const setAuto = () => {
-      prepare(false).then((callback) => middleware() && callback?.());
+      // P2P peers resolve synchronously, so we don't restore the broad async
+      // abort that stranded the typing render on fast chat switches. But the
+      // status lookup can still resolve after a switch (slow/non-cached path,
+      // 60s interval, user_update), so guard only at the paint point: if the
+      // peer changed before this resolved, drop the stale result.
+      prepare(false).then((callback) => {
+        if(!middleware()) return;
+        callback?.();
+      });
     };
 
     return {

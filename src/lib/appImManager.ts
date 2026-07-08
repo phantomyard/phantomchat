@@ -2718,10 +2718,7 @@ export class AppImManager extends EventListenerBase<{
     // log('getting peer typing');
 
     const isUser = peerId.isUser();
-    if(isUser && await this.managers.appUsersManager.isBot(peerId)) {
-      // log('a bot');
-      return;
-    }
+    // No isBot gate: P2P peers are never bots.
 
     const typings = await this.managers.appProfileManager.getPeerTypings(peerId, threadId);
     if(!typings?.length) {
@@ -2795,11 +2792,8 @@ export class AppImManager extends EventListenerBase<{
       }
     }
 
-    const langPackKey = mapa[action._];
-    if(!langPackKey) {
-      // log('no langPackKey');
-      return;
-    }
+    // No langPackKey bail: always fall back to plain "typing…".
+    const langPackKey = mapa[action._] || 'Peer.Activity.User.TypingText';
 
     let peerTitlePromise: Promise<any>;
     let args: any[];
@@ -2894,24 +2888,21 @@ export class AppImManager extends EventListenerBase<{
     };
 
     const user = await this.managers.appUsersManager.getUser(userId);
-    if(!user || (user.pFlags.self && !ignoreSelf)) {
-      return result;
+    // No !user gate: a P2P typing indicator needs no user object, so we render
+    // regardless of whether the synthetic peer has been injected yet. No
+    // bot/support wrapper either — P2P peers always show plain typing.
+    const subtitle = user ? getUserStatusString(user) : document.createElement('span');
+
+    let typingEl = await this.getPeerTyping(userId.toPeerId());
+    if(!typingEl && user?.status?._ === 'userStatusOnline') {
+      typingEl = document.createElement('span');
+      typingEl.classList.add('online');
+      typingEl.append(subtitle);
     }
 
-    const subtitle = getUserStatusString(user);
-
-    if(!user.pFlags.bot && !user.pFlags.support) {
-      let typingEl = await this.getPeerTyping(userId.toPeerId());
-      if(!typingEl && user.status?._ === 'userStatusOnline') {
-        typingEl = document.createElement('span');
-        typingEl.classList.add('online');
-        typingEl.append(subtitle);
-      }
-
-      if(typingEl) {
-        result.result = Promise.resolve(typingEl);
-        return result;
-      }
+    if(typingEl) {
+      result.result = Promise.resolve(typingEl);
+      return result;
     }
 
     result.result = Promise.resolve(subtitle);
@@ -2942,30 +2933,17 @@ export class AppImManager extends EventListenerBase<{
     // const log = this.log.bindPrefix('status-' + peerId);
     // log('setting status', element);
 
-    const {peerId, element, needClear, useWhitespace, middleware, ignoreSelf, noTyping} = options;
+    const {peerId, element, needClear, useWhitespace, ignoreSelf, noTyping} = options;
 
-    if(!needClear) {
-      // * good good good
-      const typingContainer = element.querySelector('.peer-typing-container') as HTMLElement;
-      if(typingContainer && await this.getPeerTyping(peerId, typingContainer)) {
-        // log('already have a status');
-        return;
-      }
-    }
+    // No "already have status" short-circuit — always re-render.
 
     const result = await this.getPeerStatus(peerId, ignoreSelf, noTyping);
-    // log('getPeerStatus result', result);
-    if(!middleware()) {
-      // log.warn('middleware');
-      return;
-    }
+    // No middleware peer-changed abort. Cross-chat safety is now the topbar
+    // equality guard (typingPeerId === openPeerId). P2P peers resolve
+    // synchronously, so the async abort only stranded fast switches.
 
     const set = async() => {
       const subtitle = result && await result.result;
-      if(!middleware()) {
-        return;
-      }
-
       return () => replaceContent(element, subtitle || placeholder);
     };
 

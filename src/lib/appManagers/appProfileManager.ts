@@ -1132,9 +1132,15 @@ export class AppProfileManager extends AppManager {
     }
 
     typing.timeout = ctx.setTimeout(cancelAction, 6000);
-    if(hasUser) {
-      this.rootScope.dispatchEvent('peer_typings', {peerId, threadId, typings});
-    }
+    // Dispatch peer_typings unconditionally (upstream gated it on `hasUser`).
+    // The typing tick is already stored in typingsInPeer above, and
+    // getPeerTypings reads it with no filter — but the UI only repaints when
+    // this event fires. Gating on hasUser meant a tick that landed before the
+    // sender's synthetic P2P user was injected (cold peer / just-switched chat /
+    // inject race) silently failed to repaint despite the data being present.
+    // The 1:1 render path needs no user object for private peers, so dispatching
+    // unconditionally is safe and fixes the flaky "typing dots only show sometimes".
+    this.rootScope.dispatchEvent('peer_typings', {peerId, threadId, typings});
   };
 
   private onUpdatePeerBlocked = (update: Update.updatePeerBlocked) => {
