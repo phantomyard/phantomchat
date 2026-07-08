@@ -63,7 +63,7 @@ describe('TransportStatus (P2P badge verdict)', () => {
   it('setLiveProbe notifies subscribers so mounted badges re-evaluate', () => {
     const cb = vi.fn();
     ts.subscribe(cb);
-    ts.setLiveProbe(() => 'local-ws');
+    ts.setLiveProbe(() => 'webrtc');
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
@@ -77,7 +77,7 @@ describe('TransportStatus (P2P badge verdict)', () => {
     ts.record(PEER, 'webrtc');  // relay → direct: crossing
     expect(cb).toHaveBeenCalledTimes(1);
 
-    ts.record(PEER, 'local-ws'); // direct → direct: no crossing
+    ts.record(PEER, 'webrtc'); // direct → direct: no crossing
     expect(cb).toHaveBeenCalledTimes(1);
 
     ts.record(PEER, 'relay');    // direct → relay: crossing

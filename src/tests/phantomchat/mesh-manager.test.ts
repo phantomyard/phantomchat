@@ -395,4 +395,88 @@ describe('MeshManager', () => {
 
     expect(globalThis.RTCPeerConnection).not.toHaveBeenCalled();
   });
+
+  // #61 R3 — the honest "rock-solid" badge: isVerified is the signal the badge
+  // gates green on. A channel that merely fired `open` is NOT verified until a
+  // PING/PONG round-trip proves it live.
+  describe('isVerified (badge liveness gate)', () => {
+    it('is false right after open (channel up, no PONG yet) — no optimistic green', async() => {
+      const callbacks = makeCallbacks();
+      const manager = new MeshManager(callbacks);
+
+      await manager.connect('peer1');
+      mockDC.readyState = 'open';
+      dcEventHandlers.open?.();
+
+      // Connected, but not yet proven live.
+      expect(manager.getStatus('peer1')).toBe('connected');
+      expect(manager.isVerified('peer1')).toBe(false);
+      // An immediate verification PING was sent on open.
+      expect(mockDC.send).toHaveBeenCalledWith('PING');
+    });
+
+    it('becomes true after a PONG and fires onPeerVerified exactly once', async() => {
+      const callbacks = {...makeCallbacks(), onPeerVerified: vi.fn()};
+      const manager = new MeshManager(callbacks);
+
+      await manager.connect('peer1');
+      mockDC.readyState = 'open';
+      dcEventHandlers.open?.();
+
+      dcEventHandlers.message?.({data: 'PONG'});
+      expect(manager.isVerified('peer1')).toBe(true);
+      expect(callbacks.onPeerVerified).toHaveBeenCalledWith('peer1');
+      expect(callbacks.onPeerVerified).toHaveBeenCalledTimes(1);
+
+      // A second PONG does not re-fire the rising-edge callback.
+      dcEventHandlers.message?.({data: 'PONG'});
+      expect(callbacks.onPeerVerified).toHaveBeenCalledTimes(1);
+    });
+
+    it('goes false again once the channel disconnects', async() => {
+      const callbacks = {...makeCallbacks(), onPeerVerified: vi.fn()};
+      const manager = new MeshManager(callbacks);
+
+      await manager.connect('peer1');
+      mockDC.readyState = 'open';
+      dcEventHandlers.open?.();
+      dcEventHandlers.message?.({data: 'PONG'});
+      expect(manager.isVerified('peer1')).toBe(true);
+
+      dcEventHandlers.close?.();
+      expect(manager.isVerified('peer1')).toBe(false);
+    });
+
+    it('is false for an unknown peer', () => {
+      const manager = new MeshManager(makeCallbacks());
+      expect(manager.isVerified('nobody')).toBe(false);
+    });
+  });
+
+  // Lena review (#68): a second interval PING must not fire while the previous
+  // one is still unanswered — otherwise pingSentTime is overwritten and the
+  // latency / verification round-trip is measured against the wrong ping.
+  describe('ping cadence (one outstanding at a time)', () => {
+    it('does not stack a second PING while a PONG is still pending', async() => {
+      const manager = new MeshManager(makeCallbacks());
+
+      await manager.connect('peer1');
+      mockDC.readyState = 'open';
+      dcEventHandlers.open?.();
+
+      // Immediate verification PING on open.
+      expect(mockDC.send).toHaveBeenCalledTimes(1);
+      expect(mockDC.send).toHaveBeenLastCalledWith('PING');
+
+      // Interval fires with the first PONG still outstanding → no second PING.
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(mockDC.send).toHaveBeenCalledTimes(1);
+
+      // The PONG clears the outstanding ping; the next interval sends a fresh one.
+      dcEventHandlers.message?.({data: 'PONG'});
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(mockDC.send).toHaveBeenCalledTimes(2);
+      expect(mockDC.send).toHaveBeenLastCalledWith('PING');
+    });
+  });
 });

@@ -30,16 +30,7 @@ function makeMesh(overrides = {}) {
     getStatus: vi.fn().mockReturnValue('disconnected'),
     send: vi.fn().mockReturnValue(true),
     connect: vi.fn().mockResolvedValue(undefined),
-    ...overrides
-  };
-}
-
-function makeLocal(overrides = {}) {
-  return {
-    ensureConnected: vi.fn().mockResolvedValue(true),
-    send: vi.fn().mockReturnValue(true),
-    isConnected: vi.fn().mockReturnValue(true),
-    close: vi.fn(),
+    isVerified: vi.fn().mockReturnValue(true),
     ...overrides
   };
 }
@@ -48,15 +39,12 @@ describe('TransportSelector — the gate (regression guarantee)', () => {
   it('no advertisement → declines on relay tier and NEVER touches a transport', async() => {
     const capability = new PeerCapabilityRegistry();
     const mesh = makeMesh();
-    const local = makeLocal();
-    const sel = new TransportSelector({capability, mesh, local});
+    const sel = new TransportSelector({capability, mesh});
 
     const res = await sel.tryDeliver(PK, makeWraps());
 
     expect(res).toEqual({tier: 'relay', delivered: false});
     // The whole point: the relay path is left to the caller, nothing probed.
-    expect(local.ensureConnected).not.toHaveBeenCalled();
-    expect(local.send).not.toHaveBeenCalled();
     expect(mesh.getStatus).not.toHaveBeenCalled();
     expect(mesh.connect).not.toHaveBeenCalled();
     expect(mesh.send).not.toHaveBeenCalled();
@@ -64,15 +52,13 @@ describe('TransportSelector — the gate (regression guarantee)', () => {
 
   it('advertised but no wraps → declines to relay (nothing to ship)', async() => {
     const capability = new PeerCapabilityRegistry();
-    capability.set(PK, {localWs: true, webrtc: true});
+    capability.set(PK, {webrtc: true});
     const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const local = makeLocal();
-    const sel = new TransportSelector({capability, mesh, local});
+    const sel = new TransportSelector({capability, mesh});
 
     const res = await sel.tryDeliver(PK, []);
 
     expect(res).toEqual({tier: 'relay', delivered: false});
-    expect(local.send).not.toHaveBeenCalled();
     expect(mesh.send).not.toHaveBeenCalled();
   });
 
@@ -80,7 +66,7 @@ describe('TransportSelector — the gate (regression guarantee)', () => {
     const capability = new PeerCapabilityRegistry();
     capability.set(PK, {webrtc: true});
     const mesh = makeMesh({getStatus: vi.fn(() => { throw new Error('boom'); })});
-    const sel = new TransportSelector({capability, mesh, local: null});
+    const sel = new TransportSelector({capability, mesh});
 
     const res = await sel.tryDeliver(PK, makeWraps());
     expect(res).toEqual({tier: 'relay', delivered: false});
@@ -88,20 +74,16 @@ describe('TransportSelector — the gate (regression guarantee)', () => {
 });
 
 describe('TransportSelector — frame + recipient wrap selection', () => {
-  it('ships the RECIPIENT-addressed wrap as an ["EVENT", wrap] frame', async() => {
+  it('ships the RECIPIENT-addressed wrap as an ["EVENT", wrap] frame over webrtc', async() => {
     const capability = new PeerCapabilityRegistry();
-    capability.set(PK, {localWs: true, localWsPort: 33297, webrtc: true});
+    capability.set(PK, {webrtc: true});
     const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const local = makeLocal();
-    const sel = new TransportSelector({capability, mesh, local});
+    const sel = new TransportSelector({capability, mesh});
 
     const res = await sel.tryDeliver(PK, makeWraps());
 
-    expect(res.tier).toBe('local-ws');
-    // send(port, frame) — the recipient's advertised port, then the frame.
-    expect(local.ensureConnected).toHaveBeenCalledWith(33297);
-    expect(local.send.mock.calls[0][0]).toBe(33297);
-    const frame = JSON.parse(local.send.mock.calls[0][1]);
+    expect(res.tier).toBe('webrtc');
+    const frame = JSON.parse(mesh.send.mock.calls[0][1]);
     expect(frame[0]).toBe('EVENT');
     // The wrap addressed to PK (not the self wrap) is the one that ships.
     expect(frame[1].id).toBe('wrap-recipient');
@@ -112,7 +94,7 @@ describe('TransportSelector — frame + recipient wrap selection', () => {
     const capability = new PeerCapabilityRegistry();
     capability.set(PK, {webrtc: true});
     const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const sel = new TransportSelector({capability, mesh, local: null});
+    const sel = new TransportSelector({capability, mesh});
 
     const res = await sel.tryDeliver(PK, [makeWrap(PK, 'only')]);
 
@@ -125,7 +107,7 @@ describe('TransportSelector — frame + recipient wrap selection', () => {
     const capability = new PeerCapabilityRegistry();
     capability.set(PK, {webrtc: true});
     const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const sel = new TransportSelector({capability, mesh, local: null});
+    const sel = new TransportSelector({capability, mesh});
 
     // Two wraps, neither addressed to PK → cannot pick, declines.
     const res = await sel.tryDeliver(PK, [makeWrap(SELF, 'a'), makeWrap('d'.repeat(64), 'b')]);
@@ -135,82 +117,45 @@ describe('TransportSelector — frame + recipient wrap selection', () => {
   });
 });
 
-describe('TransportSelector — tier ordering', () => {
-  it('prefers local-ws when the peer advertised it and the socket is up', async() => {
-    const capability = new PeerCapabilityRegistry();
-    capability.set(PK, {localWs: true, localWsPort: 33297, webrtc: true});
-    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const local = makeLocal();
-    const sel = new TransportSelector({capability, mesh, local});
-
-    const res = await sel.tryDeliver(PK, makeWraps());
-
-    expect(res.tier).toBe('local-ws');
-    expect(local.send).toHaveBeenCalledTimes(1);
-    expect(mesh.send).not.toHaveBeenCalled();
-  });
-
-  it('skips local-ws when localWs is advertised but no port is known → webrtc', async() => {
-    const capability = new PeerCapabilityRegistry();
-    // localWs true but port 0 (stale/missing advert) — can't dial an unknown port.
-    capability.set(PK, {localWs: true, localWsPort: 0, webrtc: true});
-    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const local = makeLocal();
-    const sel = new TransportSelector({capability, mesh, local});
-
-    const res = await sel.tryDeliver(PK, makeWraps());
-
-    expect(res.tier).toBe('webrtc');
-    expect(local.ensureConnected).not.toHaveBeenCalled();
-    expect(mesh.send).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls to webrtc when local is not advertised', async() => {
+describe('TransportSelector — WebRTC tier', () => {
+  it('delivers over an already-connected mesh channel', async() => {
     const capability = new PeerCapabilityRegistry();
     capability.set(PK, {webrtc: true});
     const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const local = makeLocal();
-    const sel = new TransportSelector({capability, mesh, local});
+    const sel = new TransportSelector({capability, mesh});
 
     const res = await sel.tryDeliver(PK, makeWraps());
 
     expect(res.tier).toBe('webrtc');
-    expect(local.ensureConnected).not.toHaveBeenCalled();
     expect(mesh.send).toHaveBeenCalledTimes(1);
   });
 
-  it('dht advertised alone (browser stub) → declines to relay', async() => {
+  it('a webrtc:false advert → declines to relay (no direct transport)', async() => {
     const capability = new PeerCapabilityRegistry();
-    capability.set(PK, {dht: true});
-    const mesh = makeMesh();
-    const sel = new TransportSelector({capability, mesh, local: null});
+    // hasAnyCapability({webrtc:false}) is false, so the gate closes and the
+    // registry stores nothing — same as no advert.
+    capability.set(PK, {webrtc: false});
+    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
+    const sel = new TransportSelector({capability, mesh});
 
     const res = await sel.tryDeliver(PK, makeWraps());
     expect(res).toEqual({tier: 'relay', delivered: false});
-    expect(mesh.connect).not.toHaveBeenCalled();
+    expect(mesh.send).not.toHaveBeenCalled();
+  });
+
+  it('null mesh (no WebRTC support) → declines to relay', async() => {
+    const capability = new PeerCapabilityRegistry();
+    capability.set(PK, {webrtc: true});
+    const sel = new TransportSelector({capability, mesh: null});
+
+    const res = await sel.tryDeliver(PK, makeWraps());
+    expect(res).toEqual({tier: 'relay', delivered: false});
   });
 });
 
-describe('TransportSelector — fast-fail down the chain', () => {
+describe('TransportSelector — connect + fast-fail', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
-
-  it('local-ws probe timeout falls through to webrtc without stalling', async() => {
-    const capability = new PeerCapabilityRegistry();
-    capability.set(PK, {localWs: true, localWsPort: 33297, webrtc: true});
-    // ensureConnected never resolves → must be bounded by localTimeoutMs.
-    const local = makeLocal({ensureConnected: vi.fn(() => new Promise(() => {}))});
-    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const sel = new TransportSelector({capability, mesh, local, localTimeoutMs: 80});
-
-    const p = sel.tryDeliver(PK, makeWraps());
-    await vi.advanceTimersByTimeAsync(80);
-    const res = await p;
-
-    expect(res.tier).toBe('webrtc');
-    expect(local.send).not.toHaveBeenCalled();
-    expect(mesh.send).toHaveBeenCalledTimes(1);
-  });
 
   it('webrtc connect timeout → declines to relay (peer went offline)', async() => {
     const capability = new PeerCapabilityRegistry();
@@ -220,7 +165,7 @@ describe('TransportSelector — fast-fail down the chain', () => {
       getStatus: vi.fn().mockReturnValue('connecting'),
       connect: vi.fn().mockResolvedValue(undefined)
     });
-    const sel = new TransportSelector({capability, mesh, local: null, rtcConnectTimeoutMs: 300, rtcPollMs: 50});
+    const sel = new TransportSelector({capability, mesh, rtcConnectTimeoutMs: 300, rtcPollMs: 50});
 
     const p = sel.tryDeliver(PK, makeWraps());
     await vi.advanceTimersByTimeAsync(400);
@@ -239,7 +184,7 @@ describe('TransportSelector — fast-fail down the chain', () => {
       getStatus: vi.fn(() => status),
       connect: vi.fn(async() => { status = 'connecting'; })
     });
-    const sel = new TransportSelector({capability, mesh, local: null, rtcConnectTimeoutMs: 500, rtcPollMs: 50});
+    const sel = new TransportSelector({capability, mesh, rtcConnectTimeoutMs: 500, rtcPollMs: 50});
 
     const p = sel.tryDeliver(PK, makeWraps());
     // Simulate the channel opening after ~100ms.
@@ -256,37 +201,38 @@ describe('TransportSelector — fast-fail down the chain', () => {
 describe('TransportSelector.liveDirectTier — the live badge probe', () => {
   it('null when the peer has no open direct channel', () => {
     const capability = new PeerCapabilityRegistry();
-    capability.set(PK, {localWs: true, localWsPort: 33297, webrtc: true});
+    capability.set(PK, {webrtc: true});
     const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('disconnected')});
-    const local = makeLocal({isConnected: vi.fn().mockReturnValue(false)});
-    const sel = new TransportSelector({capability, mesh, local});
+    const sel = new TransportSelector({capability, mesh});
     expect(sel.liveDirectTier(PK)).toBeNull();
   });
 
-  it('webrtc when the mesh data channel is currently connected', () => {
+  it('webrtc when the mesh channel is connected AND verified', () => {
     const capability = new PeerCapabilityRegistry();
     capability.set(PK, {webrtc: true});
-    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('connected')});
-    const local = makeLocal({isConnected: vi.fn().mockReturnValue(false)});
-    const sel = new TransportSelector({capability, mesh, local});
+    const mesh = makeMesh({
+      getStatus: vi.fn().mockReturnValue('connected'),
+      isVerified: vi.fn().mockReturnValue(true)
+    });
+    const sel = new TransportSelector({capability, mesh});
     expect(sel.liveDirectTier(PK)).toBe('webrtc');
   });
 
-  it('local-ws when a loopback socket to the advertised port is open', () => {
+  it('null when connected but NOT yet verified (open, no PONG) — no optimistic green', () => {
     const capability = new PeerCapabilityRegistry();
-    capability.set(PK, {localWs: true, localWsPort: 33297, webrtc: true});
-    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('disconnected')});
-    const local = makeLocal({isConnected: vi.fn().mockReturnValue(true)});
-    const sel = new TransportSelector({capability, mesh, local});
-    expect(sel.liveDirectTier(PK)).toBe('local-ws');
+    capability.set(PK, {webrtc: true});
+    const mesh = makeMesh({
+      getStatus: vi.fn().mockReturnValue('connected'),
+      isVerified: vi.fn().mockReturnValue(false)
+    });
+    const sel = new TransportSelector({capability, mesh});
+    expect(sel.liveDirectTier(PK)).toBeNull();
   });
 
-  it('does not treat an advertised-but-portless (localWsPort 0) peer as local-ws', () => {
+  it('null mesh → null', () => {
     const capability = new PeerCapabilityRegistry();
-    capability.set(PK, {localWs: true, localWsPort: 0, webrtc: true});
-    const mesh = makeMesh({getStatus: vi.fn().mockReturnValue('disconnected')});
-    const local = makeLocal({isConnected: vi.fn().mockReturnValue(true)});
-    const sel = new TransportSelector({capability, mesh, local});
+    capability.set(PK, {webrtc: true});
+    const sel = new TransportSelector({capability, mesh: null});
     expect(sel.liveDirectTier(PK)).toBeNull();
   });
 });

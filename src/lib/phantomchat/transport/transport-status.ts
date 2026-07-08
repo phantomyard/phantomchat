@@ -5,17 +5,18 @@
  * go out". The transport ladder (#61 TransportSelector.tryDeliver) already
  * returns a DeliveryResult per send; this module is where the UI-facing summary
  * of that lives so the P2P badge (contact row + chat top bar) can render whether
- * a peer is reachable over a direct transport (local-ws / WebRTC / DHT) versus
- * falling through to the Nostr relay.
+ * a peer is reachable over the direct WebRTC transport versus falling through to
+ * the Nostr relay.
  *
  * ONE SIGNAL: CONNECTED RIGHT NOW, NOT POSSIBLE, NOT HISTORICAL. A peer counts
- * as "P2P" for the badge ONLY when there is a LIVE direct channel to it at this
- * moment — an open WebRTC data channel or an open loopback socket to its node —
- * as reported by the live probe (registered from the TransportSelector). Neither
+ * as "P2P" for the badge ONLY when there is a VERIFIED-live WebRTC data channel
+ * to it at this moment (open AND a PING/PONG round-trip has proven it), as
+ * reported by the live probe (registered from the TransportSelector). Neither
  * advertised capability (a peer can run a node we never reach) NOR "our last send
- * went direct" (that channel may since have dropped) is enough. The green chip
- * means "this conversation is going direct RIGHT NOW"; the instant the channel
- * closes the badge goes dark. A peer with no open direct channel shows no badge.
+ * went direct" (that channel may since have dropped) NOR a channel that merely
+ * fired `open` (it may already be a zombie) is enough. The green chip means "this
+ * conversation is going direct RIGHT NOW over a rock-solid channel"; the instant
+ * the channel closes or fails verification the badge goes dark.
  *
  * AUDIT LOGGING. Every recorded tier and every state flip is logged under the
  * `[p2p]` tag so a session can be audited/debugged after the fact — deliberately
@@ -26,8 +27,8 @@ import type {TransportTier} from '@lib/phantomchat/transport/transport-selector'
 
 const LOG_PREFIX = '[p2p]';
 
-/** The direct (non-relay) tiers. A delivery on any of these is "true P2P". */
-const DIRECT_TIERS: ReadonlySet<TransportTier> = new Set<TransportTier>(['local-ws', 'webrtc', 'dht']);
+/** The direct (non-relay) tier. A delivery on it is "true P2P". */
+const DIRECT_TIERS: ReadonlySet<TransportTier> = new Set<TransportTier>(['webrtc']);
 
 export type P2PState = 'p2p' | 'relay';
 
@@ -88,9 +89,9 @@ export class TransportStatus {
   }
 
   /**
-   * The badge verdict for a peer: 'p2p' ONLY when there is a LIVE direct channel
-   * to it right now (an open WebRTC data channel or an open loopback socket to
-   * its node), as reported by the registered live probe. 'relay' otherwise.
+   * The badge verdict for a peer: 'p2p' ONLY when there is a VERIFIED-live
+   * WebRTC data channel to it right now (open AND a PING/PONG round-trip
+   * completed), as reported by the registered live probe. 'relay' otherwise.
    *
    * This is deliberately a LIVE check, not a historical one. Advertised
    * capability is not enough (a peer can run a node we never reach), and neither

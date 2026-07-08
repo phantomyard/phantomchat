@@ -20,7 +20,7 @@ const FRESH_TS = Math.floor(NOW / 1000) - 60; // 1 min old, in seconds
 // Build the exact advert phantombot `src/p2p/capability.ts` publishes:
 // kind 30078, d-tag 'phantomchat-p2p', JSON content. `queryLatestEvent` never
 // returns `pubkey` (we query BY author), so it's absent here too.
-function makeAdvert(caps = {localWs: true, localWsPort: 47100, webrtc: true, dht: false}, createdAt = FRESH_TS) {
+function makeAdvert(caps = {webrtc: true}, createdAt = FRESH_TS) {
   return {
     kind: CAPABILITY_KIND,
     created_at: createdAt,
@@ -54,17 +54,23 @@ function makeWrap(recipient = PEER) {
 }
 
 describe('parseCapabilityAdvert (wire-format parity with phantombot)', () => {
-  it('parses a well-formed advert and coerces every field', () => {
-    const out = parseCapabilityAdvert(makeAdvert({localWs: true, localWsPort: 47100, webrtc: true, dht: false}));
+  it('parses a well-formed advert and coerces the webrtc flag', () => {
+    const out = parseCapabilityAdvert(makeAdvert({webrtc: true}));
     expect(out).toEqual({
-      caps: {localWs: true, localWsPort: 47100, webrtc: true, dht: false},
+      caps: {webrtc: true},
       createdAt: FRESH_TS
     });
   });
 
-  it('defaults a missing/invalid port to 0 and missing flags to false', () => {
-    const out = parseCapabilityAdvert(makeAdvert({webrtc: true}));
-    expect(out.caps).toEqual({localWs: false, localWsPort: 0, webrtc: true, dht: false});
+  it('ignores retired fields on a legacy advert, reading only webrtc', () => {
+    // Old nodes may still publish localWs/localWsPort/dht — we ignore them.
+    const out = parseCapabilityAdvert(makeAdvert({localWs: true, localWsPort: 47100, webrtc: true, dht: false}));
+    expect(out.caps).toEqual({webrtc: true});
+  });
+
+  it('defaults a missing webrtc flag to false', () => {
+    const out = parseCapabilityAdvert(makeAdvert({}));
+    expect(out.caps).toEqual({webrtc: false});
   });
 
   it('rejects the wrong kind', () => {
@@ -111,7 +117,7 @@ describe('applyCapabilityAdvert (feeds or evicts the registry)', () => {
   it('sets a fresh, capable advert', () => {
     const reg = new PeerCapabilityRegistry();
     const caps = applyCapabilityAdvert(reg, PEER, makeAdvert(), NOW);
-    expect(caps).toEqual({localWs: true, localWsPort: 47100, webrtc: true, dht: false});
+    expect(caps).toEqual({webrtc: true});
     expect(reg.has(PEER)).toBe(true);
   });
 
@@ -127,7 +133,7 @@ describe('applyCapabilityAdvert (feeds or evicts the registry)', () => {
   it('clears the peer on an all-false advert', () => {
     const reg = new PeerCapabilityRegistry();
     reg.set(PEER, {webrtc: true});
-    applyCapabilityAdvert(reg, PEER, makeAdvert({localWs: false, webrtc: false, dht: false}), NOW);
+    applyCapabilityAdvert(reg, PEER, makeAdvert({webrtc: false}), NOW);
     expect(reg.has(PEER)).toBe(false);
   });
 
@@ -146,7 +152,7 @@ describe('CapabilityIngestor.refreshPeer', () => {
     const ing = new CapabilityIngestor({registry: reg, getChatAPI: () => api, getContacts: () => [PEER], now: () => NOW});
 
     const caps = await ing.refreshPeer(PEER);
-    expect(caps).toEqual({localWs: true, localWsPort: 47100, webrtc: true, dht: false});
+    expect(caps).toEqual({webrtc: true});
     expect(reg.has(PEER)).toBe(true);
     // Queried the right filter: kind 30078, our d-tag, that author.
     expect(api.queryLatestEvent).toHaveBeenCalledWith(
@@ -247,14 +253,11 @@ describe('the #61 gate, end-to-end (ingestor → registry → TransportSelector)
     const mesh = {
       getStatus: vi.fn().mockReturnValue('connected'),
       send: vi.fn().mockReturnValue(true),
-      connect: vi.fn().mockResolvedValue(undefined)
+      connect: vi.fn().mockResolvedValue(undefined),
+      isVerified: vi.fn().mockReturnValue(true)
     };
-    const local = {
-      ensureConnected: vi.fn().mockResolvedValue(false), // force fall-through to webrtc tier
-      send: vi.fn().mockReturnValue(true)
-    };
-    const selector = new TransportSelector({capability: reg, mesh, local});
-    return {selector, mesh, local};
+    const selector = new TransportSelector({capability: reg, mesh});
+    return {selector, mesh};
   }
 
   it('a peer that advertised → ladder ATTEMPTS P2P (webrtc), not relay', async() => {

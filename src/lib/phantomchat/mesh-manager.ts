@@ -17,6 +17,9 @@ export interface MeshCallbacks {
   onPeerMessage: (pubkey: string, message: string) => void;
   onPeerConnected: (pubkey: string) => void;
   onPeerDisconnected: (pubkey: string) => void;
+  /** Fired on the rising edge of verification (first PONG after open), so the
+   * P2P badge can repaint the instant a channel is proven live. Optional. */
+  onPeerVerified?: (pubkey: string) => void;
 }
 
 interface PeerState {
@@ -35,6 +38,13 @@ interface PeerState {
   // may only be applied after the remote description exists, so candidates that
   // arrive earlier are buffered (see pendingCandidates) and flushed here.
   remoteDescriptionSet: boolean;
+  // True once at least one PING/PONG round-trip has completed since the data
+  // channel opened — i.e. bidirectional liveness is PROVEN, not merely assumed
+  // from the channel firing `open`. The P2P badge (#61 R3) reads this via
+  // isVerified() so green means "rock-solid direct channel", never just "opened
+  // a moment ago and might already be a zombie". Reset to false on every fresh
+  // connection/reconnect; set true on the first PONG.
+  verified: boolean;
 }
 
 export class MeshManager {
@@ -116,7 +126,8 @@ export class MeshManager {
       lastPongTime: 0,
       latency: -1,
       pingSentTime: 0,
-      remoteDescriptionSet: false
+      remoteDescriptionSet: false,
+      verified: false
     };
 
     this.peers.set(pubkey, state);
@@ -168,7 +179,8 @@ export class MeshManager {
       lastPongTime: 0,
       latency: -1,
       pingSentTime: 0,
-      remoteDescriptionSet: false
+      remoteDescriptionSet: false,
+      verified: false
     };
 
     this.peers.set(fromPubkey, state);
@@ -251,9 +263,14 @@ export class MeshManager {
 
       state.status = 'connected';
       state.reconnectAttempts = 0;
+      state.verified = false;
       state.lastPongTime = Date.now();
       this.callbacks.onPeerConnected(pubkey);
       this.startPing(pubkey);
+      // Fire one PING immediately so verification (first PONG) lands within a
+      // round-trip rather than after the first 30s interval — the badge goes
+      // green in ~ms on a healthy channel (#61 R3), not half a minute later.
+      this.pingPeer(pubkey);
     });
 
     dc.addEventListener('message', (event: MessageEvent) => {
@@ -273,6 +290,14 @@ export class MeshManager {
         state.lastPongTime = Date.now();
         if(state.pingSentTime > 0) {
           state.latency = Date.now() - state.pingSentTime;
+        }
+        // First PONG proves a full round-trip: the channel is verified live, so
+        // the P2P badge may go green (#61 R3). Notify listeners on the rising
+        // edge so the badge repaints the instant liveness is confirmed rather
+        // than waiting for its next poll.
+        if(!state.verified) {
+          state.verified = true;
+          this.callbacks.onPeerVerified?.(pubkey);
         }
         if(state.pingTimeoutTimer !== null) {
           clearTimeout(state.pingTimeoutTimer);
@@ -327,20 +352,54 @@ export class MeshManager {
     }
 
     state.pingTimer = setInterval(() => {
-      const s = this.peers.get(pubkey);
-      if(!s || s.status !== 'connected') return;
-
-      if(!s.dc || s.dc.readyState !== 'open') return;
-
-      s.pingSentTime = Date.now();
-      s.dc.send('PING');
-
-      s.pingTimeoutTimer = setTimeout(() => {
-        const current = this.peers.get(pubkey);
-        if(!current || current.status !== 'connected') return;
-        this.handleDisconnect(pubkey, true);
-      }, PING_TIMEOUT);
+      this.pingPeer(pubkey);
     }, PING_INTERVAL);
+  }
+
+  /**
+   * Send one PING on a peer's data channel and arm the PONG-timeout that tears
+   * the channel down (→ reconnect) if no PONG returns within PING_TIMEOUT. Used
+   * both for the immediate on-open verification ping and every interval ping.
+   * No-op unless the peer is connected with an open channel.
+   */
+  private pingPeer(pubkey: string): void {
+    const s = this.peers.get(pubkey);
+    if(!s || s.status !== 'connected') return;
+    if(!s.dc || s.dc.readyState !== 'open') return;
+
+    // One outstanding ping at a time. Guard BEFORE stamping pingSentTime: if a
+    // PONG is still pending, stacking a second PING would advance pingSentTime
+    // and skew the latency/verify round-trip against the earlier, unanswered
+    // ping. The PONG handler clears the timeout, so the next interval ping sends
+    // normally. (Lena review, #68.)
+    if(s.pingTimeoutTimer !== null) return;
+
+    s.pingSentTime = Date.now();
+    try {
+      s.dc.send('PING');
+    } catch(e) {
+      // Send on a channel that just went bad → treat as a disconnect.
+      logSwallow('MeshManager.pingPeer', e);
+      this.handleDisconnect(pubkey, true);
+      return;
+    }
+
+    s.pingTimeoutTimer = setTimeout(() => {
+      const current = this.peers.get(pubkey);
+      if(!current || current.status !== 'connected') return;
+      this.handleDisconnect(pubkey, true);
+    }, PING_TIMEOUT);
+  }
+
+  /**
+   * True only when the peer's data channel is open AND a PING/PONG round-trip
+   * has completed since it opened — i.e. the connection is PROVEN live, not just
+   * newly-opened. The P2P badge (#61 R3) gates green on this so it never lights
+   * for a channel that opened but is already a zombie.
+   */
+  isVerified(pubkey: string): boolean {
+    const state = this.peers.get(pubkey);
+    return Boolean(state && state.status === 'connected' && state.verified);
   }
 
   private stopPing(pubkey: string): void {
@@ -451,7 +510,8 @@ export class MeshManager {
     try {
       state.dc.send(message);
       return true;
-    } catch{
+    } catch(e) {
+      logSwallow('MeshManager.send', e);
       return false;
     }
   }

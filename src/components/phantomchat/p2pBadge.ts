@@ -2,15 +2,15 @@
  * PhantomChat.chat — P2P transport badge (issue #52)
  *
  * A small green "P2P" chip (DTS/Dolby-logo style) that marks a contact whose
- * conversation can go over a DIRECT transport (local-ws / WebRTC / DHT) instead
- * of falling through to the Nostr relay. Rendered on each contact/dialog row
- * in the chat list.
+ * conversation is going over the DIRECT WebRTC transport instead of falling
+ * through to the Nostr relay. Rendered on each contact/dialog row in the chat
+ * list.
  *
  * DATA SOURCE. The verdict comes from `TransportStatus.stateFor(pubkey)`, which
- * is 'p2p' ONLY when our last real delivery to that peer actually landed on a
- * direct tier (local-ws / WebRTC / DHT). Advertised capability alone does NOT
- * light the badge — green means an ESTABLISHED direct connection, not merely a
- * peer that runs a node. See transport-status.ts.
+ * is 'p2p' ONLY when there is a VERIFIED-live WebRTC data channel to the peer
+ * right now (open AND a PING/PONG round-trip proven). Advertised capability
+ * alone does NOT light the badge — green means a rock-solid ESTABLISHED direct
+ * connection, not merely a peer that runs a node. See transport-status.ts.
  *
  * REACTIVITY WITHOUT PLUMBING. Capability is filled asynchronously by the
  * ingestor (no change event) and delivery tiers land on sends. Rather than

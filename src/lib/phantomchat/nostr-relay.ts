@@ -216,6 +216,15 @@ export class NostrRelay {
   private readonly reconnectBurstDelays: number[] = [1000, 2000, 4000];
   private readonly reconnectBackoffMs: number = 10000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Bad-relay cooldown (#61 R4). After this many consecutive failed reconnects
+  // (the 3-step burst + a few steady 10s backoff tries), a relay is treated as
+  // "bad" and benched for reconnectCooldownMs instead of hammering it every ~10s
+  // forever. During the cooldown window no reconnect is attempted and nothing is
+  // logged, so a permanently-dead relay stops spamming the console. One line is
+  // logged on entering cooldown; counters + the flag reset on the next connect.
+  private readonly reconnectCooldownAfter: number = 6;
+  private readonly reconnectCooldownMs: number = 10 * 60 * 1000; // 10 minutes
+  private inCooldown: boolean = false;
 
   // Zombie-socket detection. A half-open TCP socket (laptop sleep/resume, NAT
   // rebind, flaky wifi) can leave the WebSocket in readyState OPEN with onclose
@@ -359,6 +368,7 @@ export class NostrRelay {
         this.log('[NostrRelay] connected to relay');
         this.setConnectionState('connected');
         this.reconnectAttempts = 0;
+        this.inCooldown = false;
         // Fresh socket — treat as just-heard-from so the first health check
         // doesn't probe a socket we know is alive.
         this.lastInboundAt = Date.now();
@@ -1375,14 +1385,28 @@ export class NostrRelay {
     this.setLatency(-1);
     this.setConnectionState('reconnecting');
 
-    // Fast burst for the first few attempts, then steady backoff.
-    // Never give up — only an explicit disconnect() call stops retries.
-    const delay = this.reconnectAttempts < this.reconnectBurstDelays.length ?
-      this.reconnectBurstDelays[this.reconnectAttempts] :
-      this.reconnectBackoffMs;
+    // Fast burst for the first few attempts, then steady backoff, then a long
+    // cooldown once a relay proves persistently unreachable (#61 R4). Never give
+    // up — only an explicit disconnect() call stops retries.
+    const useCooldown = this.reconnectAttempts >= this.reconnectCooldownAfter;
+    const delay = useCooldown ?
+      this.reconnectCooldownMs :
+      (this.reconnectAttempts < this.reconnectBurstDelays.length ?
+        this.reconnectBurstDelays[this.reconnectAttempts] :
+        this.reconnectBackoffMs);
     this.reconnectAttempts++;
 
-    this.log('[NostrRelay] reconnecting in', delay, 'ms (attempt', this.reconnectAttempts + ')');
+    if(useCooldown) {
+      // Log ONCE on entering cooldown, then stay silent for the whole window so
+      // a dead relay doesn't spam a reconnect line every ~10s.
+      if(!this.inCooldown) {
+        this.inCooldown = true;
+        this.log('[NostrRelay]', this.relayUrl, 'unreachable after', this.reconnectAttempts - 1,
+          'attempts — cooling down', this.reconnectCooldownMs / 60000, 'min before retry');
+      }
+    } else {
+      this.log('[NostrRelay] reconnecting in', delay, 'ms (attempt', this.reconnectAttempts + ')');
+    }
 
     this.reconnectTimeout = setTimeout(() => {
       this.connect();

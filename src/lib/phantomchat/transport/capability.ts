@@ -1,39 +1,38 @@
 /*
  * PhantomChat.chat — P2P transport capability registry (issue #61)
  *
- * The gate for the whole tiered-transport ladder. A peer's direct-transport
- * tiers (localhost ws, LAN/remote WebRTC, DHT) only activate once that peer has
- * ADVERTISED support for them. Until a peer advertises, `has()` returns false
- * and the transport selector no-ops — every send falls straight through to the
- * existing Nostr relay path with no probing and no added latency.
+ * The gate for the direct-transport path. A peer's WebRTC transport only
+ * activates once that peer has ADVERTISED support for it. Until a peer
+ * advertises, `has()` returns false and the transport selector no-ops — every
+ * send falls straight through to the existing Nostr relay path with no probing
+ * and no added latency.
  *
- * No PhantomChat client advertises P2P capability until the phantombot DHT node
- * (phantomyard/phantombot#258) ships, so this registry is empty for every
- * existing user and the ladder is fully dormant. That is the zero-regression
- * guarantee for this phase: relay-only behaviour is byte-for-byte unchanged.
+ * SCOPE (issue #61 rewrite). There is exactly ONE direct transport: WebRTC
+ * (NAT-traversed via ICE, signaled over Nostr). The former `localWs` (same-
+ * machine `ws://localhost`) and `dht` (Hyperswarm) tiers were removed — the
+ * localhost tier only helped when both peers' nodes sat on one machine, and the
+ * DHT tier was a browser stub that never ran. A peer therefore advertises
+ * `{ webrtc: true }` or nothing.
+ *
+ * WIRE COMPAT. Older node adverts may still carry `localWs`/`localWsPort`/`dht`
+ * fields; the parser simply ignores them and reads `webrtc`. New adverts omit
+ * them.
  */
 
 import IS_WEBRTC_SUPPORTED from '@environment/webrtcSupport';
 
 export interface PeerCapabilities {
-  /** Peer can accept a same-machine `ws://localhost` bridge connection. */
-  localWs?: boolean;
-  /** TCP port the peer's local node listens on for the ws bridge. */
-  localWsPort?: number;
-  /** Peer can hold a WebRTC data channel (LAN host candidates or remote). */
+  /** Peer can hold a WebRTC data channel (LAN host candidates, STUN, or TURN). */
   webrtc?: boolean;
-  /** Peer runs a Hyperswarm DHT node (phantombot#258). */
-  dht?: boolean;
 }
 
 /**
- * Does this capability set advertise ANY direct transport we can try?
- * A record with every flag false/undefined is treated as "no P2P" and keeps
- * the gate closed for that peer.
+ * Does this capability set advertise the direct (WebRTC) transport?
+ * A record without `webrtc` is treated as "no P2P" and keeps the gate closed.
  */
 export function hasAnyCapability(caps: PeerCapabilities | undefined): boolean {
   if(!caps) return false;
-  return Boolean(caps.localWs || caps.webrtc || caps.dht);
+  return Boolean(caps.webrtc);
 }
 
 export class PeerCapabilityRegistry {
@@ -74,15 +73,12 @@ export class PeerCapabilityRegistry {
 
 /**
  * The capabilities THIS browser client can offer to peers. A PWA can hold a
- * WebRTC data channel but can never run a raw-UDP DHT node or listen on a
- * localhost socket, so `dht` and `localWs` are always false here — those tiers
- * are things the client CONNECTS TO (a local/LAN phantombot), not things it
- * provides. Advertising is additive and inert until a peer reads it.
+ * WebRTC data channel, so that is the one capability it advertises (when the
+ * browser supports WebRTC). Advertising is additive and inert until a peer
+ * reads it.
  */
 export function getOwnCapabilities(): PeerCapabilities {
   return {
-    localWs: false,
-    webrtc: IS_WEBRTC_SUPPORTED,
-    dht: false
+    webrtc: IS_WEBRTC_SUPPORTED
   };
 }
