@@ -16,16 +16,16 @@ const PEER_ID = 1234567890123456;
 
 describe('OptimisticTyping', () => {
   let dispatches: {peerId: number; isStop: boolean}[];
-  let resolver: ReturnType<typeof vi.fn>;
-  let dispatcher: ReturnType<typeof vi.fn>;
+  let resolver: any;
+  let dispatcher: any;
 
   beforeEach(() => {
     vi.useFakeTimers();
     dispatches = [];
-    resolver = vi.fn().mockResolvedValue(PEER_ID) as any;
+    resolver = vi.fn().mockResolvedValue(PEER_ID);
     dispatcher = vi.fn().mockImplementation((peerId: number, isStop: boolean) => {
       dispatches.push({peerId, isStop});
-    }) as any;
+    });
     optimisticTyping.setPeerResolver(resolver);
     optimisticTyping.setTypingDispatcher(dispatcher);
   });
