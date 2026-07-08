@@ -367,17 +367,23 @@ export class MeshManager {
     if(!s || s.status !== 'connected') return;
     if(!s.dc || s.dc.readyState !== 'open') return;
 
+    // One outstanding ping at a time. Guard BEFORE stamping pingSentTime: if a
+    // PONG is still pending, stacking a second PING would advance pingSentTime
+    // and skew the latency/verify round-trip against the earlier, unanswered
+    // ping. The PONG handler clears the timeout, so the next interval ping sends
+    // normally. (Lena review, #68.)
+    if(s.pingTimeoutTimer !== null) return;
+
     s.pingSentTime = Date.now();
     try {
       s.dc.send('PING');
-    } catch{
+    } catch(e) {
       // Send on a channel that just went bad → treat as a disconnect.
+      logSwallow('MeshManager.pingPeer', e);
       this.handleDisconnect(pubkey, true);
       return;
     }
 
-    // Only one outstanding timeout at a time — the PONG handler clears it.
-    if(s.pingTimeoutTimer !== null) return;
     s.pingTimeoutTimer = setTimeout(() => {
       const current = this.peers.get(pubkey);
       if(!current || current.status !== 'connected') return;
@@ -504,7 +510,8 @@ export class MeshManager {
     try {
       state.dc.send(message);
       return true;
-    } catch{
+    } catch(e) {
+      logSwallow('MeshManager.send', e);
       return false;
     }
   }

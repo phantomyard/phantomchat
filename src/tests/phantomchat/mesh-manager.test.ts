@@ -452,4 +452,31 @@ describe('MeshManager', () => {
       expect(manager.isVerified('nobody')).toBe(false);
     });
   });
+
+  // Lena review (#68): a second interval PING must not fire while the previous
+  // one is still unanswered — otherwise pingSentTime is overwritten and the
+  // latency / verification round-trip is measured against the wrong ping.
+  describe('ping cadence (one outstanding at a time)', () => {
+    it('does not stack a second PING while a PONG is still pending', async() => {
+      const manager = new MeshManager(makeCallbacks());
+
+      await manager.connect('peer1');
+      mockDC.readyState = 'open';
+      dcEventHandlers.open?.();
+
+      // Immediate verification PING on open.
+      expect(mockDC.send).toHaveBeenCalledTimes(1);
+      expect(mockDC.send).toHaveBeenLastCalledWith('PING');
+
+      // Interval fires with the first PONG still outstanding → no second PING.
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(mockDC.send).toHaveBeenCalledTimes(1);
+
+      // The PONG clears the outstanding ping; the next interval sends a fresh one.
+      dcEventHandlers.message?.({data: 'PONG'});
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(mockDC.send).toHaveBeenCalledTimes(2);
+      expect(mockDC.send).toHaveBeenLastCalledWith('PING');
+    });
+  });
 });
