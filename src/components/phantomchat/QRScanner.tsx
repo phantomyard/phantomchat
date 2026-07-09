@@ -4,9 +4,35 @@ import {parseQRPayload} from '@lib/phantomchat/qr-payload';
 import {toast} from '@components/toast';
 import styles from './key-exchange.module.scss';
 
+/**
+ * Result of parsing a scanned QR string. A successful parse returns the
+ * extracted value; a failure returns a user-facing message shown as a
+ * debounced toast + red viewfinder flash.
+ */
+export type QRParseResult = {value: string} | {error: string; message: string};
+
 export interface QRScannerProps {
-  onDetected: (npub: string) => void;
+  onDetected: (value: string) => void;
   onClose?: () => void;
+  /**
+   * Custom parser for the scanned QR string. Defaults to the npub contact
+   * parser (via parseQRPayload) so existing callers are unchanged. Provide
+   * this to accept a different payload (e.g. a recovery-phrase QR).
+   */
+  parse?: (raw: string) => QRParseResult;
+  /** Overrides the "Point camera at QR code" hint under the viewfinder. */
+  hint?: string;
+}
+
+// Default parser: npub contact QR. Maps parseQRPayload's result shape onto
+// the generic {value}/{error,message} contract so the scanner core stays
+// payload-agnostic.
+function defaultParse(raw: string): QRParseResult {
+  const result = parseQRPayload(raw);
+  if('npub' in result) return {value: result.npub};
+  if(result.error === 'self') return {error: 'self', message: 'That\'s your own QR'};
+  if(result.error === 'unsupported') return {error: 'unsupported', message: 'Hex pubkeys are not supported — scan an npub QR'};
+  return {error: 'invalid', message: 'Not a Nostr QR code'};
 }
 
 type ScannerState =
@@ -144,8 +170,8 @@ function QRScannerComponent(props: QRScannerProps) {
           inversionAttempts: 'dontInvert'
         });
         if(code) {
-          const result = parseQRPayload(code.data);
-          if('npub' in result) {
+          const result = (props.parse || defaultParse)(code.data);
+          if('value' in result) {
             detected = true;
             cleanup();
             // Toast gives the user visible confirmation that the scan
@@ -153,22 +179,14 @@ function QRScannerComponent(props: QRScannerProps) {
             // detection can feel like nothing happened.
             toast('QR code detected');
             try {
-              props.onDetected(result.npub);
+              props.onDetected(result.value);
             } finally {
               props.onClose?.();
             }
             return;
           }
-          if(result.error === 'self') {
-            debouncedToast('That\'s your own QR');
-            flashError();
-          } else if(result.error === 'unsupported') {
-            debouncedToast('Hex pubkeys are not supported — scan an npub QR');
-            flashError();
-          } else {
-            debouncedToast('Not a Nostr QR code');
-            flashError();
-          }
+          debouncedToast(result.message);
+          flashError();
         }
       }
       rafId = requestAnimationFrame(tick);
@@ -205,7 +223,7 @@ function QRScannerComponent(props: QRScannerProps) {
           class={styles.scannerViewfinder}
           classList={{[styles.scannerViewfinderError]: errorFlash()}}
         />
-        <div class={styles.scannerHint}>Point camera at QR code</div>
+        <div class={styles.scannerHint}>{props.hint || 'Point camera at QR code'}</div>
       </Show>
 
       <Show when={state().kind === 'denied'}>
@@ -245,6 +263,8 @@ export function launchQRScanner(props: QRScannerProps): () => void {
     () => (
       <QRScannerComponent
         onDetected={props.onDetected}
+        parse={props.parse}
+        hint={props.hint}
         onClose={() => {
           props.onClose?.();
           if(disposed) return;
