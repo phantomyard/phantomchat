@@ -234,6 +234,52 @@ export class PhantomChatOnboarding {
     btnContinue.textContent = 'Continue';
     btnContinue.disabled = true;
 
+    const btnScan = Button('btn-primary btn-secondary btn-primary-transparent primary');
+    btnScan.textContent = 'Scan QR';
+    btnScan.addEventListener('click', async() => {
+      // Parser: accept a recovery-phrase QR (12-word mnemonic) or an nsec QR
+      // — mirrors what the first-box paste path already accepts.
+      const parse = (raw: string): {value: string} | {error: string; message: string} => {
+        const trimmed = (raw || '').trim().toLowerCase();
+        if(!trimmed) return {error: 'invalid', message: 'Empty QR code'};
+        if(trimmed.startsWith('nsec1') || /^[0-9a-f]{64}$/.test(trimmed)) return {value: trimmed};
+        const w = trimmed.split(/\s+/);
+        if(w.length === 12 && validateMnemonic(w.join(' '))) return {value: w.join(' ')};
+        return {error: 'invalid', message: 'Not a valid recovery-phrase QR'};
+      };
+
+      const onDetected = (value: string) => {
+        if(value.startsWith('nsec1') || /^[0-9a-f]{64}$/.test(value)) {
+          try {
+            this.identity = importFromNsec(value);
+            this.showDisplayName();
+          } catch(err) {
+            errorEl.textContent = 'Failed to import key: ' + (err as Error).message;
+          }
+          return;
+        }
+        const scanned = value.split(/\s+/);
+        scanned.forEach((word, idx) => {
+          words[idx] = word;
+          inputs[idx].value = word;
+        });
+        updateValidation();
+        try {
+          this.identity = importFromMnemonic(words.join(' ').trim());
+          this.showDisplayName();
+        } catch(err) {
+          errorEl.textContent = 'Failed to import: ' + (err as Error).message;
+        }
+      };
+
+      try {
+        const {launchQRScanner} = await import('@components/phantomchat/QRScanner');
+        launchQRScanner({onDetected, parse, hint: 'Scan the Recovery Phrase QR from your other device'});
+      } catch(err) {
+        errorEl.textContent = 'Could not open camera scanner';
+      }
+    });
+
     const btnBack = Button('btn-primary btn-secondary btn-primary-transparent primary');
     btnBack.textContent = 'Back';
     btnBack.addEventListener('click', () => this.showWelcome());
@@ -313,7 +359,7 @@ export class PhantomChatOnboarding {
       }
     });
 
-    inputWrapper.append(btnContinue, btnBack);
+    inputWrapper.append(btnContinue, btnScan, btnBack);
     this.container.append(h4, subtitle, grid, errorEl, inputWrapper);
   }
 

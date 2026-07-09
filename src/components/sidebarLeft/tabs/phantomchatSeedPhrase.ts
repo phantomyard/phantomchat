@@ -131,6 +131,39 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
     const revealBtn = this.revealContainer.querySelector('.seed-reveal-btn') as HTMLElement | null;
     if(revealBtn) revealBtn.style.display = 'none';
 
+    // Recovery-phrase QR — lets a NEW device import this whole account by
+    // scanning instead of thumb-typing 12 words. Encodes the plain mnemonic
+    // (symmetric with the paste path + the Import screen's scanner). Sits
+    // behind the exact same reveal/PIN gate + auto-hide as the words below,
+    // so it adds no new exposure surface. Only for BIP-39 accounts; nsec
+    // imports have no mnemonic and use the nsec QR further down.
+    if(words.length) {
+      const seedQrSection = document.createElement('div');
+      seedQrSection.style.cssText = 'margin-bottom:1rem';
+
+      const seedQrCaption = document.createElement('div');
+      seedQrCaption.style.cssText = 'font-size:0.8125rem;opacity:0.7;text-align:center;margin-bottom:0.5rem';
+      seedQrCaption.textContent = 'Scan this from a new device to import your account — no typing needed.';
+
+      const seedQr = document.createElement('div');
+      seedQr.style.cssText = 'display:flex;justify-content:center;width:fit-content;margin:0 auto;background:#fff;padding:8px;border-radius:8px';
+      import('qr-code-styling' as any).then(({default: QRCodeStyling}) => {
+        if(!this.gridContainer || this.gridContainer.style.display === 'none') return; // hidden before render
+        new QRCodeStyling({
+          width: 200,
+          height: 200,
+          data: seed,
+          qrOptions: {errorCorrectionLevel: 'M'},
+          dotsOptions: {color: '#1a1a2e', type: 'rounded'},
+          cornersSquareOptions: {type: 'extra-rounded'},
+          backgroundOptions: {color: '#ffffff'}
+        }).append(seedQr);
+      }).catch(() => {});
+
+      seedQrSection.append(seedQrCaption, seedQr);
+      this.gridContainer.append(seedQrSection);
+    }
+
     const grid = document.createElement('div');
     grid.classList.add('seed-word-grid');
 
