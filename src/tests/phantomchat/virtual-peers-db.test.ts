@@ -487,7 +487,7 @@ describe('VirtualPeersDB', () => {
 
   describe('Schema migration', () => {
     test('schema version is set correctly', () => {
-      expect(SCHEMA_VERSION).toBe(1);
+      expect(SCHEMA_VERSION).toBe(2);
     });
 
     test('creates virtual-peers object store on first open', async() => {
@@ -574,8 +574,8 @@ describe('VirtualPeersDB Constants', () => {
     expect(VIRTUAL_PEERS_STORE).toBe('virtual-peers');
   });
 
-  test('SCHEMA_VERSION is 1', () => {
-    expect(SCHEMA_VERSION).toBe(1);
+  test('SCHEMA_VERSION is 2', () => {
+    expect(SCHEMA_VERSION).toBe(2);
   });
 });
 
@@ -838,6 +838,7 @@ describe('VirtualPeerRecord interface', () => {
       peerId: 12345,
       displayName: 'Test',
       addedAt: Date.now(),
+      updatedAt: Date.now(),
       createdAt: Date.now(),
       lastSeenAt: Date.now()
     };
@@ -854,6 +855,7 @@ describe('VirtualPeerRecord interface', () => {
       pubkey: 'a'.repeat(64),
       peerId: 12345,
       addedAt: Date.now(),
+      updatedAt: Date.now(),
       createdAt: Date.now()
     };
 
