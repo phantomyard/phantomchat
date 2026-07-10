@@ -53,6 +53,9 @@ beforeEach(() => {
   localStorage.clear();
   dispatchEventSingle.mockClear();
   queryRelayForProfileWithMeta.mockReset();
+  // Reset the in-flight + cooldown maps between tests so the per-pubkey
+  // refresh cooldown doesn't suppress queries across cases that reuse PUBKEY.
+  clearPeerProfileCache();
 });
 
 afterEach(() => {
@@ -175,6 +178,30 @@ describe('refreshPeerProfileFromRelays', () => {
     await refreshPeerProfileFromRelays(PUBKEY, PEER_ID);
 
     expect(loadCachedPeerProfile(PUBKEY)?.profile.name).toBe('ok');
+  });
+
+  test('dedups concurrent calls for the same pubkey (one query burst, not N)', async() => {
+    queryRelayForProfileWithMeta.mockResolvedValue({profile: {name: 'x'}, created_at: 10, pubkey: PUBKEY});
+
+    const a = refreshPeerProfileFromRelays(PUBKEY, PEER_ID);
+    const b = refreshPeerProfileFromRelays(PUBKEY, PEER_ID);
+    expect(a).toBe(b); // second caller rides the in-flight promise
+    await Promise.all([a, b]);
+
+    // 2 mocked relays × a single burst = 2 queries, not 4.
+    expect(queryRelayForProfileWithMeta).toHaveBeenCalledTimes(2);
+  });
+
+  test('skips a repeat refresh within the cooldown window', async() => {
+    queryRelayForProfileWithMeta.mockResolvedValue({profile: {name: 'x'}, created_at: 10, pubkey: PUBKEY});
+
+    await refreshPeerProfileFromRelays(PUBKEY, PEER_ID);
+    expect(queryRelayForProfileWithMeta).toHaveBeenCalledTimes(2);
+
+    queryRelayForProfileWithMeta.mockClear();
+    await refreshPeerProfileFromRelays(PUBKEY, PEER_ID);
+    // Still inside REFRESH_COOLDOWN_MS → no fresh relay sockets opened.
+    expect(queryRelayForProfileWithMeta).not.toHaveBeenCalled();
   });
 });
 
