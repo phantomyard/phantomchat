@@ -533,9 +533,22 @@ export class ChatAPI {
 
   /**
    * Query relays for the single latest event matching a filter, ordered
-   * by created_at descending. Returns null if no events match.
+   * by created_at descending.
    *
-   * Used by FoldersSync to fetch the latest kind 30078 folder snapshot
+   * Return contract (relied on by CrdtSync's tri-state RemoteFetch):
+   *  - resolves an event  — a relay answered with a matching event.
+   *  - resolves `null`    — a relay answered and there is genuinely NO matching
+   *                         event (confirmed absence).
+   *  - THROWS             — transport failure: relay init failed, or no live
+   *                         relay was reachable to confirm absence. Callers must
+   *                         NOT treat this as "no event" — an empty relay result
+   *                         with zero live sockets cannot distinguish "nothing
+   *                         there" from "nobody answered". CrdtSync maps the
+   *                         throw to `unavailable` and aborts without writing,
+   *                         so a transient outage can't clobber a newer remote
+   *                         snapshot with stale local state.
+   *
+   * Used by FoldersSync and CrdtSync to fetch the latest kind 30078 snapshot
    * authored by the current user.
    */
   async queryLatestEvent(filter: {
@@ -558,13 +571,26 @@ export class ChatAPI {
       try {
         await this.relayPool.initialize();
       } catch(err) {
+        // Transport failure — NOT an authoritative "no event". Throw so callers
+        // (CrdtSync) treat it as `unavailable`, never as `absent`.
         this.log.warn('[ChatAPI] queryLatestEvent: relay init failed', err);
-        return null;
+        const wrapped = new Error('queryLatestEvent: relay transport unavailable');
+        (wrapped as any).cause = err;
+        throw wrapped;
       }
     }
 
     const events = await this.relayPool.queryRawEvents(req);
-    if(!events.length) return null;
+    if(!events.length) {
+      // Empty result is only a *confirmed absence* if at least one read relay is
+      // actually live to have answered. With zero live sockets, an empty result
+      // means nobody answered — a transport failure, not absence — so throw
+      // rather than mislead the caller into seeding/publishing stale local state.
+      if(!this.relayPool.isConnected()) {
+        throw new Error('queryLatestEvent: no live relay to confirm absence');
+      }
+      return null;
+    }
 
     let latest = events[0];
     for(const ev of events) {

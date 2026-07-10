@@ -93,8 +93,30 @@ class MockRelayPool {
     }
   }
 
+  /** When true, initialize() rejects — simulates relay transport init failure. */
+  initializeShouldThrow = false;
+  /** Result queryRawEvents returns (default empty = no matching event). */
+  queryRawEventsResult: any[] = [];
+
   async initialize(): Promise<void> {
     this.initializeCallCount++;
+    if(this.initializeShouldThrow) {
+      throw new Error('mock relay init failure');
+    }
+    // A successful initialize brings at least one socket live.
+    this._connected = true;
+    this._connectedCount = Math.max(this._connectedCount, 1);
+  }
+
+  /** When true, the live socket drops during queryRawEvents (mid-query outage). */
+  dropConnectionOnQuery = false;
+
+  async queryRawEvents(_filter: Record<string, unknown>): Promise<any[]> {
+    if(this.dropConnectionOnQuery) {
+      this._connected = false;
+      this._connectedCount = 0;
+    }
+    return this.queryRawEventsResult;
   }
 
   disconnect(): void {
@@ -933,6 +955,48 @@ describe('ChatAPI', () => {
       const api = createChatAPI(OWN_ID);
       expect(api).toBeInstanceOf(ChatAPI);
       api.destroy();
+    });
+  });
+
+  // Contract relied on by CrdtSync's tri-state RemoteFetch: transport failure
+  // must THROW (→ unavailable), only a confirmed no-event answer returns null
+  // (→ absent). Guards against a transient relay outage clobbering a newer
+  // remote snapshot with stale local contacts/groups (PR #73 review blocker).
+  describe('queryLatestEvent() transport contract', () => {
+    const FILTER = {kinds: [30078], '#d': ['phantomchat.chat/contacts'], limit: 1};
+
+    test('THROWS when relay init fails (transport failure, not absence)', async() => {
+      mockPool.simulateDisconnect();
+      mockPool.initializeShouldThrow = true;
+      await expect(chatApi.queryLatestEvent(FILTER)).rejects.toThrow();
+    });
+
+    test('THROWS on empty result when no relay is live to confirm absence', async() => {
+      // Connected at entry (skips init), then the socket drops mid-query;
+      // queryRawEvents returns [] but zero live sockets means nobody answered —
+      // must throw, not report absence.
+      mockPool.simulateConnect();
+      mockPool.queryRawEventsResult = [];
+      mockPool.dropConnectionOnQuery = true;
+      await expect(chatApi.queryLatestEvent(FILTER)).rejects.toThrow();
+    });
+
+    test('returns null for a CONFIRMED absence (relay live, no matching event)', async() => {
+      mockPool.simulateConnect();
+      mockPool.queryRawEventsResult = [];
+      await expect(chatApi.queryLatestEvent(FILTER)).resolves.toBeNull();
+    });
+
+    test('returns the latest event when a relay answers with matches', async() => {
+      mockPool.simulateConnect();
+      mockPool.queryRawEventsResult = [
+        {id: 'a', kind: 30078, created_at: 100, content: 'older', tags: []},
+        {id: 'b', kind: 30078, created_at: 200, content: 'newer', tags: []}
+      ];
+      const ev = await chatApi.queryLatestEvent(FILTER);
+      expect(ev).not.toBeNull();
+      expect(ev!.created_at).toBe(200);
+      expect(ev!.content).toBe('newer');
     });
   });
 });

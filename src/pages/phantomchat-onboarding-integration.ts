@@ -430,6 +430,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
 
           const crdtChatAPI = {
             publishEvent: async(event: any) => { await chatAPI.publishEvent(event); },
+            // queryLatestEvent resolves an event / `null` (confirmed absent) and
+            // THROWS on transport failure (see chat-api.ts contract). The throw
+            // propagates unchanged into CrdtSync.fetchRemote(), which maps it to
+            // `unavailable` and aborts — so a transient relay outage never gets
+            // cast into an authoritative "absent" that republishes stale local.
             queryLatestEvent: (filter: any) => chatAPI.queryLatestEvent(filter) as any
           };
           const crdtCrypto = {

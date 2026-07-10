@@ -34,6 +34,12 @@ export type CrdtSyncDeps<T> = {
 
   chatAPI: {
     publishEvent: (event: CrdtSyncEvent) => Promise<void>;
+    /**
+     * Resolve the latest matching event, or `null` for a CONFIRMED absence (a
+     * relay answered, nothing there). MUST reject/throw on transport failure
+     * (init failure or no live relay) — fetchRemote maps a throw to
+     * `unavailable` and a `null` to `absent`, and only `absent` seeds from local.
+     */
     queryLatestEvent: (
       filter: {kinds: number[], '#d': string[], limit: number}
     ) => Promise<{kind: number, created_at: number, content: string} | null>;
