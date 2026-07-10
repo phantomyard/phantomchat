@@ -137,29 +137,48 @@ describe('CrdtSync.reconcile', () => {
   });
 
   describe('a missing remote is never mistaken for an authoritative empty one', () => {
-    it('does not wipe local when the relay query throws', async() => {
+    it('aborts without publishing when the relay query throws', async() => {
       relay.failQuery = true;
       const {adapter, state} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
 
-      await makeSync(relay, adapter).reconcile();
+      // A transient relay failure must NOT seed local over a remote we simply
+      // couldn't read — that remote may be newer than what we hold.
+      expect(await makeSync(relay, adapter).reconcile()).toBe('failed');
+      expect(relay.publishes).toBe(0);
       expect(state.map.a.deleted).toBeUndefined();
     });
 
-    it('does not wipe local when the remote snapshot version is unknown', async() => {
+    it('aborts without publishing when the remote snapshot version is unknown', async() => {
       relay.seed({}, 999);
       const {adapter, state} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
 
-      await makeSync(relay, adapter).reconcile();
+      // A present-but-incompatible snapshot is the dangerous case: it exists,
+      // may be newer, and we must never overwrite it with stale local data.
+      expect(await makeSync(relay, adapter).reconcile()).toBe('failed');
+      expect(relay.publishes).toBe(0);
       expect(state.map.a.deleted).toBeUndefined();
       expect(Object.keys(state.map)).toEqual(['a']);
     });
 
-    it('does not wipe local when the remote content is undecryptable garbage', async() => {
+    it('aborts without publishing when the remote content is undecryptable garbage', async() => {
       relay.event = {kind: 30078, created_at: 1, content: '{{{not json'};
       const {adapter, state} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
 
-      await makeSync(relay, adapter).reconcile();
+      expect(await makeSync(relay, adapter).reconcile()).toBe('failed');
+      expect(relay.publishes).toBe(0);
       expect(Object.keys(state.map)).toEqual(['a']);
+    });
+
+    it('publish() does not clobber a remote it could not read', async() => {
+      // Relay holds b; this device only knows a. A transient read failure on
+      // publish must abort, or the debounced write erases b.
+      relay.seed({b: liveEntry('b', {id: 'b', name: 'B'}, 200)});
+      relay.failQuery = true;
+      const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+
+      await makeSync(relay, adapter).publish();
+      expect(relay.publishes).toBe(0);
+      expect(Object.keys(relay.decoded().items)).toEqual(['b']);
     });
   });
 

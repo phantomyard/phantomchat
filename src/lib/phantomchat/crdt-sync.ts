@@ -74,6 +74,24 @@ export type ReconcileOutcome =
   | 'in-sync'
   | 'failed';
 
+/**
+ * Result of reading the remote snapshot. The three states must stay distinct:
+ * conflating them is how a transient relay hiccup silently overwrites a newer
+ * remote snapshot with stale local data.
+ *
+ *  - `ok`          — a snapshot was fetched, decrypted and version-matched.
+ *  - `absent`      — the relay answered and there is genuinely no snapshot.
+ *                    Only this state permits seeding the relay from local.
+ *  - `unavailable` — the relay query failed, OR a snapshot exists but is
+ *                    unreadable (bad ciphertext / garbage JSON / unknown
+ *                    version). We must NOT publish over it — it may well be
+ *                    newer than what we hold. Abort and let the retry try again.
+ */
+type RemoteFetch<T> =
+  | {status: 'ok', map: SyncMap<T>}
+  | {status: 'absent'}
+  | {status: 'unavailable'};
+
 export class CrdtSync<T> {
   private applying = false;
   private publishing = false;
@@ -108,21 +126,29 @@ export class CrdtSync<T> {
 
     const remote = await this.fetchRemote();
 
-    if(!remote) {
-      // Nothing on the relay (or it was unreadable). Seed it from local if we
+    if(remote.status === 'unavailable') {
+      // Relay unreachable, or a snapshot exists but we couldn't read it.
+      // Publishing local now could clobber a newer remote we simply failed to
+      // fetch — so bail without writing. The boot retry loop will try again.
+      return 'failed';
+    }
+
+    if(remote.status === 'absent') {
+      // Relay confirmed there is no snapshot. Safe to seed it from local if we
       // have anything worth publishing.
       if(Object.keys(local).length === 0) return 'no-remote-nothing-local';
       await this.publishMap(local);
       return 'no-remote-published-local';
     }
 
+    const remoteMap = remote.map;
     const merged = gcTombstones(
-      mergeMaps(local, remote),
+      mergeMaps(local, remoteMap),
       this.deps.nowSeconds()
     );
 
     const localChanged = differs(merged, local);
-    const remoteChanged = differs(merged, remote);
+    const remoteChanged = differs(merged, remoteMap);
 
     if(!localChanged && !remoteChanged) return 'in-sync';
 
@@ -160,11 +186,18 @@ export class CrdtSync<T> {
     try {
       const local = await this.deps.adapter.read();
       const remote = await this.fetchRemote();
-      const merged = remote ?
-        gcTombstones(mergeMaps(local, remote), this.deps.nowSeconds()) :
+
+      // Transient read failure (or an unreadable snapshot): do NOT publish. A
+      // debounced local edit must not overwrite a remote we couldn't fetch —
+      // that's exactly how a concurrent add on another device gets lost.
+      if(remote.status === 'unavailable') return;
+
+      const remoteMap = remote.status === 'ok' ? remote.map : null;
+      const merged = remoteMap ?
+        gcTombstones(mergeMaps(local, remoteMap), this.deps.nowSeconds()) :
         local;
 
-      if(remote && !differs(merged, remote)) return; // relay already current
+      if(remoteMap && !differs(merged, remoteMap)) return; // relay already current
       await this.publishMap(merged);
     } finally {
       this.publishing = false;
@@ -184,14 +217,16 @@ export class CrdtSync<T> {
   }
 
   /**
-   * Fetch + decrypt + validate the remote map. Any failure (relay down, bad
-   * ciphertext, wrong version, garbage JSON) returns null, which the caller
-   * treats as "no remote" — never as "remote is empty, delete everything".
-   * That distinction is the whole ballgame: an empty map would tombstone
-   * nothing, but a *missing* map must not be mistaken for an authoritative
-   * empty one.
+   * Fetch + decrypt + validate the remote map, returning a three-state result
+   * (see RemoteFetch). The critical distinction: a relay that *answers with no
+   * event* (`absent`) is authoritative and lets us seed from local, but a relay
+   * that *fails to answer* — or answers with a snapshot we can't read (bad
+   * ciphertext / garbage JSON / unknown version) — is `unavailable`, and the
+   * caller must never publish over it. A present-but-unreadable snapshot is the
+   * most dangerous case: it may be newer than ours, so treat it as unavailable
+   * and leave it untouched rather than clobber it with stale local data.
    */
-  private async fetchRemote(): Promise<SyncMap<T> | null> {
+  private async fetchRemote(): Promise<RemoteFetch<T>> {
     let ev;
     try {
       ev = await this.deps.chatAPI.queryLatestEvent({
@@ -201,25 +236,25 @@ export class CrdtSync<T> {
       });
     } catch(err) {
       console.warn(this.tag, 'relay query failed', err);
-      return null;
+      return {status: 'unavailable'};
     }
-    if(!ev) return null;
+    if(!ev) return {status: 'absent'};
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(this.deps.decrypt(ev.content));
     } catch(err) {
       console.warn(this.tag, 'decrypt/parse failed', err);
-      return null;
+      return {status: 'unavailable'};
     }
 
-    if(!parsed || typeof parsed !== 'object') return null;
+    if(!parsed || typeof parsed !== 'object') return {status: 'unavailable'};
     const snap = parsed as Snapshot<T>;
     if(snap.version !== this.deps.version) {
       console.warn(this.tag, 'unknown snapshot version', snap.version);
-      return null;
+      return {status: 'unavailable'};
     }
 
-    return sanitizeMap<T>(snap.items);
+    return {status: 'ok', map: sanitizeMap<T>(snap.items)};
   }
 }

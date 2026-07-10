@@ -527,7 +527,13 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                 true;
               if(ready) {
                 const {c, g} = await reconcileOnce();
-                if(!inconclusive(c) || !inconclusive(g)) break; // definitive read — done
+                // Stop only once BOTH domains got a definitive read. Using OR
+                // here would abandon a still-inconclusive domain the moment the
+                // other resolved — e.g. groups 'in-sync' but contacts
+                // 'no-remote-nothing-local' on a cold relay would leave
+                // contacts blank forever. Keep retrying while either is
+                // inconclusive; re-running a settled domain is idempotent.
+                if(!inconclusive(c) && !inconclusive(g)) break;
               }
               // No relay live yet, or both sides inconclusive: back off and
               // retry so a cold boot self-heals rather than giving up.
