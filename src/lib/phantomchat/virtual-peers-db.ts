@@ -221,6 +221,37 @@ export async function setMappingDisplayName(
 }
 
 /**
+ * Pin a mapping's `updatedAt` to an EXACT value (unix millis). Used only by
+ * contacts-sync when it restores a contact from a remote CRDT entry: the
+ * normal materialize path (addP2PContact → storeMapping) stamps updatedAt with
+ * `now()`, which would push the local timestamp above the remote's and make
+ * both devices flap — each seeing the other's entry as "newer" and
+ * republishing forever. Writing back the merged entry's own timestamp makes
+ * the local and remote views identical, so the merge converges to a fixed
+ * point. No-op if the mapping doesn't exist.
+ */
+export async function setMappingUpdatedAt(pubkey: string, updatedAt: number): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const getReq = store.get(pubkey);
+    getReq.onerror = () => reject(getReq.error);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as VirtualPeerMapping | undefined;
+      if(!existing) {
+        resolve();
+        return;
+      }
+      existing.updatedAt = updatedAt;
+      const putReq = store.put(existing);
+      putReq.onerror = () => reject(putReq.error);
+      putReq.onsuccess = () => resolve();
+    };
+  });
+}
+
+/**
  * Get a single mapping by pubkey.
  */
 export async function getMapping(pubkey: string): Promise<VirtualPeerMapping | undefined> {
