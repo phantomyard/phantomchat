@@ -9,6 +9,7 @@
 
 import type {NostrProfile} from './nostr-profile';
 import {logSwallow} from './log-swallow';
+import {schedulePublish} from './phantomchat-sync-triggers';
 
 const DB_NAME = 'phantomchat-virtual-peers';
 // v2 (#73): adds `updatedAt` — the per-item mutation timestamp the contacts
@@ -215,7 +216,11 @@ export async function setMappingDisplayName(
       existing.updatedAt = Date.now();
       const putReq = store.put(existing);
       putReq.onerror = () => reject(putReq.error);
-      putReq.onsuccess = () => resolve();
+      putReq.onsuccess = () => {
+        // Deliberate user rename — propagate cross-device (debounced).
+        schedulePublish('contacts');
+        resolve();
+      };
     };
   });
 }

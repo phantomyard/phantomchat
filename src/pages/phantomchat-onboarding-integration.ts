@@ -29,6 +29,17 @@ import {FoldersSync} from '@lib/phantomchat/folders-sync';
 import {setLastModifiedAt} from '@lib/phantomchat/folders-sync-state';
 import {FOLDER_SYNC_TRIGGER_EVENTS} from '@lib/phantomchat/folders-sync-types';
 import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/nostr-crypto';
+import {CrdtSync} from '@lib/phantomchat/crdt-sync';
+import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION} from '@lib/phantomchat/contacts-sync-adapter';
+import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION} from '@lib/phantomchat/groups-sync-adapter';
+import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
+import {getAllMappings, setMappingDisplayName, setMappingUpdatedAt, removeMapping} from '@lib/phantomchat/virtual-peers-db';
+import {getMessageStore} from '@lib/phantomchat/message-store';
+import {getGroupStore} from '@lib/phantomchat/group-store';
+import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
+import {addP2PContact} from '@lib/phantomchat/add-p2p-contact';
+import {writeGroupCreateServiceMessage} from '@lib/phantomchat/group-service-messages';
+import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection} from '@lib/phantomchat/phantomchat-groups-sync';
 import {toast} from '@components/toast';
 import I18n from '@lib/langPack';
 // tweb-contained CSS no longer needed — onboarding uses native tweb styles
@@ -398,6 +409,116 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           console.log('[PhantomChatOnboardingIntegration] FoldersSync wired');
         } catch(err) {
           console.warn('[PhantomChatOnboardingIntegration] FoldersSync init failed:', err);
+        }
+      }
+
+      // --- Contacts + Groups sync (kind 30078) — cross-device address book +
+      // group roster reconcile. Unlike folders (whole-blob last-write-wins),
+      // these use the union-merge-with-tombstones CRDT so two devices adding
+      // different contacts/groups offline never lose either. Pairing a new
+      // device (seed-phrase QR) restores keys but NOT contacts/groups; this is
+      // what makes those come across too. ---
+      const CONTACTS_GROUPS_SYNC_ENABLED = true;
+      if(CONTACTS_GROUPS_SYNC_ENABLED) {
+        try {
+          const privKeyBytes = new Uint8Array(
+            identity.privateKey.match(/.{2}/g)!.map((b) => parseInt(b, 16))
+          );
+          const convKey = getConversationKey(privKeyBytes, identity.publicKey);
+          const store = getMessageStore();
+          const ownPubkey = identity.publicKey;
+
+          const crdtChatAPI = {
+            publishEvent: async(event: any) => { await chatAPI.publishEvent(event); },
+            queryLatestEvent: (filter: any) => chatAPI.queryLatestEvent(filter) as any
+          };
+          const crdtCrypto = {
+            encrypt: (plain: string) => nip44Encrypt(plain, convKey),
+            decrypt: (cipher: string) => nip44Decrypt(cipher, convKey),
+            nowSeconds: () => Math.floor(Date.now() / 1000)
+          };
+
+          const contactsAdapter = createContactsAdapter({
+            getOwnPubkey: () => (window as any).__phantomchatOwnPubkey || ownPubkey,
+            listMappings: () => getAllMappings(),
+            listTombstones: () => store.getAllTombstones(),
+            conversationId: (a, b) => store.getConversationId(a, b),
+            addContact: async(pubkey, displayName) => {
+              await addP2PContact({pubkey, nickname: displayName, openChat: false, source: 'contacts-sync'});
+            },
+            setDisplayName: (pubkey, displayName) => setMappingDisplayName(pubkey, displayName),
+            setUpdatedAt: (pubkey, ms) => setMappingUpdatedAt(pubkey, ms),
+            removeContact: (pubkey) => removeMapping(pubkey),
+            setTombstone: (convId, sec) => store.setTombstone(convId, sec)
+          });
+
+          const groupsAdapter = createGroupsAdapter({
+            listGroups: () => getGroupStore().getAll(),
+            listTombstones: () => store.getAllTombstones(),
+            upsertGroup: async(record: GroupRecord) => {
+              const peerId = await groupIdToPeerId(record.groupId);
+              const rec: GroupRecord = {...record, peerId};
+              const existing = await getGroupStore().get(record.groupId);
+              await getGroupStore().save(rec);
+              const createdAtSec = Math.floor((rec.createdAt || Date.now()) / 1000);
+              if(!existing) {
+                // Fresh restore: clear any stale deletion watermark so the
+                // create service row isn't suppressed, then seed + inject.
+                try { await store.clearTombstone(`group:${rec.groupId}`); } catch{ /* none */ }
+                const service = await writeGroupCreateServiceMessage({
+                  groupId: rec.groupId,
+                  peerId,
+                  timestamp: createdAtSec,
+                  adminPubkey: rec.adminPubkey,
+                  title: rec.name,
+                  isOutgoing: rec.adminPubkey === ownPubkey
+                });
+                await injectGroupCreateDialog(rec.groupId, service.mid, createdAtSec);
+              } else {
+                // Update (rename / membership): refresh the mirror + title.
+                await ensureGroupChatInjected(rec.groupId, peerId);
+              }
+            },
+            removeGroup: async(groupId) => {
+              const peerId = await groupIdToPeerId(groupId);
+              await getGroupStore().delete(groupId);
+              try { await cleanupGroupChatInjection(peerId); } catch{ /* mirror already gone */ }
+            },
+            setTombstone: (convId, sec) => store.setTombstone(convId, sec)
+          });
+
+          const contactsSync = new CrdtSync({
+            dTag: CONTACTS_SYNC_D_TAG, version: CONTACTS_SYNC_VERSION,
+            chatAPI: crdtChatAPI, adapter: contactsAdapter, ...crdtCrypto
+          });
+          const groupsSync = new CrdtSync({
+            dTag: GROUPS_SYNC_D_TAG, version: GROUPS_SYNC_VERSION,
+            chatAPI: crdtChatAPI, adapter: groupsAdapter, ...crdtCrypto
+          });
+
+          // Bounded boot reconcile — never block onboarding on relay latency.
+          await Promise.race([
+            Promise.all([
+              contactsSync.reconcile().catch((e) => console.warn('[contacts-sync] reconcile failed', e)),
+              groupsSync.reconcile().catch((e) => console.warn('[groups-sync] reconcile failed', e))
+            ]),
+            new Promise<void>((resolve) => setTimeout(resolve, 8000))
+          ]);
+
+          // Debounced publishers, triggered from mutation sites via the
+          // trigger registry (addP2PContact, deleteContacts, GroupAPI).
+          const mkDebounced = (fn: () => Promise<void>, tag: string) => {
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            return () => {
+              if(timer) clearTimeout(timer);
+              timer = setTimeout(() => { fn().catch((e) => console.warn(tag, 'publish failed', e)); }, 2000);
+            };
+          };
+          registerSyncPublisher('contacts', mkDebounced(() => contactsSync.publish(), '[contacts-sync]'));
+          registerSyncPublisher('groups', mkDebounced(() => groupsSync.publish(), '[groups-sync]'));
+          console.log('[PhantomChatOnboardingIntegration] Contacts+Groups sync wired');
+        } catch(err) {
+          console.warn('[PhantomChatOnboardingIntegration] Contacts+Groups sync init failed:', err);
         }
       }
 

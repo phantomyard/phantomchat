@@ -13,6 +13,7 @@ import {Logger, logger} from '@lib/logger';
 import rootScope from '@lib/rootScope';
 import {getGroupStore} from './group-store';
 import {groupIdToPeerId} from './group-types';
+import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
 import {writeGroupCreateServiceMessage} from './group-service-messages';
@@ -193,6 +194,7 @@ export class GroupAPI {
     }
 
     this.log('[GroupAPI] group created:', groupId, name);
+    schedulePublish('groups');
     return groupId;
   }
 
@@ -506,6 +508,7 @@ export class GroupAPI {
     }
 
     this.log('[GroupAPI] member added to group:', groupId, newMemberPubkey.slice(0, 8));
+    schedulePublish('groups');
   }
 
   /**
@@ -543,6 +546,7 @@ export class GroupAPI {
     await this.publishFn(controlWraps);
 
     this.log('[GroupAPI] member removed from group:', groupId, memberPubkey.slice(0, 8));
+    schedulePublish('groups');
   }
 
   /**
@@ -606,6 +610,7 @@ export class GroupAPI {
     }
 
     this.log('[GroupAPI] info updated:', groupId, info);
+    schedulePublish('groups');
   }
 
   /**
@@ -637,6 +642,7 @@ export class GroupAPI {
 
     await this.teardownGroupLocally(groupId);
     this.log('[GroupAPI] left group:', groupId);
+    schedulePublish('groups');
   }
 
   /**
@@ -664,6 +670,7 @@ export class GroupAPI {
 
     await this.teardownGroupLocally(groupId);
     this.log('[GroupAPI] deleted group for all members:', groupId);
+    schedulePublish('groups');
   }
 
   /**

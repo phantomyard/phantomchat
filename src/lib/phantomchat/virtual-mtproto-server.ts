@@ -17,6 +17,7 @@ import {getPubkey, getMapping, removeMapping} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
 import {isGroupPeer} from './group-types';
 import {getReadReceiptsEnabled} from './read-receipts-setting';
+import {schedulePublish} from './phantomchat-sync-triggers';
 // Lazy imports for group-store / group-api so test files that never hit the
 // group branch don't drag phantomchat-groups-sync into their module graph. Each
 // test file mocks `@config/debug`'s MOUNT_CLASS_TO with its own proxy; a
@@ -1328,6 +1329,9 @@ export class PhantomChatMTProtoServer {
       }
     }
 
+    // Propagate the deletion cross-device (debounced). The contacts-sync
+    // adapter derives the tombstone from the watermark written above.
+    schedulePublish('contacts');
     return emptyUpdates;
   }
 
