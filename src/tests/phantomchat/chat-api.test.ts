@@ -112,11 +112,27 @@ class MockRelayPool {
   dropConnectionOnQuery = false;
 
   async queryRawEvents(_filter: Record<string, unknown>): Promise<any[]> {
+    return (await this.queryRawEventsWithMeta(_filter)).events;
+  }
+
+  /** Force the `responded` count independent of connection flags. null =
+   *  derive from live-socket state. Set to 0 to model "all relays errored
+   *  mid-query while a stale socket stays flagged connected". */
+  queryRespondedOverride: number | null = null;
+
+  async queryRawEventsWithMeta(_filter: Record<string, unknown>): Promise<{events: any[]; responded: number; queried: number}> {
     if(this.dropConnectionOnQuery) {
       this._connected = false;
       this._connectedCount = 0;
     }
-    return this.queryRawEventsResult;
+    const responded = this.queryRespondedOverride !== null ?
+      this.queryRespondedOverride :
+      (this._connected ? Math.max(this._connectedCount, 1) : 0);
+    return {
+      events: this.queryRawEventsResult,
+      responded,
+      queried: Math.max(this._relays.length, this._connectedCount, 1)
+    };
   }
 
   disconnect(): void {
@@ -979,6 +995,19 @@ describe('ChatAPI', () => {
       mockPool.queryRawEventsResult = [];
       mockPool.dropConnectionOnQuery = true;
       await expect(chatApi.queryLatestEvent(FILTER)).rejects.toThrow();
+    });
+
+    test('THROWS when all relays error mid-query even though a socket stays connected', async() => {
+      // The failure mode Kai flagged: the pool swallows per-relay errors and
+      // returns [], while isConnected() still reports a stale socket as live.
+      // The guard must key off "did any relay actually answer" (responded), not
+      // isConnected() — otherwise a total query outage looks like confirmed
+      // absence and republishes stale local state over a newer remote.
+      mockPool.simulateConnect();
+      mockPool.queryRawEventsResult = [];
+      mockPool.queryRespondedOverride = 0; // nobody answered…
+      await expect(chatApi.queryLatestEvent(FILTER)).rejects.toThrow();
+      expect(mockPool.isConnected()).toBe(true); // …yet the socket stayed "connected"
     });
 
     test('returns null for a CONFIRMED absence (relay live, no matching event)', async() => {

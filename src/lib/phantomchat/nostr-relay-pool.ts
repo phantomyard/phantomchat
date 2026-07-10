@@ -739,16 +739,34 @@ export class NostrRelayPool {
    * getMessages() does not support.
    */
   async queryRawEvents(filter: Record<string, unknown>): Promise<NostrEvent[]> {
+    return (await this.queryRawEventsWithMeta(filter)).events;
+  }
+
+  /**
+   * Like queryRawEvents, but also reports how many read relays actually
+   * ANSWERED the query (resolved without throwing) vs merely being enrolled.
+   *
+   * The distinction matters for authoritative-absence decisions (CrdtSync):
+   * an empty `events` array only means "no such event exists" if at least one
+   * relay actually responded (`responded > 0`). If every read relay's query
+   * threw/timed out (`responded === 0`), an empty result means "nobody
+   * answered" — a transport failure, NOT a confirmed absence — even if a
+   * stale socket is still flagged connected. Callers must not seed/publish
+   * stale local state off a zero-responded read.
+   */
+  async queryRawEventsWithMeta(filter: Record<string, unknown>): Promise<{events: NostrEvent[]; responded: number; queried: number}> {
     const readEntries = this.relayEntries.filter(e =>
       e.config.read && this.enabled.get(e.config.url) !== false
     );
 
     const seenIds = new Set<string>();
     const results: NostrEvent[] = [];
+    let responded = 0;
 
     const promises = readEntries.map(async(entry) => {
       try {
         const events = await entry.instance.queryRawEvents(filter);
+        responded++;
         for(const ev of events) {
           if(ev.id && !seenIds.has(ev.id)) {
             seenIds.add(ev.id);
@@ -761,7 +779,7 @@ export class NostrRelayPool {
     });
 
     await Promise.all(promises);
-    return results;
+    return {events: results, responded, queried: readEntries.length};
   }
 
   subscribeMessages(): void {

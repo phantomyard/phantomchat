@@ -580,14 +580,19 @@ export class ChatAPI {
       }
     }
 
-    const events = await this.relayPool.queryRawEvents(req);
+    const {events, responded, queried} = await this.relayPool.queryRawEventsWithMeta(req);
     if(!events.length) {
-      // Empty result is only a *confirmed absence* if at least one read relay is
-      // actually live to have answered. With zero live sockets, an empty result
-      // means nobody answered — a transport failure, not absence — so throw
-      // rather than mislead the caller into seeding/publishing stale local state.
-      if(!this.relayPool.isConnected()) {
-        throw new Error('queryLatestEvent: no live relay to confirm absence');
+      // Empty result is only a *confirmed absence* if at least one read relay
+      // actually ANSWERED the query. isConnected() is not enough: a socket can
+      // stay flagged connected while its query times out/errors, and the pool
+      // swallows per-relay failures. If zero relays responded (all threw, or
+      // there were none to ask), nobody confirmed absence — that's a transport
+      // failure, so throw rather than let CrdtSync cast it into `absent` and
+      // republish stale local state over a newer remote snapshot.
+      if(responded === 0) {
+        throw new Error(
+          `queryLatestEvent: no relay confirmed absence (responded=0/${queried})`
+        );
       }
       return null;
     }
