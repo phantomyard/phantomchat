@@ -9,9 +9,15 @@
 
 import type {NostrProfile} from './nostr-profile';
 import {logSwallow} from './log-swallow';
+import {schedulePublish} from './phantomchat-sync-triggers';
 
 const DB_NAME = 'phantomchat-virtual-peers';
-const DB_VERSION = 1;
+// v2 (#73): adds `updatedAt` — the per-item mutation timestamp the contacts
+// CRDT sync needs. `addedAt` is a CREATION time; an LWW register needs a
+// MUTATION time, and conflating the two silently loses cross-device renames.
+// The v1→v2 upgrade backfills updatedAt = addedAt (an unmutated item's last
+// change IS its creation), so no record is left without a merge timestamp.
+const DB_VERSION = 2;
 const STORE_NAME = 'mappings';
 
 export interface VirtualPeerMapping {
@@ -23,8 +29,15 @@ export interface VirtualPeerMapping {
   displayName?: string;
   /** Cached Nostr kind 0 profile metadata */
   nostrProfile?: NostrProfile;
-  /** Timestamp when this mapping was stored */
+  /** Timestamp when this mapping was first stored (creation time). */
   addedAt: number;
+  /**
+   * Unix-millis timestamp of the last IDENTITY-meaningful mutation (add,
+   * rename, kind-0 profile change). NOT bumped on every inbound message —
+   * that would make the contacts-sync CRDT churn a fresh relay revision on
+   * each received message. Backfilled from `addedAt` on the v1→v2 upgrade.
+   */
+  updatedAt: number;
 }
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
@@ -51,11 +64,32 @@ export function initVirtualPeersDB(): Promise<IDBDatabase> {
     request.onsuccess = () => resolve(request.result);
 
     request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
+      const req = event.target as IDBOpenDBRequest;
+      const db = req.result;
       if(!db.objectStoreNames.contains(STORE_NAME)) {
         const store = db.createObjectStore(STORE_NAME, {keyPath: 'pubkey'});
         // Unique index on peerId for reverse lookup
         store.createIndex('peerId', 'peerId', {unique: false});
+        return; // fresh DB — records will be written with updatedAt already set
+      }
+
+      // v1→v2: backfill updatedAt on every existing mapping. Runs inside the
+      // versionchange transaction, so it completes before any read/write sees
+      // the store. An unmutated contact's last change IS its creation, hence
+      // updatedAt = addedAt (falling back to now for pre-addedAt rows).
+      if(event.oldVersion < 2) {
+        const store = req.transaction!.objectStore(STORE_NAME);
+        const cursorReq = store.openCursor();
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if(!cursor) return;
+          const rec = cursor.value as VirtualPeerMapping;
+          if(rec.updatedAt === undefined) {
+            rec.updatedAt = rec.addedAt ?? Date.now();
+            cursor.update(rec);
+          }
+          cursor.continue();
+        };
       }
     };
   });
@@ -88,13 +122,22 @@ export async function storeMapping(
     getReq.onerror = () => reject(getReq.error);
     getReq.onsuccess = () => {
       const existing = getReq.result as VirtualPeerMapping | undefined;
+      const now = Date.now();
+      // updatedAt only advances on an IDENTITY-meaningful change: a brand-new
+      // contact, or a caller explicitly supplying a name/profile. The
+      // idempotent message-path (pubkey+peerId only) preserves the prior
+      // updatedAt so received messages don't churn the contacts-sync blob.
+      const identityChanged = !existing ||
+        displayName !== undefined ||
+        nostrProfile !== undefined;
       const record: VirtualPeerMapping = {
         pubkey,
         peerId,
         // Preserve prior values when the caller doesn't supply them.
         displayName: displayName ?? existing?.displayName,
         nostrProfile: nostrProfile ?? existing?.nostrProfile,
-        addedAt: Date.now()
+        addedAt: existing?.addedAt ?? now,
+        updatedAt: identityChanged ? now : (existing?.updatedAt ?? existing?.addedAt ?? now)
       };
       const putReq = store.put(record);
       putReq.onerror = () => reject(putReq.error);
@@ -134,6 +177,7 @@ export async function updateMappingProfile(
         existing.displayName = displayName;
       }
       existing.nostrProfile = nostrProfile;
+      existing.updatedAt = Date.now();
       const putReq = store.put(existing);
       putReq.onerror = () => reject(putReq.error);
       putReq.onsuccess = () => resolve();
@@ -169,6 +213,42 @@ export async function setMappingDisplayName(
         return;
       }
       existing.displayName = displayName;
+      existing.updatedAt = Date.now();
+      const putReq = store.put(existing);
+      putReq.onerror = () => reject(putReq.error);
+      putReq.onsuccess = () => {
+        // Deliberate user rename — propagate cross-device (debounced).
+        schedulePublish('contacts');
+        resolve();
+      };
+    };
+  });
+}
+
+/**
+ * Pin a mapping's `updatedAt` to an EXACT value (unix millis). Used only by
+ * contacts-sync when it restores a contact from a remote CRDT entry: the
+ * normal materialize path (addP2PContact → storeMapping) stamps updatedAt with
+ * `now()`, which would push the local timestamp above the remote's and make
+ * both devices flap — each seeing the other's entry as "newer" and
+ * republishing forever. Writing back the merged entry's own timestamp makes
+ * the local and remote views identical, so the merge converges to a fixed
+ * point. No-op if the mapping doesn't exist.
+ */
+export async function setMappingUpdatedAt(pubkey: string, updatedAt: number): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const getReq = store.get(pubkey);
+    getReq.onerror = () => reject(getReq.error);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as VirtualPeerMapping | undefined;
+      if(!existing) {
+        resolve();
+        return;
+      }
+      existing.updatedAt = updatedAt;
       const putReq = store.put(existing);
       putReq.onerror = () => reject(putReq.error);
       putReq.onsuccess = () => resolve();
@@ -243,7 +323,7 @@ export async function getPubkey(peerId: number): Promise<string | null> {
 // Named constants expected by tests
 export const VIRTUAL_PEERS_DB_NAME = DB_NAME;  // = 'phantomchat-virtual-peers'
 export const VIRTUAL_PEERS_STORE = 'virtual-peers';  // = 'mappings'
-export const SCHEMA_VERSION = DB_VERSION;        // = 1
+export const SCHEMA_VERSION = DB_VERSION;        // = 2
 
 // VirtualPeerRecord interface (extends VirtualPeerMapping with timestamp fields)
 export interface VirtualPeerRecord extends VirtualPeerMapping {

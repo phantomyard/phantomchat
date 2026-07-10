@@ -695,6 +695,24 @@ export class MessageStore {
   }
 
   /**
+   * Enumerate every deletion watermark. Used by contacts-sync / groups-sync to
+   * DERIVE their CRDT tombstones from reality rather than maintaining a
+   * parallel delete log: a DM conversation tombstone whose peer no longer has a
+   * live mapping is a deleted contact; a `group:<id>` tombstone whose group is
+   * gone is a deleted group. Returns unix-SECONDS deletedAt (the watermark
+   * unit), not millis.
+   */
+  async getAllTombstones(): Promise<Array<{conversationId: string; deletedAt: number}>> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(TOMBSTONE_STORE, 'readonly');
+      const req = tx.objectStore(TOMBSTONE_STORE).getAll();
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve((req.result as Array<{conversationId: string; deletedAt: number}>) ?? []);
+    });
+  }
+
+  /**
    * Remove the deletion watermark for a conversation. Rarely needed — provided
    * for an explicit "re-add and resync full history" flow where the caller
    * deliberately wants old messages to flow back in.

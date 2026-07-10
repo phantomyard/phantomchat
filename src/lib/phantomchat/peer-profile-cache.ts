@@ -21,6 +21,21 @@ export const PEER_PROFILE_CACHE_PREFIX = 'phantomchat-peer-profile-cache:';
 
 const LOG_PREFIX = '[PeerProfileCache]';
 
+// How long to wait before re-querying relays for the same peer. The dialog
+// list fires getFullUser once per row and re-fires on every re-render / chat
+// switch; without a cooldown each call re-opens relayCount sockets and, with
+// enough peers, trips Chrome's ~255-socket ceiling ("Insufficient resources"),
+// which then starves the gift-wrap message subscriptions.
+const REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+
+// Shared promise per pubkey so N concurrent callers collapse onto one query
+// instead of each spraying relayCount sockets.
+const inFlightRefresh = new Map<string, Promise<void>>();
+
+// Last refresh *attempt* time per pubkey (not the cached event's created_at —
+// a peer with no kind 0 on any relay never caches, so created_at can't gate it).
+const lastRefreshAttempt = new Map<string, number>();
+
 export interface CachedPeerProfile {
   profile: NostrProfile;
   created_at: number;
@@ -55,8 +70,31 @@ export function saveCachedPeerProfile(pubkey: string, cached: CachedPeerProfile)
  *
  * Returns when all relay queries have settled. Intended to be fired
  * without awaiting in hot paths.
+ *
+ * Deduped + cooldown-gated: concurrent calls for the same pubkey share one
+ * in-flight query, and a pubkey queried within REFRESH_COOLDOWN_MS is skipped
+ * entirely. This is what keeps the dialog list's per-row getFullUser storm
+ * from exhausting the browser's socket pool.
  */
-export async function refreshPeerProfileFromRelays(pubkey: string, peerId: PeerId): Promise<void> {
+export function refreshPeerProfileFromRelays(pubkey: string, peerId: PeerId): Promise<void> {
+  const existing = inFlightRefresh.get(pubkey);
+  if(existing) return existing;
+
+  const now = Date.now();
+  const last = lastRefreshAttempt.get(pubkey);
+  if(last !== undefined && now - last < REFRESH_COOLDOWN_MS) {
+    return Promise.resolve();
+  }
+  lastRefreshAttempt.set(pubkey, now);
+
+  const promise = doRefreshPeerProfileFromRelays(pubkey, peerId).finally(() => {
+    inFlightRefresh.delete(pubkey);
+  });
+  inFlightRefresh.set(pubkey, promise);
+  return promise;
+}
+
+async function doRefreshPeerProfileFromRelays(pubkey: string, peerId: PeerId): Promise<void> {
   const relayUrls = DEFAULT_RELAYS.map((r) => r.url);
   const results = await Promise.all(
     relayUrls.map((url) => queryRelayForProfileWithMeta(url, pubkey).catch((): null => null))
@@ -117,6 +155,8 @@ export async function refreshPeerProfileFromRelays(pubkey: string, peerId: PeerI
  * and we don't track which pubkeys we've seen.
  */
 export function clearPeerProfileCache(): void {
+  inFlightRefresh.clear();
+  lastRefreshAttempt.clear();
   try {
     const toRemove: string[] = [];
     for(let i = 0; i < localStorage.length; i++) {

@@ -18,6 +18,7 @@ import {getMessageStore} from './message-store';
 import {dispatchDialogUpdate} from './phantomchat-message-handler';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '@lib/rootScope';
+import {schedulePublish} from './phantomchat-sync-triggers';
 
 export interface AddP2PContactOptions {
   /** npub1… or 64-char hex pubkey */
@@ -195,6 +196,13 @@ export async function addP2PContact(opts: AddP2PContactOptions): Promise<AddP2PC
     } catch(err) {
       console.warn('[' + src + '] setInnerPeer failed:', err);
     }
+  }
+
+  // Publish the new contact cross-device (debounced). Skip when THIS add is
+  // itself a sync restore — reconcile already republishes if the merged view
+  // grew, and re-triggering would just churn.
+  if(isNew && src !== 'contacts-sync') {
+    schedulePublish('contacts');
   }
 
   return {hexPubkey, peerId, peerIdTweb, displayName, isNew};
