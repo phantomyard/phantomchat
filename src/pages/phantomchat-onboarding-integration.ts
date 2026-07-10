@@ -496,14 +496,46 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             chatAPI: crdtChatAPI, adapter: groupsAdapter, ...crdtCrypto
           });
 
-          // Bounded boot reconcile — never block onboarding on relay latency.
-          await Promise.race([
-            Promise.all([
-              contactsSync.reconcile().catch((e) => console.warn('[contacts-sync] reconcile failed', e)),
-              groupsSync.reconcile().catch((e) => console.warn('[groups-sync] reconcile failed', e))
-            ]),
-            new Promise<void>((resolve) => setTimeout(resolve, 8000))
-          ]);
+          // Receive-side self-heal. A per-relay queryRawEvents returns [] the
+          // instant the socket isn't 'connected' (nostr-relay.ts), so on a
+          // freshly-paired (cold) device — relays still handshaking when this
+          // fires — an un-gated reconcile sees "no remote", finds nothing
+          // local, and gives up FOREVER. The contacts/groups blob is on the
+          // relay; the device just queried too early. So: run non-blocking (so
+          // onboarding never waits on relay latency), gate each pass on a read
+          // relay actually going live, and retry across the cold-boot window so
+          // a slow start self-heals into a full address book / group roster
+          // instead of coming up blank.
+          const crdtRelayPool = (chatAPI as any).relayPool;
+          const reconcileOnce = async() => {
+            const [c, g] = await Promise.all([
+              contactsSync.reconcile().catch((e) => { console.warn('[contacts-sync] reconcile failed', e); return 'failed'; }),
+              groupsSync.reconcile().catch((e) => { console.warn('[groups-sync] reconcile failed', e); return 'failed'; })
+            ]);
+            console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g);
+            return {c, g};
+          };
+          // 'failed' = relay hiccup; 'no-remote-nothing-local' = we queried but
+          // saw nothing (could be a genuinely empty relay, or a cold miss). Any
+          // other outcome means we got a definitive read — stop retrying.
+          const inconclusive = (o: string) => o === 'failed' || o === 'no-remote-nothing-local';
+          void (async() => {
+            const MAX_ATTEMPTS = 5;
+            for(let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+              const ready = crdtRelayPool && typeof crdtRelayPool.whenSubscribed === 'function' ?
+                await crdtRelayPool.whenSubscribed(10000) :
+                true;
+              if(ready) {
+                const {c, g} = await reconcileOnce();
+                if(!inconclusive(c) || !inconclusive(g)) break; // definitive read — done
+              }
+              // No relay live yet, or both sides inconclusive: back off and
+              // retry so a cold boot self-heals rather than giving up.
+              if(attempt < MAX_ATTEMPTS - 1) {
+                await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
+              }
+            }
+          })();
 
           // Debounced publishers, triggered from mutation sites via the
           // trigger registry (addP2PContact, deleteContacts, GroupAPI).
