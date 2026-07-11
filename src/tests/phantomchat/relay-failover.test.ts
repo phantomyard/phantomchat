@@ -189,6 +189,9 @@ describe('Relay Pool Failover', () => {
     DEFAULT_RELAYS = mod.DEFAULT_RELAYS;
     pool = new mod.NostrRelayPool({
       relays: [...DEFAULT_RELAYS],
+      // This suite asserts publish fan-out across ALL write relays, so keep
+      // every relay in the active set (the default caps live sockets at 3).
+      maxActiveRelays: DEFAULT_RELAYS.length,
       onMessage: (msg: any) => messages.push(msg as MockMsg)
     });
   });

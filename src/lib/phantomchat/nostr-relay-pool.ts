@@ -72,6 +72,13 @@ export interface RelayPoolOptions {
    * publicKey is hex, privateKeyHex is 64-char hex string.
    */
   preloadedIdentity?: { publicKey: string; privateKeyHex: string };
+  /**
+   * Max number of relays to hold an open socket to simultaneously. The rest sit
+   * on standby and are promoted only when an active relay is benched. Defaults
+   * to TARGET_ACTIVE_RELAYS (3). Tests that exercise full N-relay fan-out pass
+   * their relay count here to keep every relay active.
+   */
+  maxActiveRelays?: number;
 }
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -119,6 +126,23 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 
 const DEDUP_CACHE_MAX = 10_000;
 const POOL_RECOVERY_INTERVAL_MS = 60_000;
+// How many relays we keep an OPEN socket to at once. The rest of the configured
+// relays sit on standby (no socket) until a slot frees. Mobile browsers choke
+// when we fan out 5+ simultaneous WebSocket handshakes on a cold, flaky radio
+// link — every socket races the same "insufficient resources" ceiling and none
+// survive, so the app shows "reconnecting" forever. Keeping the live set small
+// (3) and promoting a standby only when an active relay is benched keeps us well
+// under that ceiling while still giving delivery redundancy. Publish still
+// fans out to every connected write relay; 3 is plenty for durability, and the
+// catch-up poll covers any relay that silently drops a live push.
+const TARGET_ACTIVE_RELAYS = 3;
+// Consecutive failed socket attempts (transitions into 'reconnecting' WITHOUT an
+// intervening 'connected') before we bench an ACTIVE relay and promote a standby
+// in its place. This is the "swap to another relay" failover: a relay the device
+// simply can't reach (blocked, down, TLS-refused) stops hogging a slot so a
+// reachable standby can take it. A relay that connects fine then blips clears
+// this counter on 'connected', so a healthy relay is never benched for a blip.
+const RELAY_FAILOVER_THRESHOLD = 3;
 // Relay health / cooldown. A relay that keeps dropping shortly after it connects
 // (a "flap") burns CPU + bandwidth: every reconnect re-arms the subscription and
 // fires a since-backfill query, and the relay's own auto-reconnect loop keeps
@@ -201,10 +225,19 @@ export class NostrRelayPool {
   // RelayEntry recreation across connectAll(). `cooldownUntil` is a Date.now()
   // ms deadline; while it's in the future the pool recovery sweep skips the
   // relay and its self-reconnect has been stopped via disconnect().
-  private relayHealth: Map<string, {connectedAt: number; flaps: number; cooldownUntil: number; lastState: string}> = new Map();
+  private relayHealth: Map<string, {connectedAt: number; flaps: number; cooldownUntil: number; lastState: string; failedConnects: number}> = new Map();
 
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
+
+  // Connection supervisor. `activeUrls` is the set of relays we currently hold
+  // (or are dialing) an open socket to — capped at `maxActiveRelays`. Everything
+  // configured but not in this set is on standby (no socket). A relay is removed
+  // from activeUrls when it's benched (flap cooldown or repeated connect
+  // failure), which frees a slot for `superviseConnections()` to fill from
+  // standby. This is the "connect to a few, swap on failure" model.
+  private activeUrls: Set<string> = new Set();
+  private maxActiveRelays: number;
 
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
@@ -222,6 +255,7 @@ export class NostrRelayPool {
     this.onMessageCb = options.onMessage;
     this.onStateChangeCb = options.onStateChange;
     this._preloadedIdentity = options.preloadedIdentity;
+    this.maxActiveRelays = Math.max(1, options.maxActiveRelays ?? TARGET_ACTIVE_RELAYS);
   }
 
   // ─── Callback setters (for DI / test path) ─────────────────────
@@ -428,6 +462,7 @@ export class NostrRelayPool {
     }
 
     this.relayEntries = [];
+    this.activeUrls.clear();
     this.isSubscribedFlag = false;
   }
 
@@ -853,13 +888,9 @@ export class NostrRelayPool {
     const entry = this.createRelayEntry(config);
     this.relayEntries.push(entry);
 
-    // Initialize and connect (fire-and-forget)
-    entry.instance.initialize().then(() => {
-      if(this.isSubscribedFlag && config.read) {
-        entry.instance.pendingSubscribe = true;
-      }
-      entry.instance.connect();
-    });
+    // Connect now if there's a free active slot; otherwise it waits on standby
+    // and the supervisor promotes it when an active relay is benched.
+    void this.superviseConnections();
 
     this.persistRelayConfig();
     this.notifyStateChange();
@@ -875,7 +906,10 @@ export class NostrRelayPool {
 
     this.configs = this.configs.filter(c => c.url !== url);
     this.enabled.delete(url);
+    this.activeUrls.delete(url);
     this.persistRelayConfig();
+    // Removing an active relay frees a slot — pull a standby up to keep target.
+    void this.superviseConnections();
     this.notifyStateChange();
     this.dispatchRelayListChanged();
   }
@@ -910,6 +944,9 @@ export class NostrRelayPool {
   }
 
   disableRelay(url: string): void {
+    // "Disabled" excludes a relay from publish/read fan-out but keeps its socket
+    // — it is a policy flag, not a physical disconnect. Slot accounting is
+    // unaffected (a disabled-but-connected relay still holds its socket).
     this.enabled.set(url, false);
     this.dispatchRelayListChanged();
   }
@@ -1026,6 +1063,9 @@ export class NostrRelayPool {
       }
       this.trackRelayHealth(config.url, instance.getState());
       this.notifyStateChange();
+      // Top up the active set: a relay just dropped/benched may have freed a
+      // slot a standby should fill. Cheap no-op when already at target.
+      void this.superviseConnections();
     };
 
     // Notify pool on latency update so UI re-dispatches phantomchat_relay_state
@@ -1139,21 +1179,98 @@ export class NostrRelayPool {
 
   private async connectAll(): Promise<void> {
     this.relayEntries = [];
+    this.activeUrls.clear();
 
-    const promises = this.configs.map(async(config) => {
-      const entry = this.createRelayEntry(config);
-      this.relayEntries.push(entry);
+    // Create an entry for EVERY configured relay so they're all addressable,
+    // but only open a socket to the first `maxActiveRelays`. The remainder stay
+    // on standby (no socket) until a slot frees — see superviseConnections().
+    for(const config of this.configs) {
+      this.relayEntries.push(this.createRelayEntry(config));
+    }
 
-      try {
-        await entry.instance.initialize();
-        entry.instance.connect();
-      } catch(err) {
-        this.log.error('[NostrRelayPool] failed to connect relay:', config.url, err);
-      }
-    });
-
-    await Promise.all(promises);
+    await this.superviseConnections();
     this.notifyStateChange();
+  }
+
+  /**
+   * Bring a standby relay online: mark it active (claims a slot), initialize it,
+   * then open the socket. Marking active is synchronous and happens BEFORE the
+   * async initialize so a concurrent supervise pass counts the slot as taken and
+   * doesn't over-promote past `maxActiveRelays` during the init microtask gap.
+   */
+  private activateRelay(entry: RelayEntry): void {
+    this.activeUrls.add(entry.config.url);
+    entry.instance.initialize().then(() => {
+      // Guard against a race where the relay was benched again before init
+      // resolved — don't resurrect a socket we've since demoted.
+      if(!this.activeUrls.has(entry.config.url)) return;
+      if(this.isSubscribedFlag && entry.config.read) {
+        entry.instance.pendingSubscribe = true;
+      }
+      entry.instance.connect();
+    }).catch((err) => {
+      this.log.error('[NostrRelayPool] failed to activate relay:', entry.config.url, err);
+    });
+  }
+
+  /**
+   * Keep exactly up to `maxActiveRelays` relays holding a socket. Slots are held
+   * by membership in `activeUrls` (benching removes a url, freeing its slot), so
+   * counting is race-free regardless of a relay's transient wire state. When
+   * under target, promote standby relays in config-priority order, skipping any
+   * that are user-disabled or still serving a flap/failover cooldown.
+   */
+  private async superviseConnections(): Promise<void> {
+    const now = Date.now();
+
+    // First, re-dial any ACTIVE relay that has fully dropped its socket and is
+    // NOT self-reconnecting (state 'disconnected') and not benched. Active
+    // relays normally self-heal via their own reconnect loop; this covers the
+    // case where the socket died without arming one (and is what the pool
+    // recovery sweep leans on). Benched relays were removed from activeUrls, so
+    // they're never re-dialed here — only promoted fresh from standby.
+    for(const entry of this.relayEntries) {
+      if(!this.activeUrls.has(entry.config.url)) continue;
+      if(entry.instance.getState() !== 'disconnected') continue;
+      const health = this.relayHealth.get(entry.config.url);
+      if(health && health.cooldownUntil > now) continue;
+      entry.instance.initialize().then(() => {
+        if(!this.activeUrls.has(entry.config.url)) return;
+        if(this.isSubscribedFlag && entry.config.read) {
+          entry.instance.pendingSubscribe = true;
+        }
+        entry.instance.connect();
+      }).catch((err) => {
+        this.log.error('[NostrRelayPool] re-dial failed for:', entry.config.url, err);
+      });
+    }
+
+    let need = this.maxActiveRelays - this.activeUrls.size;
+    if(need <= 0) return;
+
+    for(const entry of this.relayEntries) {
+      if(need <= 0) break;
+      const url = entry.config.url;
+      if(this.activeUrls.has(url)) continue;             // already active/dialing
+      if(this.enabled.get(url) === false) continue;      // user-disabled
+      const health = this.relayHealth.get(url);
+      if(health && health.cooldownUntil > now) continue; // benched, cooling down
+      this.activateRelay(entry);
+      need--;
+    }
+  }
+
+  /**
+   * Bench an active relay and free its slot so a standby can take over. Used by
+   * both failure paths (flap cooldown, repeated connect failure). Sets a cooldown
+   * so the recovery sweep won't immediately re-promote the same sick relay, drops
+   * it from the active set, and hard-disconnects to stop its own retry loop.
+   */
+  private benchRelay(url: string, cooldownMs: number): void {
+    const health = this.relayHealth.get(url);
+    if(health) health.cooldownUntil = Date.now() + cooldownMs;
+    this.activeUrls.delete(url);
+    this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
   }
 
   /**
@@ -1261,25 +1378,10 @@ export class NostrRelayPool {
   }
 
   private recoverFailedRelays(): void {
-    const now = Date.now();
-    for(const entry of this.relayEntries) {
-      if(entry.instance.getState() !== 'disconnected') continue;
-
-      // Skip relays still serving a flap cooldown — retrying now would just
-      // re-arm a subscription that drops again within seconds.
-      const health = this.relayHealth.get(entry.config.url);
-      if(health && health.cooldownUntil > now) continue;
-
-      this.log('[NostrRelayPool] pool recovery: retrying', entry.config.url);
-      entry.instance.initialize().then(() => {
-        if(this.isSubscribedFlag && entry.config.read) {
-          entry.instance.pendingSubscribe = true;
-        }
-        entry.instance.connect();
-      }).catch((err) => {
-        this.log.error('[NostrRelayPool] pool recovery failed for:', entry.config.url, err);
-      });
-    }
+    // Active relays self-reconnect; benched relays sit on standby with a
+    // cooldown. Recovery is simply topping the active set back up to target —
+    // superviseConnections() promotes standby relays whose cooldown has expired.
+    void this.superviseConnections();
   }
 
   /**
@@ -1296,7 +1398,7 @@ export class NostrRelayPool {
   private trackRelayHealth(url: string, state: string): void {
     let health = this.relayHealth.get(url);
     if(!health) {
-      health = {connectedAt: -1, flaps: 0, cooldownUntil: 0, lastState: 'disconnected'};
+      health = {connectedAt: -1, flaps: 0, cooldownUntil: 0, lastState: 'disconnected', failedConnects: 0};
       this.relayHealth.set(url, health);
     }
 
@@ -1306,7 +1408,24 @@ export class NostrRelayPool {
 
     if(state === 'connected') {
       health.connectedAt = now;
+      health.failedConnects = 0; // reachable again — clear the failover streak
       return;
+    }
+
+    // Failover: a relay entering 'reconnecting' without ever having connected is
+    // a failed socket attempt. After RELAY_FAILOVER_THRESHOLD of these in a row,
+    // bench this ACTIVE relay and let a standby take its slot — a relay the
+    // device simply can't reach shouldn't monopolise one of the few live slots.
+    // (A relay that connected then dropped has failedConnects reset to 0 above,
+    // so a healthy relay's blip never trips this.)
+    if(state === 'reconnecting' && !wasConnected) {
+      health.failedConnects = (health.failedConnects || 0) + 1;
+      if(this.activeUrls.has(url) && health.failedConnects >= RELAY_FAILOVER_THRESHOLD) {
+        health.failedConnects = 0;
+        this.log('[NostrRelayPool] relay unreachable — failing over off', url);
+        this.benchRelay(url, RELAY_COOLDOWN_BASE_MS);
+        return;
+      }
     }
 
     // Only a transition out of a real connected session is a candidate flap.
@@ -1327,13 +1446,13 @@ export class NostrRelayPool {
       RELAY_COOLDOWN_BASE_MS * 2 ** (health.flaps - RELAY_FLAP_THRESHOLD),
       RELAY_COOLDOWN_MAX_MS
     );
-    health.cooldownUntil = now + backoff;
     this.log(
       '[NostrRelayPool] relay flapping — cooling down', url,
       'for', Math.round(backoff / 1000), 's (flaps:', health.flaps + ')'
     );
-    // Stop the instance's own auto-reconnect for the cooldown window.
-    this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
+    // Bench for the cooldown window: frees the slot for a standby AND stops the
+    // instance's own auto-reconnect loop.
+    this.benchRelay(url, backoff);
   }
 
   private notifyStateChange(): void {

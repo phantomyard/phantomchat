@@ -170,9 +170,13 @@ export default class AppPhantomChatStatusTab extends SliderSuperTab {
       subtitle: 'Tap to check now',
       icon: 'download',
       clickable: () => {
-        // If a newer build was already found, this acts as "Update now".
+        // If a newer build was already found, this acts as "Update now" — nuke
+        // the app-shell cache + service worker, then reload (data is kept).
         if(updateReady) {
-          appNavigationController.reload();
+          updateRow.subtitle.textContent = 'Updating…';
+          import('@lib/phantomchat/phantomchat-update-checker')
+          .then(({hardReloadClearingCaches}) => hardReloadClearingCaches())
+          .catch(() => appNavigationController.reload());
           return;
         }
 
