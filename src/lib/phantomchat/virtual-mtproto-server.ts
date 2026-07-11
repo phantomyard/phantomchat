@@ -922,8 +922,17 @@ export class PhantomChatMTProtoServer {
       pubkey;
 
     const limit = params?.limit ?? 50;
-    const offsetDate = params?.offset_date || undefined;
-    const storedMsgs = await store.getMessages(convId, limit, offsetDate);
+    // When tweb does scroll-restoration it sends offset_id + add_offset (derived
+    // from backLimit). PhantomChat previously ignored both, so switching back to
+    // a scrolled-up chat re-opened at the newest page instead of the restored
+    // position. Use getMessagesByOffsetId to paginate by mid instead of only by
+    // timestamp.  For plain newest-first fetches (offset_id = 0, add_offset = 0)
+    // this is equivalent to the old behaviour.
+    const offsetId  = params?.offset_id  ?? 0;
+    const addOffset = params?.add_offset ?? 0;
+    const storedMsgs = offsetId || addOffset ?
+      await store.getMessagesByOffsetId(convId, limit, offsetId, addOffset) :
+      await store.getMessages(convId, limit, params?.offset_date || undefined);
 
     const messages: any[] = [];
     const users: any[] = [];
@@ -1058,8 +1067,11 @@ export class PhantomChatMTProtoServer {
 
     const convId = `group:${group.groupId}`;
     const limit = params?.limit ?? 50;
-    const offsetDate = params?.offset_date || undefined;
-    const storedMsgs = await store.getMessages(convId, limit, offsetDate);
+    const offsetId  = params?.offset_id  ?? 0;
+    const addOffset = params?.add_offset ?? 0;
+    const storedMsgs = offsetId || addOffset ?
+      await store.getMessagesByOffsetId(convId, limit, offsetId, addOffset) :
+      await store.getMessages(convId, limit, params?.offset_date || undefined);
 
     const messages: any[] = [];
     const users: any[] = [];

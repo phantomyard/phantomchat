@@ -194,6 +194,53 @@ describe('MessageStore', () => {
     });
   });
 
+  describe('getMessagesByOffsetId', () => {
+    it('returns newest messages when offsetId = 0', async() => {
+      const convId = uniqueConvId();
+      for(let i = 1; i <= 5; i++) {
+        await store.saveMessage(makeMsg({eventId: `o-${i}`, conversationId: convId, timestamp: i, mid: 1000 + i}));
+      }
+      const msgs = await store.getMessagesByOffsetId(convId, 3, 0, 0);
+      expect(msgs.length).toBe(3);
+      // Newest-first (descending timestamp)
+      expect(msgs[0].mid).toBe(1005);
+      expect(msgs[1].mid).toBe(1004);
+      expect(msgs[2].mid).toBe(1003);
+    });
+
+    it('respects addOffset relative to anchor message', async() => {
+      const convId = uniqueConvId();
+      for(let i = 1; i <= 5; i++) {
+        await store.saveMessage(makeMsg({eventId: `o-${i}`, conversationId: convId, timestamp: i, mid: 1000 + i}));
+      }
+      // Anchor is 1004, addOffset = -1 → start at index=(1004 position - 1).
+      // Messages are newest-first: [1005, 1004, 1003, 1002, 1001]
+      // Anchor at index 1; addOffset -1 → start at index 0, limit 2 → [1005, 1004].
+      const msgs = await store.getMessagesByOffsetId(convId, 2, 1004, -1);
+      expect(msgs.map((m) => m.mid)).toEqual([1005, 1004]);
+    });
+
+    it('falls back to newest page when anchor mid is not found', async() => {
+      const convId = uniqueConvId();
+      await store.saveMessage(makeMsg({eventId: 'found', conversationId: convId, timestamp: 1, mid: 1}));
+      const msgs = await store.getMessagesByOffsetId(convId, 10, 9999, 0);
+      expect(msgs.length).toBe(1);
+      expect(msgs[0].mid).toBe(1);
+    });
+
+    it('returns empty for empty conversation', async() => {
+      const msgs = await store.getMessagesByOffsetId('nope:conv', 10, 0, 0);
+      expect(msgs).toEqual([]);
+    });
+
+    it('does not read past the end of the message list', async() => {
+      const convId = uniqueConvId();
+      await store.saveMessage(makeMsg({eventId: 'a', conversationId: convId, timestamp: 1, mid: 1}));
+      const msgs = await store.getMessagesByOffsetId(convId, 10, 0, 5);
+      expect(msgs).toEqual([]);
+    });
+  });
+
   describe('getLatestTimestamp', () => {
     it('returns max timestamp for a conversation', async() => {
       const convId = uniqueConvId();

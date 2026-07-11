@@ -310,13 +310,11 @@ export class MessageStore {
   }
 
   /**
-   * Get messages for a conversation, sorted by timestamp desc.
-   *
-   * @param conversationId - Deterministic conversation ID
-   * @param limit - Max messages to return (default 50)
-   * @param before - Optional timestamp for pagination (return messages before this time)
+   * Fetch all messages for a conversation, sorted newest-first.
+   * No limit; used by offset-based pagination where the anchor may be
+   * arbitrarily deep in history.
    */
-  async getMessages(conversationId: string, limit: number = DEFAULT_LIMIT, before?: number): Promise<StoredMessage[]> {
+  private async getAllMessagesSorted(conversationId: string): Promise<StoredMessage[]> {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
@@ -330,18 +328,65 @@ export class MessageStore {
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
         if(cursor) {
-          const msg = cursor.value as StoredMessage;
-          if(!before || msg.timestamp < before) {
-            results.push(msg);
-          }
+          results.push(cursor.value as StoredMessage);
           cursor.continue();
         } else {
-          // Sort by timestamp descending and limit
           results.sort((a, b) => b.timestamp - a.timestamp);
-          resolve(results.slice(0, limit));
+          resolve(results);
         }
       };
     });
+  }
+
+  /**
+   * Get messages for a conversation, sorted by timestamp desc.
+   *
+   * @param conversationId - Deterministic conversation ID
+   * @param limit - Max messages to return (default 50)
+   * @param before - Optional timestamp for pagination (return messages before this time)
+   */
+  async getMessages(conversationId: string, limit: number = DEFAULT_LIMIT, before?: number): Promise<StoredMessage[]> {
+    const all = await this.getAllMessagesSorted(conversationId);
+    const filtered = before ? all.filter(m => m.timestamp < before) : all;
+    return filtered.slice(0, limit);
+  }
+
+  /**
+   * Get messages for a conversation using offset_id/add_offset pagination.
+   * Mirrors Telegram's getHistory semantics: `results` are sorted newest-first,
+   * `offsetId` is the anchor message, `addOffset` shifts the window away from
+   * that anchor, and `limit` caps the returned slice.
+   *
+   * @param conversationId - Deterministic conversation ID
+   * @param limit - Max messages to return
+   * @param offsetId - Anchor message id (0 = start from newest)
+   * @param addOffset - Positional shift relative to anchor (negative = newer)
+   */
+  async getMessagesByOffsetId(
+    conversationId: string,
+    limit: number = DEFAULT_LIMIT,
+    offsetId: number = 0,
+    addOffset: number = 0
+  ): Promise<StoredMessage[]> {
+    // Full sorted fetch is required because the IndexedDB schema indexes
+    // on timestamp, not mid. A cursor scan is the only way to locate the
+    // anchor message by mid before computing the window slice.
+    const allMsgs = await this.getAllMessagesSorted(conversationId);
+    if(allMsgs.length === 0) return [];
+
+    if(offsetId <= 0) {
+      const start = Math.max(0, addOffset);
+      return allMsgs.slice(start, start + limit);
+    }
+
+    const offsetIndex = allMsgs.findIndex((m) => m.mid === offsetId);
+    if(offsetIndex === -1) {
+      // Anchor not found — fall back to newest page rather than empty.
+      return allMsgs.slice(0, limit);
+    }
+
+    const start = Math.max(0, offsetIndex + addOffset);
+    return allMsgs.slice(start, start + limit);
   }
 
   /**

@@ -17,6 +17,23 @@ if(!globalScope.crypto) {
   });
 }
 
+// Provide a fake localStorage so tests that exercise localStorage-backed
+// persistence (e.g. getPrivacy/setPrivacy, updateNotifySettings) don't crash
+// in the Node test environment.
+if(typeof globalScope.localStorage === 'undefined') {
+  const store: Record<string, string> = {};
+  Object.defineProperty(globalScope, 'localStorage', {
+    value: {
+      getItem: (key: string) => store[key] ?? null,
+      setItem: (key: string, value: string) => { store[key] = value; },
+      removeItem: (key: string) => { delete store[key]; },
+      clear: () => { for(const k in store) delete store[k]; }
+    },
+    configurable: true,
+    writable: true
+  });
+}
+
 // jsdom's Blob lacks arrayBuffer(); polyfill via FileReader for test runs
 if(typeof globalScope.Blob !== 'undefined' && typeof globalScope.Blob.prototype.arrayBuffer !== 'function') {
   globalScope.Blob.prototype.arrayBuffer = function(this: Blob): Promise<ArrayBuffer> {

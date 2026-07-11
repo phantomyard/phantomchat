@@ -23,6 +23,7 @@ export function _deleteHistoryStorage(key: HistoryStorageKey) {
 }
 
 export function _changeHistoryStorageKey(key: HistoryStorageKey, newKey: HistoryStorageKey) {
+  if(key === newKey) return;
   cache[newKey] = cache[key];
   delete cache[key];
 }
