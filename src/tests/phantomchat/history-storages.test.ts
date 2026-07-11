@@ -7,9 +7,11 @@ import {_useHistoryStorage, _changeHistoryStorageKey, _deleteHistoryStorage, _it
 describe('historyStorages', () => {
   beforeEach(() => {
     // Purge in-memory cache so tests don't cross-contaminate
-    _iterateHistoryStorages((key, value) => {
-      _deleteHistoryStorage(key);
+    const keys: string[] = [];
+    _iterateHistoryStorages((key) => {
+      keys.push(key as string);
     });
+    keys.forEach((key) => _deleteHistoryStorage(key as any));
   });
 
   describe('_useHistoryStorage', () => {

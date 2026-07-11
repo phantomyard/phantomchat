@@ -347,7 +347,7 @@ export class MessageStore {
    */
   async getMessages(conversationId: string, limit: number = DEFAULT_LIMIT, before?: number): Promise<StoredMessage[]> {
     const all = await this.getAllMessagesSorted(conversationId);
-    const filtered = before ? all.filter(m => m.timestamp < before) : all;
+    const filtered = before !== undefined ? all.filter(m => m.timestamp < before) : all;
     return filtered.slice(0, limit);
   }
 
@@ -373,6 +373,10 @@ export class MessageStore {
     // anchor message by mid before computing the window slice.
     const allMsgs = await this.getAllMessagesSorted(conversationId);
     if(allMsgs.length === 0) return [];
+
+    // Sort by mid descending so anchor-based pagination is deterministic
+    // even when two messages share a timestamp.
+    allMsgs.sort((a, b) => b.mid - a.mid);
 
     if(offsetId <= 0) {
       const start = Math.max(0, addOffset);
