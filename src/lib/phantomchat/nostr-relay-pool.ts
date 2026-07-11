@@ -320,7 +320,7 @@ export class NostrRelayPool {
   private _onRawEventCb?: (event: NostrEvent) => void;
   private _onPresenceCb?: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void;
   private _onDigestCb?: (digest: {deviceId: string; conv: string; count: number; latestId: string}) => void;
-  private _onSyncReqCb?: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]}) => void;
+  private _onSyncReqCb?: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}) => void;
   private _onSyncResCb?: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}) => void;
 
   /**
@@ -354,7 +354,7 @@ export class NostrRelayPool {
    * only fires for msg.from === self; the device-sync module ignores requests not
    * targeted at its own deviceId.
    */
-  setOnSyncRequest(cb: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]}) => void): void {
+  setOnSyncRequest(cb: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}) => void): void {
     this._onSyncReqCb = cb;
   }
 
@@ -389,13 +389,18 @@ export class NostrRelayPool {
    * rows I'm missing." Self-addressed like the digest, so only our own devices see
    * it. Best-effort — a dropped request is re-issued on the next digest/typing edge.
    */
-  async publishSyncRequest(payload: {deviceId: string; targetId: string; conv: string; haveIds: string[]}): Promise<void> {
+  async publishSyncRequest(payload: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}): Promise<void> {
     await this.publishSelfControl({
       type: 'device-sync-req',
       deviceId: payload.deviceId,
       targetId: payload.targetId,
       conv: payload.conv,
-      haveIds: payload.haveIds
+      haveIds: payload.haveIds,
+      // Optional: bound the reconcile to the last `limit` rows of the conversation
+      // (used by the sync-before-render barrier so an incoming message waits on a
+      // cheap recent catch-up, never a full-history pull).
+      ...(payload.recentOnly ? {recentOnly: true} : {}),
+      ...(typeof payload.limit === 'number' ? {limit: payload.limit} : {})
     });
   }
 
@@ -1383,7 +1388,7 @@ export class NostrRelayPool {
    * Returns the parsed request, or null. Only self-authored JSON carrying our
    * `device-sync-req` type matches.
    */
-  private parseSyncRequestEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; haveIds: string[]} | null {
+  private parseSyncRequestEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number} | null {
     const content = msg.content;
     if(typeof content !== 'string' || content.indexOf('device-sync-req') === -1) return null;
     try {
@@ -1394,7 +1399,9 @@ export class NostrRelayPool {
         deviceId: env.deviceId,
         targetId: env.targetId,
         conv: env.conv,
-        haveIds: Array.isArray(env.haveIds) ? env.haveIds.filter((x: unknown) => typeof x === 'string') : []
+        haveIds: Array.isArray(env.haveIds) ? env.haveIds.filter((x: unknown) => typeof x === 'string') : [],
+        ...(env.recentOnly === true ? {recentOnly: true} : {}),
+        ...(typeof env.limit === 'number' ? {limit: env.limit} : {})
       };
     } catch{
       // not JSON — a plain message

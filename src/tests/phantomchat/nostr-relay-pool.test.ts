@@ -238,8 +238,8 @@ describe('NostrRelayPool', () => {
       const pool = new NostrRelayPool({relays: [...DEFAULT_RELAYS], onMessage});
       await pool.initialize();
 
-      // All 5 connected (connect-all).
-      expect(mockRelayInstances.filter((r: any) => r.connected).length).toBe(5);
+      // All connected (connect-all).
+      expect(mockRelayInstances.filter((r: any) => r.connected).length).toBe(DEFAULT_RELAYS.length);
       const firstActive = mockRelayInstances.filter((r: any) => r.connected)[0];
 
       // Flap the first relay past threshold: connect→drop, 3× quick.
@@ -251,9 +251,9 @@ describe('NostrRelayPool', () => {
       }
       await vi.advanceTimersByTimeAsync(0);
 
-      // The flapping relay is benched (disconnected); the other 4 carry on. The
-      // liveness floor does NOT fire — 4 relays are still active.
-      expect(pool.getConnectedCount()).toBe(4);
+      // The flapping relay is benched (disconnected); the rest carry on. The
+      // liveness floor does NOT fire — the remaining relays are still active.
+      expect(pool.getConnectedCount()).toBe(DEFAULT_RELAYS.length - 1);
     });
   });
 
@@ -715,13 +715,13 @@ describe('NostrRelayPool', () => {
   });
 
   describe('default relays (Phase 3)', () => {
-    it('DEFAULT_RELAYS has 5 entries', () => {
-      expect(DEFAULT_RELAYS).toHaveLength(5);
+    it('DEFAULT_RELAYS has 3 entries', () => {
+      expect(DEFAULT_RELAYS).toHaveLength(3);
     });
 
-    it('DEFAULT_RELAYS includes relay.damus.io', () => {
+    it('DEFAULT_RELAYS includes nostr.mom', () => {
       const urls = DEFAULT_RELAYS.map((r: any) => r.url);
-      expect(urls).toContain('wss://relay.damus.io');
+      expect(urls).toContain('wss://nostr.mom');
     });
   });
 

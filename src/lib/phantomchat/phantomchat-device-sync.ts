@@ -57,6 +57,31 @@ const RESPONSE_CHUNK_ROWS = 25;
 const HAVE_IDS_CAP = 5_000;
 
 /**
+ * Sync-before-render barrier (Andrew's brief). When an incoming message arrives
+ * and one of our OWN other devices is currently live, we do a quick RECENT-ONLY
+ * catch-up from that sibling BEFORE painting the incoming bubble — so the new
+ * message never lands above a gap the sibling could have filled (crucial for
+ * media a sibling already holds). It is a HARD block, but only ever gated behind
+ * a live sibling; a single-device user is never delayed.
+ */
+
+/** Rows the recent-only barrier reconciles (last-N of the open conversation). */
+const RECENT_PULL_ROWS = 25;
+
+/** Hard ceiling on the sync-before-render wait — render anyway past this (ms). */
+const RECENT_PULL_CEILING_MS = 5_000;
+
+/** Collapse a burst of incoming messages to one recent-pull per conv (ms). */
+const RECENT_PULL_THROTTLE_MS = 2_000;
+
+/**
+ * A sibling device is considered "live" if we heard ANY self-control envelope
+ * (digest / sync req / sync res) authored by a DIFFERENT device within this
+ * window. This is the gate for the sync-before-render barrier.
+ */
+const SIBLING_LIVE_WINDOW_MS = 90_000;
+
+/**
  * Wire subset of a StoredMessage sufficient to reconstruct + render a bubble on
  * the receiving device. `mid`/`twebPeerId` are deterministic (derived from
  * eventId+timestamp / pubkey) so they are RECOMPUTED on receive, never trusted
@@ -81,6 +106,22 @@ interface DeviceSyncRow {
 
 /** Per-conversation timestamp of our last outbound sync request (throttle). */
 const lastRequestAt = new Map<string, number>();
+
+/** Per-conversation timestamp of our last recent-only barrier pull (throttle). */
+const lastRecentPullAt = new Map<string, number>();
+
+/**
+ * In-flight sync-before-render barriers, keyed by conversationId. A pending entry
+ * resolves the moment a sibling answers our recent-only request with a `last`
+ * chunk (or on the hard ceiling), unblocking the incoming message's render.
+ */
+const pendingRecentPulls = new Map<string, {resolve: () => void; timer: ReturnType<typeof setTimeout>}>();
+
+/**
+ * Wall-clock of the last self-control envelope we heard from ANOTHER device.
+ * Drives `hasLiveSibling()` — the gate for the sync-before-render barrier.
+ */
+let lastSiblingActivityAt = 0;
 
 let ownPubkey: string | null = null;
 
@@ -126,7 +167,7 @@ export async function initDeviceSync(pubkey: string): Promise<void> {
       pool.setOnDigest((d: {deviceId: string; conv: string; count: number; latestId: string}) => onRemoteDigest(d));
     }
     if(pool?.setOnSyncRequest) {
-      pool.setOnSyncRequest((r: {deviceId: string; targetId: string; conv: string; haveIds: string[]}) => onSyncRequest(r));
+      pool.setOnSyncRequest((r: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}) => onSyncRequest(r));
     }
     if(pool?.setOnSyncResponse) {
       pool.setOnSyncResponse((r: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}) => onSyncResponse(r));
@@ -192,6 +233,7 @@ export async function onRemoteDigest(d: {deviceId: string; conv: string; count: 
   if(!d || !d.conv) return;
   if(d.deviceId && d.deviceId === deviceId) return; // our own echo — ignore
 
+  lastSiblingActivityAt = Date.now(); // proof a sibling device is live
   remoteDigests.set(d.conv, {deviceId: d.deviceId, count: d.count, latestId: d.latestId, at: Date.now()});
   console.log(`${LOG_PREFIX} ← digest ${d.conv.slice(0, 12)}… count=${d.count} from device ${(d.deviceId || '?').slice(0, 8)}`);
 
@@ -226,6 +268,86 @@ export function pokeDeviceSync(): void {
     pokeTimer = null;
     void publishActiveDigest();
   }, POKE_DEBOUNCE_MS);
+}
+
+/** True when a DIFFERENT device of ours pulsed within the live window. */
+function hasLiveSibling(): boolean {
+  return lastSiblingActivityAt > 0 && (Date.now() - lastSiblingActivityAt) < SIBLING_LIVE_WINDOW_MS;
+}
+
+/**
+ * Sync-before-render barrier. Call this with the incoming message's peer pubkey
+ * BEFORE painting the bubble. If one of our OWN devices is currently live, issue a
+ * RECENT-ONLY reconcile for that conversation and BLOCK on it (up to a hard
+ * ceiling) so the incoming message lands on top of an up-to-date tail — never
+ * above a gap the sibling already holds (media included). When no sibling is live,
+ * or the pool isn't ready, it returns immediately: a single-device user is never
+ * delayed. Best-effort and self-healing — a lost request just hits the ceiling and
+ * renders anyway; the normal digest/heartbeat pull still backfills later.
+ */
+export async function syncRecentBeforeRender(peerPubkey: string): Promise<void> {
+  if(!ownPubkey || !peerPubkey || peerPubkey === ownPubkey) return;
+  if(!hasLiveSibling()) return; // no sibling to pull from — don't block
+
+  let conv: string;
+  try {
+    const {getMessageStore} = await import('./message-store');
+    conv = getMessageStore().getConversationId(ownPubkey, peerPubkey);
+  } catch{
+    return;
+  }
+
+  // Collapse a burst of incoming messages to a single recent pull per conversation.
+  const now = Date.now();
+  if(now - (lastRecentPullAt.get(conv) || 0) < RECENT_PULL_THROTTLE_MS) return;
+
+  const pool = (window as any).__phantomchatChatAPI?.relayPool;
+  if(!pool?.isConnected?.() || typeof pool.publishSyncRequest !== 'function') return;
+  lastRecentPullAt.set(conv, now);
+
+  try {
+    const {getMessageStore} = await import('./message-store');
+    const store = getMessageStore();
+    // Have-set = our most-recent N eventIds, so the sibling's diff stays bounded
+    // to the recent tail rather than the whole conversation.
+    const recent = await store.getMessages(conv, RECENT_PULL_ROWS);
+    const haveIds = recent.map((r) => r.eventId).filter((id): id is string => typeof id === 'string');
+
+    // Broadcast (empty targetId) so ANY live sibling holding extra answers — we
+    // don't need to know which device has it.
+    await pool.publishSyncRequest({
+      deviceId,
+      targetId: '',
+      conv,
+      haveIds,
+      recentOnly: true,
+      limit: RECENT_PULL_ROWS
+    });
+    console.log(`${LOG_PREFIX} → recent-sync (before render) ${conv.slice(0, 12)}… have=${haveIds.length}, blocking ≤${RECENT_PULL_CEILING_MS}ms`);
+  } catch(err) {
+    console.debug(`${LOG_PREFIX} syncRecentBeforeRender request failed:`, (err as Error)?.message);
+    return;
+  }
+
+  // Block until a sibling answers with a `last` chunk, or the hard ceiling fires.
+  await new Promise<void>((resolve) => {
+    const prior = pendingRecentPulls.get(conv);
+    if(prior) { clearTimeout(prior.timer); prior.resolve(); }
+    const timer = setTimeout(() => {
+      pendingRecentPulls.delete(conv);
+      resolve();
+    }, RECENT_PULL_CEILING_MS);
+    pendingRecentPulls.set(conv, {resolve, timer});
+  });
+}
+
+/** Resolve (unblock) a pending sync-before-render barrier for a conversation. */
+function resolveRecentPull(conv: string): void {
+  const pending = pendingRecentPulls.get(conv);
+  if(!pending) return;
+  clearTimeout(pending.timer);
+  pendingRecentPulls.delete(conv);
+  pending.resolve();
 }
 
 /** Show a brief, self-dismissing "syncing" pill. Throttled + transient. */
@@ -393,21 +515,32 @@ async function requestSyncFromDevice(conv: string, targetDeviceId: string): Prom
  * its have-set), chunk it, and answer. No-op when the request isn't aimed at us
  * or we hold nothing extra.
  */
-async function onSyncRequest(req: {deviceId: string; targetId: string; conv: string; haveIds: string[]}): Promise<void> {
-  if(!req || req.targetId !== deviceId) return;      // not aimed at this device
-  if(req.deviceId === deviceId) return;              // our own echo
+async function onSyncRequest(req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}): Promise<void> {
+  if(!req || req.deviceId === deviceId) return;      // our own echo
+  // targetId '' is a BROADCAST (sync-before-render) that ANY sibling answers; a
+  // non-empty targetId must match this device (the classic digest-driven pull).
+  if(req.targetId && req.targetId !== deviceId) return;
+  lastSiblingActivityAt = Date.now();               // proof a sibling is live
   try {
     const pool = (window as any).__phantomchatChatAPI?.relayPool;
     if(!pool?.isConnected?.() || typeof pool.publishSyncResponse !== 'function') return;
 
     const {getMessageStore} = await import('./message-store');
     const store = getMessageStore();
-    const rows = await store.getMessages(req.conv, 100_000);
+    // For a recent-only request, only consider the last N rows so the barrier stays
+    // cheap; getMessages returns newest-first, so this is exactly the recent tail.
+    const scanLimit = req.recentOnly ? (req.limit && req.limit > 0 ? req.limit : RECENT_PULL_ROWS) : 100_000;
+    const rows = await store.getMessages(req.conv, scanLimit);
     const have = new Set(req.haveIds);
     const missing = rows.filter((r) => r.eventId && !have.has(r.eventId));
 
     if(missing.length === 0) {
       console.log(`${LOG_PREFIX} sync-request ${req.conv.slice(0, 12)}… — nothing extra to send`);
+      // A recent-only barrier is BLOCKING the requester's render — send an empty
+      // `last` ACK so it unblocks immediately instead of waiting out the ceiling.
+      if(req.recentOnly) {
+        await pool.publishSyncResponse({deviceId, targetId: req.deviceId, conv: req.conv, rows: [], seq: 0, last: true});
+      }
       return;
     }
 
@@ -441,27 +574,32 @@ async function onSyncRequest(req: {deviceId: string; targetId: string; conv: str
 async function onSyncResponse(res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}): Promise<void> {
   if(!res || res.targetId !== deviceId) return;      // not aimed at this device
   if(res.deviceId === deviceId) return;              // our own echo
-  if(!Array.isArray(res.rows) || res.rows.length === 0) return;
+  lastSiblingActivityAt = Date.now();               // proof a sibling is live
 
   let applied = 0;
-  try {
-    const {getMessageStore} = await import('./message-store');
-    const store = getMessageStore();
-    for(const raw of res.rows) {
-      const row = raw as DeviceSyncRow;
-      if(!row || typeof row.eventId !== 'string' || typeof row.timestamp !== 'number') continue;
-      const existing = await store.getByEventId(row.eventId);
-      if(existing) continue;                          // strict union — never clobber
-      const ok = await ingestPulledRow(row);
-      if(ok) applied++;
+  if(Array.isArray(res.rows) && res.rows.length > 0) {
+    try {
+      const {getMessageStore} = await import('./message-store');
+      const store = getMessageStore();
+      for(const raw of res.rows) {
+        const row = raw as DeviceSyncRow;
+        if(!row || typeof row.eventId !== 'string' || typeof row.timestamp !== 'number') continue;
+        const existing = await store.getByEventId(row.eventId);
+        if(existing) continue;                        // strict union — never clobber
+        const ok = await ingestPulledRow(row);
+        if(ok) applied++;
+      }
+    } catch(err) {
+      console.debug(`${LOG_PREFIX} onSyncResponse failed:`, (err as Error)?.message);
     }
-  } catch(err) {
-    console.debug(`${LOG_PREFIX} onSyncResponse failed:`, (err as Error)?.message);
   }
   if(applied > 0) {
     console.log(`${LOG_PREFIX} ← sync-response ${res.conv.slice(0, 12)}… applied ${applied} new row(s) (seq ${res.seq}${res.last ? ', last' : ''})`);
     showSyncingIndicator();
   }
+  // The final chunk (even an empty ACK) unblocks any sync-before-render barrier
+  // waiting on this conversation — rows are already ingested above.
+  if(res.last) resolveRecentPull(res.conv);
 }
 
 /** Serialize a StoredMessage down to the wire subset the peer device needs. */
@@ -588,8 +726,12 @@ async function renderPulledRow(row: DeviceSyncRow, peerId: number, mid: number, 
 export function destroyDeviceSync(): void {
   if(pulseTimer) { clearInterval(pulseTimer); pulseTimer = null; }
   if(pokeTimer) { clearTimeout(pokeTimer); pokeTimer = null; }
+  for(const {timer, resolve} of pendingRecentPulls.values()) { clearTimeout(timer); resolve(); }
+  pendingRecentPulls.clear();
+  lastRecentPullAt.clear();
   remoteDigests.clear();
   lastRequestAt.clear();
+  lastSiblingActivityAt = 0;
   activePeerPubkey = null;
   ownPubkey = null;
   deviceId = '';

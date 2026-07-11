@@ -133,3 +133,54 @@ describe('device-sync pull (request/response, strict union)', () => {
     expect(store.saveMessage).not.toHaveBeenCalled();
   });
 });
+
+describe('device-sync sync-before-render barrier (recent-only)', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+  afterEach(() => {
+    delete (window as any).__phantomchatChatAPI;
+    delete (window as any).__phantomchatDeviceSync;
+  });
+
+  it('does not block or publish when no sibling is live', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {mod, pool} = await boot(store);
+    await mod.syncRecentBeforeRender(PEER); // must return immediately
+    expect(pool.publishSyncRequest).not.toHaveBeenCalled();
+  });
+
+  it('blocks on a recent-only broadcast pull when a sibling is live, unblocking on the last chunk', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {mod, pool, captured, deviceId} = await boot(store);
+
+    // A sibling advertises a (not-behind) digest — proof it's live.
+    await captured.digest({deviceId: 'sibling', conv: CONV, count: 1, latestId: ''});
+
+    let resolved = false;
+    const barrier = mod.syncRecentBeforeRender(PEER).then(() => { resolved = true; });
+    await new Promise((r) => setTimeout(r, 0)); // let the request + pending registration settle
+
+    // Fired a RECENT-ONLY BROADCAST request and is still blocking.
+    expect(pool.publishSyncRequest).toHaveBeenCalledTimes(1);
+    const req = pool.publishSyncRequest.mock.calls[0][0] as any;
+    expect(req.recentOnly).toBe(true);
+    expect(req.targetId).toBe(''); // broadcast — any sibling answers
+    expect(resolved).toBe(false);
+
+    // Sibling answers with the last chunk → barrier unblocks.
+    await captured.res({deviceId: 'sibling', targetId: deviceId, conv: CONV, rows: [row('m0', 5)], seq: 0, last: true});
+    await barrier;
+    expect(resolved).toBe(true);
+  });
+
+  it('answers a BROADCAST recent-only request with an empty last ACK when nothing is missing', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {captured, pool} = await boot(store);
+    await captured.req({deviceId: 'requester', targetId: '', conv: CONV, haveIds: ['m1'], recentOnly: true, limit: 25});
+
+    expect(pool.publishSyncResponse).toHaveBeenCalledTimes(1);
+    const sent = pool.publishSyncResponse.mock.calls[0][0] as any;
+    expect(sent.targetId).toBe('requester');
+    expect(sent.rows).toEqual([]);
+    expect(sent.last).toBe(true);
+  });
+});

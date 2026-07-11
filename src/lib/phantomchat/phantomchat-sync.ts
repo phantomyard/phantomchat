@@ -75,6 +75,20 @@ export class PhantomChatSync {
       });
     }
 
+    // Sync-before-render barrier: for a genuine incoming message, if one of our
+    // OWN devices is live, do a recent-only catch-up from it and BLOCK on it before
+    // painting — so the new bubble lands on top of an up-to-date tail (and any media
+    // a sibling already holds), never above a gap. No-op / non-blocking when no
+    // sibling is live. Guarded so a sync failure can never swallow the render.
+    if(!isSelfEcho) {
+      try {
+        const {syncRecentBeforeRender} = await import('./phantomchat-device-sync');
+        await syncRecentBeforeRender(senderPubkey);
+      } catch(err) {
+        console.debug(LOG_PREFIX, 'syncRecentBeforeRender skipped:', (err as Error)?.message);
+      }
+    }
+
     console.log(LOG_PREFIX, 'dispatching phantomchat_new_message', {peerId, mid, selfEcho: isSelfEcho});
     this.dispatch('phantomchat_new_message', {peerId, mid, senderPubkey, message: msg, timestamp});
   }
