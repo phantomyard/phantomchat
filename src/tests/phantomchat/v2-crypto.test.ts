@@ -191,6 +191,41 @@ describe('PhantomChat Protocol v2 (AES-256-GCM)', () => {
       const {event} = await wrapV2(skA, pkB, 'signed');
       expect(verifyEvent(event as any)).toBe(true);
     });
+
+    // MULTI-DEVICE SELF-COPY (FIND-self-bubble-missing): wrapV2 must also emit a
+    // self-addressed copy so the sender's OTHER devices receive their own
+    // outgoing message (every device subscribes on `#p == ownPubkey`).
+    it('emits a self-addressed copy p-tagged to the sender', async() => {
+      const {skA, pkA, pkB} = freshKeys();
+      const {event, selfEvent} = await wrapV2(skA, pkB, 'multi-device');
+      // Recipient copy p-tagged to recipient; self copy p-tagged to sender.
+      expect(event.tags.find((t: string[]) => t[0] === 'p')![1]).toBe(pkB);
+      expect(selfEvent.tags.find((t: string[]) => t[0] === 'p')![1]).toBe(pkA);
+      // Self copy is a valid, independently-signed gift-wrap (fresh ephemeral key).
+      expect(verifyEvent(selfEvent as any)).toBe(true);
+      expect(selfEvent.pubkey).not.toBe(event.pubkey);
+    });
+
+    it('self copy shares the recipient copy rumorId and is decryptable by the sender', async() => {
+      const {skA, pkA, skB, pkB} = freshKeys();
+      await getSymmetricKey(skA, pkB); // warm cache for the self-device unwrap
+      const {event, selfEvent, rumorId} = await wrapV2(skA, pkB, 'appears on my phone too');
+      // Same inner rumor → identical rumorId → receiver dedups the two copies.
+      const selfRumor = await unwrapV2(selfEvent, skA);
+      const recipientRumor = await unwrapV2(event, skB);
+      expect(selfRumor.id).toBe(rumorId);
+      expect(recipientRumor.id).toBe(rumorId);
+      expect(selfRumor.content).toBe('appears on my phone too');
+      expect(selfRumor.pubkey).toBe(pkA);
+    });
+
+    it('self copy carries the replyTo e-tag for reply threading on other devices', async() => {
+      const {skA, pkB} = freshKeys();
+      const {selfEvent} = await wrapV2(skA, pkB, 'reply', {eventId: 'abc123'});
+      const eTag = selfEvent.tags.find((t: string[]) => t[0] === 'e');
+      expect(eTag).toBeDefined();
+      expect(eTag![1]).toBe('abc123');
+    });
   });
 
   describe('rewrapV2', () => {

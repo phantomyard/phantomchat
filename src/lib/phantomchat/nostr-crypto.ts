@@ -260,7 +260,7 @@ export async function wrapV2(
   recipientPubHex: string,
   content: string,
   replyTo?: {eventId: string; relayUrl?: string}
-): Promise<{event: NTNostrEvent; rumorId: string; senderPubkey: string; rumor: UnsignedEvent}> {
+): Promise<{event: NTNostrEvent; selfEvent: NTNostrEvent; rumorId: string; senderPubkey: string; rumor: UnsignedEvent}> {
   const senderPubHex = getPublicKey(senderSk);
   const tags: string[][] = [['p', recipientPubHex], ['v', 'pc-v2']];
   if(replyTo) {
@@ -291,14 +291,41 @@ export async function wrapV2(
   // parity). This prevents relays from building an A→B social graph from
   // signed event.pubkey edges. Sender authenticity lives inside the encrypted
   // rumor (rumor.pubkey), verified on unwrap via getEventHash + cache key.
+  const outerCreatedAt = Math.floor(Date.now() / 1000);
   const ephemeralSk = generateSecretKey();
   const eventTemplate = {
     kind: 1059,
-    created_at: Math.floor(Date.now() / 1000),
+    created_at: outerCreatedAt,
     tags,
     content: encryptedContent
   };
   const event = finalizeEvent(eventTemplate, ephemeralSk) as unknown as NTNostrEvent;
+
+  // MULTI-DEVICE SELF-COPY (FIND-self-bubble-missing): the recipient event above
+  // is p-tagged ONLY to the recipient, but every device subscribes with
+  // `#p == ownPubkey`, so the sender's OTHER devices would never receive their
+  // own outgoing message — only the recipient's reply (p-tagged back to us)
+  // arrived. v1 NIP-17 solved this with a second gift-wrap addressed to self;
+  // v2 dropped it when it moved to single-event publishing. Re-add it here.
+  //
+  // The self event reuses the SAME `encryptedContent` (identical rumor →
+  // identical rumorId), so the receiving self-device decrypts it with the cached
+  // (self,recipient) symmetric key, and BOTH copies dedup on rumorId — the
+  // sending device echo-skips its own copy, the recipient never sees it (not
+  // p-tagged to them). A SEPARATE event (not a second p-tag on one event) keeps
+  // the relay from seeing the sender↔recipient edge — the same privacy property
+  // the ephemeral outer key exists to protect.
+  const selfTags: string[][] = [['p', senderPubHex], ['v', 'pc-v2']];
+  if(replyTo) {
+    selfTags.push(['e', replyTo.eventId, replyTo.relayUrl || '', 'reply']);
+  }
+  const selfEphemeralSk = generateSecretKey();
+  const selfEvent = finalizeEvent({
+    kind: 1059,
+    created_at: outerCreatedAt,
+    tags: selfTags,
+    content: encryptedContent
+  }, selfEphemeralSk) as unknown as NTNostrEvent;
 
   // Return the REAL sender pubkey AND the exact rumor that was hashed into
   // `rumorId`. The outer event is signed with a throwaway ephemeral key
@@ -309,7 +336,7 @@ export async function wrapV2(
   // from `event.created_at` would change the timestamp, so `getEventHash(rumor)`
   // would no longer equal `rumorId` and the receiver's recompute check (unwrapV2)
   // would reject the retried message.
-  return {event, rumorId, senderPubkey: senderPubHex, rumor: rumorWithId};
+  return {event, selfEvent, rumorId, senderPubkey: senderPubHex, rumor: rumorWithId};
 }
 
 /**
