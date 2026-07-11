@@ -292,6 +292,7 @@ export class NostrRelayPool {
   private _onReceiptCb?: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void;
   private _onRawEventCb?: (event: NostrEvent) => void;
   private _onPresenceCb?: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void;
+  private _onDigestCb?: (digest: {deviceId: string; conv: string; count: number; latestId: string}) => void;
 
   /**
    * Register a callback for presence PING / PONG control envelopes. These ride
@@ -302,6 +303,60 @@ export class NostrRelayPool {
    */
   setOnPresence(cb: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void): void {
     this._onPresenceCb = cb;
+  }
+
+  /**
+   * Register a callback for device-sync DIGEST control envelopes. Unlike presence
+   * (which targets a peer), a digest is SELF-addressed: a device advertises "for
+   * conversation X I hold `count` messages, newest is `latestId`" so our OWN other
+   * devices can detect they're behind and pull the gap. Rides the kind-1059
+   * gift-wrap path (private, repeats like the typing pulse so a late-connecting
+   * device catches the next beat) and is intercepted before ever becoming a bubble.
+   * Only fires for digests authored by us (our other device); our own echo is
+   * filtered out by deviceId inside the device-sync module.
+   */
+  setOnDigest(cb: (digest: {deviceId: string; conv: string; count: number; latestId: string}) => void): void {
+    this._onDigestCb = cb;
+  }
+
+  /**
+   * Publish a SELF-addressed device-sync digest for one conversation. Wraps the
+   * envelope `{type:'device-digest', ...}` to our OWN pubkey so it reaches our
+   * other devices' `#p == self` subscription (never the peer). Best-effort: a
+   * digest is advisory — a dropped one is re-sent on the next pulse.
+   */
+  async publishSelfDigest(payload: {deviceId: string; conv: string; count: number; latestId: string}): Promise<void> {
+    if(!this.privateKeyBytes) return;
+    const envelope = JSON.stringify({
+      type: 'device-digest',
+      deviceId: payload.deviceId,
+      conv: payload.conv,
+      count: payload.count,
+      latestId: payload.latestId,
+      timestamp: Date.now()
+    });
+
+    let selfWrap: NostrEvent | undefined;
+    try {
+      // recipient === self ⇒ both wraps are p-tagged to us; publish the self wrap.
+      const {wraps} = wrapNip17Message(this.privateKeyBytes, this.publicKey, envelope);
+      selfWrap = (wraps[1] ?? wraps[0]) as unknown as NostrEvent;
+    } catch(err) {
+      this.log.debug('[NostrRelayPool] digest wrap failed:', err);
+      return;
+    }
+    if(!selfWrap) return;
+
+    const writeEntries = this.relayEntries.filter(e =>
+      e.config.write && this.enabled.get(e.config.url) !== false
+    );
+    for(const entry of writeEntries) {
+      try {
+        entry.instance.publishRawEvent(selfWrap);
+      } catch{
+        // best-effort per relay; digests are advisory
+      }
+    }
   }
 
   /**
@@ -1128,6 +1183,24 @@ export class NostrRelayPool {
       return;
     }
 
+    // Device-sync DIGEST interception. Like presence, it rides the gift-wrap path
+    // but is a control envelope, not chat: route to the digest callback and stop
+    // (no bubble, no delivery receipt, no watermark advance). A digest is ALWAYS
+    // self-authored (our own other device advertising what it holds), so unlike
+    // presence we require msg.from === self. The device-sync module drops our own
+    // echo by deviceId.
+    const digest = this.parseDigestEnvelope(msg);
+    if(digest) {
+      if(msg.from === this.publicKey && this._onDigestCb) {
+        try {
+          this._onDigestCb(digest);
+        } catch(err) {
+          this.log.error('[NostrRelayPool] digest handler threw:', err);
+        }
+      }
+      return;
+    }
+
     // Update lastSeenTimestamp
     if(msg.timestamp > this.lastSeenTimestamp) {
       this.lastSeenTimestamp = msg.timestamp;
@@ -1152,6 +1225,32 @@ export class NostrRelayPool {
       const env = JSON.parse(content);
       if(env?.type === 'presence-ping') return {type: 'ping', nonce: typeof env.nonce === 'string' ? env.nonce : ''};
       if(env?.type === 'presence-pong') return {type: 'pong', nonce: typeof env.nonce === 'string' ? env.nonce : ''};
+    } catch{
+      // not JSON — a plain message
+    }
+    return null;
+  }
+
+  /**
+   * Cheap classifier: is this decrypted message a device-sync digest envelope?
+   * Returns the parsed digest, or null for anything else (chat text, presence,
+   * non-JSON). Only JSON content carrying our `device-digest` type matches, so a
+   * normal message or a presence ping returns null and flows on.
+   */
+  private parseDigestEnvelope(msg: DecryptedMessage): {deviceId: string; conv: string; count: number; latestId: string} | null {
+    const content = msg.content;
+    // Fast reject: digest envelopes always contain the marker substring.
+    if(typeof content !== 'string' || content.indexOf('device-digest') === -1) return null;
+    try {
+      const env = JSON.parse(content);
+      if(env?.type !== 'device-digest') return null;
+      if(typeof env.deviceId !== 'string' || typeof env.conv !== 'string') return null;
+      return {
+        deviceId: env.deviceId,
+        conv: env.conv,
+        count: typeof env.count === 'number' ? env.count : 0,
+        latestId: typeof env.latestId === 'string' ? env.latestId : ''
+      };
     } catch{
       // not JSON — a plain message
     }

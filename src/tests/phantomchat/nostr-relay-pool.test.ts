@@ -417,6 +417,59 @@ describe('NostrRelayPool', () => {
     });
   });
 
+  describe('device-sync digest envelope routing', () => {
+    // Matches the mocked identity publicKey — a digest is always self-authored.
+    const SELF_PUBKEY = 'dGVzdC1wdWJsaWMta2V5';
+
+    function digestMsg(id: string, from: string, deviceId: string, count: number): DecryptedMessage {
+      return {
+        id,
+        from,
+        content: JSON.stringify({type: 'device-digest', deviceId, conv: 'a:b', count, latestId: 'z', timestamp: Date.now()}),
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+    }
+
+    it('routes a self-authored digest to onDigest and never to onMessage', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnDigest((d) => seen.push(d));
+
+      mockRelayInstances[0].simulateMessage(digestMsg('dg-1', SELF_PUBKEY, 'device-x', 7));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({deviceId: 'device-x', conv: 'a:b', count: 7, latestId: 'z'});
+    });
+
+    it('drops a digest forged by a non-self author (never onDigest, never onMessage)', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnDigest((d) => seen.push(d));
+
+      mockRelayInstances[0].simulateMessage(digestMsg('dg-2', 'someone-else', 'device-y', 9));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(0);
+    });
+  });
+
   describe('reconnection', () => {
     it('pool-level recovery retries all failed relays every 60s', async() => {
       const onMessage = vi.fn();

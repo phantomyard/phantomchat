@@ -599,6 +599,48 @@ export class MessageStore {
   }
 
   /**
+   * Compute a lightweight sync digest for one conversation: how many messages we
+   * hold and the eventId of the newest (by timestamp, eventId as tiebreak). Used
+   * by device-sync to let two of the user's devices detect that one is behind the
+   * other for the open chat. A single conversationId-index cursor scan — no full
+   * row decode beyond what the cursor already yields.
+   *
+   * NOTE: count + latestId catches the common "you're behind by N" case but not a
+   * divergence where both sides hold the same count with different middle messages.
+   * True set-union reconciliation (id-set exchange) is a later increment; this
+   * digest is the cheap presence-style advertisement that triggers it.
+   */
+  async getConversationDigest(conversationId: string): Promise<{count: number; latestId: string; latestTimestamp: number}> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const index = tx.objectStore(STORE_NAME).index('conversationId');
+      const request = index.openCursor(IDBKeyRange.only(conversationId));
+
+      let count = 0;
+      let latestId = '';
+      let latestTimestamp = -1;
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        if(cursor) {
+          const row = cursor.value as StoredMessage;
+          count++;
+          const ts = typeof row.timestamp === 'number' ? row.timestamp : 0;
+          if(ts > latestTimestamp || (ts === latestTimestamp && (row.eventId || '') > latestId)) {
+            latestTimestamp = ts;
+            latestId = row.eventId || '';
+          }
+          cursor.continue();
+        } else {
+          resolve({count, latestId, latestTimestamp: latestTimestamp < 0 ? 0 : latestTimestamp});
+        }
+      };
+    });
+  }
+
+  /**
    * Read the stored read-cursor for a conversation.
    * Returns 0 when no cursor has ever been written.
    */

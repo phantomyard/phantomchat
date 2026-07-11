@@ -580,6 +580,17 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
         console.warn('[PhantomChatOnboardingIntegration] presence init failed:', err);
       }
 
+      // --- Initialize device-sync (Increment 1): self-addressed digest heartbeat
+      // for the open chat so the user's own devices can detect + (later) fill
+      // history gaps between each other. ---
+      try {
+        const {initDeviceSync} = await import('@lib/phantomchat/phantomchat-device-sync');
+        await initDeviceSync(identity.publicKey);
+        console.log('[PhantomChatOnboardingIntegration] device-sync initialized');
+      } catch(err) {
+        console.warn('[PhantomChatOnboardingIntegration] device-sync init failed:', err);
+      }
+
       // --- Publish kind 0 metadata (first boot only) ---
       // Historically this republished on every boot with only display_name,
       // which silently wiped picture/about/website/lud16/nip05 from the

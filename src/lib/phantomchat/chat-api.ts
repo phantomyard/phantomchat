@@ -835,6 +835,11 @@ export class ChatAPI {
           ...(replyToMid !== undefined ? {replyToMid} : {})
         };
         await store.saveMessage(storedRow);
+        // Device-sync: our history grew — re-advertise the open chat's digest so
+        // our other devices see they're now behind and (Increment 2) pull it.
+        import('./phantomchat-device-sync').then(({pokeDeviceSync}) => {
+          pokeDeviceSync();
+        }).catch(() => { /* device-sync is optional */ });
       } else {
         this.log.warn('[ChatAPI] skipping partial send save — caller did not supply identity triple', {messageId});
       }
@@ -1486,6 +1491,11 @@ export class ChatAPI {
       import('./phantomchat-presence').then(({onPeerActivity}) => {
         onPeerActivity(msg.from);
       }).catch(() => { /* presence is optional */ });
+      // Device-sync: an inbound message changed our local history — re-advertise
+      // the open chat's digest so our other devices notice the change.
+      import('./phantomchat-device-sync').then(({pokeDeviceSync}) => {
+        pokeDeviceSync();
+      }).catch(() => { /* device-sync is optional */ });
     }
 
     try {
