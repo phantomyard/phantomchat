@@ -87,7 +87,14 @@ describe('relay flap cooldown', () => {
     expect(instance.disconnect).not.toHaveBeenCalled();
   });
 
-  it('recovery sweep skips a cooled-down relay, then revives it after the cooldown', () => {
+  it('recovery sweep skips a cooled-down relay (while another stays active), then revives it', () => {
+    // A healthy relay holds a live slot so the pool is never fully benched —
+    // that keeps the liveness floor from firing so we can observe the pure
+    // cooldown-skip behaviour on the flapping relay.
+    const healthy = addRelay('wss://healthy');
+    healthy._set('connected');
+    pool.activeUrls.add('wss://healthy');
+
     const url = 'wss://flap';
     const instance = addRelay(url);
 
@@ -103,6 +110,24 @@ describe('relay flap cooldown', () => {
 
     // After the cooldown expires, the next sweep revives it.
     vi.setSystemTime(pool.relayHealth.get(url).cooldownUntil + 1);
+    pool.recoverFailedRelays();
+    expect(instance.initialize).toHaveBeenCalledTimes(1);
+  });
+
+  it('liveness floor: revives the last benched relay even during its cooldown (never deadlocks)', () => {
+    const url = 'wss://flap';
+    const instance = addRelay(url);
+
+    flap(url, instance, 1_000);
+    flap(url, instance, 1_000);
+    flap(url, instance, 1_000); // benched; the pool now has ZERO active relays
+
+    instance.initialize.mockClear();
+
+    // No relay is active — the liveness floor force-revives one despite the
+    // cooldown so the pool can never sit disconnected forever. This is the fix
+    // for the mobile "reconnecting forever" deadlock.
+    expect(pool.relayHealth.get(url).cooldownUntil).toBeGreaterThan(Date.now());
     pool.recoverFailedRelays();
     expect(instance.initialize).toHaveBeenCalledTimes(1);
   });

@@ -203,19 +203,17 @@ describe('NostrRelayPool', () => {
       expect(relays.map((r: any) => r.url)).toEqual(DEFAULT_RELAYS.map((r: any) => r.url));
     });
 
-    it('creates every relay entry but opens sockets only up to the active cap', async() => {
+    it('opens a socket to every configured relay by default', async() => {
       const onMessage = vi.fn();
       const pool = new NostrRelayPool({relays: [...DEFAULT_RELAYS], onMessage});
 
       await pool.initialize();
 
-      // An entry exists for EVERY configured relay (all addressable)...
+      // Default is connect-all: an entry AND a live socket for every relay.
       expect(mockRelayInstances.length).toBe(DEFAULT_RELAYS.length);
-      // ...but only the first 3 (TARGET_ACTIVE_RELAYS) hold a live socket; the
-      // rest sit on standby (no socket) until a slot frees.
       const connected = mockRelayInstances.filter((r: any) => r.connected);
-      expect(connected.length).toBe(3);
-      expect(pool.getConnectedCount()).toBe(3);
+      expect(connected.length).toBe(DEFAULT_RELAYS.length);
+      expect(pool.getConnectedCount()).toBe(DEFAULT_RELAYS.length);
     });
 
     it('opens sockets to every relay when maxActiveRelays covers them all', async() => {
@@ -235,17 +233,16 @@ describe('NostrRelayPool', () => {
       }
     });
 
-    it('promotes a standby relay when an active one is benched for flapping', async() => {
+    it('benches a flapping relay and keeps the rest connected', async() => {
       const onMessage = vi.fn();
       const pool = new NostrRelayPool({relays: [...DEFAULT_RELAYS], onMessage});
       await pool.initialize();
 
-      // 3 active, 2 standby.
-      expect(mockRelayInstances.filter((r: any) => r.connected).length).toBe(3);
-      const active = mockRelayInstances.filter((r: any) => r.connected);
-      const firstActive = active[0];
+      // All 5 connected (connect-all).
+      expect(mockRelayInstances.filter((r: any) => r.connected).length).toBe(5);
+      const firstActive = mockRelayInstances.filter((r: any) => r.connected)[0];
 
-      // Flap the first active relay past threshold: connect→drop, 3× quick.
+      // Flap the first relay past threshold: connect→drop, 3× quick.
       for(let i = 0; i < 3; i++) {
         firstActive.connectionState = 'connected';
         firstActive.onStateChange?.();
@@ -254,11 +251,9 @@ describe('NostrRelayPool', () => {
       }
       await vi.advanceTimersByTimeAsync(0);
 
-      // Still 3 sockets live — a standby took the benched relay's slot.
-      expect(pool.getConnectedCount()).toBe(3);
-      // A previously-standby relay is now connected.
-      const nowConnected = mockRelayInstances.filter((r: any) => r.connected);
-      expect(nowConnected.length).toBe(3);
+      // The flapping relay is benched (disconnected); the other 4 carry on. The
+      // liveness floor does NOT fire — 4 relays are still active.
+      expect(pool.getConnectedCount()).toBe(4);
     });
   });
 

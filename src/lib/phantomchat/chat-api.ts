@@ -15,7 +15,7 @@
  */
 
 import {Logger, logger} from '@lib/logger';
-import {NostrRelayPool, PublishResult, DEFAULT_RELAYS} from './nostr-relay-pool';
+import {NostrRelayPool, PublishResult, DEFAULT_RELAYS, RELAY_DIAL_STAGGER_MS} from './nostr-relay-pool';
 import {DecryptedMessage, NostrEvent, NOSTR_KIND_P2P_SIGNAL} from './nostr-relay';
 import {OfflineQueue} from './offline-queue';
 import {getMessageStore, StoredMessage} from './message-store';
@@ -200,6 +200,10 @@ export class ChatAPI {
       // Create real NostrRelayPool
       this.relayPool = new NostrRelayPool({
         relays: [...DEFAULT_RELAYS],
+        // Connect to every relay, but dial them one at a time so a cold mobile
+        // radio isn't slammed with a burst of handshakes ("insufficient
+        // resources" → stuck reconnecting).
+        dialStaggerMs: RELAY_DIAL_STAGGER_MS,
         onMessage: (msg: DecryptedMessage) => this.handleRelayMessage(msg),
         onStateChange: (connectedCount: number, _totalCount: number) => {
           this.handlePoolStateChange(connectedCount);

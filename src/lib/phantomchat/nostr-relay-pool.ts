@@ -73,12 +73,21 @@ export interface RelayPoolOptions {
    */
   preloadedIdentity?: { publicKey: string; privateKeyHex: string };
   /**
-   * Max number of relays to hold an open socket to simultaneously. The rest sit
-   * on standby and are promoted only when an active relay is benched. Defaults
-   * to TARGET_ACTIVE_RELAYS (3). Tests that exercise full N-relay fan-out pass
-   * their relay count here to keep every relay active.
+   * Max number of relays to hold an open socket to simultaneously. Defaults to
+   * Infinity — we connect to EVERY configured relay. A cap is only used by tests
+   * that pin the active set to a specific size. (The old default of 3 caused a
+   * mobile deadlock: flaky sockets flapped, all got benched, and the pool sat at
+   * zero connections forever. We now connect all + stagger + a liveness floor.)
    */
   maxActiveRelays?: number;
+  /**
+   * Milliseconds to wait between opening each relay socket. Opening 5+ WebSocket
+   * handshakes at once on a cold mobile radio trips an "insufficient resources"
+   * ceiling and none survive. Staggering the dials ("one at a time") keeps us
+   * under it. Defaults to 0 (open all immediately) so tests stay synchronous;
+   * production passes RELAY_DIAL_STAGGER_MS.
+   */
+  dialStaggerMs?: number;
 }
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -125,17 +134,18 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 }
 
 const DEDUP_CACHE_MAX = 10_000;
-const POOL_RECOVERY_INTERVAL_MS = 60_000;
-// How many relays we keep an OPEN socket to at once. The rest of the configured
-// relays sit on standby (no socket) until a slot frees. Mobile browsers choke
-// when we fan out 5+ simultaneous WebSocket handshakes on a cold, flaky radio
-// link — every socket races the same "insufficient resources" ceiling and none
-// survive, so the app shows "reconnecting" forever. Keeping the live set small
-// (3) and promoting a standby only when an active relay is benched keeps us well
-// under that ceiling while still giving delivery redundancy. Publish still
-// fans out to every connected write relay; 3 is plenty for durability, and the
-// catch-up poll covers any relay that silently drops a live push.
-const TARGET_ACTIVE_RELAYS = 3;
+// Recovery sweep cadence. Tops the active set back up and re-dials any active
+// relay whose socket died without self-reconnecting. Kept short-ish so a fully
+// benched pool (all relays cooling down) is re-evaluated promptly — the liveness
+// floor in superviseConnections guarantees ≥1 relay is always dialing, but this
+// sweep is the backstop that revives the rest as their cooldowns expire.
+const POOL_RECOVERY_INTERVAL_MS = 20_000;
+// Delay between opening each relay socket. We connect to EVERY relay, but not all
+// at once: a burst of simultaneous WebSocket handshakes on a cold mobile radio
+// trips an "insufficient resources" ceiling and none survive, leaving the app
+// stuck at "reconnecting". Dialing one at a time (~350ms apart) stays under the
+// ceiling. This is the production value; tests default to 0 for determinism.
+export const RELAY_DIAL_STAGGER_MS = 350;
 // Consecutive failed socket attempts (transitions into 'reconnecting' WITHOUT an
 // intervening 'connected') before we bench an ACTIVE relay and promote a standby
 // in its place. This is the "swap to another relay" failover: a relay the device
@@ -238,6 +248,10 @@ export class NostrRelayPool {
   // standby. This is the "connect to a few, swap on failure" model.
   private activeUrls: Set<string> = new Set();
   private maxActiveRelays: number;
+  private dialStaggerMs: number;
+  // Pending staggered-dial timers, cleared on disconnect so a deferred open
+  // can't resurrect a socket after teardown.
+  private dialTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
@@ -255,7 +269,11 @@ export class NostrRelayPool {
     this.onMessageCb = options.onMessage;
     this.onStateChangeCb = options.onStateChange;
     this._preloadedIdentity = options.preloadedIdentity;
-    this.maxActiveRelays = Math.max(1, options.maxActiveRelays ?? TARGET_ACTIVE_RELAYS);
+    // Default: connect to EVERY relay (Infinity). A finite cap is opt-in (tests).
+    this.maxActiveRelays = options.maxActiveRelays != null ?
+      Math.max(1, options.maxActiveRelays) :
+      Number.POSITIVE_INFINITY;
+    this.dialStaggerMs = Math.max(0, options.dialStaggerMs ?? 0);
   }
 
   // ─── Callback setters (for DI / test path) ─────────────────────
@@ -584,6 +602,11 @@ export class NostrRelayPool {
       clearInterval(this.backfillPollInterval);
       this.backfillPollInterval = null;
     }
+
+    for(const timer of this.dialTimers) {
+      clearTimeout(timer);
+    }
+    this.dialTimers.clear();
 
     for(const entry of this.relayEntries) {
       entry.instance.disconnect();
@@ -1442,61 +1465,74 @@ export class NostrRelayPool {
   }
 
   /**
-   * Bring a standby relay online: mark it active (claims a slot), initialize it,
-   * then open the socket. Marking active is synchronous and happens BEFORE the
-   * async initialize so a concurrent supervise pass counts the slot as taken and
-   * doesn't over-promote past `maxActiveRelays` during the init microtask gap.
+   * Open a socket to a relay, optionally after a stagger delay. Claiming the slot
+   * (activeUrls.add) is done by the CALLER, synchronously, before this runs — so
+   * a concurrent supervise pass counts the slot as taken and doesn't over-dial.
+   * The actual initialize()+connect() may be deferred (staggered) so a burst of
+   * dials doesn't slam a cold mobile radio; every deferred open re-checks that
+   * the relay is still active (not benched/removed during the delay).
    */
-  private activateRelay(entry: RelayEntry): void {
-    this.activeUrls.add(entry.config.url);
-    entry.instance.initialize().then(() => {
-      // Guard against a race where the relay was benched again before init
-      // resolved — don't resurrect a socket we've since demoted.
-      if(!this.activeUrls.has(entry.config.url)) return;
-      if(this.isSubscribedFlag && entry.config.read) {
-        entry.instance.pendingSubscribe = true;
-      }
-      entry.instance.connect();
-    }).catch((err) => {
-      this.log.error('[NostrRelayPool] failed to activate relay:', entry.config.url, err);
-    });
-  }
-
-  /**
-   * Keep exactly up to `maxActiveRelays` relays holding a socket. Slots are held
-   * by membership in `activeUrls` (benching removes a url, freeing its slot), so
-   * counting is race-free regardless of a relay's transient wire state. When
-   * under target, promote standby relays in config-priority order, skipping any
-   * that are user-disabled or still serving a flap/failover cooldown.
-   */
-  private async superviseConnections(): Promise<void> {
-    const now = Date.now();
-
-    // First, re-dial any ACTIVE relay that has fully dropped its socket and is
-    // NOT self-reconnecting (state 'disconnected') and not benched. Active
-    // relays normally self-heal via their own reconnect loop; this covers the
-    // case where the socket died without arming one (and is what the pool
-    // recovery sweep leans on). Benched relays were removed from activeUrls, so
-    // they're never re-dialed here — only promoted fresh from standby.
-    for(const entry of this.relayEntries) {
-      if(!this.activeUrls.has(entry.config.url)) continue;
-      if(entry.instance.getState() !== 'disconnected') continue;
-      const health = this.relayHealth.get(entry.config.url);
-      if(health && health.cooldownUntil > now) continue;
+  private openRelaySocket(entry: RelayEntry, delayMs: number): void {
+    const url = entry.config.url;
+    const open = () => {
+      if(!this.activeUrls.has(url)) return; // benched/removed during the stagger
       entry.instance.initialize().then(() => {
-        if(!this.activeUrls.has(entry.config.url)) return;
+        if(!this.activeUrls.has(url)) return;
         if(this.isSubscribedFlag && entry.config.read) {
           entry.instance.pendingSubscribe = true;
         }
         entry.instance.connect();
       }).catch((err) => {
-        this.log.error('[NostrRelayPool] re-dial failed for:', entry.config.url, err);
+        this.log.error('[NostrRelayPool] failed to open relay socket:', url, err);
       });
+    };
+    if(delayMs > 0) {
+      const timer = setTimeout(() => {
+        this.dialTimers.delete(timer);
+        open();
+      }, delayMs);
+      this.dialTimers.add(timer);
+    } else {
+      open();
+    }
+  }
+
+  /**
+   * Keep every eligible relay holding a socket (up to `maxActiveRelays`, which is
+   * Infinity by default — connect to ALL relays). Slots are held by membership in
+   * `activeUrls` (benching removes a url, freeing its slot). Newly-opened sockets
+   * are STAGGERED (`dialStaggerMs` apart) so we never fan out a burst of
+   * handshakes at once. Skips user-disabled relays and those serving a
+   * flap/failover cooldown.
+   *
+   * Liveness floor: the pool must NEVER sit with zero relays dialing. If every
+   * relay is benched (all cooling down) the normal promote loop would skip them
+   * all and the app would hang at "reconnecting" forever — the exact bug the old
+   * hard cap caused. So when nothing is active we force-revive the relay whose
+   * cooldown expires soonest, ignoring its cooldown, guaranteeing there is always
+   * one relay trying. It self-heals the instant connectivity returns; if it keeps
+   * failing it rotates (each failover-bench sets a fresh cooldown, moving another
+   * relay to "soonest").
+   */
+  private async superviseConnections(): Promise<void> {
+    const now = Date.now();
+    const toOpen: RelayEntry[] = [];
+
+    // Re-dial any ACTIVE relay whose socket fully dropped and isn't
+    // self-reconnecting (state 'disconnected'), unless it's benched. Active
+    // relays normally self-heal via their own reconnect loop; this covers a
+    // socket that died without arming one.
+    for(const entry of this.relayEntries) {
+      if(!this.activeUrls.has(entry.config.url)) continue;
+      if(entry.instance.getState() !== 'disconnected') continue;
+      const health = this.relayHealth.get(entry.config.url);
+      if(health && health.cooldownUntil > now) continue;
+      toOpen.push(entry);
     }
 
+    // Promote standby relays up to target (default: all of them), claiming each
+    // slot synchronously so counting stays race-free across the stagger delay.
     let need = this.maxActiveRelays - this.activeUrls.size;
-    if(need <= 0) return;
-
     for(const entry of this.relayEntries) {
       if(need <= 0) break;
       const url = entry.config.url;
@@ -1504,9 +1540,32 @@ export class NostrRelayPool {
       if(this.enabled.get(url) === false) continue;      // user-disabled
       const health = this.relayHealth.get(url);
       if(health && health.cooldownUntil > now) continue; // benched, cooling down
-      this.activateRelay(entry);
+      this.activeUrls.add(url);
+      toOpen.push(entry);
       need--;
     }
+
+    // Liveness floor: if nothing is active/dialing, force-revive the
+    // soonest-cooldown relay so the pool can never deadlock at zero connections.
+    if(this.activeUrls.size === 0) {
+      const candidates = this.relayEntries.filter(
+        (e) => this.enabled.get(e.config.url) !== false
+      );
+      if(candidates.length) {
+        candidates.sort((a, b) => {
+          const ca = this.relayHealth.get(a.config.url)?.cooldownUntil ?? 0;
+          const cb = this.relayHealth.get(b.config.url)?.cooldownUntil ?? 0;
+          return ca - cb;
+        });
+        const revive = candidates[0];
+        this.log('[NostrRelayPool] all relays benched — liveness revive of', revive.config.url);
+        this.activeUrls.add(revive.config.url);
+        toOpen.push(revive);
+      }
+    }
+
+    // Open the collected sockets one at a time (staggered).
+    toOpen.forEach((entry, i) => this.openRelaySocket(entry, i * this.dialStaggerMs));
   }
 
   /**
