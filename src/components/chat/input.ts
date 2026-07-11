@@ -2791,6 +2791,10 @@ export default class ChatInput {
     if(isEmpty) {
       if(this.lastTimeType) {
         this.managers.appMessagesManager.setTyping(this.chat.peerId, {_: 'sendMessageCancelAction'}, undefined, this.chat.threadId);
+        // Local typing STOP edge → nudge device-sync to re-advertise this device's
+        // digest so our other device can compare notes (Andrew's "when I type,
+        // sync" — the outgoing half; debounced + no-op off a P2P chat).
+        import('@lib/phantomchat/phantomchat-device-sync').then((m) => m.pokeDeviceSync()).catch(() => {});
       }
 
       MarkupTooltip.getInstance().hide();
@@ -2811,6 +2815,8 @@ export default class ChatInput {
       if((time - this.lastTimeType) >= 6000 && e?.isTrusted) {
         this.lastTimeType = time;
         this.managers.appMessagesManager.setTyping(this.chat.peerId, {_: 'sendMessageTypingAction'}, undefined, this.chat.threadId);
+        // Local typing START edge (throttled to 6s) → same device-sync nudge.
+        import('@lib/phantomchat/phantomchat-device-sync').then((m) => m.pokeDeviceSync()).catch(() => {});
       }
 
       this.botCommands?.toggle(true);

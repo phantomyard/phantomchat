@@ -268,6 +268,17 @@ export class NostrRelayPool {
     this.onStateChangeCb = cb;
   }
 
+  /**
+   * Register an ADDITIONAL state-change listener without displacing the primary
+   * `onStateChangeCb` (which chat-api owns). Used by device-sync to re-advertise
+   * its digest the moment connectivity is restored. Fires on the same debounced
+   * flush as the primary callback.
+   */
+  addStateChangeListener(cb: (connectedCount: number, totalCount: number) => void): void {
+    this._stateChangeListeners.push(cb);
+  }
+  private _stateChangeListeners: Array<(connectedCount: number, totalCount: number) => void> = [];
+
   setOnReceipt(cb: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void): void {
     // Wire receipt handler to all relay instances
     for(const entry of this.relayEntries) {
@@ -293,6 +304,8 @@ export class NostrRelayPool {
   private _onRawEventCb?: (event: NostrEvent) => void;
   private _onPresenceCb?: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void;
   private _onDigestCb?: (digest: {deviceId: string; conv: string; count: number; latestId: string}) => void;
+  private _onSyncReqCb?: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]}) => void;
+  private _onSyncResCb?: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}) => void;
 
   /**
    * Register a callback for presence PING / PONG control envelopes. These ride
@@ -320,29 +333,89 @@ export class NostrRelayPool {
   }
 
   /**
+   * Register a callback for device-sync REQUEST envelopes (a behind device asking
+   * a fuller device for the rows it's missing). Self-authored like the digest, so
+   * only fires for msg.from === self; the device-sync module ignores requests not
+   * targeted at its own deviceId.
+   */
+  setOnSyncRequest(cb: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]}) => void): void {
+    this._onSyncReqCb = cb;
+  }
+
+  /**
+   * Register a callback for device-sync RESPONSE envelopes (the fuller device
+   * returning the missing rows). Self-authored; the device-sync module ingests
+   * only responses targeted at its own deviceId, strict-union.
+   */
+  setOnSyncResponse(cb: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}) => void): void {
+    this._onSyncResCb = cb;
+  }
+
+  /**
    * Publish a SELF-addressed device-sync digest for one conversation. Wraps the
    * envelope `{type:'device-digest', ...}` to our OWN pubkey so it reaches our
    * other devices' `#p == self` subscription (never the peer). Best-effort: a
    * digest is advisory — a dropped one is re-sent on the next pulse.
    */
   async publishSelfDigest(payload: {deviceId: string; conv: string; count: number; latestId: string}): Promise<void> {
-    if(!this.privateKeyBytes) return;
-    const envelope = JSON.stringify({
+    await this.publishSelfControl({
       type: 'device-digest',
       deviceId: payload.deviceId,
       conv: payload.conv,
       count: payload.count,
-      latestId: payload.latestId,
-      timestamp: Date.now()
+      latestId: payload.latestId
     });
+  }
+
+  /**
+   * Device-sync REQUEST: "I'm behind on conversation `conv`; here are the eventIds
+   * I already hold (`haveIds`). Whichever of my devices is `targetId`, send me the
+   * rows I'm missing." Self-addressed like the digest, so only our own devices see
+   * it. Best-effort — a dropped request is re-issued on the next digest/typing edge.
+   */
+  async publishSyncRequest(payload: {deviceId: string; targetId: string; conv: string; haveIds: string[]}): Promise<void> {
+    await this.publishSelfControl({
+      type: 'device-sync-req',
+      deviceId: payload.deviceId,
+      targetId: payload.targetId,
+      conv: payload.conv,
+      haveIds: payload.haveIds
+    });
+  }
+
+  /**
+   * Device-sync RESPONSE: the fuller device answers a request with the full rows
+   * the requester was missing, chunked (`seq`/`last`) so a big backlog doesn't
+   * exceed one gift-wrap. Self-addressed; `targetId` is the requesting device.
+   */
+  async publishSyncResponse(payload: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}): Promise<void> {
+    await this.publishSelfControl({
+      type: 'device-sync-res',
+      deviceId: payload.deviceId,
+      targetId: payload.targetId,
+      conv: payload.conv,
+      rows: payload.rows,
+      seq: payload.seq,
+      last: payload.last
+    });
+  }
+
+  /**
+   * Wrap a control envelope to our OWN pubkey (both NIP-17 wraps are p-tagged to
+   * us; we publish the self wrap) and fan it out to every enabled write relay.
+   * Shared by all self-addressed device-sync envelopes (digest / request /
+   * response). Best-effort per relay — these are advisory and re-sent on retry.
+   */
+  private async publishSelfControl(envelope: Record<string, unknown>): Promise<void> {
+    if(!this.privateKeyBytes) return;
+    const payload = JSON.stringify({...envelope, timestamp: Date.now()});
 
     let selfWrap: NostrEvent | undefined;
     try {
-      // recipient === self ⇒ both wraps are p-tagged to us; publish the self wrap.
-      const {wraps} = wrapNip17Message(this.privateKeyBytes, this.publicKey, envelope);
+      const {wraps} = wrapNip17Message(this.privateKeyBytes, this.publicKey, payload);
       selfWrap = (wraps[1] ?? wraps[0]) as unknown as NostrEvent;
     } catch(err) {
-      this.log.debug('[NostrRelayPool] digest wrap failed:', err);
+      this.log.debug('[NostrRelayPool] self-control wrap failed:', err);
       return;
     }
     if(!selfWrap) return;
@@ -354,7 +427,7 @@ export class NostrRelayPool {
       try {
         entry.instance.publishRawEvent(selfWrap);
       } catch{
-        // best-effort per relay; digests are advisory
+        // best-effort per relay; device-sync control envelopes are advisory
       }
     }
   }
@@ -1201,6 +1274,33 @@ export class NostrRelayPool {
       return;
     }
 
+    // Device-sync REQUEST / RESPONSE interception. Same self-authored control-
+    // envelope contract as the digest: only honor msg.from === self, never surface
+    // as a bubble. The device-sync module owns targeting (deviceId) and strict-union.
+    const syncReq = this.parseSyncRequestEnvelope(msg);
+    if(syncReq) {
+      if(msg.from === this.publicKey && this._onSyncReqCb) {
+        try {
+          this._onSyncReqCb(syncReq);
+        } catch(err) {
+          this.log.error('[NostrRelayPool] sync-request handler threw:', err);
+        }
+      }
+      return;
+    }
+
+    const syncRes = this.parseSyncResponseEnvelope(msg);
+    if(syncRes) {
+      if(msg.from === this.publicKey && this._onSyncResCb) {
+        try {
+          this._onSyncResCb(syncRes);
+        } catch(err) {
+          this.log.error('[NostrRelayPool] sync-response handler threw:', err);
+        }
+      }
+      return;
+    }
+
     // Update lastSeenTimestamp
     if(msg.timestamp > this.lastSeenTimestamp) {
       this.lastSeenTimestamp = msg.timestamp;
@@ -1250,6 +1350,56 @@ export class NostrRelayPool {
         conv: env.conv,
         count: typeof env.count === 'number' ? env.count : 0,
         latestId: typeof env.latestId === 'string' ? env.latestId : ''
+      };
+    } catch{
+      // not JSON — a plain message
+    }
+    return null;
+  }
+
+  /**
+   * Cheap classifier: is this decrypted message a device-sync REQUEST envelope?
+   * Returns the parsed request, or null. Only self-authored JSON carrying our
+   * `device-sync-req` type matches.
+   */
+  private parseSyncRequestEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; haveIds: string[]} | null {
+    const content = msg.content;
+    if(typeof content !== 'string' || content.indexOf('device-sync-req') === -1) return null;
+    try {
+      const env = JSON.parse(content);
+      if(env?.type !== 'device-sync-req') return null;
+      if(typeof env.deviceId !== 'string' || typeof env.targetId !== 'string' || typeof env.conv !== 'string') return null;
+      return {
+        deviceId: env.deviceId,
+        targetId: env.targetId,
+        conv: env.conv,
+        haveIds: Array.isArray(env.haveIds) ? env.haveIds.filter((x: unknown) => typeof x === 'string') : []
+      };
+    } catch{
+      // not JSON — a plain message
+    }
+    return null;
+  }
+
+  /**
+   * Cheap classifier: is this decrypted message a device-sync RESPONSE envelope?
+   * Returns the parsed response, or null. Only self-authored JSON carrying our
+   * `device-sync-res` type matches. Row shape is validated by the device-sync module.
+   */
+  private parseSyncResponseEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean} | null {
+    const content = msg.content;
+    if(typeof content !== 'string' || content.indexOf('device-sync-res') === -1) return null;
+    try {
+      const env = JSON.parse(content);
+      if(env?.type !== 'device-sync-res') return null;
+      if(typeof env.deviceId !== 'string' || typeof env.targetId !== 'string' || typeof env.conv !== 'string') return null;
+      return {
+        deviceId: env.deviceId,
+        targetId: env.targetId,
+        conv: env.conv,
+        rows: Array.isArray(env.rows) ? env.rows : [],
+        seq: typeof env.seq === 'number' ? env.seq : 0,
+        last: env.last === true
       };
     } catch{
       // not JSON — a plain message
@@ -1569,8 +1719,16 @@ export class NostrRelayPool {
   }
 
   private flushStateChange(): void {
+    const connected = this.getConnectedCount();
     if(this.onStateChangeCb) {
-      this.onStateChangeCb(this.getConnectedCount(), this.relayEntries.length);
+      this.onStateChangeCb(connected, this.relayEntries.length);
+    }
+    for(const cb of this._stateChangeListeners) {
+      try {
+        cb(connected, this.relayEntries.length);
+      } catch(err) {
+        this.log.debug('[NostrRelayPool] extra state-change listener threw:', err);
+      }
     }
 
     // Dispatch phantomchat_relay_state events for each relay

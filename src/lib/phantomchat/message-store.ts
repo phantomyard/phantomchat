@@ -641,6 +641,35 @@ export class MessageStore {
   }
 
   /**
+   * List every eventId we hold for a conversation. This is the "have-set" a
+   * device sends in a device-sync request so the fuller device can compute the
+   * exact rows it holds that we don't (strict set difference). A single
+   * conversationId-index cursor scan; returns the raw eventId strings only.
+   */
+  async getConversationEventIds(conversationId: string): Promise<string[]> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const index = tx.objectStore(STORE_NAME).index('conversationId');
+      const request = index.openCursor(IDBKeyRange.only(conversationId));
+
+      const ids: string[] = [];
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        if(cursor) {
+          const row = cursor.value as StoredMessage;
+          if(row.eventId) ids.push(row.eventId);
+          cursor.continue();
+        } else {
+          resolve(ids);
+        }
+      };
+    });
+  }
+
+  /**
    * Read the stored read-cursor for a conversation.
    * Returns 0 when no cursor has ever been written.
    */

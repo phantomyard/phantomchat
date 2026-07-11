@@ -468,6 +468,78 @@ describe('NostrRelayPool', () => {
       expect(onMessage).not.toHaveBeenCalled();
       expect(seen).toHaveLength(0);
     });
+
+    function syncReqMsg(id: string, from: string): DecryptedMessage {
+      return {
+        id, from,
+        content: JSON.stringify({type: 'device-sync-req', deviceId: 'req-dev', targetId: 'holder-dev', conv: 'a:b', haveIds: ['m1'], timestamp: Date.now()}),
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+    }
+    function syncResMsg(id: string, from: string): DecryptedMessage {
+      return {
+        id, from,
+        content: JSON.stringify({type: 'device-sync-res', deviceId: 'holder-dev', targetId: 'req-dev', conv: 'a:b', rows: [{eventId: 'm2'}], seq: 0, last: true, timestamp: Date.now()}),
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+    }
+
+    it('routes a self-authored sync-request to onSyncRequest, never to onMessage', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnSyncRequest((r) => seen.push(r));
+      mockRelayInstances[0].simulateMessage(syncReqMsg('sr-1', SELF_PUBKEY));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({deviceId: 'req-dev', targetId: 'holder-dev', conv: 'a:b', haveIds: ['m1']});
+    });
+
+    it('routes a self-authored sync-response to onSyncResponse, never to onMessage', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnSyncResponse((r) => seen.push(r));
+      mockRelayInstances[0].simulateMessage(syncResMsg('ss-1', SELF_PUBKEY));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({deviceId: 'holder-dev', targetId: 'req-dev', conv: 'a:b', seq: 0, last: true});
+      expect(seen[0].rows).toHaveLength(1);
+    });
+
+    it('drops a sync-request forged by a non-self author', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnSyncRequest((r) => seen.push(r));
+      mockRelayInstances[0].simulateMessage(syncReqMsg('sr-2', 'someone-else'));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(0);
+    });
   });
 
   describe('reconnection', () => {
