@@ -94,6 +94,14 @@ interface DeviceSyncRow {
   content: string;
   type: 'text' | 'file';
   timestamp: number;
+  /**
+   * Millisecond-of-second (0-999) — the sub-second ordering signal. MUST ride
+   * the wire: a pulled row's mid is RE-DERIVED on the receiving device, and
+   * without this it would fall back to the legacy hash tiebreak and compute a
+   * DIFFERENT mid than the device that already holds the row — forking one
+   * message into two bubbles across devices. Absent on legacy rows.
+   */
+  msSlot?: number;
   deliveryState?: string;
   isOutgoing?: boolean;
   appMessageId?: string;
@@ -611,6 +619,7 @@ function toWireRow(r: any): DeviceSyncRow {
     content: r.content,
     type: r.type === 'file' ? 'file' : 'text',
     timestamp: r.timestamp,
+    ...(typeof r.msSlot === 'number' ? {msSlot: r.msSlot} : {}),
     deliveryState: r.deliveryState,
     isOutgoing: !!r.isOutgoing,
     ...(r.appMessageId ? {appMessageId: r.appMessageId} : {}),
@@ -641,7 +650,7 @@ async function ingestPulledRow(row: DeviceSyncRow): Promise<boolean> {
     const {PhantomChatBridge} = await import('./phantomchat-bridge');
     const bridge = PhantomChatBridge.getInstance();
     const peerId = await bridge.mapPubkeyToPeerId(peer);
-    const mid = await bridge.mapEventIdToMid(row.eventId, Math.floor(row.timestamp));
+    const mid = await bridge.mapEventIdToMid(row.eventId, Math.floor(row.timestamp), row.msSlot);
     if(peerId === undefined || mid === undefined) return false;
 
     const {getMessageStore} = await import('./message-store');
@@ -657,6 +666,7 @@ async function ingestPulledRow(row: DeviceSyncRow): Promise<boolean> {
       mid,
       twebPeerId: peerId,
       isOutgoing: !!row.isOutgoing,
+      ...(typeof row.msSlot === 'number' ? {msSlot: row.msSlot} : {}),
       ...(row.appMessageId ? {appMessageId: row.appMessageId} : {}),
       ...(typeof row.replyToMid === 'number' ? {replyToMid: row.replyToMid} : {}),
       ...(typeof row.editedAt === 'number' ? {editedAt: row.editedAt} : {}),

@@ -413,9 +413,16 @@ describe('PhantomChat Protocol v2 — cross-repo shared test vector', () => {
 
   // Deterministic inner half — these bytes MUST match across repos
   const EXPECTED_SYMMETRIC_KEY = '20be5fd3f2476eed59a6eeac45331d88e8f5a2204591f3604d57c87b1eada7fc';
-  const EXPECTED_RUMOR_ID = '1012a22578e51593cad513f022acd569452a8a22a3560e9af260049edcdc4435';
+  // Re-pinned when the ['ms', …] sub-second ordering tag was added to the
+  // kind-14 rumor (see MS_TAG in src/lib/phantomchat/nostr-crypto.ts). The tag
+  // is part of the hashed tag set, so it changes the rumor id — phantombot's
+  // copy of this vector (tests/lib-nostrCrypto.test.ts) MUST pin the same value.
+  const EXPECTED_RUMOR_ID = '3ded8957dfc336570634322ed9e8ace9b12cf89c9533560a4d139864f98d8c0c';
   const PLAINTEXT = 'test vector plaintext';
   const FIXED_CREATED_AT = 1700000000;
+  // Date.now() is pinned to FIXED_CREATED_AT * 1000 — an exact second boundary,
+  // so the sub-second slot is 0.
+  const EXPECTED_MS_SLOT = '0';
 
   it('symmetric key derivation matches cross-repo vector', async() => {
     clearConversationKeyCache();
@@ -428,7 +435,7 @@ describe('PhantomChat Protocol v2 — cross-repo shared test vector', () => {
     const rumor = {
       kind: 14,
       created_at: FIXED_CREATED_AT,
-      tags: [['p', recipientPk], ['v', 'pc-v2']],
+      tags: [['p', recipientPk], ['v', 'pc-v2'], ['ms', EXPECTED_MS_SLOT]],
       content: PLAINTEXT,
       pubkey: senderPk
     };

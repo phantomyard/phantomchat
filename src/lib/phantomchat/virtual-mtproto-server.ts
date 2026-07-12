@@ -1443,7 +1443,15 @@ export class PhantomChatMTProtoServer {
       // duplicate save closes that path.
       const text = params?.message ?? '';
       const twebPeerId = Math.abs(peerId);
-      const now = Math.floor(Date.now() / 1000);
+      const nowMs = Date.now();
+      const now = Math.floor(nowMs / 1000);
+      // Sub-second ordering for our OWN outgoing bubble. The wire `ms` tag is
+      // minted inside the crypto wrap (a later instant we can't see from here),
+      // so this device uses its own send instant — a few ms apart, which is
+      // irrelevant: mids are device-local, and all that matters is that OUR
+      // bubble orders correctly against the peer's messages in the same second.
+      // Handed to sendText so the persisted row derives the SAME mid we paint.
+      const msSlot = nowMs % 1000;
 
       // tweb sends `reply_to: {_: 'inputReplyToMessage', reply_to_msg_id: <mid>}`.
       // Resolve the mid back to the rumor eventId we stored on the original
@@ -1474,7 +1482,7 @@ export class PhantomChatMTProtoServer {
       // mid. (mapEventId hashes `messageId + timestamp` into a tweb mid the same
       // way ChatAPI does on its row save — see chat-api.ts allocateMessageId.)
       const messageId = this.chatAPI.allocateMessageId();
-      const mid = await this.mapper.mapEventId(messageId, now);
+      const mid = await this.mapper.mapEventId(messageId, now, msSlot);
 
       // This is the ONLY history_append dispatch path for P2P sends —
       // beforeMessageSending on the Worker side is skipped for P2P peers to
@@ -1497,7 +1505,7 @@ export class PhantomChatMTProtoServer {
       if(this.chatAPI.getActivePeer() !== peerPubkey) {
         await this.chatAPI.connect(peerPubkey);
       }
-      await this.chatAPI.sendText(text, {messageId, twebPeerId, timestampSec: now, replyTo});
+      await this.chatAPI.sendText(text, {messageId, twebPeerId, timestampSec: now, msSlot, replyTo});
 
       // Return the mid and date so the Worker's P2P shortcut can
       // re-assign the message's id from the temp value (0.0001) to the

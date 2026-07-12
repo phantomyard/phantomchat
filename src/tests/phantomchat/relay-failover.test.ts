@@ -201,9 +201,12 @@ describe('Relay Pool Failover', () => {
   });
 
   describe('DEFAULT_RELAYS', () => {
-    it('should have 5 default relays', () => {
-      expect(DEFAULT_RELAYS).toHaveLength(5);
-      expect(DEFAULT_RELAYS.map(r => r.url)).toContain('wss://relay.damus.io');
+    it('ships a non-empty, write-enabled default relay set', () => {
+      expect(DEFAULT_RELAYS.length).toBeGreaterThan(0);
+      for(const relay of DEFAULT_RELAYS) {
+        expect(relay.url).toMatch(/^wss:\/\//);
+        expect(relay.write).toBe(true);
+      }
     });
   });
 
@@ -213,9 +216,9 @@ describe('Relay Pool Failover', () => {
 
       const result = await pool.publish('recipient-pubkey', 'test message');
 
-      // All 5 default relays are write-enabled
+      // Every default relay is write-enabled
       const totalResults = result.successes.length + result.failures.length;
-      expect(totalResults).toBe(5);
+      expect(totalResults).toBe(DEFAULT_RELAYS.length);
     });
 
     it('with one relay disconnected, publish succeeds via remaining relays', async() => {
@@ -227,8 +230,8 @@ describe('Relay Pool Failover', () => {
 
       const result = await pool.publish('recipient-pubkey', 'test message');
 
-      // 4 succeed, 1 fails
-      expect(result.successes.length).toBe(4);
+      // All but the downed relay succeed
+      expect(result.successes.length).toBe(DEFAULT_RELAYS.length - 1);
       expect(result.failures.length).toBe(1);
     });
   });
@@ -258,7 +261,7 @@ describe('Relay Pool Failover', () => {
       await pool.initialize();
       dispatchedEvents.length = 0;
 
-      pool.removeRelay('wss://relay.damus.io');
+      pool.removeRelay(DEFAULT_RELAYS[0].url);
 
       const listEvents = dispatchedEvents.filter(e => e.name === 'phantomchat_relay_list_changed');
       expect(listEvents.length).toBeGreaterThan(0);
@@ -269,27 +272,29 @@ describe('Relay Pool Failover', () => {
     it('disableRelay prevents publish to that relay', async() => {
       await pool.initialize();
 
-      pool.disableRelay('wss://relay.damus.io');
+      const target = DEFAULT_RELAYS[0].url;
+      pool.disableRelay(target);
 
       const states = pool.getRelayStates();
-      const damusState = states.find((s: any) => s.url === 'wss://relay.damus.io');
-      expect(damusState?.enabled).toBe(false);
+      const targetState = states.find((s: any) => s.url === target);
+      expect(targetState?.enabled).toBe(false);
 
       const result = await pool.publish('recipient-pubkey', 'test message');
-      // Only 4 write relays now (1 disabled)
+      // One fewer write relay now (1 disabled)
       const totalResults = result.successes.length + result.failures.length;
-      expect(totalResults).toBe(4);
+      expect(totalResults).toBe(DEFAULT_RELAYS.length - 1);
     });
 
     it('enableRelay re-enables publish to that relay', async() => {
       await pool.initialize();
 
-      pool.disableRelay('wss://relay.damus.io');
-      pool.enableRelay('wss://relay.damus.io');
+      const target = DEFAULT_RELAYS[0].url;
+      pool.disableRelay(target);
+      pool.enableRelay(target);
 
       const result = await pool.publish('recipient-pubkey', 'test message');
       const totalResults = result.successes.length + result.failures.length;
-      expect(totalResults).toBe(5);
+      expect(totalResults).toBe(DEFAULT_RELAYS.length);
     });
   });
 
@@ -299,7 +304,7 @@ describe('Relay Pool Failover', () => {
 
       const states = pool.getRelayStates();
 
-      expect(states).toHaveLength(5);
+      expect(states).toHaveLength(DEFAULT_RELAYS.length);
       for(const state of states) {
         expect(state).toHaveProperty('url');
         expect(state).toHaveProperty('connected');

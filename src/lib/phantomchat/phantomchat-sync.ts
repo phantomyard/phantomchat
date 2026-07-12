@@ -51,7 +51,11 @@ export class PhantomChatSync {
     const renderPubkey = isSelfEcho ? (msg.to || senderPubkey) : senderPubkey;
     const peerId = await this.mapper.mapPubkey(renderPubkey);
     const storageEventId = msg.relayEventId || msg.id;
-    const mid = await this.mapper.mapEventId(storageEventId, Math.floor(msg.timestamp));
+    // TWO-WRITER INVARIANT: chat-api-receive already minted a mid for this same
+    // message. It MUST match ours or the message forks into two bubbles under
+    // two mids. Both read msSlot off the SAME ChatMessage object (stamped from
+    // the rumor's `ms` tag at parse time) — do not recompute it from elsewhere.
+    const mid = await this.mapper.mapEventId(storageEventId, Math.floor(msg.timestamp), msg.msSlot);
     // msg.timestamp is already in UNIX seconds (from rumor.created_at)
     const timestamp = Math.floor(msg.timestamp);
 
@@ -71,6 +75,7 @@ export class PhantomChatSync {
         mid,
         twebPeerId: peerId,
         isOutgoing: false,
+        ...(msg.msSlot !== undefined ? {msSlot: msg.msSlot} : {}),
         ...(msg.fileMetadata ? {fileMetadata: msg.fileMetadata} : {})
       });
     }

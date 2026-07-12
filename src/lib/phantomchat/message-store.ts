@@ -41,6 +41,15 @@ export interface StoredMessage {
   type: 'text' | 'file';
   /** Unix timestamp in seconds — authoritative creation time (immutable) */
   timestamp: number;
+  /**
+   * Millisecond-of-second (0-999) of creation, from the rumor's `ms` tag.
+   * Feeds the sub-second half of `mid` so same-second messages sort
+   * chronologically instead of by hash. Absent on legacy rows written before
+   * the ms tag existed — those keep the legacy hash tiebreak, so any code that
+   * RE-derives a mid from this row must pass this field through verbatim
+   * (undefined included) or it will compute a different mid and fork the row.
+   */
+  msSlot?: number;
   /** Delivery state */
   deliveryState: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   /** File metadata (for type='file', used by Plan 02) */
