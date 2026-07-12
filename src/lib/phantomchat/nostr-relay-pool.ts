@@ -132,6 +132,11 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 }
 
 const DEDUP_CACHE_MAX = 10_000;
+
+// Consecutive unwrap failures tolerated for a single wrap before it is PARKED
+// (claim kept, no further retries) until the next resume trigger. Caps the
+// 15s-poll re-unwrap loop for a deterministically-bad wrap; see releaseWrapId.
+const WRAP_RETRY_LIMIT = 3;
 // Recovery sweep cadence. Tops the active set back up and re-dials any active
 // relay whose socket died without self-reconnecting. Kept short-ish so a fully
 // benched pool (all relays cooling down) is re-evaluated promptly — the liveness
@@ -208,12 +213,24 @@ export class NostrRelayPool {
   private seenWrapIds: Set<string> = new Set();
   private seenWrapOrder: string[] = [];
 
+  // Consecutive unwrap failures per wrap id. Bounds the retry loop for a wrap
+  // that fails deterministically (see releaseWrapId) without making the drop
+  // permanent — cleared on every resume trigger (resetWrapRetryBudget).
+  private wrapFailures: Map<string, number> = new Map();
+
   // Pool recovery
   private recoveryInterval: ReturnType<typeof setInterval> | null = null;
 
   // Catch-up poll (delivery backbone — recovers wraps the live push dropped)
   private backfillPollInterval: ReturnType<typeof setInterval> | null = null;
   private backfillPollInFlight = false;
+
+  // Resume state for a backfill that ran out of pages before exhausting the
+  // range. `backfillCursor` is the `until` to continue from next tick;
+  // `backfillGapOpen` freezes the watermark meanwhile, because "caught up" is
+  // not true while wraps older than the cursor remain unfetched.
+  private backfillCursor: number | undefined = undefined;
+  private backfillGapOpen = false;
 
   // Identity
   private publicKey: string = '';
@@ -484,6 +501,8 @@ export class NostrRelayPool {
 
   async initialize(): Promise<void> {
     this.log('[NostrRelayPool] initializing');
+
+    this.registerResumeTriggers();
 
     // Use pre-decrypted identity if provided (avoids redundant PBKDF2 on cold
     // start — onboarding already did this work ~100ms earlier).
@@ -1196,6 +1215,12 @@ export class NostrRelayPool {
     // Optional-call so test mocks without the method don't break (the real
     // NostrRelay always implements it; nostr-relay.test.ts covers the gate).
     instance.setEventDedup?.((eventId) => this.claimWrapId(eventId));
+    // ...and the rollback, so a wrap whose processing dies is not poisoned in
+    // the seen-set and can be retried by a replay.
+    instance.setEventRelease?.((eventId) => this.releaseWrapId(eventId));
+    // ...and the success signal, so a wrap that unwraps cleanly stops carrying
+    // the failure strikes it accrued while the worker/network was broken.
+    instance.setEventCommit?.((eventId) => this.commitWrapId(eventId));
 
     // Feed the live subscription a `since` watermark so each (re)connect only
     // replays events since we last saw one — not the entire gift-wrap history.
@@ -1229,6 +1254,11 @@ export class NostrRelayPool {
         const firstConnect = !this.relayHasConnected.has(config.url);
         this.relayHasConnected.add(config.url);
         if(!firstConnect && this.isSubscribedFlag && config.read) {
+          // RESUME TRIGGER: a socket that just came back is the strongest signal
+          // that whatever was breaking unwraps (frozen worker, dead network) has
+          // cleared. Give parked wraps a fresh retry budget BEFORE the backfill
+          // runs, so the backfill can actually re-deliver them.
+          this.resetWrapRetryBudget();
           this.backfillRelay({config, instance}).catch(
             swallowHandler('NostrRelayPool.reconnectBackfill')
           );
@@ -1264,6 +1294,121 @@ export class NostrRelayPool {
       this.seenWrapIds.delete(evicted);
     }
     return true;
+  }
+
+  /**
+   * Hand a claimed wrap id back to the seen-set (see `claimWrapId`).
+   *
+   * `claimWrapId` is a CLAIM, not a COMMIT: the relay marks a wrap id as seen
+   * before it unwraps, so a duplicate copy from a second relay skips the
+   * (expensive) crypto. If the unwrap then fails, the wrap was never delivered
+   * — and leaving its id in the set means every later replay is deduped away.
+   * The message is on the relay, retrievable, and permanently invisible to this
+   * session. Only a reload clears it. Releasing the claim closes that hole.
+   */
+  public releaseWrapId(eventId: string): void {
+    // Bound the retry loop, but never permanently.
+    //
+    // An unconditional release re-opens a known freeze (FIND-poll-reunwrap): a
+    // deterministically-corrupt wrap sitting near the watermark is re-fetched by
+    // the 15s catch-up poll, fails, is released, re-fetched... forever, and the
+    // re-unwrap storm saturates the worker. So we cap consecutive failures per
+    // wrap and PARK it (keep the claim) once the cap is hit — the hot loop dies.
+    //
+    // But the cap must NOT be the terminal verdict. Failures here are not
+    // independent trials: a frozen/backgrounded worker fails EVERY wrap it
+    // touches, in a burst, so one background episode would burn a 3-strike
+    // budget in ~45s and silently drop a perfectly good message — which is the
+    // original bug wearing a hat. Instead the counters reset on RESUME
+    // (visibility/online/reconnect — see resetWrapRetryBudget), the moments the
+    // environmental cause has plausibly cleared and a retry is newly
+    // informative. Net: corrupt wrap => <=N attempts per resume (bounded CPU);
+    // transient wrap => always recovers on the next resume, no reload needed.
+    //
+    // A count can't distinguish "bad wrap" from "sleeping device" — only the
+    // error can. A future pass should make DETERMINISTIC errors (malformed rumor
+    // JSON, AEAD failure) terminal and leave everything else retryable; the cap
+    // is the coarse stand-in until then.
+    const failures = (this.wrapFailures.get(eventId) ?? 0) + 1;
+    this.wrapFailures.set(eventId, failures);
+    if(failures >= WRAP_RETRY_LIMIT) {
+      this.log.warn(
+        '[NostrRelayPool] wrap failed', failures, 'times; parking until resume:', eventId.slice(0, 8)
+      );
+      return; // keep the claim — no retry until resetWrapRetryBudget()
+    }
+
+    if(!this.seenWrapIds.delete(eventId)) return;
+    const idx = this.seenWrapOrder.lastIndexOf(eventId);
+    if(idx !== -1) this.seenWrapOrder.splice(idx, 1);
+  }
+
+  /**
+   * A claimed wrap unwrapped cleanly — forget its failure history.
+   *
+   * The counters are meant to measure CONSECUTIVE failures (a hot retry loop on
+   * a wrap that cannot be unwrapped). A wrap that failed twice under a frozen
+   * worker and then succeeded has proven the failures were environmental, so
+   * keeping its strikes would park it a failure early next time — and leave the
+   * entry in a map that otherwise only shrinks on resume, while `seenWrapIds`
+   * is LRU-capped. Cheap to clear, honest to clear.
+   */
+  private commitWrapId(eventId: string): void {
+    this.wrapFailures.delete(eventId);
+  }
+
+  /**
+   * Clear the per-wrap retry budget and un-park everything it parked.
+   *
+   * Called on the resume triggers (visibilitychange -> visible, online, relay
+   * reconnect). These are precisely the moments when the reason an unwrap was
+   * failing — frozen worker, dead socket, no network — has plausibly gone away,
+   * so a wrap we parked deserves a fresh set of attempts. Without this, parking
+   * is indistinguishable from the poisoning this whole PR exists to remove.
+   */
+  /**
+   * Register the DOM resume triggers that refresh the wrap retry budget.
+   *
+   * A backgrounded PWA is the environment that produces the failures we park on
+   * (frozen unwrap worker), and coming back to the foreground / regaining the
+   * network is the environment ceasing to be broken. Idempotent, and guarded for
+   * non-DOM contexts (worker/test).
+   */
+  private resumeTriggersRegistered = false;
+  private registerResumeTriggers(): void {
+    if(this.resumeTriggersRegistered) return;
+    if(typeof document === 'undefined' && typeof window === 'undefined') return;
+    this.resumeTriggersRegistered = true;
+
+    if(typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if(document.visibilityState === 'visible') {
+          this.resetWrapRetryBudget();
+        }
+      });
+    }
+
+    if(typeof window !== 'undefined') {
+      window.addEventListener('online', () => this.resetWrapRetryBudget());
+    }
+  }
+
+  public resetWrapRetryBudget(): void {
+    if(this.wrapFailures.size === 0) return;
+    let unparked = 0;
+    for(const [eventId, failures] of this.wrapFailures) {
+      if(failures < WRAP_RETRY_LIMIT) continue;
+      // Parked: the claim was kept, so drop it now to make the wrap replayable.
+      if(this.seenWrapIds.delete(eventId)) {
+        const idx = this.seenWrapOrder.lastIndexOf(eventId);
+        if(idx !== -1) this.seenWrapOrder.splice(idx, 1);
+        unparked++;
+      }
+    }
+    this.wrapFailures.clear();
+    if(unparked > 0) {
+      this.log('[NostrRelayPool] resume: un-parked', unparked, 'failed wrap(s) for retry');
+    }
   }
 
   private handleIncomingMessage(msg: DecryptedMessage): void {
@@ -1346,8 +1491,22 @@ export class NostrRelayPool {
       return;
     }
 
-    // Update lastSeenTimestamp
-    if(msg.timestamp > this.lastSeenTimestamp) {
+    // Update lastSeenTimestamp — UNLESS a backfill gap is still open.
+    //
+    // The watermark is a claim: "everything at or below this has been
+    // delivered." A truncated backfill (page cap hit with the range
+    // unexhausted) means that claim is false — there are older wraps we have
+    // NOT fetched yet. Advancing to the newest message we happen to have
+    // decrypted would move the floor above them, and since every replay path
+    // (live REQ `since`, catch-up poll, reconnect backfill) is keyed off this
+    // watermark, they'd be permanently out of reach. Exactly the failure Robert
+    // flagged, just reached through the pool instead of the relay.
+    //
+    // So while `backfillGapOpen` is set we deliver the message but hold the
+    // watermark still. backfillRecent() resumes the walk from its saved cursor
+    // on the next tick and clears the flag when the range is finally exhausted;
+    // the watermark then jumps forward normally.
+    if(msg.timestamp > this.lastSeenTimestamp && !this.backfillGapOpen) {
       this.lastSeenTimestamp = msg.timestamp;
       localStorage.setItem(LS_LAST_SEEN_KEY, String(this.lastSeenTimestamp));
     }
@@ -1694,21 +1853,120 @@ export class NostrRelayPool {
     if(!this.isSubscribedFlag) return;
     this.backfillPollInFlight = true;
     try {
-      const since = Math.floor(Date.now() / 1000) - RECENT_BACKFILL_WINDOW_SEC;
+      // Reach back to the WATERMARK, not to a fixed wall-clock window.
+      //
+      // This poll is the delivery backbone — the thing that recovers a wrap the
+      // live socket never pushed. A fixed `now - 90s` window silently assumed
+      // the client is always awake to catch it. A PWA is not: freeze the tab
+      // (background it, sleep the phone, lose the network) for longer than 90s
+      // and the window slides clean past everything that arrived during the
+      // gap. The message stays on the relay, retrievable, and the one component
+      // whose job is to retrieve it is looking at the wrong 90 seconds. That is
+      // the "Kai went quiet until I reloaded" bug.
+      //
+      // `catchUpSince()` is the honest lower bound: it tracks the newest event
+      // we have actually PROCESSED (not wall-clock), so it cannot skip a gap no
+      // matter how long we were asleep. We still floor the window at 90s so a
+      // freshly-advanced watermark doesn't shrink the poll to nothing and lose
+      // the out-of-order/clock-skew margin the fixed window was giving us.
+      //
+      // Cost of being wrong in this direction is a few duplicate wraps, which
+      // the dedup LRU eats for free. Cost of being wrong in the other direction
+      // is a lost message. The reach-back is bounded by SUBSCRIBE_REPLAY_LIMIT
+      // inside getMessages(), so even a very stale watermark can't pull
+      // unbounded history — and one successful tick advances the watermark,
+      // which collapses the window back to normal.
+      const recentWindow = Math.floor(Date.now() / 1000) - RECENT_BACKFILL_WINDOW_SEC;
+      const watermark = this.catchUpSince();
+      const since = watermark === undefined ?
+        recentWindow :
+        Math.min(recentWindow, watermark);
       const readEntries = this.relayEntries.filter(
         e => e.config.read && e.instance.getState() === 'connected'
       );
-      const promises = readEntries.map(async(entry) => {
+
+      // The walk is PAGINATED (see NostrRelay.getMessagesPaged): a single
+      // limit-capped REQ returns only the NEWEST page of the range, so on a gap
+      // wider than the limit the oldest wraps are dropped on the floor. Resume
+      // from `backfillCursor` when the previous tick ran out of pages, so a deep
+      // backlog drains across ticks rather than being re-fetched from the top
+      // (which would loop on the same newest page forever and never reach the
+      // messages that are actually missing).
+      const resumeFrom = this.backfillCursor;
+      let deepestUnclosed: number | undefined;
+
+      // FETCH EVERYTHING FIRST, THEN DECIDE, THEN DISPATCH.
+      //
+      // The gap flag has to be set BEFORE any message is handed to
+      // handleIncomingMessage, because that is what advances the watermark.
+      // Dispatching as each relay lands and only raising the flag afterwards
+      // lets the newest message of a truncated walk move the watermark on its
+      // way past — which is precisely the "advanced past an unclosed gap" bug
+      // this is here to prevent. (Caught by its own test: the walk truncated at
+      // t0+500 and the watermark still jumped to t0+900.)
+      const pages = await Promise.all(readEntries.map(async(entry) => {
         try {
-          const messages = await entry.instance.getMessages(since);
-          for(const msg of messages) {
-            this.handleIncomingMessage(msg);
-          }
+          return await entry.instance.getMessagesPaged(since, resumeFrom);
         } catch(err) {
           this.log.error('[NostrRelayPool] catch-up poll failed for:', entry.config.url, err);
+          return null;
         }
-      });
-      await Promise.all(promises);
+      }));
+
+      for(const page of pages) {
+        if(page?.outcome === 'truncated' && page.oldestReached !== undefined) {
+          // Resume at the NEWEST of the truncated relays' cursors. Cheaper to
+          // re-fetch overlap (the claim gate eats it) than to skip a region a
+          // slower relay hasn't handed us yet.
+          deepestUnclosed = deepestUnclosed === undefined ?
+            page.oldestReached :
+            Math.max(deepestUnclosed, page.oldestReached);
+        }
+      }
+
+      // GAP STATE MAY ONLY BE CLEARED BY A WALK THAT REACHED THE BOTTOM.
+      //
+      // Recomputing the flag from scratch each tick (`gapOpen = deepestUnclosed
+      // !== undefined`) treats "nobody reported truncation" as proof the range
+      // was exhausted. It isn't — it is equally what a tick that LEARNED NOTHING
+      // looks like: every relay threw, every page timed out, or no read relay was
+      // connected at all. Clearing on that throws the resume cursor away and
+      // unfreezes the watermark over wraps we never fetched; the next dispatched
+      // message then drags `lastSeenTimestamp` past them, and since every replay
+      // path (live REQ `since`, catch-up poll, reconnect backfill) keys off that
+      // watermark, the backlog below it is unreachable by all of them. Reload-only
+      // recovery — the exact bug this PR exists to kill, reached via the resume
+      // path. And it fires hardest on a just-woken device: relays not yet
+      // reconnected, sockets erroring, first query slow — the one moment a deep
+      // gap is actually open.
+      //
+      // So: truncation is evidence (gap open). Exhaustion is evidence (gap
+      // closed). Everything else is ignorance — leave the state exactly as it was
+      // and look again next tick. Absence of a signal is not the signal.
+      if(deepestUnclosed !== undefined) {
+        this.backfillCursor = deepestUnclosed;
+        this.backfillGapOpen = true;
+        this.log.warn(
+          '[NostrRelayPool] backfill gap still open below', deepestUnclosed,
+          '- holding watermark, resuming next tick'
+        );
+      } else if(pages.some(p => p?.outcome === 'exhausted')) {
+        // Positive evidence: a relay walked the range to the bottom. Gap closed.
+        this.backfillCursor = undefined;
+        this.backfillGapOpen = false;
+      } else if(this.backfillGapOpen) {
+        this.log.warn(
+          '[NostrRelayPool] backfill tick learned nothing (no relay reached the bottom of the range)',
+          '- preserving open gap below', this.backfillCursor
+        );
+      }
+
+      for(const page of pages) {
+        if(!page) continue;
+        for(const msg of page.messages) {
+          this.handleIncomingMessage(msg);
+        }
+      }
     } finally {
       this.backfillPollInFlight = false;
     }

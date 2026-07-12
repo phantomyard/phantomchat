@@ -83,6 +83,25 @@ export const NOSTR_KIND_PRESENCE = 30315;
  */
 export const SUBSCRIBE_REPLAY_LIMIT = 100;
 
+// Max pages a single backfill walk will pull (see getMessagesPaged). Bounds the
+// work one poll tick can do — SUBSCRIBE_REPLAY_LIMIT * this many wraps — while
+// still being deep enough that a realistic offline gap closes in one pass. When
+// the cap IS hit the walk reports `truncated` and hands back a resume cursor, so
+// the backlog drains across ticks instead of being silently skipped.
+export const BACKFILL_MAX_PAGES = 20;
+
+/**
+ * How a backfill walk ended (see getMessagesPaged).
+ *
+ * The distinction that matters is EVIDENCE vs IGNORANCE. Only 'exhausted' is
+ * positive evidence that a range holds nothing older; 'unknown' means the walk
+ * never got an answer (not connected, socket threw, page timed out) and says
+ * nothing at all about the range. Callers may clear gap state on 'exhausted'
+ * only — never on 'unknown', which would mistake a failure to look for a
+ * confirmed absence and strand the wraps below the cursor.
+ */
+export type WalkOutcome = 'exhausted' | 'truncated' | 'unknown';
+
 /**
  * Decrypted message structure returned by getMessages.
  * After NIP-17 migration, includes rumor kind and tags for routing.
@@ -184,6 +203,18 @@ export class NostrRelay {
   // skipping it for duplicates before any crypto runs is the single biggest
   // snappiness win. No-op (everything processed) when unset.
   private claimEvent: ((eventId: string) => boolean) | null = null;
+
+  // Rollback for the gate above. A claim is only a promise to PROCESS the wrap;
+  // if processing then fails we must hand the id back, or the wrap is poisoned
+  // in the shared seen-set and no replay path can ever recover it. Set by the
+  // pool alongside claimEvent. No-op when unset.
+  private releaseEvent: ((eventId: string) => void) | null = null;
+
+  // Success counterpart of `releaseEvent`: the wrap unwrapped cleanly, so the
+  // pool can forget any failure count it accrued (see wrapFailures). Without it
+  // a wrap that fails twice, then succeeds, carries its two strikes forever and
+  // parks one failure early next time. No-op when unset.
+  private commitEvent: ((eventId: string) => void) | null = null;
 
   // State change callback — notifies pool when relay connects/disconnects
   public onStateChange: ((state: 'disconnected' | 'connecting' | 'connected' | 'reconnecting') => void) | null = null;
@@ -511,18 +542,126 @@ export class NostrRelay {
    * @returns Array of decrypted messages
    */
   async getMessages(since?: number): Promise<DecryptedMessage[]> {
+    const {messages} = await this.getMessagesPaged(since);
+    return messages;
+  }
+
+  /**
+   * Paginated backfill query — the reach-back that actually closes a gap.
+   *
+   * WHY PAGINATION. A single REQ carries `limit: SUBSCRIBE_REPLAY_LIMIT`, and
+   * NIP-01 says a limited filter returns the **newest** N events in the range,
+   * then EOSE. So `{since: watermark, limit: 100}` against a 500-wrap gap hands
+   * back the newest 100 and silently discards the OLDEST 400 — the relay is not
+   * lying, it answered exactly what we asked. We would then advance the
+   * watermark past those 400 (we "caught up"), and they become unreachable by
+   * any later query. Widening `since` to the watermark — the whole point of this
+   * PR — made this WORSE, not better: the longer the sleep, the bigger the gap,
+   * the more the limit eats. The reach-back has to walk the range, not peek at
+   * the top of it.
+   *
+   * HOW. Page backwards with `until`, anchored at the oldest wrap of the
+   * previous page, until a page comes back short (= range exhausted, gap
+   * CLOSED) or we hit BACKFILL_MAX_PAGES. Page fullness is judged on the RAW
+   * event count from the relay, not on how many we collected — wraps already in
+   * the dedup set are skipped by collectQueryEvent and would otherwise make a
+   * full page look short and end the walk early, re-creating the bug.
+   *
+   * `until` is inclusive, so the boundary wrap repeats across pages; the
+   * pre-decrypt claim gate absorbs it (no double crypto, no double dispatch).
+   *
+   * OUTCOME IS THREE-VALUED, and that is load-bearing. A boolean `truncated`
+   * conflates "the range is exhausted" (positive evidence: the relay answered
+   * and had nothing older) with "we learned nothing" (the socket threw, the page
+   * timed out, we were never connected). The caller CLEARS its gap state on a
+   * closed range — so reporting an unproductive walk as `truncated: false` tells
+   * it to throw away the resume cursor and unfreeze the watermark over wraps it
+   * never fetched, which is the very bug this pagination exists to prevent, and
+   * it fires hardest on a just-woken device (relays not reconnected, sockets
+   * erroring, first query slow) — exactly the scenario we are fixing.
+   *
+   *   'exhausted' — the relay answered and had nothing older. Gap CLOSED.
+   *   'truncated' — hit the page cap, range still unexhausted. Gap OPEN,
+   *                 `oldestReached` is the resume cursor.
+   *   'unknown'   — we failed to look. Says NOTHING about the range; the caller
+   *                 must preserve whatever gap state it already had.
+   *
+   * Absence of a signal is not the signal.
+   */
+  async getMessagesPaged(since?: number, startUntil?: number): Promise<{
+    messages: DecryptedMessage[];
+    outcome: WalkOutcome;
+    oldestReached?: number;
+  }> {
     if(this.connectionState !== 'connected') {
+      // Not a closed range — we never asked. Report ignorance, not absence.
       this.log.warn('[NostrRelay] cannot query: not connected');
-      return [];
+      return {messages: [], outcome: 'unknown'};
     }
 
     this.log('[NostrRelay] querying messages', since ? `since ${since}` : '(all)');
 
-    // Build filter for kind 1059 gift-wrap events
+    const messages: DecryptedMessage[] = [];
+    let until = startUntil;
+    let page = 0;
+
+    for(; page < BACKFILL_MAX_PAGES; page++) {
+      const {collected, rawCount, oldest, timedOut} = await this.queryPage(since, until);
+      messages.push(...collected);
+
+      // A timed-out page is a partial answer: we cannot tell a short page from a
+      // truncated one, so we must not claim either. Hand back what we collected
+      // plus the cursor we were walking, and let the caller keep its gap state.
+      if(timedOut) {
+        this.log.warn('[NostrRelay] backfill page timed out at until', until, '- outcome unknown');
+        return {messages, outcome: 'unknown', oldestReached: until};
+      }
+
+      // Short page => the relay had nothing older left in the range. Gap closed.
+      if(rawCount < SUBSCRIBE_REPLAY_LIMIT || oldest === undefined) {
+        return {messages, outcome: 'exhausted'};
+      }
+
+      // A full page of wraps all sharing one timestamp would make `until` stand
+      // still and spin us on the same page. Bail rather than loop forever; the
+      // window is exhausted for practical purposes.
+      if(until !== undefined && oldest >= until) {
+        this.log.warn('[NostrRelay] backfill pagination stalled at', oldest, '- stopping');
+        return {messages, outcome: 'exhausted'};
+      }
+
+      until = oldest;
+
+      // Walked back past the lower bound — nothing older is in range.
+      if(since !== undefined && until <= since) {
+        return {messages, outcome: 'exhausted'};
+      }
+    }
+
+    this.log.warn(
+      '[NostrRelay] backfill hit page cap after', page, 'pages;',
+      'gap still open below', until, '- caller must not advance its watermark'
+    );
+    return {messages, outcome: 'truncated', oldestReached: until};
+  }
+
+  /**
+   * One page of the backfill walk. Resolves on EOSE (or a 10s timeout) with the
+   * decrypted messages PLUS the raw event count and oldest raw timestamp, which
+   * the pager needs and which the decrypted list cannot supply (deduped and
+   * failed wraps never reach it, and rumor timestamps are a different clock from
+   * the wrap `created_at` the relay filters on).
+   */
+  private async queryPage(since: number | undefined, until: number | undefined): Promise<{
+    collected: DecryptedMessage[];
+    rawCount: number;
+    oldest?: number;
+    timedOut?: boolean;
+  }> {
     const filter: Record<string, unknown> = {
       'kinds': [NOSTR_KIND_GIFTWRAP],
       '#p': [this.publicKey],
-      // Cap the backfill so a stale/absent `since` can't pull full history.
+      // Cap each PAGE. The walk above is what bounds the total.
       'limit': SUBSCRIBE_REPLAY_LIMIT
     };
 
@@ -530,32 +669,60 @@ export class NostrRelay {
       filter.since = since;
     }
 
-    // Send query with a unique subscription ID
-    const queryId = `phantomchat-query-${Date.now()}`;
+    if(until !== undefined) {
+      filter.until = until;
+    }
+
+    const queryId = `phantomchat-query-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const collected: DecryptedMessage[] = [];
 
-    // Create a promise that resolves on EOSE or times out after 10s
-    const result = await new Promise<DecryptedMessage[]>((resolve) => {
+    // Hold the resolver by reference, not by map lookup: the EOSE handler DELETES
+    // it from `queryResolvers` before invoking resolve(), so a lookup at resolve
+    // time finds nothing and the page's rawCount/oldest would read as 0/undefined
+    // — which the pager reads as "short page", ending the walk on page 1 and
+    // quietly restoring the exact truncation this pagination exists to fix.
+    const resolver: {
+      events: DecryptedMessage[];
+      inflight: Promise<void>[];
+      rawCount: number;
+      oldestCreatedAt?: number;
+      resolve: (events: DecryptedMessage[]) => void;
+    } = {
+      events: collected,
+      inflight: [],
+      rawCount: 0,
+      oldestCreatedAt: undefined,
+      resolve: () => {}
+    };
+
+    const result = await new Promise<{
+      collected: DecryptedMessage[];
+      rawCount: number;
+      oldest?: number;
+      timedOut?: boolean;
+    }>((resolve) => {
       const timeout = setTimeout(() => {
         this.log.warn('[NostrRelay] query timeout for:', queryId, 'returning', collected.length, 'partial results');
         this.queryResolvers.delete(queryId);
         this.safeSend(JSON.stringify(['CLOSE', queryId]));
-        resolve(collected);
+        // A timed-out page is a partial answer: we cannot tell a short page from
+        // a truncated one. Flag it EXPLICITLY as timed out — reporting it as a
+        // short page (rawCount 0) would read as "range exhausted" up the stack,
+        // and the caller would clear the gap and walk the watermark past wraps
+        // it never fetched. The next tick must re-query the same range instead.
+        resolve({collected, rawCount: 0, oldest: resolver.oldestCreatedAt, timedOut: true});
       }, 10_000);
 
-      this.queryResolvers.set(queryId, {
-        events: collected,
-        inflight: [],
-        resolve: (events) => {
-          clearTimeout(timeout);
-          resolve(events);
-        }
-      });
+      resolver.resolve = () => {
+        clearTimeout(timeout);
+        resolve({collected, rawCount: resolver.rawCount, oldest: resolver.oldestCreatedAt});
+      };
 
+      this.queryResolvers.set(queryId, resolver);
       this.safeSend(JSON.stringify(['REQ', queryId, filter]));
     });
 
-    this.log('[NostrRelay] query complete:', result.length, 'messages');
+    this.log('[NostrRelay] query page complete:', result.collected.length, 'messages,', result.rawCount, 'raw');
     return result;
   }
 
@@ -691,6 +858,24 @@ export class NostrRelay {
    */
   setEventDedup(fn: (eventId: string) => boolean): void {
     this.claimEvent = fn;
+  }
+
+  /**
+   * Install the rollback for the gate above (see `releaseEvent`). Called when a
+   * claimed wrap fails to process, so the id leaves the shared seen-set and a
+   * later replay can retry it instead of being silently deduped into the void.
+   */
+  setEventRelease(fn: (eventId: string) => void): void {
+    this.releaseEvent = fn;
+  }
+
+  /**
+   * Install the success counterpart of the rollback above (see `commitEvent`).
+   * Called when a claimed wrap unwraps cleanly, so the pool can discard the
+   * failure count it accrued while the environment was broken.
+   */
+  setEventCommit(fn: (eventId: string) => void): void {
+    this.commitEvent = fn;
   }
 
   /**
@@ -985,6 +1170,14 @@ export class NostrRelay {
     events: DecryptedMessage[];
     resolve: (events: DecryptedMessage[]) => void;
     inflight: Promise<void>[];
+    // Pagination bookkeeping (see getMessagesPaged). `rawCount` counts EVENT
+    // frames as the relay sent them — BEFORE dedup/unwrap filtering — because
+    // page fullness is a fact about the relay's answer, not about how many
+    // events survived our processing. `oldestCreatedAt` is the next page's
+    // `until` anchor, taken from the WRAP's created_at (the field the relay
+    // filters on), not the rumor's.
+    rawCount: number;
+    oldestCreatedAt?: number;
   }> = new Map();
 
   // Pending raw query resolvers (non-giftwrap queries): queryId -> {events, resolve}
@@ -1016,6 +1209,16 @@ export class NostrRelay {
           const queryResolver = this.queryResolvers.get(subId);
           const rawResolver = this.rawQueryResolvers.get(subId);
           if(queryResolver) {
+            // Count the raw frame and track the oldest wrap timestamp BEFORE any
+            // dedup/unwrap filtering — the pager needs the relay's own answer
+            // size to tell a full page from a short one (see getMessagesPaged).
+            queryResolver.rawCount++;
+            if(typeof event.created_at === 'number' && (
+              queryResolver.oldestCreatedAt === undefined ||
+              event.created_at < queryResolver.oldestCreatedAt
+            )) {
+              queryResolver.oldestCreatedAt = event.created_at;
+            }
             // Track the async unwrap so EOSE can await it (see EOSE handler).
             queryResolver.inflight.push(this.collectQueryEvent(event, queryResolver.events));
           } else if(rawResolver) {
@@ -1111,6 +1314,13 @@ export class NostrRelay {
       // caught below.
       const rumor = await getNostrUnwrapClient().unwrap(event as any, this.privateKey);
 
+      // Unwrapped cleanly — whatever was breaking this wrap has stopped, so drop
+      // its failure count rather than carrying stale strikes into the next
+      // failure and parking it early.
+      if(event.id && this.commitEvent) {
+        this.commitEvent(event.id);
+      }
+
       // Skip receipt messages for query results
       const receiptTag = rumor.tags?.find((t: string[]) => t[0] === 'receipt-type');
       if(receiptTag) return;
@@ -1125,6 +1335,23 @@ export class NostrRelay {
       });
     } catch(err) {
       this.log.error('[NostrRelay] failed to unwrap query event:', err);
+      // RELEASE THE DEDUP CLAIM — same rollback as handleEvent()'s catch, and
+      // for a sharper reason: THIS is the recovery path. collectQueryEvent
+      // serves the catch-up poll, the reconnect backfill and the startup
+      // backfill. A claim left behind here doesn't just lose the live push, it
+      // poisons the wrap against the very mechanisms whose job is to go back
+      // and fetch what the live push missed — so the message is unreachable by
+      // every path at once, until a reload.
+      //
+      // Fixing the rollback in handleEvent() but not here left the bug fully
+      // intact for exactly the frozen-worker case it was meant to fix: the
+      // poll re-fetches the wrap, the frozen worker fails the unwrap again,
+      // and the claim sticks. Same asymmetry as handleEvent: deliberate
+      // rejections above (non-giftwrap kind, empty content, receipt) are
+      // terminal verdicts and KEEP the claim; only failures are released.
+      if(event.id && this.releaseEvent) {
+        this.releaseEvent(event.id);
+      }
     }
   }
 
@@ -1199,6 +1426,13 @@ export class NostrRelay {
       // the worker.
       const rumor = await getNostrUnwrapClient().unwrap(event as any, this.privateKey);
 
+      // Unwrapped cleanly — clear any failure count this wrap accrued (see
+      // commitEvent), so stale strikes from a broken environment don't park it
+      // early the next time it stumbles.
+      if(event.id && this.commitEvent) {
+        this.commitEvent(event.id);
+      }
+
       // Check if this is a self-sent message (for multi-device sync)
       const isSelfSent = rumor.pubkey === this.publicKey;
 
@@ -1247,6 +1481,26 @@ export class NostrRelay {
       }
     } catch(err) {
       this.log.error('[NostrRelay] failed to unwrap gift-wrap:', err);
+      // RELEASE THE DEDUP CLAIM. `claimEvent` (above) marked this wrap id as
+      // seen BEFORE the unwrap ran, so that a copy from a second relay is not
+      // decrypted twice. But a claim is not a commit: if we get here the wrap
+      // was never dispatched, and leaving the id in the seen-set poisons it —
+      // every subsequent replay (reconnect re-arm, catch-up poll, manual
+      // backfill) is deduped away and the message is lost until a full page
+      // reload rebuilds the pool with an empty set.
+      //
+      // This is not hypothetical: a backgrounded PWA can have its unwrap worker
+      // frozen mid-flight, so the wrap lands, gets claimed, and dies here while
+      // the relay still holds it. Releasing the claim makes the replay paths
+      // able to retry, which is the whole point of having them.
+      //
+      // Note the asymmetry with the DELIBERATE rejections above (bad signature,
+      // non-giftwrap kind, empty content): those are terminal verdicts on the
+      // event, so they KEEP the claim and are not retried. Only failures —
+      // where we never reached a verdict — are released.
+      if(event.id && this.releaseEvent) {
+        this.releaseEvent(event.id);
+      }
       // Don't throw - just log the error and skip this message
     }
   }
