@@ -137,6 +137,12 @@ const DEDUP_CACHE_MAX = 10_000;
 // (claim kept, no further retries) until the next resume trigger. Caps the
 // 15s-poll re-unwrap loop for a deterministically-bad wrap; see releaseWrapId.
 const WRAP_RETRY_LIMIT = 3;
+// NIP-59 gift wrap. Re-fetch queries are pinned to this kind so a stray id can
+// never pull a non-wrap event into the unwrap path.
+const GIFTWRAP_KIND = 1059;
+// Safety valve on the targeted-re-fetch queue (see markWrapForRefetch). The set
+// is drained every poll tick, so this only bites under something pathological.
+const MAX_PENDING_WRAP_REFETCH = 500;
 // Recovery sweep cadence. Tops the active set back up and re-dials any active
 // relay whose socket died without self-reconnecting. Kept short-ish so a fully
 // benched pool (all relays cooling down) is re-evaluated promptly — the liveness
@@ -217,6 +223,12 @@ export class NostrRelayPool {
   // that fails deterministically (see releaseWrapId) without making the drop
   // permanent — cleared on every resume trigger (resetWrapRetryBudget).
   private wrapFailures: Map<string, number> = new Map();
+
+  // Wrap ids that were released (or un-parked) and therefore need a TARGETED
+  // re-fetch, because the watermark may already have advanced past them and no
+  // since-query will ever ask for them again. See refetchPendingWraps().
+  private pendingWrapRefetch: Set<string> = new Set();
+  private refetchInFlight = false;
 
   // Pool recovery
   private recoveryInterval: ReturnType<typeof setInterval> | null = null;
@@ -1341,6 +1353,31 @@ export class NostrRelayPool {
     if(!this.seenWrapIds.delete(eventId)) return;
     const idx = this.seenWrapOrder.lastIndexOf(eventId);
     if(idx !== -1) this.seenWrapOrder.splice(idx, 1);
+
+    // Re-admitting the id to the seen-set only makes the wrap CLAIMABLE. It does
+    // not make it REACHABLE: every replay path queries `since >= watermark-fuzz`,
+    // and the watermark advances on any delivered message, so as soon as one
+    // later message unwraps cleanly this wrap sits below the floor and no query
+    // will ever mention it again. Mark it for targeted re-fetch by id.
+    this.markWrapForRefetch(eventId);
+  }
+
+  /**
+   * Queue a wrap id for targeted re-fetch, bounding the queue.
+   *
+   * The cap is a safety valve, not a policy: the set only ever holds wraps we
+   * released within the last poll tick (refetchPendingWraps drains it), so in
+   * practice it stays tiny. If something pathological floods it, drop the OLDEST
+   * ids — a stale pending id is worth less than a fresh one, and the LRU
+   * seen-set has the same shape.
+   */
+  private markWrapForRefetch(eventId: string): void {
+    this.pendingWrapRefetch.add(eventId);
+    while(this.pendingWrapRefetch.size > MAX_PENDING_WRAP_REFETCH) {
+      const oldest = this.pendingWrapRefetch.values().next().value;
+      if(oldest === undefined) break;
+      this.pendingWrapRefetch.delete(oldest);
+    }
   }
 
   /**
@@ -1355,6 +1392,10 @@ export class NostrRelayPool {
    */
   private commitWrapId(eventId: string): void {
     this.wrapFailures.delete(eventId);
+    // Delivered — it no longer needs chasing. Without this a wrap that failed
+    // once and then succeeded would generate an ids-query on every 15s tick for
+    // the rest of the session.
+    this.pendingWrapRefetch.delete(eventId);
   }
 
   /**
@@ -1402,12 +1443,84 @@ export class NostrRelayPool {
       if(this.seenWrapIds.delete(eventId)) {
         const idx = this.seenWrapOrder.lastIndexOf(eventId);
         if(idx !== -1) this.seenWrapOrder.splice(idx, 1);
+        // Same trap as releaseWrapId: un-parking clears a flag, it does not make
+        // the wrap reachable. A parked wrap is BY DEFINITION old (it has been
+        // failing for a while), so the watermark is almost certainly above it.
+        // Un-parking without re-fetching is a no-op dressed as a recovery.
+        this.markWrapForRefetch(eventId);
         unparked++;
       }
     }
     this.wrapFailures.clear();
     if(unparked > 0) {
       this.log('[NostrRelayPool] resume: un-parked', unparked, 'failed wrap(s) for retry');
+    }
+    // Resume is exactly when the environment that broke these unwraps (frozen
+    // worker, dead socket, no network) has plausibly healed — go and get them
+    // now rather than waiting up to 15s for the next poll tick.
+    void this.refetchPendingWraps();
+  }
+
+  /**
+   * Go and re-fetch the wraps we released, BY ID.
+   *
+   * This is the other half of releaseWrapId. Releasing the dedup claim says "you
+   * may process this wrap again"; nothing in the system ever offers it again,
+   * because every replay path is a since-query and the watermark has moved on.
+   * The wrap id is the one piece of information that survives the failure — so
+   * use it: ask the relays for exactly these ids, and push whatever comes back
+   * through the normal ingest path (claim gate, unwrap, dispatch).
+   *
+   * WHY NOT JUST LOWER THE WATERMARK. A floor at the oldest failed wrap would
+   * also reach it — and would re-request every wrap newer than it, on every tick,
+   * for as long as the wrap kept failing. A deterministically-corrupt wrap would
+   * hold the window open forever and turn each poll into a history replay. An
+   * ids-query costs one REQ and is bounded by the number of wraps that actually
+   * failed. Precision beats a wider net.
+   *
+   * ATTEMPT-ONCE, SELF-HEALING. The pending set is drained on attempt, not on
+   * success: if the re-fetched wrap fails to unwrap again, releaseWrapId puts it
+   * straight back (until the retry budget parks it), and if the relay no longer
+   * has it, it simply falls out. No id can loop forever, and none is dropped
+   * while it is still failing.
+   */
+  private async refetchPendingWraps(): Promise<void> {
+    if(this.refetchInFlight) return;
+    if(this.pendingWrapRefetch.size === 0) return;
+
+    const readEntries = this.relayEntries.filter(
+      e => e.config.read && e.instance.getState() === 'connected'
+    );
+    // Nobody can answer. Ignorance is not absence — keep the ids and retry on a
+    // later tick, rather than draining the set into the void.
+    if(readEntries.length === 0) return;
+
+    this.refetchInFlight = true;
+    const ids = [...this.pendingWrapRefetch];
+    this.pendingWrapRefetch.clear();
+
+    try {
+      this.log('[NostrRelayPool] re-fetching', ids.length, 'released wrap(s) by id');
+      for(const entry of readEntries) {
+        try {
+          const events = await entry.instance.queryRawEvents({
+            ids,
+            kinds: [GIFTWRAP_KIND]
+          });
+          for(const event of events) {
+            // Identical path a socket-delivered wrap takes — claim gate included,
+            // so a copy another relay already delivered is not unwrapped twice.
+            await entry.instance.ingestExternalEvent(event);
+          }
+        } catch(err) {
+          // A relay that throws told us nothing. Put the ids back so a later tick
+          // can try again; do not let one bad relay strand the wrap.
+          this.log.warn('[NostrRelayPool] wrap re-fetch failed on', entry.config.url, err);
+          ids.forEach((id) => this.markWrapForRefetch(id));
+        }
+      }
+    } finally {
+      this.refetchInFlight = false;
     }
   }
 
@@ -1967,6 +2080,12 @@ export class NostrRelayPool {
           this.handleIncomingMessage(msg);
         }
       }
+
+      // The since-walk above can only reach wraps ABOVE the watermark. Anything
+      // we released that now sits below it is invisible to that walk by
+      // construction, so chase those explicitly by id. Runs every tick, so a
+      // failed unwrap recovers within one poll interval — no resume event needed.
+      await this.refetchPendingWraps();
     } finally {
       this.backfillPollInFlight = false;
     }
