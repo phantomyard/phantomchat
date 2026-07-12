@@ -41,6 +41,15 @@ export interface StoredMessage {
   type: 'text' | 'file';
   /** Unix timestamp in seconds — authoritative creation time (immutable) */
   timestamp: number;
+  /**
+   * Millisecond-of-second (0-999) of creation, from the rumor's `ms` tag.
+   * Feeds the sub-second half of `mid` so same-second messages sort
+   * chronologically instead of by hash. Absent on legacy rows written before
+   * the ms tag existed — those keep the legacy hash tiebreak, so any code that
+   * RE-derives a mid from this row must pass this field through verbatim
+   * (undefined included) or it will compute a different mid and fork the row.
+   */
+  msSlot?: number;
   /** Delivery state */
   deliveryState: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   /** File metadata (for type='file', used by Plan 02) */
@@ -639,6 +648,77 @@ export class MessageStore {
         const cursor = (event.target as IDBRequest<IDBCursor>).result;
         if(cursor) {
           ids.push(cursor.key as string);
+          cursor.continue();
+        } else {
+          resolve(ids);
+        }
+      };
+    });
+  }
+
+  /**
+   * Compute a lightweight sync digest for one conversation: how many messages we
+   * hold and the eventId of the newest (by timestamp, eventId as tiebreak). Used
+   * by device-sync to let two of the user's devices detect that one is behind the
+   * other for the open chat. A single conversationId-index cursor scan — no full
+   * row decode beyond what the cursor already yields.
+   *
+   * NOTE: count + latestId catches the common "you're behind by N" case but not a
+   * divergence where both sides hold the same count with different middle messages.
+   * True set-union reconciliation (id-set exchange) is a later increment; this
+   * digest is the cheap presence-style advertisement that triggers it.
+   */
+  async getConversationDigest(conversationId: string): Promise<{count: number; latestId: string; latestTimestamp: number}> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const index = tx.objectStore(STORE_NAME).index('conversationId');
+      const request = index.openCursor(IDBKeyRange.only(conversationId));
+
+      let count = 0;
+      let latestId = '';
+      let latestTimestamp = -1;
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        if(cursor) {
+          const row = cursor.value as StoredMessage;
+          count++;
+          const ts = typeof row.timestamp === 'number' ? row.timestamp : 0;
+          if(ts > latestTimestamp || (ts === latestTimestamp && (row.eventId || '') > latestId)) {
+            latestTimestamp = ts;
+            latestId = row.eventId || '';
+          }
+          cursor.continue();
+        } else {
+          resolve({count, latestId, latestTimestamp: latestTimestamp < 0 ? 0 : latestTimestamp});
+        }
+      };
+    });
+  }
+
+  /**
+   * List every eventId we hold for a conversation. This is the "have-set" a
+   * device sends in a device-sync request so the fuller device can compute the
+   * exact rows it holds that we don't (strict set difference). A single
+   * conversationId-index cursor scan; returns the raw eventId strings only.
+   */
+  async getConversationEventIds(conversationId: string): Promise<string[]> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const index = tx.objectStore(STORE_NAME).index('conversationId');
+      const request = index.openCursor(IDBKeyRange.only(conversationId));
+
+      const ids: string[] = [];
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        if(cursor) {
+          const row = cursor.value as StoredMessage;
+          if(row.eventId) ids.push(row.eventId);
           cursor.continue();
         } else {
           resolve(ids);

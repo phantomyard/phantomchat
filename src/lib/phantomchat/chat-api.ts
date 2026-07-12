@@ -15,7 +15,7 @@
  */
 
 import {Logger, logger} from '@lib/logger';
-import {NostrRelayPool, PublishResult, DEFAULT_RELAYS} from './nostr-relay-pool';
+import {NostrRelayPool, PublishResult, DEFAULT_RELAYS, RELAY_DIAL_STAGGER_MS} from './nostr-relay-pool';
 import {DecryptedMessage, NostrEvent, NOSTR_KIND_P2P_SIGNAL} from './nostr-relay';
 import {OfflineQueue} from './offline-queue';
 import {getMessageStore, StoredMessage} from './message-store';
@@ -69,6 +69,15 @@ export interface ChatMessage {
   content: string;
   /** Unix timestamp in milliseconds */
   timestamp: number;
+  /**
+   * Millisecond-of-second (0-999) from the rumor's `ms` tag — the sub-second
+   * ordering signal. Carried on the message object so that BOTH mid writers for
+   * an incoming message (chat-api-receive's eager row save AND
+   * PhantomChatSync.onIncomingMessage's authoritative save) derive the SAME mid
+   * from the SAME source. If they disagreed, the same message would land twice
+   * under two mids — two bubbles. Undefined for legacy/foreign senders.
+   */
+  msSlot?: number;
   /** Current delivery status */
   status: ChatMessageStatus;
   /** Nostr relay event ID - set after successful relay publish */
@@ -200,6 +209,10 @@ export class ChatAPI {
       // Create real NostrRelayPool
       this.relayPool = new NostrRelayPool({
         relays: [...DEFAULT_RELAYS],
+        // Connect to every relay, but dial them one at a time so a cold mobile
+        // radio isn't slammed with a burst of handshakes ("insufficient
+        // resources" → stuck reconnecting).
+        dialStaggerMs: RELAY_DIAL_STAGGER_MS,
         onMessage: (msg: DecryptedMessage) => this.handleRelayMessage(msg),
         onStateChange: (connectedCount: number, _totalCount: number) => {
           this.handlePoolStateChange(connectedCount);
@@ -657,7 +670,7 @@ export class ChatAPI {
    *   IDB row (FIND-e49755c1 residual).
    * @returns The generated message ID
    */
-  async sendText(content: string, opts?: {mid?: number; messageId?: string; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}}): Promise<string> {
+  async sendText(content: string, opts?: {mid?: number; messageId?: string; twebPeerId?: number; timestampSec?: number; msSlot?: number; replyTo?: {eventId: string; relayUrl?: string}}): Promise<string> {
     return this.sendMessage('text', content, opts);
   }
 
@@ -741,7 +754,7 @@ export class ChatAPI {
     // media store row by this rumor id so it MERGES with the row saved here
     // (also rumor-id keyed) instead of creating a second, fileMetadata-less row
     // that renders as raw JSON. See sendFileMessage.
-    opts?: {mid?: number; messageId?: string; twebPeerId?: number; timestampSec?: number; replyTo?: {eventId: string; relayUrl?: string}; onPublishedRumorId?: (rumorId: string) => void}
+    opts?: {mid?: number; messageId?: string; twebPeerId?: number; timestampSec?: number; msSlot?: number; replyTo?: {eventId: string; relayUrl?: string}; onPublishedRumorId?: (rumorId: string) => void}
   ): Promise<string> {
     // The caller (VMT) may pre-allocate the id so it can render the optimistic
     // outgoing bubble BEFORE this publish/save runs — the row's mid (derived
@@ -795,13 +808,17 @@ export class ChatAPI {
 
       let rowMid: number | undefined = opts?.mid;
       const twebPeerId = opts?.twebPeerId;
+      // Sub-second slot for our own outgoing row. VMT pins it (same value it
+      // used to paint the optimistic bubble) so the persisted mid MATCHES the
+      // painted one; callers that don't pin it fall back to this send instant.
+      const msSlot = opts?.msSlot !== undefined ? opts.msSlot : timestamp % 1000;
       if(rowMid === undefined && twebPeerId !== undefined) {
         try {
           const {PhantomChatBridge} = await import('./phantomchat-bridge');
           // Bridge hashes eventId+timestamp into a tweb mid. We key by messageId
           // (not rumorId) to preserve the mid value VMT computed for the painted
           // optimistic bubble so getHistory/getDialogs mirror coherence holds.
-          rowMid = await PhantomChatBridge.getInstance().mapEventIdToMid(messageId, timestampSec);
+          rowMid = await PhantomChatBridge.getInstance().mapEventIdToMid(messageId, timestampSec, msSlot);
         } catch(e: any) {
           this.log.warn('[ChatAPI] mid compute failed:', e?.message);
         }
@@ -829,12 +846,18 @@ export class ChatAPI {
           timestamp: timestampSec,
           deliveryState: 'sending',
           mid: rowMid,
+          msSlot,
           twebPeerId,
           isOutgoing: true,
           appMessageId: messageId,
           ...(replyToMid !== undefined ? {replyToMid} : {})
         };
         await store.saveMessage(storedRow);
+        // Device-sync: our history grew — re-advertise the open chat's digest so
+        // our other devices see they're now behind and (Increment 2) pull it.
+        import('./phantomchat-device-sync').then(({pokeDeviceSync}) => {
+          pokeDeviceSync();
+        }).catch(() => { /* device-sync is optional */ });
       } else {
         this.log.warn('[ChatAPI] skipping partial send save — caller did not supply identity triple', {messageId});
       }
@@ -1486,6 +1509,11 @@ export class ChatAPI {
       import('./phantomchat-presence').then(({onPeerActivity}) => {
         onPeerActivity(msg.from);
       }).catch(() => { /* presence is optional */ });
+      // Device-sync: an inbound message changed our local history — re-advertise
+      // the open chat's digest so our other devices notice the change.
+      import('./phantomchat-device-sync').then(({pokeDeviceSync}) => {
+        pokeDeviceSync();
+      }).catch(() => { /* device-sync is optional */ });
     }
 
     try {

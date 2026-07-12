@@ -13,6 +13,7 @@ import {DecryptedMessage} from './nostr-relay';
 import {getMessageStore, StoredMessage} from './message-store';
 import {getMessageRequestStore} from './message-requests';
 import {isControlEvent, getGroupIdFromRumor} from './group-control-messages';
+import {getMsSlotFromTags} from './nostr-crypto';
 import type {ChatMessage, ChatMessageType} from './chat-api';
 import rootScope from '@lib/rootScope';
 
@@ -404,6 +405,10 @@ export async function handleRelayMessage(
     // files store ''. Plain text keeps parsed.content.
     content: fileMetadata ? (fileMetadata.caption || '') : parsed.content,
     timestamp: msg.timestamp,
+    // Sub-second ordering signal off the wire. Attached here so every
+    // downstream mid writer (the row save below, and PhantomChatSync's
+    // authoritative save) reads ONE source and computes an identical mid.
+    msSlot: getMsSlotFromTags(msg.tags),
     status: 'delivered',
     relayEventId: msg.id,
     fileMetadata
@@ -458,7 +463,7 @@ export async function handleRelayMessage(
       const {PhantomChatBridge} = await import('./phantomchat-bridge');
       const bridge = PhantomChatBridge.getInstance();
       resolvedPeerId = await bridge.mapPubkeyToPeerId(msg.from);
-      resolvedMid = await bridge.mapEventIdToMid(msg.id, Math.floor(msg.timestamp));
+      resolvedMid = await bridge.mapEventIdToMid(msg.id, Math.floor(msg.timestamp), chatMessage.msSlot);
     } catch(e: any) {
       ctx.log.warn('[ChatAPI] incoming save: mid/peerId compute failed:', e?.message);
     }
@@ -496,6 +501,9 @@ export async function handleRelayMessage(
         mid: resolvedMid,
         twebPeerId: resolvedPeerId,
         isOutgoing: false,
+        // Persist the ms slot so anything that re-derives this row's mid later
+        // (device-sync pull, mirror rebuild) reproduces the SAME mid.
+        ...(chatMessage.msSlot !== undefined ? {msSlot: chatMessage.msSlot} : {}),
         ...(replyToMid !== undefined ? {replyToMid} : {}),
         fileMetadata: fileMetadata ? {
           url: fileMetadata.url,
@@ -582,11 +590,14 @@ async function handleSelfEcho(
   // mid+twebPeerId or they become ghost-mid sources downstream.
   let resolvedMid: number | undefined;
   let resolvedPeerId: number | undefined;
+  // Our own message arriving on a SIBLING device: this device never saw the
+  // original send instant, so the wire `ms` tag is its only sub-second signal.
+  const echoMsSlot = getMsSlotFromTags(msg.tags);
   try {
     const {PhantomChatBridge} = await import('./phantomchat-bridge');
     const bridge = PhantomChatBridge.getInstance();
     resolvedPeerId = await bridge.mapPubkeyToPeerId(peerPubkey);
-    resolvedMid = await bridge.mapEventIdToMid(echoId, Math.floor(msg.timestamp));
+    resolvedMid = await bridge.mapEventIdToMid(echoId, Math.floor(msg.timestamp), echoMsSlot);
   } catch(e: any) {
     ctx.log.warn('[ChatAPI] self-echo: bridge resolve failed', e?.message);
   }
@@ -608,6 +619,7 @@ async function handleSelfEcho(
     twebPeerId: resolvedPeerId,
     isOutgoing: true,
     appMessageId,
+    ...(echoMsSlot !== undefined ? {msSlot: echoMsSlot} : {}),
     fileMetadata: echoFileMetadata ? {
       url: echoFileMetadata.url,
       sha256: echoFileMetadata.sha256,

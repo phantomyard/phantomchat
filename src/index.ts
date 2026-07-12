@@ -436,6 +436,13 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   bootProgress?.(4, 4, 'Ready');
   requestAnimationFrame(() => (window as any).__hideBootSplash?.());
 
+  // Poll for a newer deployed build and surface a prominent "Update" pill that
+  // hard-clears the app-shell cache on tap — kills the "am I on a stale bundle?"
+  // guessing game. Fire-and-forget; never blocks boot.
+  import('@lib/phantomchat/phantomchat-update-checker')
+  .then(({startUpdateChecker}) => startUpdateChecker())
+  .catch(() => {});
+
   await PasscodeLockScreenController.waitForUnlock(async() => {
     rootScope.settings = await commonStateStorage.get('settings');
     themeController.setThemeListener();

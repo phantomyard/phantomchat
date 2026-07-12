@@ -307,8 +307,10 @@ export class PhantomChatPeerMapper {
   /**
    * Maps a Nostr event ID to a tweb virtual message ID.
    * Timestamp is encoded in the high bits for chronological ordering.
+   * `msSlot` (0-999, from the rumor's `ms` tag) makes the SUB-second tiebreak
+   * chronological too; omit it only for legacy rows that have no ms tag.
    */
-  async mapEventId(eventId: string, timestamp: number): Promise<number> {
-    return PhantomChatBridge.getInstance().mapEventIdToMid(eventId, timestamp);
+  async mapEventId(eventId: string, timestamp: number, msSlot?: number): Promise<number> {
+    return PhantomChatBridge.getInstance().mapEventIdToMid(eventId, timestamp, msSlot);
   }
 }

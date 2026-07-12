@@ -47,9 +47,21 @@ describe('mergeEntry', () => {
   });
 
   it('is commutative for live entries on a tie (no flapping)', () => {
+    // Adapters floor updatedAt to whole seconds, so two edits inside one second
+    // genuinely tie. If the tie-break depends on argument order, each device
+    // keeps its OWN edit (callers merge `(local, remote)`) and republishes
+    // forever. Both orders must land on the same entry.
     const a = liveEntry('x', c('x', 'a'), 100);
     const b = liveEntry('x', c('x', 'b'), 100);
-    expect(mergeEntry(a, b)).toBe(mergeEntry(a, b));
+    expect(mergeEntry(a, b)).toEqual(mergeEntry(b, a));
+  });
+
+  it('picks the tie winner by content, not by key insertion order', () => {
+    // The same payload built with different key order must serialize
+    // identically, or two devices disagree about who won the tie.
+    const a = liveEntry<Contact>('x', {pubkey: 'x', name: 'a'}, 100);
+    const b = liveEntry<Contact>('x', {name: 'b', pubkey: 'x'}, 100);
+    expect(mergeEntry(a, b)).toEqual(mergeEntry(b, a));
   });
 });
 
@@ -75,6 +87,23 @@ describe('mergeMaps — the case folders-sync gets wrong', () => {
       z: liveEntry('z', c('z', 'Z'), 150)
     };
     expect(mergeMaps(a, b)).toEqual(mergeMaps(b, a));
+  });
+
+  it('two devices converge on a same-second concurrent edit (no republish flap)', () => {
+    // The reported bug. A and B each edit contact x inside the SAME second, so
+    // updatedAt ties. Each device merges (own, theirs). If the tie-break is
+    // argument-order dependent, A keeps A's edit and B keeps B's — both then
+    // see a diff against the relay and republish, forever.
+    const editA: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-A'), 100)};
+    const editB: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-B'), 100)};
+
+    const aResult = mergeMaps(editA, editB); // device A: (local, remote)
+    const bResult = mergeMaps(editB, editA); // device B: (local, remote)
+
+    expect(aResult).toEqual(bResult);
+    // ...and having converged, neither device sees a reason to republish.
+    expect(differs(aResult, bResult)).toBe(false);
+    expect(mergeMaps(aResult, bResult)).toEqual(aResult);
   });
 
   it('is idempotent — merging the same remote twice changes nothing', () => {
@@ -171,6 +200,43 @@ describe('differs', () => {
     const a: SyncMap<Contact> = {x: liveEntry('x', c('x', 'X'), 100)};
     const b: SyncMap<Contact> = {y: liveEntry('y', c('y', 'Y'), 100)};
     expect(differs(a, b)).toBe(true);
+  });
+
+  it('true when only the PAYLOAD differs (same id, same second, same liveness)', () => {
+    // The exact shape a same-second tie leaves behind: metadata identical, data
+    // different. A metadata-only comparison calls this "no change" and the
+    // losing snapshot is never overwritten on the relay.
+    const a: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-A'), 100)};
+    const b: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-B'), 100)};
+    expect(differs(a, b)).toBe(true);
+  });
+
+  it('false when payloads are equal but key order differs', () => {
+    // Same canonicalization as the merge tie-break: insertion order is not content.
+    const a: SyncMap<Contact> = {x: {id: 'x', updatedAt: 100, data: {pubkey: 'x', name: 'X'}}};
+    const b: SyncMap<Contact> = {x: {id: 'x', updatedAt: 100, data: {name: 'X', pubkey: 'x'} as Contact}};
+    expect(differs(a, b)).toBe(false);
+  });
+
+  it('a same-second tie loser on the relay IS republished (no silent divergence)', () => {
+    // Regression for the review finding. Relay holds B's edit; this device holds
+    // A's. They tie on updatedAt, so the merge picks a content-deterministic
+    // winner — which has the SAME id/updatedAt/deleted as the loser.
+    const local: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-A'), 100)};
+    const remote: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-B'), 100)};
+    const merged = mergeMaps(local, remote);
+
+    // Whichever side won, reconcile must still see a diff against the LOSER,
+    // or that loser stays on the relay forever and newly paired devices get it.
+    const loser = merged.x.data.name === 'from-A' ? remote : local;
+    const winner = merged.x.data.name === 'from-A' ? local : remote;
+
+    expect(differs(merged, loser)).toBe(true);   // -> publish fires, relay is corrected
+    expect(differs(merged, winner)).toBe(false); // -> and the winner does not churn
+
+    // A device pairing afterwards downloads the corrected relay state and agrees.
+    const newDevice = mergeMaps({}, merged);
+    expect(differs(newDevice, merged)).toBe(false);
   });
 });
 

@@ -72,6 +72,22 @@ export interface RelayPoolOptions {
    * publicKey is hex, privateKeyHex is 64-char hex string.
    */
   preloadedIdentity?: { publicKey: string; privateKeyHex: string };
+  /**
+   * Max number of relays to hold an open socket to simultaneously. Defaults to
+   * Infinity — we connect to EVERY configured relay. A cap is only used by tests
+   * that pin the active set to a specific size. (The old default of 3 caused a
+   * mobile deadlock: flaky sockets flapped, all got benched, and the pool sat at
+   * zero connections forever. We now connect all + stagger + a liveness floor.)
+   */
+  maxActiveRelays?: number;
+  /**
+   * Milliseconds to wait between opening each relay socket. Opening 5+ WebSocket
+   * handshakes at once on a cold mobile radio trips an "insufficient resources"
+   * ceiling and none survive. Staggering the dials ("one at a time") keeps us
+   * under it. Defaults to 0 (open all immediately) so tests stay synchronous;
+   * production passes RELAY_DIAL_STAGGER_MS.
+   */
+  dialStaggerMs?: number;
 }
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -80,11 +96,9 @@ export interface RelayPoolOptions {
 // the app loads (via Playwright addInitScript). Production uses the hardcoded list.
 const _testRelays = typeof window !== 'undefined' && (window as any).__phantomchatTestRelays;
 export const DEFAULT_RELAYS: RelayConfig[] = Array.isArray(_testRelays) ? _testRelays : [
-  {url: 'wss://relay.damus.io', read: true, write: true},
-  {url: 'wss://nos.lol', read: true, write: true},
-  {url: 'wss://relay.primal.net', read: true, write: true},
   {url: 'wss://nostr.mom', read: true, write: true},
-  {url: 'wss://nostr.data.haus', read: true, write: true}
+  {url: 'wss://relay.nostr.com', read: true, write: true},
+  {url: 'wss://relay.nostr.hu', read: true, write: true}
 ];
 
 /**
@@ -118,7 +132,25 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 }
 
 const DEDUP_CACHE_MAX = 10_000;
-const POOL_RECOVERY_INTERVAL_MS = 60_000;
+// Recovery sweep cadence. Tops the active set back up and re-dials any active
+// relay whose socket died without self-reconnecting. Kept short-ish so a fully
+// benched pool (all relays cooling down) is re-evaluated promptly — the liveness
+// floor in superviseConnections guarantees ≥1 relay is always dialing, but this
+// sweep is the backstop that revives the rest as their cooldowns expire.
+const POOL_RECOVERY_INTERVAL_MS = 20_000;
+// Delay between opening each relay socket. We connect to EVERY relay, but not all
+// at once: a burst of simultaneous WebSocket handshakes on a cold mobile radio
+// trips an "insufficient resources" ceiling and none survive, leaving the app
+// stuck at "reconnecting". Dialing one at a time (~350ms apart) stays under the
+// ceiling. This is the production value; tests default to 0 for determinism.
+export const RELAY_DIAL_STAGGER_MS = 350;
+// Consecutive failed socket attempts (transitions into 'reconnecting' WITHOUT an
+// intervening 'connected') before we bench an ACTIVE relay and promote a standby
+// in its place. This is the "swap to another relay" failover: a relay the device
+// simply can't reach (blocked, down, TLS-refused) stops hogging a slot so a
+// reachable standby can take it. A relay that connects fine then blips clears
+// this counter on 'connected', so a healthy relay is never benched for a blip.
+const RELAY_FAILOVER_THRESHOLD = 3;
 // Relay health / cooldown. A relay that keeps dropping shortly after it connects
 // (a "flap") burns CPU + bandwidth: every reconnect re-arms the subscription and
 // fires a since-backfill query, and the relay's own auto-reconnect loop keeps
@@ -201,10 +233,23 @@ export class NostrRelayPool {
   // RelayEntry recreation across connectAll(). `cooldownUntil` is a Date.now()
   // ms deadline; while it's in the future the pool recovery sweep skips the
   // relay and its self-reconnect has been stopped via disconnect().
-  private relayHealth: Map<string, {connectedAt: number; flaps: number; cooldownUntil: number; lastState: string}> = new Map();
+  private relayHealth: Map<string, {connectedAt: number; flaps: number; cooldownUntil: number; lastState: string; failedConnects: number}> = new Map();
 
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
+
+  // Connection supervisor. `activeUrls` is the set of relays we currently hold
+  // (or are dialing) an open socket to — capped at `maxActiveRelays`. Everything
+  // configured but not in this set is on standby (no socket). A relay is removed
+  // from activeUrls when it's benched (flap cooldown or repeated connect
+  // failure), which frees a slot for `superviseConnections()` to fill from
+  // standby. This is the "connect to a few, swap on failure" model.
+  private activeUrls: Set<string> = new Set();
+  private maxActiveRelays: number;
+  private dialStaggerMs: number;
+  // Pending staggered-dial timers, cleared on disconnect so a deferred open
+  // can't resurrect a socket after teardown.
+  private dialTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
@@ -222,6 +267,11 @@ export class NostrRelayPool {
     this.onMessageCb = options.onMessage;
     this.onStateChangeCb = options.onStateChange;
     this._preloadedIdentity = options.preloadedIdentity;
+    // Default: connect to EVERY relay (Infinity). A finite cap is opt-in (tests).
+    this.maxActiveRelays = options.maxActiveRelays != null ?
+      Math.max(1, options.maxActiveRelays) :
+      Number.POSITIVE_INFINITY;
+    this.dialStaggerMs = Math.max(0, options.dialStaggerMs ?? 0);
   }
 
   // ─── Callback setters (for DI / test path) ─────────────────────
@@ -233,6 +283,17 @@ export class NostrRelayPool {
   setOnStateChange(cb: (connectedCount: number, totalCount: number) => void): void {
     this.onStateChangeCb = cb;
   }
+
+  /**
+   * Register an ADDITIONAL state-change listener without displacing the primary
+   * `onStateChangeCb` (which chat-api owns). Used by device-sync to re-advertise
+   * its digest the moment connectivity is restored. Fires on the same debounced
+   * flush as the primary callback.
+   */
+  addStateChangeListener(cb: (connectedCount: number, totalCount: number) => void): void {
+    this._stateChangeListeners.push(cb);
+  }
+  private _stateChangeListeners: Array<(connectedCount: number, totalCount: number) => void> = [];
 
   setOnReceipt(cb: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void): void {
     // Wire receipt handler to all relay instances
@@ -258,6 +319,9 @@ export class NostrRelayPool {
   private _onReceiptCb?: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void;
   private _onRawEventCb?: (event: NostrEvent) => void;
   private _onPresenceCb?: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void;
+  private _onDigestCb?: (digest: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => void;
+  private _onSyncReqCb?: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => void;
+  private _onSyncResCb?: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => void;
 
   /**
    * Register a callback for presence PING / PONG control envelopes. These ride
@@ -268,6 +332,130 @@ export class NostrRelayPool {
    */
   setOnPresence(cb: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void): void {
     this._onPresenceCb = cb;
+  }
+
+  /**
+   * Register a callback for device-sync DIGEST control envelopes. Unlike presence
+   * (which targets a peer), a digest is SELF-addressed: a device advertises "for
+   * conversation X I hold `count` messages, newest is `latestId`" so our OWN other
+   * devices can detect they're behind and pull the gap. Rides the kind-1059
+   * gift-wrap path (private, repeats like the typing pulse so a late-connecting
+   * device catches the next beat) and is intercepted before ever becoming a bubble.
+   * Only fires for digests authored by us (our other device); our own echo is
+   * filtered out by deviceId inside the device-sync module.
+   *
+   * `sentAt` is the AUTHORING device's wall-clock (ms) taken from the envelope
+   * payload. Control envelopes are STORED gift-wraps, so a reconnecting device
+   * replays the entire backlog of them — `sentAt` is what lets the device-sync
+   * module tell a live pulse from a replayed one and drop the latter.
+   */
+  setOnDigest(cb: (digest: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => void): void {
+    this._onDigestCb = cb;
+  }
+
+  /**
+   * Register a callback for device-sync REQUEST envelopes (a behind device asking
+   * a fuller device for the rows it's missing). Self-authored like the digest, so
+   * only fires for msg.from === self; the device-sync module ignores requests not
+   * targeted at its own deviceId.
+   */
+  setOnSyncRequest(cb: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => void): void {
+    this._onSyncReqCb = cb;
+  }
+
+  /**
+   * Register a callback for device-sync RESPONSE envelopes (the fuller device
+   * returning the missing rows). Self-authored; the device-sync module ingests
+   * only responses targeted at its own deviceId, strict-union.
+   */
+  setOnSyncResponse(cb: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => void): void {
+    this._onSyncResCb = cb;
+  }
+
+  /**
+   * Publish a SELF-addressed device-sync digest for one conversation. Wraps the
+   * envelope `{type:'device-digest', ...}` to our OWN pubkey so it reaches our
+   * other devices' `#p == self` subscription (never the peer). Best-effort: a
+   * digest is advisory — a dropped one is re-sent on the next pulse.
+   */
+  async publishSelfDigest(payload: {deviceId: string; conv: string; count: number; latestId: string}): Promise<void> {
+    await this.publishSelfControl({
+      type: 'device-digest',
+      deviceId: payload.deviceId,
+      conv: payload.conv,
+      count: payload.count,
+      latestId: payload.latestId
+    });
+  }
+
+  /**
+   * Device-sync REQUEST: "I'm behind on conversation `conv`; here are the eventIds
+   * I already hold (`haveIds`). Whichever of my devices is `targetId`, send me the
+   * rows I'm missing." Self-addressed like the digest, so only our own devices see
+   * it. Best-effort — a dropped request is re-issued on the next digest/typing edge.
+   */
+  async publishSyncRequest(payload: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}): Promise<void> {
+    await this.publishSelfControl({
+      type: 'device-sync-req',
+      deviceId: payload.deviceId,
+      targetId: payload.targetId,
+      conv: payload.conv,
+      haveIds: payload.haveIds,
+      // Optional: bound the reconcile to the last `limit` rows of the conversation
+      // (used by the sync-before-render barrier so an incoming message waits on a
+      // cheap recent catch-up, never a full-history pull).
+      ...(payload.recentOnly ? {recentOnly: true} : {}),
+      ...(typeof payload.limit === 'number' ? {limit: payload.limit} : {})
+    });
+  }
+
+  /**
+   * Device-sync RESPONSE: the fuller device answers a request with the full rows
+   * the requester was missing, chunked (`seq`/`last`) so a big backlog doesn't
+   * exceed one gift-wrap. Self-addressed; `targetId` is the requesting device.
+   */
+  async publishSyncResponse(payload: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}): Promise<void> {
+    await this.publishSelfControl({
+      type: 'device-sync-res',
+      deviceId: payload.deviceId,
+      targetId: payload.targetId,
+      conv: payload.conv,
+      rows: payload.rows,
+      seq: payload.seq,
+      last: payload.last
+    });
+  }
+
+  /**
+   * Wrap a control envelope to our OWN pubkey (both NIP-17 wraps are p-tagged to
+   * us; we publish the self wrap) and fan it out to every enabled write relay.
+   * Shared by all self-addressed device-sync envelopes (digest / request /
+   * response). Best-effort per relay — these are advisory and re-sent on retry.
+   */
+  private async publishSelfControl(envelope: Record<string, unknown>): Promise<void> {
+    if(!this.privateKeyBytes) return;
+    const payload = JSON.stringify({...envelope, timestamp: Date.now()});
+
+    let selfWrap: NostrEvent | undefined;
+    try {
+      const {wraps} = wrapNip17Message(this.privateKeyBytes, this.publicKey, payload);
+      selfWrap = (wraps[1] ?? wraps[0]) as unknown as NostrEvent;
+    } catch(err) {
+      this.log.debug('[NostrRelayPool] self-control wrap failed:', err);
+      return;
+    }
+    if(!selfWrap) return;
+
+    const writeEntries = this.relayEntries.filter(e =>
+      e.config.write && this.enabled.get(e.config.url) !== false
+    );
+    for(const entry of writeEntries) {
+      try {
+        entry.instance.publishRawEvent(selfWrap);
+      } catch{
+        // best-effort per relay; device-sync control envelopes are advisory
+      }
+    }
   }
 
   /**
@@ -423,11 +611,17 @@ export class NostrRelayPool {
       this.backfillPollInterval = null;
     }
 
+    for(const timer of this.dialTimers) {
+      clearTimeout(timer);
+    }
+    this.dialTimers.clear();
+
     for(const entry of this.relayEntries) {
       entry.instance.disconnect();
     }
 
     this.relayEntries = [];
+    this.activeUrls.clear();
     this.isSubscribedFlag = false;
   }
 
@@ -853,13 +1047,9 @@ export class NostrRelayPool {
     const entry = this.createRelayEntry(config);
     this.relayEntries.push(entry);
 
-    // Initialize and connect (fire-and-forget)
-    entry.instance.initialize().then(() => {
-      if(this.isSubscribedFlag && config.read) {
-        entry.instance.pendingSubscribe = true;
-      }
-      entry.instance.connect();
-    });
+    // Connect now if there's a free active slot; otherwise it waits on standby
+    // and the supervisor promotes it when an active relay is benched.
+    void this.superviseConnections();
 
     this.persistRelayConfig();
     this.notifyStateChange();
@@ -875,7 +1065,10 @@ export class NostrRelayPool {
 
     this.configs = this.configs.filter(c => c.url !== url);
     this.enabled.delete(url);
+    this.activeUrls.delete(url);
     this.persistRelayConfig();
+    // Removing an active relay frees a slot — pull a standby up to keep target.
+    void this.superviseConnections();
     this.notifyStateChange();
     this.dispatchRelayListChanged();
   }
@@ -910,6 +1103,9 @@ export class NostrRelayPool {
   }
 
   disableRelay(url: string): void {
+    // "Disabled" excludes a relay from publish/read fan-out but keeps its socket
+    // — it is a policy flag, not a physical disconnect. Slot accounting is
+    // unaffected (a disabled-but-connected relay still holds its socket).
     this.enabled.set(url, false);
     this.dispatchRelayListChanged();
   }
@@ -1026,6 +1222,9 @@ export class NostrRelayPool {
       }
       this.trackRelayHealth(config.url, instance.getState());
       this.notifyStateChange();
+      // Top up the active set: a relay just dropped/benched may have freed a
+      // slot a standby should fill. Cheap no-op when already at target.
+      void this.superviseConnections();
     };
 
     // Notify pool on latency update so UI re-dispatches phantomchat_relay_state
@@ -1088,6 +1287,51 @@ export class NostrRelayPool {
       return;
     }
 
+    // Device-sync DIGEST interception. Like presence, it rides the gift-wrap path
+    // but is a control envelope, not chat: route to the digest callback and stop
+    // (no bubble, no delivery receipt, no watermark advance). A digest is ALWAYS
+    // self-authored (our own other device advertising what it holds), so unlike
+    // presence we require msg.from === self. The device-sync module drops our own
+    // echo by deviceId.
+    const digest = this.parseDigestEnvelope(msg);
+    if(digest) {
+      if(msg.from === this.publicKey && this._onDigestCb) {
+        try {
+          this._onDigestCb(digest);
+        } catch(err) {
+          this.log.error('[NostrRelayPool] digest handler threw:', err);
+        }
+      }
+      return;
+    }
+
+    // Device-sync REQUEST / RESPONSE interception. Same self-authored control-
+    // envelope contract as the digest: only honor msg.from === self, never surface
+    // as a bubble. The device-sync module owns targeting (deviceId) and strict-union.
+    const syncReq = this.parseSyncRequestEnvelope(msg);
+    if(syncReq) {
+      if(msg.from === this.publicKey && this._onSyncReqCb) {
+        try {
+          this._onSyncReqCb(syncReq);
+        } catch(err) {
+          this.log.error('[NostrRelayPool] sync-request handler threw:', err);
+        }
+      }
+      return;
+    }
+
+    const syncRes = this.parseSyncResponseEnvelope(msg);
+    if(syncRes) {
+      if(msg.from === this.publicKey && this._onSyncResCb) {
+        try {
+          this._onSyncResCb(syncRes);
+        } catch(err) {
+          this.log.error('[NostrRelayPool] sync-response handler threw:', err);
+        }
+      }
+      return;
+    }
+
     // Update lastSeenTimestamp
     if(msg.timestamp > this.lastSeenTimestamp) {
       this.lastSeenTimestamp = msg.timestamp;
@@ -1118,6 +1362,89 @@ export class NostrRelayPool {
     return null;
   }
 
+  /**
+   * Cheap classifier: is this decrypted message a device-sync digest envelope?
+   * Returns the parsed digest, or null for anything else (chat text, presence,
+   * non-JSON). Only JSON content carrying our `device-digest` type matches, so a
+   * normal message or a presence ping returns null and flows on.
+   */
+  private parseDigestEnvelope(msg: DecryptedMessage): {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number} | null {
+    const content = msg.content;
+    // Fast reject: digest envelopes always contain the marker substring.
+    if(typeof content !== 'string' || content.indexOf('device-digest') === -1) return null;
+    try {
+      const env = JSON.parse(content);
+      if(env?.type !== 'device-digest') return null;
+      if(typeof env.deviceId !== 'string' || typeof env.conv !== 'string') return null;
+      return {
+        deviceId: env.deviceId,
+        conv: env.conv,
+        count: typeof env.count === 'number' ? env.count : 0,
+        latestId: typeof env.latestId === 'string' ? env.latestId : '',
+        // `publishSelfControl` always stamps `timestamp` (ms). Surfacing it lets the
+        // device-sync module drop replayed backlog envelopes.
+        ...(typeof env.timestamp === 'number' ? {sentAt: env.timestamp} : {})
+      };
+    } catch{
+      // not JSON — a plain message
+    }
+    return null;
+  }
+
+  /**
+   * Cheap classifier: is this decrypted message a device-sync REQUEST envelope?
+   * Returns the parsed request, or null. Only self-authored JSON carrying our
+   * `device-sync-req` type matches.
+   */
+  private parseSyncRequestEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number} | null {
+    const content = msg.content;
+    if(typeof content !== 'string' || content.indexOf('device-sync-req') === -1) return null;
+    try {
+      const env = JSON.parse(content);
+      if(env?.type !== 'device-sync-req') return null;
+      if(typeof env.deviceId !== 'string' || typeof env.targetId !== 'string' || typeof env.conv !== 'string') return null;
+      return {
+        deviceId: env.deviceId,
+        targetId: env.targetId,
+        conv: env.conv,
+        haveIds: Array.isArray(env.haveIds) ? env.haveIds.filter((x: unknown) => typeof x === 'string') : [],
+        ...(env.recentOnly === true ? {recentOnly: true} : {}),
+        ...(typeof env.limit === 'number' ? {limit: env.limit} : {}),
+        ...(typeof env.timestamp === 'number' ? {sentAt: env.timestamp} : {})
+      };
+    } catch{
+      // not JSON — a plain message
+    }
+    return null;
+  }
+
+  /**
+   * Cheap classifier: is this decrypted message a device-sync RESPONSE envelope?
+   * Returns the parsed response, or null. Only self-authored JSON carrying our
+   * `device-sync-res` type matches. Row shape is validated by the device-sync module.
+   */
+  private parseSyncResponseEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number} | null {
+    const content = msg.content;
+    if(typeof content !== 'string' || content.indexOf('device-sync-res') === -1) return null;
+    try {
+      const env = JSON.parse(content);
+      if(env?.type !== 'device-sync-res') return null;
+      if(typeof env.deviceId !== 'string' || typeof env.targetId !== 'string' || typeof env.conv !== 'string') return null;
+      return {
+        deviceId: env.deviceId,
+        targetId: env.targetId,
+        conv: env.conv,
+        rows: Array.isArray(env.rows) ? env.rows : [],
+        seq: typeof env.seq === 'number' ? env.seq : 0,
+        last: env.last === true,
+        ...(typeof env.timestamp === 'number' ? {sentAt: env.timestamp} : {})
+      };
+    } catch{
+      // not JSON — a plain message
+    }
+    return null;
+  }
+
   private handleIncomingRawEvent(event: NostrEvent): void {
     if(!event.id) return;
     // Reuse the same LRU as gift-wrap dedup; event ids are globally unique.
@@ -1139,21 +1466,134 @@ export class NostrRelayPool {
 
   private async connectAll(): Promise<void> {
     this.relayEntries = [];
+    this.activeUrls.clear();
 
-    const promises = this.configs.map(async(config) => {
-      const entry = this.createRelayEntry(config);
-      this.relayEntries.push(entry);
+    // Create an entry for EVERY configured relay so they're all addressable,
+    // but only open a socket to the first `maxActiveRelays`. The remainder stay
+    // on standby (no socket) until a slot frees — see superviseConnections().
+    for(const config of this.configs) {
+      this.relayEntries.push(this.createRelayEntry(config));
+    }
 
-      try {
-        await entry.instance.initialize();
-        entry.instance.connect();
-      } catch(err) {
-        this.log.error('[NostrRelayPool] failed to connect relay:', config.url, err);
-      }
-    });
-
-    await Promise.all(promises);
+    await this.superviseConnections();
     this.notifyStateChange();
+  }
+
+  /**
+   * Open a socket to a relay, optionally after a stagger delay. Claiming the slot
+   * (activeUrls.add) is done by the CALLER, synchronously, before this runs — so
+   * a concurrent supervise pass counts the slot as taken and doesn't over-dial.
+   * The actual initialize()+connect() may be deferred (staggered) so a burst of
+   * dials doesn't slam a cold mobile radio; every deferred open re-checks that
+   * the relay is still active (not benched/removed during the delay).
+   */
+  private openRelaySocket(entry: RelayEntry, delayMs: number): void {
+    const url = entry.config.url;
+    const open = () => {
+      if(!this.activeUrls.has(url)) return; // benched/removed during the stagger
+      entry.instance.initialize().then(() => {
+        if(!this.activeUrls.has(url)) return;
+        if(this.isSubscribedFlag && entry.config.read) {
+          entry.instance.pendingSubscribe = true;
+        }
+        entry.instance.connect();
+      }).catch((err) => {
+        this.log.error('[NostrRelayPool] failed to open relay socket:', url, err);
+      });
+    };
+    if(delayMs > 0) {
+      const timer = setTimeout(() => {
+        this.dialTimers.delete(timer);
+        open();
+      }, delayMs);
+      this.dialTimers.add(timer);
+    } else {
+      open();
+    }
+  }
+
+  /**
+   * Keep every eligible relay holding a socket (up to `maxActiveRelays`, which is
+   * Infinity by default — connect to ALL relays). Slots are held by membership in
+   * `activeUrls` (benching removes a url, freeing its slot). Newly-opened sockets
+   * are STAGGERED (`dialStaggerMs` apart) so we never fan out a burst of
+   * handshakes at once. Skips user-disabled relays and those serving a
+   * flap/failover cooldown.
+   *
+   * Liveness floor: the pool must NEVER sit with zero relays dialing. If every
+   * relay is benched (all cooling down) the normal promote loop would skip them
+   * all and the app would hang at "reconnecting" forever — the exact bug the old
+   * hard cap caused. So when nothing is active we force-revive the relay whose
+   * cooldown expires soonest, ignoring its cooldown, guaranteeing there is always
+   * one relay trying. It self-heals the instant connectivity returns; if it keeps
+   * failing it rotates (each failover-bench sets a fresh cooldown, moving another
+   * relay to "soonest").
+   */
+  private async superviseConnections(): Promise<void> {
+    const now = Date.now();
+    const toOpen: RelayEntry[] = [];
+
+    // Re-dial any ACTIVE relay whose socket fully dropped and isn't
+    // self-reconnecting (state 'disconnected'), unless it's benched. Active
+    // relays normally self-heal via their own reconnect loop; this covers a
+    // socket that died without arming one.
+    for(const entry of this.relayEntries) {
+      if(!this.activeUrls.has(entry.config.url)) continue;
+      if(entry.instance.getState() !== 'disconnected') continue;
+      const health = this.relayHealth.get(entry.config.url);
+      if(health && health.cooldownUntil > now) continue;
+      toOpen.push(entry);
+    }
+
+    // Promote standby relays up to target (default: all of them), claiming each
+    // slot synchronously so counting stays race-free across the stagger delay.
+    let need = this.maxActiveRelays - this.activeUrls.size;
+    for(const entry of this.relayEntries) {
+      if(need <= 0) break;
+      const url = entry.config.url;
+      if(this.activeUrls.has(url)) continue;             // already active/dialing
+      if(this.enabled.get(url) === false) continue;      // user-disabled
+      const health = this.relayHealth.get(url);
+      if(health && health.cooldownUntil > now) continue; // benched, cooling down
+      this.activeUrls.add(url);
+      toOpen.push(entry);
+      need--;
+    }
+
+    // Liveness floor: if nothing is active/dialing, force-revive the
+    // soonest-cooldown relay so the pool can never deadlock at zero connections.
+    if(this.activeUrls.size === 0) {
+      const candidates = this.relayEntries.filter(
+        (e) => this.enabled.get(e.config.url) !== false
+      );
+      if(candidates.length) {
+        candidates.sort((a, b) => {
+          const ca = this.relayHealth.get(a.config.url)?.cooldownUntil ?? 0;
+          const cb = this.relayHealth.get(b.config.url)?.cooldownUntil ?? 0;
+          return ca - cb;
+        });
+        const revive = candidates[0];
+        this.log('[NostrRelayPool] all relays benched — liveness revive of', revive.config.url);
+        this.activeUrls.add(revive.config.url);
+        toOpen.push(revive);
+      }
+    }
+
+    // Open the collected sockets one at a time (staggered).
+    toOpen.forEach((entry, i) => this.openRelaySocket(entry, i * this.dialStaggerMs));
+  }
+
+  /**
+   * Bench an active relay and free its slot so a standby can take over. Used by
+   * both failure paths (flap cooldown, repeated connect failure). Sets a cooldown
+   * so the recovery sweep won't immediately re-promote the same sick relay, drops
+   * it from the active set, and hard-disconnects to stop its own retry loop.
+   */
+  private benchRelay(url: string, cooldownMs: number): void {
+    const health = this.relayHealth.get(url);
+    if(health) health.cooldownUntil = Date.now() + cooldownMs;
+    this.activeUrls.delete(url);
+    this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
   }
 
   /**
@@ -1261,25 +1701,10 @@ export class NostrRelayPool {
   }
 
   private recoverFailedRelays(): void {
-    const now = Date.now();
-    for(const entry of this.relayEntries) {
-      if(entry.instance.getState() !== 'disconnected') continue;
-
-      // Skip relays still serving a flap cooldown — retrying now would just
-      // re-arm a subscription that drops again within seconds.
-      const health = this.relayHealth.get(entry.config.url);
-      if(health && health.cooldownUntil > now) continue;
-
-      this.log('[NostrRelayPool] pool recovery: retrying', entry.config.url);
-      entry.instance.initialize().then(() => {
-        if(this.isSubscribedFlag && entry.config.read) {
-          entry.instance.pendingSubscribe = true;
-        }
-        entry.instance.connect();
-      }).catch((err) => {
-        this.log.error('[NostrRelayPool] pool recovery failed for:', entry.config.url, err);
-      });
-    }
+    // Active relays self-reconnect; benched relays sit on standby with a
+    // cooldown. Recovery is simply topping the active set back up to target —
+    // superviseConnections() promotes standby relays whose cooldown has expired.
+    void this.superviseConnections();
   }
 
   /**
@@ -1296,7 +1721,7 @@ export class NostrRelayPool {
   private trackRelayHealth(url: string, state: string): void {
     let health = this.relayHealth.get(url);
     if(!health) {
-      health = {connectedAt: -1, flaps: 0, cooldownUntil: 0, lastState: 'disconnected'};
+      health = {connectedAt: -1, flaps: 0, cooldownUntil: 0, lastState: 'disconnected', failedConnects: 0};
       this.relayHealth.set(url, health);
     }
 
@@ -1306,7 +1731,24 @@ export class NostrRelayPool {
 
     if(state === 'connected') {
       health.connectedAt = now;
+      health.failedConnects = 0; // reachable again — clear the failover streak
       return;
+    }
+
+    // Failover: a relay entering 'reconnecting' without ever having connected is
+    // a failed socket attempt. After RELAY_FAILOVER_THRESHOLD of these in a row,
+    // bench this ACTIVE relay and let a standby take its slot — a relay the
+    // device simply can't reach shouldn't monopolise one of the few live slots.
+    // (A relay that connected then dropped has failedConnects reset to 0 above,
+    // so a healthy relay's blip never trips this.)
+    if(state === 'reconnecting' && !wasConnected) {
+      health.failedConnects = (health.failedConnects || 0) + 1;
+      if(this.activeUrls.has(url) && health.failedConnects >= RELAY_FAILOVER_THRESHOLD) {
+        health.failedConnects = 0;
+        this.log('[NostrRelayPool] relay unreachable — failing over off', url);
+        this.benchRelay(url, RELAY_COOLDOWN_BASE_MS);
+        return;
+      }
     }
 
     // Only a transition out of a real connected session is a candidate flap.
@@ -1327,13 +1769,13 @@ export class NostrRelayPool {
       RELAY_COOLDOWN_BASE_MS * 2 ** (health.flaps - RELAY_FLAP_THRESHOLD),
       RELAY_COOLDOWN_MAX_MS
     );
-    health.cooldownUntil = now + backoff;
     this.log(
       '[NostrRelayPool] relay flapping — cooling down', url,
       'for', Math.round(backoff / 1000), 's (flaps:', health.flaps + ')'
     );
-    // Stop the instance's own auto-reconnect for the cooldown window.
-    this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
+    // Bench for the cooldown window: frees the slot for a standby AND stops the
+    // instance's own auto-reconnect loop.
+    this.benchRelay(url, backoff);
   }
 
   private notifyStateChange(): void {
@@ -1351,8 +1793,16 @@ export class NostrRelayPool {
   }
 
   private flushStateChange(): void {
+    const connected = this.getConnectedCount();
     if(this.onStateChangeCb) {
-      this.onStateChangeCb(this.getConnectedCount(), this.relayEntries.length);
+      this.onStateChangeCb(connected, this.relayEntries.length);
+    }
+    for(const cb of this._stateChangeListeners) {
+      try {
+        cb(connected, this.relayEntries.length);
+      } catch(err) {
+        this.log.debug('[NostrRelayPool] extra state-change listener threw:', err);
+      }
     }
 
     // Dispatch phantomchat_relay_state events for each relay
