@@ -82,6 +82,37 @@ const RECENT_PULL_THROTTLE_MS = 2_000;
 const SIBLING_LIVE_WINDOW_MS = 90_000;
 
 /**
+ * Control envelopes (digest / sync req / sync res) ride the gift-wrap path, which
+ * means relays STORE them. A device that connects therefore replays the entire
+ * backlog of them — potentially hundreds of digests going back days. Acting on that
+ * replay is wrong in two distinct ways:
+ *
+ *   1. STORM — every replayed digest ran a full compare and could fire a sync
+ *      request, so a reconnect kicked off a burst of request/response churn.
+ *   2. PHANTOM SIBLING — a replayed digest set `lastSiblingActivityAt = now`, so
+ *      `hasLiveSibling()` reported true for 90s even when NO other device was
+ *      online. Every incoming message in that window then hard-blocked the
+ *      sync-before-render barrier for its full ceiling waiting on a pull that
+ *      nobody would ever answer.
+ *
+ * So a control envelope is only honored when the AUTHORING device stamped it within
+ * this window. Replayed history is inert. The window is generous relative to the
+ * 45s heartbeat (a live pulse always lands well inside it) and to clock skew between
+ * a user's own NTP-synced devices, but far tighter than the age of any backlog.
+ *
+ * Fail-open on a MISSING stamp: every envelope this code publishes carries one, so
+ * absence means an envelope shape we don't know — treat it as live rather than
+ * silently deafening device-sync against an older build.
+ */
+const CONTROL_FRESHNESS_MS = 120_000;
+
+/** Collapse byte-identical digests arriving inside this window (multi-relay fan-in). */
+const DIGEST_DEDUP_WINDOW_MS = 10_000;
+
+/** Floor between reciprocal "actually, I hold more" digest replies per conv (ms). */
+const DIGEST_REPLY_THROTTLE_MS = 6_000;
+
+/**
  * Wire subset of a StoredMessage sufficient to reconstruct + render a bubble on
  * the receiving device. `mid`/`twebPeerId` are deterministic (derived from
  * eventId+timestamp / pubkey) so they are RECOMPUTED on receive, never trusted
@@ -127,9 +158,29 @@ const pendingRecentPulls = new Map<string, {resolve: () => void; timer: ReturnTy
 
 /**
  * Wall-clock of the last self-control envelope we heard from ANOTHER device.
- * Drives `hasLiveSibling()` — the gate for the sync-before-render barrier.
+ * Drives `hasLiveSibling()` — the gate for the sync-before-render barrier. Only
+ * ever advanced by a FRESH envelope (see CONTROL_FRESHNESS_MS); a replayed one
+ * must not fake a live sibling.
  */
 let lastSiblingActivityAt = 0;
+
+/** Last identical digest we acted on, keyed by digest identity → when we saw it. */
+const recentDigestSeen = new Map<string, number>();
+
+/** Digest we last PUBLISHED per conversation — lets the heartbeat skip a no-op. */
+const lastPublishedDigest = new Map<string, string>();
+
+/** Per-conversation floor on reciprocal digest replies to a behind sibling. */
+const lastDigestReplyAt = new Map<string, number>();
+
+/**
+ * True when the authoring device stamped this control envelope recently enough to
+ * be a LIVE pulse rather than a replayed backlog entry. Missing stamp → fail open.
+ */
+function isFreshControl(sentAt?: number): boolean {
+  if(typeof sentAt !== 'number' || sentAt <= 0) return true; // unknown shape — fail open
+  return (Date.now() - sentAt) < CONTROL_FRESHNESS_MS;
+}
 
 let ownPubkey: string | null = null;
 
@@ -172,13 +223,13 @@ export async function initDeviceSync(pubkey: string): Promise<void> {
   try {
     const pool = (window as any).__phantomchatChatAPI?.relayPool;
     if(pool?.setOnDigest) {
-      pool.setOnDigest((d: {deviceId: string; conv: string; count: number; latestId: string}) => onRemoteDigest(d));
+      pool.setOnDigest((d: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => onRemoteDigest(d));
     }
     if(pool?.setOnSyncRequest) {
-      pool.setOnSyncRequest((r: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}) => onSyncRequest(r));
+      pool.setOnSyncRequest((r: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => onSyncRequest(r));
     }
     if(pool?.setOnSyncResponse) {
-      pool.setOnSyncResponse((r: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}) => onSyncResponse(r));
+      pool.setOnSyncResponse((r: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => onSyncResponse(r));
     }
   } catch(err) {
     console.debug(`${LOG_PREFIX} pool wiring failed:`, (err as Error)?.message);
@@ -209,8 +260,19 @@ export async function initDeviceSync(pubkey: string): Promise<void> {
 /**
  * Compute the digest for the currently-open conversation and self-publish it.
  * No-op when no P2P chat is open or the pool isn't ready.
+ *
+ * `force` distinguishes the two reasons we advertise:
+ *   - The periodic HEARTBEAT (force=false) exists to catch a device that connected
+ *     late. But a digest is a STORED event, so an idle chat re-publishing the same
+ *     unchanged digest every 45s writes garbage to the relays forever. So the
+ *     heartbeat publishes only when the digest actually CHANGED since our last one.
+ *   - An EXPLICIT trigger (force=true) — chat-open, reconnect, foreground, a local
+ *     send/receive, or a reciprocal reply to a behind sibling — always publishes,
+ *     even unchanged, because those are precisely the moments some other device
+ *     needs to hear us. Without the force the change-gate would suppress exactly
+ *     the advertisement a freshly-connected sibling is waiting on.
  */
-export async function publishActiveDigest(): Promise<void> {
+export async function publishActiveDigest(opts?: {force?: boolean}): Promise<void> {
   const peer = activePeerPubkey;
   if(!peer || !ownPubkey) return;
   try {
@@ -225,7 +287,12 @@ export async function publishActiveDigest(): Promise<void> {
     // Nothing to advertise for an empty conversation.
     if(count === 0) return;
 
+    // Idle heartbeat on an unchanged conversation — say nothing, store nothing.
+    const key = `${count}:${latestId}`;
+    if(!opts?.force && lastPublishedDigest.get(conv) === key) return;
+
     await pool.publishSelfDigest({deviceId, conv, count, latestId});
+    lastPublishedDigest.set(conv, key);
     console.log(`${LOG_PREFIX} → digest ${conv.slice(0, 12)}… count=${count}`);
   } catch(err) {
     console.debug(`${LOG_PREFIX} publishActiveDigest failed:`, (err as Error)?.message);
@@ -237,12 +304,31 @@ export async function publishActiveDigest(): Promise<void> {
  * record it and, if it advertises more than we hold for that conversation, show
  * the transient "syncing" indicator. (Increment 2 will pull the gap here.)
  */
-export async function onRemoteDigest(d: {deviceId: string; conv: string; count: number; latestId: string}): Promise<void> {
+export async function onRemoteDigest(d: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}): Promise<void> {
   if(!d || !d.conv) return;
   if(d.deviceId && d.deviceId === deviceId) return; // our own echo — ignore
 
-  lastSiblingActivityAt = Date.now(); // proof a sibling device is live
-  remoteDigests.set(d.conv, {deviceId: d.deviceId, count: d.count, latestId: d.latestId, at: Date.now()});
+  // Replayed backlog, not a live pulse: don't compare, don't request, and above all
+  // don't let it masquerade as a live sibling and arm the render barrier.
+  if(!isFreshControl(d.sentAt)) return;
+
+  // Byte-identical digest we just acted on (same event fanned in from several
+  // relays). Window is short on purpose: a genuinely REPEATED pulse 45s later must
+  // still get through, because the re-send IS the retry that heals a lost pull.
+  const now = Date.now();
+  const identity = `${d.deviceId}|${d.conv}|${d.count}|${d.latestId}`;
+  if(now - (recentDigestSeen.get(identity) || 0) < DIGEST_DEDUP_WINDOW_MS) return;
+  recentDigestSeen.set(identity, now);
+  // Every distinct digest mints a new key, so drop entries that have aged past the
+  // dedup window rather than letting the map grow for the life of the session.
+  if(recentDigestSeen.size > 64) {
+    for(const [k, seenAt] of recentDigestSeen) {
+      if(now - seenAt >= DIGEST_DEDUP_WINDOW_MS) recentDigestSeen.delete(k);
+    }
+  }
+
+  lastSiblingActivityAt = now; // proof a sibling device is live
+  remoteDigests.set(d.conv, {deviceId: d.deviceId, count: d.count, latestId: d.latestId, at: now});
   console.log(`${LOG_PREFIX} ← digest ${d.conv.slice(0, 12)}… count=${d.count} from device ${(d.deviceId || '?').slice(0, 8)}`);
 
   try {
@@ -258,6 +344,23 @@ export async function onRemoteDigest(d: {deviceId: string; conv: string; count: 
       showSyncingIndicator();
       // Increment 2: pull the gap from the device that advertised more.
       void requestSyncFromDevice(d.conv, d.deviceId);
+      return;
+    }
+
+    // The sibling is BEHIND us. Reciprocate: force-publish our digest so it learns
+    // we hold more and pulls. This is what keeps catch-up working now that the idle
+    // heartbeat is change-gated — an idle-but-fuller device would otherwise stay
+    // silent forever and a freshly-connected behind device would never hear anyone
+    // advertising more than it holds.
+    if(d.count < local.count) {
+      // publishActiveDigest only ever speaks for the OPEN chat, so a reciprocal is
+      // only meaningful when the sibling is talking about that same conversation.
+      const activeConv = activePeerPubkey ? store.getConversationId(ownPubkey, activePeerPubkey) : null;
+      if(d.conv !== activeConv) return;
+      if(now - (lastDigestReplyAt.get(d.conv) || 0) < DIGEST_REPLY_THROTTLE_MS) return;
+      lastDigestReplyAt.set(d.conv, now);
+      console.log(`${LOG_PREFIX} sibling behind on ${d.conv.slice(0, 12)}… (theirs=${d.count} ours=${local.count}) — re-advertising`);
+      void publishActiveDigest({force: true});
     }
   } catch(err) {
     console.debug(`${LOG_PREFIX} onRemoteDigest compare failed:`, (err as Error)?.message);
@@ -274,7 +377,7 @@ export function pokeDeviceSync(): void {
   if(pokeTimer) clearTimeout(pokeTimer);
   pokeTimer = setTimeout(() => {
     pokeTimer = null;
-    void publishActiveDigest();
+    void publishActiveDigest({force: true});
   }, POKE_DEBOUNCE_MS);
 }
 
@@ -437,7 +540,7 @@ async function onChatOpen(peerId: number): Promise<void> {
   activePeerPubkey = pubkey; // null for group/other — stops advertising
   if(!pubkey) return;
   console.log(`${LOG_PREFIX} chat-open: peer ${peerId} (${pubkey.slice(0, 8)}) — advertising digest`);
-  void publishActiveDigest();
+  void publishActiveDigest({force: true});
 }
 
 /**
@@ -469,7 +572,7 @@ function wireReconnectTrigger(): void {
     // it without clobbering existing subscribers by wrapping the current callback.
     if(pool && typeof pool.addStateChangeListener === 'function') {
       pool.addStateChangeListener((connected: number) => {
-        if(connected > 0) void publishActiveDigest();
+        if(connected > 0) void publishActiveDigest({force: true});
       });
     }
   } catch(err) {
@@ -482,7 +585,7 @@ function wireForegroundTrigger(): void {
   if(typeof document === 'undefined') return;
   try {
     document.addEventListener('visibilitychange', () => {
-      if(document.visibilityState === 'visible') void publishActiveDigest();
+      if(document.visibilityState === 'visible') void publishActiveDigest({force: true});
     });
   } catch(err) {
     console.debug(`${LOG_PREFIX} wireForegroundTrigger failed:`, (err as Error)?.message);
@@ -523,11 +626,15 @@ async function requestSyncFromDevice(conv: string, targetDeviceId: string): Prom
  * its have-set), chunk it, and answer. No-op when the request isn't aimed at us
  * or we hold nothing extra.
  */
-async function onSyncRequest(req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}): Promise<void> {
+async function onSyncRequest(req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}): Promise<void> {
   if(!req || req.deviceId === deviceId) return;      // our own echo
   // targetId '' is a BROADCAST (sync-before-render) that ANY sibling answers; a
   // non-empty targetId must match this device (the classic digest-driven pull).
   if(req.targetId && req.targetId !== deviceId) return;
+  // A replayed request is stale by definition — the asking device long since either
+  // got its answer or moved on. Answering it would publish a fresh response backlog
+  // to the relays for nobody, and fake a live sibling for the render barrier.
+  if(!isFreshControl(req.sentAt)) return;
   lastSiblingActivityAt = Date.now();               // proof a sibling is live
   try {
     const pool = (window as any).__phantomchatChatAPI?.relayPool;
@@ -579,10 +686,15 @@ async function onSyncRequest(req: {deviceId: string; targetId: string; conv: str
  * ingest only rows we don't already hold (by eventId); never delete. Each new row
  * is persisted and, if its chat is open, painted live.
  */
-async function onSyncResponse(res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}): Promise<void> {
+async function onSyncResponse(res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}): Promise<void> {
   if(!res || res.targetId !== deviceId) return;      // not aimed at this device
   if(res.deviceId === deviceId) return;              // our own echo
-  lastSiblingActivityAt = Date.now();               // proof a sibling is live
+  // Deliberately NOT freshness-gated for INGEST: a response carries real rows, and
+  // strict-union ingest is purely additive — a slow response that arrives late is
+  // still worth applying. (Replays from a past session are already inert: they
+  // target a previous session's deviceId, which the check above rejects.)
+  // Liveness, though, must only ever come from a FRESH envelope.
+  if(isFreshControl(res.sentAt)) lastSiblingActivityAt = Date.now();
 
   let applied = 0;
   if(Array.isArray(res.rows) && res.rows.length > 0) {
@@ -741,6 +853,9 @@ export function destroyDeviceSync(): void {
   lastRecentPullAt.clear();
   remoteDigests.clear();
   lastRequestAt.clear();
+  recentDigestSeen.clear();
+  lastPublishedDigest.clear();
+  lastDigestReplyAt.clear();
   lastSiblingActivityAt = 0;
   activePeerPubkey = null;
   ownPubkey = null;

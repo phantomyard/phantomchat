@@ -319,9 +319,9 @@ export class NostrRelayPool {
   private _onReceiptCb?: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void;
   private _onRawEventCb?: (event: NostrEvent) => void;
   private _onPresenceCb?: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void;
-  private _onDigestCb?: (digest: {deviceId: string; conv: string; count: number; latestId: string}) => void;
-  private _onSyncReqCb?: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}) => void;
-  private _onSyncResCb?: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}) => void;
+  private _onDigestCb?: (digest: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => void;
+  private _onSyncReqCb?: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => void;
+  private _onSyncResCb?: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => void;
 
   /**
    * Register a callback for presence PING / PONG control envelopes. These ride
@@ -343,8 +343,13 @@ export class NostrRelayPool {
    * device catches the next beat) and is intercepted before ever becoming a bubble.
    * Only fires for digests authored by us (our other device); our own echo is
    * filtered out by deviceId inside the device-sync module.
+   *
+   * `sentAt` is the AUTHORING device's wall-clock (ms) taken from the envelope
+   * payload. Control envelopes are STORED gift-wraps, so a reconnecting device
+   * replays the entire backlog of them — `sentAt` is what lets the device-sync
+   * module tell a live pulse from a replayed one and drop the latter.
    */
-  setOnDigest(cb: (digest: {deviceId: string; conv: string; count: number; latestId: string}) => void): void {
+  setOnDigest(cb: (digest: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => void): void {
     this._onDigestCb = cb;
   }
 
@@ -354,7 +359,7 @@ export class NostrRelayPool {
    * only fires for msg.from === self; the device-sync module ignores requests not
    * targeted at its own deviceId.
    */
-  setOnSyncRequest(cb: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number}) => void): void {
+  setOnSyncRequest(cb: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => void): void {
     this._onSyncReqCb = cb;
   }
 
@@ -363,7 +368,7 @@ export class NostrRelayPool {
    * returning the missing rows). Self-authored; the device-sync module ingests
    * only responses targeted at its own deviceId, strict-union.
    */
-  setOnSyncResponse(cb: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean}) => void): void {
+  setOnSyncResponse(cb: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => void): void {
     this._onSyncResCb = cb;
   }
 
@@ -1363,7 +1368,7 @@ export class NostrRelayPool {
    * non-JSON). Only JSON content carrying our `device-digest` type matches, so a
    * normal message or a presence ping returns null and flows on.
    */
-  private parseDigestEnvelope(msg: DecryptedMessage): {deviceId: string; conv: string; count: number; latestId: string} | null {
+  private parseDigestEnvelope(msg: DecryptedMessage): {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number} | null {
     const content = msg.content;
     // Fast reject: digest envelopes always contain the marker substring.
     if(typeof content !== 'string' || content.indexOf('device-digest') === -1) return null;
@@ -1375,7 +1380,10 @@ export class NostrRelayPool {
         deviceId: env.deviceId,
         conv: env.conv,
         count: typeof env.count === 'number' ? env.count : 0,
-        latestId: typeof env.latestId === 'string' ? env.latestId : ''
+        latestId: typeof env.latestId === 'string' ? env.latestId : '',
+        // `publishSelfControl` always stamps `timestamp` (ms). Surfacing it lets the
+        // device-sync module drop replayed backlog envelopes.
+        ...(typeof env.timestamp === 'number' ? {sentAt: env.timestamp} : {})
       };
     } catch{
       // not JSON — a plain message
@@ -1388,7 +1396,7 @@ export class NostrRelayPool {
    * Returns the parsed request, or null. Only self-authored JSON carrying our
    * `device-sync-req` type matches.
    */
-  private parseSyncRequestEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number} | null {
+  private parseSyncRequestEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number} | null {
     const content = msg.content;
     if(typeof content !== 'string' || content.indexOf('device-sync-req') === -1) return null;
     try {
@@ -1401,7 +1409,8 @@ export class NostrRelayPool {
         conv: env.conv,
         haveIds: Array.isArray(env.haveIds) ? env.haveIds.filter((x: unknown) => typeof x === 'string') : [],
         ...(env.recentOnly === true ? {recentOnly: true} : {}),
-        ...(typeof env.limit === 'number' ? {limit: env.limit} : {})
+        ...(typeof env.limit === 'number' ? {limit: env.limit} : {}),
+        ...(typeof env.timestamp === 'number' ? {sentAt: env.timestamp} : {})
       };
     } catch{
       // not JSON — a plain message
@@ -1414,7 +1423,7 @@ export class NostrRelayPool {
    * Returns the parsed response, or null. Only self-authored JSON carrying our
    * `device-sync-res` type matches. Row shape is validated by the device-sync module.
    */
-  private parseSyncResponseEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean} | null {
+  private parseSyncResponseEnvelope(msg: DecryptedMessage): {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number} | null {
     const content = msg.content;
     if(typeof content !== 'string' || content.indexOf('device-sync-res') === -1) return null;
     try {
@@ -1427,7 +1436,8 @@ export class NostrRelayPool {
         conv: env.conv,
         rows: Array.isArray(env.rows) ? env.rows : [],
         seq: typeof env.seq === 'number' ? env.seq : 0,
-        last: env.last === true
+        last: env.last === true,
+        ...(typeof env.timestamp === 'number' ? {sentAt: env.timestamp} : {})
       };
     } catch{
       // not JSON — a plain message
