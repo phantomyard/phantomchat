@@ -75,13 +75,29 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       return this.stored.filter((m) => since === undefined || m.timestamp >= since);
     }
 
+    // When set, the next getMessagesPaged() reports an UNKNOWN outcome — the walk
+    // failed to learn anything (page timed out / not connected). Distinct from a
+    // short page, and the pool must not read it as a closed range.
+    unknownNext = false;
+
     async getMessagesPaged(since?: number, until?: number): Promise<{
       messages: MockMsg[];
-      truncated: boolean;
+      outcome: 'exhausted' | 'truncated' | 'unknown';
       oldestReached?: number;
     }> {
       this.sinceCalls.push(since);
       this.pagedCalls.push({since, until});
+
+      // A relay we're not connected to cannot answer — ignorance, not absence.
+      if(this.connectionState !== 'connected') {
+        return {messages: [], outcome: 'unknown'};
+      }
+
+      if(this.unknownNext) {
+        this.unknownNext = false;
+        return {messages: [], outcome: 'unknown', oldestReached: until};
+      }
+
       const messages = this.stored.filter((m) =>
         (since === undefined || m.timestamp >= since) &&
         (until === undefined || m.timestamp <= until)
@@ -89,9 +105,9 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       if(this.truncateAt !== null) {
         const oldestReached = this.truncateAt;
         this.truncateAt = null; // one truncated tick, then the walk completes
-        return {messages, truncated: true, oldestReached};
+        return {messages, outcome: 'truncated', oldestReached};
       }
-      return {messages, truncated: false};
+      return {messages, outcome: 'exhausted'};
     }
 
     subscribeMessages(): void {
@@ -112,6 +128,12 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
     setEventRelease(fn: (id: string) => void): void {
       this.releaseEvent = fn;
     }
+
+    setEventCommit(fn: (id: string) => void): void {
+      this.commitEvent = fn;
+    }
+
+    commitEvent: ((id: string) => void) | null = null;
 
     getPublicKey(): string {
       return 'abcd1234pubkey';
@@ -337,6 +359,131 @@ describe('message-loss recovery', () => {
       // to move again.
       expect((pool as any).backfillGapOpen).toBe(false);
       expect((pool as any).lastSeenTimestamp).toBe(t0 + 300);
+    });
+  });
+
+  // Review finding (Robert, re-review of 70920c9): the gap machinery recomputed
+  // its state from scratch each tick, so "no relay reported truncation" was read
+  // as "the range is exhausted". It is equally what a tick that LEARNED NOTHING
+  // looks like — relay threw, page timed out, no read relay connected. Clearing
+  // the gap on that throws the cursor away and unfreezes the watermark over wraps
+  // never fetched: reload-only recovery, the bug this PR exists to kill, reached
+  // through the resume path. And these conditions CORRELATE with the target
+  // scenario — a just-woken device has unreconnected relays and a deep backlog.
+  //
+  // Invariant: gap state may only be CLEARED by a walk that reached the bottom of
+  // the range. Absence of a signal is not the signal.
+  describe('an unproductive tick must never be mistaken for a closed gap', () => {
+    async function poolWithOpenGap(t0: number, onMessage = vi.fn()) {
+      vi.useFakeTimers();
+      vi.setSystemTime(t0 * 1000);
+
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const relay = mockRelayInstances[0];
+      relay.stored.push(makeMsg('rumor-newest', t0 + 900));
+      relay.truncateAt = t0 + 500;
+
+      await (pool as any).backfillRecent();
+      expect((pool as any).backfillGapOpen).toBe(true);
+      expect((pool as any).backfillCursor).toBe(t0 + 500);
+
+      return {pool, relay};
+    }
+
+    it('a relay that THROWS mid-gap leaves the gap open and the cursor intact', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, relay} = await poolWithOpenGap(t0);
+
+      // The socket dies — which is the state a just-woken device is in, and
+      // exactly when a gap is open.
+      relay.getMessagesPaged = async() => {
+        throw new Error('socket closed');
+      };
+      await (pool as any).backfillRecent();
+
+      // Nothing fetched the wraps below t0+500. We learned NOTHING about the
+      // range, so the gap must still be open and the resume cursor preserved.
+      expect((pool as any).backfillGapOpen).toBe(true);
+      expect((pool as any).backfillCursor).toBe(t0 + 500);
+      expect((pool as any).lastSeenTimestamp).toBe(0);
+    });
+
+    it('a tick with NO CONNECTED READ RELAY leaves the gap open', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, relay} = await poolWithOpenGap(t0);
+
+      // Relays not yet reconnected after the freeze: the poll has nobody to ask.
+      relay.disconnect();
+      await (pool as any).backfillRecent();
+
+      expect((pool as any).backfillGapOpen).toBe(true);
+      expect((pool as any).backfillCursor).toBe(t0 + 500);
+      expect((pool as any).lastSeenTimestamp).toBe(0);
+    });
+
+    it('a page TIMEOUT is not a short page — the gap survives it', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, relay} = await poolWithOpenGap(t0);
+
+      // A slow first query after resume hits the 10s page timeout. The walk
+      // reports 'unknown', NOT an exhausted range.
+      relay.unknownNext = true;
+      await (pool as any).backfillRecent();
+
+      expect((pool as any).backfillGapOpen).toBe(true);
+      expect((pool as any).backfillCursor).toBe(t0 + 500);
+      expect((pool as any).lastSeenTimestamp).toBe(0);
+    });
+
+    it('still closes the gap on POSITIVE evidence — an exhausted walk', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, relay} = await poolWithOpenGap(t0);
+
+      // The relay answers and reaches the bottom of the range. THAT is evidence,
+      // and only that may clear the gap.
+      await (pool as any).backfillRecent();
+
+      expect((pool as any).backfillGapOpen).toBe(false);
+      expect((pool as any).backfillCursor).toBeUndefined();
+
+      // And the watermark is free to move again — preserving gap state on
+      // ignorance must not curdle into a watermark that is frozen forever.
+      relay.simulateMessage(makeMsg('rumor-after-gap', t0 + 950));
+      expect((pool as any).lastSeenTimestamp).toBe(t0 + 950);
+    });
+  });
+
+  // Review nit (Robert): wrapFailures only shrank on resume, so a wrap that
+  // failed twice then succeeded kept its strikes and parked a failure early.
+  describe('failure counters clear on a successful unwrap', () => {
+    it('forgets strikes once the wrap unwraps cleanly', async() => {
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage: vi.fn()});
+      await pool.initialize();
+
+      const relay = mockRelayInstances[0];
+      const claim = relay.claimEvent!;
+      const release = relay.releaseEvent!;
+      const commit = relay.commitEvent!;
+
+      // Two failures under a briefly-frozen worker...
+      claim('wrap-flaky'); release('wrap-flaky');
+      claim('wrap-flaky'); release('wrap-flaky');
+
+      // ...then it unwraps fine. The failures were environmental, so the strikes
+      // must go.
+      claim('wrap-flaky');
+      commit('wrap-flaky');
+      expect((pool as any).wrapFailures.has('wrap-flaky')).toBe(false);
+
+      // Proof the budget is genuinely full again: the next failure is strike ONE,
+      // so the wrap is released and retryable. Carrying the two stale strikes
+      // would make this failure the third — parking a wrap whose only crime was
+      // stumbling while the worker was frozen.
+      release('wrap-flaky');
+      expect(claim('wrap-flaky')).toBe(true);
     });
   });
 

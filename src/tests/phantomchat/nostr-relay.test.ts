@@ -717,7 +717,7 @@ describe('NostrRelay', () => {
       // Walked three pages (100 + 100 + the 52-wrap remainder) and reported the
       // range as fully exhausted.
       expect(pages.length).toBeGreaterThanOrEqual(3);
-      expect(result.truncated).toBe(false);
+      expect(result.outcome).toBe('exhausted');
 
       // THE CLAIM: every wrap in the gap was actually fetched — including the
       // 150 oldest, which a single limited REQ drops on the floor while the
@@ -741,7 +741,53 @@ describe('NostrRelay', () => {
       const result = await relay.getMessagesPaged(t0);
 
       expect(pages.length).toBe(1);
-      expect(result.truncated).toBe(false);
+      expect(result.outcome).toBe('exhausted');
+    });
+
+    // Review finding (Robert): a timed-out page used to be reported as a SHORT
+    // page (rawCount 0), which reads as "range exhausted" up in the pool — so the
+    // pool cleared the gap, dropped the resume cursor and let the watermark walk
+    // past wraps it never fetched. A slow first query is exactly what a device
+    // waking from a freeze gets, and that is the one moment a deep gap is open.
+    // A page we never got an answer for must say so: 'unknown', not 'exhausted'.
+    test('a page that times out reports UNKNOWN, never an exhausted range', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+
+      const t0 = 1_800_000_000;
+      const ws = getLastMockWs()!;
+
+      // The relay accepts the REQ and then goes silent — no EVENTs, no EOSE.
+      const origSend = ws.send.bind(ws);
+      ws.send = (data: string) => {
+        origSend(data);
+      };
+
+      vi.useFakeTimers();
+      try {
+        const pending = relay.getMessagesPaged(t0, t0 + 500);
+        await vi.advanceTimersByTimeAsync(10_001); // trip the 10s page timeout
+
+        const result = await pending;
+
+        // We learned NOTHING about the range. Saying 'exhausted' here is the bug.
+        expect(result.outcome).toBe('unknown');
+        // ...and we hand back the cursor we were walking, so the next tick can
+        // re-query the SAME range instead of walking past an unknown gap.
+        expect(result.oldestReached).toBe(t0 + 500);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // A relay we were never connected to cannot testify about the range either.
+    test('a disconnected relay reports UNKNOWN, never an exhausted range', async() => {
+      const t0 = 1_800_000_000;
+      // Never connected — connectionState is 'disconnected'.
+      const result = await relay.getMessagesPaged(t0);
+
+      expect(result.outcome).toBe('unknown');
+      expect(result.messages).toEqual([]);
     });
   });
 

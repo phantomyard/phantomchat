@@ -1218,6 +1218,9 @@ export class NostrRelayPool {
     // ...and the rollback, so a wrap whose processing dies is not poisoned in
     // the seen-set and can be retried by a replay.
     instance.setEventRelease?.((eventId) => this.releaseWrapId(eventId));
+    // ...and the success signal, so a wrap that unwraps cleanly stops carrying
+    // the failure strikes it accrued while the worker/network was broken.
+    instance.setEventCommit?.((eventId) => this.commitWrapId(eventId));
 
     // Feed the live subscription a `since` watermark so each (re)connect only
     // replays events since we last saw one — not the entire gift-wrap history.
@@ -1338,6 +1341,20 @@ export class NostrRelayPool {
     if(!this.seenWrapIds.delete(eventId)) return;
     const idx = this.seenWrapOrder.lastIndexOf(eventId);
     if(idx !== -1) this.seenWrapOrder.splice(idx, 1);
+  }
+
+  /**
+   * A claimed wrap unwrapped cleanly — forget its failure history.
+   *
+   * The counters are meant to measure CONSECUTIVE failures (a hot retry loop on
+   * a wrap that cannot be unwrapped). A wrap that failed twice under a frozen
+   * worker and then succeeded has proven the failures were environmental, so
+   * keeping its strikes would park it a failure early next time — and leave the
+   * entry in a map that otherwise only shrinks on resume, while `seenWrapIds`
+   * is LRU-capped. Cheap to clear, honest to clear.
+   */
+  private commitWrapId(eventId: string): void {
+    this.wrapFailures.delete(eventId);
   }
 
   /**
@@ -1897,7 +1914,7 @@ export class NostrRelayPool {
       }));
 
       for(const page of pages) {
-        if(page?.truncated && page.oldestReached !== undefined) {
+        if(page?.outcome === 'truncated' && page.oldestReached !== undefined) {
           // Resume at the NEWEST of the truncated relays' cursors. Cheaper to
           // re-fetch overlap (the claim gate eats it) than to skip a region a
           // slower relay hasn't handed us yet.
@@ -1907,12 +1924,40 @@ export class NostrRelayPool {
         }
       }
 
-      this.backfillCursor = deepestUnclosed;
-      this.backfillGapOpen = deepestUnclosed !== undefined;
-      if(this.backfillGapOpen) {
+      // GAP STATE MAY ONLY BE CLEARED BY A WALK THAT REACHED THE BOTTOM.
+      //
+      // Recomputing the flag from scratch each tick (`gapOpen = deepestUnclosed
+      // !== undefined`) treats "nobody reported truncation" as proof the range
+      // was exhausted. It isn't — it is equally what a tick that LEARNED NOTHING
+      // looks like: every relay threw, every page timed out, or no read relay was
+      // connected at all. Clearing on that throws the resume cursor away and
+      // unfreezes the watermark over wraps we never fetched; the next dispatched
+      // message then drags `lastSeenTimestamp` past them, and since every replay
+      // path (live REQ `since`, catch-up poll, reconnect backfill) keys off that
+      // watermark, the backlog below it is unreachable by all of them. Reload-only
+      // recovery — the exact bug this PR exists to kill, reached via the resume
+      // path. And it fires hardest on a just-woken device: relays not yet
+      // reconnected, sockets erroring, first query slow — the one moment a deep
+      // gap is actually open.
+      //
+      // So: truncation is evidence (gap open). Exhaustion is evidence (gap
+      // closed). Everything else is ignorance — leave the state exactly as it was
+      // and look again next tick. Absence of a signal is not the signal.
+      if(deepestUnclosed !== undefined) {
+        this.backfillCursor = deepestUnclosed;
+        this.backfillGapOpen = true;
         this.log.warn(
           '[NostrRelayPool] backfill gap still open below', deepestUnclosed,
           '- holding watermark, resuming next tick'
+        );
+      } else if(pages.some(p => p?.outcome === 'exhausted')) {
+        // Positive evidence: a relay walked the range to the bottom. Gap closed.
+        this.backfillCursor = undefined;
+        this.backfillGapOpen = false;
+      } else if(this.backfillGapOpen) {
+        this.log.warn(
+          '[NostrRelayPool] backfill tick learned nothing (no relay reached the bottom of the range)',
+          '- preserving open gap below', this.backfillCursor
         );
       }
 

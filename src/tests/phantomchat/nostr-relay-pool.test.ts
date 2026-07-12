@@ -70,10 +70,10 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
     // so it can reach wraps older than one limit-capped REQ returns.
     async getMessagesPaged(_since?: number, _until?: number): Promise<{
       messages: MockMsg[];
-      truncated: boolean;
+      outcome: 'exhausted' | 'truncated' | 'unknown';
       oldestReached?: number;
     }> {
-      return {messages: [], truncated: false};
+      return {messages: [], outcome: 'exhausted'};
     }
 
     subscribeMessages(): void {
@@ -689,7 +689,7 @@ describe('NostrRelayPool', () => {
         const inst = mockRelayInstances[mockRelayInstances.length - 1];
         inst.connectionState = 'connected';
         // The poll goes through the PAGED walk now, not the single-shot query.
-        const spy = vi.spyOn(inst, 'getMessagesPaged').mockResolvedValue({messages: [], truncated: false});
+        const spy = vi.spyOn(inst, 'getMessagesPaged').mockResolvedValue({messages: [], outcome: 'exhausted'});
 
         // Advance past one poll interval (BACKFILL_POLL_INTERVAL_MS = 15s).
         // Fake timers move Date.now() forward too, so measure "now" at the
