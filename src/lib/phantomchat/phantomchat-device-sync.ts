@@ -436,6 +436,13 @@ export function pokeDeviceSync(): void {
   if(pokeTimer) clearTimeout(pokeTimer);
   pokeTimer = setTimeout(() => {
     pokeTimer = null;
+    // Nobody of ours is listening — there is nobody to be prompt FOR, and a
+    // single-device npub would otherwise write a digest on every send/receive. The
+    // poke is a latency optimisation, not a correctness one: the change-gated
+    // heartbeat still advertises the new digest within one pulse, and a sibling that
+    // comes online announces itself first (chat-open/foreground/relays-green), which
+    // marks it live and gets us publishing again immediately.
+    if(!hasLiveSibling()) return;
     void publishActiveDigest({force: true});
   }, POKE_DEBOUNCE_MS);
 }
@@ -517,18 +524,20 @@ async function runSync(conv: string, peer: string, scope: SyncScope, reason: str
   const startedAt = Date.now();
   if(scope === 'recent' && startedAt - (lastSyncAt.get(conv) || 0) < RECENT_SYNC_FLOOR_MS) return;
 
-  // Advertise our own digest: the reconcile is two-way. A sibling that is BEHIND us
-  // learns it from this and pulls, without us having to ask it for anything.
-  void publishActiveDigest({force: true});
-
-  // Nobody live to answer. Don't publish a request into the void (a single-device
-  // user would otherwise write one to the relays on every keystroke burst) — HOLD the
-  // intent instead and run it the instant a sibling pulses. See `deferredSync`.
+  // Nobody live to answer. A single-device npub must cost ZERO relay writes: no sync
+  // request AND no digest. HOLD the intent instead and run it the instant a sibling
+  // pulses (see `deferredSync`). Nothing is lost by staying quiet here — a sibling
+  // coming online publishes its own digest, which marks it live, which releases the
+  // held intent and gets us to the force-publish below. See `markSiblingLive`.
   if(!hasLiveSibling()) {
     deferredSync.set(conv, {peer, scope, reason});
     console.debug(`${LOG_PREFIX} ${scope}-sync (${reason}) deferred — no live sibling`);
     return;
   }
+
+  // Advertise our own digest: the reconcile is two-way. A sibling that is BEHIND us
+  // learns it from this and pulls, without us having to ask it for anything.
+  void publishActiveDigest({force: true});
 
   inFlightSync.add(conv);
   lastSyncAt.set(conv, startedAt);

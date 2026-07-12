@@ -138,6 +138,41 @@ describe('device-sync — stored-control-envelope replay storm', () => {
     expect(pool.publishSyncRequest).not.toHaveBeenCalled();
   });
 
+  it('a lone device writes NOTHING to the relays on a chatty trigger — no request AND no digest', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {mod, pool, openChat} = await boot(store);
+    await openChat(); // active chat set; the chat-open "hello" is cleared by the helper
+
+    // The gate has to cover the digest too, not just the request. Otherwise a
+    // single-device npub still pays one relay write per keystroke burst / per
+    // inbound message — which is the WAN cost the gate exists to kill.
+    mod.scheduleSync(PEER, 'recent', 'typing');
+    mod.scheduleSync(PEER, 'recent', 'message-received');
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(pool.publishSyncRequest).not.toHaveBeenCalled();
+    expect(pool.publishSelfDigest).not.toHaveBeenCalled();
+  });
+
+  it('pokeDeviceSync stays silent with no live sibling, and publishes once one is live', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {mod, pool, captured, openChat} = await boot(store);
+    await openChat();
+
+    mod.pokeDeviceSync(); // a local send/receive — fires on EVERY message
+    await new Promise((r) => setTimeout(r, 700));
+    expect(pool.publishSelfDigest).not.toHaveBeenCalled();
+
+    // A sibling announces itself ⇒ we start advertising again immediately. The
+    // silence is a gate, not a mute: nothing is permanently suppressed.
+    await captured.digest({deviceId: 'sibling', conv: CONV, count: 1, latestId: '', sentAt: FRESH()});
+    pool.publishSelfDigest.mockClear(); // the reciprocal reply is its own behaviour
+
+    mod.pokeDeviceSync();
+    await new Promise((r) => setTimeout(r, 700));
+    expect(pool.publishSelfDigest).toHaveBeenCalledTimes(1);
+  });
+
   it('a FRESH digest releases a held sync (the gate is freshness, not a mute)', async() => {
     const store = makeStore([row('m1', 10)]);
     const {mod, captured, pool} = await boot(store);
