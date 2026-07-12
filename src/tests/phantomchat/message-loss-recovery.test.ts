@@ -146,6 +146,36 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
     }
     sendRawEvent(_event: any): void {}
 
+    // Raw wraps this relay is holding, keyed by wrap id, each carrying the
+    // message it unwraps to. Models what the relay ACTUALLY stores (gift wraps),
+    // as opposed to `stored`, which is the already-decrypted view the paged
+    // walk hands back.
+    storedWraps: Map<string, {id: string; created_at: number; msg: MockMsg}> = new Map();
+    // Every filter the pool has asked this relay to raw-query with.
+    rawQueries: Record<string, unknown>[] = [];
+
+    async queryRawEvents(filter: Record<string, unknown>): Promise<any[]> {
+      this.rawQueries.push(filter);
+      if(this.connectionState !== 'connected') return [];
+      const ids = (filter.ids as string[]) ?? [];
+      return ids
+      .map((id) => this.storedWraps.get(id))
+      .filter(Boolean)
+      .map((w) => ({id: w!.id, created_at: w!.created_at, kind: 1059}));
+    }
+
+    // The real relay runs an out-of-band event through the identical path a
+    // socket-delivered one takes: the shared pre-decrypt claim gate, then unwrap,
+    // then dispatch. Model exactly that — including the gate, which is what makes
+    // a still-claimed wrap silently vanish.
+    async ingestExternalEvent(event: any): Promise<void> {
+      if(event.id && this.claimEvent && !this.claimEvent(event.id)) return;
+      const wrap = this.storedWraps.get(event.id);
+      if(!wrap) return;
+      this.messageHandler?.(wrap.msg);
+      this.commitEvent?.(event.id);
+    }
+
     simulateMessage(msg: MockMsg): void {
       this.messageHandler?.(msg);
     }
@@ -533,6 +563,168 @@ describe('message-loss recovery', () => {
       document.dispatchEvent(new Event('visibilitychange'));
 
       expect(claim('wrap-kai-good')).toBe(true);
+    });
+  });
+
+  // Releasing a claim makes a wrap CLAIMABLE. It does not make it REACHABLE.
+  //
+  // Every replay path is keyed off the watermark (`since = min(now-90s,
+  // lastSeen-fuzz)`), and the watermark advances on any delivered message. So a
+  // wrap that fails to unwrap and is then overtaken by a later, successful
+  // message falls BELOW the floor — and no since-query will ever ask for it
+  // again. The release is a promise the poll cannot keep: seenWrapIds says
+  // "retry me", the watermark says "never look there again", and the watermark
+  // wins. Invisible until reload — the exact bug this suite exists to kill,
+  // surviving in the failed-unwrap path.
+  //
+  // The fix is targeted re-fetch BY ID (the wrap id is known — we just released
+  // it), not widening the since-window: the window is the thing that is wrong,
+  // and dragging it back down would replay unbounded history on every tick.
+  describe('a released wrap must stay reachable after the watermark overtakes it', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('re-fetches a failed wrap by id once the watermark has moved past it', async() => {
+      const t0 = 1_800_000_000;
+      vi.setSystemTime(t0 * 1000);
+
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const relay = mockRelayInstances[0];
+      const claim = relay.claimEvent!;
+      const release = relay.releaseEvent!;
+
+      // Kai's message lands at t0. The relay genuinely HOLDS it — both as a raw
+      // wrap and in the paged view. Nothing about this message is lost.
+      const missed = makeMsg('rumor-kai-missed', t0);
+      relay.stored.push(missed);
+      relay.storedWraps.set('wrap-kai-missed', {
+        id: 'wrap-kai-missed', created_at: t0, msg: missed
+      });
+
+      // But the unwrap dies (frozen worker). Claimed, failed, released.
+      expect(claim('wrap-kai-missed')).toBe(true);
+      release('wrap-kai-missed');
+      expect(onMessage).not.toHaveBeenCalled();
+
+      // The conversation carries on. Ten minutes later a message unwraps fine,
+      // and the watermark jumps to t0+600 — sailing past the wrap we dropped.
+      vi.setSystemTime((t0 + 600) * 1000);
+      relay.simulateMessage(makeMsg('rumor-later', t0 + 600));
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      onMessage.mockClear();
+
+      // Now the catch-up poll runs. Its since-window starts at
+      // min(now-90, watermark-fuzz) = t0+300 — 300s ABOVE the missed wrap. The
+      // paged walk cannot see it, and never will again.
+      await (pool as any).backfillRecent();
+
+      const since = relay.sinceCalls[relay.sinceCalls.length - 1];
+      expect(since!).toBeGreaterThan(missed.timestamp); // the floor really is above it
+
+      // ...so the ONLY way back is a targeted re-fetch of the id we released.
+      // Without one, Kai's message is on the relay, retrievable, and invisible.
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage.mock.calls[0][0].id).toBe('rumor-kai-missed');
+    });
+
+    it('un-parking on resume actually re-delivers, not merely re-admits', async() => {
+      const t0 = 1_800_000_000;
+      vi.setSystemTime(t0 * 1000);
+
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const relay = mockRelayInstances[0];
+      const claim = relay.claimEvent!;
+      const release = relay.releaseEvent!;
+
+      const missed = makeMsg('rumor-parked', t0);
+      relay.stored.push(missed);
+      relay.storedWraps.set('wrap-parked', {id: 'wrap-parked', created_at: t0, msg: missed});
+
+      // A frozen worker burns the whole retry budget in a burst — the wrap parks.
+      for(let i = 0; i < 3; i++) {
+        claim('wrap-parked');
+        release('wrap-parked');
+      }
+      expect(claim('wrap-parked')).toBe(false); // parked
+
+      // The watermark then sails past it.
+      vi.setSystemTime((t0 + 600) * 1000);
+      relay.simulateMessage(makeMsg('rumor-later', t0 + 600));
+      onMessage.mockClear();
+
+      // User foregrounds. The existing code un-parks the wrap — but un-parking
+      // only clears a flag. Nothing re-requests the wrap, and the watermark is
+      // now above it, so it stays gone. Resume must actually GO AND GET IT.
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage.mock.calls[0][0].id).toBe('rumor-parked');
+    });
+
+    it('does not keep re-fetching a wrap that unwrapped cleanly', async() => {
+      const t0 = 1_800_000_000;
+      vi.setSystemTime(t0 * 1000);
+
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage: vi.fn()});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const relay = mockRelayInstances[0];
+      const claim = relay.claimEvent!;
+      const release = relay.releaseEvent!;
+      const commit = relay.commitEvent!;
+
+      // Failed once (so it is pending re-fetch), then succeeded on retry.
+      claim('wrap-flaky');
+      release('wrap-flaky');
+      claim('wrap-flaky');
+      commit('wrap-flaky');
+
+      // A committed wrap is done. It must not sit in the pending set generating
+      // an ids-query on every 15s tick forever.
+      relay.rawQueries.length = 0;
+      await (pool as any).backfillRecent();
+      expect(relay.rawQueries).toHaveLength(0);
+    });
+
+    it('keeps the pending id when no relay is connected to answer', async() => {
+      const t0 = 1_800_000_000;
+      vi.setSystemTime(t0 * 1000);
+
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage: vi.fn()});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const relay = mockRelayInstances[0];
+      // Claim then fail, as production does — a release with no prior claim is a
+      // no-op by design (nothing to hand back).
+      relay.claimEvent!('wrap-offline');
+      relay.releaseEvent!('wrap-offline');
+
+      // Nothing can answer a re-fetch right now. Ignorance is not absence: the
+      // id must survive to be retried, not be quietly dropped on the floor.
+      mockRelayInstances.forEach((r: any) => r.disconnect());
+      await (pool as any).refetchPendingWraps();
+      expect((pool as any).pendingWrapRefetch.has('wrap-offline')).toBe(true);
+
+      // Reconnect, and the re-fetch finally goes out.
+      relay.connect();
+      relay.rawQueries.length = 0;
+      await (pool as any).refetchPendingWraps();
+      expect(relay.rawQueries[0]?.ids).toContain('wrap-offline');
     });
   });
 });
