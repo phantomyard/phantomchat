@@ -201,6 +201,43 @@ describe('differs', () => {
     const b: SyncMap<Contact> = {y: liveEntry('y', c('y', 'Y'), 100)};
     expect(differs(a, b)).toBe(true);
   });
+
+  it('true when only the PAYLOAD differs (same id, same second, same liveness)', () => {
+    // The exact shape a same-second tie leaves behind: metadata identical, data
+    // different. A metadata-only comparison calls this "no change" and the
+    // losing snapshot is never overwritten on the relay.
+    const a: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-A'), 100)};
+    const b: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-B'), 100)};
+    expect(differs(a, b)).toBe(true);
+  });
+
+  it('false when payloads are equal but key order differs', () => {
+    // Same canonicalization as the merge tie-break: insertion order is not content.
+    const a: SyncMap<Contact> = {x: {id: 'x', updatedAt: 100, data: {pubkey: 'x', name: 'X'}}};
+    const b: SyncMap<Contact> = {x: {id: 'x', updatedAt: 100, data: {name: 'X', pubkey: 'x'} as Contact}};
+    expect(differs(a, b)).toBe(false);
+  });
+
+  it('a same-second tie loser on the relay IS republished (no silent divergence)', () => {
+    // Regression for the review finding. Relay holds B's edit; this device holds
+    // A's. They tie on updatedAt, so the merge picks a content-deterministic
+    // winner — which has the SAME id/updatedAt/deleted as the loser.
+    const local: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-A'), 100)};
+    const remote: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-B'), 100)};
+    const merged = mergeMaps(local, remote);
+
+    // Whichever side won, reconcile must still see a diff against the LOSER,
+    // or that loser stays on the relay forever and newly paired devices get it.
+    const loser = merged.x.data.name === 'from-A' ? remote : local;
+    const winner = merged.x.data.name === 'from-A' ? local : remote;
+
+    expect(differs(merged, loser)).toBe(true);   // -> publish fires, relay is corrected
+    expect(differs(merged, winner)).toBe(false); // -> and the winner does not churn
+
+    // A device pairing afterwards downloads the corrected relay state and agrees.
+    const newDevice = mergeMaps({}, merged);
+    expect(differs(newDevice, merged)).toBe(false);
+  });
 });
 
 describe('isValidEntry / sanitizeMap — remote content is untrusted', () => {
