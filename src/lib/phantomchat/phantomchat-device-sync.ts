@@ -19,10 +19,10 @@
  * of our devices hears a digest advertising MORE than it holds, it knows it's
  * behind that conversation.
  *
- * This module is INCREMENT 1: emit the self-digest heartbeat, receive a peer
- * device's digest, and surface a transient "syncing" indicator when we detect
- * we're behind. Increment 2 turns "I'm behind" into an actual scoped, strict-union
- * pull of the missing messages. Increment 3 hardens (chunking, throttle).
+ * A device that hears a digest advertising more than it holds pulls the difference
+ * (strict union). Reconciliation is entirely BACKGROUND: it is never awaited by the
+ * UI, never gates a render, and never announces itself on screen — see the
+ * "reconciliation is never a render gate" note below.
  *
  * Design rules baked in (Andrew's brief):
  *   - EPHEMERAL presence, no device roster: we never persist "seen" devices. A
@@ -41,12 +41,6 @@ const PULSE_INTERVAL_MS = 45_000;
 /** Debounce for send/receive-triggered pulses so a burst collapses to one (ms). */
 const POKE_DEBOUNCE_MS = 1_500;
 
-/** Don't re-show the "syncing" indicator more than once per this window (ms). */
-const INDICATOR_THROTTLE_MS = 8_000;
-
-/** How long the transient "syncing" indicator stays on screen (ms). */
-const INDICATOR_TTL_MS = 4_000;
-
 /** Don't issue more than one sync REQUEST per conversation inside this window (ms). */
 const REQUEST_THROTTLE_MS = 6_000;
 
@@ -57,27 +51,53 @@ const RESPONSE_CHUNK_ROWS = 25;
 const HAVE_IDS_CAP = 5_000;
 
 /**
- * Sync-before-render barrier (Andrew's brief). When an incoming message arrives
- * and one of our OWN other devices is currently live, we do a quick RECENT-ONLY
- * catch-up from that sibling BEFORE painting the incoming bubble — so the new
- * message never lands above a gap the sibling could have filled (crucial for
- * media a sibling already holds). It is a HARD block, but only ever gated behind
- * a live sibling; a single-device user is never delayed.
+ * RECONCILIATION IS NEVER A RENDER GATE (Andrew's brief — supersedes the old
+ * sync-before-render barrier).
+ *
+ * The barrier used to BLOCK an incoming bubble on a recent-only pull from a live
+ * sibling. That put a network round-trip on the paint path: a lost request, a
+ * sibling that never answers, a pool that isn't ready — each cost a multi-second
+ * stall, and any bug in that path could swallow the bubble outright.
+ *
+ * The rule now: a message that arrives is PAINTED IMMEDIATELY, always. Sync runs
+ * BESIDE the render, in the background, and repairs the tail after the fact
+ * (ordering, gaps, media a sibling already holds). We're lucky to have received the
+ * message at all — never hold it hostage to a sync.
+ *
+ * Proactive triggers (each SCHEDULES; none blocks, none renders):
+ *   1. ALL RELAYS GREEN → FULL sync of the selected chat. Hard rule.
+ *   2. CHAT SELECTED    → recent-only sync (last N).
+ *   3. TYPING INDICATOR → recent-only sync (last N).
+ *   4. MESSAGE RECEIVED → recent-only sync (last N).
+ *
+ * All of them go through `scheduleSync`, which single-flights per conversation and
+ * folds a burst into one run behind a short trailing debounce — so a typing storm or
+ * a flurry of inbound messages produces ONE sync, but a sync always follows the burst.
  */
 
-/** Rows the recent-only barrier reconciles (last-N of the open conversation). */
-const RECENT_PULL_ROWS = 25;
+/** Rows a recent-scope sync reconciles (the tail of the conversation). */
+const RECENT_SYNC_ROWS = 25;
 
-/** Hard ceiling on the sync-before-render wait — render anyway past this (ms). */
-const RECENT_PULL_CEILING_MS = 5_000;
+/**
+ * Trailing debounce. The first trigger of a burst arms the timer; every trigger
+ * inside the window folds into it. One sync per burst, fired promptly after it.
+ */
+const SYNC_DEBOUNCE_MS = 500;
 
-/** Collapse a burst of incoming messages to one recent-pull per conv (ms). */
-const RECENT_PULL_THROTTLE_MS = 2_000;
+/** Floor between two recent-scope syncs of the same conversation (ms). */
+const RECENT_SYNC_FLOOR_MS = 2_000;
+
+/**
+ * Attempt schedule for a single scheduled sync. A lone request can be lost (flaky
+ * socket, sibling mid-reconnect), so we re-ask on a backoff — "multiple attempts as
+ * soon as a message is detected". Bails the instant a sibling answers, so the
+ * healthy path still costs exactly one request.
+ */
+const SYNC_RETRY_BACKOFF_MS = [0, 1_500, 4_000];
 
 /**
  * A sibling device is considered "live" if we heard ANY self-control envelope
- * (digest / sync req / sync res) authored by a DIFFERENT device within this
- * window. This is the gate for the sync-before-render barrier.
+ * (digest / sync req / sync res) authored by a DIFFERENT device within this window.
  */
 const SIBLING_LIVE_WINDOW_MS = 90_000;
 
@@ -91,9 +111,9 @@ const SIBLING_LIVE_WINDOW_MS = 90_000;
  *      request, so a reconnect kicked off a burst of request/response churn.
  *   2. PHANTOM SIBLING — a replayed digest set `lastSiblingActivityAt = now`, so
  *      `hasLiveSibling()` reported true for 90s even when NO other device was
- *      online. Every incoming message in that window then hard-blocked the
- *      sync-before-render barrier for its full ceiling waiting on a pull that
- *      nobody would ever answer.
+ *      online, and we published requests nobody could ever answer. (Under the old
+ *      barrier this was far worse: every incoming message in that window hard-blocked
+ *      the render for its full ceiling waiting on that phantom.)
  *
  * So a control envelope is only honored when the AUTHORING device stamped it within
  * this window. Replayed history is inert. The window is generous relative to the
@@ -146,21 +166,51 @@ interface DeviceSyncRow {
 /** Per-conversation timestamp of our last outbound sync request (throttle). */
 const lastRequestAt = new Map<string, number>();
 
-/** Per-conversation timestamp of our last recent-only barrier pull (throttle). */
-const lastRecentPullAt = new Map<string, number>();
+/** Scope of a background sync: the whole conversation, or just its recent tail. */
+export type SyncScope = 'full' | 'recent';
+
+/** Debounced, not-yet-fired sync per conversation (the burst-coalescing window). */
+const pendingSync = new Map<string, {peer: string; scope: SyncScope; reason: string; timer: ReturnType<typeof setTimeout>}>();
+
+/** Conversations with a sync currently running — the single-flight gate. */
+const inFlightSync = new Set<string>();
+
+/** A trigger that landed while a sync was in flight; re-armed when that one ends. */
+const rerunSync = new Map<string, {peer: string; scope: SyncScope; reason: string}>();
+
+/** Per-conversation start time of our last background sync (feeds the floor). */
+const lastSyncAt = new Map<string, number>();
+
+/** Per-conversation time a sibling last ANSWERED us — lets a retry loop bail early. */
+const lastSyncResponseAt = new Map<string, number>();
+
+/** Conversations already FULL-synced this session (chat-open needn't redo one). */
+const fullSyncedConvs = new Set<string>();
 
 /**
- * In-flight sync-before-render barriers, keyed by conversationId. A pending entry
- * resolves the moment a sibling answers our recent-only request with a `last`
- * chunk (or on the hard ceiling), unblocking the incoming message's render.
+ * A sync we WANTED to run but nobody was live to answer. Held, not dropped: the
+ * moment a sibling proves it's live, it runs. This is what keeps the all-relays-green
+ * hard rule honest at cold start — the pool typically goes green BEFORE we've heard a
+ * peep from any sibling, and dropping the intent there would silently skip the one
+ * full sync the user explicitly asked for.
  */
-const pendingRecentPulls = new Map<string, {resolve: () => void; timer: ReturnType<typeof setTimeout>}>();
+const deferredSync = new Map<string, {peer: string; scope: SyncScope; reason: string}>();
+
+/** True while every relay socket in the pool is connected (drives the hard rule). */
+let allRelaysGreen = false;
+
+/**
+ * Bumped by every init/destroy. A sync run captures it and abandons itself the moment
+ * it changes: a retry loop can sit in a 4s backoff, and without this a teardown
+ * (logout, account switch) would leave it publishing requests for a session that no
+ * longer exists.
+ */
+let epoch = 0;
 
 /**
  * Wall-clock of the last self-control envelope we heard from ANOTHER device.
- * Drives `hasLiveSibling()` — the gate for the sync-before-render barrier. Only
- * ever advanced by a FRESH envelope (see CONTROL_FRESHNESS_MS); a replayed one
- * must not fake a live sibling.
+ * Drives `hasLiveSibling()`. Only ever advanced by a FRESH envelope (see
+ * CONTROL_FRESHNESS_MS); a replayed one must not fake a live sibling.
  */
 let lastSiblingActivityAt = 0;
 
@@ -194,7 +244,6 @@ let deviceId = '';
 
 let pulseTimer: ReturnType<typeof setInterval> | null = null;
 let pokeTimer: ReturnType<typeof setTimeout> | null = null;
-let lastIndicatorAt = 0;
 
 /** The peer whose chat is currently open — the only conversation we reconcile. */
 let activePeerPubkey: string | null = null;
@@ -218,6 +267,7 @@ function newDeviceId(): string {
 export async function initDeviceSync(pubkey: string): Promise<void> {
   ownPubkey = pubkey;
   deviceId = newDeviceId();
+  epoch++;
 
   // Route inbound digests + sync request/response from our other devices.
   try {
@@ -242,18 +292,27 @@ export async function initDeviceSync(pubkey: string): Promise<void> {
   // Advertise (and switch scope) whenever a chat opens.
   await wireChatOpen();
 
-  // Durable reconcile triggers beyond chat-open + heartbeat:
-  //  - incoming PEER TYPING: the peer's tick is p-tagged to us, so it wakes BOTH
-  //    our devices at the same instant — a free synchronized "compare notes now"
-  //    barrier. Re-advertise our digest so the behind device pulls immediately.
-  //  - RECONNECT: a socket that just came back re-advertises so a device that was
-  //    offline reconciles the open chat without waiting for the next heartbeat.
-  //  - FOREGROUND: waking a backgrounded PWA re-advertises for the same reason.
+  // Proactive reconcile triggers. All of them SCHEDULE background work — none of
+  // them can delay, gate, or suppress a render.
+  //  1. RELAY STATUS: all sockets green ⇒ FULL sync of the selected chat (hard rule).
+  //  2. CHAT SELECTED: wireChatOpen above ⇒ recent-only sync.
+  //  3. PEER TYPING:   the peer's tick reaches both our devices at once ⇒ recent sync.
+  //  4. MESSAGE RECEIVED: phantomchat-sync calls scheduleSync ⇒ recent sync + retries.
+  //  + FOREGROUND: waking a backgrounded PWA re-advertises the digest.
   wireTypingTrigger();
-  wireReconnectTrigger();
+  wireRelayStatusTrigger();
   wireForegroundTrigger();
 
-  (window as any).__phantomchatDeviceSync = {deviceId, remoteDigests, publishActiveDigest};
+  // Debug surface: lets a live console (and the tests) see WHY a sync did or didn't
+  // happen — which is exactly what was missing when the barrier misbehaved in prod.
+  (window as any).__phantomchatDeviceSync = {
+    deviceId,
+    remoteDigests,
+    publishActiveDigest,
+    scheduleSync,
+    deferredSync,
+    hasLiveSibling: () => hasLiveSibling()
+  };
   console.log(`${LOG_PREFIX} initialized for ${pubkey.slice(0, 8)}... (device ${deviceId.slice(0, 8)})`);
 }
 
@@ -327,7 +386,7 @@ export async function onRemoteDigest(d: {deviceId: string; conv: string; count: 
     }
   }
 
-  lastSiblingActivityAt = now; // proof a sibling device is live
+  markSiblingLive(); // proof a sibling device is live (releases any deferred sync)
   remoteDigests.set(d.conv, {deviceId: d.deviceId, count: d.count, latestId: d.latestId, at: now});
   console.log(`${LOG_PREFIX} ← digest ${d.conv.slice(0, 12)}… count=${d.count} from device ${(d.deviceId || '?').slice(0, 8)}`);
 
@@ -340,9 +399,9 @@ export async function onRemoteDigest(d: {deviceId: string; conv: string; count: 
       (d.count === local.count && !!d.latestId && d.latestId !== local.latestId);
 
     if(behind) {
-      console.log(`${LOG_PREFIX} behind on ${d.conv.slice(0, 12)}…: local=${local.count} remote=${d.count} — requesting sync`);
-      showSyncingIndicator();
-      // Increment 2: pull the gap from the device that advertised more.
+      console.debug(`${LOG_PREFIX} behind on ${d.conv.slice(0, 12)}…: local=${local.count} remote=${d.count} — requesting sync`);
+      // Pull the gap from the device that advertised more. Background, silent: sync
+      // is never announced to the user and never blocks anything on screen.
       void requestSyncFromDevice(d.conv, d.deviceId);
       return;
     }
@@ -387,115 +446,166 @@ function hasLiveSibling(): boolean {
 }
 
 /**
- * Sync-before-render barrier. Call this with the incoming message's peer pubkey
- * BEFORE painting the bubble. If one of our OWN devices is currently live, issue a
- * RECENT-ONLY reconcile for that conversation and BLOCK on it (up to a hard
- * ceiling) so the incoming message lands on top of an up-to-date tail — never
- * above a gap the sibling already holds (media included). When no sibling is live,
- * or the pool isn't ready, it returns immediately: a single-device user is never
- * delayed. Best-effort and self-healing — a lost request just hits the ceiling and
- * renders anyway; the normal digest/heartbeat pull still backfills later.
+ * A FRESH control envelope from another of our devices just landed — proof a sibling
+ * is online. Record it, then release any sync we deferred for want of somebody to
+ * ask. This is the other half of the deferral: an intent is never dropped, only held
+ * until there's a device that can actually answer it.
  */
-export async function syncRecentBeforeRender(peerPubkey: string): Promise<void> {
-  if(!ownPubkey || !peerPubkey || peerPubkey === ownPubkey) return;
-  if(!hasLiveSibling()) return; // no sibling to pull from — don't block
+function markSiblingLive(): void {
+  lastSiblingActivityAt = Date.now();
+  if(deferredSync.size === 0) return;
+  const held = [...deferredSync.values()];
+  deferredSync.clear();
+  for(const {peer, scope, reason} of held) scheduleSync(peer, scope, reason);
+}
 
-  let conv: string;
-  try {
-    const {getMessageStore} = await import('./message-store');
-    conv = getMessageStore().getConversationId(ownPubkey, peerPubkey);
-  } catch{
+/**
+ * Schedule a background reconcile of `peerPubkey`'s conversation. FIRE-AND-FORGET
+ * by contract: it returns void, never a promise the caller could await, so no
+ * call-site can accidentally put a sync in front of a render again.
+ *
+ * Coalescing: the first trigger of a burst arms a short trailing debounce and every
+ * trigger inside that window folds into it — a typing storm or a run of inbound
+ * messages costs ONE sync, and a sync always follows the burst. A `full` scope
+ * arriving mid-burst upgrades the pending run (the hard rule always wins).
+ */
+export function scheduleSync(peerPubkey: string, scope: SyncScope, reason: string): void {
+  if(!ownPubkey || !peerPubkey || peerPubkey === ownPubkey) return;
+
+  void (async() => {
+    let conv: string;
+    try {
+      const {getMessageStore} = await import('./message-store');
+      conv = getMessageStore().getConversationId(ownPubkey, peerPubkey);
+    } catch{
+      return;
+    }
+
+    const pending = pendingSync.get(conv);
+    if(pending) {
+      // Fold into the armed burst. `full` outranks `recent` — never downgrade.
+      if(scope === 'full') { pending.scope = 'full'; pending.reason = reason; }
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const entry = pendingSync.get(conv);
+      pendingSync.delete(conv);
+      if(!entry) return;
+      void runSync(conv, entry.peer, entry.scope, entry.reason);
+    }, SYNC_DEBOUNCE_MS);
+
+    pendingSync.set(conv, {peer: peerPubkey, scope, reason, timer});
+  })();
+}
+
+/**
+ * Run one reconcile for `conv`. Single-flight per conversation: a trigger landing
+ * mid-run is remembered and re-armed once this run finishes, rather than stacking a
+ * second concurrent sync on the same conversation.
+ *
+ * Recent-scope runs sit behind a floor so a chatty conversation can't hammer the
+ * relays. A FULL run (the all-relays-green hard rule) ignores the floor — it is the
+ * one sync the user explicitly asked to always happen.
+ */
+async function runSync(conv: string, peer: string, scope: SyncScope, reason: string): Promise<void> {
+  if(inFlightSync.has(conv)) {
+    rerunSync.set(conv, {peer, scope, reason});
     return;
   }
 
-  // Collapse a burst of incoming messages to a single recent pull per conversation.
-  const now = Date.now();
-  if(now - (lastRecentPullAt.get(conv) || 0) < RECENT_PULL_THROTTLE_MS) return;
+  const startedAt = Date.now();
+  if(scope === 'recent' && startedAt - (lastSyncAt.get(conv) || 0) < RECENT_SYNC_FLOOR_MS) return;
 
+  // Advertise our own digest: the reconcile is two-way. A sibling that is BEHIND us
+  // learns it from this and pulls, without us having to ask it for anything.
+  void publishActiveDigest({force: true});
+
+  // Nobody live to answer. Don't publish a request into the void (a single-device
+  // user would otherwise write one to the relays on every keystroke burst) — HOLD the
+  // intent instead and run it the instant a sibling pulses. See `deferredSync`.
+  if(!hasLiveSibling()) {
+    deferredSync.set(conv, {peer, scope, reason});
+    console.debug(`${LOG_PREFIX} ${scope}-sync (${reason}) deferred — no live sibling`);
+    return;
+  }
+
+  inFlightSync.add(conv);
+  lastSyncAt.set(conv, startedAt);
+  const myEpoch = epoch;
+
+  try {
+    for(const backoff of SYNC_RETRY_BACKOFF_MS) {
+      if(backoff > 0) {
+        await delay(backoff);
+        // Device-sync was torn down (or re-inited) under us mid-backoff — this run
+        // belongs to a session that no longer exists.
+        if(epoch !== myEpoch) return;
+        // A sibling already answered this run — re-asking would be pure noise.
+        if((lastSyncResponseAt.get(conv) || 0) >= startedAt) break;
+        // A newer trigger is already queued behind us. Stop re-asking on behalf of
+        // the old one and hand over — otherwise a fresh trigger (a message that just
+        // landed, relays going green) would sit behind a stale backoff for seconds.
+        if(rerunSync.has(conv)) break;
+      }
+      const sent = await publishSyncRequest(conv, scope, reason);
+      if(!sent) break; // pool isn't ready — retrying on a backoff won't change that
+    }
+
+    if(scope === 'full') fullSyncedConvs.add(conv);
+  } catch(err) {
+    console.debug(`${LOG_PREFIX} runSync failed:`, (err as Error)?.message);
+  } finally {
+    inFlightSync.delete(conv);
+    const rerun = rerunSync.get(conv);
+    if(rerun) {
+      rerunSync.delete(conv);
+      if(epoch === myEpoch) scheduleSync(rerun.peer, rerun.scope, rerun.reason);
+    }
+  }
+}
+
+/**
+ * Broadcast one sync request for `conv`. `targetId: ''` is a BROADCAST — ANY live
+ * sibling holding rows we lack can answer, so we never need to know which device
+ * has them. Returns false when the pool isn't ready (so a retry loop can give up).
+ */
+async function publishSyncRequest(conv: string, scope: SyncScope, reason: string): Promise<boolean> {
   const pool = (window as any).__phantomchatChatAPI?.relayPool;
-  if(!pool?.isConnected?.() || typeof pool.publishSyncRequest !== 'function') return;
-  lastRecentPullAt.set(conv, now);
+  if(!pool?.isConnected?.() || typeof pool.publishSyncRequest !== 'function') return false;
 
   try {
     const {getMessageStore} = await import('./message-store');
     const store = getMessageStore();
-    // Have-set = our most-recent N eventIds, so the sibling's diff stays bounded
-    // to the recent tail rather than the whole conversation.
-    const recent = await store.getMessages(conv, RECENT_PULL_ROWS);
-    const haveIds = recent.map((r) => r.eventId).filter((id): id is string => typeof id === 'string');
 
-    // Broadcast (empty targetId) so ANY live sibling holding extra answers — we
-    // don't need to know which device has it.
+    let haveIds: string[];
+    if(scope === 'full') {
+      haveIds = await store.getConversationEventIds(conv);
+      if(haveIds.length > HAVE_IDS_CAP) haveIds = haveIds.slice(-HAVE_IDS_CAP);
+    } else {
+      // Have-set = our most-recent N eventIds, so the sibling's diff stays bounded
+      // to the recent tail rather than the whole conversation.
+      const recent = await store.getMessages(conv, RECENT_SYNC_ROWS);
+      haveIds = recent.map((r) => r.eventId).filter((id): id is string => typeof id === 'string');
+    }
+
     await pool.publishSyncRequest({
       deviceId,
       targetId: '',
       conv,
       haveIds,
-      recentOnly: true,
-      limit: RECENT_PULL_ROWS
+      ...(scope === 'recent' ? {recentOnly: true, limit: RECENT_SYNC_ROWS} : {})
     });
-    console.log(`${LOG_PREFIX} → recent-sync (before render) ${conv.slice(0, 12)}… have=${haveIds.length}, blocking ≤${RECENT_PULL_CEILING_MS}ms`);
+    console.debug(`${LOG_PREFIX} → ${scope}-sync (${reason}) ${conv.slice(0, 12)}… have=${haveIds.length}`);
+    return true;
   } catch(err) {
-    console.debug(`${LOG_PREFIX} syncRecentBeforeRender request failed:`, (err as Error)?.message);
-    return;
+    console.debug(`${LOG_PREFIX} publishSyncRequest failed:`, (err as Error)?.message);
+    return false;
   }
-
-  // Block until a sibling answers with a `last` chunk, or the hard ceiling fires.
-  await new Promise<void>((resolve) => {
-    const prior = pendingRecentPulls.get(conv);
-    if(prior) { clearTimeout(prior.timer); prior.resolve(); }
-    const timer = setTimeout(() => {
-      pendingRecentPulls.delete(conv);
-      resolve();
-    }, RECENT_PULL_CEILING_MS);
-    pendingRecentPulls.set(conv, {resolve, timer});
-  });
 }
 
-/** Resolve (unblock) a pending sync-before-render barrier for a conversation. */
-function resolveRecentPull(conv: string): void {
-  const pending = pendingRecentPulls.get(conv);
-  if(!pending) return;
-  clearTimeout(pending.timer);
-  pendingRecentPulls.delete(conv);
-  pending.resolve();
-}
-
-/** Show a brief, self-dismissing "syncing" pill. Throttled + transient. */
-function showSyncingIndicator(): void {
-  if(typeof document === 'undefined') return;
-  const now = Date.now();
-  if(now - lastIndicatorAt < INDICATOR_THROTTLE_MS) return;
-  lastIndicatorAt = now;
-
-  const pill = document.createElement('div');
-  pill.textContent = '🔄 Syncing history from your other device…';
-  pill.style.cssText = [
-    'position:fixed',
-    'top:calc(env(safe-area-inset-top, 0px) + 10px)',
-    'left:50%',
-    'transform:translateX(-50%)',
-    'z-index:100000',
-    'padding:7px 16px',
-    'border-radius:18px',
-    'background:rgba(51,144,236,.95)',
-    'color:#fff',
-    'font-size:13px',
-    'font-weight:500',
-    'font-family:inherit',
-    'line-height:1.2',
-    'box-shadow:0 2px 12px rgba(0,0,0,.3)',
-    'max-width:92vw',
-    'white-space:nowrap',
-    'overflow:hidden',
-    'text-overflow:ellipsis',
-    'pointer-events:none',
-    'transition:opacity .3s ease'
-  ].join(';');
-
-  document.body.appendChild(pill);
-  setTimeout(() => { pill.style.opacity = '0'; }, INDICATOR_TTL_MS - 300);
-  setTimeout(() => { pill.remove(); }, INDICATOR_TTL_MS);
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -535,12 +645,33 @@ async function wireChatOpen(): Promise<void> {
   }
 }
 
+/**
+ * TRIGGER 2 — a chat was SELECTED. Advertise, then reconcile its recent tail in the
+ * background. If every relay is already green and this conversation hasn't had a
+ * full sync yet this session, the all-relays-green hard rule applies to the chat the
+ * user just selected too: give it the FULL sync rather than only the tail.
+ */
 async function onChatOpen(peerId: number): Promise<void> {
   const pubkey = await resolvePeerPubkey(peerId);
   activePeerPubkey = pubkey; // null for group/other — stops advertising
   if(!pubkey) return;
-  console.log(`${LOG_PREFIX} chat-open: peer ${peerId} (${pubkey.slice(0, 8)}) — advertising digest`);
+  console.debug(`${LOG_PREFIX} chat-open: peer ${peerId} (${pubkey.slice(0, 8)})`);
   void publishActiveDigest({force: true});
+
+  const conv = await convFor(pubkey);
+  const wantsFull = allRelaysGreen && !!conv && !fullSyncedConvs.has(conv);
+  scheduleSync(pubkey, wantsFull ? 'full' : 'recent', 'chat-open');
+}
+
+/** conversationId for a peer, or null when the store isn't reachable. */
+async function convFor(peerPubkey: string): Promise<string | null> {
+  if(!ownPubkey) return null;
+  try {
+    const {getMessageStore} = await import('./message-store');
+    return getMessageStore().getConversationId(ownPubkey, peerPubkey);
+  } catch{
+    return null;
+  }
 }
 
 /**
@@ -555,8 +686,12 @@ function wireTypingTrigger(): void {
     // typing receiver dispatches `peer_typings` on for INCOMING peer ticks.
     void import('@lib/rootScope').then(({default: rootScope}) => {
       rootScope.addEventListener('peer_typings' as any, () => {
-        // A typing edge (start OR stop) for whatever chat is open ⇒ nudge a digest.
+        // TRIGGER 3 — a typing edge (start OR stop) on the open chat. Both our
+        // devices see the peer's tick at the same instant, which makes it a free
+        // synchronized "compare notes now". Nudge the digest AND reconcile the tail;
+        // the debounce collapses a typing storm into one sync.
         pokeDeviceSync();
+        if(activePeerPubkey) scheduleSync(activePeerPubkey, 'recent', 'typing');
       });
     }).catch((err) => console.debug(`${LOG_PREFIX} typing trigger wiring failed:`, (err as Error)?.message));
   } catch(err) {
@@ -564,19 +699,38 @@ function wireTypingTrigger(): void {
   }
 }
 
-/** Reconnect trigger: when the relay pool reports connectivity restored, re-advertise. */
-function wireReconnectTrigger(): void {
+/**
+ * TRIGGER 1 (the hard rule) — RELAY STATUS CHANGE. The moment every relay socket is
+ * connected, FULL-sync the selected chat. All-green is the one instant we know the
+ * whole pool can both carry our request and deliver a sibling's answer, so it's the
+ * cheapest possible moment to buy a complete conversation.
+ *
+ * Edge-triggered: the pool fans out state changes on every socket transition, so we
+ * only act on the not-green → green EDGE, not on every notification while green.
+ * Any connectivity at all (>0) still re-advertises the digest, as before.
+ */
+function wireRelayStatusTrigger(): void {
   try {
     const pool = (window as any).__phantomchatChatAPI?.relayPool;
-    // The pool already exposes a state-change fan-out (connectedCount). Chain onto
-    // it without clobbering existing subscribers by wrapping the current callback.
+    // The pool exposes a state-change fan-out. Chain onto it without clobbering
+    // existing subscribers.
     if(pool && typeof pool.addStateChangeListener === 'function') {
-      pool.addStateChangeListener((connected: number) => {
+      pool.addStateChangeListener((connected: number, total: number) => {
         if(connected > 0) void publishActiveDigest({force: true});
+
+        const green = total > 0 && connected >= total;
+        const wasGreen = allRelaysGreen;
+        allRelaysGreen = green;
+        if(!green || wasGreen) return; // only the rising edge
+
+        if(activePeerPubkey) {
+          console.debug(`${LOG_PREFIX} all ${total} relay(s) green — full sync of the selected chat`);
+          scheduleSync(activePeerPubkey, 'full', 'relays-green');
+        }
       });
     }
   } catch(err) {
-    console.debug(`${LOG_PREFIX} wireReconnectTrigger failed:`, (err as Error)?.message);
+    console.debug(`${LOG_PREFIX} wireRelayStatusTrigger failed:`, (err as Error)?.message);
   }
 }
 
@@ -635,27 +789,26 @@ async function onSyncRequest(req: {deviceId: string; targetId: string; conv: str
   // got its answer or moved on. Answering it would publish a fresh response backlog
   // to the relays for nobody, and fake a live sibling for the render barrier.
   if(!isFreshControl(req.sentAt)) return;
-  lastSiblingActivityAt = Date.now();               // proof a sibling is live
+  markSiblingLive();                                // proof a sibling is live
   try {
     const pool = (window as any).__phantomchatChatAPI?.relayPool;
     if(!pool?.isConnected?.() || typeof pool.publishSyncResponse !== 'function') return;
 
     const {getMessageStore} = await import('./message-store');
     const store = getMessageStore();
-    // For a recent-only request, only consider the last N rows so the barrier stays
+    // For a recent-only request, only consider the last N rows so the answer stays
     // cheap; getMessages returns newest-first, so this is exactly the recent tail.
-    const scanLimit = req.recentOnly ? (req.limit && req.limit > 0 ? req.limit : RECENT_PULL_ROWS) : 100_000;
+    const scanLimit = req.recentOnly ? (req.limit && req.limit > 0 ? req.limit : RECENT_SYNC_ROWS) : 100_000;
     const rows = await store.getMessages(req.conv, scanLimit);
     const have = new Set(req.haveIds);
     const missing = rows.filter((r) => r.eventId && !have.has(r.eventId));
 
     if(missing.length === 0) {
-      console.log(`${LOG_PREFIX} sync-request ${req.conv.slice(0, 12)}… — nothing extra to send`);
-      // A recent-only barrier is BLOCKING the requester's render — send an empty
-      // `last` ACK so it unblocks immediately instead of waiting out the ceiling.
-      if(req.recentOnly) {
-        await pool.publishSyncResponse({deviceId, targetId: req.deviceId, conv: req.conv, rows: [], seq: 0, last: true});
-      }
+      console.debug(`${LOG_PREFIX} sync-request ${req.conv.slice(0, 12)}… — nothing extra to send`);
+      // Still ACK, with an empty `last` chunk. Nothing is blocked on it any more, but
+      // the requester retries on a backoff until somebody answers — so "I have
+      // nothing for you" is exactly what stops it re-asking two more times.
+      await pool.publishSyncResponse({deviceId, targetId: req.deviceId, conv: req.conv, rows: [], seq: 0, last: true});
       return;
     }
 
@@ -694,7 +847,7 @@ async function onSyncResponse(res: {deviceId: string; targetId: string; conv: st
   // still worth applying. (Replays from a past session are already inert: they
   // target a previous session's deviceId, which the check above rejects.)
   // Liveness, though, must only ever come from a FRESH envelope.
-  if(isFreshControl(res.sentAt)) lastSiblingActivityAt = Date.now();
+  if(isFreshControl(res.sentAt)) markSiblingLive();
 
   let applied = 0;
   if(Array.isArray(res.rows) && res.rows.length > 0) {
@@ -714,12 +867,12 @@ async function onSyncResponse(res: {deviceId: string; targetId: string; conv: st
     }
   }
   if(applied > 0) {
-    console.log(`${LOG_PREFIX} ← sync-response ${res.conv.slice(0, 12)}… applied ${applied} new row(s) (seq ${res.seq}${res.last ? ', last' : ''})`);
-    showSyncingIndicator();
+    console.debug(`${LOG_PREFIX} ← sync-response ${res.conv.slice(0, 12)}… applied ${applied} new row(s) (seq ${res.seq}${res.last ? ', last' : ''})`);
   }
-  // The final chunk (even an empty ACK) unblocks any sync-before-render barrier
-  // waiting on this conversation — rows are already ingested above.
-  if(res.last) resolveRecentPull(res.conv);
+  // A sibling answered us (even an empty `last` ACK is an answer). Record it so a
+  // retry loop still mid-backoff stops re-asking — nothing is waiting on this, the
+  // rows above are already ingested and painted.
+  if(res.last) lastSyncResponseAt.set(res.conv, Date.now());
 }
 
 /** Serialize a StoredMessage down to the wire subset the peer device needs. */
@@ -846,11 +999,18 @@ async function renderPulledRow(row: DeviceSyncRow, peerId: number, mid: number, 
 
 /** Clean up on page unload. */
 export function destroyDeviceSync(): void {
+  epoch++; // orphan every in-flight sync run: they check this after each await
   if(pulseTimer) { clearInterval(pulseTimer); pulseTimer = null; }
   if(pokeTimer) { clearTimeout(pokeTimer); pokeTimer = null; }
-  for(const {timer, resolve} of pendingRecentPulls.values()) { clearTimeout(timer); resolve(); }
-  pendingRecentPulls.clear();
-  lastRecentPullAt.clear();
+  for(const {timer} of pendingSync.values()) clearTimeout(timer);
+  pendingSync.clear();
+  inFlightSync.clear();
+  rerunSync.clear();
+  lastSyncAt.clear();
+  lastSyncResponseAt.clear();
+  fullSyncedConvs.clear();
+  deferredSync.clear();
+  allRelaysGreen = false;
   remoteDigests.clear();
   lastRequestAt.clear();
   recentDigestSeen.clear();

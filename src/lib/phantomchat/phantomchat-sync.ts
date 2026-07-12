@@ -80,18 +80,19 @@ export class PhantomChatSync {
       });
     }
 
-    // Sync-before-render barrier: for a genuine incoming message, if one of our
-    // OWN devices is live, do a recent-only catch-up from it and BLOCK on it before
-    // painting — so the new bubble lands on top of an up-to-date tail (and any media
-    // a sibling already holds), never above a gap. No-op / non-blocking when no
-    // sibling is live. Guarded so a sync failure can never swallow the render.
+    // TRIGGER 4 — message received. Kick a background, recent-only reconcile of this
+    // conversation (with retries) so a gap or an out-of-order tail is repaired right
+    // after this bubble lands.
+    //
+    // NOT a barrier, and deliberately NOT awaited. Rendering is NEVER gated on sync:
+    // the message is HERE, so it gets painted. If it lands out of order, the
+    // background sync fixes the tail moments later. The old sync-before-render
+    // barrier put a relay round-trip in FRONT of the paint — one unanswered request
+    // and the bubble stalled for seconds, or never appeared at all. Never again.
     if(!isSelfEcho) {
-      try {
-        const {syncRecentBeforeRender} = await import('./phantomchat-device-sync');
-        await syncRecentBeforeRender(senderPubkey);
-      } catch(err) {
-        console.debug(LOG_PREFIX, 'syncRecentBeforeRender skipped:', (err as Error)?.message);
-      }
+      void import('./phantomchat-device-sync')
+      .then(({scheduleSync}) => scheduleSync(senderPubkey, 'recent', 'message-received'))
+      .catch((err) => console.debug(LOG_PREFIX, 'scheduleSync skipped:', (err as Error)?.message));
     }
 
     console.log(LOG_PREFIX, 'dispatching phantomchat_new_message', {peerId, mid, selfEcho: isSelfEcho});

@@ -68,14 +68,28 @@ async function boot(store: any) {
   }));
 
   const mod = await import('@lib/phantomchat/phantomchat-device-sync');
+  // Destroy first: a retry loop left mid-backoff by the PREVIOUS test would otherwise
+  // keep publishing into this test's pool (it reads the pool from window at call
+  // time). destroy() bumps the epoch, which orphans those runs.
+  mod.destroyDeviceSync();
   await mod.initDeviceSync(OWN);
+  teardown = () => mod.destroyDeviceSync();
   const deviceId = (window as any).__phantomchatDeviceSync.deviceId as string;
   return {mod, pool, captured, deviceId};
+}
+
+let teardown: (() => void) | null = null;
+
+/** Stop any in-flight sync run so it cannot bleed into the next test's pool. */
+function tearDownSync() {
+  teardown?.();
+  teardown = null;
 }
 
 describe('device-sync pull (request/response, strict union)', () => {
   beforeEach(() => { document.body.innerHTML = ''; });
   afterEach(() => {
+    tearDownSync();
     delete (window as any).__phantomchatChatAPI;
     delete (window as any).__phantomchatDeviceSync;
   });
@@ -101,11 +115,17 @@ describe('device-sync pull (request/response, strict union)', () => {
     expect(pool.publishSyncResponse).not.toHaveBeenCalled();
   });
 
-  it('sends nothing when the requester already holds everything', async() => {
+  it('sends an empty last ACK when the requester already holds everything', async() => {
     const store = makeStore([row('m1', 10), row('m2', 20)]);
     const {captured, pool, deviceId} = await boot(store);
     await captured.req({deviceId: 'requester', targetId: deviceId, conv: CONV, haveIds: ['m1', 'm2']});
-    expect(pool.publishSyncResponse).not.toHaveBeenCalled();
+
+    // "I have nothing for you" is a real answer — it's what stops the requester's
+    // retry loop from re-asking twice more on its backoff.
+    expect(pool.publishSyncResponse).toHaveBeenCalledTimes(1);
+    const sent = pool.publishSyncResponse.mock.calls[0][0] as any;
+    expect(sent.rows).toEqual([]);
+    expect(sent.last).toBe(true);
   });
 
   it('ingests only new rows from a response aimed at us (strict union)', async() => {
@@ -134,43 +154,89 @@ describe('device-sync pull (request/response, strict union)', () => {
   });
 });
 
-describe('device-sync sync-before-render barrier (recent-only)', () => {
+describe('device-sync background reconcile (never a render gate)', () => {
   beforeEach(() => { document.body.innerHTML = ''; });
   afterEach(() => {
+    tearDownSync();
     delete (window as any).__phantomchatChatAPI;
     delete (window as any).__phantomchatDeviceSync;
   });
 
-  it('does not block or publish when no sibling is live', async() => {
+  it('scheduleSync is fire-and-forget — it returns void, so no caller can await it', async() => {
     const store = makeStore([row('m1', 10)]);
-    const {mod, pool} = await boot(store);
-    await mod.syncRecentBeforeRender(PEER); // must return immediately
-    expect(pool.publishSyncRequest).not.toHaveBeenCalled();
+    const {mod} = await boot(store);
+    // The whole point: a render path physically CANNOT block on this. If this ever
+    // starts returning a promise, someone has re-introduced the barrier.
+    expect(mod.scheduleSync(PEER, 'recent', 'test')).toBeUndefined();
   });
 
-  it('blocks on a recent-only broadcast pull when a sibling is live, unblocking on the last chunk', async() => {
+  it('holds (does not publish) a sync when no sibling is live, and releases it when one pulses', async() => {
     const store = makeStore([row('m1', 10)]);
-    const {mod, pool, captured, deviceId} = await boot(store);
+    const {mod, pool, captured} = await boot(store);
 
-    // A sibling advertises a (not-behind) digest — proof it's live.
+    mod.scheduleSync(PEER, 'recent', 'message-received');
+    await new Promise((r) => setTimeout(r, 700)); // past the debounce
+
+    // Nobody to ask — a lone device must not write requests into the void.
+    expect(pool.publishSyncRequest).not.toHaveBeenCalled();
+
+    // A sibling pulses ⇒ the HELD intent runs. It was deferred, never dropped.
     await captured.digest({deviceId: 'sibling', conv: CONV, count: 1, latestId: ''});
+    await new Promise((r) => setTimeout(r, 700));
 
-    let resolved = false;
-    const barrier = mod.syncRecentBeforeRender(PEER).then(() => { resolved = true; });
-    await new Promise((r) => setTimeout(r, 0)); // let the request + pending registration settle
-
-    // Fired a RECENT-ONLY BROADCAST request and is still blocking.
-    expect(pool.publishSyncRequest).toHaveBeenCalledTimes(1);
+    expect(pool.publishSyncRequest).toHaveBeenCalled();
     const req = pool.publishSyncRequest.mock.calls[0][0] as any;
     expect(req.recentOnly).toBe(true);
-    expect(req.targetId).toBe(''); // broadcast — any sibling answers
-    expect(resolved).toBe(false);
-
-    // Sibling answers with the last chunk → barrier unblocks.
-    await captured.res({deviceId: 'sibling', targetId: deviceId, conv: CONV, rows: [row('m0', 5)], seq: 0, last: true});
-    await barrier;
-    expect(resolved).toBe(true);
+    expect(req.targetId).toBe(''); // broadcast — any sibling can answer
   });
+
+  it('collapses a burst of triggers into ONE sync (typing storm must not self-DDoS)', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {mod, pool, captured} = await boot(store);
+    await captured.digest({deviceId: 'sibling', conv: CONV, count: 1, latestId: ''}); // sibling live
+
+    // Six triggers inside the debounce window — the shape of a real typing burst.
+    for(let i = 0; i < 6; i++) mod.scheduleSync(PEER, 'recent', 'typing');
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(pool.publishSyncRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('a full-scope trigger UPGRADES a pending recent one (the hard rule always wins)', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {mod, pool, captured} = await boot(store);
+    await captured.digest({deviceId: 'sibling', conv: CONV, count: 1, latestId: ''});
+
+    mod.scheduleSync(PEER, 'recent', 'typing');
+    await new Promise((r) => setTimeout(r, 10)); // still inside the debounce
+    mod.scheduleSync(PEER, 'full', 'relays-green');
+    await new Promise((r) => setTimeout(r, 1_200));
+
+    // Whatever else happened, the conversation ends up FULL-synced: the hard rule is
+    // never downgraded to a tail sync by a trigger that merely got there first.
+    const last = pool.publishSyncRequest.mock.calls.at(-1)[0] as any;
+    expect(last.recentOnly).toBeUndefined(); // full scope — whole conversation
+    expect(last.haveIds).toEqual(['m1']);    // whole-conversation have-set
+  });
+
+  it('retries when nobody answers, and stops re-asking the moment a sibling does', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {mod, pool, captured, deviceId} = await boot(store);
+    await captured.digest({deviceId: 'sibling', conv: CONV, count: 1, latestId: ''});
+
+    mod.scheduleSync(PEER, 'recent', 'message-received');
+    await new Promise((r) => setTimeout(r, 700));
+    expect(pool.publishSyncRequest).toHaveBeenCalledTimes(1); // first attempt
+
+    // Silence → the backoff re-asks. A single lost request must not lose the sync.
+    await new Promise((r) => setTimeout(r, 1_700));
+    expect(pool.publishSyncRequest).toHaveBeenCalledTimes(2);
+
+    // A sibling answers → the remaining attempt is abandoned.
+    await captured.res({deviceId: 'sibling', targetId: deviceId, conv: CONV, rows: [], seq: 0, last: true});
+    await new Promise((r) => setTimeout(r, 4_500));
+    expect(pool.publishSyncRequest).toHaveBeenCalledTimes(2);
+  }, 15_000);
 
   it('answers a BROADCAST recent-only request with an empty last ACK when nothing is missing', async() => {
     const store = makeStore([row('m1', 10)]);
