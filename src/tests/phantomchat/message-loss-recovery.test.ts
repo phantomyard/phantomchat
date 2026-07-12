@@ -64,9 +64,34 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       this.connectionState = 'disconnected';
     }
 
+    // Every (since, until) pair the pool has asked this relay to walk.
+    pagedCalls: {since?: number; until?: number}[] = [];
+    // When set, the next getMessagesPaged() reports a truncated walk (page cap
+    // hit with the range unexhausted) and hands back this resume cursor.
+    truncateAt: number | null = null;
+
     async getMessages(since?: number): Promise<MockMsg[]> {
       this.sinceCalls.push(since);
       return this.stored.filter((m) => since === undefined || m.timestamp >= since);
+    }
+
+    async getMessagesPaged(since?: number, until?: number): Promise<{
+      messages: MockMsg[];
+      truncated: boolean;
+      oldestReached?: number;
+    }> {
+      this.sinceCalls.push(since);
+      this.pagedCalls.push({since, until});
+      const messages = this.stored.filter((m) =>
+        (since === undefined || m.timestamp >= since) &&
+        (until === undefined || m.timestamp <= until)
+      );
+      if(this.truncateAt !== null) {
+        const oldestReached = this.truncateAt;
+        this.truncateAt = null; // one truncated tick, then the walk completes
+        return {messages, truncated: true, oldestReached};
+      }
+      return {messages, truncated: false};
     }
 
     subscribeMessages(): void {
@@ -242,6 +267,125 @@ describe('message-loss recovery', () => {
       expect(since!).toBeLessThanOrEqual(missed.timestamp);
       expect(onMessage).toHaveBeenCalledTimes(1);
       expect(onMessage.mock.calls[0][0].id).toBe('rumor-kai-missed');
+    });
+  });
+
+  // Review finding (Robert): reaching the poll back to the watermark makes the
+  // GAP bigger, and a limit-capped REQ answers a big gap with only its NEWEST
+  // page. If the pool then advances the watermark to the newest message it
+  // decrypted, everything older is stranded below the floor forever. The relay
+  // paginates (getMessagesPaged); the pool must not "catch up" past a walk that
+  // ran out of pages.
+  describe('truncated backfill must not strand the messages it did not reach', () => {
+    it('holds the watermark while a backfill gap is still open', async() => {
+      const t0 = 1_800_000_000;
+      vi.useFakeTimers();
+      vi.setSystemTime(t0 * 1000);
+
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const relay = mockRelayInstances[0];
+
+      // A deep backlog: the walk hits the page cap and only reaches back to
+      // t0+500, leaving everything below it unfetched.
+      relay.stored.push(makeMsg('rumor-newest', t0 + 900));
+      relay.truncateAt = t0 + 500;
+
+      await (pool as any).backfillRecent();
+
+      expect(onMessage).toHaveBeenCalledTimes(1); // the newest DID arrive...
+      // ...but the watermark must NOT jump to it. Doing so would put the floor
+      // above the unfetched older wraps and make them permanently unreachable —
+      // every replay path (live REQ, poll, reconnect backfill) keys off it.
+      expect((pool as any).lastSeenTimestamp).toBe(0);
+      expect((pool as any).backfillGapOpen).toBe(true);
+    });
+
+    it('resumes the walk from the saved cursor, then advances once the gap closes', async() => {
+      const t0 = 1_800_000_000;
+      vi.useFakeTimers();
+      vi.setSystemTime(t0 * 1000);
+
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const relay = mockRelayInstances[0];
+      relay.stored.push(makeMsg('rumor-newest', t0 + 900));
+      relay.truncateAt = t0 + 500;
+
+      await (pool as any).backfillRecent();
+      expect((pool as any).backfillCursor).toBe(t0 + 500);
+
+      // Next tick must CONTINUE from the cursor. Restarting from the top would
+      // re-fetch the same newest page forever and never reach the older wraps.
+      relay.stored.push(makeMsg('rumor-older', t0 + 300));
+      relay.pagedCalls.length = 0;
+      onMessage.mockClear();
+
+      await (pool as any).backfillRecent();
+
+      expect(relay.pagedCalls[0].until).toBe(t0 + 500);
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage.mock.calls[0][0].id).toBe('rumor-older');
+
+      // Range exhausted this time — the gap is closed, so the watermark is free
+      // to move again.
+      expect((pool as any).backfillGapOpen).toBe(false);
+      expect((pool as any).lastSeenTimestamp).toBe(t0 + 300);
+    });
+  });
+
+  // Review finding (Robert, revised): an UNCONDITIONAL release re-opens the
+  // FIND-poll-reunwrap freeze — a deterministically-bad wrap near the watermark
+  // is re-fetched and re-unwrapped every 15s forever. Cap it. But the cap must
+  // reset on resume, or a frozen worker (which fails wraps in BURSTS) burns the
+  // budget in ~45s and drops a good message permanently — the original bug.
+  describe('retry budget — bounded, but never permanent', () => {
+    it('parks a wrap that keeps failing, killing the 15s re-unwrap loop', async() => {
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage: vi.fn()});
+      await pool.initialize();
+
+      const relay = mockRelayInstances[0];
+      const claim = relay.claimEvent!;
+      const release = relay.releaseEvent!;
+
+      // Three consecutive failed unwraps of the same wrap.
+      for(let i = 0; i < 3; i++) {
+        expect(claim('wrap-corrupt')).toBe(true); // re-admitted each time
+        release('wrap-corrupt');
+      }
+
+      // Budget spent: the wrap is now PARKED — the claim is kept, so the poll
+      // stops re-fetching and re-decrypting it on every tick.
+      expect(claim('wrap-corrupt')).toBe(false);
+    });
+
+    it('un-parks on resume, so a frozen-worker burst never loses a good wrap', async() => {
+      const pool = new NostrRelayPool({relays: [...RELAYS], onMessage: vi.fn()});
+      await pool.initialize();
+
+      const relay = mockRelayInstances[0];
+      const claim = relay.claimEvent!;
+      const release = relay.releaseEvent!;
+
+      // The tab is backgrounded and the unwrap worker is frozen: this PERFECTLY
+      // GOOD wrap fails on every attempt, in a burst, and gets parked.
+      for(let i = 0; i < 3; i++) {
+        claim('wrap-kai-good');
+        release('wrap-kai-good');
+      }
+      expect(claim('wrap-kai-good')).toBe(false); // parked
+
+      // The user comes back to the tab. The worker thaws. The wrap MUST become
+      // retryable — otherwise the cap is just the poisoning we set out to remove.
+      document.dispatchEvent(new Event('visibilitychange'));
+
+      expect(claim('wrap-kai-good')).toBe(true);
     });
   });
 });

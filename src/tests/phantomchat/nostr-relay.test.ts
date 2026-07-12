@@ -618,6 +618,131 @@ describe('NostrRelay', () => {
       const calls = gate.mock.results.filter((r) => r.value === false).length;
       expect(calls).toBeGreaterThanOrEqual(1);
     });
+
+    // Review finding (Kai): the rollback was added to handleEvent()'s catch but
+    // NOT to collectQueryEvent()'s — and collectQueryEvent IS the recovery path
+    // (catch-up poll, reconnect backfill, startup backfill). A claim left behind
+    // here poisons the wrap against the very mechanisms meant to re-fetch it, so
+    // the frozen-worker case the rollback exists for stayed broken end to end.
+    test('releases the dedup claim when a QUERY-path unwrap fails', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+
+      const claim = vi.fn(() => true);
+      const release = vi.fn();
+      relay.setEventDedup(claim);
+      relay.setEventRelease(release);
+
+      // A signed kind-1059 whose content is NOT a real gift-wrap: the unwrap
+      // throws, exactly as a frozen/failing worker would make it throw.
+      const wrap = finalizeEvent(
+        {kind: NOSTR_KIND_GIFTWRAP, created_at: Math.floor(Date.now() / 1000), tags: [], content: 'not-a-real-wrap'},
+        generateSecretKey()
+      );
+
+      const ws = getLastMockWs();
+      const origSend = ws!.send.bind(ws);
+      ws!.send = (data: string) => {
+        origSend(data);
+        const parsed = JSON.parse(data);
+        if(parsed[0] === 'REQ' && parsed[1]?.startsWith('phantomchat-query-')) {
+          ws!.simulateMessage(['EVENT', parsed[1], wrap]);
+          setTimeout(() => ws!.simulateMessage(['EOSE', parsed[1]]), 10);
+        }
+      };
+
+      await relay.getMessages();
+
+      expect(claim).toHaveBeenCalledWith(wrap.id);
+      // The wrap was claimed, never delivered, and the claim MUST come back —
+      // otherwise the next poll tick dedups it away and it is lost until reload.
+      expect(release).toHaveBeenCalledWith(wrap.id);
+    });
+  });
+
+  // Review finding (Robert): NIP-01 answers a limited filter with the NEWEST N
+  // events in the range. So `{since: watermark, limit: 100}` against a gap wider
+  // than 100 wraps silently drops the OLDEST ones — and widening `since` to the
+  // watermark (this PR's other half) makes the gap bigger, so it made this
+  // WORSE. The reach-back has to WALK the range with `until`, not peek at the
+  // top of it.
+  describe('getMessagesPaged — backfill must walk the whole gap', () => {
+    function wrapAt(created_at: number, i: number) {
+      // content:'' short-circuits collectQueryEvent before any crypto — this
+      // test is about the PAGER (raw frames in, `until` anchors out), not unwrap.
+      const tags: string[][] = [];
+      return {id: `wrap-${i}`, pubkey: 'aa'.repeat(32), kind: NOSTR_KIND_GIFTWRAP, created_at, content: '', tags, sig: 'x'};
+    }
+
+    /**
+     * Serve REQs like a real relay: newest-N within [since, until], then EOSE.
+     */
+    function serveStore(ws: MockWebSocket, store: any[]) {
+      const pagesServed: {since?: number; until?: number; served: number}[] = [];
+      const idsServed = new Set<string>();
+      const origSend = ws.send.bind(ws);
+      ws.send = (data: string) => {
+        origSend(data);
+        const parsed = JSON.parse(data);
+        if(parsed[0] !== 'REQ' || !parsed[1]?.startsWith('phantomchat-query-')) return;
+        const [, subId, filter] = parsed;
+        const matched = store
+        .filter((e) => (filter.since === undefined || e.created_at >= filter.since))
+        .filter((e) => (filter.until === undefined || e.created_at <= filter.until))
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, filter.limit ?? 100);
+        pagesServed.push({since: filter.since, until: filter.until, served: matched.length});
+        setTimeout(() => {
+          for(const ev of matched) {
+            idsServed.add(ev.id);
+            ws.simulateMessage(['EVENT', subId, ev]);
+          }
+          ws.simulateMessage(['EOSE', subId]);
+        }, 0);
+      };
+      return {pagesServed, idsServed};
+    }
+
+    test('reaches every wrap in a gap far wider than the page limit', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+
+      const t0 = 1_800_000_000;
+      // 250 wraps — 2.5x the page limit. A single REQ can only ever return 100.
+      const store = Array.from({length: 250}, (_, i) => wrapAt(t0 + i, i));
+      const {pagesServed: pages, idsServed} = serveStore(getLastMockWs()!, store);
+
+      const result = await relay.getMessagesPaged(t0);
+
+      // Walked three pages (100 + 100 + the 52-wrap remainder) and reported the
+      // range as fully exhausted.
+      expect(pages.length).toBeGreaterThanOrEqual(3);
+      expect(result.truncated).toBe(false);
+
+      // THE CLAIM: every wrap in the gap was actually fetched — including the
+      // 150 oldest, which a single limited REQ drops on the floor while the
+      // watermark advances past them. `wrap-0` is the Kai message.
+      expect(idsServed.size).toBe(250);
+      expect(idsServed.has('wrap-0')).toBe(true);
+
+      // Each page after the first is anchored at the previous page's oldest wrap.
+      expect(pages[0].until).toBeUndefined();
+      expect(pages[1].until).toBe(t0 + 150); // oldest of the newest 100 (t0+150..t0+249)
+    });
+
+    test('a gap within one page still completes in a single REQ (no needless walk)', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+
+      const t0 = 1_800_000_000;
+      const store = Array.from({length: 12}, (_, i) => wrapAt(t0 + i, i));
+      const {pagesServed: pages} = serveStore(getLastMockWs()!, store);
+
+      const result = await relay.getMessagesPaged(t0);
+
+      expect(pages.length).toBe(1);
+      expect(result.truncated).toBe(false);
+    });
   });
 
   // Issue #61: a gift-wrap copy delivered over a direct P2P transport is fed to
