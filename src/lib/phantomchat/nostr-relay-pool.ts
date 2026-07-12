@@ -1196,6 +1196,9 @@ export class NostrRelayPool {
     // Optional-call so test mocks without the method don't break (the real
     // NostrRelay always implements it; nostr-relay.test.ts covers the gate).
     instance.setEventDedup?.((eventId) => this.claimWrapId(eventId));
+    // ...and the rollback, so a wrap whose processing dies is not poisoned in
+    // the seen-set and can be retried by a replay.
+    instance.setEventRelease?.((eventId) => this.releaseWrapId(eventId));
 
     // Feed the live subscription a `since` watermark so each (re)connect only
     // replays events since we last saw one — not the entire gift-wrap history.
@@ -1264,6 +1267,22 @@ export class NostrRelayPool {
       this.seenWrapIds.delete(evicted);
     }
     return true;
+  }
+
+  /**
+   * Hand a claimed wrap id back to the seen-set (see `claimWrapId`).
+   *
+   * `claimWrapId` is a CLAIM, not a COMMIT: the relay marks a wrap id as seen
+   * before it unwraps, so a duplicate copy from a second relay skips the
+   * (expensive) crypto. If the unwrap then fails, the wrap was never delivered
+   * — and leaving its id in the set means every later replay is deduped away.
+   * The message is on the relay, retrievable, and permanently invisible to this
+   * session. Only a reload clears it. Releasing the claim closes that hole.
+   */
+  public releaseWrapId(eventId: string): void {
+    if(!this.seenWrapIds.delete(eventId)) return;
+    const idx = this.seenWrapOrder.lastIndexOf(eventId);
+    if(idx !== -1) this.seenWrapOrder.splice(idx, 1);
   }
 
   private handleIncomingMessage(msg: DecryptedMessage): void {
@@ -1694,7 +1713,34 @@ export class NostrRelayPool {
     if(!this.isSubscribedFlag) return;
     this.backfillPollInFlight = true;
     try {
-      const since = Math.floor(Date.now() / 1000) - RECENT_BACKFILL_WINDOW_SEC;
+      // Reach back to the WATERMARK, not to a fixed wall-clock window.
+      //
+      // This poll is the delivery backbone — the thing that recovers a wrap the
+      // live socket never pushed. A fixed `now - 90s` window silently assumed
+      // the client is always awake to catch it. A PWA is not: freeze the tab
+      // (background it, sleep the phone, lose the network) for longer than 90s
+      // and the window slides clean past everything that arrived during the
+      // gap. The message stays on the relay, retrievable, and the one component
+      // whose job is to retrieve it is looking at the wrong 90 seconds. That is
+      // the "Kai went quiet until I reloaded" bug.
+      //
+      // `catchUpSince()` is the honest lower bound: it tracks the newest event
+      // we have actually PROCESSED (not wall-clock), so it cannot skip a gap no
+      // matter how long we were asleep. We still floor the window at 90s so a
+      // freshly-advanced watermark doesn't shrink the poll to nothing and lose
+      // the out-of-order/clock-skew margin the fixed window was giving us.
+      //
+      // Cost of being wrong in this direction is a few duplicate wraps, which
+      // the dedup LRU eats for free. Cost of being wrong in the other direction
+      // is a lost message. The reach-back is bounded by SUBSCRIBE_REPLAY_LIMIT
+      // inside getMessages(), so even a very stale watermark can't pull
+      // unbounded history — and one successful tick advances the watermark,
+      // which collapses the window back to normal.
+      const recentWindow = Math.floor(Date.now() / 1000) - RECENT_BACKFILL_WINDOW_SEC;
+      const watermark = this.catchUpSince();
+      const since = watermark === undefined ?
+        recentWindow :
+        Math.min(recentWindow, watermark);
       const readEntries = this.relayEntries.filter(
         e => e.config.read && e.instance.getState() === 'connected'
       );

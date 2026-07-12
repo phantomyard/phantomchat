@@ -185,6 +185,12 @@ export class NostrRelay {
   // snappiness win. No-op (everything processed) when unset.
   private claimEvent: ((eventId: string) => boolean) | null = null;
 
+  // Rollback for the gate above. A claim is only a promise to PROCESS the wrap;
+  // if processing then fails we must hand the id back, or the wrap is poisoned
+  // in the shared seen-set and no replay path can ever recover it. Set by the
+  // pool alongside claimEvent. No-op when unset.
+  private releaseEvent: ((eventId: string) => void) | null = null;
+
   // State change callback — notifies pool when relay connects/disconnects
   public onStateChange: ((state: 'disconnected' | 'connecting' | 'connected' | 'reconnecting') => void) | null = null;
 
@@ -691,6 +697,15 @@ export class NostrRelay {
    */
   setEventDedup(fn: (eventId: string) => boolean): void {
     this.claimEvent = fn;
+  }
+
+  /**
+   * Install the rollback for the gate above (see `releaseEvent`). Called when a
+   * claimed wrap fails to process, so the id leaves the shared seen-set and a
+   * later replay can retry it instead of being silently deduped into the void.
+   */
+  setEventRelease(fn: (eventId: string) => void): void {
+    this.releaseEvent = fn;
   }
 
   /**
@@ -1247,6 +1262,26 @@ export class NostrRelay {
       }
     } catch(err) {
       this.log.error('[NostrRelay] failed to unwrap gift-wrap:', err);
+      // RELEASE THE DEDUP CLAIM. `claimEvent` (above) marked this wrap id as
+      // seen BEFORE the unwrap ran, so that a copy from a second relay is not
+      // decrypted twice. But a claim is not a commit: if we get here the wrap
+      // was never dispatched, and leaving the id in the seen-set poisons it —
+      // every subsequent replay (reconnect re-arm, catch-up poll, manual
+      // backfill) is deduped away and the message is lost until a full page
+      // reload rebuilds the pool with an empty set.
+      //
+      // This is not hypothetical: a backgrounded PWA can have its unwrap worker
+      // frozen mid-flight, so the wrap lands, gets claimed, and dies here while
+      // the relay still holds it. Releasing the claim makes the replay paths
+      // able to retry, which is the whole point of having them.
+      //
+      // Note the asymmetry with the DELIBERATE rejections above (bad signature,
+      // non-giftwrap kind, empty content): those are terminal verdicts on the
+      // event, so they KEEP the claim and are not retried. Only failures —
+      // where we never reached a verdict — are released.
+      if(event.id && this.releaseEvent) {
+        this.releaseEvent(event.id);
+      }
       // Don't throw - just log the error and skip this message
     }
   }
