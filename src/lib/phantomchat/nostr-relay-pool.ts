@@ -293,6 +293,16 @@ export class NostrRelayPool {
   addStateChangeListener(cb: (connectedCount: number, totalCount: number) => void): void {
     this._stateChangeListeners.push(cb);
   }
+
+  /**
+   * Drop a listener registered via `addStateChangeListener`. The pool outlives its
+   * subscribers (device-sync is torn down and re-inited on every account switch),
+   * so registration has to be reversible or stale callbacks accumulate here.
+   */
+  removeStateChangeListener(cb: (connectedCount: number, totalCount: number) => void): void {
+    const i = this._stateChangeListeners.indexOf(cb);
+    if(i !== -1) this._stateChangeListeners.splice(i, 1);
+  }
   private _stateChangeListeners: Array<(connectedCount: number, totalCount: number) => void> = [];
 
   setOnReceipt(cb: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void): void {
@@ -348,28 +358,32 @@ export class NostrRelayPool {
    * payload. Control envelopes are STORED gift-wraps, so a reconnecting device
    * replays the entire backlog of them — `sentAt` is what lets the device-sync
    * module tell a live pulse from a replayed one and drop the latter.
+   *
+   * Pass `null` to UNWIRE — device-sync does this on destroy, so a control envelope
+   * replayed after logout has nothing to run instead of reaching a stale handler.
    */
-  setOnDigest(cb: (digest: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => void): void {
-    this._onDigestCb = cb;
+  setOnDigest(cb: ((digest: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => void) | null): void {
+    this._onDigestCb = cb ?? undefined;
   }
 
   /**
    * Register a callback for device-sync REQUEST envelopes (a behind device asking
    * a fuller device for the rows it's missing). Self-authored like the digest, so
    * only fires for msg.from === self; the device-sync module ignores requests not
-   * targeted at its own deviceId.
+   * targeted at its own deviceId. Pass `null` to unwire (see `setOnDigest`).
    */
-  setOnSyncRequest(cb: (req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => void): void {
-    this._onSyncReqCb = cb;
+  setOnSyncRequest(cb: ((req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => void) | null): void {
+    this._onSyncReqCb = cb ?? undefined;
   }
 
   /**
    * Register a callback for device-sync RESPONSE envelopes (the fuller device
    * returning the missing rows). Self-authored; the device-sync module ingests
-   * only responses targeted at its own deviceId, strict-union.
+   * only responses targeted at its own deviceId, strict-union. Pass `null` to unwire
+   * (see `setOnDigest`).
    */
-  setOnSyncResponse(cb: (res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => void): void {
-    this._onSyncResCb = cb;
+  setOnSyncResponse(cb: ((res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => void) | null): void {
+    this._onSyncResCb = cb ?? undefined;
   }
 
   /**
