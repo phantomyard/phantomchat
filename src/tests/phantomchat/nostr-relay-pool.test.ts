@@ -203,9 +203,26 @@ describe('NostrRelayPool', () => {
       expect(relays.map((r: any) => r.url)).toEqual(DEFAULT_RELAYS.map((r: any) => r.url));
     });
 
-    it('connects to all relays on initialize()', async() => {
+    it('opens a socket to every configured relay by default', async() => {
       const onMessage = vi.fn();
       const pool = new NostrRelayPool({relays: [...DEFAULT_RELAYS], onMessage});
+
+      await pool.initialize();
+
+      // Default is connect-all: an entry AND a live socket for every relay.
+      expect(mockRelayInstances.length).toBe(DEFAULT_RELAYS.length);
+      const connected = mockRelayInstances.filter((r: any) => r.connected);
+      expect(connected.length).toBe(DEFAULT_RELAYS.length);
+      expect(pool.getConnectedCount()).toBe(DEFAULT_RELAYS.length);
+    });
+
+    it('opens sockets to every relay when maxActiveRelays covers them all', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [...DEFAULT_RELAYS],
+        maxActiveRelays: DEFAULT_RELAYS.length,
+        onMessage
+      });
 
       await pool.initialize();
 
@@ -214,6 +231,29 @@ describe('NostrRelayPool', () => {
         expect(relay.initialized).toBe(true);
         expect(relay.connected).toBe(true);
       }
+    });
+
+    it('benches a flapping relay and keeps the rest connected', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({relays: [...DEFAULT_RELAYS], onMessage});
+      await pool.initialize();
+
+      // All connected (connect-all).
+      expect(mockRelayInstances.filter((r: any) => r.connected).length).toBe(DEFAULT_RELAYS.length);
+      const firstActive = mockRelayInstances.filter((r: any) => r.connected)[0];
+
+      // Flap the first relay past threshold: connect→drop, 3× quick.
+      for(let i = 0; i < 3; i++) {
+        firstActive.connectionState = 'connected';
+        firstActive.onStateChange?.();
+        firstActive.connectionState = 'reconnecting';
+        firstActive.onStateChange?.();
+      }
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The flapping relay is benched (disconnected); the rest carry on. The
+      // liveness floor does NOT fire — the remaining relays are still active.
+      expect(pool.getConnectedCount()).toBe(DEFAULT_RELAYS.length - 1);
     });
   });
 
@@ -369,6 +409,131 @@ describe('NostrRelayPool', () => {
 
       expect(onMessage).toHaveBeenCalledTimes(1);
       expect(onMessage).toHaveBeenCalledWith(textMsg);
+    });
+  });
+
+  describe('device-sync digest envelope routing', () => {
+    // Matches the mocked identity publicKey — a digest is always self-authored.
+    const SELF_PUBKEY = 'dGVzdC1wdWJsaWMta2V5';
+
+    function digestMsg(id: string, from: string, deviceId: string, count: number): DecryptedMessage {
+      return {
+        id,
+        from,
+        content: JSON.stringify({type: 'device-digest', deviceId, conv: 'a:b', count, latestId: 'z', timestamp: Date.now()}),
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+    }
+
+    it('routes a self-authored digest to onDigest and never to onMessage', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnDigest((d) => seen.push(d));
+
+      mockRelayInstances[0].simulateMessage(digestMsg('dg-1', SELF_PUBKEY, 'device-x', 7));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({deviceId: 'device-x', conv: 'a:b', count: 7, latestId: 'z'});
+    });
+
+    it('drops a digest forged by a non-self author (never onDigest, never onMessage)', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnDigest((d) => seen.push(d));
+
+      mockRelayInstances[0].simulateMessage(digestMsg('dg-2', 'someone-else', 'device-y', 9));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(0);
+    });
+
+    function syncReqMsg(id: string, from: string): DecryptedMessage {
+      return {
+        id, from,
+        content: JSON.stringify({type: 'device-sync-req', deviceId: 'req-dev', targetId: 'holder-dev', conv: 'a:b', haveIds: ['m1'], timestamp: Date.now()}),
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+    }
+    function syncResMsg(id: string, from: string): DecryptedMessage {
+      return {
+        id, from,
+        content: JSON.stringify({type: 'device-sync-res', deviceId: 'holder-dev', targetId: 'req-dev', conv: 'a:b', rows: [{eventId: 'm2'}], seq: 0, last: true, timestamp: Date.now()}),
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+    }
+
+    it('routes a self-authored sync-request to onSyncRequest, never to onMessage', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnSyncRequest((r) => seen.push(r));
+      mockRelayInstances[0].simulateMessage(syncReqMsg('sr-1', SELF_PUBKEY));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({deviceId: 'req-dev', targetId: 'holder-dev', conv: 'a:b', haveIds: ['m1']});
+    });
+
+    it('routes a self-authored sync-response to onSyncResponse, never to onMessage', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnSyncResponse((r) => seen.push(r));
+      mockRelayInstances[0].simulateMessage(syncResMsg('ss-1', SELF_PUBKEY));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({deviceId: 'holder-dev', targetId: 'req-dev', conv: 'a:b', seq: 0, last: true});
+      expect(seen[0].rows).toHaveLength(1);
+    });
+
+    it('drops a sync-request forged by a non-self author', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r.test', read: true, write: true}],
+        onMessage,
+        preloadedIdentity: {publicKey: SELF_PUBKEY, privateKeyHex: 'short'}
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const seen: any[] = [];
+      pool.setOnSyncRequest((r) => seen.push(r));
+      mockRelayInstances[0].simulateMessage(syncReqMsg('sr-2', 'someone-else'));
+
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(seen).toHaveLength(0);
     });
   });
 
@@ -550,13 +715,13 @@ describe('NostrRelayPool', () => {
   });
 
   describe('default relays (Phase 3)', () => {
-    it('DEFAULT_RELAYS has 5 entries', () => {
-      expect(DEFAULT_RELAYS).toHaveLength(5);
+    it('DEFAULT_RELAYS has 3 entries', () => {
+      expect(DEFAULT_RELAYS).toHaveLength(3);
     });
 
-    it('DEFAULT_RELAYS includes relay.damus.io', () => {
+    it('DEFAULT_RELAYS includes nostr.mom', () => {
       const urls = DEFAULT_RELAYS.map((r: any) => r.url);
-      expect(urls).toContain('wss://relay.damus.io');
+      expect(urls).toContain('wss://nostr.mom');
     });
   });
 

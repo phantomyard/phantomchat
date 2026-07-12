@@ -435,12 +435,36 @@ export class PhantomChatBridge {
    * Map a Nostr event ID (hex or text) to a deterministic virtual message ID.
    * The mid encodes the timestamp in the high bits so that SlicedArray's
    * descending numeric sort produces chronological order:
-   *   mid = timestamp * 1_000_000 + (hash % 1_000_000)
-   * The hash suffix disambiguates messages within the same second.
+   *
+   *   mid = timestamp * 1_000_000 + slot     (slot < 1e6)
+   *
+   * The `slot` breaks ties BETWEEN messages sharing the same whole second
+   * (Nostr `created_at` has no sub-second precision), and there are two shapes:
+   *
+   *   msSlot given  →  slot = msSlot * 1000 + (hash % 1000)     [chronological]
+   *   msSlot absent →  slot = hash % 1_000_000                  [legacy]
+   *
+   * The legacy shape is deterministic across devices but NOT chronological — a
+   * pure hash tiebreak, so of two messages in the same second the later one
+   * sorted first ~50% of the time (a reply landing above the message it
+   * answered). The `msSlot` (millisecond-of-second, 0-999, carried on the wire
+   * as the `ms` rumor tag — see nostr-crypto MS_TAG) makes the tiebreak
+   * genuinely time-ordered, keeping the low 3 digits of hash so two messages
+   * minted in the SAME millisecond still get distinct, stable mids.
+   *
+   * Legacy history (and peers on older builds) has no ms tag and MUST keep
+   * falling back to the hash shape — recomputing those mids would re-key every
+   * stored row. Both shapes occupy the same 0..999_999 slot range, so they
+   * interleave safely; only a legacy/new PAIR inside one shared second can
+   * still tie-break arbitrarily.
+   *
    * Max value: ~1_712_345_678 * 1e6 + 999_999 ≈ 1.71e15 — within JS safe integer range (2^53-1 ≈ 9.0e15).
+   *
+   * @param msSlot - Optional millisecond-of-second (0-999) for chronological ordering.
    */
-  async mapEventIdToMid(eventId: string, timestamp: number): Promise<number> {
-    const cacheKey = `${eventId}:${timestamp}`;
+  async mapEventIdToMid(eventId: string, timestamp: number, msSlot?: number): Promise<number> {
+    const hasMs = Number.isInteger(msSlot) && msSlot >= 0 && msSlot <= 999;
+    const cacheKey = `${eventId}:${timestamp}:${hasMs ? msSlot : ''}`;
     if(this.midCache.has(cacheKey)) {
       return this.midCache.get(cacheKey)!;
     }
@@ -458,7 +482,11 @@ export class PhantomChatBridge {
 
     const TIMESTAMP_MULTIPLIER = BigInt(1_000_000);
     const ts = BigInt(Math.floor(timestamp));
-    const mid = Number(ts * TIMESTAMP_MULTIPLIER + (hashBigInt % TIMESTAMP_MULTIPLIER));
+    // Chronological slot when we know the millisecond; legacy hash slot otherwise.
+    const slot = hasMs ?
+      BigInt(msSlot) * BigInt(1000) + (hashBigInt % BigInt(1000)) :
+      hashBigInt % TIMESTAMP_MULTIPLIER;
+    const mid = Number(ts * TIMESTAMP_MULTIPLIER + slot);
 
     this.midCache.set(cacheKey, mid);
 

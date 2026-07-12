@@ -51,7 +51,11 @@ export class PhantomChatSync {
     const renderPubkey = isSelfEcho ? (msg.to || senderPubkey) : senderPubkey;
     const peerId = await this.mapper.mapPubkey(renderPubkey);
     const storageEventId = msg.relayEventId || msg.id;
-    const mid = await this.mapper.mapEventId(storageEventId, Math.floor(msg.timestamp));
+    // TWO-WRITER INVARIANT: chat-api-receive already minted a mid for this same
+    // message. It MUST match ours or the message forks into two bubbles under
+    // two mids. Both read msSlot off the SAME ChatMessage object (stamped from
+    // the rumor's `ms` tag at parse time) — do not recompute it from elsewhere.
+    const mid = await this.mapper.mapEventId(storageEventId, Math.floor(msg.timestamp), msg.msSlot);
     // msg.timestamp is already in UNIX seconds (from rumor.created_at)
     const timestamp = Math.floor(msg.timestamp);
 
@@ -71,8 +75,23 @@ export class PhantomChatSync {
         mid,
         twebPeerId: peerId,
         isOutgoing: false,
+        ...(msg.msSlot !== undefined ? {msSlot: msg.msSlot} : {}),
         ...(msg.fileMetadata ? {fileMetadata: msg.fileMetadata} : {})
       });
+    }
+
+    // Sync-before-render barrier: for a genuine incoming message, if one of our
+    // OWN devices is live, do a recent-only catch-up from it and BLOCK on it before
+    // painting — so the new bubble lands on top of an up-to-date tail (and any media
+    // a sibling already holds), never above a gap. No-op / non-blocking when no
+    // sibling is live. Guarded so a sync failure can never swallow the render.
+    if(!isSelfEcho) {
+      try {
+        const {syncRecentBeforeRender} = await import('./phantomchat-device-sync');
+        await syncRecentBeforeRender(senderPubkey);
+      } catch(err) {
+        console.debug(LOG_PREFIX, 'syncRecentBeforeRender skipped:', (err as Error)?.message);
+      }
     }
 
     console.log(LOG_PREFIX, 'dispatching phantomchat_new_message', {peerId, mid, selfEcho: isSelfEcho});

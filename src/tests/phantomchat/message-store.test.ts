@@ -211,6 +211,48 @@ describe('MessageStore', () => {
     });
   });
 
+  describe('getConversationDigest (device-sync)', () => {
+    it('returns count and the newest eventId by timestamp', async() => {
+      const convId = uniqueConvId();
+      await store.saveMessage(makeMsg({eventId: 'd1', conversationId: convId, timestamp: 100}));
+      await store.saveMessage(makeMsg({eventId: 'd2', conversationId: convId, timestamp: 300}));
+      await store.saveMessage(makeMsg({eventId: 'd3', conversationId: convId, timestamp: 200}));
+
+      const digest = await store.getConversationDigest(convId);
+      expect(digest.count).toBe(3);
+      expect(digest.latestId).toBe('d2');
+      expect(digest.latestTimestamp).toBe(300);
+    });
+
+    it('breaks a timestamp tie by highest eventId (deterministic across devices)', async() => {
+      const convId = uniqueConvId();
+      await store.saveMessage(makeMsg({eventId: 'aaa', conversationId: convId, timestamp: 500}));
+      await store.saveMessage(makeMsg({eventId: 'zzz', conversationId: convId, timestamp: 500}));
+
+      const digest = await store.getConversationDigest(convId);
+      expect(digest.count).toBe(2);
+      expect(digest.latestId).toBe('zzz');
+    });
+
+    it('returns an empty digest for an unknown conversation', async() => {
+      const digest = await store.getConversationDigest('nonexistent:conv');
+      expect(digest.count).toBe(0);
+      expect(digest.latestId).toBe('');
+      expect(digest.latestTimestamp).toBe(0);
+    });
+
+    it('scopes strictly to the given conversation', async() => {
+      const conv1 = uniqueConvId();
+      const conv2 = uniqueConvId();
+      await store.saveMessage(makeMsg({eventId: 's1', conversationId: conv1, timestamp: 10}));
+      await store.saveMessage(makeMsg({eventId: 's2', conversationId: conv2, timestamp: 20}));
+      await store.saveMessage(makeMsg({eventId: 's3', conversationId: conv2, timestamp: 30}));
+
+      expect((await store.getConversationDigest(conv1)).count).toBe(1);
+      expect((await store.getConversationDigest(conv2)).count).toBe(2);
+    });
+  });
+
   describe('deleteMessages', () => {
     it('deletes all messages in a conversation', async() => {
       const convId = uniqueConvId();

@@ -191,6 +191,41 @@ describe('PhantomChat Protocol v2 (AES-256-GCM)', () => {
       const {event} = await wrapV2(skA, pkB, 'signed');
       expect(verifyEvent(event as any)).toBe(true);
     });
+
+    // MULTI-DEVICE SELF-COPY (FIND-self-bubble-missing): wrapV2 must also emit a
+    // self-addressed copy so the sender's OTHER devices receive their own
+    // outgoing message (every device subscribes on `#p == ownPubkey`).
+    it('emits a self-addressed copy p-tagged to the sender', async() => {
+      const {skA, pkA, pkB} = freshKeys();
+      const {event, selfEvent} = await wrapV2(skA, pkB, 'multi-device');
+      // Recipient copy p-tagged to recipient; self copy p-tagged to sender.
+      expect(event.tags.find((t: string[]) => t[0] === 'p')![1]).toBe(pkB);
+      expect(selfEvent.tags.find((t: string[]) => t[0] === 'p')![1]).toBe(pkA);
+      // Self copy is a valid, independently-signed gift-wrap (fresh ephemeral key).
+      expect(verifyEvent(selfEvent as any)).toBe(true);
+      expect(selfEvent.pubkey).not.toBe(event.pubkey);
+    });
+
+    it('self copy shares the recipient copy rumorId and is decryptable by the sender', async() => {
+      const {skA, pkA, skB, pkB} = freshKeys();
+      await getSymmetricKey(skA, pkB); // warm cache for the self-device unwrap
+      const {event, selfEvent, rumorId} = await wrapV2(skA, pkB, 'appears on my phone too');
+      // Same inner rumor → identical rumorId → receiver dedups the two copies.
+      const selfRumor = await unwrapV2(selfEvent, skA);
+      const recipientRumor = await unwrapV2(event, skB);
+      expect(selfRumor.id).toBe(rumorId);
+      expect(recipientRumor.id).toBe(rumorId);
+      expect(selfRumor.content).toBe('appears on my phone too');
+      expect(selfRumor.pubkey).toBe(pkA);
+    });
+
+    it('self copy carries the replyTo e-tag for reply threading on other devices', async() => {
+      const {skA, pkB} = freshKeys();
+      const {selfEvent} = await wrapV2(skA, pkB, 'reply', {eventId: 'abc123'});
+      const eTag = selfEvent.tags.find((t: string[]) => t[0] === 'e');
+      expect(eTag).toBeDefined();
+      expect(eTag![1]).toBe('abc123');
+    });
   });
 
   describe('rewrapV2', () => {
@@ -378,9 +413,16 @@ describe('PhantomChat Protocol v2 — cross-repo shared test vector', () => {
 
   // Deterministic inner half — these bytes MUST match across repos
   const EXPECTED_SYMMETRIC_KEY = '20be5fd3f2476eed59a6eeac45331d88e8f5a2204591f3604d57c87b1eada7fc';
-  const EXPECTED_RUMOR_ID = '1012a22578e51593cad513f022acd569452a8a22a3560e9af260049edcdc4435';
+  // Re-pinned when the ['ms', …] sub-second ordering tag was added to the
+  // kind-14 rumor (see MS_TAG in src/lib/phantomchat/nostr-crypto.ts). The tag
+  // is part of the hashed tag set, so it changes the rumor id — phantombot's
+  // copy of this vector (tests/lib-nostrCrypto.test.ts) MUST pin the same value.
+  const EXPECTED_RUMOR_ID = '3ded8957dfc336570634322ed9e8ace9b12cf89c9533560a4d139864f98d8c0c';
   const PLAINTEXT = 'test vector plaintext';
   const FIXED_CREATED_AT = 1700000000;
+  // Date.now() is pinned to FIXED_CREATED_AT * 1000 — an exact second boundary,
+  // so the sub-second slot is 0.
+  const EXPECTED_MS_SLOT = '0';
 
   it('symmetric key derivation matches cross-repo vector', async() => {
     clearConversationKeyCache();
@@ -393,7 +435,7 @@ describe('PhantomChat Protocol v2 — cross-repo shared test vector', () => {
     const rumor = {
       kind: 14,
       created_at: FIXED_CREATED_AT,
-      tags: [['p', recipientPk], ['v', 'pc-v2']],
+      tags: [['p', recipientPk], ['v', 'pc-v2'], ['ms', EXPECTED_MS_SLOT]],
       content: PLAINTEXT,
       pubkey: senderPk
     };

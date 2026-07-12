@@ -266,8 +266,17 @@ export async function sendFileViaPhantomChat(
     // expected to match `mapEventIdToMid(eventId, timestampSec)` since the
     // file pipeline has always tracked sender mid locally rather than from
     // the rumor event id.
-    const timestampSec = Math.floor(Date.now() / 1000);
-    const slot = (__sendFileMidCounter = (__sendFileMidCounter + 1) % 1_000_000);
+    //
+    // Sub-second ORDERING (ms tiebreak): the slot's high 3 digits are now the
+    // millisecond-of-second, mirroring `mapEventIdToMid`'s msSlot shape. A bare
+    // counter would have produced a tiny slot (e.g. 5 → sorts as ms=000), so
+    // every media send would sink BELOW the same-second text messages around it.
+    // The counter survives as the low 3 digits, keeping album items minted in
+    // the same millisecond unique and monotonic.
+    const nowMs = Date.now();
+    const timestampSec = Math.floor(nowMs / 1000);
+    const counter = (__sendFileMidCounter = (__sendFileMidCounter + 1) % 1000);
+    const slot = (nowMs % 1000) * 1000 + counter;
     const mid = timestampSec * 1_000_000 + slot;
     // Voice notes recorded via opus-recorder can surface with an empty
     // `blob.type` → 'application/octet-stream'. Pin a sensible audio mime so

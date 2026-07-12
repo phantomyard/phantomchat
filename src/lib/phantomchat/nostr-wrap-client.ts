@@ -113,9 +113,9 @@ class NostrWrapClient {
   private wrapSync(entry: PendingEntry): void {
     // Use v2 (AES-256-GCM) with fallback to legacy NIP-17
     wrapV2(entry.sk, entry.recipientPubHex, entry.plaintext, entry.replyTo).then(
-      ({event, rumorId, rumor}) => {
+      ({event, selfEvent, rumorId, rumor}) => {
         entry.resolve({
-          wraps: [event] as unknown as NTNostrEvent[],
+          wraps: [event, selfEvent] as unknown as NTNostrEvent[],
           rumorId,
           // Pass the EXACT rumor that was hashed into rumorId through verbatim.
           // Reconstructing it (e.g. with event.created_at) changes the timestamp
@@ -150,8 +150,8 @@ class NostrWrapClient {
     if(!this.workerUsable || !this.worker) {
       // No worker — use v2 directly with legacy fallback
       return wrapV2(sk, recipientPubHex, plaintext, replyTo).then(
-        ({event, rumorId, rumor}) => ({
-          wraps: [event] as unknown as NTNostrEvent[],
+        ({event, selfEvent, rumorId, rumor}) => ({
+          wraps: [event, selfEvent] as unknown as NTNostrEvent[],
           rumorId,
           // Pass the EXACT rumor that was hashed into rumorId through verbatim,
           // so getEventHash(rumor) === rumorId holds on the receiver's recompute.

@@ -1,9 +1,7 @@
 {
   "relays": [
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://relay.primal.net",
     "wss://nostr.mom",
-    "wss://nostr.data.haus"
+    "wss://relay.nostr.com",
+    "wss://relay.nostr.hu"
   ]
 }

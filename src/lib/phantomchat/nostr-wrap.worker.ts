@@ -36,10 +36,12 @@ ctx.addEventListener('message', (e: MessageEvent) => {
 
   // PhantomChat v2: use AES-256-GCM (fast, no ephemeral key)
   wrapV2(senderSk, recipientPubHex, plaintext, replyTo).then(
-    ({event, rumorId, rumor}) => {
+    ({event, selfEvent, rumorId, rumor}) => {
       ctx.postMessage({
         id,
-        wraps: [event],
+        // [recipientEvent, selfEvent] — the self copy is p-tagged to the sender
+        // so the sender's OTHER devices receive their own outgoing message.
+        wraps: [event, selfEvent],
         rumorId,
         // Pass the EXACT rumor that was hashed into rumorId through verbatim.
         // Reconstructing it from event.created_at (a separate Date.now() call)
