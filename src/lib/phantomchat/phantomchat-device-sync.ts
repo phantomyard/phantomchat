@@ -294,16 +294,43 @@ export async function initDeviceSync(pubkey: string): Promise<void> {
   epoch++;
 
   // Route inbound digests + sync request/response from our other devices.
+  //
+  // The pool's control callbacks are SINGLE-SLOT, so unlike the bus listeners they
+  // don't stack — but they DO outlive us: nothing cleared them, so after logout the
+  // last-wired handler stayed installed, holding this session's closure. Control
+  // envelopes are stored gift-wraps, so a reconnect replays the backlog and a late
+  // one would ingest/publish against a session that no longer exists.
+  //
+  // Two layers, because either alone is thin: teardowns UNWIRE the callbacks on
+  // destroy, and each handler is pinned to the epoch it was wired in, so an envelope
+  // already in flight when destroy lands is dropped rather than run against the
+  // successor session.
   try {
     const pool = (window as any).__phantomchatChatAPI?.relayPool;
+    const wiredEpoch = epoch;
     if(pool?.setOnDigest) {
-      pool.setOnDigest((d: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => onRemoteDigest(d));
+      // NB: these handlers return the handler's PROMISE — the pool awaits it, and so do
+      // the tests. A brace body that drops the `return` silently makes every control
+      // envelope fire-and-forget.
+      pool.setOnDigest((d: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => {
+        if(epoch !== wiredEpoch) return;
+        return onRemoteDigest(d);
+      });
+      teardowns.push(() => pool.setOnDigest(null));
     }
     if(pool?.setOnSyncRequest) {
-      pool.setOnSyncRequest((r: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => onSyncRequest(r));
+      pool.setOnSyncRequest((r: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => {
+        if(epoch !== wiredEpoch) return;
+        return onSyncRequest(r);
+      });
+      teardowns.push(() => pool.setOnSyncRequest(null));
     }
     if(pool?.setOnSyncResponse) {
-      pool.setOnSyncResponse((r: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => onSyncResponse(r));
+      pool.setOnSyncResponse((r: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => {
+        if(epoch !== wiredEpoch) return;
+        return onSyncResponse(r);
+      });
+      teardowns.push(() => pool.setOnSyncResponse(null));
     }
   } catch(err) {
     console.debug(`${LOG_PREFIX} pool wiring failed:`, (err as Error)?.message);
@@ -1078,7 +1105,7 @@ function runTeardowns(): void {
 /** Clean up on page unload. */
 export function destroyDeviceSync(): void {
   epoch++; // orphan every in-flight sync run: they check this after each await
-  runTeardowns(); // drop every bus listener init installed — buses outlive us
+  runTeardowns(); // drop every bus listener AND pool control callback init installed — both outlive us
   if(pulseTimer) { clearInterval(pulseTimer); pulseTimer = null; }
   if(pokeTimer) { clearTimeout(pokeTimer); pokeTimer = null; }
   for(const {timer} of pendingSync.values()) clearTimeout(timer);

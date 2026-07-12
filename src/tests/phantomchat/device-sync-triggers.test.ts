@@ -346,6 +346,49 @@ describe('device-sync proactive triggers', () => {
     expect(counts()).toEqual({peer_changed: 0, peer_typings: 0, relayState: 0});
   }, 15_000);
 
+  it('LIFECYCLE — destroy unwires the pool control callbacks', async() => {
+    const {mod, pool, captured} = await boot(['m1']);
+
+    // init routes all three control envelope types...
+    expect(typeof captured.digest).toBe('function');
+    expect(typeof captured.req).toBe('function');
+    expect(typeof captured.res).toBe('function');
+
+    mod.destroyDeviceSync();
+
+    // ...and destroy must hand them back. These are SINGLE-SLOT on the pool, so they
+    // never stacked — they just stayed wired, holding the dead session's closure.
+    expect(captured.digest).toBeNull();
+    expect(captured.req).toBeNull();
+    expect(captured.res).toBeNull();
+    expect(pool.publishSyncRequest).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it('LIFECYCLE — a control envelope in flight across destroy is dropped', async() => {
+    const {mod, pool, captured} = await boot(['m1']);
+
+    // Grab the handler the pool is holding BEFORE teardown — this is the envelope that
+    // was already in the pool's hands when the user logged out. Unwiring can't reach it;
+    // only the epoch pin can. Control envelopes are stored gift-wraps, so a reconnect
+    // replays the backlog and this is a live path, not a theoretical one.
+    const inFlightDigest = captured.digest;
+    const inFlightReq = captured.req;
+
+    mod.destroyDeviceSync();
+    pool.publishSyncRequest.mockClear();
+    pool.publishSelfDigest.mockClear();
+    pool.publishSyncResponse.mockClear();
+
+    await inFlightDigest({deviceId: 'sibling', conv: PEER, count: 99, latestId: 'm99', sentAt: Date.now()});
+    await inFlightReq({deviceId: 'sibling', targetId: 'whoever', conv: PEER, haveIds: [], sentAt: Date.now()});
+    await wait(1_200);
+
+    // Nothing reaches the relays for the session we just tore down.
+    expect(pool.publishSyncRequest).not.toHaveBeenCalled();
+    expect(pool.publishSyncResponse).not.toHaveBeenCalled();
+    expect(pool.publishSelfDigest).not.toHaveBeenCalled();
+  }, 15_000);
+
   it('LIFECYCLE — re-init does not accumulate listeners across account switches', async() => {
     const {mod, counts} = await boot(['m1']);
 
