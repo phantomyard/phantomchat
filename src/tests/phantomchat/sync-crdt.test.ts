@@ -47,9 +47,21 @@ describe('mergeEntry', () => {
   });
 
   it('is commutative for live entries on a tie (no flapping)', () => {
+    // Adapters floor updatedAt to whole seconds, so two edits inside one second
+    // genuinely tie. If the tie-break depends on argument order, each device
+    // keeps its OWN edit (callers merge `(local, remote)`) and republishes
+    // forever. Both orders must land on the same entry.
     const a = liveEntry('x', c('x', 'a'), 100);
     const b = liveEntry('x', c('x', 'b'), 100);
-    expect(mergeEntry(a, b)).toBe(mergeEntry(a, b));
+    expect(mergeEntry(a, b)).toEqual(mergeEntry(b, a));
+  });
+
+  it('picks the tie winner by content, not by key insertion order', () => {
+    // The same payload built with different key order must serialize
+    // identically, or two devices disagree about who won the tie.
+    const a = liveEntry<Contact>('x', {pubkey: 'x', name: 'a'}, 100);
+    const b = liveEntry<Contact>('x', {name: 'b', pubkey: 'x'}, 100);
+    expect(mergeEntry(a, b)).toEqual(mergeEntry(b, a));
   });
 });
 
@@ -75,6 +87,23 @@ describe('mergeMaps — the case folders-sync gets wrong', () => {
       z: liveEntry('z', c('z', 'Z'), 150)
     };
     expect(mergeMaps(a, b)).toEqual(mergeMaps(b, a));
+  });
+
+  it('two devices converge on a same-second concurrent edit (no republish flap)', () => {
+    // The reported bug. A and B each edit contact x inside the SAME second, so
+    // updatedAt ties. Each device merges (own, theirs). If the tie-break is
+    // argument-order dependent, A keeps A's edit and B keeps B's — both then
+    // see a diff against the relay and republish, forever.
+    const editA: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-A'), 100)};
+    const editB: SyncMap<Contact> = {x: liveEntry('x', c('x', 'from-B'), 100)};
+
+    const aResult = mergeMaps(editA, editB); // device A: (local, remote)
+    const bResult = mergeMaps(editB, editA); // device B: (local, remote)
+
+    expect(aResult).toEqual(bResult);
+    // ...and having converged, neither device sees a reason to republish.
+    expect(differs(aResult, bResult)).toBe(false);
+    expect(mergeMaps(aResult, bResult)).toEqual(aResult);
   });
 
   it('is idempotent — merging the same remote twice changes nothing', () => {
