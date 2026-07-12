@@ -244,8 +244,34 @@ describe('device-sync proactive triggers', () => {
     pool.publishSyncRequest.mockClear();
     await wait(PAST_FLOOR_MS);       // the chat-open sync's floor has expired
 
-    captured['peer_typings']({});    // the peer starts typing at us
+    captured['peer_typings']({peerId: PEER_ID});    // the OPEN chat's peer types at us
 
+    expect(await waitFor(() => requests().length > 0)).toBe(true);
+    expect(requests()[0].recentOnly).toBe(true);
+  }, 20_000);
+
+  it('TRIGGER 3 — typing in an UNRELATED chat buys the open chat nothing', async() => {
+    const {pool, captured, selectChat, siblingPulses, siblingAnswers, requests} = await boot(['m1']);
+
+    await siblingPulses();
+    await selectChat();
+    expect(await waitFor(() => requests().length > 0)).toBe(true);
+    await siblingAnswers();
+    pool.publishSyncRequest.mockClear();
+    pool.publishSelfDigest.mockClear();
+    await wait(PAST_FLOOR_MS);
+
+    // `peer_typings` is a GLOBAL bus event — it fires for every peer the client
+    // tracks. A stranger typing in some other conversation is not evidence about
+    // the open one, and must not buy it a sync (nor a digest advertising it).
+    for(let i = 0; i < 8; i++) captured['peer_typings']({peerId: PEER_ID + 777});
+    await wait(1_200);   // well past the trailing debounce
+
+    expect(pool.publishSyncRequest).not.toHaveBeenCalled();
+    expect(pool.publishSelfDigest).not.toHaveBeenCalled();
+
+    // ...and the filter is a filter, not a mute: the open chat's own peer still works.
+    captured['peer_typings']({peerId: PEER_ID});
     expect(await waitFor(() => requests().length > 0)).toBe(true);
     expect(requests()[0].recentOnly).toBe(true);
   }, 20_000);
@@ -262,7 +288,7 @@ describe('device-sync proactive triggers', () => {
 
     // The shape of the real log: a burst of typing edges inside one second. Each one
     // is a trigger; the debounce must fold them into a single sync.
-    for(let i = 0; i < 8; i++) captured['peer_typings']({});
+    for(let i = 0; i < 8; i++) captured['peer_typings']({peerId: PEER_ID});
     expect(await waitFor(() => requests().length > 0)).toBe(true);
     await siblingAnswers();
     await wait(800);

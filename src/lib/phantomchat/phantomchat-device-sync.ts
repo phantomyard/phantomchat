@@ -249,6 +249,13 @@ let pokeTimer: ReturnType<typeof setTimeout> | null = null;
 let activePeerPubkey: string | null = null;
 
 /**
+ * The tweb peerId of that same open chat. Kept alongside the pubkey purely so
+ * peer-scoped rootScope events (which speak peerId, not Nostr pubkey) can be
+ * filtered to the open conversation without a store round-trip on every edge.
+ */
+let activePeerId: number | null = null;
+
+/**
  * Latest digest heard from another of our devices, keyed by conversationId.
  * Increment 2 consumes this to decide what to pull. Increment 1 only reads it to
  * flip the "syncing" indicator.
@@ -663,6 +670,7 @@ async function wireChatOpen(): Promise<void> {
 async function onChatOpen(peerId: number): Promise<void> {
   const pubkey = await resolvePeerPubkey(peerId);
   activePeerPubkey = pubkey; // null for group/other — stops advertising
+  activePeerId = pubkey ? peerId : null;
   if(!pubkey) return;
   console.debug(`${LOG_PREFIX} chat-open: peer ${peerId} (${pubkey.slice(0, 8)})`);
   void publishActiveDigest({force: true});
@@ -686,21 +694,28 @@ async function convFor(peerPubkey: string): Promise<string | null> {
 /**
  * Incoming peer-typing trigger. The peer's typing tick is p-tagged to us, so
  * both our devices receive it simultaneously — the perfect moment to compare
- * notes. On any typing edge for a tracked peer, re-advertise the open chat's
+ * notes. On a typing edge from the OPEN chat's peer, re-advertise that chat's
  * digest (debounced via pokeDeviceSync) so a behind device pulls right then.
+ *
+ * `peer_typings` is a global bus event: it fires for EVERY peer the client is
+ * tracking, not just the open one. We reconcile exactly one conversation — the
+ * open one — so an edge from any other peer is not evidence about it and must
+ * not buy it a sync. Filter on the event's own peerId before doing anything.
  */
 function wireTypingTrigger(): void {
   try {
     // Lazy import to dodge a static cycle; rootScope is the main-thread bus the
     // typing receiver dispatches `peer_typings` on for INCOMING peer ticks.
     void import('@lib/rootScope').then(({default: rootScope}) => {
-      rootScope.addEventListener('peer_typings' as any, () => {
+      rootScope.addEventListener('peer_typings' as any, (payload: {peerId?: number}) => {
         // TRIGGER 3 — a typing edge (start OR stop) on the open chat. Both our
         // devices see the peer's tick at the same instant, which makes it a free
         // synchronized "compare notes now". Nudge the digest AND reconcile the tail;
         // the debounce collapses a typing storm into one sync.
+        if(!activePeerPubkey || activePeerId === null) return; // no P2P chat open
+        if(payload?.peerId !== activePeerId) return;           // some other chat's peer
         pokeDeviceSync();
-        if(activePeerPubkey) scheduleSync(activePeerPubkey, 'recent', 'typing');
+        scheduleSync(activePeerPubkey, 'recent', 'typing');
       });
     }).catch((err) => console.debug(`${LOG_PREFIX} typing trigger wiring failed:`, (err as Error)?.message));
   } catch(err) {
@@ -1027,6 +1042,7 @@ export function destroyDeviceSync(): void {
   lastDigestReplyAt.clear();
   lastSiblingActivityAt = 0;
   activePeerPubkey = null;
+  activePeerId = null;
   ownPubkey = null;
   deviceId = '';
 }
