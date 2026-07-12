@@ -41,6 +41,7 @@ const mockMessage = {
 const mockStore = vi.hoisted(() => ({
   getAllConversationIds: vi.fn(),
   getMessages: vi.fn(),
+  getMessagesByOffsetId: vi.fn(),
   getByMid: vi.fn(),
   getConversationId: vi.fn((a: string, b: string) => [a, b].sort().join(':')),
   saveMessage: vi.fn(),
@@ -86,11 +87,14 @@ vi.mock('@lib/phantomchat/peer-profile-cache', () => ({
 }));
 
 // group-store dynamic import mock
+const mockGroupStore = vi.hoisted(() => ({
+  getAll: vi.fn().mockResolvedValue([]),
+  getByPeerId: vi.fn().mockResolvedValue(null),
+  save: vi.fn().mockResolvedValue(undefined)
+}));
+
 vi.mock('@lib/phantomchat/group-store', () => ({
-  getGroupStore: () => ({
-    getAll: vi.fn().mockResolvedValue([]),
-    getByPeerId: vi.fn().mockResolvedValue(null)
-  })
+  getGroupStore: () => mockGroupStore
 }));
 
 // PhantomChatBridge mock for mapper.mapPubkey / mapper.mapEventId
@@ -143,10 +147,7 @@ beforeAll(async() => {
     clearPeerProfileCache: vi.fn()
   }));
   vi.doMock('@lib/phantomchat/group-store', () => ({
-    getGroupStore: () => ({
-      getAll: vi.fn().mockResolvedValue([]),
-      getByPeerId: vi.fn().mockResolvedValue(null)
-    })
+    getGroupStore: () => mockGroupStore
   }));
   vi.doMock('@lib/phantomchat/phantomchat-bridge', () => ({
     PhantomChatBridge: {
@@ -187,9 +188,13 @@ describe('PhantomChatMTProtoServer', () => {
 
     mockStore.getAllConversationIds.mockResolvedValue([CONVERSATION_ID]);
     mockStore.getMessages.mockResolvedValue([mockMessage]);
+    mockStore.getMessagesByOffsetId.mockResolvedValue([mockMessage]);
     mockStore.getReadCursor.mockResolvedValue(0);
     mockStore.countUnread.mockResolvedValue(0);
     mockStore.setReadCursor.mockResolvedValue(undefined);
+    mockGroupStore.getAll.mockResolvedValue([]);
+    mockGroupStore.getByPeerId.mockResolvedValue(null);
+    mockGroupStore.save.mockResolvedValue(undefined);
 
     mockGetPubkey.mockResolvedValue(PEER_PUBKEY);
   });
@@ -304,14 +309,76 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result.messages).toEqual([]);
     });
 
-    it('handles chat_id peer (negative peerId)', async () => {
+    it('uses getMessagesByOffsetId when offset_id / add_offset are present', async () => {
+      const msgs = [
+        {...mockMessage, mid: MID + 2, timestamp: mockMessage.timestamp + 2},
+        {...mockMessage, mid: MID + 1, timestamp: mockMessage.timestamp + 1},
+        mockMessage
+      ];
+      mockStore.getMessagesByOffsetId.mockResolvedValueOnce(msgs.slice(1, 3));
+
       const result = await server.handleMethod('messages.getHistory', {
-        peer: {_: 'inputPeerChat', chat_id: 100}
+        peer: {user_id: PEER_ID},
+        offset_id: MID + 2,
+        add_offset: -1,
+        limit: 2
       });
 
-      expect(result._).toBe('messages.messages');
-      // Result shape should be correct regardless of found messages
-      expect(Array.isArray(result.messages)).toBe(true);
+      expect(mockStore.getMessagesByOffsetId).toHaveBeenCalledWith(
+        CONVERSATION_ID, 2, MID + 2, -1
+      );
+      expect(result.messages.length).toBe(2);
+      expect(result.messages.map((m: any) => m.id)).toEqual([MID + 1, MID]);
+    });
+
+    it('falls back to getMessages when offset_id = 0 and add_offset = 0', async () => {
+      mockStore.getMessages.mockResolvedValueOnce([mockMessage]);
+
+      const result = await server.handleMethod('messages.getHistory', {
+        peer: {user_id: PEER_ID},
+        limit: 10
+      });
+
+      expect(mockStore.getMessages).toHaveBeenCalledWith(CONVERSATION_ID, 10, undefined);
+      expect(mockStore.getMessagesByOffsetId).not.toHaveBeenCalled();
+      expect(result.messages.length).toBeGreaterThan(0);
+    });
+
+    it('routes group getHistory with offset_id/add_offset to getMessagesByOffsetId', async () => {
+      const GROUP_PEER_ID = -2_000_000_000_000_001;
+      const GROUP_CONV_ID = 'group:testgroup123';
+
+      mockGroupStore.getByPeerId.mockResolvedValueOnce({
+        groupId: 'testgroup123',
+        name: 'Test Group',
+        adminPubkey: OWN_PUBKEY,
+        members: [OWN_PUBKEY, PEER_PUBKEY],
+        peerId: GROUP_PEER_ID,
+        createdAt: 1000,
+        updatedAt: 1000
+      });
+
+      const groupMsgs = [
+        {...mockMessage, conversationId: GROUP_CONV_ID, mid: MID + 2, timestamp: mockMessage.timestamp + 2, senderPubkey: PEER_PUBKEY},
+        {...mockMessage, conversationId: GROUP_CONV_ID, mid: MID + 1, timestamp: mockMessage.timestamp + 1, senderPubkey: PEER_PUBKEY},
+        {...mockMessage, conversationId: GROUP_CONV_ID, mid: MID, timestamp: mockMessage.timestamp, senderPubkey: PEER_PUBKEY}
+      ];
+      mockStore.getMessagesByOffsetId.mockResolvedValueOnce(groupMsgs.slice(1, 3));
+
+      const result = await server.handleMethod('messages.getHistory', {
+        peer: {chat_id: Math.abs(GROUP_PEER_ID)},
+        offset_id: MID + 2,
+        add_offset: -1,
+        limit: 2
+      });
+
+      expect(mockStore.getMessagesByOffsetId).toHaveBeenCalledWith(
+        GROUP_CONV_ID, 2, MID + 2, -1
+      );
+      expect(result.messages.length).toBe(2);
+      expect(result.messages.map((m: any) => m.id)).toEqual([MID + 1, MID]);
+      expect(result.chats.length).toBe(1);
+      expect(result.chats[0].title).toBe('Test Group');
     });
   });
 
@@ -1010,7 +1077,7 @@ describe('PhantomChatMTProtoServer', () => {
 
   describe('account.setPrivacy + account.getPrivacy round-trip', () => {
     beforeEach(() => {
-      localStorage.clear();
+      if(typeof localStorage !== 'undefined') localStorage.clear();
     });
 
     it('getPrivacy returns allowAll fallback when no entry stored', async () => {
@@ -1075,7 +1142,7 @@ describe('PhantomChatMTProtoServer', () => {
     const peer = {_: 'inputNotifyPeer', peer: {_: 'inputPeerUser', user_id: 777}};
 
     beforeEach(() => {
-      localStorage.clear();
+      if(typeof localStorage !== 'undefined') localStorage.clear();
     });
 
     it('getNotifySettings returns a peerNotifySettings shape when nothing stored', async () => {
