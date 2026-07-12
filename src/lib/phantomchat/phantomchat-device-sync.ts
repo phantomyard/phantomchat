@@ -245,6 +245,19 @@ let deviceId = '';
 let pulseTimer: ReturnType<typeof setInterval> | null = null;
 let pokeTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Unregister callbacks for every listener `initDeviceSync` installs — one per
+ * wiring, run (and dropped) by `destroyDeviceSync`.
+ *
+ * Init/destroy is NOT once-per-process: logout, account switch and re-login all
+ * cycle it. Without this, every cycle stacked another `peer_changed` /
+ * `peer_typings` / `visibilitychange` / relay-state callback on buses that
+ * outlive us, so a single typing edge fanned out to N stale handlers and each
+ * one published a digest and scheduled a sync — duplicate relay traffic that
+ * grows linearly with the number of account switches in the session.
+ */
+const teardowns: Array<() => void> = [];
+
 /** The peer whose chat is currently open — the only conversation we reconcile. */
 let activePeerPubkey: string | null = null;
 
@@ -272,6 +285,10 @@ function newDeviceId(): string {
  * is connected (alongside initPresence).
  */
 export async function initDeviceSync(pubkey: string): Promise<void> {
+  // A re-init without a preceding destroy (some account-switch paths) would stack a
+  // second set of bus listeners on top of the first. Drop any we still hold first.
+  runTeardowns();
+
   ownPubkey = pubkey;
   deviceId = newDeviceId();
   epoch++;
@@ -647,15 +664,23 @@ async function resolvePeerPubkey(peerId: number): Promise<string | null> {
  * is dispatched on appImManager, NOT rootScope.
  */
 async function wireChatOpen(): Promise<void> {
+  const myEpoch = epoch;
   try {
     const appImManager = (await import('@lib/appImManager')).default;
-    appImManager.addEventListener('peer_changed' as any, (payload: any) => {
+    // The dynamic import above is a suspension point: a destroy (logout) can land
+    // while it's in flight, and registering after that would install a listener no
+    // teardown is left to remove. Re-check we're still the current generation.
+    if(epoch !== myEpoch) return;
+
+    const onPeerChanged = (payload: any) => {
       const peerId: number | undefined = typeof payload === 'number' ?
         payload :
         (typeof payload?.peerId === 'number' ? payload.peerId : undefined);
       if(typeof peerId !== 'number') return;
       void onChatOpen(peerId);
-    });
+    };
+    appImManager.addEventListener('peer_changed' as any, onPeerChanged);
+    teardowns.push(() => appImManager.removeEventListener('peer_changed' as any, onPeerChanged));
   } catch(err) {
     console.debug(`${LOG_PREFIX} wireChatOpen failed:`, (err as Error)?.message);
   }
@@ -703,11 +728,15 @@ async function convFor(peerPubkey: string): Promise<string | null> {
  * not buy it a sync. Filter on the event's own peerId before doing anything.
  */
 function wireTypingTrigger(): void {
+  const myEpoch = epoch;
   try {
     // Lazy import to dodge a static cycle; rootScope is the main-thread bus the
     // typing receiver dispatches `peer_typings` on for INCOMING peer ticks.
     void import('@lib/rootScope').then(({default: rootScope}) => {
-      rootScope.addEventListener('peer_typings' as any, (payload: {peerId?: number}) => {
+      // Suspension point — see wireChatOpen. Don't register into a torn-down generation.
+      if(epoch !== myEpoch) return;
+
+      const onPeerTypings = (payload: {peerId?: number}) => {
         // TRIGGER 3 — a typing edge (start OR stop) on the open chat. Both our
         // devices see the peer's tick at the same instant, which makes it a free
         // synchronized "compare notes now". Nudge the digest AND reconcile the tail;
@@ -716,7 +745,9 @@ function wireTypingTrigger(): void {
         if(payload?.peerId !== activePeerId) return;           // some other chat's peer
         pokeDeviceSync();
         scheduleSync(activePeerPubkey, 'recent', 'typing');
-      });
+      };
+      rootScope.addEventListener('peer_typings' as any, onPeerTypings);
+      teardowns.push(() => rootScope.removeEventListener('peer_typings' as any, onPeerTypings));
     }).catch((err) => console.debug(`${LOG_PREFIX} typing trigger wiring failed:`, (err as Error)?.message));
   } catch(err) {
     console.debug(`${LOG_PREFIX} wireTypingTrigger failed:`, (err as Error)?.message);
@@ -739,7 +770,7 @@ function wireRelayStatusTrigger(): void {
     // The pool exposes a state-change fan-out. Chain onto it without clobbering
     // existing subscribers.
     if(pool && typeof pool.addStateChangeListener === 'function') {
-      pool.addStateChangeListener((connected: number, total: number) => {
+      const onStateChange = (connected: number, total: number) => {
         if(connected > 0) void publishActiveDigest({force: true});
 
         const green = total > 0 && connected >= total;
@@ -751,7 +782,11 @@ function wireRelayStatusTrigger(): void {
           console.debug(`${LOG_PREFIX} all ${total} relay(s) green — full sync of the selected chat`);
           scheduleSync(activePeerPubkey, 'full', 'relays-green');
         }
-      });
+      };
+      pool.addStateChangeListener(onStateChange);
+      // The pool is a long-lived singleton that outlives us — leaving a callback on
+      // it after destroy is a leak, and a stale one would still publish digests.
+      teardowns.push(() => pool.removeStateChangeListener?.(onStateChange));
     }
   } catch(err) {
     console.debug(`${LOG_PREFIX} wireRelayStatusTrigger failed:`, (err as Error)?.message);
@@ -762,9 +797,11 @@ function wireRelayStatusTrigger(): void {
 function wireForegroundTrigger(): void {
   if(typeof document === 'undefined') return;
   try {
-    document.addEventListener('visibilitychange', () => {
+    const onVisibilityChange = () => {
       if(document.visibilityState === 'visible') void publishActiveDigest({force: true});
-    });
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    teardowns.push(() => document.removeEventListener('visibilitychange', onVisibilityChange));
   } catch(err) {
     console.debug(`${LOG_PREFIX} wireForegroundTrigger failed:`, (err as Error)?.message);
   }
@@ -1021,9 +1058,27 @@ async function renderPulledRow(row: DeviceSyncRow, peerId: number, mid: number, 
   }
 }
 
+/**
+ * Run and drop every registered unregister-callback. Idempotent: called by
+ * `destroyDeviceSync`, and again at the head of `initDeviceSync` so a re-init that
+ * skipped destroy (account switch paths don't all go through unload) still can't
+ * double-register a listener.
+ */
+function runTeardowns(): void {
+  while(teardowns.length) {
+    const off = teardowns.pop();
+    try {
+      off?.();
+    } catch(err) {
+      console.debug(`${LOG_PREFIX} teardown failed:`, (err as Error)?.message);
+    }
+  }
+}
+
 /** Clean up on page unload. */
 export function destroyDeviceSync(): void {
   epoch++; // orphan every in-flight sync run: they check this after each await
+  runTeardowns(); // drop every bus listener init installed — buses outlive us
   if(pulseTimer) { clearInterval(pulseTimer); pulseTimer = null; }
   if(pokeTimer) { clearTimeout(pokeTimer); pokeTimer = null; }
   for(const {timer} of pendingSync.values()) clearTimeout(timer);

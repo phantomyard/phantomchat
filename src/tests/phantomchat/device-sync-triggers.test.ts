@@ -83,12 +83,37 @@ async function boot(eventIds: string[]) {
   vi.resetModules();
   const store = await seedStore(eventIds);
   const captured: any = {};
+
+  // The mocked buses are REGISTRIES, not last-one-wins slots. A bus that only kept the
+  // most recent callback made a listener leak invisible — a second registration simply
+  // overwrote the first and the tests stayed green. Here every listener is retained, and
+  // `captured[ev]` fans a dispatch out to ALL of them, so a duplicate registration shows
+  // up as duplicate work and `counts()` can assert teardown actually removed them.
+  const listeners: Record<string, any[]> = {};
+  const addListener = (ev: string, cb: any) => {
+    (listeners[ev] ||= []).push(cb);
+    captured[ev] = (payload: any) => (listeners[ev] || []).map((f) => f(payload));
+  };
+  const removeListener = (ev: string, cb: any) => {
+    const arr = listeners[ev] || [];
+    const i = arr.indexOf(cb);
+    if(i !== -1) arr.splice(i, 1);
+  };
+  const relayListeners: any[] = [];
+
   const pool = {
     isConnected: () => true,
     setOnDigest: (cb: any) => { captured.digest = cb; },
     setOnSyncRequest: (cb: any) => { captured.req = cb; },
     setOnSyncResponse: (cb: any) => { captured.res = cb; },
-    addStateChangeListener: (cb: any) => { captured.relayState = cb; },
+    addStateChangeListener: (cb: any) => {
+      relayListeners.push(cb);
+      captured.relayState = (c: number, t: number) => relayListeners.map((f) => f(c, t));
+    },
+    removeStateChangeListener: (cb: any) => {
+      const i = relayListeners.indexOf(cb);
+      if(i !== -1) relayListeners.splice(i, 1);
+    },
     publishSyncRequest: vi.fn(async(_p: any) => {}),
     publishSyncResponse: vi.fn(async(_p: any) => {}),
     publishSelfDigest: vi.fn(async(_p: any) => {})
@@ -96,18 +121,26 @@ async function boot(eventIds: string[]) {
   (window as any).__phantomchatChatAPI = {relayPool: pool};
 
   vi.doMock('@lib/appImManager', () => ({
-    default: {addEventListener: (ev: string, cb: any) => { captured[ev] = cb; }}
+    default: {addEventListener: addListener, removeEventListener: removeListener}
   }));
   vi.doMock('@lib/phantomchat/virtual-peers-db', () => ({
     getAllMappings: async() => [{peerId: PEER_ID, pubkey: PEER}]
   }));
   vi.doMock('@lib/rootScope', () => ({
     default: {
-      addEventListener: (ev: string, cb: any) => { captured[ev] = cb; },
+      addEventListener: addListener,
+      removeEventListener: removeListener,
       dispatchEvent: () => {},
       managers: {}
     }
   }));
+
+  /** How many live callbacks each bus is holding right now. */
+  const counts = () => ({
+    peer_changed: (listeners['peer_changed'] || []).length,
+    peer_typings: (listeners['peer_typings'] || []).length,
+    relayState: relayListeners.length
+  });
   vi.doMock('@lib/phantomchat/phantomchat-bridge', () => ({
     PhantomChatBridge: {getInstance: () => ({
       mapPubkeyToPeerId: async() => PEER_ID,
@@ -152,7 +185,7 @@ async function boot(eventIds: string[]) {
 
   const requests = () => pool.publishSyncRequest.mock.calls.map((c: any[]) => c[0]);
 
-  return {mod, pool, captured, deviceId, store, selectChat, siblingPulses, siblingAnswers, requests};
+  return {mod, pool, captured, deviceId, store, selectChat, siblingPulses, siblingAnswers, requests, counts};
 }
 
 let teardown: (() => void) | null = null;
@@ -294,5 +327,62 @@ describe('device-sync proactive triggers', () => {
     await wait(800);
 
     expect(pool.publishSyncRequest).toHaveBeenCalledTimes(1);
+  }, 20_000);
+
+  it('LIFECYCLE — destroy unregisters every listener it installed', async() => {
+    const {mod, counts} = await boot(['m1']);
+
+    // The typing trigger registers behind a dynamic import, so it lands a tick after
+    // init resolves — wait for it rather than racing it.
+    expect(await waitFor(() => counts().peer_typings === 1)).toBe(true);
+
+    // init wired all three buses...
+    expect(counts()).toEqual({peer_changed: 1, peer_typings: 1, relayState: 1});
+
+    mod.destroyDeviceSync();
+
+    // ...and destroy must hand every one of them back. The buses (rootScope,
+    // appImManager, the relay pool) are long-lived singletons that outlive us.
+    expect(counts()).toEqual({peer_changed: 0, peer_typings: 0, relayState: 0});
+  }, 15_000);
+
+  it('LIFECYCLE — re-init does not accumulate listeners across account switches', async() => {
+    const {mod, counts} = await boot(['m1']);
+
+    // Logout → login, twice. This is the real path: destroy then init, repeatedly.
+    for(let i = 0; i < 2; i++) {
+      mod.destroyDeviceSync();
+      await mod.initDeviceSync(OWN);
+    }
+    expect(await waitFor(() => counts().peer_typings === 1)).toBe(true);
+    expect(counts()).toEqual({peer_changed: 1, peer_typings: 1, relayState: 1});
+
+    // And the path that skips destroy entirely — a bare re-init must be self-cleaning
+    // too, or it stacks a second full set of callbacks on the buses.
+    await mod.initDeviceSync(OWN);
+    expect(await waitFor(() => counts().peer_typings === 1)).toBe(true);
+    expect(counts()).toEqual({peer_changed: 1, peer_typings: 1, relayState: 1});
+  }, 15_000);
+
+  it('LIFECYCLE — a stale generation does no work after teardown', async() => {
+    const {mod, pool, captured, selectChat, siblingPulses, requests} = await boot(['m1']);
+
+    await siblingPulses();
+    await selectChat();
+    expect(await waitFor(() => requests().length > 0)).toBe(true);
+
+    mod.destroyDeviceSync();
+    pool.publishSyncRequest.mockClear();
+    pool.publishSelfDigest.mockClear();
+
+    // Every trigger source, fired at a torn-down module. The leak's real cost was here:
+    // a surviving callback keeps publishing to the relays for an account we logged out of.
+    captured['peer_typings']?.({peerId: PEER_ID});
+    captured.relayState?.(3, 3);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await wait(1_200);
+
+    expect(pool.publishSyncRequest).not.toHaveBeenCalled();
+    expect(pool.publishSelfDigest).not.toHaveBeenCalled();
   }, 20_000);
 });

@@ -293,6 +293,16 @@ export class NostrRelayPool {
   addStateChangeListener(cb: (connectedCount: number, totalCount: number) => void): void {
     this._stateChangeListeners.push(cb);
   }
+
+  /**
+   * Drop a listener registered via `addStateChangeListener`. The pool outlives its
+   * subscribers (device-sync is torn down and re-inited on every account switch),
+   * so registration has to be reversible or stale callbacks accumulate here.
+   */
+  removeStateChangeListener(cb: (connectedCount: number, totalCount: number) => void): void {
+    const i = this._stateChangeListeners.indexOf(cb);
+    if(i !== -1) this._stateChangeListeners.splice(i, 1);
+  }
   private _stateChangeListeners: Array<(connectedCount: number, totalCount: number) => void> = [];
 
   setOnReceipt(cb: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void): void {
