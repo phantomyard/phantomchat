@@ -312,6 +312,27 @@ export class PhantomChatBridge {
       (window as any).__phantomchatMessageRouter = messageRouter;
       (window as any).__phantomchatTransportSelector = transportSelector;
 
+      // Proactive ICE restart on network change (#82). When the underlying
+      // network shifts (tailnet switch, wifi↔cellular, VPN up/down) existing
+      // ICE candidate pairs become stale. Rather than wait up to 90 s for the
+      // PING timeout to discover the dead route, tear everything down and
+      // rebuild with fresh RTCPeerConnections immediately. Debounced so rapid
+      // successive events (e.g. wifi bouncing) coalesce into one restart.
+      let netRestartTimer: ReturnType<typeof setTimeout> | null = null;
+      const debouncedRestart = () => {
+        if(netRestartTimer !== null) clearTimeout(netRestartTimer);
+        netRestartTimer = setTimeout(() => {
+          meshManager.restartAll();
+          netRestartTimer = null;
+        }, 500);
+      };
+
+      window.addEventListener('online', debouncedRestart);
+      const conn = (navigator as any).connection;
+      if(conn && typeof conn.addEventListener === 'function') {
+        conn.addEventListener('change', debouncedRestart);
+      }
+
       // Drive the P2P badge off LIVE connection state: green only while a
       // VERIFIED WebRTC data channel to the peer is open right now (open + a
       // PING/PONG round-trip proven). The badge polls this and is also nudged on

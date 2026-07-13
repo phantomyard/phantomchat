@@ -501,6 +501,33 @@ export class MeshManager {
     }
   }
 
+  /**
+   * Proactively restart every peer connection.
+   *
+   * On a network change (tailnet switch, wifi→cellular, VPN up/down) the
+   * existing ICE candidate pairs become stale, but the browser may take up to
+   * PING_TIMEOUT (90 s) before declaring the connection failed. This method
+   * tears down all connections immediately and spins up fresh
+   * RTCPeerConnections so ICE gathers new candidates right away.
+   *
+   * Relay remains the guaranteed floor throughout the reconnect window.
+   */
+  restartAll(): void {
+    const pubkeys = Array.from(this.peers.keys());
+
+    // Disconnect first (synchronously) to cancel any pending reconnect timers
+    // and prevent the old reconnect loop from interfering.
+    for(const pubkey of pubkeys) {
+      this.disconnect(pubkey);
+    }
+
+    // Immediately reconnect with fresh PCs. Fire-and-forget: connect() handles
+    // its own errors via logSwallow inside the signal handlers.
+    for(const pubkey of pubkeys) {
+      this.connect(pubkey).catch((e) => logSwallow('MeshManager.restartAll', e));
+    }
+  }
+
   send(pubkey: string, message: string): boolean {
     const state = this.peers.get(pubkey);
     if(!state || state.status !== 'connected' || !state.dc || state.dc.readyState !== 'open') {

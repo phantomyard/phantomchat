@@ -313,6 +313,54 @@ describe('MeshManager', () => {
     expect(manager.getStatus('bob')).toBe('disconnected');
   });
 
+  it('restartAll() tears down and immediately rebuilds all peers with fresh PCs', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.connect('alice');
+    await manager.connect('bob');
+
+    const initialPcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    manager.restartAll();
+
+    // restartAll() calls disconnect() then connect() synchronously.
+    // connect() inserts the peer as 'connecting' right away, so there's
+    // no transient 'disconnected' window — the fast path is intentional.
+    expect(manager.getStatus('alice')).toBe('connecting');
+    expect(manager.getStatus('bob')).toBe('connecting');
+
+    // Fresh RTCPeerConnections created (one per peer)
+    await vi.advanceTimersByTimeAsync(0);
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(initialPcCount + 2);
+  });
+
+  it('restartAll() cancels pending reconnect timers from a prior disconnect', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.connect('alice');
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+
+    // Trigger a disconnect → schedules a reconnect in 1s
+    dcEventHandlers.close?.();
+    expect(manager.getStatus('alice')).toBe('disconnected');
+
+    const initialPcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    // Restart BEFORE the scheduled reconnect fires
+    manager.restartAll();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The scheduled reconnect from handleDisconnect must NOT fire later,
+    // because disconnect() set reconnectAttempts = Infinity.
+    await vi.advanceTimersByTimeAsync(30000);
+
+    // Only the restartAll reconnect happened (+1 PC), not the old timer too.
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(initialPcCount + 1);
+  });
+
   it('send() returns true for connected peer with open DataChannel', async() => {
     const callbacks = makeCallbacks();
     const manager = new MeshManager(callbacks);
