@@ -82,6 +82,9 @@ export class PhantomChatBridge {
   private _relayPool: NostrRelayPool | null = null;
   private _offlineQueue: OfflineQueue | null = null;
 
+  private _netRestartTimer: ReturnType<typeof setTimeout> | null = null;
+  private _networkRestartHandler: (() => void) | null = null;
+
   private constructor() {}
 
   static getInstance(): PhantomChatBridge {
@@ -316,21 +319,34 @@ export class PhantomChatBridge {
       // network shifts (tailnet switch, wifi↔cellular, VPN up/down) existing
       // ICE candidate pairs become stale. Rather than wait up to 90 s for the
       // PING timeout to discover the dead route, tear everything down and
-      // rebuild with fresh RTCPeerConnections immediately. Debounced so rapid
-      // successive events (e.g. wifi bouncing) coalesce into one restart.
-      let netRestartTimer: ReturnType<typeof setTimeout> | null = null;
-      const debouncedRestart = () => {
-        if(netRestartTimer !== null) clearTimeout(netRestartTimer);
-        netRestartTimer = setTimeout(() => {
-          meshManager.restartAll();
-          netRestartTimer = null;
+      // rebuild. Debounced so rapid successive events coalesce into one restart.
+      // Guard: remove old listeners before re-adding so re-init does not leak
+      // duplicate handlers or capture a stale meshManager reference.
+      if(this._networkRestartHandler) {
+        window.removeEventListener('online', this._networkRestartHandler);
+        const oldConn = (navigator as any).connection;
+        if(oldConn && typeof oldConn.removeEventListener === 'function') {
+          oldConn.removeEventListener('change', this._networkRestartHandler);
+        }
+        if(this._netRestartTimer !== null) {
+          clearTimeout(this._netRestartTimer);
+          this._netRestartTimer = null;
+        }
+      }
+
+      this._networkRestartHandler = () => {
+        if(this._netRestartTimer !== null) clearTimeout(this._netRestartTimer);
+        this._netRestartTimer = setTimeout(() => {
+          const mm = (window as any).__phantomchatMeshManager as MeshManager | undefined;
+          mm?.restartAll();
+          this._netRestartTimer = null;
         }, 500);
       };
 
-      window.addEventListener('online', debouncedRestart);
+      window.addEventListener('online', this._networkRestartHandler);
       const conn = (navigator as any).connection;
       if(conn && typeof conn.addEventListener === 'function') {
-        conn.addEventListener('change', debouncedRestart);
+        conn.addEventListener('change', this._networkRestartHandler);
       }
 
       // Drive the P2P badge off LIVE connection state: green only while a

@@ -23,6 +23,12 @@ import {
   isStubInstalled,
 } from '../../lib/phantomchat/api-manager-stub';
 
+import 'fake-indexeddb/auto';
+import {MeshManager} from '../../lib/phantomchat/mesh-manager';
+import {NostrRelayPool} from '../../lib/phantomchat/nostr-relay-pool';
+import * as vdb from '../../lib/phantomchat/virtual-peers-db';
+import * as relayPool from '../../lib/phantomchat/nostr-relay-pool';
+
 // ==================== Helpers ====================
 
 /** Extracts peerId from the deterministic formula to verify correctness */
@@ -408,5 +414,120 @@ describe('api-manager-stub', () => {
     expect(result).toBe(false);
     expect(consoleWarnSpy).toHaveBeenCalledWith('[PhantomChat.chat] apiManager stub: apiManager not found on ctx — stub not installed');
     consoleWarnSpy.mockRestore();
+  });
+});
+
+// ==================== Network Restart Wiring Tests ====================
+
+describe('PhantomChatBridge network restart wiring (PR #83 Copilot review)', () => {
+  let bridge: PhantomChatBridge;
+  let restartAllSpy: ReturnType<typeof vi.spyOn>;
+  let onlineHandlers: ((ev: Event) => void)[];
+  let connChangeHandlers: ((ev: Event) => void)[];
+  let mockConnection: {
+    addEventListener: ReturnType<typeof vi.fn>;
+    removeEventListener: ReturnType<typeof vi.fn>;
+  };
+  let originalAdd: typeof window.addEventListener;
+  let originalRemove: typeof window.removeEventListener;
+
+  beforeEach(() => {
+    // Reset singleton and clear window ref so getInstance() returns a fresh bridge
+    (PhantomChatBridge as unknown as {_instance: PhantomChatBridge | null})._instance = null;
+    if(typeof window !== 'undefined') delete (window as any).__phantomchatBridgeInstance;
+    bridge = PhantomChatBridge.getInstance();
+
+    onlineHandlers = [];
+    originalAdd = window.addEventListener.bind(window);
+    originalRemove = window.removeEventListener.bind(window);
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, handler, options) => {
+      if(type === 'online') onlineHandlers.push(handler as (ev: Event) => void);
+      else originalAdd(type, handler as EventListenerOrEventListenerObject | null, options);
+    });
+    vi.spyOn(window, 'removeEventListener').mockImplementation((type, handler, options) => {
+      if(type === 'online') {
+        const idx = onlineHandlers.indexOf(handler as (ev: Event) => void);
+        if(idx !== -1) onlineHandlers.splice(idx, 1);
+      } else {
+        originalRemove(type, handler as EventListenerOrEventListenerObject | null, options);
+      }
+    });
+
+    connChangeHandlers = [];
+    mockConnection = {
+      addEventListener: vi.fn((type: string, handler: (ev: Event) => void) => {
+        if(type === 'change') connChangeHandlers.push(handler);
+      }),
+      removeEventListener: vi.fn((type: string, handler: (ev: Event) => void) => {
+        if(type === 'change') {
+          const idx = connChangeHandlers.indexOf(handler);
+          if(idx !== -1) connChangeHandlers.splice(idx, 1);
+        }
+      }),
+    };
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {...(globalThis.navigator ?? {}), connection: mockConnection},
+      configurable: true,
+      writable: true,
+    });
+
+    (globalThis as any).Worker = class {
+      postMessage = vi.fn();
+      onmessage: ((e: MessageEvent) => void) | null = null;
+    };
+
+    vi.spyOn(vdb, 'initVirtualPeersDB').mockResolvedValue(undefined);
+    vi.spyOn(vdb, 'getAllMappings').mockResolvedValue([]);
+    vi.spyOn(relayPool, 'loadCanonicalRelays').mockResolvedValue(undefined);
+    vi.spyOn(NostrRelayPool.prototype, 'initialize').mockResolvedValue(undefined);
+
+    restartAllSpy = vi.spyOn(MeshManager.prototype, 'restartAll').mockImplementation(() => {});
+
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    (PhantomChatBridge as unknown as {_instance: PhantomChatBridge | null})._instance = null;
+    if(typeof window !== 'undefined') delete (window as any).__phantomchatBridgeInstance;
+  });
+
+  it('registers online and navigator.connection change listeners exactly once on init()', async () => {
+    await bridge.init('a'.repeat(64));
+    expect(onlineHandlers.length).toBe(1);
+    expect(mockConnection.addEventListener).toHaveBeenCalledTimes(1);
+    expect(mockConnection.addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+  });
+
+  it('debounces rapid online events into a single restartAll()', async () => {
+    await bridge.init('a'.repeat(64));
+    const handler = onlineHandlers[0];
+    handler(new Event('online'));
+    handler(new Event('online'));
+    handler(new Event('online'));
+    expect(restartAllSpy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(500);
+    expect(restartAllSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not duplicate listeners when init() is called again', async () => {
+    await bridge.init('a'.repeat(64));
+    expect(onlineHandlers.length).toBe(1);
+    expect(mockConnection.addEventListener).toHaveBeenCalledTimes(1);
+
+    await bridge.init('b'.repeat(64));
+    expect(onlineHandlers.length).toBe(1);
+    expect(mockConnection.addEventListener).toHaveBeenCalledTimes(2);
+    expect(mockConnection.removeEventListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires restartAll after 500 ms when navigator.connection changes', async () => {
+    await bridge.init('a'.repeat(64));
+    const handler = connChangeHandlers[0];
+    handler(new Event('change'));
+    expect(restartAllSpy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(500);
+    expect(restartAllSpy).toHaveBeenCalledTimes(1);
   });
 });

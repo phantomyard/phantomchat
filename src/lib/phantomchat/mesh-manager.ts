@@ -507,8 +507,9 @@ export class MeshManager {
    * On a network change (tailnet switch, wifi→cellular, VPN up/down) the
    * existing ICE candidate pairs become stale, but the browser may take up to
    * PING_TIMEOUT (90 s) before declaring the connection failed. This method
-   * tears down all connections immediately and spins up fresh
-   * RTCPeerConnections so ICE gathers new candidates right away.
+   * tears down all connections immediately and initiates reconnection.
+   * For initiators this creates a fresh RTCPeerConnection right away; for
+   * responders it sends a hello and waits for the initiator's offer.
    *
    * Relay remains the guaranteed floor throughout the reconnect window.
    */
