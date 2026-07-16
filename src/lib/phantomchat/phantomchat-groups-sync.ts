@@ -81,6 +81,7 @@ interface ParsedGroupRumor {
     height?: number;
     duration?: number;
     waveform?: string;
+    servers?: string[];
   };
 }
 
@@ -109,6 +110,9 @@ function parseGroupRumorContent(raw: string): ParsedGroupRumor | null {
       if(typeof fm.url === 'string' && typeof fm.sha256 === 'string' &&
          typeof fm.keyHex === 'string' && typeof fm.ivHex === 'string' &&
          typeof fm.mimeType === 'string' && typeof fm.size === 'number') {
+        const servers = Array.isArray(fm.servers) ?
+          fm.servers.filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('http')) :
+          undefined;
         fileMetadata = {
           url: fm.url,
           sha256: fm.sha256,
@@ -119,7 +123,8 @@ function parseGroupRumorContent(raw: string): ParsedGroupRumor | null {
           ...(typeof fm.width === 'number' ? {width: fm.width} : {}),
           ...(typeof fm.height === 'number' ? {height: fm.height} : {}),
           ...(typeof fm.duration === 'number' ? {duration: fm.duration} : {}),
-          ...(typeof fm.waveform === 'string' ? {waveform: fm.waveform} : {})
+          ...(typeof fm.waveform === 'string' ? {waveform: fm.waveform} : {}),
+          ...(servers && servers.length ? {servers} : {})
         };
       }
     }

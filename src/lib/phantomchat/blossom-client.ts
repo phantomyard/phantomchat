@@ -8,14 +8,13 @@
  */
 
 import {encryptMedia, sha256Hex, hexToBytes, decryptMedia} from './media-crypto';
+import {DEFAULT_BLOSSOM_SERVERS as CANONICAL_BLOSSOM_SERVERS} from './blossom-servers';
 
 // ─── Constants ───────────────────────────────────────────────────
+// Single shared list (see /blossom.json + blossom-servers.ts). Re-exported
+// so existing imports of DEFAULT_BLOSSOM_SERVERS from this module keep working.
 
-export const DEFAULT_BLOSSOM_SERVERS = [
-  'https://blossom.primal.net',
-  'https://cdn.satellite.earth',
-  'https://nostrmedia.com'
-];
+export const DEFAULT_BLOSSOM_SERVERS = [...CANONICAL_BLOSSOM_SERVERS];
 
 export const MAX_PHOTO_SIZE = 10 * 1024 * 1024;   // 10MB
 export const MAX_VIDEO_SIZE = 50 * 1024 * 1024;    // 50MB

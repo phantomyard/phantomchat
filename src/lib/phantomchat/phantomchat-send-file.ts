@@ -51,7 +51,16 @@ export interface SendCtx {
       mimeType: string,
       size: number,
       dim?: {width: number; height: number},
-      extras?: {duration?: number; waveform?: string; mid?: number; twebPeerId?: number; timestampSec?: number; caption?: string}
+      extras?: {
+        duration?: number;
+        waveform?: string;
+        mid?: number;
+        twebPeerId?: number;
+        timestampSec?: number;
+        caption?: string;
+        /** Every successful Blossom URL including primary. */
+        servers?: string[];
+      }
     ): Promise<string>;
   };
   dispatch(name: string, payload: any): void;
@@ -82,6 +91,7 @@ export interface SendCtx {
     duration?: number;
     waveform?: string;
     mediaType?: PhantomChatFileType;
+    servers?: string[];
   }): Promise<void>;
   log: ((...args: any[]) => void) & {warn(...args: any[]): void; error(...args: any[]): void};
 }
@@ -155,13 +165,18 @@ async function uploadWithRetry(
   privkeyHex: string,
   onProgress: (p: number) => void,
   signal: AbortSignal | undefined
-): Promise<{url: string; sha256: string}> {
+): Promise<{url: string; sha256: string; mirrors: string[]}> {
   let lastErr: unknown;
   for(let attempt = 0; attempt < 1 + BACKOFF_MS.length; attempt++) {
     if(signal?.aborted) throw new Error('upload aborted');
     try {
       const result = await uploadToBlossomWithProgress(ciphertext, privkeyHex, {onProgress, signal});
-      return result;
+      // Defensive: older mocks may only return {url, sha256}.
+      return {
+        url: result.url,
+        sha256: result.sha256,
+        mirrors: result.mirrors?.length ? result.mirrors : [result.url]
+      };
     } catch(err) {
       lastErr = err;
       if(signal?.aborted) throw err;
@@ -227,6 +242,7 @@ export async function sendFileViaPhantomChat(
   }
 
   let url: string;
+  let mirrors: string[] = [];
   try {
     const result = await uploadWithRetry(
       ciphertext,
@@ -235,6 +251,7 @@ export async function sendFileViaPhantomChat(
       signal
     );
     url = result.url;
+    mirrors = result.mirrors;
   } catch(err) {
     const msg = err instanceof Error ? err.message : String(err);
     ctx.log.warn('[sendFile] upload failed:', msg);
@@ -290,7 +307,15 @@ export async function sendFileViaPhantomChat(
       effectiveMime,
       blob.size,
       args.width && args.height ? {width: args.width, height: args.height} : undefined,
-      {duration: args.duration, waveform: args.waveform, mid, twebPeerId: Math.abs(peerId), timestampSec, caption: args.caption}
+      {
+        duration: args.duration,
+        waveform: args.waveform,
+        mid,
+        twebPeerId: Math.abs(peerId),
+        timestampSec,
+        caption: args.caption,
+        servers: mirrors
+      }
     );
 
     await ctx.saveMessage({
@@ -301,7 +326,8 @@ export async function sendFileViaPhantomChat(
       keyHex, ivHex,
       width: args.width, height: args.height,
       duration: args.duration, waveform: args.waveform,
-      mediaType: type
+      mediaType: type,
+      servers: mirrors
     });
 
     // Event name kept for backward compatibility with UI listeners.

@@ -2273,7 +2273,8 @@ export class PhantomChatMTProtoServer {
               ivHex: p.ivHex,
               duration: p.duration,
               waveform: p.waveform,
-              mediaType: p.mediaType
+              mediaType: p.mediaType,
+              ...(p.servers?.length ? {servers: p.servers} : {})
             }
           });
         },
@@ -2407,17 +2408,26 @@ export class PhantomChatMTProtoServer {
     }
 
     // Encrypt + upload to Blossom. Reuses the 1:1 upload helper since the
-    // blob-encryption + Blossom auth flow is peer-agnostic.
+    // blob-encryption + Blossom auth flow is peer-agnostic. Multi-mirror write
+    // (issue #86) so a single CDN dying can't brick the file for the group.
     let url: string;
     let sha256Hex: string;
     let keyHex: string;
     let ivHex: string;
+    let servers: string[] = [];
     try {
       const {encryptFile} = await import('./file-crypto');
       const enc = await encryptFile(blob);
       keyHex = enc.keyHex;
       ivHex = enc.ivHex;
       sha256Hex = enc.sha256Hex;
+      // Persist local plaintext so the bubble plays offline after reload.
+      void (async() => {
+        try {
+          const {putLocalMedia} = await import('./phantomchat-local-media');
+          await putLocalMedia(sha256Hex, blob);
+        } catch{ /* best-effort */ }
+      })();
       const {uploadToBlossomWithProgress} = await import('./blossom-upload-progress');
       const rs: any = (await import('@lib/rootScope')).default;
       // Dispatch progress + completion with the NEGATIVE group peerId — the
@@ -2432,6 +2442,7 @@ export class PhantomChatMTProtoServer {
         }
       });
       url = upload.url;
+      servers = upload.mirrors?.length ? upload.mirrors : [upload.url];
     } catch(err) {
       console.warn(LOG_PREFIX, 'phantomchatSendFileToGroup: encrypt/upload failed', err);
       const rs: any = (await import('@lib/rootScope')).default;
@@ -2448,6 +2459,7 @@ export class PhantomChatMTProtoServer {
       ivHex,
       mimeType: blob.type,
       size: blob.size,
+      servers,
       ...(width !== undefined ? {width} : {}),
       ...(height !== undefined ? {height} : {}),
       ...(duration !== undefined ? {duration} : {}),

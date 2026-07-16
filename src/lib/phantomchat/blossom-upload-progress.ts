@@ -1,28 +1,40 @@
 /*
  * PhantomChat.chat — Blossom upload with progress + abort
  *
- * XHR-based variant of blossom-upload.ts used by media send (voice/image/file).
- * Emits progress via callback and supports AbortSignal. Same NIP-24242 auth,
- * same fallback chain. Signs a fresh auth event per server attempt.
+ * XHR-based variant used by media send (voice/image/file). Emits progress via
+ * callback and supports AbortSignal. Signs a fresh NIP-24242 auth event per
+ * server attempt. Uploads to multiple Blossom servers so a single CDN dying
+ * cannot brick the voice note; returns the primary URL plus every successful
+ * mirror so the envelope can carry them.
+ *
+ * Server list comes from /blossom.json (see blossom-servers.ts).
  */
 
 import {finalizeEvent} from 'nostr-tools/pure';
 import {logSwallow} from './log-swallow';
+import {
+  BLOSSOM_MIRROR_MIN,
+  DEFAULT_BLOSSOM_SERVERS,
+  getBlossomServers
+} from './blossom-servers';
 
-export const BLOSSOM_SERVERS = [
-  'https://blossom.primal.net',
-  'https://cdn.satellite.earth',
-  'https://blossom.band'
-] as const;
+/** @deprecated Prefer getBlossomServers() / DEFAULT_BLOSSOM_SERVERS. Kept for tests. */
+export const BLOSSOM_SERVERS = DEFAULT_BLOSSOM_SERVERS;
 
 export interface BlossomUploadProgressResult {
+  /** Primary URL — first successful PUT. Goes in envelope.url. */
   url: string;
+  /** sha256 of the ciphertext (from us; server may echo it). */
   sha256: string;
+  /** Every successful URL including primary. Recipient tries these in order. */
+  mirrors: string[];
 }
 
 export interface BlossomUploadProgressOptions {
   onProgress?: (percent: number) => void;
   signal?: AbortSignal;
+  /** Min successful mirrors before we stop (defaults to BLOSSOM_MIRROR_MIN). */
+  minMirrors?: number;
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -63,7 +75,7 @@ function putWithProgress(
   authHeader: string,
   onProgress: ((p: number) => void) | undefined,
   signal: AbortSignal | undefined
-): Promise<BlossomUploadProgressResult> {
+): Promise<{url: string; sha256: string}> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
 
@@ -99,7 +111,7 @@ function putWithProgress(
           return;
         }
         resolve({url: data.url, sha256: data.sha256 || ''});
-      } catch(err) {
+      } catch{
         reject(new Error(`${server}: invalid JSON`));
       }
     };
@@ -116,34 +128,54 @@ function putWithProgress(
   });
 }
 
-/** Returns the list of Blossom servers to try, honoring a test override. */
-function getBlossomServers(): readonly string[] {
-  try {
-    const w: any = typeof window !== 'undefined' ? window : null;
-    const override = w?.__phantomchatTestBlossom;
-    if(typeof override === 'string' && override) return [override];
-  } catch(e) { logSwallow('BlossomUpload.testOverride', e); }
-  return BLOSSOM_SERVERS;
-}
-
+/**
+ * Upload ciphertext to Blossom.
+ *
+ * Tries servers in order. Collects successful URLs until `minMirrors` is
+ * reached (or the list is exhausted). Needs at least one success; prefers
+ * ≥2 so the note survives a single CDN outage.
+ *
+ * Progress is reported from the first attempt only (later mirrors burn silent
+ * bandwidth — user already saw 100%).
+ */
 export async function uploadToBlossomWithProgress(
   blob: Blob,
   privkeyHex: string,
   options: BlossomUploadProgressOptions
 ): Promise<BlossomUploadProgressResult> {
   const hash = await sha256Hex(blob);
+  const servers = await getBlossomServers();
+  const minMirrors = Math.max(1, options.minMirrors ?? BLOSSOM_MIRROR_MIN);
   const errors: string[] = [];
-  for(const server of getBlossomServers()) {
+  const mirrors: string[] = [];
+  let firstSha = hash;
+
+  for(const server of servers) {
     if(options.signal?.aborted) throw new Error('upload aborted');
+    // Stop once we have enough mirrors.
+    if(mirrors.length >= minMirrors) break;
+
     const authHeader = signAuth(privkeyHex, hash);
+    // Progress only while still looking for the first success.
+    const onProgress = mirrors.length === 0 ? options.onProgress : undefined;
     try {
-      const result = await putWithProgress(server, blob, authHeader, options.onProgress, options.signal);
-      return result;
+      const result = await putWithProgress(server, blob, authHeader, onProgress, options.signal);
+      if(!mirrors.includes(result.url)) mirrors.push(result.url);
+      if(result.sha256) firstSha = result.sha256;
     } catch(err) {
       const msg = err instanceof Error ? err.message : String(err);
       if(msg === 'upload aborted') throw err;
       errors.push(msg);
     }
   }
-  throw new Error(`all blossom servers failed: ${errors.join('; ')}`);
+
+  if(mirrors.length === 0) {
+    throw new Error(`all blossom servers failed: ${errors.join('; ')}`);
+  }
+
+  return {
+    url: mirrors[0],
+    sha256: firstSha || hash,
+    mirrors
+  };
 }

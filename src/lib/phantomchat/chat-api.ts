@@ -98,6 +98,8 @@ export interface ChatMessage {
     caption?: string;
     /** Authoritative sender-tagged media class (image/video/voice/file). */
     mediaType?: 'image' | 'video' | 'voice' | 'file';
+    /** Every successful Blossom URL including primary (multi-mirror). */
+    servers?: string[];
   };
 }
 
@@ -698,7 +700,16 @@ export class ChatAPI {
     mimeType: string,
     size: number,
     dim?: {width: number; height: number},
-    extras?: {duration?: number; waveform?: string; mid?: number; twebPeerId?: number; timestampSec?: number; caption?: string}
+    extras?: {
+      duration?: number;
+      waveform?: string;
+      mid?: number;
+      twebPeerId?: number;
+      timestampSec?: number;
+      caption?: string;
+      /** All successful Blossom URLs; primary first. */
+      servers?: string[];
+    }
   ): Promise<string> {
     // A voice note recorded via opus-recorder can arrive with an empty
     // `blob.type` → 'application/octet-stream', which made the receiver's
@@ -707,6 +718,11 @@ export class ChatAPI {
     const effectiveMime = (type === 'voice' && (!mimeType || mimeType === 'application/octet-stream')) ?
       'audio/ogg; codecs=opus' :
       mimeType;
+    // Prefer an explicit multi-mirror list; fall back to just the primary URL
+    // so old callers that don't pass servers still put a usable list on the wire.
+    const servers = (extras?.servers && extras.servers.length > 0) ?
+      extras.servers :
+      [url];
     const fileContent = JSON.stringify({
       url,
       sha256,
@@ -717,6 +733,8 @@ export class ChatAPI {
       // Authoritative media class so the receiver never re-guesses voice vs
       // file from mime/duration (the cause of the "Unknown file" render).
       mediaType: type,
+      // Multi-mirror list — receiver tries these before hash-geo elsewhere.
+      servers,
       ...(dim ? {width: dim.width, height: dim.height} : {}),
       ...(extras?.duration !== undefined ? {duration: extras.duration} : {}),
       ...(extras?.waveform !== undefined ? {waveform: extras.waveform} : {}),
@@ -935,10 +953,10 @@ export class ChatAPI {
           .catch(swallowHandler('ChatAPI.p2pFastPath'));
         }
 
-        // For plain-text sends the peer's delivery receipt references the rumor
-        // id, so re-key delivery tracking from the app id → rumor id; otherwise
-        // the ✓✓ (delivered) tick would never match. Files keep the app id.
-        if(type === 'text' && publishedRumorId) {
+        // Delivery receipts (text AND media) reference the rumor id, so re-key
+        // delivery tracking from the app id → rumor id; otherwise the ✓ / ✓✓
+        // ticks never match on file/voice bubbles (issue #86).
+        if(publishedRumorId) {
           trackId = publishedRumorId;
           this.deliveryTracker?.rekey(messageId, trackId);
         }

@@ -1,5 +1,6 @@
 import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
 import {uploadToBlossomWithProgress, BLOSSOM_SERVERS} from '@lib/phantomchat/blossom-upload-progress';
+import {__resetBlossomServersCacheForTests} from '@lib/phantomchat/blossom-servers';
 
 class MockXHR {
   static instances: MockXHR[] = [];
@@ -44,13 +45,23 @@ describe('blossom-upload-progress', () => {
     MockXHR.instances = [];
     origXHR = globalThis.XMLHttpRequest;
     (globalThis as any).XMLHttpRequest = MockXHR;
+    __resetBlossomServersCacheForTests();
+    // Pin server list so tests don't depend on network for /blossom.json.
+    if(typeof (globalThis as any).window === 'undefined') {
+      (globalThis as any).window = {};
+    }
+    (globalThis as any).window.__phantomchatTestBlossom = undefined;
   });
 
   afterEach(() => {
     (globalThis as any).XMLHttpRequest = origXHR;
+    __resetBlossomServersCacheForTests();
+    if(typeof (globalThis as any).window !== 'undefined') {
+      delete (globalThis as any).window.__phantomchatTestBlossom;
+    }
   });
 
-  it('resolves with the first server success', async() => {
+  it('uploads to ≥2 servers and returns primary + mirrors', async() => {
     const blob = new Blob([new Uint8Array([1, 2, 3])]);
     const progress: number[] = [];
 
@@ -58,40 +69,53 @@ describe('blossom-upload-progress', () => {
       onProgress: (p) => progress.push(p)
     });
 
+    // First server succeeds — progress reported.
     await waitForXhr();
-    const xhr = MockXHR.instances[0];
-    expect(xhr.method).toBe('PUT');
-    expect(xhr.url).toBe(BLOSSOM_SERVERS[0] + '/upload');
-    expect(xhr.headers['Authorization']).toMatch(/^Nostr /);
+    const xhr0 = MockXHR.instances[0];
+    expect(xhr0.method).toBe('PUT');
+    expect(xhr0.url).toBe(BLOSSOM_SERVERS[0] + '/upload');
+    expect(xhr0.headers['Authorization']).toMatch(/^Nostr /);
+    xhr0.upload.onprogress?.({loaded: 50, total: 100, lengthComputable: true});
+    xhr0.upload.onprogress?.({loaded: 100, total: 100, lengthComputable: true});
+    xhr0.status = 200;
+    xhr0.responseText = JSON.stringify({url: 'https://p.example/x', sha256: 'abc'});
+    xhr0.onload?.();
 
-    xhr.upload.onprogress?.({loaded: 50, total: 100, lengthComputable: true});
-    xhr.upload.onprogress?.({loaded: 100, total: 100, lengthComputable: true});
-    xhr.status = 200;
-    xhr.responseText = JSON.stringify({url: 'https://example.com/x', sha256: 'abc'});
-    xhr.onload?.();
+    // Second server also succeeds (mirror write).
+    await waitForXhr();
+    const xhr1 = MockXHR.instances[1];
+    expect(xhr1.url).toBe(BLOSSOM_SERVERS[1] + '/upload');
+    xhr1.status = 200;
+    xhr1.responseText = JSON.stringify({url: 'https://m.example/x', sha256: 'abc'});
+    xhr1.onload?.();
 
     const result = await promise;
-    expect(result.url).toBe('https://example.com/x');
+    expect(result.url).toBe('https://p.example/x');
+    expect(result.mirrors).toEqual(['https://p.example/x', 'https://m.example/x']);
     expect(progress).toEqual([50, 100]);
+    // Stops once minMirrors (=2) are filled — no third PUT.
+    expect(MockXHR.instances.length).toBe(2);
   });
 
-  it('falls back to next server on failure', async() => {
+  it('succeeds with one mirror when later servers fail', async() => {
     const blob = new Blob([new Uint8Array([1])]);
     const promise = uploadToBlossomWithProgress(blob, PRIVKEY_HEX, {});
 
     await waitForXhr();
-    MockXHR.instances[0].status = 503;
+    MockXHR.instances[0].status = 200;
+    MockXHR.instances[0].responseText = JSON.stringify({url: 'https://only.example/y', sha256: 'def'});
     MockXHR.instances[0].onload?.();
 
-    await waitForXhr();
-    const second = MockXHR.instances[1];
-    expect(second.url).toBe(BLOSSOM_SERVERS[1] + '/upload');
-    second.status = 200;
-    second.responseText = JSON.stringify({url: 'https://example.com/y', sha256: 'def'});
-    second.onload?.();
+    // Pursuit of a second mirror — second host 503s, third also fails.
+    for(let i = 1; i < BLOSSOM_SERVERS.length; i++) {
+      await waitForXhr();
+      MockXHR.instances[i].status = 503;
+      MockXHR.instances[i].onload?.();
+    }
 
     const result = await promise;
-    expect(result.url).toBe('https://example.com/y');
+    expect(result.url).toBe('https://only.example/y');
+    expect(result.mirrors).toEqual(['https://only.example/y']);
   });
 
   it('throws when all servers fail', async() => {

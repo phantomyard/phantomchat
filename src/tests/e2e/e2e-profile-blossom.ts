@@ -190,7 +190,7 @@ async function test3_saveWithBlossomMock() {
   const page = await ctx.newPage();
 
   const mockedUrl = 'https://mocked-blossom.example/avatar123.png';
-  await page.route(/blossom\.primal\.net\/upload|cdn\.satellite\.earth\/upload|blossom\.band\/upload/, (route) => {
+  await page.route(/blossom\.primal\.net\/upload|blossom\.band\/upload|nostrmedia\.com\/upload/, (route) => {
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -267,7 +267,7 @@ async function test4_blossomFallback() {
 
   const fallbackUrl = 'https://mocked-fallback.example/def.png';
   await page.route(/blossom\.primal\.net\/upload/, (r) => r.fulfill({status: 500, body: 'down'}));
-  await page.route(/cdn\.satellite\.earth\/upload/, (r) => r.fulfill({
+  await page.route(/blossom\.band\/upload/, (r) => r.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({url: fallbackUrl, sha256: 'def', size: 10, type: 'image/png'})

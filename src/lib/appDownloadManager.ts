@@ -217,7 +217,12 @@ export class AppDownloadManager {
           } catch{ /* fall through to Blossom fetch */ }
         }
         const {fetchAndDecryptPhantomChatFile} = await import('@lib/phantomchat/phantomchat-file-fetch');
-        const blob = await fetchAndDecryptPhantomChatFile(phantomchatFM.url, phantomchatFM.keyHex, phantomchatFM.ivHex);
+        const blob = await fetchAndDecryptPhantomChatFile(
+          phantomchatFM.url,
+          phantomchatFM.keyHex,
+          phantomchatFM.ivHex,
+          {sha256: phantomchatFM.sha256, mirrors: phantomchatFM.servers}
+        );
         if(type === 'url') {
           const url = URL.createObjectURL(blob);
           // Stamp the cache context + fire document_downloaded so the media
