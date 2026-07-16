@@ -52,18 +52,24 @@ class MockRelayPool {
 
   rewrapCalls: Array<{recipientPubkey: string; rumorId: string}> = [];
 
-  async rewrapAndPublish(_recipientPubkey: string, rumor: any): Promise<any[]> {
+  async rewrapAndPublish(_recipientPubkey: string, rumor: any): Promise<PublishResult> {
     this.publishCalls.push({recipientPubkey: _recipientPubkey, plaintext: `rewrap:${rumor.id}`});
     this.rewrapCalls.push({recipientPubkey: _recipientPubkey, rumorId: rumor.id});
-    return [{
-      id: `rewrap-${Date.now()}-${this.publishCalls.length}`,
-      kind: 1059,
-      pubkey: 'x',
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [],
-      content: 'mock',
-      sig: 'mock'
-    }];
+    return {
+      successes: [`rewrap-${Date.now()}-${this.publishCalls.length}`],
+      failures: [],
+      rumorId: rumor.id,
+      rumor,
+      wraps: [{
+        id: `rewrap-${Date.now()}-${this.publishCalls.length}`,
+        kind: 1059,
+        pubkey: 'x',
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [],
+        content: 'mock',
+        sig: 'mock'
+      }]
+    };
   }
 
   async publish(recipientPubkey: string, plaintext: string): Promise<PublishResult> {
@@ -559,6 +565,33 @@ describe('OfflineQueue', () => {
   describe('stable rumor id across flush retries (GitHub issue #84)', () => {
     const PEER = 'stable.rumor.peer';
 
+    test('does not acknowledge or delete on rewrap with zero relay successes', async() => {
+      // Queue offline, publish() returns rumor but no successes (ghost ack).
+      mockRelayPool.publish = async(): Promise<PublishResult> => ({
+        successes: [],
+        failures: [{url: 'wss://relay.test', error: 'ghost'}],
+        rumorId: 'r'.repeat(64),
+        rumor: {kind: 14, content: 'hello ghost', pubkey: 'x', created_at: 0, tags: [], id: 'r'.repeat(64)} as any
+      });
+      await queue.queue(PEER, 'hello ghost');
+
+      // First flush captures the rumor; retry rewrap has zero successes → stays
+      mockRelayPool.simulateConnect();
+      mockRelayPool.rewrapAndPublish = vi.fn(async(): Promise<PublishResult> => ({
+        successes: [],
+        failures: [{url: 'wss://relay.test', error: 'still offline'}],
+        rumorId: 'r'.repeat(64),
+        rumor: {kind: 14, content: 'hello ghost', pubkey: 'x', created_at: 0, tags: [], id: 'r'.repeat(64)} as any,
+        wraps: [{id: 'rewrap-0', kind: 1059, pubkey: 'x', created_at: 0, tags: [], content: 'mock', sig: 'mock'} as any]
+      }));
+
+      await queue.flush(PEER);
+
+      const items = queue.getQueued(PEER);
+      expect(items).toHaveLength(1); // Still queued
+      expect(items[0].rumorId).toBe('r'.repeat(64));
+    });
+
     test('flush() re-wraps the same rumor on retry, producing a stable rumor id', async() => {
       // Queue offline
       await queue.queue(PEER, 'hello ghost');
@@ -581,9 +614,13 @@ describe('OfflineQueue', () => {
       expect(items[0].rumor).toBeDefined();
 
       // Second flush: should call rewrapAndPublish with the SAME rumor id
-      mockRelayPool.rewrapAndPublish = vi.fn(async(_recipientPubkey: string, rumor: any): Promise<any[]> => (
-        [{id: 'rewrap-1', kind: 1059, pubkey: 'x', created_at: 0, tags: [], content: 'mock', sig: 'mock'}]
-      ));
+      mockRelayPool.rewrapAndPublish = vi.fn(async(_recipientPubkey: string, rumor: any): Promise<PublishResult> => ({
+        successes: ['rewrap-1'],
+        failures: [],
+        rumorId: rumor.id,
+        rumor,
+        wraps: [{id: 'rewrap-1', kind: 1059, pubkey: 'x', created_at: 0, tags: [], content: 'mock', sig: 'mock'}]
+      }));
 
       await queue.flush(PEER);
 

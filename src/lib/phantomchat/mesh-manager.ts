@@ -135,7 +135,9 @@ export class MeshManager {
     this.setupPeerConnection(pubkey, pc);
 
     const offer = await pc.createOffer();
+    if(!this.peers.has(pubkey) || this.peers.get(pubkey)!.sessionId !== sessionId) return;
     await pc.setLocalDescription(offer);
+    if(!this.peers.has(pubkey) || this.peers.get(pubkey)!.sessionId !== sessionId) return;
 
     await this.callbacks.sendSignal(pubkey, {t: 'offer', sdp: pc.localDescription.sdp});
   }
@@ -167,11 +169,12 @@ export class MeshManager {
 
     const pc = new RTCPeerConnection(this.rtcConfig());
 
+    const sessionId = `${fromPubkey}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const state: PeerState = {
       pc,
       dc: null,
       status: 'connecting',
-      sessionId: `${fromPubkey}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      sessionId,
       reconnectAttempts: 0,
       reconnectTimer: null,
       pingTimer: null,
@@ -194,11 +197,15 @@ export class MeshManager {
     this.setupPeerConnection(fromPubkey, pc);
 
     await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: signal.sdp}));
+    if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== sessionId) return;
     state.remoteDescriptionSet = true;
     await this.flushPendingCandidates(fromPubkey);
+    if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== sessionId) return;
 
     const answer = await pc.createAnswer();
+    if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== sessionId) return;
     await pc.setLocalDescription(answer);
+    if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== sessionId) return;
 
     await this.callbacks.sendSignal(fromPubkey, {t: 'answer', sdp: pc.localDescription.sdp});
   }
@@ -206,8 +213,10 @@ export class MeshManager {
   private async handleAnswer(fromPubkey: string, signal: SignalMessage & {t: 'answer'}): Promise<void> {
     const state = this.peers.get(fromPubkey);
     if(!state) return;
+    const expectedSessionId = state.sessionId;
 
     await state.pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: signal.sdp}));
+    if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== expectedSessionId) return;
     state.remoteDescriptionSet = true;
     await this.flushPendingCandidates(fromPubkey);
   }
@@ -233,6 +242,10 @@ export class MeshManager {
       this.pendingCandidates.set(fromPubkey, pending);
       return;
     }
+
+    // Guard: ignore stale candidates for a replaced session
+    const current = this.peers.get(fromPubkey);
+    if(!current || current.sessionId !== state.sessionId) return;
 
     try {
       await state.pc.addIceCandidate(init);
@@ -330,9 +343,12 @@ export class MeshManager {
 
       const state = this.peers.get(pubkey);
       if(!state) return;
+      const expectedSessionId = state.sessionId;
 
       const c = event.candidate;
       try {
+        const current = this.peers.get(pubkey);
+        if(!current || current.sessionId !== expectedSessionId) return;
         await this.callbacks.sendSignal(pubkey, {
           t: 'candidate',
           candidate: c.candidate,
@@ -509,7 +525,9 @@ export class MeshManager {
    * PING_TIMEOUT (90 s) before declaring the connection failed. This method
    * tears down all connections immediately and initiates reconnection.
    * For initiators this creates a fresh RTCPeerConnection right away; for
-   * responders it sends a hello and waits for the initiator's offer.
+   * responders (`!amInitiator`) `connect()` sends a hello nudge and waits
+   * for the initiator's offer — no new RTCPeerConnection is created until the
+   * offer arrives.
    *
    * Relay remains the guaranteed floor throughout the reconnect window.
    */

@@ -773,8 +773,13 @@ export class NostrRelayPool {
    * which a verbatim resend of the original wrap cannot do. Returns the freshly
    * minted wraps (mainly for tests/inspection). Best-effort per relay.
    */
-  async rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): Promise<NostrEvent[]> {
-    if(!this.privateKeyBytes) return [];
+  async rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): Promise<PublishResult> {
+    if(!this.privateKeyBytes) {
+      return {successes: [], failures: [{url: 'wrap', error: 'no private key available for re-wrap'}]};
+    }
+
+    const successes: string[] = [];
+    const failures: {url: string; error: string}[] = [];
 
     // Use v2 re-wrap (AES-256-GCM) with fallback to legacy NIP-17
     let wrap: NostrEvent;
@@ -791,11 +796,15 @@ export class NostrRelayPool {
     for(const entry of writeEntries) {
       try {
         entry.instance.publishRawEvent(wrap);
-      } catch{
-        // best-effort per relay; the retry schedule will try again
+        successes.push(wrap.id);
+      } catch(err) {
+        failures.push({
+          url: entry.config.url,
+          error: err instanceof Error ? err.message : String(err)
+        });
       }
     }
-    return [wrap];
+    return {successes, failures, rumorId: rumor.id, wraps: [wrap], rumor};
   }
 
   /**

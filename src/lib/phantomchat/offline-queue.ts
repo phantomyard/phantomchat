@@ -395,9 +395,9 @@ export class OfflineQueue {
         if(msg.rumor) {
           // Retry with re-wrap: fresh outer gift-wrap, same inner rumor id
           // so the receiver dedups. (GitHub issue #84)
-          const wraps = await this.relayPool.rewrapAndPublish(msg.to, msg.rumor);
-          if(wraps.length > 0) {
-            successes = [wraps[0].id];
+          const result = await this.relayPool.rewrapAndPublish(msg.to, msg.rumor);
+          if(result.successes.length > 0) {
+            successes = result.successes;
             rumorId = msg.rumorId;
             rumor = msg.rumor;
           }
@@ -542,8 +542,8 @@ export class OfflineQueue {
         if(this.relayPool.isConnected()) {
           try {
             if(msg.rumor) {
-              const wraps = await this.relayPool.rewrapAndPublish(msg.to, msg.rumor);
-              if(wraps.length > 0) {
+              const result = await this.relayPool.rewrapAndPublish(msg.to, msg.rumor);
+              if(result.successes.length > 0) {
                 this.acknowledge(msg.id);
                 deleteFromIndexedDB(msg.id).catch((e) => console.debug('[OfflineQueue] IndexedDB delete failed:', e?.message));
                 return true;
