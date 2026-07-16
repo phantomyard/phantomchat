@@ -23,6 +23,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelayPool} from './nostr-relay-pool';
+import {UnsignedEvent} from './nostr-crypto';
 
 /**
  * Queued message structure
@@ -47,6 +48,15 @@ export interface QueuedMessage {
    * returns. Absent for callers that don't track a local row.
    */
   appMessageId?: string;
+  /**
+   * The immutable inner rumor (kind 14) produced on the first wrap attempt.
+   * Stored so that retry flushes can re-wrap the SAME rumor — preserving its
+   * id so the receiver dedups — rather than minting a new one each time.
+   * (GitHub issue #84)
+   */
+  rumor?: UnsignedEvent;
+  /** Canonical 64-hex rumor id, paired with `rumor`. */
+  rumorId?: string;
 }
 
 /** Emitted for each queued message that successfully flushes to a relay. */
@@ -297,6 +307,7 @@ export class OfflineQueue {
     let relayEventId: string | undefined;
 
     // Attempt to publish via relay pool if connected
+    let publishResult: { rumor?: UnsignedEvent; rumorId?: string } | undefined;
     try {
       if(this.relayPool.isConnected()) {
         const result = await this.relayPool.publish(recipientPubkey, payload);
@@ -305,6 +316,11 @@ export class OfflineQueue {
           this.log('[OfflineQueue] published to relay pool, event ID:', relayEventId.slice(0, 8) + '…');
         } else {
           this.log('[OfflineQueue] relay pool publish had no successes, message stored locally');
+        }
+        // Capture the rumor even on partial failure so retries don't mint a
+        // new rumor id each time (GitHub issue #84).
+        if(result.rumor) {
+          publishResult = {rumor: result.rumor, rumorId: result.rumorId};
         }
       } else {
         this.log('[OfflineQueue] relay pool not connected, message stored locally only');
@@ -320,6 +336,7 @@ export class OfflineQueue {
       payload,
       timestamp,
       relayEventId,
+      ...(publishResult ? publishResult : {}),
       ...(appMessageId ? {appMessageId} : {})
     };
 
@@ -371,21 +388,47 @@ export class OfflineQueue {
       }
 
       try {
-        const result = await this.relayPool.publish(msg.to, msg.payload);
-        if(result.successes.length > 0) {
+        let successes: string[] = [];
+        let rumorId: string | undefined;
+        let rumor: UnsignedEvent | undefined;
+
+        if(msg.rumor) {
+          // Retry with re-wrap: fresh outer gift-wrap, same inner rumor id
+          // so the receiver dedups. (GitHub issue #84)
+          const wraps = await this.relayPool.rewrapAndPublish(msg.to, msg.rumor);
+          if(wraps.length > 0) {
+            successes = [wraps[0].id];
+            rumorId = msg.rumorId;
+            rumor = msg.rumor;
+          }
+        } else {
+          // First wrap attempt: mint the rumor from plaintext
+          const result = await this.relayPool.publish(msg.to, msg.payload);
+          successes = result.successes;
+          rumorId = result.rumorId;
+          rumor = result.rumor;
+
+          // Persist the rumor for future retries so we don't mint a new id
+          // on every flush attempt.
+          if(rumor) {
+            msg.rumor = rumor;
+            msg.rumorId = rumorId;
+            saveToIndexedDB(msg).catch((e) =>
+              console.debug('[OfflineQueue] IndexedDB rumor persist failed:', e?.message)
+            );
+          }
+        }
+
+        if(successes.length > 0) {
           // Mark as acknowledged so we don't deliver it again
           this.acknowledge(msg.id);
           // Remove from IndexedDB (per D029)
           deleteFromIndexedDB(msg.id).catch(err => {
             this.log.warn('[OfflineQueue] failed to delete from IndexedDB:', err);
           });
-          // Hand the canonical rumor id back so ChatAPI can migrate the local
-          // row + delivery tracker off the app message id. Without this the
-          // receiver's receipt (which references the rumor id) never matches
-          // the sender's row and the bubble is stuck single-check.
           if(this._onFlushed) {
             try {
-              this._onFlushed({appMessageId: msg.appMessageId, to: msg.to, rumorId: result.rumorId, rumor: result.rumor});
+              this._onFlushed({appMessageId: msg.appMessageId, to: msg.to, rumorId, rumor});
             } catch(e: any) {
               this.log.warn('[OfflineQueue] onFlushed handler threw:', e?.message);
             }
@@ -498,11 +541,25 @@ export class OfflineQueue {
 
         if(this.relayPool.isConnected()) {
           try {
-            const result = await this.relayPool.publish(msg.to, msg.payload);
-            if(result.successes.length > 0) {
-              this.acknowledge(msg.id);
-              deleteFromIndexedDB(msg.id).catch((e) => console.debug('[OfflineQueue] IndexedDB delete failed:', e?.message));
-              return true;
+            if(msg.rumor) {
+              const wraps = await this.relayPool.rewrapAndPublish(msg.to, msg.rumor);
+              if(wraps.length > 0) {
+                this.acknowledge(msg.id);
+                deleteFromIndexedDB(msg.id).catch((e) => console.debug('[OfflineQueue] IndexedDB delete failed:', e?.message));
+                return true;
+              }
+            } else {
+              const result = await this.relayPool.publish(msg.to, msg.payload);
+              if(result.successes.length > 0) {
+                if(result.rumor) {
+                  msg.rumor = result.rumor;
+                  msg.rumorId = result.rumorId;
+                  saveToIndexedDB(msg).catch((e) => console.debug('[OfflineQueue] IndexedDB persist failed:', e?.message));
+                }
+                this.acknowledge(msg.id);
+                deleteFromIndexedDB(msg.id).catch((e) => console.debug('[OfflineQueue] IndexedDB delete failed:', e?.message));
+                return true;
+              }
             }
           } catch{
             // Will be retried on next flush
