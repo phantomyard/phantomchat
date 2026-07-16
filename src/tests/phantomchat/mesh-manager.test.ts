@@ -313,6 +313,54 @@ describe('MeshManager', () => {
     expect(manager.getStatus('bob')).toBe('disconnected');
   });
 
+  it('restartAll() tears down and immediately rebuilds all peers with fresh PCs', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.connect('alice');
+    await manager.connect('bob');
+
+    const initialPcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    manager.restartAll();
+
+    // restartAll() calls disconnect() then connect() synchronously.
+    // connect() inserts the peer as 'connecting' right away, so there's
+    // no transient 'disconnected' window — the fast path is intentional.
+    expect(manager.getStatus('alice')).toBe('connecting');
+    expect(manager.getStatus('bob')).toBe('connecting');
+
+    // Fresh RTCPeerConnections created (one per peer)
+    await vi.advanceTimersByTimeAsync(0);
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(initialPcCount + 2);
+  });
+
+  it('restartAll() cancels pending reconnect timers from a prior disconnect', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.connect('alice');
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+
+    // Trigger a disconnect → schedules a reconnect in 1s
+    dcEventHandlers.close?.();
+    expect(manager.getStatus('alice')).toBe('disconnected');
+
+    const initialPcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    // Restart BEFORE the scheduled reconnect fires
+    manager.restartAll();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The scheduled reconnect from handleDisconnect must NOT fire later,
+    // because disconnect() set reconnectAttempts = Infinity.
+    await vi.advanceTimersByTimeAsync(30000);
+
+    // Only the restartAll reconnect happened (+1 PC), not the old timer too.
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(initialPcCount + 1);
+  });
+
   it('send() returns true for connected peer with open DataChannel', async() => {
     const callbacks = makeCallbacks();
     const manager = new MeshManager(callbacks);
@@ -477,6 +525,123 @@ describe('MeshManager', () => {
       await vi.advanceTimersByTimeAsync(30000);
       expect(mockDC.send).toHaveBeenCalledTimes(2);
       expect(mockDC.send).toHaveBeenLastCalledWith('PING');
+    });
+  });
+
+  // Lena/Kai review (#82): stale signals from a replaced session must be
+  // dropped. If restartAll() fires while an in-flight startOffer() is awaiting
+  // createOffer, the old operation must not publish after the new peer state is
+  // created.
+  describe('generation guard (sessionId) blocks stale signals across restartAll()', () => {
+    it('startOffer() aborted after restartAll() does not publish a stale offer', async() => {
+      const callbacks = makeCallbacks();
+      const manager = new MeshManager(callbacks, undefined, ''); // initiator
+
+      let resolveFirstOffer: (() => void) | null = null;
+      let offerCallCount = 0;
+      mockPC.createOffer = vi.fn().mockImplementation(() => {
+        offerCallCount++;
+        if(offerCallCount === 1) {
+          return new Promise((resolve) => {
+            resolveFirstOffer = () => resolve({type: 'offer', sdp: 'v=0\r\nstale...'});
+          });
+        }
+        return Promise.resolve({type: 'offer', sdp: 'v=0\r\nfresh...'});
+      });
+
+      // First connect enters startOffer but createOffer hangs.
+      const connectPromise = manager.connect('alice');
+
+      // Restart while the first createOffer is still pending.
+      manager.restartAll();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // A new 'connecting' session should exist.
+      expect(manager.getStatus('alice')).toBe('connecting');
+
+      // The stale createOffer finally resolves → should be dropped by the guard.
+      resolveFirstOffer!();
+      await Promise.resolve();
+
+      // Only ONE offer should have been published (the fresh session's).
+      const offerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'offer');
+      expect(offerSignals).toHaveLength(1);
+      // setLocalDescription should also only have been called for the fresh session.
+      expect(mockPC.setLocalDescription).toHaveBeenCalledTimes(1);
+
+      await connectPromise;
+    });
+
+    it('handleOffer() aborted after restartAll() does not publish a stale answer', async() => {
+      const callbacks = makeCallbacks();
+      // '' < 'alice' → initiator on our side, but here we test the responder
+      // path by invoking handleOffer directly.
+      const manager = new MeshManager(callbacks, undefined, 'zzzz');
+
+      let resolveSetRemote: (() => void) | null = null;
+      mockPC.setRemoteDescription = vi.fn().mockImplementation(() => {
+        return new Promise((resolve) => {
+          resolveSetRemote = () => resolve(undefined);
+        });
+      });
+
+      // First offer arrives — handleOffer enters but setRemoteDescription hangs.
+      const handlePromise = manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\nfirst-offer'});
+
+      // While the responder is still awaiting setRemoteDescription, the initiator
+      // restarts and sends a new offer. For this test we simulate restartAll()
+      // locally (disconnect + reconnect on the responder side isn't automatic,
+      // but a duplicate offer from a new initiator session would arrive).
+      manager.disconnect('alice');
+
+      // Now the first (stale) setRemoteDescription resolves.
+      resolveSetRemote!();
+      await Promise.resolve();
+
+      // The stale handleOffer should have been dropped by the guard before
+      // createAnswer / setLocalDescription / sendSignal.
+      expect(mockPC.createAnswer).not.toHaveBeenCalled();
+      expect(mockPC.setLocalDescription).not.toHaveBeenCalled();
+      const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+      expect(answerSignals).toHaveLength(0);
+
+      await handlePromise;
+    });
+
+    it('ignores stale ICE candidate signals after restartAll()', async() => {
+      const callbacks = makeCallbacks();
+      const manager = new MeshManager(callbacks, undefined, '');
+
+      await manager.connect('alice');
+
+      // Capture the first session's sessionId by inspecting internal state.
+      // (We can't in production, but for the test we know it was created.)
+      const firstState = (manager as any).peers.get('alice');
+      const firstSessionId = firstState.sessionId;
+
+      // A candidate arrives for the first session.
+      const candidateSignal = {
+        t: 'candidate',
+        candidate: 'candidate:old 1 UDP 1 10.0.0.1 50000 typ host',
+        sdpMid: '0',
+        sdpMLineIndex: 0
+      } as any;
+
+      // Before it can be applied, restartAll replaces the peer.
+      manager.restartAll();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The new peer has a different sessionId.
+      const newState = (manager as any).peers.get('alice');
+      expect(newState.sessionId).not.toBe(firstSessionId);
+
+      // Now the old candidate is processed. The handler must not add it to
+      // the new peer because the sessionId check fails.
+      mockPC.addIceCandidate.mockClear();
+      await manager.handleSignal('alice', candidateSignal);
+
+      // The candidate should have been buffered but NOT applied.
+      expect(mockPC.addIceCandidate).not.toHaveBeenCalled();
     });
   });
 });
