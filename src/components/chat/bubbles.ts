@@ -1590,7 +1590,7 @@ export default class ChatBubbles {
       if(inner) inner.style.width = percent + '%';
     });
 
-    this.listenerSetter.add(rootScope)('phantomchat_file_upload_completed', ({peerId, mid, realMid, finalMid}) => {
+    this.listenerSetter.add(rootScope)('phantomchat_file_upload_completed', ({peerId, mid, realMid}) => {
       if(peerId !== this.peerId) return;
       const bubble = findBubbleByMid(mid);
       if(!bubble) return;
@@ -1601,9 +1601,8 @@ export default class ChatBubbles {
       // attached and the Blossom upload + publish finished, flip the bubble
       // from the sending clock to a single ✓. Delivered/read (✓✓) still come
       // from phantomchat_delivery_update like any other message.
-      const nextMid = realMid ?? finalMid;
-      if(nextMid != null && String(nextMid) !== String(mid)) {
-        bubble.dataset.mid = '' + nextMid;
+      if(realMid != null && String(realMid) !== String(mid)) {
+        bubble.dataset.mid = '' + realMid;
       }
       // Only promote to 'sent' if we haven't already seen delivered/read.
       if(!bubble.classList.contains('is-read') && !bubble.classList.contains('is-p2p-read')) {

@@ -275,7 +275,7 @@ export type BroadcastEvents = {
   'phantomchat_push_subscription_changed': {state: 'registered' | 'unregistered' | 'error'; pubkey?: string},
   'phantomchat_file_upload_progress': {peerId: number; mid: number; percent: number},
   'phantomchat_file_upload_failed': {peerId: number; mid: number; error: string},
-  'phantomchat_file_upload_completed': {peerId: number; mid: number; url: string; realMid: number},
+  'phantomchat_file_upload_completed': {peerId: number; mid: number; url?: string; realMid?: number},
   'phantomchat_retry_file_send': {peerId: number; mid: number},
   'phantomchat_profile_update': {peerId: number; pubkey: string; displayName: string; about?: string; picture?: string},
   'phantomchat_backfill_complete': void,

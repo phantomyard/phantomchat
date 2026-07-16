@@ -2517,7 +2517,7 @@ export class PhantomChatMTProtoServer {
 
     const rs: any = (await import('@lib/rootScope')).default;
     if(typeof rs.dispatchEventSingle === 'function') {
-      rs.dispatchEventSingle('phantomchat_file_upload_completed', {peerId, mid: tempMid, finalMid: realMid});
+      rs.dispatchEventSingle('phantomchat_file_upload_completed', {peerId, mid: tempMid, realMid});
     }
 
     return {
