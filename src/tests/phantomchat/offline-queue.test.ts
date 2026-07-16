@@ -50,6 +50,22 @@ class MockRelayPool {
 
   lastRumorId = '';
 
+  rewrapCalls: Array<{recipientPubkey: string; rumorId: string}> = [];
+
+  async rewrapAndPublish(_recipientPubkey: string, rumor: any): Promise<any[]> {
+    this.publishCalls.push({recipientPubkey: _recipientPubkey, plaintext: `rewrap:${rumor.id}`});
+    this.rewrapCalls.push({recipientPubkey: _recipientPubkey, rumorId: rumor.id});
+    return [{
+      id: `rewrap-${Date.now()}-${this.publishCalls.length}`,
+      kind: 1059,
+      pubkey: 'x',
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [],
+      content: 'mock',
+      sig: 'mock'
+    }];
+  }
+
   async publish(recipientPubkey: string, plaintext: string): Promise<PublishResult> {
     this.publishCalls.push({recipientPubkey, plaintext});
 
@@ -537,6 +553,45 @@ describe('OfflineQueue', () => {
 
       // After destroy, state should be cleared
       expect(queue.getQueued(peerId)).toHaveLength(0);
+    });
+  });
+
+  describe('stable rumor id across flush retries (GitHub issue #84)', () => {
+    const PEER = 'stable.rumor.peer';
+
+    test('flush() re-wraps the same rumor on retry, producing a stable rumor id', async() => {
+      // Queue offline
+      await queue.queue(PEER, 'hello ghost');
+      mockRelayPool.simulateConnect();
+
+      // First flush: publish() returns a rumor but no successes (ghost ack).
+      // The rumor should be captured and stored on the queue item.
+      mockRelayPool.publish = async(): Promise<PublishResult> => ({
+        successes: [],
+        failures: [{url: 'wss://relay.test', error: 'ghost'}],
+        rumorId: 'r'.repeat(64),
+        rumor: {kind: 14, content: 'hello ghost', pubkey: 'x', created_at: 0, tags: [], id: 'r'.repeat(64)} as any
+      });
+      await queue.flush(PEER);
+
+      // The item should now have the rumor persisted
+      let items = queue.getQueued(PEER);
+      expect(items).toHaveLength(1);
+      expect(items[0].rumorId).toBe('r'.repeat(64));
+      expect(items[0].rumor).toBeDefined();
+
+      // Second flush: should call rewrapAndPublish with the SAME rumor id
+      mockRelayPool.rewrapAndPublish = vi.fn(async(_recipientPubkey: string, rumor: any): Promise<any[]> => (
+        [{id: 'rewrap-1', kind: 1059, pubkey: 'x', created_at: 0, tags: [], content: 'mock', sig: 'mock'}]
+      ));
+
+      await queue.flush(PEER);
+
+      expect(mockRelayPool.rewrapAndPublish).toHaveBeenCalledTimes(1);
+      expect(mockRelayPool.rewrapAndPublish).toHaveBeenCalledWith(
+        PEER,
+        expect.objectContaining({id: 'r'.repeat(64)})
+      );
     });
   });
 });
