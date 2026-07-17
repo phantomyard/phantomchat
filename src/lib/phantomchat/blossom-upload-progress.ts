@@ -3,7 +3,7 @@
  *
  * XHR-based variant used by media send (voice/image/file). Emits progress via
  * callback and supports AbortSignal. Signs one NIP-24242 auth event for the
- * blob (auth tags the content hash) and fans it out to every Blossom host in
+ * blob (auth tags the content hash) and fans it out to minMirrors hosts in
  * parallel. A single CDN dying cannot brick the voice note; returns the
  * primary URL plus every successful mirror so the envelope can carry them.
  *
@@ -39,8 +39,8 @@ export interface BlossomUploadProgressOptions {
   signal?: AbortSignal;
   /**
    * Preferred minimum successful mirrors (defaults to BLOSSOM_MIRROR_MIN).
-   * With parallel fan-out we try the full list anyway; this is kept for
-   * callers / docs as a durability preference signal, not an early-stop gate.
+   * Caps the parallel fan-out so we don't pay full-list egress every send.
+   * Durability floor after settle remains ≥1 required; ≥ minMirrors preferred.
    */
   minMirrors?: number;
 }
@@ -141,15 +141,12 @@ function putWithProgress(
  *
  * Fans out PUTs in parallel (`Promise.allSettled`) so the ✓ lands at
  * max(t1, t2, …) rather than t1+t2+… — keeping the "ticks like text"
- * promise. Durability is evaluated after the fan-out: ≥1 floor still
- * required, ≥2 preferred (every fulfilled host becomes a mirror).
+ * promise. Fan-out is capped at `minMirrors` so a three-host list does
+ * not necessarily cost 3× blob egress. Durability is evaluated after
+ * the fan-out: ≥1 floor still required.
  *
- * Progress is pinned to the first server only so a later host can't
- * rewind the bar 0→100→0→100 on a failure/retry.
- *
- * `minMirrors` stays on the options object as a durability preference
- * signal for callers/docs. Parallel fan-out already covers the full
- * list, so it is no longer an early-stop gate.
+ * Progress is max-across-legs (monotonic — never rewinds, never stalls
+ * while any leg is still moving).
  */
 export async function uploadToBlossomWithProgress(
   blob: Blob,
@@ -158,25 +155,34 @@ export async function uploadToBlossomWithProgress(
 ): Promise<BlossomUploadProgressResult> {
   const hash = await sha256Hex(blob);
   const servers = await getBlossomServers();
-  // minMirrors is retained as API/docs (`BLOSSOM_MIRROR_MIN` default).
-  // Parallel fan-out already covers the full list, so it is not an
-  // early-stop gate — durability is ≥1 required after settle, ≥2 preferred.
   if(options.minMirrors !== undefined && options.minMirrors < 1) {
     // Reject nonsense so a caller can't silently disable the floor.
     throw new Error('minMirrors must be ≥ 1');
   }
+  const minMirrors = Math.max(1, options.minMirrors ?? BLOSSOM_MIRROR_MIN);
   if(options.signal?.aborted) throw new Error('upload aborted');
+
+  // Cap fan-out at durability preference: parallel for timing, not full-list
+  // egress. Extra hosts stay on the known list as receive-side fallback.
+  const targets = servers.slice(0, minMirrors);
 
   // One auth event covers every server attempt (kind-24242 tags the hash).
   const authHeader = signAuth(privkeyHex, hash);
+
+  // Max-across-legs progress: monotonic, no stall if host 0 dies mid-way.
+  const pct = new Array<number>(targets.length).fill(0);
+  const onLeg = (i: number) => (p: number) => {
+    pct[i] = p;
+    options.onProgress?.(Math.max(...pct));
+  };
+
   const results = await Promise.allSettled(
-    servers.map((server, i) =>
+    targets.map((server, i) =>
       putWithProgress(
         server,
         blob,
         authHeader,
-        // Progress pinned to host 0 only — avoids the 0→100→0→100 rewind.
-        i === 0 ? options.onProgress : undefined,
+        options.onProgress ? onLeg(i) : undefined,
         options.signal
       )
     )
@@ -190,7 +196,7 @@ export async function uploadToBlossomWithProgress(
   const mirrors: string[] = [];
   for(let i = 0; i < results.length; i++) {
     const r = results[i];
-    const server = servers[i];
+    const server = targets[i];
     if(r.status === 'fulfilled') {
       if(!mirrors.includes(r.value.url)) mirrors.push(r.value.url);
       // Integrity hash is always our local compute. A server-echoed sha is
