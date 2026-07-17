@@ -1,7 +1,7 @@
 {
   "servers": [
-    "https://blossom.primal.net",
-    "https://blossom.band",
-    "https://nostrmedia.com"
+    "https://nostr.download",
+    "https://blossom.ditto.pub",
+    "https://blossom.data.haus"
   ]
 }

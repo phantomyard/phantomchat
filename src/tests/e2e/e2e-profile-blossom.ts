@@ -190,7 +190,7 @@ async function test3_saveWithBlossomMock() {
   const page = await ctx.newPage();
 
   const mockedUrl = 'https://mocked-blossom.example/avatar123.png';
-  await page.route(/blossom\.primal\.net\/upload|blossom\.band\/upload|nostrmedia\.com\/upload/, (route) => {
+  await page.route(/nostr\.download\/upload|blossom\.ditto\.pub\/upload|blossom\.data\.haus\/upload/, (route) => {
     route.fulfill({
       status: 200,
       contentType: 'application/json',

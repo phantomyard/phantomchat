@@ -47,7 +47,7 @@ describe('blossom-upload', () => {
 
     // First call is /blossom.json (getBlossomServers); subsequent is the upload.
     const uploadResponse = new Response(JSON.stringify({
-      url: 'https://blossom.primal.net/abc.png',
+      url: 'https://nostr.download/abc.png',
       sha256: 'abc',
       size: 4,
       type: 'image/png'
@@ -56,7 +56,7 @@ describe('blossom-upload', () => {
 
     const result = await uploadToBlossom(blob, privkeyHex);
 
-    expect(result.url).toBe('https://blossom.primal.net/abc.png');
+    expect(result.url).toBe('https://nostr.download/abc.png');
   });
 
   it('falls back to next server on 5xx', async() => {
@@ -68,7 +68,7 @@ describe('blossom-upload', () => {
         uploadCalls++;
         if(uploadCalls === 1) return new Response('boom', {status: 500});
         return new Response(JSON.stringify({
-          url: 'https://blossom.band/def.png',
+          url: 'https://nostr.download/def.png',
           sha256: 'def',
           size: 1,
           type: 'image/png'
@@ -79,7 +79,7 @@ describe('blossom-upload', () => {
 
     const result = await uploadToBlossom(blob, privkeyHex);
 
-    expect(result.url).toBe('https://blossom.band/def.png');
+    expect(result.url).toBe('https://nostr.download/def.png');
     expect(uploadCalls).toBe(2);
   });
 

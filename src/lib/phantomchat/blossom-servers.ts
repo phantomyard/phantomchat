@@ -8,14 +8,19 @@
  *
  * Shape: `{ "servers": ["https://...", ...] }`
  *
- * Current solid public set (probed 2026-07-16): primal, band, nostrmedia.
- * `cdn.satellite.earth` timed out and was dropped.
+ * Solid free public set (live write-probe 2026-07-17):
+ *   nostr.download / ditto.pub / data.haus
+ * Requirement: NIP-24242 + application/octet-stream (encrypted media) upload 2xx
+ * and hash-matched GET. Dropped: primal (now mime-filters octet-stream),
+ * band / nostr.build (mime wall), nostrmedia (paid), satellite (auth/flaky).
+ * Spares if any of the three go soft: dreamith.to, almond.slidestr.net,
+ * upload.iris.to, blossom-01/02.uid.ovh, cdn.hzrd149.com.
  */
 
 export const DEFAULT_BLOSSOM_SERVERS: readonly string[] = [
-  'https://blossom.primal.net',
-  'https://blossom.band',
-  'https://nostrmedia.com'
+  'https://nostr.download',
+  'https://blossom.ditto.pub',
+  'https://blossom.data.haus'
 ];
 
 /** Prefer ≥2 successful totals so a single CDN dying mid-day cannot brick the note. */

@@ -35,8 +35,15 @@ describe('blossom-servers', () => {
     for(const s of DEFAULT_BLOSSOM_SERVERS) {
       expect(s.startsWith('https://')).toBe(true);
     }
-    // Dead CDN we deliberately dropped on 2026-07-16.
+    // Unusable hosts deliberately dropped after 2026-07-16/17 probes.
     expect(DEFAULT_BLOSSOM_SERVERS).not.toContain('https://cdn.satellite.earth');
+    expect(DEFAULT_BLOSSOM_SERVERS).not.toContain('https://blossom.band');
+    expect(DEFAULT_BLOSSOM_SERVERS).not.toContain('https://nostrmedia.com');
+    expect(DEFAULT_BLOSSOM_SERVERS).not.toContain('https://blossom.primal.net');
+    // Proven free octet-stream writers (live probe 2026-07-17).
+    expect(DEFAULT_BLOSSOM_SERVERS).toContain('https://nostr.download');
+    expect(DEFAULT_BLOSSOM_SERVERS).toContain('https://blossom.ditto.pub');
+    expect(DEFAULT_BLOSSOM_SERVERS).toContain('https://blossom.data.haus');
     expect(BLOSSOM_MIRROR_MIN).toBeGreaterThanOrEqual(2);
   });
 
