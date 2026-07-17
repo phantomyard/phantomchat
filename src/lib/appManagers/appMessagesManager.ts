@@ -1662,13 +1662,32 @@ export class AppMessagesManager extends AppManager {
         if(updates?.phantomchatMid) {
           const storage = this.getHistoryMessagesStorage(peerId);
           const realMid = updates.phantomchatMid;
+          // Build a minimal message/tempMessage so bubbles.ts can remid the
+          // optimistic bubble and flip ⏳ → ✓ the same way text messages do
+          // (undefined tempMessage would crash makeFullMid and skip status).
+          const tempMessage: any = {
+            _: 'message',
+            id: tempMid,
+            mid: tempMid,
+            peerId,
+            pFlags: {out: true, is_outgoing: true},
+            date: Math.floor(Date.now() / 1000)
+          };
+          const finalMessage: any = {
+            _: 'message',
+            id: realMid,
+            mid: realMid,
+            peerId,
+            pFlags: {out: true, unread: true},
+            date: Math.floor(Date.now() / 1000)
+          };
           this.rootScope.dispatchEvent('messages_pending');
           this.rootScope.dispatchEvent('message_sent', {
             storageKey: storage.key,
             tempId: tempMid,
-            tempMessage: undefined as any,
+            tempMessage,
             mid: realMid,
-            message: undefined as any
+            message: finalMessage
           });
         } else {
           // VMT returned emptyUpdates — a guard clause rejected the send

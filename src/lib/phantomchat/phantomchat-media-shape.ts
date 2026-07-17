@@ -33,6 +33,8 @@ export interface PhantomChatFileMetadata {
    * notes whose recorded blob mime came across as application/octet-stream.
    */
   mediaType?: 'image' | 'video' | 'voice' | 'file';
+  /** Multi-mirror Blossom URLs (primary first). Receiver falls back across them. */
+  servers?: string[];
 }
 
 export function buildPhantomChatMedia(mid: number, fm: PhantomChatFileMetadata): any {

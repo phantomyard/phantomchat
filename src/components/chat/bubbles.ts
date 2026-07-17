@@ -1590,13 +1590,24 @@ export default class ChatBubbles {
       if(inner) inner.style.width = percent + '%';
     });
 
-    this.listenerSetter.add(rootScope)('phantomchat_file_upload_completed', ({peerId, mid}) => {
+    this.listenerSetter.add(rootScope)('phantomchat_file_upload_completed', ({peerId, mid, realMid}) => {
       if(peerId !== this.peerId) return;
       const bubble = findBubbleByMid(mid);
       if(!bubble) return;
       bubble.querySelector('.media-upload-progress')?.remove();
       bubble.classList.remove('upload-failed');
       bubble.querySelector('.media-upload-retry')?.remove();
+      // Issue #86: mirror the text-message tick path. Once local media is
+      // attached and the Blossom upload + publish finished, flip the bubble
+      // from the sending clock to a single ✓. Delivered/read (✓✓) still come
+      // from phantomchat_delivery_update like any other message.
+      if(realMid != null && String(realMid) !== String(mid)) {
+        bubble.dataset.mid = '' + realMid;
+      }
+      // Only promote to 'sent' if we haven't already seen delivered/read.
+      if(!bubble.classList.contains('is-read') && !bubble.classList.contains('is-p2p-read')) {
+        this.setBubbleSendingStatus(bubble, 'sent');
+      }
     });
 
     this.listenerSetter.add(rootScope)('phantomchat_file_upload_failed', ({peerId, mid, error}) => {

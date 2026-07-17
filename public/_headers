@@ -27,5 +27,11 @@
 /relays.json
   Cache-Control: no-cache, must-revalidate
 
+# Canonical Blossom server list (issue #86) — same revalidate posture as
+# relays. PWA + phantombot both fetch this so neither side hard-codes a
+# drifting public CDN set.
+/blossom.json
+  Cache-Control: no-cache, must-revalidate
+
 /*.webmanifest
   Cache-Control: public, max-age=3600

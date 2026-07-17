@@ -54,7 +54,7 @@ describe('phantomchat-send-file', () => {
     mockedUpload.mockImplementation(async(_blob: any, _key: any, opts: any) => {
       opts?.onProgress?.(50);
       opts?.onProgress?.(100);
-      return {url: 'https://mock/x', sha256: 'abc'};
+      return {url: 'https://mock/x', sha256: 'abc', mirrors: ['https://mock/x', 'https://mock2/y']};
     });
 
     const {ctx, dispatched} = makeCtx();
@@ -77,7 +77,11 @@ describe('phantomchat-send-file', () => {
   });
 
   it('carries the caption to sendFileMessage and saves it as the row content (#11)', async() => {
-    mockedUpload.mockImplementation(async() => ({url: 'https://mock/x', sha256: 'abc'}));
+    mockedUpload.mockImplementation(async() => ({
+      url: 'https://mock/x',
+      sha256: 'abc',
+      mirrors: ['https://mock/x', 'https://mock2/y']
+    }));
     const {ctx} = makeCtx();
 
     await sendFileViaPhantomChat(ctx, {
@@ -92,9 +96,15 @@ describe('phantomchat-send-file', () => {
 
     // caption reaches the relay publish via the sendFileMessage extras (→ fileContent)
     const extras = (ctx.chatAPI.sendFileMessage as any).mock.calls[0][8];
-    expect(extras).toMatchObject({caption: 'sunset 🌅'});
+    expect(extras).toMatchObject({
+      caption: 'sunset 🌅',
+      servers: ['https://mock/x', 'https://mock2/y']
+    });
     // caption persisted as the local row content so the sender's own bubble shows it
-    expect((ctx.saveMessage as any).mock.calls[0][0]).toMatchObject({content: 'sunset 🌅'});
+    expect((ctx.saveMessage as any).mock.calls[0][0]).toMatchObject({
+      content: 'sunset 🌅',
+      servers: ['https://mock/x', 'https://mock2/y']
+    });
   });
 
   it('tags voice notes with mediaType + an audio mime even when blob.type is empty', async() => {

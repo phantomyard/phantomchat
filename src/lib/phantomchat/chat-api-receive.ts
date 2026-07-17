@@ -147,6 +147,12 @@ export function extractFileMetadata(
   try {
     const fileParsed = typeof parsed.content === 'string' ? JSON.parse(parsed.content) : parsed;
     if(fileParsed.url && fileParsed.sha256 && fileParsed.key && fileParsed.iv) {
+      // Accept both `servers` and legacy `mirrors` field names.
+      const rawServers = Array.isArray(fileParsed.servers) ? fileParsed.servers :
+        (Array.isArray(fileParsed.mirrors) ? fileParsed.mirrors : undefined);
+      const servers = rawServers ?
+        rawServers.filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('http')) :
+        undefined;
       return {
         url: fileParsed.url,
         sha256: fileParsed.sha256,
@@ -164,7 +170,8 @@ export function extractFileMetadata(
         // back to the mime/duration heuristic.
         mediaType: fileParsed.mediaType === 'image' || fileParsed.mediaType === 'video' ||
           fileParsed.mediaType === 'voice' || fileParsed.mediaType === 'file' ?
-          fileParsed.mediaType : undefined
+          fileParsed.mediaType : undefined,
+        ...(servers && servers.length ? {servers} : {})
       };
     }
   } catch{
@@ -518,7 +525,8 @@ export async function handleRelayMessage(
           waveform: fileMetadata.waveform,
           // Persist the authoritative media class so reload classifies voice /
           // image / video without re-guessing from mime+duration.
-          mediaType: fileMetadata.mediaType
+          mediaType: fileMetadata.mediaType,
+          ...(fileMetadata.servers?.length ? {servers: fileMetadata.servers} : {})
         } : undefined
       };
       store.saveMessage(row).catch((err) => {
@@ -633,7 +641,8 @@ async function handleSelfEcho(
       waveform: echoFileMetadata.waveform,
       // Persist the authoritative media class so reload classifies it as voice
       // without re-guessing from mime+duration.
-      mediaType: echoFileMetadata.mediaType
+      mediaType: echoFileMetadata.mediaType,
+      ...(echoFileMetadata.servers?.length ? {servers: echoFileMetadata.servers} : {})
     } : undefined
   });
 

@@ -1,28 +1,48 @@
 /*
  * PhantomChat.chat — Blossom upload with progress + abort
  *
- * XHR-based variant of blossom-upload.ts used by media send (voice/image/file).
- * Emits progress via callback and supports AbortSignal. Same NIP-24242 auth,
- * same fallback chain. Signs a fresh auth event per server attempt.
+ * XHR-based variant used by media send (voice/image/file). Emits progress via
+ * callback and supports AbortSignal. Signs one NIP-24242 auth event for the
+ * blob (auth tags the content hash) and fans it out to minMirrors hosts in
+ * parallel. A single CDN dying cannot brick the voice note; returns the
+ * primary URL plus every successful mirror so the envelope can carry them.
+ *
+ * Server list comes from /blossom.json (see blossom-servers.ts).
  */
 
 import {finalizeEvent} from 'nostr-tools/pure';
 import {logSwallow} from './log-swallow';
+import {
+  BLOSSOM_MIRROR_MIN,
+  DEFAULT_BLOSSOM_SERVERS,
+  getBlossomServers
+} from './blossom-servers';
 
-export const BLOSSOM_SERVERS = [
-  'https://blossom.primal.net',
-  'https://cdn.satellite.earth',
-  'https://blossom.band'
-] as const;
+// Re-export so callers/tests that read the durability constant off this
+// module keep working after the sequential early-stop path went away.
+export {BLOSSOM_MIRROR_MIN};
+
+/** @deprecated Prefer getBlossomServers() / DEFAULT_BLOSSOM_SERVERS. Kept for tests. */
+export const BLOSSOM_SERVERS = DEFAULT_BLOSSOM_SERVERS;
 
 export interface BlossomUploadProgressResult {
+  /** Primary URL — first successful PUT. Goes in envelope.url. */
   url: string;
+  /** sha256 of the ciphertext (from us; server may echo it). */
   sha256: string;
+  /** Every successful URL including primary. Recipient tries these in order. */
+  mirrors: string[];
 }
 
 export interface BlossomUploadProgressOptions {
   onProgress?: (percent: number) => void;
   signal?: AbortSignal;
+  /**
+   * Preferred minimum successful mirrors (defaults to BLOSSOM_MIRROR_MIN).
+   * Caps the parallel fan-out so we don't pay full-list egress every send.
+   * Durability floor after settle remains ≥1 required; ≥ minMirrors preferred.
+   */
+  minMirrors?: number;
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -63,7 +83,7 @@ function putWithProgress(
   authHeader: string,
   onProgress: ((p: number) => void) | undefined,
   signal: AbortSignal | undefined
-): Promise<BlossomUploadProgressResult> {
+): Promise<{url: string; sha256: string}> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
 
@@ -99,7 +119,7 @@ function putWithProgress(
           return;
         }
         resolve({url: data.url, sha256: data.sha256 || ''});
-      } catch(err) {
+      } catch{
         reject(new Error(`${server}: invalid JSON`));
       }
     };
@@ -116,34 +136,91 @@ function putWithProgress(
   });
 }
 
-/** Returns the list of Blossom servers to try, honoring a test override. */
-function getBlossomServers(): readonly string[] {
-  try {
-    const w: any = typeof window !== 'undefined' ? window : null;
-    const override = w?.__phantomchatTestBlossom;
-    if(typeof override === 'string' && override) return [override];
-  } catch(e) { logSwallow('BlossomUpload.testOverride', e); }
-  return BLOSSOM_SERVERS;
-}
-
+/**
+ * Upload ciphertext to Blossom.
+ *
+ * Fans out PUTs in parallel (`Promise.allSettled`) so the ✓ lands at
+ * max(t1, t2, …) rather than t1+t2+… — keeping the "ticks like text"
+ * promise. Fan-out is capped at `minMirrors` so a three-host list does
+ * not necessarily cost 3× blob egress. Durability is evaluated after
+ * the fan-out: ≥1 floor still required.
+ *
+ * Progress is max-across-legs (monotonic — never rewinds, never stalls
+ * while any leg is still moving).
+ */
 export async function uploadToBlossomWithProgress(
   blob: Blob,
   privkeyHex: string,
   options: BlossomUploadProgressOptions
 ): Promise<BlossomUploadProgressResult> {
   const hash = await sha256Hex(blob);
+  const servers = await getBlossomServers();
+  if(options.minMirrors !== undefined && options.minMirrors < 1) {
+    // Reject nonsense so a caller can't silently disable the floor.
+    throw new Error('minMirrors must be ≥ 1');
+  }
+  const minMirrors = Math.max(1, options.minMirrors ?? BLOSSOM_MIRROR_MIN);
+  if(options.signal?.aborted) throw new Error('upload aborted');
+
+  // Cap fan-out at durability preference: parallel for timing, not full-list
+  // egress. Extra hosts stay on the known list as receive-side fallback.
+  const targets = servers.slice(0, minMirrors);
+
+  // One auth event covers every server attempt (kind-24242 tags the hash).
+  const authHeader = signAuth(privkeyHex, hash);
+
+  // Max-across-legs progress: monotonic, no stall if host 0 dies mid-way.
+  const pct = new Array<number>(targets.length).fill(0);
+  const onLeg = (i: number) => (p: number) => {
+    pct[i] = p;
+    options.onProgress?.(Math.max(...pct));
+  };
+
+  const results = await Promise.allSettled(
+    targets.map((server, i) =>
+      putWithProgress(
+        server,
+        blob,
+        authHeader,
+        options.onProgress ? onLeg(i) : undefined,
+        options.signal
+      )
+    )
+  );
+
+  // Abort mid-fan-out must not surface a half-success; cancel killed
+  // every leg via the shared signal, so treat the whole upload as aborted.
+  if(options.signal?.aborted) throw new Error('upload aborted');
+
   const errors: string[] = [];
-  for(const server of getBlossomServers()) {
-    if(options.signal?.aborted) throw new Error('upload aborted');
-    const authHeader = signAuth(privkeyHex, hash);
-    try {
-      const result = await putWithProgress(server, blob, authHeader, options.onProgress, options.signal);
-      return result;
-    } catch(err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if(msg === 'upload aborted') throw err;
+  const mirrors: string[] = [];
+  for(let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const server = targets[i];
+    if(r.status === 'fulfilled') {
+      if(!mirrors.includes(r.value.url)) mirrors.push(r.value.url);
+      // Integrity hash is always our local compute. A server-echoed sha is
+      // informational only — never overwrite what the receiver will verify.
+      if(r.value.sha256 && r.value.sha256.toLowerCase() !== hash) {
+        console.warn(
+          `[blossom] ${server} echoed sha256 ${r.value.sha256}, expected ${hash}`
+        );
+      }
+    } else {
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      // Abort already handled via signal.aborted above; skip the string.
+      if(options.signal?.aborted || msg === 'upload aborted') continue;
       errors.push(msg);
     }
   }
-  throw new Error(`all blossom servers failed: ${errors.join('; ')}`);
+
+  if(mirrors.length === 0) {
+    throw new Error(`all blossom servers failed: ${errors.join('; ')}`);
+  }
+
+  return {
+    url: mirrors[0],
+    sha256: hash,
+    mirrors
+  };
 }

@@ -309,6 +309,8 @@ export class GroupAPI {
       height?: number;
       duration?: number;
       waveform?: string;
+      /** Multi-mirror Blossom URLs (primary first). */
+      servers?: string[];
     },
     caption: string = ''
   ): Promise<GroupSendResult> {

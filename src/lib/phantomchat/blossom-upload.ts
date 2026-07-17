@@ -1,21 +1,17 @@
 /*
- * PhantomChat.chat — Blossom upload helper
+ * PhantomChat.chat — Blossom upload helper (avatar / non-progress path)
  *
  * Signs a NIP-24242 auth event with the active PhantomChat private key and
- * uploads a blob to a fallback chain of public Blossom servers. Returns the
- * resulting URL for the first server that accepts the upload.
- *
- * Implementation is inline (no blossom-client-sdk dependency) to keep the
- * dependency surface small. SHA-256 uses Web Crypto.
+ * uploads a blob. Uses the same /blossom.json list as media upload. For
+ * avatars we still take the first success (one URL is enough for kind-0);
+ * media goes through blossom-upload-progress instead, which multi-mirrors.
  */
 
 import {finalizeEvent} from 'nostr-tools/pure';
+import {DEFAULT_BLOSSOM_SERVERS, getBlossomServers} from './blossom-servers';
 
-export const BLOSSOM_SERVERS = [
-  'https://blossom.primal.net',
-  'https://cdn.satellite.earth',
-  'https://blossom.band'
-] as const;
+/** @deprecated Prefer DEFAULT_BLOSSOM_SERVERS / getBlossomServers(). */
+export const BLOSSOM_SERVERS = DEFAULT_BLOSSOM_SERVERS;
 
 export interface BlossomUploadResult {
   url: string;
@@ -77,9 +73,10 @@ export async function uploadToBlossom(
   }, privkey);
 
   const authHeader = 'Nostr ' + btoa(JSON.stringify(event));
-
+  const servers = await getBlossomServers();
   const errors: string[] = [];
-  for(const server of BLOSSOM_SERVERS) {
+
+  for(const server of servers) {
     try {
       const res = await fetch(server + '/upload', {
         method: 'PUT',
@@ -95,12 +92,16 @@ export async function uploadToBlossom(
         continue;
       }
 
-      const data = await res.json() as {url: string; sha256: string};
+      const data = await res.json() as {url: string; sha256?: string};
       if(!data.url) {
         errors.push(`${server}: no url in response`);
         continue;
       }
-      return {url: data.url, sha256: data.sha256 || hash};
+      // Always return our local hash — server echo is not authoritative.
+      if(data.sha256 && data.sha256.toLowerCase() !== hash) {
+        console.warn(`[blossom] ${server} echoed sha256 ${data.sha256}, expected ${hash}`);
+      }
+      return {url: data.url, sha256: hash};
     } catch(err) {
       errors.push(`${server}: ${err instanceof Error ? err.message : String(err)}`);
     }

@@ -1,0 +1,7 @@
+{
+  "servers": [
+    "https://nostr.download",
+    "https://blossom.ditto.pub",
+    "https://blossom.data.haus"
+  ]
+}

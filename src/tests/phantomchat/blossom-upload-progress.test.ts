@@ -1,5 +1,10 @@
-import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
-import {uploadToBlossomWithProgress, BLOSSOM_SERVERS} from '@lib/phantomchat/blossom-upload-progress';
+import {describe, it, expect, beforeEach, afterEach} from 'vitest';
+import {
+  uploadToBlossomWithProgress,
+  BLOSSOM_SERVERS,
+  BLOSSOM_MIRROR_MIN
+} from '@lib/phantomchat/blossom-upload-progress';
+import {__resetBlossomServersCacheForTests} from '@lib/phantomchat/blossom-servers';
 
 class MockXHR {
   static instances: MockXHR[] = [];
@@ -28,13 +33,14 @@ class MockXHR {
 const PRIVKEY_HEX = '0000000000000000000000000000000000000000000000000000000000000001';
 
 // sha256Hex inside uploadToBlossomWithProgress needs several event-loop turns
-// to resolve (Blob.arrayBuffer polyfill → crypto.subtle.digest). Spin until
-// an XHR instance appears, up to 20 turns.
-async function waitForXhr(targetIndex = MockXHR.instances.length) {
-  for(let i = 0; i < 20; i++) {
-    if(MockXHR.instances.length > targetIndex) return;
+// to resolve (Blob.arrayBuffer polyfill → crypto.subtle.digest). Parallel
+// fan-out opens every XHR in one map, so wait until all expected ones land.
+async function waitForXhrCount(n: number) {
+  for(let i = 0; i < 40; i++) {
+    if(MockXHR.instances.length >= n) return;
     await new Promise(r => setTimeout(r, 0));
   }
+  throw new Error(`expected ${n} XHRs, got ${MockXHR.instances.length}`);
 }
 
 describe('blossom-upload-progress', () => {
@@ -44,13 +50,26 @@ describe('blossom-upload-progress', () => {
     MockXHR.instances = [];
     origXHR = globalThis.XMLHttpRequest;
     (globalThis as any).XMLHttpRequest = MockXHR;
+    __resetBlossomServersCacheForTests();
+    if(typeof (globalThis as any).window === 'undefined') {
+      (globalThis as any).window = {};
+    }
+    (globalThis as any).window.__phantomchatTestBlossom = undefined;
   });
 
   afterEach(() => {
     (globalThis as any).XMLHttpRequest = origXHR;
+    __resetBlossomServersCacheForTests();
+    if(typeof (globalThis as any).window !== 'undefined') {
+      delete (globalThis as any).window.__phantomchatTestBlossom;
+    }
   });
 
-  it('resolves with the first server success', async() => {
+  it('fans out in parallel to minMirrors hosts, returns primary + every success', async() => {
+    // List has 3 hosts; default minMirrors=2 → only open 2 XHRs (cap egress).
+    expect(BLOSSOM_SERVERS.length).toBeGreaterThanOrEqual(BLOSSOM_MIRROR_MIN);
+    expect(BLOSSOM_MIRROR_MIN).toBe(2);
+
     const blob = new Blob([new Uint8Array([1, 2, 3])]);
     const progress: number[] = [];
 
@@ -58,63 +77,113 @@ describe('blossom-upload-progress', () => {
       onProgress: (p) => progress.push(p)
     });
 
-    await waitForXhr();
-    const xhr = MockXHR.instances[0];
-    expect(xhr.method).toBe('PUT');
-    expect(xhr.url).toBe(BLOSSOM_SERVERS[0] + '/upload');
-    expect(xhr.headers['Authorization']).toMatch(/^Nostr /);
+    await waitForXhrCount(BLOSSOM_MIRROR_MIN);
+    // Give a couple more ticks so a full-list fan-out would have appeared.
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    expect(MockXHR.instances.length).toBe(BLOSSOM_MIRROR_MIN);
 
-    xhr.upload.onprogress?.({loaded: 50, total: 100, lengthComputable: true});
-    xhr.upload.onprogress?.({loaded: 100, total: 100, lengthComputable: true});
-    xhr.status = 200;
-    xhr.responseText = JSON.stringify({url: 'https://example.com/x', sha256: 'abc'});
-    xhr.onload?.();
+    const xhr0 = MockXHR.instances[0];
+    expect(xhr0.method).toBe('PUT');
+    expect(xhr0.url).toBe(BLOSSOM_SERVERS[0] + '/upload');
+    expect(xhr0.headers['Authorization']).toMatch(/^Nostr /);
+    // Shared Authorization across every leg (one auth event for the hash).
+    for(const xhr of MockXHR.instances) {
+      expect(xhr.headers['Authorization']).toBe(xhr0.headers['Authorization']);
+      expect(xhr.url).toMatch(/\/upload$/);
+    }
 
-    const result = await promise;
-    expect(result.url).toBe('https://example.com/x');
-    expect(progress).toEqual([50, 100]);
-  });
+    // Max-across-legs progress: both legs report; reported value is monotonic max.
+    MockXHR.instances[0].upload.onprogress?.({loaded: 40, total: 100, lengthComputable: true});
+    MockXHR.instances[1].upload.onprogress?.({loaded: 70, total: 100, lengthComputable: true});
+    MockXHR.instances[0].upload.onprogress?.({loaded: 55, total: 100, lengthComputable: true});
+    MockXHR.instances[1].upload.onprogress?.({loaded: 100, total: 100, lengthComputable: true});
 
-  it('falls back to next server on failure', async() => {
-    const blob = new Blob([new Uint8Array([1])]);
-    const promise = uploadToBlossomWithProgress(blob, PRIVKEY_HEX, {});
-
-    await waitForXhr();
-    MockXHR.instances[0].status = 503;
+    // Both capped targets succeed.
+    MockXHR.instances[0].status = 200;
+    MockXHR.instances[0].responseText = JSON.stringify({url: 'https://p.example/x', sha256: 'abc'});
     MockXHR.instances[0].onload?.();
-
-    await waitForXhr();
-    const second = MockXHR.instances[1];
-    expect(second.url).toBe(BLOSSOM_SERVERS[1] + '/upload');
-    second.status = 200;
-    second.responseText = JSON.stringify({url: 'https://example.com/y', sha256: 'def'});
-    second.onload?.();
+    MockXHR.instances[1].status = 200;
+    MockXHR.instances[1].responseText = JSON.stringify({url: 'https://m.example/x', sha256: 'abc'});
+    MockXHR.instances[1].onload?.();
 
     const result = await promise;
-    expect(result.url).toBe('https://example.com/y');
+    expect(result.url).toBe('https://p.example/x');
+    expect(result.mirrors).toEqual(['https://p.example/x', 'https://m.example/x']);
+    // Local integrity hash; never trust the server-echoed 'abc'.
+    expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.sha256).not.toBe('abc');
+    // Max progression: 40 → 70 → 70 (55 ignored, host0 lagging) → 100
+    expect(progress).toEqual([40, 70, 70, 100]);
   });
 
-  it('throws when all servers fail', async() => {
+  it('succeeds with one mirror when the second target fails', async() => {
     const blob = new Blob([new Uint8Array([1])]);
     const promise = uploadToBlossomWithProgress(blob, PRIVKEY_HEX, {});
 
-    for(let i = 0; i < BLOSSOM_SERVERS.length; i++) {
-      await waitForXhr();
-      MockXHR.instances[i].status = 500;
-      MockXHR.instances[i].onload?.();
+    await waitForXhrCount(BLOSSOM_MIRROR_MIN);
+    MockXHR.instances[0].status = 200;
+    MockXHR.instances[0].responseText = JSON.stringify({url: 'https://only.example/y', sha256: 'def'});
+    MockXHR.instances[0].onload?.();
+    MockXHR.instances[1].status = 503;
+    MockXHR.instances[1].onload?.();
+
+    const result = await promise;
+    expect(result.url).toBe('https://only.example/y');
+    expect(result.mirrors).toEqual(['https://only.example/y']);
+  });
+
+  it('throws when all targets fail', async() => {
+    const blob = new Blob([new Uint8Array([1])]);
+    const promise = uploadToBlossomWithProgress(blob, PRIVKEY_HEX, {});
+
+    await waitForXhrCount(BLOSSOM_MIRROR_MIN);
+    for(const xhr of MockXHR.instances) {
+      xhr.status = 500;
+      xhr.onload?.();
     }
 
     await expect(promise).rejects.toThrow(/all blossom servers failed/);
   });
 
-  it('aborts the current XHR when signal fires', async() => {
+  it('aborts every leg and rejects when signal fires mid-fan-out', async() => {
     const ctrl = new AbortController();
     const blob = new Blob([new Uint8Array([1])]);
     const promise = uploadToBlossomWithProgress(blob, PRIVKEY_HEX, {signal: ctrl.signal});
 
-    await waitForXhr();
+    await waitForXhrCount(BLOSSOM_MIRROR_MIN);
     ctrl.abort();
-    expect(MockXHR.instances[0].aborted).toBe(true);
+    for(const xhr of MockXHR.instances) {
+      expect(xhr.aborted).toBe(true);
+    }
     await expect(promise).rejects.toThrow(/aborted/);
+  });
+
+  it('rejects immediately when signal is already aborted', async() => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const blob = new Blob([new Uint8Array([1])]);
+    await expect(
+      uploadToBlossomWithProgress(blob, PRIVKEY_HEX, {signal: ctrl.signal})
+    ).rejects.toThrow(/aborted/);
+    expect(MockXHR.instances.length).toBe(0);
+  });
+
+  it('respects an explicit minMirrors cap', async() => {
+    const blob = new Blob([new Uint8Array([9])]);
+    // Cap at 1 → single PUT, not the full list.
+    const promise = uploadToBlossomWithProgress(blob, PRIVKEY_HEX, {minMirrors: 1});
+
+    await waitForXhrCount(1);
+    await new Promise(r => setTimeout(r, 0));
+    expect(MockXHR.instances.length).toBe(1);
+    expect(MockXHR.instances[0].url).toBe(BLOSSOM_SERVERS[0] + '/upload');
+
+    MockXHR.instances[0].status = 200;
+    MockXHR.instances[0].responseText = JSON.stringify({url: 'https://solo.example/z', sha256: 'ghi'});
+    MockXHR.instances[0].onload?.();
+
+    const result = await promise;
+    expect(result.mirrors).toEqual(['https://solo.example/z']);
   });
 });
