@@ -2,10 +2,10 @@
  * PhantomChat.chat — Blossom upload with progress + abort
  *
  * XHR-based variant used by media send (voice/image/file). Emits progress via
- * callback and supports AbortSignal. Signs a fresh NIP-24242 auth event per
- * server attempt. Uploads to multiple Blossom servers so a single CDN dying
- * cannot brick the voice note; returns the primary URL plus every successful
- * mirror so the envelope can carry them.
+ * callback and supports AbortSignal. Signs one NIP-24242 auth event for the
+ * blob (auth tags the content hash) and fans it out to every Blossom host in
+ * parallel. A single CDN dying cannot brick the voice note; returns the
+ * primary URL plus every successful mirror so the envelope can carry them.
  *
  * Server list comes from /blossom.json (see blossom-servers.ts).
  */
@@ -17,6 +17,10 @@ import {
   DEFAULT_BLOSSOM_SERVERS,
   getBlossomServers
 } from './blossom-servers';
+
+// Re-export so callers/tests that read the durability constant off this
+// module keep working after the sequential early-stop path went away.
+export {BLOSSOM_MIRROR_MIN};
 
 /** @deprecated Prefer getBlossomServers() / DEFAULT_BLOSSOM_SERVERS. Kept for tests. */
 export const BLOSSOM_SERVERS = DEFAULT_BLOSSOM_SERVERS;
@@ -33,7 +37,11 @@ export interface BlossomUploadProgressResult {
 export interface BlossomUploadProgressOptions {
   onProgress?: (percent: number) => void;
   signal?: AbortSignal;
-  /** Min successful mirrors before we stop (defaults to BLOSSOM_MIRROR_MIN). */
+  /**
+   * Preferred minimum successful mirrors (defaults to BLOSSOM_MIRROR_MIN).
+   * With parallel fan-out we try the full list anyway; this is kept for
+   * callers / docs as a durability preference signal, not an early-stop gate.
+   */
   minMirrors?: number;
 }
 
@@ -131,12 +139,17 @@ function putWithProgress(
 /**
  * Upload ciphertext to Blossom.
  *
- * Tries servers in order. Collects successful URLs until `minMirrors` is
- * reached (or the list is exhausted). Needs at least one success; prefers
- * ≥2 so the note survives a single CDN outage.
+ * Fans out PUTs in parallel (`Promise.allSettled`) so the ✓ lands at
+ * max(t1, t2, …) rather than t1+t2+… — keeping the "ticks like text"
+ * promise. Durability is evaluated after the fan-out: ≥1 floor still
+ * required, ≥2 preferred (every fulfilled host becomes a mirror).
  *
- * Progress is reported from the first attempt only (later mirrors burn silent
- * bandwidth — user already saw 100%).
+ * Progress is pinned to the first server only so a later host can't
+ * rewind the bar 0→100→0→100 on a failure/retry.
+ *
+ * `minMirrors` stays on the options object as a durability preference
+ * signal for callers/docs. Parallel fan-out already covers the full
+ * list, so it is no longer an early-stop gate.
  */
 export async function uploadToBlossomWithProgress(
   blob: Blob,
@@ -145,31 +158,52 @@ export async function uploadToBlossomWithProgress(
 ): Promise<BlossomUploadProgressResult> {
   const hash = await sha256Hex(blob);
   const servers = await getBlossomServers();
-  const minMirrors = Math.max(1, options.minMirrors ?? BLOSSOM_MIRROR_MIN);
+  // minMirrors is retained as API/docs (`BLOSSOM_MIRROR_MIN` default).
+  // Parallel fan-out already covers the full list, so it is not an
+  // early-stop gate — durability is ≥1 required after settle, ≥2 preferred.
+  if(options.minMirrors !== undefined && options.minMirrors < 1) {
+    // Reject nonsense so a caller can't silently disable the floor.
+    throw new Error('minMirrors must be ≥ 1');
+  }
+  if(options.signal?.aborted) throw new Error('upload aborted');
+
+  // One auth event covers every server attempt (kind-24242 tags the hash).
+  const authHeader = signAuth(privkeyHex, hash);
+  const results = await Promise.allSettled(
+    servers.map((server, i) =>
+      putWithProgress(
+        server,
+        blob,
+        authHeader,
+        // Progress pinned to host 0 only — avoids the 0→100→0→100 rewind.
+        i === 0 ? options.onProgress : undefined,
+        options.signal
+      )
+    )
+  );
+
+  // Abort mid-fan-out must not surface a half-success; cancel killed
+  // every leg via the shared signal, so treat the whole upload as aborted.
+  if(options.signal?.aborted) throw new Error('upload aborted');
+
   const errors: string[] = [];
   const mirrors: string[] = [];
-
-  for(const server of servers) {
-    if(options.signal?.aborted) throw new Error('upload aborted');
-    // Stop once we have enough mirrors.
-    if(mirrors.length >= minMirrors) break;
-
-    const authHeader = signAuth(privkeyHex, hash);
-    // Progress only while still looking for the first success.
-    const onProgress = mirrors.length === 0 ? options.onProgress : undefined;
-    try {
-      const result = await putWithProgress(server, blob, authHeader, onProgress, options.signal);
-      if(!mirrors.includes(result.url)) mirrors.push(result.url);
+  for(let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const server = servers[i];
+    if(r.status === 'fulfilled') {
+      if(!mirrors.includes(r.value.url)) mirrors.push(r.value.url);
       // Integrity hash is always our local compute. A server-echoed sha is
       // informational only — never overwrite what the receiver will verify.
-      if(result.sha256 && result.sha256.toLowerCase() !== hash) {
+      if(r.value.sha256 && r.value.sha256.toLowerCase() !== hash) {
         console.warn(
-          `[blossom] ${server} echoed sha256 ${result.sha256}, expected ${hash}`
+          `[blossom] ${server} echoed sha256 ${r.value.sha256}, expected ${hash}`
         );
       }
-    } catch(err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if(msg === 'upload aborted') throw err;
+    } else {
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      // Abort already handled via signal.aborted above; skip the string.
+      if(options.signal?.aborted || msg === 'upload aborted') continue;
       errors.push(msg);
     }
   }
