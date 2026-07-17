@@ -266,8 +266,24 @@ async function test4_blossomFallback() {
   const page = await ctx.newPage();
 
   const fallbackUrl = 'https://mocked-fallback.example/def.png';
-  await page.route(/blossom\.primal\.net\/upload/, (r) => r.fulfill({status: 500, body: 'down'}));
-  await page.route(/blossom\.band\/upload/, (r) => r.fulfill({
+  // Pin the SERVER list for this session so the test does not depend on
+  // /blossom.json network. Mirrors DEFAULT_BLOSSOM_SERVERS order.
+  await page.addInitScript(() => {
+    (window as any).__phantomchatTestBlossom = [
+      'https://nostr.download',
+      'https://blossom.ditto.pub',
+      'https://blossom.data.haus'
+    ];
+  });
+  // First host dies, second saves us — exercises the multi-mirror floor.
+  await page.route(/nostr\.download\/upload/, (r) => r.fulfill({status: 500, body: 'down'}));
+  await page.route(/blossom\.ditto\.pub\/upload/, (r) => r.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({url: fallbackUrl, sha256: 'def', size: 10, type: 'image/png'})
+  }));
+  // Third host also succeeds so default minMirrors=2 is satisfiable hermetically.
+  await page.route(/blossom\.data\.haus\/upload/, (r) => r.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({url: fallbackUrl, sha256: 'def', size: 10, type: 'image/png'})

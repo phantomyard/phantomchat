@@ -93,6 +93,43 @@ describe('blossom-servers', () => {
     expect(fetched).toBe(false);
   });
 
+  it('refetches after the session cache TTL expires and keeps last-good list on fail', async() => {
+    let n = 0;
+    mockFetch(async() => {
+      n += 1;
+      if(n === 1) {
+        return {ok: true, json: async() => ({servers: ['https://first.example']})};
+      }
+      if(n === 2) {
+        return {ok: false, json: async() => ({})};
+      }
+      return {ok: true, json: async() => ({servers: ['https://second.example']})};
+    });
+
+    expect(await getBlossomServers()).toEqual(['https://first.example']);
+    expect(await getBlossomServers()).toEqual(['https://first.example']); // still within TTL
+    expect(n).toBe(1);
+
+    // Expire the cache by rewinding cachedAt through a second call after a
+    // private reset is impossible; simulate expiry by clearing then re-seeding.
+    // Directly poke the module clock via a second wins window: set Date.now.
+    const realNow = Date.now;
+    try {
+      // Force the next call to consider cache stale (TTL = 1h).
+      Date.now = () => realNow() + 61 * 60 * 1000;
+      // Failure path must keep last good, not fall to defaults.
+      expect(await getBlossomServers()).toEqual(['https://first.example']);
+      expect(n).toBe(2);
+
+      // Expire again → successful swap to the new list.
+      Date.now = () => realNow() + 122 * 60 * 1000;
+      expect(await getBlossomServers()).toEqual(['https://second.example']);
+      expect(n).toBe(3);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   it('builds hash URLs and expands fetch candidates primary → mirrors → hash', () => {
     const sha = 'ab'.repeat(32);
     expect(blossomHashUrl('https://a.example/', sha)).toBe(`https://a.example/${sha}`);

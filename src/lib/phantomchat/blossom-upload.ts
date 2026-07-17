@@ -92,12 +92,16 @@ export async function uploadToBlossom(
         continue;
       }
 
-      const data = await res.json() as {url: string; sha256: string};
+      const data = await res.json() as {url: string; sha256?: string};
       if(!data.url) {
         errors.push(`${server}: no url in response`);
         continue;
       }
-      return {url: data.url, sha256: data.sha256 || hash};
+      // Always return our local hash — server echo is not authoritative.
+      if(data.sha256 && data.sha256.toLowerCase() !== hash) {
+        console.warn(`[blossom] ${server} echoed sha256 ${data.sha256}, expected ${hash}`);
+      }
+      return {url: data.url, sha256: hash};
     } catch(err) {
       errors.push(`${server}: ${err instanceof Error ? err.message : String(err)}`);
     }

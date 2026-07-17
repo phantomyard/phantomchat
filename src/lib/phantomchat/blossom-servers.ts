@@ -26,7 +26,10 @@ export const DEFAULT_BLOSSOM_SERVERS: readonly string[] = [
 /** Prefer ≥2 successful totals so a single CDN dying mid-day cannot brick the note. */
 export const BLOSSOM_MIRROR_MIN = 2;
 
+/** 1h TTL — /blossom.json is served no-cache so the list can drift without a build. */
+const CACHE_TTL_MS = 60 * 60 * 1000;
 let cached: readonly string[] | null = null;
+let cachedAt = 0;
 let inflight: Promise<readonly string[]> | null = null;
 
 function isHttpsBlossomUrl(u: unknown): u is string {
@@ -82,17 +85,33 @@ export async function loadCanonicalBlossomServers(): Promise<readonly string[] |
 }
 
 /**
- * Resolve the server list once per session (cached). Always returns ≥1 URL —
- * either the website list, a test override, or the disaster-net default.
+ * Resolve the server list with a short session cache (CACHE_TTL_MS). Always
+ * returns ≥1 URL — website list, test override, or the disaster-net default.
+ * Refetch honours the no-cache /blossom.json header so a host can go dark and
+ * be replaced without forcing a PWA relaunch. On fetch failure we keep the
+ * last good list rather than degrading.
  */
 export async function getBlossomServers(): Promise<readonly string[]> {
   const override = testOverride();
   if(override) return override;
-  if(cached) return cached;
+  if(cached && Date.now() - cachedAt < CACHE_TTL_MS) return cached;
   if(!inflight) {
+    const previous = cached;
     inflight = (async() => {
       const fetched = await loadCanonicalBlossomServers();
-      cached = fetched && fetched.length > 0 ? fetched : DEFAULT_BLOSSOM_SERVERS;
+      if(fetched && fetched.length > 0) {
+        cached = fetched;
+        cachedAt = Date.now();
+        return cached;
+      }
+      // Hold last good list on network/parse failure; only fall to disaster-net
+      // when we have nothing cached yet.
+      if(previous && previous.length > 0) {
+        cachedAt = Date.now(); // back-off another TTL before retrying
+        return previous;
+      }
+      cached = DEFAULT_BLOSSOM_SERVERS;
+      cachedAt = Date.now();
       return cached;
     })().finally(() => { inflight = null; });
   }
@@ -109,6 +128,7 @@ export function getBlossomServersSync(): readonly string[] {
 /** Test-only: clear the session cache so subsequent calls re-fetch. */
 export function __resetBlossomServersCacheForTests(): void {
   cached = null;
+  cachedAt = 0;
   inflight = null;
 }
 

@@ -92,6 +92,9 @@ describe('blossom-upload-progress', () => {
     const result = await promise;
     expect(result.url).toBe('https://p.example/x');
     expect(result.mirrors).toEqual(['https://p.example/x', 'https://m.example/x']);
+    // Local integrity hash; never trust the server-echoed 'abc'.
+    expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.sha256).not.toBe('abc');
     expect(progress).toEqual([50, 100]);
     // Stops once minMirrors (=2) are filled — no third PUT.
     expect(MockXHR.instances.length).toBe(2);

@@ -148,7 +148,6 @@ export async function uploadToBlossomWithProgress(
   const minMirrors = Math.max(1, options.minMirrors ?? BLOSSOM_MIRROR_MIN);
   const errors: string[] = [];
   const mirrors: string[] = [];
-  let firstSha = hash;
 
   for(const server of servers) {
     if(options.signal?.aborted) throw new Error('upload aborted');
@@ -161,7 +160,13 @@ export async function uploadToBlossomWithProgress(
     try {
       const result = await putWithProgress(server, blob, authHeader, onProgress, options.signal);
       if(!mirrors.includes(result.url)) mirrors.push(result.url);
-      if(result.sha256) firstSha = result.sha256;
+      // Integrity hash is always our local compute. A server-echoed sha is
+      // informational only — never overwrite what the receiver will verify.
+      if(result.sha256 && result.sha256.toLowerCase() !== hash) {
+        console.warn(
+          `[blossom] ${server} echoed sha256 ${result.sha256}, expected ${hash}`
+        );
+      }
     } catch(err) {
       const msg = err instanceof Error ? err.message : String(err);
       if(msg === 'upload aborted') throw err;
@@ -175,7 +180,7 @@ export async function uploadToBlossomWithProgress(
 
   return {
     url: mirrors[0],
-    sha256: firstSha || hash,
+    sha256: hash,
     mirrors
   };
 }
