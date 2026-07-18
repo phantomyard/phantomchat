@@ -833,4 +833,95 @@ describe('NostrRelayPool', () => {
     });
   });
 
+  describe('resume-trigger listener cleanup (#81)', () => {
+    it('disconnect removes visibilitychange listener', async() => {
+      const onMessage = vi.fn();
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage});
+      await pool.initialize();
+
+      const spy = vi.spyOn(pool, 'resetWrapRetryBudget');
+
+      pool.disconnect();
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('disconnect removes online listener', async() => {
+      const onMessage = vi.fn();
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage});
+      await pool.initialize();
+
+      const spy = vi.spyOn(pool, 'resetWrapRetryBudget');
+
+      pool.disconnect();
+
+      window.dispatchEvent(new Event('online'));
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('listeners fire before disconnect', async() => {
+      const onMessage = vi.fn();
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage});
+      await pool.initialize();
+
+      const spy = vi.spyOn(pool, 'resetWrapRetryBudget');
+
+      window.dispatchEvent(new Event('online'));
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-initialize after disconnect re-registers listeners', async() => {
+      const onMessage = vi.fn();
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage});
+      await pool.initialize();
+      pool.disconnect();
+
+      await pool.initialize();
+
+      const spy = vi.spyOn(pool, 'resetWrapRetryBudget');
+      window.dispatchEvent(new Event('online'));
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      spy.mockClear();
+      pool.disconnect();
+      window.dispatchEvent(new Event('online'));
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('double disconnect is a no-op (no throw)', async() => {
+      const onMessage = vi.fn();
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage});
+      await pool.initialize();
+
+      pool.disconnect();
+      expect(() => pool.disconnect()).not.toThrow();
+    });
+
+    it('disconnect before initialize is safe', async() => {
+      const onMessage = vi.fn();
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage});
+
+      expect(() => pool.disconnect()).not.toThrow();
+    });
+  });
+
 });

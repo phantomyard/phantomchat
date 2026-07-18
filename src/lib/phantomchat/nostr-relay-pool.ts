@@ -290,6 +290,19 @@ export class NostrRelayPool {
   private notifyStateChangeTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly STATE_DEBOUNCE_MS = 200;
 
+  // Resume-trigger handlers — named arrow fields so the reference is stable
+  // across add/removeEventListener calls. Arrow fields bind `this` at
+  // construction time, so no .bind() needed (and .bind() would create a new
+  // function on each call, breaking removeEventListener).
+  private onVisibilityChange = (): void => {
+    if(typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      this.resetWrapRetryBudget();
+    }
+  };
+  private onOnline = (): void => {
+    this.resetWrapRetryBudget();
+  };
+
   constructor(options: RelayPoolOptions) {
     this.log = logger('NostrRelayPool');
     this.configs = options.relays ? [...options.relays] : [];
@@ -663,6 +676,19 @@ export class NostrRelayPool {
 
     for(const entry of this.relayEntries) {
       entry.instance.disconnect();
+    }
+
+    // Remove resume-trigger listeners so a disconnected pool stops
+    // responding to tab-foreground / network-online events. Guarded by
+    // the flag so double-disconnect or pre-register disconnect is a no-op.
+    if(this.resumeTriggersRegistered) {
+      if(typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', this.onVisibilityChange);
+      }
+      if(typeof window !== 'undefined') {
+        window.removeEventListener('online', this.onOnline);
+      }
+      this.resumeTriggersRegistered = false;
     }
 
     this.relayEntries = [];
@@ -1431,15 +1457,11 @@ export class NostrRelayPool {
     this.resumeTriggersRegistered = true;
 
     if(typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', () => {
-        if(document.visibilityState === 'visible') {
-          this.resetWrapRetryBudget();
-        }
-      });
+      document.addEventListener('visibilitychange', this.onVisibilityChange);
     }
 
     if(typeof window !== 'undefined') {
-      window.addEventListener('online', () => this.resetWrapRetryBudget());
+      window.addEventListener('online', this.onOnline);
     }
   }
 
