@@ -57,6 +57,8 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       this.connectionState = 'disconnected';
     }
 
+    resetReconnectBackoff(): void {}
+
     async storeMessage(_recipientPubkey: string, _plaintext: string): Promise<string> {
       if(!this.connected) throw new Error('Not connected to relay');
       return 'event-id-' + Math.random().toString(36).slice(2, 8);

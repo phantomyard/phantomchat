@@ -1095,3 +1095,47 @@ describe('NostrRelay bad-relay cooldown', () => {
     expect(relay.inCooldown).toBe(false);
   });
 });
+
+describe('NostrRelay resetReconnectBackoff (resume triggers)', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('cancels the 10-min cooldown and re-dials immediately on resume', () => {
+    const relay: any = new NostrRelay('wss://dead.example');
+
+    const connectSpy = vi.spyOn(relay, 'connect').mockImplementation(() => {
+      relay.handleDisconnect();
+    });
+
+    // Drive it into the bad-relay cooldown, as a wake into a dead radio would.
+    relay.connectionState = 'connecting';
+    relay.handleDisconnect();
+    vi.advanceTimersByTime(60_000);
+    expect(relay.inCooldown).toBe(true);
+
+    // Resume: fresh network context — the cooldown was earned on a network
+    // that no longer exists. Counters reset, pending 10-min timer cancelled,
+    // and an immediate redial (state is 'reconnecting').
+    const callsAtBench = connectSpy.mock.calls.length;
+    relay.resetReconnectBackoff();
+
+    expect(relay.inCooldown).toBe(false);
+    // Counter restarted — 1 = the immediate redial inside resetReconnectBackoff.
+    expect(relay.reconnectAttempts).toBe(1);
+    expect(connectSpy.mock.calls.length).toBe(callsAtBench + 1); // re-dialed NOW
+
+    // Back on the fast burst cadence (1s), not the 10-min bench.
+    vi.advanceTimersByTime(1_000);
+    expect(connectSpy.mock.calls.length).toBeGreaterThan(callsAtBench + 1);
+  });
+
+  it('leaves an explicitly disconnected relay alone', () => {
+    const relay: any = new NostrRelay('wss://dead.example');
+    const connectSpy = vi.spyOn(relay, 'connect').mockImplementation(() => {});
+
+    relay.resetReconnectBackoff(); // fresh instance: state 'disconnected'
+
+    expect(connectSpy).not.toHaveBeenCalled();
+    expect(relay.getState()).toBe('disconnected');
+  });
+});

@@ -284,6 +284,19 @@ export class NostrRelayPool {
   // Keyed by url: ONE relay dropping repeatedly is a sick relay, not a network
   // event — only DISTINCT relays dropping together qualify.
   private recentDrops: Array<{url: string; t: number}> = [];
+  // Same idea for FAILED DIALS: a frozen-tab wake redials every relay into a
+  // radio that isn't up yet, so all of them fail inside the same seconds.
+  // Benching them as "individually unreachable" manufactures the all-red
+  // "Reconnecting..." outage — DISTINCT relays failing together = network event.
+  // `charged` marks failures that actually consumed a failover strike before
+  // correlation was provable, so a later-established network event can refund
+  // exactly those strikes (and no more) — see trackRelayHealth.
+  private recentDialFailures: Array<{url: string; t: number; charged: boolean}> = [];
+  // Failover benches handed out inside the current correlation window, with
+  // the strike count as it stood AT bench time. A bench given to relay #1 or
+  // #2 of what turns out to be a network event was earned on strikes that get
+  // refunded, so the bench itself must be undone too.
+  private recentFailoverBenches: Array<{url: string; t: number; prevFailedConnects: number}> = [];
 
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
@@ -345,6 +358,16 @@ export class NostrRelayPool {
       health.failedConnects = 0;
     }
     this.recentDrops = [];
+    this.recentDialFailures = [];
+    this.recentFailoverBenches = [];
+    // Instance-level clean slate: a wake into a still-dead radio burns the
+    // relay's 6-attempt budget in seconds and parks it in the 10-minute
+    // bad-relay cooldown — earned on a network that no longer exists. Reset
+    // each instance's backoff (cancelling any pending 10-min retry timer) and
+    // re-dial the mid-reconnect ones now.
+    for(const entry of this.relayEntries) {
+      entry.instance.resetReconnectBackoff();
+    }
     if(cleared > 0) {
       this.log('[NostrRelayPool] resume: cleared', cleared, 'relay cooldown(s)');
     }
@@ -2212,6 +2235,10 @@ export class NostrRelayPool {
       // this, a relay that recovered and then flaps again inside the window
       // would still see the stale drop history and evade flap accounting.
       this.recentDrops = this.recentDrops.filter((d) => d.url !== url);
+      // Same anti-staleness for the dial-failure correlation set: a relay that
+      // made it is no longer part of an in-flight network outage.
+      this.recentDialFailures = this.recentDialFailures.filter((d) => d.url !== url);
+      this.recentFailoverBenches = this.recentFailoverBenches.filter((b) => b.url !== url);
       return;
     }
 
@@ -2222,8 +2249,51 @@ export class NostrRelayPool {
     // (A relay that connected then dropped has failedConnects reset to 0 above,
     // so a healthy relay's blip never trips this.)
     if(state === 'reconnecting' && !wasConnected) {
+      // Correlated-failure check first: if several DISTINCT relays failed to
+      // dial inside the window, the device's network is down (frozen-tab wake
+      // into a dead radio), not N relays independently unreachable — skip
+      // failover accounting entirely (no increment, no bench). Without this,
+      // a wake benches the whole pool as "sick" for a local network moment.
+      this.recentDialFailures = this.recentDialFailures.filter((d) => now - d.t < NETWORK_DROP_WINDOW_MS);
+      const failure = {url, t: now, charged: false};
+      this.recentDialFailures.push(failure);
+      const distinctDialFailures = new Set(this.recentDialFailures.map((d) => d.url)).size;
+      if(distinctDialFailures >= NETWORK_DROP_THRESHOLD) {
+        this.log(
+          '[NostrRelayPool] correlated dial failure —', distinctDialFailures,
+          'relays unreachable within', NETWORK_DROP_WINDOW_MS / 1000, 's; network event, no failover counted'
+        );
+        // Correlation only becomes provable when the Nth DISTINCT relay fails,
+        // so relays #1..N-1 were already charged strikes — and possibly benched
+        // — before the network event was visible. Undo that: restore any bench
+        // handed out inside this window (recovering the strike count as it was
+        // at bench time), then refund every strike charged to an in-window
+        // failure. Pre-window strikes survive — they were earned solo.
+        let unbenched = false;
+        this.recentFailoverBenches = this.recentFailoverBenches.filter((b) => {
+          if(now - b.t >= NETWORK_DROP_WINDOW_MS) return false; // stale record, drop
+          const h = this.relayHealth.get(b.url);
+          if(h) {
+            h.failedConnects = b.prevFailedConnects; // refund step below nets out the in-window charge
+            h.cooldownUntil = 0;
+          }
+          unbenched = true;
+          return false; // handled — remove
+        });
+        for(const d of this.recentDialFailures) {
+          if(!d.charged) continue;
+          d.charged = false;
+          const h = this.relayHealth.get(d.url);
+          if(h) h.failedConnects = Math.max(0, h.failedConnects - 1);
+        }
+        if(unbenched) void this.superviseConnections(); // re-activate + re-dial the refunded relays
+        return;
+      }
+
       health.failedConnects = (health.failedConnects || 0) + 1;
+      failure.charged = true;
       if(this.activeUrls.has(url) && health.failedConnects >= RELAY_FAILOVER_THRESHOLD) {
+        this.recentFailoverBenches.push({url, t: now, prevFailedConnects: health.failedConnects});
         health.failedConnects = 0;
         this.log('[NostrRelayPool] relay unreachable — failing over off', url);
         this.benchRelay(url, RELAY_COOLDOWN_BASE_MS);

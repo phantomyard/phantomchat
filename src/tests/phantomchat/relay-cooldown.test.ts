@@ -19,6 +19,7 @@ function stubInstance() {
     disconnect: vi.fn(() => { state = 'disconnected'; }),
     initialize: vi.fn().mockResolvedValue(undefined),
     connect: vi.fn(() => { state = 'connected'; }),
+    resetReconnectBackoff: vi.fn(),
     pendingSubscribe: false
   };
 }
@@ -393,5 +394,194 @@ describe('catch-up poll is sequential', () => {
 
     await pool.backfillRecent();
     expect(queried).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('network-event detection (correlated dial failures)', () => {
+  let pool: any;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    pool = new NostrRelayPool({
+      relays: [],
+      onMessage: () => {}
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function addRelay(url: string) {
+    const instance = stubInstance();
+    pool.relayEntries.push({config: {url, read: true, write: true}, instance});
+    return instance;
+  }
+
+  // A failed dial: relay never connected, state enters 'reconnecting'.
+  function failedDial(url: string) {
+    pool.trackRelayHealth(url, 'reconnecting');
+  }
+
+  it('does NOT bench when 3+ DISTINCT relays fail dials inside the window (wake into dead radio)', () => {
+    const urls = ['wss://a', 'wss://b', 'wss://c'];
+    const instances = urls.map(addRelay);
+    urls.forEach((u) => pool.activeUrls.add(u));
+
+    // The frozen-tab wake: every relay redials into a radio that isn't up yet
+    // and fails, over and over. Five rounds each — none may be benched.
+    for(let round = 0; round < 5; round++) {
+      urls.forEach(failedDial);
+      vi.advanceTimersByTime(2_000);
+    }
+
+    urls.forEach((u, i) => {
+      const health = pool.relayHealth.get(u);
+      expect(health.failedConnects).toBeLessThan(3); // never reaches failover threshold
+      expect(health.cooldownUntil).toBe(0);
+      expect(pool.activeUrls.has(u)).toBe(true);     // still active
+      expect(instances[i].disconnect).not.toHaveBeenCalled();
+    });
+  });
+
+  it('still benches ONE relay failing alone (genuinely unreachable, not a network event)', () => {
+    const url = 'wss://dead';
+    const instance = addRelay(url);
+    pool.activeUrls.add(url);
+
+    failedDial(url); // 1
+    failedDial(url); // 2
+    expect(instance.disconnect).not.toHaveBeenCalled();
+    failedDial(url); // 3 -> failover threshold
+
+    const health = pool.relayHealth.get(url);
+    expect(health.cooldownUntil - Date.now()).toBe(60_000);
+    expect(pool.activeUrls.has(url)).toBe(false);
+    expect(instance.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('refunds strikes charged before correlation is provable — including a bench from pre-existing strikes', () => {
+    const urls = ['wss://a', 'wss://b', 'wss://c'];
+    const instances = urls.map(addRelay);
+    urls.forEach((u) => pool.activeUrls.add(u));
+
+    // Pre-existing strikes: 'a' failed twice SOLO, then the window expired —
+    // those strikes are legitimate and must survive the rollback.
+    failedDial('wss://a');
+    failedDial('wss://a');
+    expect(pool.relayHealth.get('wss://a').failedConnects).toBe(2);
+    vi.advanceTimersByTime(11_000);
+
+    // Wake into a dead radio: every relay redials and fails together.
+    failedDial('wss://a'); // charged -> 3 strikes -> BENCHED before correlation is provable
+    expect(pool.activeUrls.has('wss://a')).toBe(false);
+    expect(instances[0].disconnect).toHaveBeenCalledTimes(1);
+    failedDial('wss://b'); // charged -> 1 strike
+    failedDial('wss://c'); // 3rd distinct -> network event established -> rollback
+
+    // a: premature bench undone, in-window charge refunded, pre-existing 2 kept.
+    const ha = pool.relayHealth.get('wss://a');
+    expect(ha.failedConnects).toBe(2);
+    expect(ha.cooldownUntil).toBe(0);
+    expect(pool.activeUrls.has('wss://a')).toBe(true);
+
+    // b's in-window strike refunded; c was never charged.
+    expect(pool.relayHealth.get('wss://b').failedConnects).toBe(0);
+    expect(pool.relayHealth.get('wss://c').failedConnects).toBe(0);
+    expect(pool.relayHealth.get('wss://b').cooldownUntil).toBe(0);
+    expect(pool.relayHealth.get('wss://c').cooldownUntil).toBe(0);
+  });
+
+  it('a later solo failure after the network event still counts (refunded strikes do not leak)', () => {
+    const urls = ['wss://a', 'wss://b', 'wss://c'];
+    urls.forEach(addRelay);
+    urls.forEach((u) => pool.activeUrls.add(u));
+
+    urls.forEach(failedDial); // network event: a+b charged then refunded, c suppressed
+    urls.forEach((u) => expect(pool.relayHealth.get(u).failedConnects).toBe(0));
+
+    vi.advanceTimersByTime(11_000); // window expires
+
+    // 'a' now fails alone, for real. Refund must not double-apply: 3 strikes to bench.
+    failedDial('wss://a');
+    failedDial('wss://a');
+    expect(pool.relayHealth.get('wss://a').failedConnects).toBe(2);
+    expect(pool.activeUrls.has('wss://a')).toBe(true);
+    failedDial('wss://a');
+    expect(pool.activeUrls.has('wss://a')).toBe(false); // benched, correctly
+  });
+
+  it('a relay that connects leaves the correlation set — a later solo failure counts again', () => {
+    const urls = ['wss://a', 'wss://b', 'wss://c'];
+    urls.forEach(addRelay);
+    urls.forEach((u) => pool.activeUrls.add(u));
+
+    urls.forEach(failedDial); // network event: suppressed, set = {a,b,c}
+
+    // a and b recover — they are no longer part of the outage.
+    pool.trackRelayHealth('wss://a', 'connected');
+    pool.trackRelayHealth('wss://b', 'connected');
+
+    // a's socket dies and the redial fails, still inside the window. With the
+    // stale entries removed the set is {c, a} = 2 distinct — below threshold,
+    // so this MUST be counted as a real failure, not suppressed.
+    pool.trackRelayHealth('wss://a', 'reconnecting'); // socket drops (flap path)
+    pool.trackRelayHealth('wss://a', 'connecting');   // redial attempt
+    failedDial('wss://a');                            // dial fails -> failover branch
+
+    expect(pool.relayHealth.get('wss://a').failedConnects).toBeGreaterThan(0);
+  });
+
+  it('dial failures outside the window are not correlated', () => {
+    const urls = ['wss://a', 'wss://b', 'wss://c'];
+    urls.forEach(addRelay);
+    urls.forEach((u) => pool.activeUrls.add(u));
+
+    failedDial('wss://a');
+    vi.advanceTimersByTime(11_000); // past the 10s window
+    failedDial('wss://b');
+    vi.advanceTimersByTime(11_000);
+    failedDial('wss://c');
+
+    // Never 3 distinct failures inside one window — each counted normally.
+    urls.forEach((u) => {
+      expect(pool.relayHealth.get(u).failedConnects).toBe(1);
+    });
+  });
+});
+
+describe('resume resets instance-level reconnect backoff', () => {
+  let pool: any;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    pool = new NostrRelayPool({
+      relays: [],
+      onMessage: () => {}
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function addRelay(url: string) {
+    const instance = stubInstance();
+    pool.relayEntries.push({config: {url, read: true, write: true}, instance});
+    return instance;
+  }
+
+  it('clears the dial-failure correlation set and resets every instance backoff', () => {
+    const a = addRelay('wss://a');
+    const b = addRelay('wss://b');
+    pool.recentDialFailures.push({url: 'wss://a', t: Date.now()});
+
+    pool.resetRelayCooldowns();
+
+    expect(pool.recentDialFailures).toEqual([]);
+    expect(a.resetReconnectBackoff).toHaveBeenCalledTimes(1);
+    expect(b.resetReconnectBackoff).toHaveBeenCalledTimes(1);
   });
 });

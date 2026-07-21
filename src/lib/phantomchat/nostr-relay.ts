@@ -456,6 +456,30 @@ export class NostrRelay {
   }
 
   /**
+   * Fresh network context = clean slate for the reconnect backoff. Called by
+   * the pool on the resume triggers (visibilitychange -> visible, online).
+   *
+   * Why: a frozen-tab wake redials into a radio that isn't up yet, burning the
+   * 6-attempt budget in seconds and parking the relay in the 10-minute
+   * bad-relay cooldown (#61 R4) — earned entirely on a network that no longer
+   * exists. Resets the counters, cancels a pending (possibly 10-min) retry
+   * timer, and re-dials immediately if we were mid-reconnect. An explicitly
+   * disconnected relay (user-disabled, pool-benched) is left alone.
+   */
+  resetReconnectBackoff(): void {
+    if(this.connectionState === 'disconnected') return; // intentional — stay down
+    this.reconnectAttempts = 0;
+    this.inCooldown = false;
+    if(this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    if(this.connectionState === 'reconnecting') {
+      this.connect();
+    }
+  }
+
+  /**
    * Disconnect from the relay
    */
   disconnect(): void {
