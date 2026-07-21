@@ -98,7 +98,11 @@ const _testRelays = typeof window !== 'undefined' && (window as any).__phantomch
 export const DEFAULT_RELAYS: RelayConfig[] = Array.isArray(_testRelays) ? _testRelays : [
   {url: 'wss://nostr.mom', read: true, write: true},
   {url: 'wss://relay.nostr.com', read: true, write: true},
-  {url: 'wss://relay.nostr.hu', read: true, write: true}
+  {url: 'wss://relay.nostr.hu', read: true, write: true},
+  {url: 'wss://relay.primal.net', read: true, write: true},
+  {url: 'wss://relay.damus.io', read: true, write: true},
+  {url: 'wss://nos.lol', read: true, write: true},
+  {url: 'wss://relay.nostr.info', read: true, write: true}
 ];
 
 /**

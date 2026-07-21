@@ -2,6 +2,10 @@
   "relays": [
     "wss://nostr.mom",
     "wss://relay.nostr.com",
-    "wss://relay.nostr.hu"
+    "wss://relay.nostr.hu",
+    "wss://relay.primal.net",
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.info"
   ]
 }
