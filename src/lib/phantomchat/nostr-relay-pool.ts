@@ -181,6 +181,14 @@ const RELAY_FLAP_WINDOW_MS = 30_000;       // connected < this before dropping =
 const RELAY_FLAP_THRESHOLD = 3;            // consecutive flaps before cooldown kicks in
 const RELAY_COOLDOWN_BASE_MS = 60_000;     // first cooldown span
 const RELAY_COOLDOWN_MAX_MS = 15 * 60_000; // cap so a relay is always eventually retried
+// Network-event detection: when several relays drop out of 'connected' inside
+// the same short window, that's the DEVICE's network blipping (radio sleep,
+// WiFi↔cellular handoff), not N relays independently turning sick. Flap-
+// benching exists to quarantine one sick relay; applying it to a correlated
+// drop benches the whole pool for a local blip and manufactures the exact
+// "all red → Reconnecting..." outage the liveness floor has to dig out of.
+const NETWORK_DROP_WINDOW_MS = 10_000;  // drops inside this span are correlated
+const NETWORK_DROP_THRESHOLD = 3;       // this many correlated drops = network event
 // Gift-wrap (kind 1059) outer created_at is now the REAL send time — backdating
 // was removed (see nostr-crypto.createGiftWrap) because it was the root cause of
 // the "first message ghosts" bug: a relay applies a subscription's `since` to
@@ -271,6 +279,11 @@ export class NostrRelayPool {
   // ms deadline; while it's in the future the pool recovery sweep skips the
   // relay and its self-reconnect has been stopped via disconnect().
   private relayHealth: Map<string, {connectedAt: number; flaps: number; cooldownUntil: number; lastState: string; failedConnects: number}> = new Map();
+  // Timestamps of recent connected→dropped transitions across the whole pool,
+  // for correlated-drop (network event) detection. Pruned to the window above.
+  // Keyed by url: ONE relay dropping repeatedly is a sick relay, not a network
+  // event — only DISTINCT relays dropping together qualify.
+  private recentDrops: Array<{url: string; t: number}> = [];
 
   // Enable/disable per-relay (Phase 3)
   private enabled: Map<string, boolean> = new Map();
@@ -305,11 +318,38 @@ export class NostrRelayPool {
   private onVisibilityChange = (): void => {
     if(typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this.resetWrapRetryBudget();
+      this.resetRelayCooldowns();
     }
   };
   private onOnline = (): void => {
     this.resetWrapRetryBudget();
+    this.resetRelayCooldowns();
   };
+
+  /**
+   * Fresh network context = clean slate for relay health. Called on the resume
+   * triggers (visibilitychange -> visible, online): the environment that made
+   * sockets flap (frozen tab, dead radio, captive portal) has plausibly healed,
+   * so a cooling-down relay deserves immediate re-evaluation rather than
+   * serving out a cooldown it earned on the PREVIOUS network. Clears cooldowns
+   * and flap/failover streaks, then re-supervises right away so benched relays
+   * rejoin the active set now instead of at the next recovery sweep.
+   */
+  private resetRelayCooldowns(): void {
+    const now = Date.now();
+    let cleared = 0;
+    for(const health of this.relayHealth.values()) {
+      if(health.cooldownUntil > now) cleared++;
+      health.cooldownUntil = 0;
+      health.flaps = 0;
+      health.failedConnects = 0;
+    }
+    this.recentDrops = [];
+    if(cleared > 0) {
+      this.log('[NostrRelayPool] resume: cleared', cleared, 'relay cooldown(s)');
+    }
+    void this.superviseConnections();
+  }
 
   constructor(options: RelayPoolOptions) {
     this.log = logger('NostrRelayPool');
@@ -2056,14 +2096,20 @@ export class NostrRelayPool {
       // way past — which is precisely the "advanced past an unclosed gap" bug
       // this is here to prevent. (Caught by its own test: the walk truncated at
       // t0+500 and the watermark still jumped to t0+900.)
-      const pages = await Promise.all(readEntries.map(async(entry) => {
+      // Sequential, one relay at a time: this poll is a heartbeat, not a race.
+      // Fanning out N concurrent REQ round-trips every tick bursts the radio on
+      // mobile for no benefit — the pages are only USED once all of them are in
+      // (fetch-everything-first, then decide, then dispatch), so per-relay
+      // latency was never on the critical path.
+      const pages: Array<any> = [];
+      for(const entry of readEntries) {
         try {
-          return await entry.instance.getMessagesPaged(since, resumeFrom);
+          pages.push(await entry.instance.getMessagesPaged(since, resumeFrom));
         } catch(err) {
           this.log.error('[NostrRelayPool] catch-up poll failed for:', entry.config.url, err);
-          return null;
+          pages.push(null);
         }
-      }));
+      }
 
       for(const page of pages) {
         if(page?.outcome === 'truncated' && page.oldestReached !== undefined) {
@@ -2189,6 +2235,20 @@ export class NostrRelayPool {
 
     if(connectedFor >= RELAY_FLAP_WINDOW_MS) {
       health.flaps = 0; // healthy session — clear the streak
+      return;
+    }
+
+    // Correlated-drop check: if several relays fell out of 'connected' inside
+    // the window, this is the device's network blipping, not relay sickness —
+    // skip flap accounting for the drop entirely (no increment, no bench).
+    this.recentDrops = this.recentDrops.filter((d) => now - d.t < NETWORK_DROP_WINDOW_MS);
+    this.recentDrops.push({url, t: now});
+    const distinctRelaysDown = new Set(this.recentDrops.map((d) => d.url)).size;
+    if(distinctRelaysDown >= NETWORK_DROP_THRESHOLD) {
+      this.log(
+        '[NostrRelayPool] correlated drop —', distinctRelaysDown,
+        'relays down within', NETWORK_DROP_WINDOW_MS / 1000, 's; network event, no flap counted'
+      );
       return;
     }
 
