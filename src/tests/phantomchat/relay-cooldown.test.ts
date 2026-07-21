@@ -461,6 +461,57 @@ describe('network-event detection (correlated dial failures)', () => {
     expect(instance.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it('refunds strikes charged before correlation is provable — including a bench from pre-existing strikes', () => {
+    const urls = ['wss://a', 'wss://b', 'wss://c'];
+    const instances = urls.map(addRelay);
+    urls.forEach((u) => pool.activeUrls.add(u));
+
+    // Pre-existing strikes: 'a' failed twice SOLO, then the window expired —
+    // those strikes are legitimate and must survive the rollback.
+    failedDial('wss://a');
+    failedDial('wss://a');
+    expect(pool.relayHealth.get('wss://a').failedConnects).toBe(2);
+    vi.advanceTimersByTime(11_000);
+
+    // Wake into a dead radio: every relay redials and fails together.
+    failedDial('wss://a'); // charged -> 3 strikes -> BENCHED before correlation is provable
+    expect(pool.activeUrls.has('wss://a')).toBe(false);
+    expect(instances[0].disconnect).toHaveBeenCalledTimes(1);
+    failedDial('wss://b'); // charged -> 1 strike
+    failedDial('wss://c'); // 3rd distinct -> network event established -> rollback
+
+    // a: premature bench undone, in-window charge refunded, pre-existing 2 kept.
+    const ha = pool.relayHealth.get('wss://a');
+    expect(ha.failedConnects).toBe(2);
+    expect(ha.cooldownUntil).toBe(0);
+    expect(pool.activeUrls.has('wss://a')).toBe(true);
+
+    // b's in-window strike refunded; c was never charged.
+    expect(pool.relayHealth.get('wss://b').failedConnects).toBe(0);
+    expect(pool.relayHealth.get('wss://c').failedConnects).toBe(0);
+    expect(pool.relayHealth.get('wss://b').cooldownUntil).toBe(0);
+    expect(pool.relayHealth.get('wss://c').cooldownUntil).toBe(0);
+  });
+
+  it('a later solo failure after the network event still counts (refunded strikes do not leak)', () => {
+    const urls = ['wss://a', 'wss://b', 'wss://c'];
+    urls.forEach(addRelay);
+    urls.forEach((u) => pool.activeUrls.add(u));
+
+    urls.forEach(failedDial); // network event: a+b charged then refunded, c suppressed
+    urls.forEach((u) => expect(pool.relayHealth.get(u).failedConnects).toBe(0));
+
+    vi.advanceTimersByTime(11_000); // window expires
+
+    // 'a' now fails alone, for real. Refund must not double-apply: 3 strikes to bench.
+    failedDial('wss://a');
+    failedDial('wss://a');
+    expect(pool.relayHealth.get('wss://a').failedConnects).toBe(2);
+    expect(pool.activeUrls.has('wss://a')).toBe(true);
+    failedDial('wss://a');
+    expect(pool.activeUrls.has('wss://a')).toBe(false); // benched, correctly
+  });
+
   it('a relay that connects leaves the correlation set — a later solo failure counts again', () => {
     const urls = ['wss://a', 'wss://b', 'wss://c'];
     urls.forEach(addRelay);
