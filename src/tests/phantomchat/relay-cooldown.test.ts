@@ -212,6 +212,30 @@ describe('network-event detection (correlated drops)', () => {
     expect(instance.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it('a relay that reconnects leaves the correlation set — a later solo drop is a real flap', () => {
+    const a = addRelay('wss://a');
+    const b = addRelay('wss://b');
+    const c = addRelay('wss://c');
+
+    // Network blip: all three drop inside the window — suppressed.
+    flap('wss://a', a, 1_000);
+    flap('wss://b', b, 1_000);
+    flap('wss://c', c, 1_000);
+    expect(pool.relayHealth.get('wss://c').flaps).toBe(0);
+
+    // All three recover inside the window…
+    pool.trackRelayHealth('wss://a', 'connected');
+    pool.trackRelayHealth('wss://b', 'connected');
+    pool.trackRelayHealth('wss://c', 'connected');
+
+    // …then c drops again on its own. The stale correlated-drop history must
+    // not suppress this flap — the other relays are no longer down.
+    vi.advanceTimersByTime(1_000);
+    pool.trackRelayHealth('wss://c', 'reconnecting');
+
+    expect(pool.relayHealth.get('wss://c').flaps).toBe(1);
+  });
+
   it('drops outside the window are not correlated', () => {
     const a = addRelay('wss://a');
     const b = addRelay('wss://b');

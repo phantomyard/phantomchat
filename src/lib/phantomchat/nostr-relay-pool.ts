@@ -2208,6 +2208,10 @@ export class NostrRelayPool {
     if(state === 'connected') {
       health.connectedAt = now;
       health.failedConnects = 0; // reachable again — clear the failover streak
+      // Back up — no longer part of any in-flight correlated drop. Without
+      // this, a relay that recovered and then flaps again inside the window
+      // would still see the stale drop history and evade flap accounting.
+      this.recentDrops = this.recentDrops.filter((d) => d.url !== url);
       return;
     }
 
