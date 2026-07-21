@@ -236,6 +236,26 @@ describe('network-event detection (correlated drops)', () => {
     expect(pool.relayHealth.get('wss://c').flaps).toBe(1);
   });
 
+  it('a relay that re-drops while 2 others are still down is still a network event', () => {
+    const a = addRelay('wss://a');
+    const b = addRelay('wss://b');
+    const c = addRelay('wss://c');
+
+    flap('wss://a', a, 1_000);
+    flap('wss://b', b, 1_000);
+    flap('wss://c', c, 1_000);
+
+    // a bounces back and immediately drops again while b and c are STILL down —
+    // 3 distinct currently-down relays, so the network-event reading stands.
+    a._set('connected');
+    pool.trackRelayHealth('wss://a', 'connected');
+    vi.advanceTimersByTime(1_000);
+    a._set('reconnecting');
+    pool.trackRelayHealth('wss://a', 'reconnecting');
+
+    expect(pool.relayHealth.get('wss://a').flaps).toBe(1); // suppressed again
+  });
+
   it('drops outside the window are not correlated', () => {
     const a = addRelay('wss://a');
     const b = addRelay('wss://b');
