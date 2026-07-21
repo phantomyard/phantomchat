@@ -10,17 +10,22 @@
  *
  * Solid free public set (live write-probe 2026-07-17):
  *   nostr.download / ditto.pub / data.haus
+ * Expanded 2026-07-21 with two vetted spares (liveness-probed same day) so one
+ * soft server can't drop us to the BLOSSOM_MIRROR_MIN floor:
+ *   blossom-01.uid.ovh / cdn.hzrd149.com
  * Requirement: NIP-24242 + application/octet-stream (encrypted media) upload 2xx
  * and hash-matched GET. Dropped: primal (now mime-filters octet-stream),
  * band / nostr.build (mime wall), nostrmedia (paid), satellite (auth/flaky).
- * Spares if any of the three go soft: dreamith.to, almond.slidestr.net,
- * upload.iris.to, blossom-01/02.uid.ovh, cdn.hzrd149.com.
+ * Remaining spares if any go soft: dreamith.to, almond.slidestr.net,
+ * upload.iris.to, blossom-02.uid.ovh.
  */
 
 export const DEFAULT_BLOSSOM_SERVERS: readonly string[] = [
   'https://nostr.download',
   'https://blossom.ditto.pub',
-  'https://blossom.data.haus'
+  'https://blossom.data.haus',
+  'https://blossom-01.uid.ovh',
+  'https://cdn.hzrd149.com'
 ];
 
 /** Prefer ≥2 successful totals so a single CDN dying mid-day cannot brick the note. */

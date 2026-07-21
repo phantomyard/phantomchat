@@ -13,6 +13,12 @@ const RELAY_COLORS: Record<RelayState, string> = {
   none: '#f44336'
 };
 
+// Green when at least 60% of configured relays are connected, yellow below
+// that, red when down to 1 or 0. With a 7-relay pool that means green at 5+,
+// yellow at 2–4, red at 0–1 — the pool stays fully functional on 2 relays,
+// so red is reserved for the genuinely degraded state.
+const RELAY_GREEN_THRESHOLD = 0.6;
+
 // ─── SVG Icons ───────────────────────────────────────────────────
 
 // Nostrich ostrich silhouette — the PNG is pre-processed (cropped + alpha
@@ -60,8 +66,8 @@ export default function SearchBarStatusIcons(props: {
     if(total === 0) { setRelayState('none'); return; }
     let up = 0;
     for(const ok of relayConnections.values()) if(ok) up++;
-    if(up === 0) setRelayState('none');
-    else if(up === total) setRelayState('all');
+    if(up <= 1) setRelayState('none');
+    else if(up / total >= RELAY_GREEN_THRESHOLD) setRelayState('all');
     else setRelayState('partial');
   };
 

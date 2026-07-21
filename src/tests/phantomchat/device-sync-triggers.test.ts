@@ -108,7 +108,9 @@ async function boot(eventIds: string[]) {
     setOnSyncResponse: (cb: any) => { captured.res = cb; },
     addStateChangeListener: (cb: any) => {
       relayListeners.push(cb);
-      captured.relayState = (c: number, t: number) => relayListeners.map((f) => f(c, t));
+      // Mirrors the real pool contract: (connected, total, eligible). Eligible
+      // defaults to total (nothing benched) unless a test says otherwise.
+      captured.relayState = (c: number, t: number, e?: number) => relayListeners.map((f) => f(c, t, e ?? t));
     },
     removeStateChangeListener: (cb: any) => {
       const i = relayListeners.indexOf(cb);
@@ -221,6 +223,19 @@ describe('device-sync proactive triggers', () => {
     expect(req.recentOnly).toBeUndefined();     // FULL scope, not just the tail
     expect(req.conv).toBe(CONV);                // scoped to the SELECTED chat
     expect(req.haveIds).toEqual(['m1', 'm2']);  // whole-conversation have-set
+  }, 15_000);
+
+  it('TRIGGER 1 — benched relays are excluded: all ELIGIBLE green fires the hard rule', async() => {
+    const {captured, selectChat, siblingPulses, requests} = await boot(['m1']);
+
+    await selectChat();
+    // 4 configured, 1 benched (dead relay in cooldown) — the 3 active sockets
+    // are all connected. Counting the benched relay would suppress the rule.
+    captured.relayState(3, 4, 3);
+    await siblingPulses();
+
+    expect(await waitFor(() => requests().length > 0)).toBe(true);
+    expect(requests().some((r: any) => r.recentOnly === undefined)).toBe(true); // FULL scope fired
   }, 15_000);
 
   it('TRIGGER 1 — partial connectivity does NOT full-sync', async() => {

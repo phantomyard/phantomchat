@@ -65,7 +65,11 @@ export interface PublishResult {
 export interface RelayPoolOptions {
   relays?: RelayConfig[];
   onMessage: (msg: DecryptedMessage) => void;
-  onStateChange?: (connectedCount: number, totalCount: number) => void;
+  // eligibleCount = relays the pool is currently trying to keep connected
+  // (active set). Benched relays (flap/connect-fail cooldown) are excluded so
+  // consumers like the device-sync all-green hard rule aren't held hostage by
+  // a relay we've deliberately benched.
+  onStateChange?: (connectedCount: number, totalCount: number, eligibleCount: number) => void;
   /**
    * Pre-decrypted identity — when provided, initialize() skips the encrypted
    * store load + PBKDF2 decrypt (which onboarding already did ~100ms earlier).
@@ -98,7 +102,11 @@ const _testRelays = typeof window !== 'undefined' && (window as any).__phantomch
 export const DEFAULT_RELAYS: RelayConfig[] = Array.isArray(_testRelays) ? _testRelays : [
   {url: 'wss://nostr.mom', read: true, write: true},
   {url: 'wss://relay.nostr.com', read: true, write: true},
-  {url: 'wss://relay.nostr.hu', read: true, write: true}
+  {url: 'wss://relay.nostr.hu', read: true, write: true},
+  {url: 'wss://relay.primal.net', read: true, write: true},
+  {url: 'wss://relay.damus.io', read: true, write: true},
+  {url: 'wss://nos.lol', read: true, write: true},
+  {url: 'wss://relay.nostr.info', read: true, write: true}
 ];
 
 /**
@@ -204,7 +212,7 @@ export class NostrRelayPool {
   private relayEntries: RelayEntry[] = [];
   private configs: RelayConfig[];
   private onMessageCb: (msg: DecryptedMessage) => void;
-  private onStateChangeCb?: (connectedCount: number, totalCount: number) => void;
+  private onStateChangeCb?: (connectedCount: number, totalCount: number, eligibleCount: number) => void;
 
   // Dedup LRU — keyed by the DECRYPTED rumor/message id (post-unwrap).
   private seenIds: Set<string> = new Set();
@@ -332,7 +340,7 @@ export class NostrRelayPool {
    * its digest the moment connectivity is restored. Fires on the same debounced
    * flush as the primary callback.
    */
-  addStateChangeListener(cb: (connectedCount: number, totalCount: number) => void): void {
+  addStateChangeListener(cb: (connectedCount: number, totalCount: number, eligibleCount: number) => void): void {
     this._stateChangeListeners.push(cb);
   }
 
@@ -341,11 +349,11 @@ export class NostrRelayPool {
    * subscribers (device-sync is torn down and re-inited on every account switch),
    * so registration has to be reversible or stale callbacks accumulate here.
    */
-  removeStateChangeListener(cb: (connectedCount: number, totalCount: number) => void): void {
+  removeStateChangeListener(cb: (connectedCount: number, totalCount: number, eligibleCount: number) => void): void {
     const i = this._stateChangeListeners.indexOf(cb);
     if(i !== -1) this._stateChangeListeners.splice(i, 1);
   }
-  private _stateChangeListeners: Array<(connectedCount: number, totalCount: number) => void> = [];
+  private _stateChangeListeners: Array<(connectedCount: number, totalCount: number, eligibleCount: number) => void> = [];
 
   setOnReceipt(cb: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void): void {
     // Wire receipt handler to all relay instances
@@ -2216,12 +2224,17 @@ export class NostrRelayPool {
 
   private flushStateChange(): void {
     const connected = this.getConnectedCount();
+    const total = this.relayEntries.length;
+    // Eligible = active (non-benched) relays. A benched relay re-enters the
+    // eligible set when the recovery sweep revives it past cooldown, at which
+    // point it must connect before all-green can fire again.
+    const eligible = this.relayEntries.filter((e) => this.activeUrls.has(e.config.url)).length;
     if(this.onStateChangeCb) {
-      this.onStateChangeCb(connected, this.relayEntries.length);
+      this.onStateChangeCb(connected, total, eligible);
     }
     for(const cb of this._stateChangeListeners) {
       try {
-        cb(connected, this.relayEntries.length);
+        cb(connected, total, eligible);
       } catch(err) {
         this.log.debug('[NostrRelayPool] extra state-change listener threw:', err);
       }

@@ -726,8 +726,8 @@ describe('NostrRelayPool', () => {
   });
 
   describe('default relays (Phase 3)', () => {
-    it('DEFAULT_RELAYS has 3 entries', () => {
-      expect(DEFAULT_RELAYS).toHaveLength(3);
+    it('DEFAULT_RELAYS has 7 entries', () => {
+      expect(DEFAULT_RELAYS).toHaveLength(7);
     });
 
     it('DEFAULT_RELAYS includes nostr.mom', () => {
