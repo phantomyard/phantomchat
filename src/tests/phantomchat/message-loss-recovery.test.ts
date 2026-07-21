@@ -64,6 +64,8 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       this.connectionState = 'disconnected';
     }
 
+    resetReconnectBackoff(): void {}
+
     // Every (since, until) pair the pool has asked this relay to walk.
     pagedCalls: {since?: number; until?: number}[] = [];
     // When set, the next getMessagesPaged() reports a truncated walk (page cap
