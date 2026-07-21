@@ -2,6 +2,8 @@
   "servers": [
     "https://nostr.download",
     "https://blossom.ditto.pub",
-    "https://blossom.data.haus"
+    "https://blossom.data.haus",
+    "https://blossom-01.uid.ovh",
+    "https://cdn.hzrd149.com"
   ]
 }

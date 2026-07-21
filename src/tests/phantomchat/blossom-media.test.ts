@@ -134,8 +134,10 @@ describe('BlossomClient', () => {
   const sampleData = new Uint8Array([10, 20, 30, 40, 50]).buffer;
 
   describe('DEFAULT_BLOSSOM_SERVERS', () => {
-    it('has 3 servers configured', () => {
-      expect(DEFAULT_BLOSSOM_SERVERS).toHaveLength(3);
+    it('has 5 servers configured', () => {
+      expect(DEFAULT_BLOSSOM_SERVERS).toHaveLength(5);
+      expect(DEFAULT_BLOSSOM_SERVERS).toContain('https://blossom-01.uid.ovh');
+      expect(DEFAULT_BLOSSOM_SERVERS).toContain('https://cdn.hzrd149.com');
     });
   });
 

@@ -782,10 +782,14 @@ function wireTypingTrigger(): void {
 }
 
 /**
- * TRIGGER 1 (the hard rule) — RELAY STATUS CHANGE. The moment every relay socket is
- * connected, FULL-sync the selected chat. All-green is the one instant we know the
- * whole pool can both carry our request and deliver a sibling's answer, so it's the
- * cheapest possible moment to buy a complete conversation.
+ * TRIGGER 1 (the hard rule) — RELAY STATUS CHANGE. The moment every ELIGIBLE relay
+ * socket is connected, FULL-sync the selected chat. All-green is the one instant we
+ * know the whole pool can both carry our request and deliver a sibling's answer, so
+ * it's the cheapest possible moment to buy a complete conversation.
+ *
+ * Eligible = active (non-benched) relays. A relay in flap/connect-fail cooldown is
+ * deliberately benched by the pool — counting it would let one dead relay (e.g. a
+ * permanently offline entry in relays.json) suppress the hard rule forever.
  *
  * Edge-triggered: the pool fans out state changes on every socket transition, so we
  * only act on the not-green → green EDGE, not on every notification while green.
@@ -797,16 +801,16 @@ function wireRelayStatusTrigger(): void {
     // The pool exposes a state-change fan-out. Chain onto it without clobbering
     // existing subscribers.
     if(pool && typeof pool.addStateChangeListener === 'function') {
-      const onStateChange = (connected: number, total: number) => {
+      const onStateChange = (connected: number, _total: number, eligible: number) => {
         if(connected > 0) void publishActiveDigest({force: true});
 
-        const green = total > 0 && connected >= total;
+        const green = eligible > 0 && connected >= eligible;
         const wasGreen = allRelaysGreen;
         allRelaysGreen = green;
         if(!green || wasGreen) return; // only the rising edge
 
         if(activePeerPubkey) {
-          console.debug(`${LOG_PREFIX} all ${total} relay(s) green — full sync of the selected chat`);
+          console.debug(`${LOG_PREFIX} all ${eligible} eligible relay(s) green — full sync of the selected chat`);
           scheduleSync(activePeerPubkey, 'full', 'relays-green');
         }
       };
