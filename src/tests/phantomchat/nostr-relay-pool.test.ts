@@ -267,6 +267,52 @@ describe('NostrRelayPool', () => {
       // liveness floor does NOT fire — the remaining relays are still active.
       expect(pool.getConnectedCount()).toBe(DEFAULT_RELAYS.length - 1);
     });
+
+    it('throttles per-relay reconnect backfills during a flap storm', async() => {
+      const pool = new NostrRelayPool({
+        relays: [...DEFAULT_RELAYS],
+        maxActiveRelays: DEFAULT_RELAYS.length,
+        onMessage: vi.fn()
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const relay = mockRelayInstances.filter((r: any) => r.connected)[0];
+      const getMessagesSpy = vi.spyOn(relay, 'getMessages');
+
+      // Register the first connect (no backfill on first connect by design)
+      relay.connectionState = 'connected';
+      relay.onStateChange?.();
+      expect(getMessagesSpy).not.toHaveBeenCalled();
+
+      // First reconnect: the idle-gap backfill runs
+      relay.connectionState = 'reconnecting';
+      relay.onStateChange?.();
+      relay.connectionState = 'connected';
+      relay.onStateChange?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getMessagesSpy).toHaveBeenCalledTimes(1);
+
+      // Immediate re-flap inside the throttle window: no second backfill —
+      // each one re-runs every returned wrap through main-thread unwrap crypto,
+      // and the watermark poll covers the gap.
+      relay.connectionState = 'reconnecting';
+      relay.onStateChange?.();
+      relay.connectionState = 'connected';
+      relay.onStateChange?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getMessagesSpy).toHaveBeenCalledTimes(1);
+
+      // Past the window (and connected long enough to clear the flap counter),
+      // a reconnect backfills again.
+      await vi.advanceTimersByTimeAsync(35_000);
+      relay.connectionState = 'reconnecting';
+      relay.onStateChange?.();
+      relay.connectionState = 'connected';
+      relay.onStateChange?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getMessagesSpy).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('publish', () => {
