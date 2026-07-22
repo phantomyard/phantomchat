@@ -1526,19 +1526,25 @@ export class ChatAPI {
         }
       }
 
-      // Recovery work (queue flush + backfill) only on a genuine reconnect
-      // edge, throttled to one burst per interval — both are heavy on
-      // main-thread gift-wrap crypto and stall the UI when fired per-flap.
+      // Drain the offline queue whenever relays are up. The queue's only
+      // drain path is flush() — gating it behind the throttle below would
+      // strand an outbound message queued mid-storm with no other retry.
+      // Cheap when idle: doFlush early-returns on an empty queue and the
+      // flushInFlight coalescer prevents overlapping re-wraps.
+      if(this.offlineQueue && this.activePeer) {
+        this.offlineQueue.flush(this.activePeer).catch((err: any) => {
+          this.log.error('[ChatAPI] auto-flush failed:', err);
+        });
+      }
+
+      // Heavy recovery work (backfill) only on a genuine reconnect edge,
+      // throttled to one burst per interval — it is heavy on main-thread
+      // gift-wrap crypto and stalls the UI when fired per-flap. Backfill
+      // recovers inbound history, which self-heals on the next genuine
+      // reconnect, so a suppressed run is safe.
       const now = Date.now();
       if(reconnectEdge && now - this.lastReconnectRecoveryAt >= RECONNECT_RECOVERY_MIN_INTERVAL_MS) {
         this.lastReconnectRecoveryAt = now;
-
-        // Auto-flush offline queue when relays come back
-        if(this.offlineQueue && this.activePeer) {
-          this.offlineQueue.flush(this.activePeer).catch((err: any) => {
-            this.log.error('[ChatAPI] auto-flush failed:', err);
-          });
-        }
 
         // Trigger backfill on reconnect (MSG-02)
         this.backfillConversations().catch((err) => {

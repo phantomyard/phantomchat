@@ -782,34 +782,44 @@ describe('ChatAPI', () => {
   });
 
   describe('reconnect flap throttling', () => {
-    test('recovery work fires on the 0→>0 edge only, not on every connected notification', async() => {
+    test('backfill fires on the 0→>0 edge only; queue flush drains on every connected notification', async() => {
       mockPool.simulateConnect();
       await chatApi.connect(PEER_ID);
+      const backfillSpy = vi.spyOn(chatApi as any, 'backfillConversations').mockResolvedValue(undefined);
 
       // First edge (0 → >0): one recovery burst
       mockPool.simulateStateChange(1, 7);
       expect(mockQueue.flushCallCount).toBe(1);
+      expect(backfillSpy).toHaveBeenCalledTimes(1);
 
       // Flap storm WITHOUT dropping to zero: the pool fans out a notification
-      // per debounced state flush while connectedCount stays > 0. None may
-      // re-run recovery (backfill + flush = main-thread crypto storms).
+      // per debounced state flush while connectedCount stays > 0. The flush is
+      // re-invoked each time (cheap — the real queue early-returns when empty
+      // and the flushInFlight coalescer prevents overlap), but the heavy
+      // backfill must NOT re-run (main-thread crypto storm).
       mockPool.simulateStateChange(2, 7);
       mockPool.simulateStateChange(1, 7);
       mockPool.simulateStateChange(3, 7);
-      expect(mockQueue.flushCallCount).toBe(1);
+      expect(mockQueue.flushCallCount).toBe(4);
+      expect(backfillSpy).toHaveBeenCalledTimes(1);
     });
 
-    test('genuine reconnects re-run recovery, throttled to one burst per interval', async() => {
+    test('genuine reconnects re-run backfill throttled to one burst per interval; flush always drains', async() => {
       mockPool.simulateConnect();
       await chatApi.connect(PEER_ID);
+      const backfillSpy = vi.spyOn(chatApi as any, 'backfillConversations').mockResolvedValue(undefined);
 
       mockPool.simulateStateChange(1, 7);   // edge #1
       expect(mockQueue.flushCallCount).toBe(1);
+      expect(backfillSpy).toHaveBeenCalledTimes(1);
 
-      // A genuine drop-to-zero and recovery INSIDE the window: throttled
+      // A genuine drop-to-zero and recovery INSIDE the window: backfill is
+      // throttled, but the flush still drains — it is the offline queue's
+      // only drain path, so gating it would strand queued messages.
       mockPool.simulateStateChange(0, 7);
       mockPool.simulateStateChange(1, 7);
-      expect(mockQueue.flushCallCount).toBe(1);
+      expect(mockQueue.flushCallCount).toBe(2);
+      expect(backfillSpy).toHaveBeenCalledTimes(1);
 
       // Past the window, a genuine reconnect recovers again
       vi.useFakeTimers();
@@ -817,10 +827,32 @@ describe('ChatAPI', () => {
         vi.setSystemTime(Date.now() + 31_000);
         mockPool.simulateStateChange(0, 7);
         mockPool.simulateStateChange(1, 7);
-        expect(mockQueue.flushCallCount).toBe(2);
+        expect(mockQueue.flushCallCount).toBe(3);
+        expect(backfillSpy).toHaveBeenCalledTimes(2);
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    test('drains a message queued mid-storm even when the reconnect edge is throttled', async() => {
+      mockPool.simulateConnect();
+      await chatApi.connect(PEER_ID);
+
+      // A prior recovery just happened → the 30s throttle window is open
+      mockPool.simulateStateChange(1, 7);   // edge #1, opens the window
+      expect(mockQueue.flushCallCount).toBe(1);
+
+      // Relays drop → user sends → message lands in the offline queue
+      mockPool.simulateStateChange(0, 7);
+      const messageId = await chatApi.sendText('queued mid-storm');
+      expect(messageId).toBeDefined();
+      expect(mockQueue.queueCallCount).toBe(1);
+
+      // A relay reconnects within the throttle window. The backfill edge is
+      // suppressed, but the flush must still fire — the pool then stays
+      // connected, so no further edge will ever come to drain the queue.
+      mockPool.simulateStateChange(1, 7);
+      expect(mockQueue.flushCallCount).toBe(2);
     });
   });
 
