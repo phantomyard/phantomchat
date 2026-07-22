@@ -35,6 +35,15 @@
 
 const LOG_PREFIX = '[PhantomChatDeviceSync]';
 
+/**
+ * Minimum interval between reconnect-triggered digest re-advertises. The pool
+ * notifies on every debounced state flush — several per second during a
+ * reconnect flap storm — and each force-publish re-signs and re-wraps the
+ * digest on the main thread. Genuine reconnect edges still re-advertise, just
+ * not more than once per window.
+ */
+const RECONNECT_ADVERTISE_MIN_INTERVAL_MS = 30_000;
+
 /** How often we re-advertise the open chat's digest (ms). Heartbeat cadence. */
 const PULSE_INTERVAL_MS = 45_000;
 
@@ -198,6 +207,11 @@ const deferredSync = new Map<string, {peer: string; scope: SyncScope; reason: st
 
 /** True while every relay socket in the pool is connected (drives the hard rule). */
 let allRelaysGreen = false;
+
+// Reconnect-edge tracking for the throttled digest re-advertise (see
+// RECONNECT_ADVERTISE_MIN_INTERVAL_MS).
+let lastPoolConnectedCount = 0;
+let lastReconnectAdvertiseAt = 0;
 
 /**
  * Bumped by every init/destroy. A sync run captures it and abandons itself the moment
@@ -802,7 +816,17 @@ function wireRelayStatusTrigger(): void {
     // existing subscribers.
     if(pool && typeof pool.addStateChangeListener === 'function') {
       const onStateChange = (connected: number, _total: number, eligible: number) => {
-        if(connected > 0) void publishActiveDigest({force: true});
+        // Edge-trigger (0 → >0) + throttle the re-advertise. The pool fans out
+        // a notification on every debounced state flush, so a flapping relay
+        // used to force-publish the digest (sign + gift-wrap, main thread)
+        // several times a second — stalling the UI during reconnect storms.
+        const now = Date.now();
+        const reconnectEdge = connected > 0 && lastPoolConnectedCount === 0;
+        lastPoolConnectedCount = connected;
+        if(reconnectEdge && now - lastReconnectAdvertiseAt >= RECONNECT_ADVERTISE_MIN_INTERVAL_MS) {
+          lastReconnectAdvertiseAt = now;
+          void publishActiveDigest({force: true});
+        }
 
         const green = eligible > 0 && connected >= eligible;
         const wasGreen = allRelaysGreen;
@@ -1121,6 +1145,8 @@ export function destroyDeviceSync(): void {
   fullSyncedConvs.clear();
   deferredSync.clear();
   allRelaysGreen = false;
+  lastPoolConnectedCount = 0;
+  lastReconnectAdvertiseAt = 0;
   remoteDigests.clear();
   lastRequestAt.clear();
   recentDigestSeen.clear();

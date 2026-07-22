@@ -124,6 +124,16 @@ export type StatusChangeCallback = (peerId: string, status: string) => void;
  * 4. Persists messages to IndexedDB message store
  * 5. Backfills missed messages on init/reconnect (MSG-02)
  */
+/**
+ * Minimum interval between reconnect-recovery runs (offline-queue flush +
+ * conversation backfill). The pool fans out a state notification on every
+ * debounced flush — several per second during a reconnect flap storm — and
+ * each unguarded notification used to kick a full backfill + queue flush,
+ * blocking the main thread with gift-wrap crypto. Edge-trigger (0 → >0) +
+ * this window bounds that work to at most one burst per interval.
+ */
+const RECONNECT_RECOVERY_MIN_INTERVAL_MS = 30_000;
+
 export class ChatAPI {
   private ownId: string;
   private log: Logger;
@@ -143,6 +153,11 @@ export class ChatAPI {
   // Connection state
   private state: ChatState = 'disconnected';
   private activePeer: string | null = null;
+
+  // Reconnect-recovery throttling state (see RECONNECT_RECOVERY_MIN_INTERVAL_MS).
+  private lastPoolConnectedCount = 0;
+  private lastReconnectRecoveryAt = 0;
+  private backfillInFlight: Promise<void> | null = null;
 
   // Message history (in-memory)
   private history: ChatMessage[] = [];
@@ -1150,6 +1165,18 @@ export class ChatAPI {
    * event when done so display bridge can refresh.
    */
   async backfillConversations(): Promise<void> {
+    // Coalesce overlapping runs: reconnect flap storms can trigger several
+    // near-simultaneous backfills, each re-querying every conversation and
+    // re-running the unwrap path. One at a time.
+    if(this.backfillInFlight) return this.backfillInFlight;
+    const run = this.doBackfillConversations().finally(() => {
+      if(this.backfillInFlight === run) this.backfillInFlight = null;
+    });
+    this.backfillInFlight = run;
+    return run;
+  }
+
+  private async doBackfillConversations(): Promise<void> {
     this.log('[ChatAPI] starting relay backfill');
 
     try {
@@ -1485,6 +1512,12 @@ export class ChatAPI {
   private handlePoolStateChange(connectedCount: number): void {
     this.log('[ChatAPI] relay pool state change: connectedCount =', connectedCount);
 
+    // 0 → >0 edge detection. The pool notifies on every debounced state flush,
+    // not just transitions, so a flapping relay fires this repeatedly while
+    // connectedCount stays > 0.
+    const reconnectEdge = connectedCount > 0 && this.lastPoolConnectedCount === 0;
+    this.lastPoolConnectedCount = connectedCount;
+
     if(connectedCount > 0) {
       if(this.state !== 'connected' && this.activePeer) {
         this.setState('connected');
@@ -1493,17 +1526,25 @@ export class ChatAPI {
         }
       }
 
-      // Auto-flush offline queue when relays come back
-      if(this.offlineQueue && this.activePeer) {
-        this.offlineQueue.flush(this.activePeer).catch((err: any) => {
-          this.log.error('[ChatAPI] auto-flush failed:', err);
+      // Recovery work (queue flush + backfill) only on a genuine reconnect
+      // edge, throttled to one burst per interval — both are heavy on
+      // main-thread gift-wrap crypto and stall the UI when fired per-flap.
+      const now = Date.now();
+      if(reconnectEdge && now - this.lastReconnectRecoveryAt >= RECONNECT_RECOVERY_MIN_INTERVAL_MS) {
+        this.lastReconnectRecoveryAt = now;
+
+        // Auto-flush offline queue when relays come back
+        if(this.offlineQueue && this.activePeer) {
+          this.offlineQueue.flush(this.activePeer).catch((err: any) => {
+            this.log.error('[ChatAPI] auto-flush failed:', err);
+          });
+        }
+
+        // Trigger backfill on reconnect (MSG-02)
+        this.backfillConversations().catch((err) => {
+          this.log.error('[ChatAPI] reconnect backfill failed:', err);
         });
       }
-
-      // Trigger backfill on reconnect (MSG-02)
-      this.backfillConversations().catch((err) => {
-        this.log.error('[ChatAPI] reconnect backfill failed:', err);
-      });
     } else {
       if(this.state !== 'disconnected' && this.activePeer) {
         this.setState('disconnected');

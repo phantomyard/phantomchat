@@ -268,6 +268,34 @@ describe('device-sync proactive triggers', () => {
     expect(pool.publishSyncRequest.mock.calls.length).toBe(after);
   }, 15_000);
 
+  it('TRIGGER 1 — reconnect digest re-advertise is edge-triggered and throttled', async() => {
+    const {pool, captured, selectChat} = await boot(['m1']);
+
+    await selectChat();
+    captured.relayState(3, 3);   // first edge 0 → >0: re-advertise
+    await wait(100);
+    const afterEdge = pool.publishSelfDigest.mock.calls.length;
+
+    // Flap storm while staying connected: the pool notifies on every debounced
+    // state flush — a force-publish per notification re-signs + re-wraps the
+    // digest on the main thread several times a second.
+    captured.relayState(2, 3);
+    captured.relayState(3, 3);
+    captured.relayState(1, 3);
+    captured.relayState(3, 3);
+    await wait(100);
+    expect(pool.publishSelfDigest.mock.calls.length).toBe(afterEdge);
+
+    // Even a genuine 0 → >0 edge INSIDE the throttle window is suppressed —
+    // the opening edge of this test proved a genuine edge DOES advertise; the
+    // window bounds re-advertises to one per interval. (Real timers by design
+    // in this suite, so the window-expiry path can't be fast-forwarded.)
+    captured.relayState(0, 3);
+    captured.relayState(3, 3);
+    await wait(100);
+    expect(pool.publishSelfDigest.mock.calls.length).toBe(afterEdge);
+  }, 15_000);
+
   it('TRIGGER 2 — selecting a chat syncs its recent tail', async() => {
     const {pool, siblingPulses, selectChat, requests} = await boot(['m1']);
 

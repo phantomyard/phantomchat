@@ -371,6 +371,42 @@ describe('OfflineQueue', () => {
       }
     });
 
+    test('coalesces overlapping flushes into a single run', async() => {
+      await queue.queue('BBBBBB.CCCCCC.DDDDDD', 'message 1');
+      await queue.queue('BBBBBB.CCCCCC.DDDDDD', 'message 2');
+      mockRelayPool.simulateConnect();
+
+      // Slow publish so the first flush is still in flight when the others land
+      const originalPublish = mockRelayPool.publish.bind(mockRelayPool);
+      mockRelayPool.publish = async(recipientPubkey: string, plaintext: string): Promise<PublishResult> => {
+        await new Promise((r) => setTimeout(r, 10));
+        return originalPublish(recipientPubkey, plaintext);
+      };
+
+      // Reconnect flap storms fire flush repeatedly — concurrent callers must
+      // share ONE run, not stack three re-wrap/re-publish passes.
+      const [a, b, c] = await Promise.all([
+        queue.flush('BBBBBB.CCCCCC.DDDDDD'),
+        queue.flush('BBBBBB.CCCCCC.DDDDDD'),
+        queue.flush('BBBBBB.CCCCCC.DDDDDD')
+      ]);
+
+      expect(mockRelayPool.publishCalls).toHaveLength(2);
+      expect(a).toBe(2);
+      expect(b).toBe(2);
+      expect(c).toBe(2);
+
+      // After the run completes, a later flush starts fresh (no stale latch).
+      // Queue while DISCONNECTED — queue() optimistically publishes when the
+      // pool is up, which would confound the count.
+      mockRelayPool.simulateDisconnect();
+      await queue.queue('BBBBBB.CCCCCC.DDDDDD', 'message 3');
+      mockRelayPool.simulateConnect();
+      const flushed = await queue.flush('BBBBBB.CCCCCC.DDDDDD');
+      expect(flushed).toBe(1);
+      expect(mockRelayPool.publishCalls).toHaveLength(3);
+    });
+
     test('clears queue after successful flush', async() => {
       await queue.queue('BBBBBB.CCCCCC.DDDDDD', 'message 1');
 

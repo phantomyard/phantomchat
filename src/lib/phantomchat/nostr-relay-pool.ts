@@ -157,6 +157,15 @@ const MAX_PENDING_WRAP_REFETCH = 500;
 // floor in superviseConnections guarantees ≥1 relay is always dialing, but this
 // sweep is the backstop that revives the rest as their cooldowns expire.
 const POOL_RECOVERY_INTERVAL_MS = 20_000;
+
+/**
+ * Minimum interval between reconnect backfills for a single relay. During a
+ * flap storm a relay can re-connect repeatedly within seconds, and each
+ * reconnect backfill re-queries the relay and re-runs every returned wrap
+ * through the unwrap path (main-thread crypto). The watermark catch-up poll
+ * covers short gaps, so a backfill that ran moments ago adds nothing.
+ */
+const RECONNECT_BACKFILL_MIN_INTERVAL_MS = 30_000;
 // Delay between opening each relay socket. We connect to EVERY relay, but not all
 // at once: a burst of simultaneous WebSocket handshakes on a cold mobile radio
 // trips an "insufficient resources" ceiling and none survive, leaving the app
@@ -273,6 +282,8 @@ export class NostrRelayPool {
   // connect (startup — covered by initialize()'s global backfill) from a
   // RE-connect (recovers the idle gap via backfillRelay). Keyed by relay url.
   private relayHasConnected: Set<string> = new Set();
+  // Per-relay throttle for reconnect backfills (see RECONNECT_BACKFILL_MIN_INTERVAL_MS).
+  private lastReconnectBackfillAt: Map<string, number> = new Map();
 
   // Per-relay health for flap detection / cooldown. Keyed by url so it survives
   // RelayEntry recreation across connectAll(). `cooldownUntil` is a Date.now()
@@ -1376,10 +1387,18 @@ export class NostrRelayPool {
           // that whatever was breaking unwraps (frozen worker, dead network) has
           // cleared. Give parked wraps a fresh retry budget BEFORE the backfill
           // runs, so the backfill can actually re-deliver them.
-          this.resetWrapRetryBudget();
-          this.backfillRelay({config, instance}).catch(
-            swallowHandler('NostrRelayPool.reconnectBackfill')
-          );
+          //
+          // Throttled per relay: during a flap storm the same relay re-fires
+          // this within seconds, and each backfill is a burst of main-thread
+          // unwrap crypto. Short gaps are covered by the watermark poll.
+          const lastBackfill = this.lastReconnectBackfillAt.get(config.url) ?? 0;
+          if(Date.now() - lastBackfill >= RECONNECT_BACKFILL_MIN_INTERVAL_MS) {
+            this.lastReconnectBackfillAt.set(config.url, Date.now());
+            this.resetWrapRetryBudget();
+            this.backfillRelay({config, instance}).catch(
+              swallowHandler('NostrRelayPool.reconnectBackfill')
+            );
+          }
         }
       }
       this.trackRelayHealth(config.url, instance.getState());

@@ -781,6 +781,49 @@ describe('ChatAPI', () => {
     });
   });
 
+  describe('reconnect flap throttling', () => {
+    test('recovery work fires on the 0→>0 edge only, not on every connected notification', async() => {
+      mockPool.simulateConnect();
+      await chatApi.connect(PEER_ID);
+
+      // First edge (0 → >0): one recovery burst
+      mockPool.simulateStateChange(1, 7);
+      expect(mockQueue.flushCallCount).toBe(1);
+
+      // Flap storm WITHOUT dropping to zero: the pool fans out a notification
+      // per debounced state flush while connectedCount stays > 0. None may
+      // re-run recovery (backfill + flush = main-thread crypto storms).
+      mockPool.simulateStateChange(2, 7);
+      mockPool.simulateStateChange(1, 7);
+      mockPool.simulateStateChange(3, 7);
+      expect(mockQueue.flushCallCount).toBe(1);
+    });
+
+    test('genuine reconnects re-run recovery, throttled to one burst per interval', async() => {
+      mockPool.simulateConnect();
+      await chatApi.connect(PEER_ID);
+
+      mockPool.simulateStateChange(1, 7);   // edge #1
+      expect(mockQueue.flushCallCount).toBe(1);
+
+      // A genuine drop-to-zero and recovery INSIDE the window: throttled
+      mockPool.simulateStateChange(0, 7);
+      mockPool.simulateStateChange(1, 7);
+      expect(mockQueue.flushCallCount).toBe(1);
+
+      // Past the window, a genuine reconnect recovers again
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(Date.now() + 31_000);
+        mockPool.simulateStateChange(0, 7);
+        mockPool.simulateStateChange(1, 7);
+        expect(mockQueue.flushCallCount).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('relay message deduplication', () => {
     /** Flush microtasks so async handleRelayMessage completes */
     const flush = () => new Promise(r => setTimeout(r, 50));

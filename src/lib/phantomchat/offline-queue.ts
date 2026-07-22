@@ -227,6 +227,7 @@ export class OfflineQueue {
 
   /** Queue keyed by recipient pubkey */
   private _queue: Map<string, QueuedMessage[]> = new Map();
+  private flushInFlight: Promise<number> | null = null;
 
   /** Track which relay messages have been acknowledged (already delivered) */
   private _acknowledged: Set<string> = new Set();
@@ -363,6 +364,19 @@ export class OfflineQueue {
    * @returns Number of messages flushed
    */
   async flush(recipientPubkey: string): Promise<number> {
+    // Coalesce overlapping flushes: reconnect flap storms can trigger many
+    // near-simultaneous flush calls, each re-wrapping and re-publishing the
+    // same rumors (pure-JS crypto on the main thread). One flush at a time;
+    // concurrent callers share the in-flight run.
+    if(this.flushInFlight) return this.flushInFlight;
+    const run = this.doFlush(recipientPubkey).finally(() => {
+      if(this.flushInFlight === run) this.flushInFlight = null;
+    });
+    this.flushInFlight = run;
+    return run;
+  }
+
+  private async doFlush(recipientPubkey: string): Promise<number> {
     if(!this.relayPool.isConnected()) {
       this.log.debug('[OfflineQueue] flush skipped: relay pool not connected');
       return 0;
