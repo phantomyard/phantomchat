@@ -65,6 +65,39 @@ describe('WS-A: Telegram-only UI cleanup', () => {
   });
 });
 
+// ---- Basic search + Add Folder UX ----
+describe('sidebar search is stripped to basics', () => {
+  const sidebarSrc = readFile('components/sidebarLeft/index.ts');
+
+  it('does not mount the relay/connection status icons in the search bar', () => {
+    expect(sidebarSrc).not.toContain('mountStatusIcons');
+    expect(sidebarSrc).not.toContain('SearchBarStatusIcons');
+  });
+
+  it('does not use the chat-type (all/private/groups) search submenu', () => {
+    expect(sidebarSrc).not.toContain('ChatTypeMenu');
+    expect(sidebarSrc).not.toContain('chatTypeMenu');
+  });
+
+  it('search has only the single chats tab (no media/links/files/music/voice tabs)', () => {
+    expect(sidebarSrc).toContain('inputMessagesFilterEmpty');
+    expect(sidebarSrc).not.toContain('inputMessagesFilterPhotoVideo');
+    expect(sidebarSrc).not.toContain('inputMessagesFilterUrl');
+    expect(sidebarSrc).not.toContain('inputMessagesFilterDocument');
+    expect(sidebarSrc).not.toContain('inputMessagesFilterMusic');
+    expect(sidebarSrc).not.toContain('inputMessagesFilterRoundVoice');
+  });
+});
+
+describe('sidebar add-menu has an Add Folder option', () => {
+  const sidebarSrc = readFile('components/sidebarLeft/index.ts');
+
+  it('wires a New Folder item to the edit-folder tab', () => {
+    expect(sidebarSrc).toContain("text: 'FilterNew'");
+    expect(sidebarSrc).toContain('this.createTab(AppEditFolderTab).open()');
+  });
+});
+
 // ---- WS-B: Identity integrated into EditProfile ----
 describe('WS-B: Identity in EditProfile', () => {
   const editProfileSrc = readFile('components/sidebarLeft/tabs/editProfile/index.ts');

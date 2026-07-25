@@ -91,7 +91,6 @@ import EncryptionKeyStore from '@lib/passcode/keyStore';
 import createLockButton from '@components/sidebarLeft/lockButton';
 import {MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_FACTOR} from '@components/sidebarLeft/constants';
 import createSubmenuTrigger from '@components/createSubmenuTrigger';
-import ChatTypeMenu from '@components/chatTypeMenu';
 import {RequestHistoryOptions} from '@appManagers/appMessagesManager';
 import EmptySearchPlaceholder from '@components/emptySearchPlaceholder';
 import useHasFoldersSidebar, {useIsSidebarCollapsed} from '@stores/foldersSidebar';
@@ -156,9 +155,6 @@ export class AppSidebarLeft extends SidebarSlider {
     (this.inputSearch.input as HTMLInputElement).placeholder = ' ';
     const sidebarHeader = this.sidebarEl.querySelector('.item-main .sidebar-header');
     sidebarHeader.append(this.inputSearch.container);
-
-    // Mount PhantomChat.chat relay status icon in search bar
-    this.mountStatusIcons();
 
     // this.toolsBtn = this.sidebarEl.querySelector('.sidebar-tools-button') as HTMLButtonElement;
     this.backBtn = this.sidebarEl.querySelector('.sidebar-back-button') as HTMLButtonElement;
@@ -1071,6 +1067,12 @@ export class AppSidebarLeft extends SidebarSlider {
       });
     };
 
+    const onNewFolderClick = () => {
+      closeTabsBefore(() => {
+        this.createTab(AppEditFolderTab).open();
+      });
+    };
+
     return [{
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
@@ -1083,6 +1085,10 @@ export class AppSidebarLeft extends SidebarSlider {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',
       onClick: onContactsClick
+    }, {
+      icon: 'folder',
+      text: 'FilterNew',
+      onClick: onNewFolderClick
     }];
   }
 
@@ -1127,30 +1133,6 @@ export class AppSidebarLeft extends SidebarSlider {
     }
   }
 
-  private mountStatusIcons(): void {
-    // Mount PhantomChat.chat relay status icon in the search bar
-    Promise.all([
-      import('@components/phantomchat/SearchBarStatusIcons'),
-      import('solid-js/web')
-    ]).then(([{default: SearchBarStatusIcons}, {render}]) => {
-      const searchContainer = this.inputSearch.container;
-      const mountEl = document.createElement('div');
-      mountEl.style.cssText = 'position:relative;display:contents;';
-      searchContainer.style.position = 'relative';
-      searchContainer.append(mountEl);
-
-      render(() => SearchBarStatusIcons({
-        onRelayClick: () => {
-          this.openStatusTab?.();
-        }
-      }), mountEl);
-    }).catch((err) => {
-      console.warn('[AppSidebarLeft] status icons mount failed:', err);
-    });
-  }
-
-  private openStatusTab?: () => void;
-
   public initSearch() {
     if(this.searchInitResult) return this.searchInitResult;
 
@@ -1173,25 +1155,8 @@ export class AppSidebarLeft extends SidebarSlider {
     };
 
     this.searchGroups.messages.createPlaceholder = () => {
-      const placeholder = new EmptySearchPlaceholder;
-      if(chatTypeMenu.props.selected !== 'all' && !chatTypeMenu.props.hidden)
-        placeholder.feedProps({
-          onAllChats: () => {
-            chatTypeMenu.props.selected = 'all';
-            updateSearchQuery({search: this.inputSearch.value, chatType: 'all'})
-          }
-        });
-
-      return placeholder;
+      return new EmptySearchPlaceholder;
     };
-
-    const chatTypeMenu = new ChatTypeMenu;
-    chatTypeMenu.feedProps({
-      onChange: (chatType) => void updateSearchQuery({search: this.inputSearch.value, chatType}),
-      selected: 'all'
-    });
-
-    this.searchGroups.messages.nameEl.append(chatTypeMenu);
 
     // bots.getPopularAppBots
 
@@ -1200,26 +1165,6 @@ export class AppSidebarLeft extends SidebarSlider {
         inputFilter: 'inputMessagesFilterEmpty',
         name: 'FilterChats',
         type: 'chats'
-      }, {
-        inputFilter: 'inputMessagesFilterPhotoVideo',
-        name: 'SharedMediaTab2',
-        type: 'media'
-      }, {
-        inputFilter: 'inputMessagesFilterUrl',
-        name: 'SharedLinksTab2',
-        type: 'links'
-      }, {
-        inputFilter: 'inputMessagesFilterDocument',
-        name: 'SharedFilesTab2',
-        type: 'files'
-      }, {
-        inputFilter: 'inputMessagesFilterMusic',
-        name: 'SharedMusicTab2',
-        type: 'music'
-      }, {
-        inputFilter: 'inputMessagesFilterRoundVoice',
-        name: 'SharedVoiceTab2',
-        type: 'voice'
       }],
       scrollable,
       searchGroups: this.searchGroups,
@@ -1261,14 +1206,11 @@ export class AppSidebarLeft extends SidebarSlider {
       });
 
       if(pickedElements.length) {
-        pause(0).then(() => chatTypeMenu.props.hidden = true);
-
         this.inputSearch.input.style.setProperty(
           '--paddingLeft',
           (pickedElements[pickedElements.length - 1].getBoundingClientRect().right - this.inputSearch.input.getBoundingClientRect().left) + 'px'
         );
       } else {
-        chatTypeMenu.props.hidden = false;
         this.inputSearch.input.style.removeProperty('--paddingLeft');
       }
     };
@@ -1357,10 +1299,7 @@ export class AppSidebarLeft extends SidebarSlider {
         return;
       }
 
-      if(searchSuper.mediaTab.type !== 'chats') {
-        chatTypeMenu.props.selected = 'all';
-      }
-      updateSearchQuery({search: value, chatType: chatTypeMenu.props.selected});
+      updateSearchQuery({search: value, chatType: 'all'});
     };
 
     type UpdateSearchQueryArgs = {
@@ -1508,8 +1447,6 @@ export class AppSidebarLeft extends SidebarSlider {
       this.buttonsContainer.classList.remove('is-visible');
       this.isSearchActive = false;
       this.onSomethingOpenInsideChange(true);
-
-      chatTypeMenu.props.selected = 'all';
     });
 
     const clearRecentSearchBtn = ButtonIcon('close');
