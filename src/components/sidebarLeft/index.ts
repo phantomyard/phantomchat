@@ -12,7 +12,7 @@ import InputSearch from '@components/inputSearch';
 import SidebarSlider, {SliderSuperTab} from '@components/slider';
 import TransitionSlider from '@components/transition';
 import AppNewGroupTab from '@components/sidebarLeft/tabs/newGroup';
-import AppSearchSuper from '@components/appSearchSuper';
+import AppSearchSuper, {SearchSettingsEntry} from '@components/appSearchSuper';
 import {DateData, fillTipDates} from '@helpers/date';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import AppSettingsTab from '@components/sidebarLeft/tabs/settings';
@@ -92,7 +92,6 @@ import createLockButton from '@components/sidebarLeft/lockButton';
 import {MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_FACTOR} from '@components/sidebarLeft/constants';
 import createSubmenuTrigger from '@components/createSubmenuTrigger';
 import {RequestHistoryOptions} from '@appManagers/appMessagesManager';
-import EmptySearchPlaceholder from '@components/emptySearchPlaceholder';
 import useHasFoldersSidebar, {useIsSidebarCollapsed} from '@stores/foldersSidebar';
 import isObject from '@helpers/object/isObject';
 import {useAppSettings} from '@stores/appSettings';
@@ -126,7 +125,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
   private newBtnMenu: HTMLElement;
 
-  private searchGroups: {[k in 'contacts' | 'globalContacts' | 'messages' | 'people' | 'recent']: SearchGroup} = {} as any;
+  private searchGroups: {[k in 'chats' | 'contacts' | 'groups' | 'folders' | 'settings' | 'people' | 'recent']: SearchGroup} = {} as any;
   public searchSuper: AppSearchSuper;
   private searchInitResult: SearchInitResult;
   private isSearchActive = false;
@@ -1146,17 +1145,29 @@ export class AppSidebarLeft extends SidebarSlider {
       // }, 0);
     };
 
+    // [PhantomChat.search] Local-entity search groups. Peer groups (chats/contacts/
+    // groups) navigate to the chat on click; folders/settings render custom rows
+    // (clickable=false here so they don't wire the peer-list click listener — each
+    // row carries its own handler set in appSearchSuper).
     this.searchGroups = {
-      contacts: new SearchGroup('SearchAllChatsShort', 'contacts', undefined, undefined, undefined, undefined, close),
-      globalContacts: new SearchGroup('GlobalSearch', 'contacts', undefined, undefined, undefined, undefined, close),
-      messages: new SearchGroup('SearchMessages', 'messages'),
+      chats: new SearchGroup('SearchAllChatsShort', 'contacts', undefined, undefined, undefined, undefined, close),
+      contacts: new SearchGroup('Contacts', 'contacts', undefined, undefined, undefined, undefined, close),
+      groups: new SearchGroup('FilterGroups', 'contacts', undefined, undefined, undefined, undefined, close),
+      folders: new SearchGroup('Filters', 'contacts', undefined, undefined, false),
+      settings: new SearchGroup('Settings', 'contacts', undefined, undefined, false),
       people: new SearchGroup(false, 'contacts', true, 'search-group-people', true, false, close, true),
       recent: new SearchGroup('Recent', 'contacts', true, 'search-group-recent', true, true, close)
     };
 
-    this.searchGroups.messages.createPlaceholder = () => {
-      return new EmptySearchPlaceholder;
-    };
+    // [PhantomChat.search] Settings pages reachable from search. Clicking one opens
+    // its tab (and closes the search via onResultNavigate). searchText is the
+    // lowercased haystack matched against the query.
+    const settingsEntries: SearchSettingsEntry[] = [
+      {titleLangKey: 'Settings', icon: 'settings', searchText: 'settings', onClick: () => this.createTab(AppSettingsTab).open()},
+      {titleLangKey: 'ArchivedChats', icon: 'archive', searchText: 'archived chats archive', onClick: () => this.createTab(AppArchivedTab).open()},
+      {titleLangKey: 'Contacts', icon: 'user', searchText: 'contacts', onClick: () => this.createTab(AppContactsTab).open()},
+      {titleLangKey: 'SavedMessages', icon: 'savedmessages', searchText: 'saved messages', onClick: () => appImManager.setPeer({peerId: appImManager.myId})}
+    ];
 
     // bots.getPopularAppBots
 
@@ -1171,15 +1182,27 @@ export class AppSidebarLeft extends SidebarSlider {
       asChatList: true,
       hideEmptyTabs: false,
       showSender: true,
-      managers: this.managers
+      managers: this.managers,
+      // [PhantomChat.search] Relay-backed history isn't full-text searchable, so the
+      // sidebar search is local-entity only — no message-content search.
+      disableMessageSearch: true,
+      settingsEntries,
+      onResultNavigate: close
     });
 
     searchSuper.onChangeTab = () => {
       searchSuper.searchContext.chatType = 'all';
     };
 
-    searchContainer.prepend(searchSuper.nav.parentElement.parentElement);
+    const searchNavContainer = searchSuper.nav.parentElement.parentElement;
+    searchContainer.prepend(searchNavContainer);
     scrollable.append(searchSuper.container);
+
+    // [PhantomChat.search] Single-tab search: hide the "Chats" tab bar entirely.
+    // The tab menu stays permanently hidden; the surrounding bar is only revealed
+    // when the date/peer helper has chips to display (see onHelperLength).
+    searchSuper.nav.classList.add('hide');
+    searchNavContainer.classList.add('hide');
 
     const resetSearch = () => {
       searchSuper.setQuery({
@@ -1284,7 +1307,9 @@ export class AppSidebarLeft extends SidebarSlider {
 
     const onHelperLength = (hide = !helper.firstElementChild) => {
       helper.classList.toggle('hide', hide);
-      searchSuper.nav.classList.toggle('hide', !hide);
+      // [PhantomChat.search] The tab menu stays hidden (single-tab search); only the
+      // surrounding bar is shown when the helper actually has chips.
+      searchNavContainer.classList.toggle('hide', hide);
     };
 
     const appendToHelper = (elements: HTMLElement[]) => {
