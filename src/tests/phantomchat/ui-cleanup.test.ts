@@ -98,6 +98,51 @@ describe('sidebar add-menu has an Add Folder option', () => {
   });
 });
 
+// ---- Local entity search (Chats/Contacts/Groups/Folders/Settings) ----
+describe('sidebar search is local-entity search, not message search', () => {
+  const sidebarSrc = readFile('components/sidebarLeft/index.ts');
+  const superSrc = readFile('components/appSearchSuper.ts');
+
+  it('sidebar disables message-content search', () => {
+    expect(sidebarSrc).toContain('disableMessageSearch: true');
+  });
+
+  it('sidebar no longer has message / global-directory search groups', () => {
+    expect(sidebarSrc).not.toContain('SearchMessages');
+    expect(sidebarSrc).not.toContain('GlobalSearch');
+    expect(sidebarSrc).not.toContain('EmptySearchPlaceholder');
+  });
+
+  it('sidebar groups results into chats/contacts/groups/folders/settings', () => {
+    for(const key of ['chats:', 'contacts:', 'groups:', 'folders:', 'settings:']) {
+      expect(sidebarSrc).toContain(key);
+    }
+  });
+
+  it('sidebar hides the single-tab nav (removes the Chats tab)', () => {
+    expect(sidebarSrc).toContain("searchSuper.nav.classList.add('hide')");
+  });
+
+  it('sidebar supplies settings entries and a navigate-and-close callback', () => {
+    expect(sidebarSrc).toContain('SearchSettingsEntry');
+    expect(sidebarSrc).toContain('settingsEntries');
+    expect(sidebarSrc).toContain('onResultNavigate: close');
+  });
+
+  it('appSearchSuper skips message search when disableMessageSearch is set', () => {
+    expect(superSrc).toContain('this.disableMessageSearch');
+  });
+
+  it('appSearchSuper renders folder and settings results', () => {
+    expect(superSrc).toContain('renderFolderResults');
+    expect(superSrc).toContain('renderSettingsResults');
+  });
+
+  it('folder result navigates via the folder-switch event', () => {
+    expect(superSrc).toContain("'changing_folder_from_sidebar'");
+  });
+});
+
 // ---- WS-B: Identity integrated into EditProfile ----
 describe('WS-B: Identity in EditProfile', () => {
   const editProfileSrc = readFile('components/sidebarLeft/tabs/editProfile/index.ts');

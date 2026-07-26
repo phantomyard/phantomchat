@@ -74,7 +74,7 @@ import filterAsync from '@helpers/array/filterAsync';
 import ChatContextMenu, {getSponsoredMessageButtons} from '@components/chat/contextMenu';
 import PopupElement from '@components/popups';
 import getParticipantRank from '@appManagers/utils/chats/getParticipantRank';
-import {NULL_PEER_ID} from '@appManagers/constants';
+import {NULL_PEER_ID, REAL_FOLDERS} from '@appManagers/constants';
 import createParticipantContextMenu from '@helpers/dom/createParticipantContextMenu';
 import findAndSpliceAll from '@helpers/array/findAndSpliceAll';
 import deferredPromise from '@helpers/cancellablePromise';
@@ -94,6 +94,7 @@ import {ALL_COLLECTIONS_ID, StarGiftsProfileActions, StarGiftsProfileStore} from
 import {getFirstChild} from '@solid-primitives/refs';
 import SortedDialogList from '@components/sortedDialogList';
 import Icon from '@components/icon';
+import wrapFolderTitle from '@components/wrappers/folderTitle';
 import PopupReportAd from '@components/popups/reportAd';
 import ButtonMenuToggle from '@components/buttonMenuToggle';
 import {isSensitive} from '@helpers/restrictions';
@@ -394,6 +395,15 @@ export type ProcessSearchSuperResult = {
   mediaTab: SearchSuperMediaTab
 };
 
+// [PhantomChat.search] A searchable "jump to settings page" entry. The sidebar
+// supplies the list; matching + rendering happens inside loadChats.
+export type SearchSettingsEntry = {
+  titleLangKey: LangPackKey,
+  icon: Icon,
+  searchText: string,
+  onClick: () => void
+};
+
 export default class AppSearchSuper {
   public tabs: {[t in SearchSuperType]: HTMLDivElement} = {} as any;
 
@@ -479,6 +489,13 @@ export default class AppSearchSuper {
 
   public openSavedDialogsInner: boolean;
 
+  // [PhantomChat.search] When set, the global sidebar search skips message-content
+  // search entirely (relay-backed history can't be full-text searched), and instead
+  // renders only local entity results: chats, contacts, groups, folders, settings.
+  public disableMessageSearch: boolean;
+  public settingsEntries: SearchSettingsEntry[];
+  public onResultNavigate: () => void;
+
   public slider: SidebarSlider;
 
   public stargiftsStore: StarGiftsProfileStore;
@@ -495,7 +512,7 @@ export default class AppSearchSuper {
     'onChangeTab' |
     'showSender' |
     'managers'
-  > & Partial<Pick<AppSearchSuper, 'storiesArchive' | 'onLengthChange' | 'openSavedDialogsInner' | 'slider'>>) {
+  > & Partial<Pick<AppSearchSuper, 'storiesArchive' | 'onLengthChange' | 'openSavedDialogsInner' | 'slider' | 'disableMessageSearch' | 'settingsEntries' | 'onResultNavigate'>>) {
     safeAssign(this, options);
 
     this.slider ??= appSidebarRight;
@@ -1367,6 +1384,39 @@ export default class AppSearchSuper {
         return arg;
       };
 
+      // [PhantomChat.search] Local-entity search: no message-content search, no
+      // global directory. Split local dialogs into Chats (users) and Groups
+      // (chats/channels), list matching Contacts, Folders and Settings pages.
+      // Each section navigates to its item on click.
+      if(this.disableMessageSearch) {
+        const entityPromise = this.managers.dialogsStorage.getDialogs({query, offsetIndex: 0, limit: 30, filterId: 0})
+        .then(onLoad)
+        .then((value) => {
+          if(!value) return;
+          const chatPeerIds: PeerId[] = [];
+          const groupPeerIds: PeerId[] = [];
+          for(const dialog of value.dialogs) {
+            const peerId = dialog.peerId;
+            (peerId.isUser() ? chatPeerIds : groupPeerIds).push(peerId);
+          }
+          if(this.searchGroups.chats) setResults(chatPeerIds, this.searchGroups.chats, true);
+          if(this.searchGroups.groups) setResults(groupPeerIds, this.searchGroups.groups, true);
+        })
+        // contacts are rendered after dialogs so that a contact you already have a
+        // chat with lands in Chats (renderedPeerIds dedupes, first writer wins).
+        .then(() => this.managers.appUsersManager.getContactsPeerIds(query, true, undefined, 20))
+        .then(onLoad)
+        .then((contacts) => {
+          if(contacts && this.searchGroups.contacts) setResults(contacts, this.searchGroups.contacts, true);
+        });
+
+        return Promise.all([
+          entityPromise,
+          this.renderFolderResults(query, middleware),
+          this.renderSettingsResults(query, middleware)
+        ]).then(() => {});
+      }
+
       return Promise.all([
         this.managers.appUsersManager.getContactsPeerIds(query, true, undefined, 10)
         .then(onLoad)
@@ -1562,6 +1612,68 @@ export default class AppSearchSuper {
         renderRecentSearch()
       ]);
     } else return Promise.resolve();
+  }
+
+  // [PhantomChat.search] Render matching chat folders. Clicking a folder switches
+  // the main dialog list to it (same event the folders sidebar dispatches).
+  private async renderFolderResults(query: string, middleware: Middleware) {
+    const group = this.searchGroups.folders;
+    if(!group) return;
+
+    const filters = await this.managers.filtersStorage.getFilters();
+    if(!middleware()) return;
+
+    const needle = query.trim().toLowerCase();
+    const matched = Object.values(filters).filter((filter) => {
+      if(filter._ !== 'dialogFilter' && filter._ !== 'dialogFilterChatlist') return false;
+      if(REAL_FOLDERS.has(filter.id)) return false; // skip the built-in "All chats" folder
+      return (filter.title?.text || '').toLowerCase().includes(needle);
+    });
+
+    for(const filter of matched) {
+      const title = await wrapFolderTitle(filter.title, middleware, true);
+      if(!middleware()) return;
+
+      const row = new Row({
+        title,
+        icon: 'folder',
+        clickable: () => {
+          rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: filter.id});
+          this.onResultNavigate?.();
+        },
+        listenerSetter: this.listenerSetter
+      });
+
+      group.list.append(row.container);
+    }
+
+    group.toggle();
+  }
+
+  // [PhantomChat.search] Render matching settings pages. Clicking one opens that
+  // settings tab (handler supplied by the sidebar via settingsEntries).
+  private renderSettingsResults(query: string, _middleware: Middleware) {
+    const group = this.searchGroups.settings;
+    if(!group || !this.settingsEntries?.length) return;
+
+    const needle = query.trim().toLowerCase();
+    const matched = this.settingsEntries.filter((entry) => entry.searchText.includes(needle));
+
+    for(const entry of matched) {
+      const row = new Row({
+        titleLangKey: entry.titleLangKey,
+        icon: entry.icon,
+        clickable: () => {
+          entry.onClick();
+          this.onResultNavigate?.();
+        },
+        listenerSetter: this.listenerSetter
+      });
+
+      group.list.append(row.container);
+    }
+
+    group.toggle();
   }
 
   private async loadMembers({mediaTab}: SearchSuperLoadTypeOptions) {
@@ -2290,7 +2402,10 @@ export default class AppSearchSuper {
         this.loadedChats = true;
       }
 
-      if(!this.searchContext.query.trim() && !this.searchContext.peerId && !this.searchContext.minDate) {
+      // [PhantomChat.search] Global sidebar search is local-entity only. loadChats
+      // has already rendered chats/contacts/groups/folders/settings; there is no
+      // message-content search to run, so stop here.
+      if(this.disableMessageSearch || (!this.searchContext.query.trim() && !this.searchContext.peerId && !this.searchContext.minDate)) {
         this.loaded[type] = true;
         return Promise.resolve();
       }
