@@ -1631,7 +1631,7 @@ export default class AppSearchSuper {
     });
 
     for(const filter of matched) {
-      const title = await wrapFolderTitle(filter.title, middleware, true);
+      const title = wrapFolderTitle(filter.title, middleware, true);
       if(!middleware()) return;
 
       const row = new Row({
