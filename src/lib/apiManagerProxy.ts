@@ -62,7 +62,7 @@ import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
 import CacheStorageController, {CacheStorageDbName} from '@lib/files/cacheStorage';
 import type {PushSingleManager} from '@appManagers/pushSingleManager';
 import getDeepProperty from '@helpers/object/getDeepProperty';
-import {_changeHistoryStorageKey, _deleteHistoryStorage, _iterateHistoryStorages, _useHistoryStorage} from '@stores/historyStorages';
+import {_changeHistoryStorageKey, _deleteHistoryStorage, _iterateHistoryStorages, _useHistoryStorage, applyMirroredHistoryStorage} from '@stores/historyStorages';
 import SlicedArray, {SliceEnd} from '@helpers/slicedArray';
 import {createHistoryStorageSearchSlicedArray} from '@appManagers/utils/messages/createHistoryStorage';
 import tabId from '@config/tabId';
@@ -72,13 +72,6 @@ import {BroadcastChannelWrapper, createBroadcastChannelWrapper} from './broadcas
 import {MainBroadcastChannelEvents, unversionedMainBroadcastChannelName} from '@config/broadcastChannel';
 import {CacheStorageThreadedControls, createCacheStorageThreadedControls} from './apiManagerProxyUtils';
 import type {ThreadedWorkerType} from '@lib/appManagers/appManagersManager';
-
-// * Total number of items a SlicedArray holds across all of its slices.
-// * SlicedArray.length only reports the first slice, which is not a reliable
-// * measure of "how complete is this history" when comparing snapshots.
-function countHistoryItems(sliced: SlicedArray<any> | undefined) {
-  return sliced ? sliced.slices.reduce((total, slice) => total + slice.length, 0) : 0;
-}
 
 export type Mirrors = {
   state: State,
@@ -258,35 +251,10 @@ class ApiManagerProxy extends MTProtoMessagePort {
         if(!payload.key) { // * mirroring all history storages at once
           batch(() => {
             for(const key in payload.value) {
-              const historyStorage = payload.value[key];
-              const [existingHistoryStorage, setHistoryStorage] = _useHistoryStorage(key as any);
-              if(historyStorage.searchHistorySerialized) {
-                setHistoryStorage(
-                  'searchHistory',
-                  SlicedArray.fromJSON<`${PeerId}_${number}`>(historyStorage.searchHistorySerialized)
-                );
-                delete historyStorage.searchHistorySerialized;
-              } else {
-                // * A worker snapshot can arrive partial or zeroed — e.g. after a
-                // * SharedWorker reconnect on app backgrounding / bfcache restore, or
-                // * after device-sync calls invalidateHistoryCache. For P2P chats the
-                // * message bodies live in IndexedDB (the VMT reads them straight from
-                // * there), so the mirrored SlicedArray can be shorter than what is
-                // * already rendered on the main thread. Replacing wholesale would
-                // * blank the open conversation (issue #99). Only adopt the incoming
-                // * history when it is at least as complete as the one we already hold.
-                const incomingHistory = SlicedArray.fromJSON<number>(historyStorage.historySerialized);
-                delete historyStorage.historySerialized;
-
-                if(countHistoryItems(incomingHistory) >= countHistoryItems(existingHistoryStorage.history)) {
-                  setHistoryStorage('history', incomingHistory);
-                } else {
-                  // Keep the richer in-memory history — and its matching count — intact.
-                  delete historyStorage.count;
-                }
-              }
-
-              setHistoryStorage(historyStorage);
+              // * Unions instead of replacing wholesale — never shrinks a
+              // * non-empty in-memory history with a partial/zeroed worker
+              // * snapshot (issue #99). See applyMirroredHistoryStorage.
+              applyMirroredHistoryStorage(key as any, payload.value[key]);
             }
           });
           return false;
