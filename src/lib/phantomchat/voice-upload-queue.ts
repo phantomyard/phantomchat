@@ -203,13 +203,16 @@ export class VoiceUploadQueue {
   private log: Logger;
   private _queue: QueuedVoiceUpload[] = [];
   private _initialized = false;
+  /** Resolves once IndexedDB restore completes. Awaite this before reading `size`. */
+  readonly ready: Promise<void>;
   private _flushInFlight: Promise<VoiceUploadFlushResult> | null = null;
 
   constructor() {
     this.log = logger('VoiceUploadQueue');
 
-    // Restore from IndexedDB on construction
-    loadFromIndexedDB()
+    // Restore from IndexedDB on construction — exposed via `ready` so callers
+    // can await initialization before checking `size`.
+    this.ready = loadFromIndexedDB()
     .then(entries => {
       this._queue = entries;
       this._initialized = true;
@@ -434,6 +437,14 @@ export class VoiceUploadQueue {
   /** Whether the queue has been initialized from IndexedDB. */
   get initialized(): boolean {
     return this._initialized;
+  }
+
+  /**
+   * Wait for IndexedDB restore to complete. Returns immediately if already
+   * initialized. Safe to call multiple times — the same promise is reused.
+   */
+  awaitReady(): Promise<void> {
+    return this.ready;
   }
 
   /** Clear all pending entries (memory + IndexedDB). */

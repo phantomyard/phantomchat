@@ -1541,26 +1541,30 @@ export class ChatAPI {
       // Drain the voice-upload queue on reconnect — persisted encrypted blobs
       // from failed file uploads (e.g. offline in a tunnel) get re-uploaded
       // to Blossom and completed through the normal send pipeline.
+      // Await ready first — the queue restores from IndexedDB asynchronously;
+      // checking size before that finishes would miss persisted entries.
       const voiceQueue = getVoiceUploadQueue();
-      if(voiceQueue.size > 0) {
-        void import('./message-store').then(({getMessageStore}) => {
-          return voiceQueue.flush(
-            this as any,
-            getMessageStore() as any,
-            (name: string, payload: any) => {
-              if(typeof rootScope !== 'undefined' && typeof (rootScope as any).dispatchEventSingle === 'function') {
-                (rootScope as any).dispatchEventSingle(name, payload);
+      void voiceQueue.awaitReady().then(() => {
+        if(voiceQueue.size > 0) {
+          return import('./message-store').then(({getMessageStore}) => {
+            return voiceQueue.flush(
+              this as any,
+              getMessageStore() as any,
+              (name: string, payload: any) => {
+                if(typeof rootScope !== 'undefined' && typeof (rootScope as any).dispatchEventSingle === 'function') {
+                  (rootScope as any).dispatchEventSingle(name, payload);
+                }
               }
+            );
+          }).then(result => {
+            if(result.flushed > 0) {
+              this.log('[ChatAPI] voice-upload queue flushed:', result.flushed, 'upload(s)');
             }
-          );
-        }).then(result => {
-          if(result.flushed > 0) {
-            this.log('[ChatAPI] voice-upload queue flushed:', result.flushed, 'upload(s)');
-          }
-        }).catch((err: any) => {
-          this.log.error('[ChatAPI] voice-upload queue flush failed:', err);
-        });
-      }
+          }).catch((err: any) => {
+            this.log.error('[ChatAPI] voice-upload queue flush failed:', err);
+          });
+        }
+      });
 
       // Heavy recovery work (backfill) only on a genuine reconnect edge,
       // throttled to one burst per interval — it is heavy on main-thread

@@ -441,6 +441,109 @@ describe('VoiceUploadQueue', () => {
     });
   });
 
+  describe('ready / awaitReady', () => {
+    it('should resolve after IndexedDB restore completes', async () => {
+      const queue = new VoiceUploadQueue();
+      // size is 0 before IDB restore finishes
+      expect(queue.initialized).toBe(false);
+
+      await queue.awaitReady();
+
+      expect(queue.initialized).toBe(true);
+    });
+
+    it('should return the same promise on repeated calls', () => {
+      const queue = new VoiceUploadQueue();
+      const p1 = queue.awaitReady();
+      const p2 = queue.awaitReady();
+      expect(p1).toBe(p2);
+    });
+
+    it('should resolve even if IndexedDB restore fails', async () => {
+      // Force IDB failure by making indexedDB.open return an error
+      (globalThis as any).indexedDB = {
+        open: () => {
+          const req = {onerror: null as any, error: new Error('IDB failure')};
+          setTimeout(() => req.onerror?.({target: req}), 0);
+          return req;
+        }
+      };
+
+      const queue = new VoiceUploadQueue();
+      await queue.awaitReady();
+
+      // Should still be initialized (empty queue, graceful degradation)
+      expect(queue.initialized).toBe(true);
+      expect(queue.size).toBe(0);
+    });
+
+    it('should restore persisted entries from IndexedDB', async () => {
+      const queue = new VoiceUploadQueue();
+      await queue.awaitReady();
+
+      // Enqueue an entry (persists to IDB)
+      await queue.enqueue({
+        peerId: 1, peerPubkey: 'aa', tempMid: 1, type: 'voice',
+        caption: '', ciphertext: makeCiphertext(), privkeyHex: 'a',
+        ownPubkey: 'b', keyHex: 'c', ivHex: 'd', sha256Hex: 'e',
+        mimeType: 'audio/ogg', size: 100
+      });
+      expect(queue.size).toBe(1);
+
+      // Create a new queue instance — it should restore the persisted entry
+      __resetVoiceUploadQueueForTests();
+      const queue2 = new VoiceUploadQueue();
+      await queue2.awaitReady();
+
+      expect(queue2.size).toBe(1);
+    });
+  });
+
+  describe('reconnect flush race condition', () => {
+    it('should report correct size only after ready resolves', async () => {
+      // Simulates the race: IDB restore is slow, and a reconnect
+      // callback arrives before it completes.
+      __resetVoiceUploadQueueForTests();
+
+      // Pre-populate IndexedDB with an entry via a separate queue
+      const setupQueue = new VoiceUploadQueue();
+      await setupQueue.awaitReady();
+      await setupQueue.enqueue({
+        peerId: 12345,
+        peerPubkey: 'aabbccdd11223344',
+        tempMid: 1,
+        type: 'voice',
+        caption: '',
+        ciphertext: makeCiphertext(), privkeyHex: 'a',
+        ownPubkey: 'b', keyHex: 'c', ivHex: 'd', sha256Hex: 'e',
+        mimeType: 'audio/ogg', size: 100
+      });
+      __resetVoiceUploadQueueForTests();
+
+      // Slow down IDB restore to simulate the race
+      const origOpen = (globalThis as any).indexedDB.open;
+      (globalThis as any).indexedDB.open = (...args: any[]) => {
+        const req = origOpen(...args);
+        const origSuccess = req.onsuccess;
+        req.onsuccess = (e: any) => {
+          setTimeout(() => origSuccess(e), 50);
+        };
+        return req;
+      };
+
+      const queue = new VoiceUploadQueue();
+      // Before ready: size is 0 (IDB hasn't restored yet)
+      expect(queue.size).toBe(0);
+
+      // After ready: size reflects persisted entries
+      await queue.awaitReady();
+      expect(queue.size).toBe(1);
+
+      // Restore original
+      (globalThis as any).indexedDB.open = origOpen;
+    });
+  });
+
   describe('bubble re-injection on flush', () => {
     it('should not inject a new bubble — the original optimistic bubble persists', async () => {
       const queue = new VoiceUploadQueue();

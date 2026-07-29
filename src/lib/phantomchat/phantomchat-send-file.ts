@@ -261,7 +261,8 @@ export async function sendFileViaPhantomChat(
     // Persist encrypted blob to the voice-upload queue so it survives the
     // 30s in-memory TTL and auto-retries on relay reconnect. Non-voice
     // types are also queued — any file send benefits from reconnect retry.
-    void getVoiceUploadQueue().enqueue({
+    // Await the write — persistence is the core guarantee of this change.
+    await getVoiceUploadQueue().enqueue({
       peerId,
       peerPubkey: ctx.peerPubkey,
       tempMid,
