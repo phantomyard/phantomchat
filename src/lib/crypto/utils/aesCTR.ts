@@ -68,7 +68,9 @@ export default class CTR {
       const leftLength = this.leftLength;
       const leftLength2 = COUNTER_LENGTH - leftLength;
       // const left = this.encLeft.concat(toEncrypt.slice(0, leftLength2));
-      const left = (new Uint8Array(leftLength)).concat(toEncrypt.slice(0, leftLength2));
+      const slice = toEncrypt.slice(0, leftLength2);
+      const left = new Uint8Array(leftLength + slice.length);
+      left.set(slice, leftLength);
 
       const performed = await this.perform(left);
 
@@ -81,7 +83,11 @@ export default class CTR {
 
     const tail = new Uint8Array(await this.perform(toEncrypt));
 
-    const result = head ? head.concat(tail) : tail;
+    const result = head ? new Uint8Array(head.length + tail.length) : tail;
+    if(head) {
+      (result as Uint8Array).set(head);
+      (result as Uint8Array).set(tail, head.length);
+    }
 
     let length = toEncrypt.length;
     const leftAfter = length % COUNTER_LENGTH;
