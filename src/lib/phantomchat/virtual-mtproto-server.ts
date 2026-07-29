@@ -12,7 +12,7 @@ import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
 import {loadCachedPeerProfile, refreshPeerProfileFromRelays} from './peer-profile-cache';
 import type {NostrBotCommand} from './nostr-profile';
-import {buildPhantomChatMedia} from './phantomchat-media-shape';
+import {buildPhantomChatMedia, healStoredFileRow} from './phantomchat-media-shape';
 import {getPubkey, getMapping, removeMapping} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
 import {isGroupPeer} from './group-types';
@@ -985,14 +985,21 @@ export class PhantomChatMTProtoServer {
         const isOutgoing = stored.isOutgoing ?? (stored.senderPubkey === this.ownPubkey);
         const fromPeerId = isOutgoing ? undefined : absPeerId;
 
-        const media = stored.fileMetadata ? buildPhantomChatMedia(mid, stored.fileMetadata) : undefined;
+        // Heal rows written without nested fileMetadata (queue-flush regression
+        // / interrupted durable-write-first): media is recovered from the raw
+        // envelope JSON in `content`, and the bubble text becomes the caption
+        // instead of the JSON. See healStoredFileRow.
+        const healed = healStoredFileRow(stored);
+        const fm = stored.fileMetadata ?? healed?.fileMetadata;
+        const media = fm ? buildPhantomChatMedia(mid, fm) : undefined;
+        const text = healed ? healed.caption : stored.content;
 
         const msg = this.mapper.createTwebMessage({
           mid,
           peerId: absPeerId,
           fromPeerId,
           date: stored.timestamp,
-          text: stored.content,
+          text,
           isOutgoing,
           media,
           deliveryState: stored.deliveryState,
@@ -1138,14 +1145,18 @@ export class PhantomChatMTProtoServer {
           }
         }
 
-        const media = stored.fileMetadata ? buildPhantomChatMedia(mid, stored.fileMetadata) : undefined;
+        // Same fileMetadata heal as the 1:1 getHistory path (see there).
+        const healed = healStoredFileRow(stored);
+        const fm = stored.fileMetadata ?? healed?.fileMetadata;
+        const media = fm ? buildPhantomChatMedia(mid, fm) : undefined;
+        const text = healed ? healed.caption : stored.content;
 
         const msg = this.mapper.createTwebMessage({
           mid,
           peerId, // negative — peer_id becomes peerChat
           fromPeerId,
           date: stored.timestamp,
-          text: stored.content,
+          text,
           isOutgoing,
           media,
           deliveryState: stored.deliveryState,

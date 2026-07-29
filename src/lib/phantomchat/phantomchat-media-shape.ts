@@ -37,6 +37,90 @@ export interface PhantomChatFileMetadata {
   servers?: string[];
 }
 
+export interface HealedFileRow {
+  fileMetadata: PhantomChatFileMetadata;
+  /** Caption recovered from the envelope — the text the bubble should show. */
+  caption: string;
+}
+
+/**
+ * Defensive heal for stored file rows that lost their nested `fileMetadata`.
+ *
+ * Two known write paths produced such rows:
+ *  - ChatAPI.sendMessage's durable-write-first pre-save (content = the raw
+ *    file-envelope JSON, no fileMetadata) when the app was killed / the queue
+ *    flush was interrupted before the authoritative merge landed.
+ *  - The voice-upload-queue flush before the save-contract fix, which wrote
+ *    flat top-level media fields and (via merge) could leave the pre-saved
+ *    JSON content in place.
+ *
+ * In both cases the row's `content` still holds the full file envelope that
+ * ChatAPI.sendFileMessage built ({url, sha256, mimeType, size, key, iv,
+ * mediaType, servers, duration, waveform, caption?}), so the media is fully
+ * recoverable at render time. Render-only heal — the row in IndexedDB is not
+ * rewritten; a corrupt row simply heals on every read. Returns undefined when
+ * the row has no recoverable media (healthy text row, non-envelope JSON, or
+ * an empty-content row whose media info is genuinely gone).
+ */
+export function healStoredFileRow(stored: {
+  type?: string;
+  content?: string;
+  fileMetadata?: PhantomChatFileMetadata;
+}): HealedFileRow | undefined {
+  if(stored.fileMetadata) return undefined; // healthy row — nothing to heal
+  if(stored.type !== 'file' || !stored.content) return undefined;
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(stored.content);
+  } catch{
+    return undefined;
+  }
+  // Envelope shape check: the fields sendFileMessage always writes.
+  if(!parsed ||
+    typeof parsed.url !== 'string' ||
+    typeof parsed.sha256 !== 'string' ||
+    typeof parsed.key !== 'string' ||
+    typeof parsed.iv !== 'string') {
+    return undefined;
+  }
+
+  // Waveform travels as a base64 string on healthy rows, but some send paths
+  // serialized it as a raw byte array on the wire. Convert so the bubble's
+  // amplitude bars survive the heal.
+  let waveform: string | undefined;
+  if(typeof parsed.waveform === 'string') {
+    waveform = parsed.waveform;
+  } else if(Array.isArray(parsed.waveform) && parsed.waveform.length) {
+    try {
+      const bytes = Uint8Array.from(parsed.waveform);
+      let bin = '';
+      for(let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      waveform = btoa(bin);
+    } catch{
+      waveform = undefined;
+    }
+  }
+
+  return {
+    caption: typeof parsed.caption === 'string' ? parsed.caption : '',
+    fileMetadata: {
+      url: parsed.url,
+      sha256: parsed.sha256,
+      mimeType: typeof parsed.mimeType === 'string' ? parsed.mimeType : 'application/octet-stream',
+      size: typeof parsed.size === 'number' ? parsed.size : 0,
+      width: typeof parsed.width === 'number' ? parsed.width : undefined,
+      height: typeof parsed.height === 'number' ? parsed.height : undefined,
+      keyHex: parsed.key,
+      ivHex: parsed.iv,
+      duration: typeof parsed.duration === 'number' ? parsed.duration : undefined,
+      waveform,
+      mediaType: parsed.mediaType,
+      ...(Array.isArray(parsed.servers) && parsed.servers.length ? {servers: parsed.servers} : {})
+    }
+  };
+}
+
 export function buildPhantomChatMedia(mid: number, fm: PhantomChatFileMetadata): any {
   const mime = fm.mimeType || '';
   // Prefer the explicit, sender-tagged media class. Fall back to the legacy
