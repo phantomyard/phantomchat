@@ -238,6 +238,10 @@ export class VoiceUploadQueue {
    * when all upload attempts are exhausted.
    */
   async enqueue(entry: Omit<QueuedVoiceUpload, 'id' | 'timestamp' | 'retryCount'>): Promise<string> {
+    // Wait for IndexedDB restore so the constructor's loadFromIndexedDB
+    // doesn't overwrite this entry when its .then() assigns this._queue.
+    await this.ready;
+
     const id = `vu-${Date.now()}-${_idCounter++}`;
     const full: QueuedVoiceUpload = {
       ...entry,

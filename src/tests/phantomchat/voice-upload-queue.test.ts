@@ -646,6 +646,111 @@ describe('VoiceUploadQueue', () => {
       // Restore original
       (globalThis as any).indexedDB.open = origOpen;
     });
+
+    it('should block enqueue until restore completes (startup-enqueue interleaving)', async () => {
+      // Regression: enqueue() pushes into _queue, then saveToIndexedDB.
+      // If the constructor's loadFromIndexedDB resolves later and does
+      // this._queue = entries, the just-enqueued entry is silently lost.
+      __resetVoiceUploadQueueForTests();
+
+      // Install a mock where getAll (used by loadFromIndexedDB) is slow
+      // but put (used by saveToIndexedDB) is fast. This way enqueue
+      // can write to IDB quickly, but the constructor's restore is pending.
+      const stores = new Map<string, Map<any, any>>();
+      const slowGetAllMs = 200;
+
+      const slowMockStore = (storeName: string) => {
+        if(!stores.has(storeName)) stores.set(storeName, new Map());
+        const data = stores.get(storeName)!;
+        return {
+          createIndex: () => ({}),
+          put: (entry: any) => {
+            const req = {onsuccess: null as any, onerror: null as any, error: null as any};
+            data.set(entry.id, entry);
+            setTimeout(() => req.onsuccess?.({target: req} as any), 0);
+            return req;
+          },
+          delete: (id: string) => {
+            const req = {onsuccess: null as any, onerror: null as any, error: null as any};
+            data.delete(id);
+            setTimeout(() => req.onsuccess?.({target: req} as any), 0);
+            return req;
+          },
+          getAll: () => {
+            const req = {result: [...data.values()], onsuccess: null as any, onerror: null as any, error: null as any};
+            // Slow getAll — simulates IDB restore taking time
+            setTimeout(() => req.onsuccess?.({target: req} as any), slowGetAllMs);
+            return req;
+          },
+          index: () => ({
+            openCursor: () => {
+              const req = {result: null as any, onsuccess: null as any, onerror: null as any, error: null as any};
+              setTimeout(() => req.onsuccess?.({target: req} as any), 0);
+              return req;
+            }
+          })
+        };
+      };
+
+      (globalThis as any).indexedDB = {
+        open: (_name: string, _version: number) => {
+          const req = {
+            result: {
+              objectStoreNames: {contains: () => false},
+              createObjectStore: () => slowMockStore('voice-uploads'),
+              transaction: (storeName: string, _mode: string) => ({
+                objectStore: () => slowMockStore(storeName)
+              })
+            },
+            onsuccess: null as any,
+            onerror: null as any,
+            onupgradeneeded: null as any,
+            error: null as any
+          };
+          setTimeout(() => {
+            req.onupgradeneeded?.({target: req});
+            req.onsuccess?.({target: req});
+          }, 0);
+          return req;
+        }
+      };
+
+      const queue = new VoiceUploadQueue();
+
+      // Start enqueue immediately — before restore completes
+      const enqueuePromise = queue.enqueue({
+        peerId: 99999,
+        peerPubkey: 'ffff000011112222',
+        tempMid: 42,
+        type: 'voice',
+        caption: '',
+        ciphertext: makeCiphertext(),
+        privkeyHex: 'ff',
+        ownPubkey: 'aa',
+        keyHex: 'bb',
+        ivHex: 'cc',
+        sha256Hex: 'dd',
+        mimeType: 'audio/ogg',
+        size: 256
+      });
+
+      // Restore takes ~200ms (slow getAll), enqueue's IDB write is fast (~1ms).
+      // enqueue() awaits this.ready, so the promise must still be pending.
+      let resolved = false;
+      enqueuePromise.then(() => { resolved = true; });
+      await new Promise(r => setTimeout(r, 50));
+      expect(resolved).toBe(false);
+
+      // Now let restore + enqueue complete
+      const id = await enqueuePromise;
+      expect(id).toBeTruthy();
+
+      // Entry must be in the live queue — not lost to the restore overwrite
+      expect(queue.size).toBe(1);
+
+      // Reinstall the standard test mock for subsequent tests
+      idb.install();
+    });
   });
 
   describe('bubble re-injection on flush', () => {
