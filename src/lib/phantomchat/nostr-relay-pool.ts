@@ -188,8 +188,17 @@ const RELAY_FAILOVER_THRESHOLD = 3;
 // in the meantime (publish is fire-and-forget across connected relays).
 const RELAY_FLAP_WINDOW_MS = 30_000;       // connected < this before dropping = a flap
 const RELAY_FLAP_THRESHOLD = 3;            // consecutive flaps before cooldown kicks in
+// Pool cooldown is a flat 60s — a long bench risks ALL relays sitting in
+// cooldown at once (the all-red stall).
 const RELAY_COOLDOWN_BASE_MS = 60_000;     // first cooldown span
-const RELAY_COOLDOWN_MAX_MS = 15 * 60_000; // cap so a relay is always eventually retried
+const RELAY_COOLDOWN_MAX_MS = 60_000;      // flat cap — see above
+const MAX_BENCHED_RELAYS = 3;              // hard cap on relays cooling down at once
+// Hard cap on simultaneously benched relays. Benchings quarantine one sick
+// relay so the others carry delivery — but with no cap, a sick network segment
+// (or a hostile/flaky relay set) can bench the whole pool and leave only the
+// liveness floor dialing one relay at a time. At most this many relays may be
+// cooling down at once; further bench attempts are refused (the relay keeps
+// its slot and its own retry loop instead).
 // Network-event detection: when several relays drop out of 'connected' inside
 // the same short window, that's the DEVICE's network blipping (radio sleep,
 // WiFi↔cellular handoff), not N relays independently turning sick. Flap-
@@ -1997,8 +2006,17 @@ export class NostrRelayPool {
    * it from the active set, and hard-disconnects to stop its own retry loop.
    */
   private benchRelay(url: string, cooldownMs: number): void {
+    const now = Date.now();
+    let benched = 0;
+    for(const h of this.relayHealth.values()) {
+      if(h.cooldownUntil > now) benched++;
+    }
+    if(benched >= MAX_BENCHED_RELAYS) {
+      this.log('[NostrRelayPool] bench cap reached (' + MAX_BENCHED_RELAYS + ') — keeping', url, 'active despite failures');
+      return;
+    }
     const health = this.relayHealth.get(url);
-    if(health) health.cooldownUntil = Date.now() + cooldownMs;
+    if(health) health.cooldownUntil = now + cooldownMs;
     this.activeUrls.delete(url);
     this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
   }
