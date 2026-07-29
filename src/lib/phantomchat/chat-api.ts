@@ -31,6 +31,7 @@ import {phantomchatReactionsReceive} from './phantomchat-reactions-receive';
 import {phantomchatTypingReceive} from './phantomchat-typing-receive';
 import {setChatAPI as setReactionsChatAPI} from './phantomchat-reactions-publish';
 import {swallowHandler} from './log-swallow';
+import {getVoiceUploadQueue} from './voice-upload-queue';
 
 /**
  * Optional P2P fast-path (issue #61). Implemented by TransportSelector; kept as
@@ -1534,6 +1535,30 @@ export class ChatAPI {
       if(this.offlineQueue && this.activePeer) {
         this.offlineQueue.flush(this.activePeer).catch((err: any) => {
           this.log.error('[ChatAPI] auto-flush failed:', err);
+        });
+      }
+
+      // Drain the voice-upload queue on reconnect — persisted encrypted blobs
+      // from failed file uploads (e.g. offline in a tunnel) get re-uploaded
+      // to Blossom and completed through the normal send pipeline.
+      const voiceQueue = getVoiceUploadQueue();
+      if(voiceQueue.size > 0) {
+        void import('./message-store').then(({getMessageStore}) => {
+          return voiceQueue.flush(
+            this as any,
+            getMessageStore() as any,
+            (name: string, payload: any) => {
+              if(typeof rootScope !== 'undefined' && typeof (rootScope as any).dispatchEventSingle === 'function') {
+                (rootScope as any).dispatchEventSingle(name, payload);
+              }
+            }
+          );
+        }).then(result => {
+          if(result.flushed > 0) {
+            this.log('[ChatAPI] voice-upload queue flushed:', result.flushed, 'upload(s)');
+          }
+        }).catch((err: any) => {
+          this.log.error('[ChatAPI] voice-upload queue flush failed:', err);
         });
       }
 

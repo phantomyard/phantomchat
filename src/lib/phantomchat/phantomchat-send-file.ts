@@ -13,6 +13,7 @@
 
 import {encryptFile} from './file-crypto';
 import {uploadToBlossomWithProgress} from './blossom-upload-progress';
+import {getVoiceUploadQueue} from './voice-upload-queue';
 
 // Issue #111: monotonic sub-second slot counter for collision-resistant mids
 // when album sends fire N file uploads in the same second. Module-level so
@@ -257,6 +258,30 @@ export async function sendFileViaPhantomChat(
     ctx.log.warn('[sendFile] upload failed:', msg);
     ctx.dispatch('phantomchat_file_upload_failed', {peerId, mid: tempMid, error: msg});
     const p = PENDING.get(tempMid); if(p) p.failedAt = Date.now();
+    // Persist encrypted blob to the voice-upload queue so it survives the
+    // 30s in-memory TTL and auto-retries on relay reconnect. Non-voice
+    // types are also queued — any file send benefits from reconnect retry.
+    void getVoiceUploadQueue().enqueue({
+      peerId,
+      peerPubkey: ctx.peerPubkey,
+      tempMid,
+      type,
+      caption,
+      width: args.width,
+      height: args.height,
+      duration: args.duration,
+      waveform: args.waveform,
+      ciphertext,
+      privkeyHex: ctx.privkeyHex,
+      ownPubkey: ctx.ownPubkey,
+      keyHex,
+      ivHex,
+      sha256Hex,
+      mimeType: (blob.type || 'application/octet-stream'),
+      size: blob.size
+    }).catch(qErr => {
+      ctx.log.warn('[sendFile] failed to enqueue to voice-upload queue:', qErr);
+    });
     return {ok: false, reason: msg};
   }
 
