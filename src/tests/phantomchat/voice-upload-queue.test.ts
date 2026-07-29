@@ -176,6 +176,110 @@ describe('VoiceUploadQueue', () => {
       expect(queue.size).toBe(1);
     });
 
+    it('should not resolve until IndexedDB write completes (durability)', async () => {
+      // Install a controllable IDB mock — put() resolves only when we say so
+      let resolveWrite: (() => void) | null = null;
+      const writeCompleted = new Promise<void>(r => { resolveWrite = r; });
+      let writeStarted = false;
+
+      (globalThis as any).indexedDB = {
+        open: () => {
+          const req = {
+            result: {
+              objectStoreNames: {contains: () => false},
+              createObjectStore: () => ({
+                createIndex: () => ({}),
+                put: () => {
+                  writeStarted = true;
+                  const req = {onsuccess: null as any, onerror: null as any, error: null as any};
+                  // Block until we explicitly resolve
+                  writeCompleted.then(() => req.onsuccess?.({target: req} as any));
+                  return req;
+                },
+                delete: () => {
+                  const req = {onsuccess: null as any, onerror: null as any, error: null as any};
+                  setTimeout(() => req.onsuccess?.({target: req} as any), 0);
+                  return req;
+                },
+                getAll: () => {
+                  const req = {result: [] as any[], onsuccess: null as any, onerror: null as any, error: null as any};
+                  setTimeout(() => req.onsuccess?.({target: req} as any), 0);
+                  return req;
+                }
+              }),
+              transaction: (_storeName: string, _mode: string) => ({
+                objectStore: () => ({
+                  createIndex: () => ({}),
+                  put: () => {
+                    writeStarted = true;
+                    const req = {onsuccess: null as any, onerror: null as any, error: null as any};
+                    writeCompleted.then(() => req.onsuccess?.({target: req} as any));
+                    return req;
+                  },
+                  delete: () => {
+                    const req = {onsuccess: null as any, onerror: null as any, error: null as any};
+                    setTimeout(() => req.onsuccess?.({target: req} as any), 0);
+                    return req;
+                  },
+                  getAll: () => {
+                    const req = {result: [] as any[], onsuccess: null as any, onerror: null as any, error: null as any};
+                    setTimeout(() => req.onsuccess?.({target: req} as any), 0);
+                    return req;
+                  }
+                })
+              })
+            },
+            onsuccess: null as any,
+            onerror: null as any,
+            onupgradeneeded: null as any,
+            error: null as any
+          };
+          setTimeout(() => {
+            req.onupgradeneeded?.({target: req});
+            req.onsuccess?.({target: req});
+          }, 0);
+          return req;
+        }
+      };
+
+      const queue = new VoiceUploadQueue();
+      await queue.awaitReady();
+
+      // Start enqueue — it should block because IDB write is pending
+      const enqueuePromise = queue.enqueue({
+        peerId: 12345,
+        peerPubkey: 'aabbccdd11223344',
+        tempMid: 1,
+        type: 'voice',
+        caption: '',
+        ciphertext: makeCiphertext(),
+        privkeyHex: 'a',
+        ownPubkey: 'b',
+        keyHex: 'c',
+        ivHex: 'd',
+        sha256Hex: 'e',
+        mimeType: 'audio/ogg',
+        size: 100
+      });
+
+      // Give the microtask queue a tick — enqueue should have started but not resolved
+      await new Promise(r => setTimeout(r, 10));
+      expect(writeStarted).toBe(true);
+
+      // The promise should still be pending
+      let resolved = false;
+      enqueuePromise.then(() => { resolved = true; });
+      await new Promise(r => setTimeout(r, 10));
+      expect(resolved).toBe(false);
+
+      // Now let the write complete
+      resolveWrite!();
+      const id = await enqueuePromise;
+
+      expect(resolved).toBe(true);
+      expect(id).toMatch(/^vu-/);
+    });
+
     it('should generate unique IDs', async () => {
       const queue = new VoiceUploadQueue();
       await new Promise(r => setTimeout(r, 10));

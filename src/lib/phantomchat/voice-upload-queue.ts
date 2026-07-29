@@ -248,10 +248,17 @@ export class VoiceUploadQueue {
 
     this._queue.push(full);
 
-    // Persist to IndexedDB — fire and forget; failures are non-fatal
-    saveToIndexedDB(full).catch(err => {
+    // Persist to IndexedDB — awaited so the write is durable before returning.
+    // If the write fails, remove from in-memory queue and re-throw.
+    try {
+      await saveToIndexedDB(full);
+    } catch(err) {
+      // Roll back in-memory push so queue stays consistent
+      const idx = this._queue.findIndex(e => e.id === id);
+      if(idx !== -1) this._queue.splice(idx, 1);
       this.log.warn('[VoiceUploadQueue] failed to persist to IndexedDB:', err);
-    });
+      throw err;
+    }
 
     this.log('[VoiceUploadQueue] enqueued voice upload:', id, 'for peer:', entry.peerPubkey.slice(0, 8) + '…');
     return id;
