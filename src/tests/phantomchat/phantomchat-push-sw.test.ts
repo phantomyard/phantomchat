@@ -30,6 +30,32 @@ function buildEvent(payload: any): any {
   return {data: {json: () => payload}};
 }
 
+// Seed the virtual-peers DB the way the app really creates it: store name
+// 'mappings' (matching STORE_NAME in virtual-peers-db.ts), keyPath 'pubkey'.
+// If the SW ever reads the wrong store name again, this lookup returns null
+// and the sender-name assertions below fail.
+function seedVirtualPeer(pubkey: string, displayName: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    indexedDB.deleteDatabase('phantomchat-virtual-peers');
+    const open = indexedDB.open('phantomchat-virtual-peers', 2);
+    open.onupgradeneeded = () => {
+      const db = open.result;
+      if(!db.objectStoreNames.contains('mappings')) {
+        const store = db.createObjectStore('mappings', {keyPath: 'pubkey'});
+        store.createIndex('peerId', 'peerId', {unique: false});
+      }
+    };
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction('mappings', 'readwrite');
+      tx.objectStore('mappings').put({pubkey, peerId: 1, displayName, addedAt: 1, updatedAt: 1});
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+}
+
 describe('phantomchat-push SW handler', () => {
   beforeEach(async() => {
     showNotification.mockClear();
@@ -39,6 +65,7 @@ describe('phantomchat-push SW handler', () => {
     (loadIdentitySW as any).mockReset();
     await destroyStorage();
     indexedDB.deleteDatabase('phantomchat-push');
+    indexedDB.deleteDatabase('phantomchat-virtual-peers');
   });
   afterEach(() => destroyStorage());
 
@@ -81,6 +108,26 @@ describe('phantomchat-push SW handler', () => {
     const [title, opts] = showNotification.mock.calls[0];
     expect(title).toMatch(/sender|sender_pk/);
     expect(opts.body).toContain('Hello world');
+  });
+
+  it('preview B resolves sender display name from the virtual-peers DB', async() => {
+    await setPreviewLevel('B');
+    await seedVirtualPeer('resolvable_pk', 'Alice Example');
+    (loadIdentitySW as any).mockResolvedValue({publicKey: 'p', privateKey: '00'.repeat(32)});
+    (unwrapNip17Message as any).mockReturnValue({
+      pubkey: 'resolvable_pk',
+      content: 'hi'
+    });
+    await onPhantomChatPush(buildEvent({
+      app: 'phantomchat-webpush-relay',
+      version: 1,
+      event_id: 'evtName',
+      recipient_pubkey: 'r',
+      phantomchat_event: '{}'
+    }));
+    expect(showNotification).toHaveBeenCalledTimes(1);
+    const [title] = showNotification.mock.calls[0];
+    expect(title).toBe('Alice Example');
   });
 
   it('preview C decrypts but masks content', async() => {
