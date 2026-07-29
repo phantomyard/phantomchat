@@ -62,7 +62,7 @@ import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
 import CacheStorageController, {CacheStorageDbName} from '@lib/files/cacheStorage';
 import type {PushSingleManager} from '@appManagers/pushSingleManager';
 import getDeepProperty from '@helpers/object/getDeepProperty';
-import {_changeHistoryStorageKey, _deleteHistoryStorage, _iterateHistoryStorages, _useHistoryStorage} from '@stores/historyStorages';
+import {_changeHistoryStorageKey, _deleteHistoryStorage, _iterateHistoryStorages, _useHistoryStorage, applyMirroredHistoryStorage} from '@stores/historyStorages';
 import SlicedArray, {SliceEnd} from '@helpers/slicedArray';
 import {createHistoryStorageSearchSlicedArray} from '@appManagers/utils/messages/createHistoryStorage';
 import tabId from '@config/tabId';
@@ -251,23 +251,10 @@ class ApiManagerProxy extends MTProtoMessagePort {
         if(!payload.key) { // * mirroring all history storages at once
           batch(() => {
             for(const key in payload.value) {
-              const historyStorage = payload.value[key];
-              const [, setHistoryStorage] = _useHistoryStorage(key as any);
-              if(historyStorage.searchHistorySerialized) {
-                setHistoryStorage(
-                  'searchHistory',
-                  SlicedArray.fromJSON<`${PeerId}_${number}`>(historyStorage.searchHistorySerialized)
-                );
-                delete historyStorage.searchHistorySerialized;
-              } else {
-                setHistoryStorage(
-                  'history',
-                  SlicedArray.fromJSON<number>(historyStorage.historySerialized)
-                );
-                delete historyStorage.historySerialized;
-              }
-
-              setHistoryStorage(historyStorage);
+              // * Unions instead of replacing wholesale — never shrinks a
+              // * non-empty in-memory history with a partial/zeroed worker
+              // * snapshot (issue #99). See applyMirroredHistoryStorage.
+              applyMirroredHistoryStorage(key as any, payload.value[key]);
             }
           });
           return false;

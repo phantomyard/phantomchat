@@ -755,6 +755,22 @@ export class AppImManager extends EventListenerBase<{
       });
     });
 
+    // Issue #99: on bfcache restore (pageshow with e.persisted) the page's JS
+    // heap is thawed and the SharedWorker may have reconnected and re-mirrored a
+    // history snapshot while we were frozen. The mirror handler now preserves the
+    // richer in-memory history, but we still refresh the open conversation so its
+    // bubbles reflect the authoritative IndexedDB state once the page returns.
+    window.addEventListener('pageshow', (e) => {
+      if(!e.persisted) {
+        return;
+      }
+
+      const peerId = this.chat?.peerId;
+      if(peerId) {
+        rootScope.dispatchEvent('history_reload', peerId);
+      }
+    });
+
     setInterval(setAuthorized, ONE_DAY);
     setAuthorized();
 
