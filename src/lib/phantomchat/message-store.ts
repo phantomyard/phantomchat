@@ -379,29 +379,63 @@ export class MessageStore {
     offsetId: number = 0,
     addOffset: number = 0
   ): Promise<StoredMessage[]> {
+    const {messages} = await this.getMessagesPage(conversationId, limit, offsetId, addOffset);
+    return messages;
+  }
+
+  /**
+   * Paginated history read that ALSO reports the totals the client needs to
+   * decide whether the top/bottom of history has been reached.
+   *
+   * Returns the same window `getMessagesByOffsetId` would, plus:
+   *  - `total`          — total messages stored for the conversation.
+   *  - `offsetIdOffset` — absolute position of `messages[0]` within the full
+   *                       newest-first list (Telegram's `offset_id_offset`).
+   *
+   * The Virtual MTProto server maps these onto `messages.messagesSlice` so
+   * tweb's `isHistoryResultEnd` knows the true total instead of assuming the
+   * page length IS the total. Previously it reported `count = page length`,
+   * so every first page looked like the whole history: the scroller marked
+   * the top as reached and never paged older messages in — even though they
+   * were sitting in IndexedDB. This is the scroll-back-is-dead fix.
+   *
+   * Ordering is mid-descending for BOTH the initial page and paginated pages,
+   * so the two never disagree (mid = timestamp * 1e6 + slot, i.e. mid order is
+   * chronological order, which is also the order tweb rebuilds the slice in).
+   *
+   * @param conversationId - Deterministic conversation ID
+   * @param limit - Max messages to return
+   * @param offsetId - Anchor message id (0 = start from newest)
+   * @param addOffset - Positional shift relative to anchor (negative = newer)
+   */
+  async getMessagesPage(
+    conversationId: string,
+    limit: number = DEFAULT_LIMIT,
+    offsetId: number = 0,
+    addOffset: number = 0
+  ): Promise<{messages: StoredMessage[]; total: number; offsetIdOffset: number}> {
     // Full sorted fetch is required because the IndexedDB schema indexes
     // on timestamp, not mid. A cursor scan is the only way to locate the
     // anchor message by mid before computing the window slice.
     const allMsgs = await this.getAllMessagesSorted(conversationId);
-    if(allMsgs.length === 0) return [];
+    const total = allMsgs.length;
+    if(total === 0) return {messages: [], total: 0, offsetIdOffset: 0};
 
     // Sort by mid descending so anchor-based pagination is deterministic
     // even when two messages share a timestamp.
     allMsgs.sort((a, b) => b.mid - a.mid);
 
-    if(offsetId <= 0) {
-      const start = Math.max(0, addOffset);
-      return allMsgs.slice(start, start + limit);
+    let start: number;
+    if(offsetId > 0) {
+      const offsetIndex = allMsgs.findIndex((m) => m.mid === offsetId);
+      // Anchor not found — fall back to the newest page rather than empty.
+      start = offsetIndex === -1 ? 0 : Math.max(0, offsetIndex + addOffset);
+    } else {
+      start = Math.max(0, addOffset);
     }
 
-    const offsetIndex = allMsgs.findIndex((m) => m.mid === offsetId);
-    if(offsetIndex === -1) {
-      // Anchor not found — fall back to newest page rather than empty.
-      return allMsgs.slice(0, limit);
-    }
-
-    const start = Math.max(0, offsetIndex + addOffset);
-    return allMsgs.slice(start, start + limit);
+    const messages = allMsgs.slice(start, start + limit);
+    return {messages, total, offsetIdOffset: start};
   }
 
   /**

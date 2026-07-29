@@ -53,6 +53,7 @@ const mockMessage = {
 const mockStore = vi.hoisted(() => ({
   getAllConversationIds: vi.fn(),
   getMessages: vi.fn(),
+  getMessagesPage: vi.fn(),
   getConversationId: vi.fn((a: string, b: string) => [a, b].sort().join(':')),
   saveMessage: vi.fn(),
   deleteByMid: vi.fn(),
@@ -161,6 +162,7 @@ describe('PhantomChatMTProtoServer — error + malformed input paths', () => {
 
     mockStore.getAllConversationIds.mockResolvedValue([CONVERSATION_ID]);
     mockStore.getMessages.mockResolvedValue([mockMessage]);
+    mockStore.getMessagesPage.mockResolvedValue({messages: [mockMessage], total: 1, offsetIdOffset: 0});
     mockStore.getByMid.mockResolvedValue(undefined);
     mockGetPubkey.mockResolvedValue(PEER_PUBKEY);
 
@@ -189,16 +191,17 @@ describe('PhantomChatMTProtoServer — error + malformed input paths', () => {
     expect(result.messages).toEqual([]);
   });
 
-  it('getHistory with missing offset_id/offset_date falls back to defaults', async() => {
-    // No offset_* passed → limit default 50 and offsetDate undefined
+  it('getHistory with missing offset_id/add_offset falls back to defaults', async() => {
+    // No offset_* passed → limit default 50, offsetId 0, addOffset 0
     const result = await server.handleMethod('messages.getHistory', {
       peer: {user_id: PEER_ID}
     });
     expect(result._).toBe('messages.messages');
-    expect(mockStore.getMessages).toHaveBeenCalledWith(
+    expect(mockStore.getMessagesPage).toHaveBeenCalledWith(
       expect.any(String),
       50,
-      undefined
+      0,
+      0
     );
   });
 
