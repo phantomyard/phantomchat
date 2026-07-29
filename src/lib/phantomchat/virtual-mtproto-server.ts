@@ -889,6 +889,38 @@ export class PhantomChatMTProtoServer {
     };
   }
 
+  /**
+   * Shape a history response so the client knows how much history actually
+   * exists. When the returned window does not cover the whole conversation
+   * from the newest message, this is a `messages.messagesSlice` carrying the
+   * true stored `count` and `offset_id_offset` (position of `messages[0]` in
+   * the full list). tweb's `isHistoryResultEnd` uses those to decide whether
+   * the top of history is reached; if we instead reported `count = page
+   * length` (as this server used to) every first page looked complete and
+   * scroll-back never fired, hiding older messages that were present in IDB.
+   */
+  private buildHistoryResult(opts: {
+    messages: any[];
+    users: any[];
+    chats: any[];
+    total: number;
+    offsetIdOffset: number;
+  }): any {
+    const {messages, users, chats, total, offsetIdOffset} = opts;
+    const isComplete = offsetIdOffset === 0 && messages.length >= total;
+    if(isComplete) {
+      return {_: 'messages.messages', messages, users, chats, count: total};
+    }
+    return {
+      _: 'messages.messagesSlice',
+      messages,
+      users,
+      chats,
+      count: total,
+      offset_id_offset: offsetIdOffset
+    };
+  }
+
   private async getHistory(params: any): Promise<any> {
     // If called with a pinned filter, return empty (P2P doesn't support pinning)
     const filterType = params?.filter?._ || '';
@@ -923,16 +955,15 @@ export class PhantomChatMTProtoServer {
 
     const limit = params?.limit ?? 50;
     // When tweb does scroll-restoration it sends offset_id + add_offset (derived
-    // from backLimit). PhantomChat previously ignored both, so switching back to
-    // a scrolled-up chat re-opened at the newest page instead of the restored
-    // position. Use getMessagesByOffsetId to paginate by mid instead of only by
-    // timestamp.  For plain newest-first fetches (offset_id = 0, add_offset = 0)
-    // this is equivalent to the old behaviour.
+    // from backLimit). getMessagesPage paginates by mid (chronological) and, for
+    // plain newest-first fetches (offset_id = 0, add_offset = 0), returns the
+    // newest page — the same window the old code did. It ALSO reports the true
+    // stored total + offset so buildHistoryResult can tell tweb there is older
+    // history left to page in.
     const offsetId  = params?.offset_id  ?? 0;
     const addOffset = params?.add_offset ?? 0;
-    const storedMsgs = offsetId || addOffset ?
-      await store.getMessagesByOffsetId(convId, limit, offsetId, addOffset) :
-      await store.getMessages(convId, limit, params?.offset_date || undefined);
+    const {messages: storedMsgs, total, offsetIdOffset} =
+      await store.getMessagesPage(convId, limit, offsetId, addOffset);
 
     const messages: any[] = [];
     const users: any[] = [];
@@ -973,13 +1004,7 @@ export class PhantomChatMTProtoServer {
       }
     }
 
-    return {
-      _: 'messages.messages',
-      messages,
-      users,
-      chats: [],
-      count: messages.length
-    };
+    return this.buildHistoryResult({messages, users, chats: [], total, offsetIdOffset});
   }
 
   /**
@@ -1069,9 +1094,8 @@ export class PhantomChatMTProtoServer {
     const limit = params?.limit ?? 50;
     const offsetId  = params?.offset_id  ?? 0;
     const addOffset = params?.add_offset ?? 0;
-    const storedMsgs = offsetId || addOffset ?
-      await store.getMessagesByOffsetId(convId, limit, offsetId, addOffset) :
-      await store.getMessages(convId, limit, params?.offset_date || undefined);
+    const {messages: storedMsgs, total, offsetIdOffset} =
+      await store.getMessagesPage(convId, limit, offsetId, addOffset);
 
     const messages: any[] = [];
     const users: any[] = [];
@@ -1133,13 +1157,7 @@ export class PhantomChatMTProtoServer {
       }
     }
 
-    return {
-      _: 'messages.messages',
-      messages,
-      users,
-      chats: [chat],
-      count: messages.length
-    };
+    return this.buildHistoryResult({messages, users, chats: [chat], total, offsetIdOffset});
   }
 
   private async searchMessages(params: any): Promise<any> {

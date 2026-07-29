@@ -32,6 +32,7 @@ const mockGetAllConversationIds = vi.hoisted(() => vi.fn());
 const mockGetTombstone = vi.hoisted(() => vi.fn());
 const mockDeleteMessages = vi.hoisted(() => vi.fn());
 const mockGetMessages = vi.hoisted(() => vi.fn());
+const mockGetMessagesPage = vi.hoisted(() => vi.fn());
 const mockGroupSave = vi.hoisted(() => vi.fn());
 const mockG2p = vi.hoisted(() => vi.fn());
 
@@ -41,6 +42,7 @@ vi.mock('@lib/phantomchat/message-store', () => ({
     getTombstone: mockGetTombstone,
     deleteMessages: mockDeleteMessages,
     getMessages: mockGetMessages,
+    getMessagesPage: mockGetMessagesPage,
     getConversationId: (a: string, b: string) => [a, b].sort().join(':')
   })
 }));
@@ -64,7 +66,9 @@ describe('getGroupHistory — resurrection guard', () => {
   beforeEach(async() => {
     vi.resetModules();
     [mockGetByPeerId, mockGetAllConversationIds, mockGetTombstone,
-      mockDeleteMessages, mockGetMessages, mockGroupSave, mockG2p].forEach((m) => m.mockReset());
+      mockDeleteMessages, mockGetMessages, mockGetMessagesPage, mockGroupSave, mockG2p].forEach((m) => m.mockReset());
+
+    mockGetMessagesPage.mockResolvedValue({messages: [], total: 0, offsetIdOffset: 0});
 
     vi.doMock('@lib/phantomchat/message-store', () => ({
       getMessageStore: () => ({
@@ -72,6 +76,7 @@ describe('getGroupHistory — resurrection guard', () => {
         getTombstone: mockGetTombstone,
         deleteMessages: mockDeleteMessages,
         getMessages: mockGetMessages,
+        getMessagesPage: mockGetMessagesPage,
         getConversationId: (a: string, b: string) => [a, b].sort().join(':')
       })
     }));

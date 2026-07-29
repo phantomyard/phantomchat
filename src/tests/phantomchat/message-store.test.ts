@@ -241,6 +241,37 @@ describe('MessageStore', () => {
     });
   });
 
+  describe('getMessagesPage', () => {
+    it('reports the true stored total even when the window is a single page', async() => {
+      const convId = uniqueConvId();
+      for(let i = 1; i <= 5; i++) {
+        await store.saveMessage(makeMsg({eventId: `pg-${i}`, conversationId: convId, timestamp: i, mid: 1000 + i}));
+      }
+      const page = await store.getMessagesPage(convId, 2, 0, 0);
+      expect(page.messages.map((m) => m.mid)).toEqual([1005, 1004]);
+      expect(page.total).toBe(5);          // NOT the page length (2)
+      expect(page.offsetIdOffset).toBe(0); // newest page starts at position 0
+    });
+
+    it('reports offsetIdOffset as the anchor position in the full list', async() => {
+      const convId = uniqueConvId();
+      for(let i = 1; i <= 5; i++) {
+        await store.saveMessage(makeMsg({eventId: `pg-${i}`, conversationId: convId, timestamp: i, mid: 1000 + i}));
+      }
+      // Full mid-desc order: [1005, 1004, 1003, 1002, 1001]. Anchor 1003 is at
+      // index 2, addOffset 0 → window starts there.
+      const page = await store.getMessagesPage(convId, 2, 1003, 0);
+      expect(page.messages.map((m) => m.mid)).toEqual([1003, 1002]);
+      expect(page.total).toBe(5);
+      expect(page.offsetIdOffset).toBe(2);
+    });
+
+    it('returns zeroed metadata for an empty conversation', async() => {
+      const page = await store.getMessagesPage('nope:conv', 10, 0, 0);
+      expect(page).toEqual({messages: [], total: 0, offsetIdOffset: 0});
+    });
+  });
+
   describe('getLatestTimestamp', () => {
     it('returns max timestamp for a conversation', async() => {
       const convId = uniqueConvId();

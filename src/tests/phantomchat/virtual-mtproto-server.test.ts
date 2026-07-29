@@ -42,6 +42,7 @@ const mockStore = vi.hoisted(() => ({
   getAllConversationIds: vi.fn(),
   getMessages: vi.fn(),
   getMessagesByOffsetId: vi.fn(),
+  getMessagesPage: vi.fn(),
   getByMid: vi.fn(),
   getConversationId: vi.fn((a: string, b: string) => [a, b].sort().join(':')),
   saveMessage: vi.fn(),
@@ -189,6 +190,7 @@ describe('PhantomChatMTProtoServer', () => {
     mockStore.getAllConversationIds.mockResolvedValue([CONVERSATION_ID]);
     mockStore.getMessages.mockResolvedValue([mockMessage]);
     mockStore.getMessagesByOffsetId.mockResolvedValue([mockMessage]);
+    mockStore.getMessagesPage.mockResolvedValue({messages: [mockMessage], total: 1, offsetIdOffset: 0});
     mockStore.getReadCursor.mockResolvedValue(0);
     mockStore.countUnread.mockResolvedValue(0);
     mockStore.setReadCursor.mockResolvedValue(undefined);
@@ -309,13 +311,18 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result.messages).toEqual([]);
     });
 
-    it('uses getMessagesByOffsetId when offset_id / add_offset are present', async () => {
+    it('pages via getMessagesPage and returns a slice with true total when older history remains', async () => {
       const msgs = [
         {...mockMessage, mid: MID + 2, timestamp: mockMessage.timestamp + 2},
         {...mockMessage, mid: MID + 1, timestamp: mockMessage.timestamp + 1},
         mockMessage
       ];
-      mockStore.getMessagesByOffsetId.mockResolvedValueOnce(msgs.slice(1, 3));
+      // Window of 2, anchored one position deep, with more history behind it.
+      mockStore.getMessagesPage.mockResolvedValueOnce({
+        messages: msgs.slice(1, 3),
+        total: 3,
+        offsetIdOffset: 1
+      });
 
       const result = await server.handleMethod('messages.getHistory', {
         peer: {user_id: PEER_ID},
@@ -324,27 +331,37 @@ describe('PhantomChatMTProtoServer', () => {
         limit: 2
       });
 
-      expect(mockStore.getMessagesByOffsetId).toHaveBeenCalledWith(
+      expect(mockStore.getMessagesPage).toHaveBeenCalledWith(
         CONVERSATION_ID, 2, MID + 2, -1
       );
+      // Partial view → messagesSlice carrying the real total + offset so tweb
+      // knows there is older history to page in.
+      expect(result._).toBe('messages.messagesSlice');
+      expect(result.count).toBe(3);
+      expect(result.offset_id_offset).toBe(1);
       expect(result.messages.length).toBe(2);
       expect(result.messages.map((m: any) => m.id)).toEqual([MID + 1, MID]);
     });
 
-    it('falls back to getMessages when offset_id = 0 and add_offset = 0', async () => {
-      mockStore.getMessages.mockResolvedValueOnce([mockMessage]);
+    it('returns messages.messages when the page covers the whole conversation', async () => {
+      mockStore.getMessagesPage.mockResolvedValueOnce({
+        messages: [mockMessage],
+        total: 1,
+        offsetIdOffset: 0
+      });
 
       const result = await server.handleMethod('messages.getHistory', {
         peer: {user_id: PEER_ID},
         limit: 10
       });
 
-      expect(mockStore.getMessages).toHaveBeenCalledWith(CONVERSATION_ID, 10, undefined);
-      expect(mockStore.getMessagesByOffsetId).not.toHaveBeenCalled();
-      expect(result.messages.length).toBeGreaterThan(0);
+      expect(mockStore.getMessagesPage).toHaveBeenCalledWith(CONVERSATION_ID, 10, 0, 0);
+      expect(result._).toBe('messages.messages');
+      expect(result.count).toBe(1);
+      expect(result.messages.length).toBe(1);
     });
 
-    it('routes group getHistory with offset_id/add_offset to getMessagesByOffsetId', async () => {
+    it('routes group getHistory with offset_id/add_offset to getMessagesPage', async () => {
       const GROUP_PEER_ID = -2_000_000_000_000_001;
       const GROUP_CONV_ID = 'group:testgroup123';
 
@@ -363,7 +380,11 @@ describe('PhantomChatMTProtoServer', () => {
         {...mockMessage, conversationId: GROUP_CONV_ID, mid: MID + 1, timestamp: mockMessage.timestamp + 1, senderPubkey: PEER_PUBKEY},
         {...mockMessage, conversationId: GROUP_CONV_ID, mid: MID, timestamp: mockMessage.timestamp, senderPubkey: PEER_PUBKEY}
       ];
-      mockStore.getMessagesByOffsetId.mockResolvedValueOnce(groupMsgs.slice(1, 3));
+      mockStore.getMessagesPage.mockResolvedValueOnce({
+        messages: groupMsgs.slice(1, 3),
+        total: 3,
+        offsetIdOffset: 1
+      });
 
       const result = await server.handleMethod('messages.getHistory', {
         peer: {chat_id: Math.abs(GROUP_PEER_ID)},
@@ -372,9 +393,12 @@ describe('PhantomChatMTProtoServer', () => {
         limit: 2
       });
 
-      expect(mockStore.getMessagesByOffsetId).toHaveBeenCalledWith(
+      expect(mockStore.getMessagesPage).toHaveBeenCalledWith(
         GROUP_CONV_ID, 2, MID + 2, -1
       );
+      expect(result._).toBe('messages.messagesSlice');
+      expect(result.count).toBe(3);
+      expect(result.offset_id_offset).toBe(1);
       expect(result.messages.length).toBe(2);
       expect(result.messages.map((m: any) => m.id)).toEqual([MID + 1, MID]);
       expect(result.chats.length).toBe(1);
