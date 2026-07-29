@@ -570,8 +570,8 @@ describe('VirtualPeersDB Constants', () => {
     expect(VIRTUAL_PEERS_DB_NAME).toBe('phantomchat-virtual-peers');
   });
 
-  test('VIRTUAL_PEERS_STORE is virtual-peers', () => {
-    expect(VIRTUAL_PEERS_STORE).toBe('virtual-peers');
+  test('VIRTUAL_PEERS_STORE is mappings (the real object-store name)', () => {
+    expect(VIRTUAL_PEERS_STORE).toBe('mappings');
   });
 
   test('SCHEMA_VERSION is 2', () => {

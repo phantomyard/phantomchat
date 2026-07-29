@@ -90,12 +90,17 @@ async function tryDecrypt(payload: PhantomChatPushPayload): Promise<DecryptedRum
 }
 
 async function resolveSenderName(pubkey: string): Promise<string | null> {
+  let db: IDBDatabase | null = null;
   try {
-    const db = await openVirtualPeersDB();
+    db = await openVirtualPeersDB();
+    const database = db;
     return await new Promise<string | null>((resolve) => {
       try {
-        const tx = db.transaction('peers', 'readonly');
-        const req = tx.objectStore('peers').get(pubkey);
+        // Store name MUST match STORE_NAME in @lib/phantomchat/virtual-peers-db
+        // ('mappings'). Kept hardcoded to avoid pulling the whole DB module
+        // (and its sync/publish deps) into the service-worker bundle.
+        const tx = database.transaction('mappings', 'readonly');
+        const req = tx.objectStore('mappings').get(pubkey);
         req.onerror = () => resolve(null);
         req.onsuccess = () => {
           const r = req.result;
@@ -105,7 +110,13 @@ async function resolveSenderName(pubkey: string): Promise<string | null> {
         };
       } catch{ resolve(null); }
     });
-  } catch{ return null; }
+  } catch{
+    return null;
+  } finally {
+    // Don't leak the connection — an open handle blocks later
+    // deleteDatabase / version upgrades (e.g. contacts-sync migrations).
+    if(db) db.close();
+  }
 }
 
 function openVirtualPeersDB(): Promise<IDBDatabase> {

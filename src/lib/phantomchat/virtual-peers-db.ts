@@ -322,7 +322,7 @@ export async function getPubkey(peerId: number): Promise<string | null> {
 
 // Named constants expected by tests
 export const VIRTUAL_PEERS_DB_NAME = DB_NAME;  // = 'phantomchat-virtual-peers'
-export const VIRTUAL_PEERS_STORE = 'virtual-peers';  // = 'mappings'
+export const VIRTUAL_PEERS_STORE = STORE_NAME;  // = 'mappings'
 export const SCHEMA_VERSION = DB_VERSION;        // = 2
 
 // VirtualPeerRecord interface (extends VirtualPeerMapping with timestamp fields)
