@@ -291,7 +291,9 @@ describe('AES-CTR', () => {
     const encryptedHead = await encrypt(data.slice(0, data.length / 2));
     const encryptedTail = await encrypt(data.slice(data.length / 2));
 
-    const encrypted = encryptedHead.concat(encryptedTail);
+    const encrypted = new Uint8Array(encryptedHead.length + encryptedTail.length);
+    encrypted.set(encryptedHead);
+    encrypted.set(encryptedTail, encryptedHead.length);
 
     expect(encrypted).toEqual(good);
 
