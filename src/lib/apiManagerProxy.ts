@@ -73,6 +73,13 @@ import {MainBroadcastChannelEvents, unversionedMainBroadcastChannelName} from '@
 import {CacheStorageThreadedControls, createCacheStorageThreadedControls} from './apiManagerProxyUtils';
 import type {ThreadedWorkerType} from '@lib/appManagers/appManagersManager';
 
+// * Total number of items a SlicedArray holds across all of its slices.
+// * SlicedArray.length only reports the first slice, which is not a reliable
+// * measure of "how complete is this history" when comparing snapshots.
+function countHistoryItems(sliced: SlicedArray<any> | undefined) {
+  return sliced ? sliced.slices.reduce((total, slice) => total + slice.length, 0) : 0;
+}
+
 export type Mirrors = {
   state: State,
   thumbs: ThumbsStorage['thumbsCache'],
@@ -252,7 +259,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
           batch(() => {
             for(const key in payload.value) {
               const historyStorage = payload.value[key];
-              const [, setHistoryStorage] = _useHistoryStorage(key as any);
+              const [existingHistoryStorage, setHistoryStorage] = _useHistoryStorage(key as any);
               if(historyStorage.searchHistorySerialized) {
                 setHistoryStorage(
                   'searchHistory',
@@ -260,11 +267,23 @@ class ApiManagerProxy extends MTProtoMessagePort {
                 );
                 delete historyStorage.searchHistorySerialized;
               } else {
-                setHistoryStorage(
-                  'history',
-                  SlicedArray.fromJSON<number>(historyStorage.historySerialized)
-                );
+                // * A worker snapshot can arrive partial or zeroed — e.g. after a
+                // * SharedWorker reconnect on app backgrounding / bfcache restore, or
+                // * after device-sync calls invalidateHistoryCache. For P2P chats the
+                // * message bodies live in IndexedDB (the VMT reads them straight from
+                // * there), so the mirrored SlicedArray can be shorter than what is
+                // * already rendered on the main thread. Replacing wholesale would
+                // * blank the open conversation (issue #99). Only adopt the incoming
+                // * history when it is at least as complete as the one we already hold.
+                const incomingHistory = SlicedArray.fromJSON<number>(historyStorage.historySerialized);
                 delete historyStorage.historySerialized;
+
+                if(countHistoryItems(incomingHistory) >= countHistoryItems(existingHistoryStorage.history)) {
+                  setHistoryStorage('history', incomingHistory);
+                } else {
+                  // Keep the richer in-memory history — and its matching count — intact.
+                  delete historyStorage.count;
+                }
               }
 
               setHistoryStorage(historyStorage);
