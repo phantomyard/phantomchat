@@ -9733,7 +9733,17 @@ export class AppMessagesManager extends AppManager {
     const offsetMessage = offsetId && this.getMessageByPeer(offsetPeerId || peerId, offsetId);
     offsetPeerId ??= offsetMessage?.peerId;
 
-    offsetId = getServerMessageId(offsetId) || 0;
+    // PhantomChat P2P/group scroll-back: `getServerMessageId` truncates the
+    // anchor id via `mid % 2^32`, but phantomchat mids are `timestamp * 1e6 +
+    // slot` (~1.75e15), so truncation yields a small unrelated number. The VMT
+    // then can't match the anchor (`findIndex(m => m.mid === offset_id)` in
+    // message-store.getMessagesPage), falls back to the newest page, and
+    // scroll-back dies — every older request returns page 0. Pass the full mid
+    // through unchanged for phantomchat peers so the anchor lookup resolves.
+    // Same mid-mangle class as the reply path (FIND-16af771a, getInputReplyTo).
+    const numericPeer = Number(peerId);
+    const isPhantomChatPeer = numericPeer >= 1e15 || isGroupPeer(numericPeer);
+    offsetId = isPhantomChatPeer ? (offsetId || 0) : (getServerMessageId(offsetId) || 0);
     threadId = historyType === HistoryType.Saved ? threadId : (getServerMessageId(threadId) || 0);
 
     minDate = minDate ? minDate / 1000 | 0 : 0;
