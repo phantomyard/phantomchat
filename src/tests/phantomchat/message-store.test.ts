@@ -12,6 +12,7 @@ import '../setup';
 import 'fake-indexeddb/auto';
 import {describe, it, expect, beforeEach, afterAll, vi} from 'vitest';
 import {MessageStore, StoredMessage} from '@lib/phantomchat/message-store';
+import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 
 const PK_A = 'aaaa'.repeat(16);
 const PK_B = 'bbbb'.repeat(16);
@@ -269,6 +270,46 @@ describe('MessageStore', () => {
     it('returns zeroed metadata for an empty conversation', async() => {
       const page = await store.getMessagesPage('nope:conv', 10, 0, 0);
       expect(page).toEqual({messages: [], total: 0, offsetIdOffset: 0});
+    });
+
+    // Regression: PhantomChat mids are `timestamp * 1e6 + slot` (~1.75e15).
+    // tweb's requestHistory used to run every anchor through getServerMessageId
+    // (`mid % 2^32`) before sending it. For phantomchat mids that truncation
+    // produces a small, unrelated number the anchor lookup below can never
+    // match → start=0 → the NEWEST page comes back on every scroll-back, so the
+    // scroller never advances and older history (present in IDB) stays hidden.
+    // The fix skips that truncation for phantomchat peers so the FULL mid
+    // reaches this method. These two tests pin both halves of that contract.
+    describe('scroll-back anchor must be the full mid, not a truncated one', () => {
+      // timestamp * 1e6 + slot, i.e. the real phantomchat mid scale.
+      const midOf = (i: number) => 1_700_000_000 * 1_000_000 + i;
+
+      async function seed(convId: string) {
+        for(let i = 1; i <= 5; i++) {
+          await store.saveMessage(makeMsg({eventId: `big-${i}`, conversationId: convId, timestamp: i, mid: midOf(i)}));
+        }
+      }
+
+      it('paginates correctly when the FULL mid is passed as the anchor', async() => {
+        const convId = uniqueConvId();
+        await seed(convId);
+        // Newest-first order: [midOf(5)..midOf(1)]. Anchor = midOf(3) (index 2).
+        const page = await store.getMessagesPage(convId, 2, midOf(3), 0);
+        expect(page.messages.map((m) => m.mid)).toEqual([midOf(3), midOf(2)]);
+        expect(page.offsetIdOffset).toBe(2);
+      });
+
+      it('a getServerMessageId-truncated anchor fails to match and re-serves the newest page (the bug)', async() => {
+        const convId = uniqueConvId();
+        await seed(convId);
+        const truncated = getServerMessageId(midOf(3));
+        // Truncation destroys the anchor: mid % 2^32 is not any stored mid.
+        expect(truncated).not.toBe(midOf(3));
+        const page = await store.getMessagesPage(convId, 2, truncated, 0);
+        // Anchor not found → falls back to newest page → scroll-back is stuck.
+        expect(page.messages.map((m) => m.mid)).toEqual([midOf(5), midOf(4)]);
+        expect(page.offsetIdOffset).toBe(0);
+      });
     });
   });
 
