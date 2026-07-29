@@ -241,21 +241,31 @@ export class NostrRelay {
   private subscriptionReady: {promise: Promise<boolean>; resolve: (v: boolean) => void} | null = null;
 
   // Reconnection — fast retries first, then persistent backoff.
-  // After the initial burst (1s, 2s, 4s), retries continue every 10s
+  // After the initial burst (1s, 2s, 4s), retries continue every ~10s
+  // (±25% jitter so a fleet of dropped relays doesn't re-dial in lockstep)
   // indefinitely. A relay glitch should not permanently kill the subscription.
   private reconnectAttempts: number = 0;
   private readonly reconnectBurstDelays: number[] = [1000, 2000, 4000];
   private readonly reconnectBackoffMs: number = 10000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   // Bad-relay cooldown (#61 R4). After this many consecutive failed reconnects
-  // (the 3-step burst + a few steady 10s backoff tries), a relay is treated as
+  // (the 3-step burst + a few steady ~10s backoff tries), a relay is treated as
   // "bad" and benched for reconnectCooldownMs instead of hammering it every ~10s
   // forever. During the cooldown window no reconnect is attempted and nothing is
   // logged, so a permanently-dead relay stops spamming the console. One line is
   // logged on entering cooldown; counters + the flag reset on the next connect.
+  // The bench is deliberately SHORT (60s): a long bench risks every relay
+  // sitting in cooldown simultaneously (the all-red "Reconnecting..." stall),
+  // and a resumed network is detected faster than any long cooldown would allow.
   private readonly reconnectCooldownAfter: number = 6;
-  private readonly reconnectCooldownMs: number = 10 * 60 * 1000; // 10 minutes
+  private readonly reconnectCooldownMs: number = 60_000; // 60 seconds
   private inCooldown: boolean = false;
+  // Connect-attempt watchdog. A WebSocket handshake can hang in 'connecting'
+  // for minutes (browser TCP timeout) when the network is half-up — far longer
+  // than any retry interval. Cap a single dial at 10s: on timeout the socket
+  // is torn down and the failure feeds the normal retry schedule.
+  private readonly connectTimeoutMs: number = 10_000;
+  private connectTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Zombie-socket detection. A half-open TCP socket (laptop sleep/resume, NAT
   // rebind, flaky wifi) can leave the WebSocket in readyState OPEN with onclose
@@ -395,7 +405,27 @@ export class NostrRelay {
     try {
       this.ws = new WebSocket(this.relayUrl);
 
+      // Watchdog: if the handshake hasn't completed within connectTimeoutMs,
+      // tear the socket down and route through the normal retry schedule.
+      this.clearConnectTimeout();
+      this.connectTimeout = setTimeout(() => {
+        this.connectTimeout = null;
+        if(this.connectionState !== 'connecting') return;
+        this.log('[NostrRelay] connect attempt timed out after', this.connectTimeoutMs, 'ms:', this.relayUrl);
+        const ws = this.ws;
+        this.ws = null;
+        if(ws) {
+          ws.onopen = null;
+          ws.onmessage = null;
+          ws.onerror = null;
+          ws.onclose = null; // suppress double-handling; we fail it ourselves
+          try { ws.close(); } catch{ /* already gone */ }
+        }
+        this.handleDisconnect();
+      }, this.connectTimeoutMs);
+
       this.ws.onopen = () => {
+        this.clearConnectTimeout();
         this.log('[NostrRelay] connected to relay');
         this.setConnectionState('connected');
         this.reconnectAttempts = 0;
@@ -426,12 +456,21 @@ export class NostrRelay {
       };
 
       this.ws.onclose = (event) => {
+        this.clearConnectTimeout();
         this.log('[NostrRelay] relay connection closed:', event.code, event.reason);
         this.handleDisconnect();
       };
     } catch(err) {
+      this.clearConnectTimeout();
       this.log.error('[NostrRelay] failed to create WebSocket:', err);
       this.handleDisconnect();
+    }
+  }
+
+  private clearConnectTimeout(): void {
+    if(this.connectTimeout) {
+      clearTimeout(this.connectTimeout);
+      this.connectTimeout = null;
     }
   }
 
@@ -493,6 +532,7 @@ export class NostrRelay {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+    this.clearConnectTimeout();
 
     if(this.ws) {
       this.ws.onclose = null; // Prevent reconnection logic
@@ -1663,15 +1703,18 @@ export class NostrRelay {
     this.setLatency(-1);
     this.setConnectionState('reconnecting');
 
-    // Fast burst for the first few attempts, then steady backoff, then a long
-    // cooldown once a relay proves persistently unreachable (#61 R4). Never give
-    // up — only an explicit disconnect() call stops retries.
+    // Fast burst for the first few attempts, then steady jittered backoff, then
+    // a short cooldown once a relay proves persistently unreachable (#61 R4).
+    // Never give up — only an explicit disconnect() call stops retries. The
+    // ±25% jitter on the steady cadence keeps relays that dropped together
+    // (network blip) from re-dialing in lockstep forever.
     const useCooldown = this.reconnectAttempts >= this.reconnectCooldownAfter;
+    const jitter = 1 + (Math.random() * 0.5 - 0.25); // ±25%
     const delay = useCooldown ?
       this.reconnectCooldownMs :
       (this.reconnectAttempts < this.reconnectBurstDelays.length ?
         this.reconnectBurstDelays[this.reconnectAttempts] :
-        this.reconnectBackoffMs);
+        Math.round(this.reconnectBackoffMs * jitter));
     this.reconnectAttempts++;
 
     if(useCooldown) {
@@ -1680,7 +1723,7 @@ export class NostrRelay {
       if(!this.inCooldown) {
         this.inCooldown = true;
         this.log('[NostrRelay]', this.relayUrl, 'unreachable after', this.reconnectAttempts - 1,
-          'attempts — cooling down', this.reconnectCooldownMs / 60000, 'min before retry');
+          'attempts — cooling down', this.reconnectCooldownMs / 1000, 's before retry');
       }
     } else {
       this.log('[NostrRelay] reconnecting in', delay, 'ms (attempt', this.reconnectAttempts + ')');

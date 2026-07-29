@@ -1,8 +1,10 @@
 /**
  * Relay flap cooldown (#2). A relay that keeps dropping shortly after it
- * connects gets an exponential cooldown: the pool stops its self-reconnect
+ * connects gets benched for a flat 60s: the pool stops its self-reconnect
  * (disconnect) and the recovery sweep skips it until the cooldown expires.
- * Healthy relays (long-lived sessions) are never penalised.
+ * At most 3 relays may be benched at once, so the pool can never sit with
+ * every relay in cooldown. Healthy relays (long-lived sessions) are never
+ * penalised.
  *
  * Drives the pool's flap logic directly with stub entries + fake timers so the
  * test is deterministic and doesn't depend on real sockets.
@@ -133,7 +135,7 @@ describe('relay flap cooldown', () => {
     expect(instance.initialize).toHaveBeenCalledTimes(1);
   });
 
-  it('escalates the cooldown exponentially on continued flapping', () => {
+  it('keeps the cooldown flat at 60s on continued flapping (no long benches)', () => {
     const url = 'wss://flap';
     const instance = addRelay(url);
 
@@ -143,9 +145,31 @@ describe('relay flap cooldown', () => {
     let health = pool.relayHealth.get(url);
     expect(health.cooldownUntil - Date.now()).toBe(60_000);
 
-    flap(url, instance, 1_000); // flaps=4 -> 120s
+    flap(url, instance, 1_000); // flaps=4 -> still 60s (capped — long benches risk all-red stalls)
     health = pool.relayHealth.get(url);
-    expect(health.cooldownUntil - Date.now()).toBe(120_000);
+    expect(health.cooldownUntil - Date.now()).toBe(60_000);
+  });
+
+  it('benches at most MAX_BENCHED_RELAYS (3) at once — further failures keep their slot', () => {
+    const urls = ['wss://a', 'wss://b', 'wss://c', 'wss://d'];
+    urls.forEach((u) => {
+      addRelay(u);
+      pool.activeUrls.add(u);
+      pool.trackRelayHealth(u, 'reconnecting'); // create the health entry
+    });
+
+    pool.benchRelay(urls[0], 60_000);
+    pool.benchRelay(urls[1], 60_000);
+    pool.benchRelay(urls[2], 60_000);
+    pool.benchRelay(urls[3], 60_000); // refused — cap reached
+
+    const now = Date.now();
+    const benched = urls.filter((u) => pool.relayHealth.get(u).cooldownUntil > now);
+    expect(benched).toHaveLength(3);
+    // The 4th was refused a bench: no cooldown set, keeps its active slot,
+    // and its self-reconnect loop is left running.
+    expect(pool.relayHealth.get(urls[3]).cooldownUntil).toBe(0);
+    expect(pool.activeUrls.has(urls[3])).toBe(true);
   });
 });
 

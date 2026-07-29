@@ -1043,7 +1043,7 @@ describe('Integration: NIP-44 with NostrRelay patterns', () => {
 /**
  * Bad-relay cooldown (#61 R4). A relay that never manages to connect must not
  * reconnect-and-log every ~10s forever. After the burst + a few steady retries
- * it is benched for 10 minutes: no reconnect attempt during the window, and the
+ * it is benched for 60 seconds: no reconnect attempt during the window, and the
  * next successful connect resets everything. Complements the pool-level FLAP
  * cooldown (relay-cooldown.test.ts), which only covers connect-then-drop churn —
  * this covers a relay that never connects at all.
@@ -1052,7 +1052,7 @@ describe('NostrRelay bad-relay cooldown', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it('benches a never-connecting relay for 10 min instead of retrying every ~10s', () => {
+  it('benches a never-connecting relay for 60s instead of retrying every ~10s', () => {
     const relay: any = new NostrRelay('wss://dead.example');
 
     // Each reconnect attempt "fails" straight back into the disconnect handler,
@@ -1066,17 +1066,21 @@ describe('NostrRelay bad-relay cooldown', () => {
     relay.connectionState = 'connecting';
     relay.handleDisconnect();
 
-    // Burst (1+2+4s) + steady 10s retries — cross the cooldown threshold (6).
-    vi.advanceTimersByTime(60_000);
+    // Burst (1+2+4s) + steady ~10s jittered retries — cross the cooldown
+    // threshold (6). Step in 1s increments so we know exactly when the bench
+    // started (jitter makes the raw advance non-deterministic).
+    for(let i = 0; i < 60 && !relay.inCooldown; i++) {
+      vi.advanceTimersByTime(1_000);
+    }
     expect(relay.inCooldown).toBe(true);
 
-    // During the 10-minute bench, NO further reconnect attempts fire.
+    // During the 60s bench, NO further reconnect attempts fire.
     const callsAtBench = connectSpy.mock.calls.length;
-    vi.advanceTimersByTime(9 * 60_000);
+    vi.advanceTimersByTime(59_000);
     expect(connectSpy.mock.calls.length).toBe(callsAtBench);
 
     // Once the cooldown elapses, it retries (then re-benches).
-    vi.advanceTimersByTime(2 * 60_000);
+    vi.advanceTimersByTime(2_000);
     expect(connectSpy.mock.calls.length).toBeGreaterThan(callsAtBench);
   });
 
@@ -1086,7 +1090,9 @@ describe('NostrRelay bad-relay cooldown', () => {
 
     relay.connectionState = 'connecting';
     relay.handleDisconnect();
-    vi.advanceTimersByTime(60_000);
+    for(let i = 0; i < 60 && !relay.inCooldown; i++) {
+      vi.advanceTimersByTime(1_000);
+    }
     expect(relay.inCooldown).toBe(true);
 
     // The onopen path resets these; verify the flag clears.
@@ -1096,11 +1102,47 @@ describe('NostrRelay bad-relay cooldown', () => {
   });
 });
 
+describe('NostrRelay connect-attempt timeout', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('aborts a hung handshake after 10s and schedules a retry', () => {
+    // Swap in a WebSocket that never completes the handshake.
+    const realMock = (global as any).WebSocket;
+    class HungWebSocket {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
+      readyState = 0;
+      onopen: any = null; onclose: any = null; onmessage: any = null; onerror: any = null;
+      constructor(public url: string) {}
+      close() { this.readyState = 3; }
+      send() {}
+    }
+    (global as any).WebSocket = HungWebSocket;
+    try {
+      const relay: any = new NostrRelay('wss://hung.example');
+      relay.connect();
+      expect(relay.connectionState).toBe('connecting');
+
+      // No handshake within 10s -> watchdog tears the socket down and the
+      // failure feeds the normal retry schedule.
+      vi.advanceTimersByTime(10_000);
+      expect(relay.connectionState).toBe('reconnecting');
+      expect(relay.reconnectTimeout).not.toBeNull();
+
+      // The retry fires on the fast-burst cadence (1s) — a fresh dial begins.
+      vi.advanceTimersByTime(1_000);
+      expect(relay.connectionState).toBe('connecting');
+    } finally {
+      (global as any).WebSocket = realMock;
+    }
+  });
+});
+
 describe('NostrRelay resetReconnectBackoff (resume triggers)', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it('cancels the 10-min cooldown and re-dials immediately on resume', () => {
+  it('cancels the 60s cooldown and re-dials immediately on resume', () => {
     const relay: any = new NostrRelay('wss://dead.example');
 
     const connectSpy = vi.spyOn(relay, 'connect').mockImplementation(() => {
@@ -1114,7 +1156,7 @@ describe('NostrRelay resetReconnectBackoff (resume triggers)', () => {
     expect(relay.inCooldown).toBe(true);
 
     // Resume: fresh network context — the cooldown was earned on a network
-    // that no longer exists. Counters reset, pending 10-min timer cancelled,
+    // that no longer exists. Counters reset, pending cooldown timer cancelled,
     // and an immediate redial (state is 'reconnecting').
     const callsAtBench = connectSpy.mock.calls.length;
     relay.resetReconnectBackoff();
@@ -1124,7 +1166,7 @@ describe('NostrRelay resetReconnectBackoff (resume triggers)', () => {
     expect(relay.reconnectAttempts).toBe(1);
     expect(connectSpy.mock.calls.length).toBe(callsAtBench + 1); // re-dialed NOW
 
-    // Back on the fast burst cadence (1s), not the 10-min bench.
+    // Back on the fast burst cadence (1s), not the 60s bench.
     vi.advanceTimersByTime(1_000);
     expect(connectSpy.mock.calls.length).toBeGreaterThan(callsAtBench + 1);
   });
