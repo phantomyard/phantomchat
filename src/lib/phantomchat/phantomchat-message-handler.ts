@@ -86,10 +86,58 @@ function persistUnreadCounts(): void {
 if(typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('visibilitychange', () => {
     if(document.visibilityState === 'hidden' && unreadFlushTimer !== null) flushUnreadCounts();
+    if(document.visibilityState === 'visible') void rehydrateOpenChatOnVisible();
   });
 }
 if(typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener('pagehide', () => { if(unreadFlushTimer !== null) flushUnreadCounts(); });
+}
+
+// Throttle for the visible-transition rehydration: visibilitychange fires once
+// per transition, but rapid hide→show flicker (app switching, notification
+// shade) would otherwise spam an invalidate+reload per flicker. 10s is short
+// enough that a real return-to-app always rehydrates, long enough to absorb
+// flicker bursts.
+const VISIBILITY_REHYDRATE_MIN_INTERVAL_MS = 10_000;
+let lastVisibleRehydrateAt = 0;
+
+/**
+ * Rehydrate the open conversation after a hidden→visible transition (#117).
+ *
+ * A backgrounded/frozen PWA keeps its in-memory history caches (main-thread
+ * SlicedArray + Worker slice) while IndexedDB — the source of truth — may have
+ * moved on (messages processed on a throttled timer, mid-slice injection lost
+ * to a kill mid-write, etc.). Nothing re-queries IndexedDB on wake, so the UI
+ * can render a stale or partial slice until the next app restart.
+ *
+ * Fix: invalidate the open chat's cached history slice (next getHistory
+ * re-reads IndexedDB) and dispatch `history_reload` so the open bubbles view
+ * refreshes its rendered messages and re-arms its lazy paging triggers against
+ * the invalidated cache. New messages that arrived during dormancy are the
+ * relay pool's job — its own visible handler runs a catch-up backfill whose
+ * results land here via the normal history_append path.
+ *
+ * No-op when no chat is open: closed chats re-fetch on entry via getHistory,
+ * which reads IndexedDB through the virtual MTProto server.
+ *
+ * @param now - injectable timestamp for tests
+ */
+export async function rehydrateOpenChatOnVisible(now = Date.now()): Promise<void> {
+  if(now - lastVisibleRehydrateAt < VISIBILITY_REHYDRATE_MIN_INTERVAL_MS) return;
+  let peerId: number;
+  try {
+    const im = (MOUNT_CLASS_TO as any).appImManager;
+    const current = im?.chat?.peerId;
+    if(current == null || +current === 0) return;
+    peerId = +current;
+  } catch{
+    return;
+  }
+  lastVisibleRehydrateAt = now;
+  await invalidateHistoryCache(peerId);
+  try {
+    rootScope.dispatchEvent('history_reload' as any, peerId as any);
+  } catch(e) { logSwallow('MessageHandler.rehydrate.history_reload', e); }
 }
 
 function isChatOpenFor(peerId: number): boolean {

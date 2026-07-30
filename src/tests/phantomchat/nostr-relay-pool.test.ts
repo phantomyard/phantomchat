@@ -1058,4 +1058,64 @@ describe('NostrRelayPool', () => {
     });
   });
 
+  describe('dormancy catch-up on visible (#117)', () => {
+    it('runs a catch-up poll on visible only when the last catch-up is overdue', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://relay1.test', read: true, write: true}],
+        onMessage
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const relay = mockRelayInstances.filter((r: any) => r.connected)[0];
+      const pagedSpy = vi.spyOn(relay, 'getMessagesPaged');
+
+      // Poll is alive (last catch-up just happened): a visible flicker must
+      // NOT double-fetch — the 15s poll has the gap covered.
+      (pool as any).lastCatchUpAt = Date.now();
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(pagedSpy).not.toHaveBeenCalled();
+
+      // Simulate dormancy: a backgrounded/frozen PWA suspends the poll timer,
+      // so on wake the last catch-up is an hour stale — the gap is uncovered
+      // and the visible transition must fire the catch-up NOW.
+      (pool as any).lastCatchUpAt = Date.now() - 3_600_000;
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(pagedSpy).toHaveBeenCalledTimes(1);
+
+      // Immediate second visible (app-switch flicker): throttled — the
+      // dormancy catch-up above refreshed the timestamp.
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(pagedSpy).toHaveBeenCalledTimes(1);
+
+      pool.disconnect();
+    });
+
+    it('does not fire when not subscribed', async() => {
+      const onMessage = vi.fn();
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://relay1.test', read: true, write: true}],
+        onMessage
+      });
+      await pool.initialize();
+
+      const relay = mockRelayInstances.filter((r: any) => r.connected)[0];
+      const pagedSpy = vi.spyOn(relay, 'getMessagesPaged');
+      // Overdue by construction (never caught up), but with no subscription
+      // there is nothing to catch up TO — backfillRecent guards on this too.
+      (pool as any).lastCatchUpAt = 0;
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(pagedSpy).not.toHaveBeenCalled();
+
+      pool.disconnect();
+    });
+  });
+
 });
