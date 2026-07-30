@@ -782,6 +782,32 @@ describe('NostrRelay', () => {
       }
     });
 
+    // Issue #80: a full page of wraps all sharing ONE timestamp makes `until`
+    // stand still — the walk cannot advance. Bailing is correct, but the range
+    // is NOT exhausted: the relay just served a FULL page, positive evidence
+    // there is more below. Reporting 'exhausted' here clears the gap state and
+    // unfreezes the watermark over wraps we never fetched (same failure class
+    // as #77/#79). The stall must report 'truncated' with the cursor intact.
+    test('a same-timestamp stall reports TRUNCATED, never an exhausted range', async() => {
+      relay.connect();
+      await new Promise((r) => setTimeout(r, 50));
+
+      const t0 = 1_800_000_000;
+      // A full page (SUBSCRIBE_REPLAY_LIMIT) of wraps, all at one timestamp.
+      const store = Array.from({length: 100}, (_, i) => wrapAt(t0 + 50, i));
+      const {pagesServed: pages} = serveStore(getLastMockWs()!, store);
+
+      const result = await relay.getMessagesPaged(t0);
+
+      // Page 1 fills and anchors at t0+50; page 2 returns the same wraps (until
+      // is inclusive), the cursor cannot advance, and the walk bails.
+      expect(pages.length).toBe(2);
+      // The gap is still OPEN — 'exhausted' here is the bug.
+      expect(result.outcome).toBe('truncated');
+      // ...and the resume cursor is handed back so the caller keeps the gap.
+      expect(result.oldestReached).toBe(t0 + 50);
+    });
+
     // A relay we were never connected to cannot testify about the range either.
     test('a disconnected relay reports UNKNOWN, never an exhausted range', async() => {
       const t0 = 1_800_000_000;

@@ -687,11 +687,15 @@ export class NostrRelay {
       }
 
       // A full page of wraps all sharing one timestamp would make `until` stand
-      // still and spin us on the same page. Bail rather than loop forever; the
-      // window is exhausted for practical purposes.
+      // still and spin us on the same page. Bail rather than loop forever — but
+      // the range is NOT exhausted: the relay just answered a FULL page, which
+      // is positive evidence there is more below. Report 'truncated' with the
+      // cursor we were walking so the caller keeps its gap state; reporting
+      // 'exhausted' here clears the gap and unfreezes the watermark over wraps
+      // we never fetched (issue #80, same failure class as #77/#79).
       if(until !== undefined && oldest >= until) {
-        this.log.warn('[NostrRelay] backfill pagination stalled at', oldest, '- stopping');
-        return {messages, outcome: 'exhausted'};
+        this.log.warn('[NostrRelay] backfill pagination stalled at', oldest, '- range still open below', until);
+        return {messages, outcome: 'truncated', oldestReached: until};
       }
 
       until = oldest;
