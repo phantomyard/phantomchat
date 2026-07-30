@@ -352,6 +352,78 @@ describe('VoiceUploadQueue', () => {
       expect(queue.size).toBe(0);
     });
 
+    it('should save the authoritative row contract (nested fileMetadata + identity triple)', async () => {
+      // Regression for the #105 JSON-bubble bug: the flush previously wrote
+      // flat top-level media fields with no mid/twebPeerId/timestamp, so
+      // getHistory found no fileMetadata and rendered the raw envelope JSON
+      // (or an empty bubble) after reload. The flush MUST land the exact row
+      // shape the normal send bridge writes (see virtual-mtproto-server's
+      // ctx.saveMessage), which merges over ChatAPI's durable-write-first row
+      // and heals it.
+      const queue = new VoiceUploadQueue();
+      await new Promise(r => setTimeout(r, 10));
+
+      await queue.enqueue({
+        peerId: 12345,
+        peerPubkey: 'aabbccdd11223344',
+        tempMid: 99999,
+        type: 'voice',
+        caption: 'hello caption',
+        ciphertext: makeCiphertext(),
+        privkeyHex: 'deadbeef',
+        ownPubkey: '11223344aabbccdd',
+        keyHex: 'aabb',
+        ivHex: 'ccdd',
+        sha256Hex: 'eeff0011',
+        mimeType: 'audio/ogg; codecs=opus',
+        size: 1024,
+        duration: 4,
+        waveform: 'AAAA'
+      });
+
+      const messageStore = makeMockMessageStore();
+      const result = await queue.flush(makeMockChatAPI(), messageStore, makeMockDispatch());
+
+      expect(result.flushed).toBe(1);
+      const row = messageStore.saveMessage.mock.calls[0][0];
+
+      // Identity triple + delivery fields — the mid/timestamp pair must be
+      // coherent (mid's high digits encode the same second).
+      expect(row.eventId).toBe('event-id-001');
+      expect(row.conversationId).toBe('conv-001');
+      expect(row.senderPubkey).toBe('11223344aabbccdd');
+      expect(row.type).toBe('file');
+      expect(row.deliveryState).toBe('sent');
+      expect(row.isOutgoing).toBe(true);
+      expect(typeof row.mid).toBe('number');
+      expect(typeof row.twebPeerId).toBe('number');
+      expect(row.twebPeerId).toBe(12345);
+      expect(typeof row.timestamp).toBe('number');
+      expect(Math.floor(row.mid / 1_000_000)).toBe(row.timestamp);
+
+      // Caption replaces the raw envelope JSON as the bubble text.
+      expect(row.content).toBe('hello caption');
+
+      // Media fields nested under fileMetadata — the ONLY place getHistory
+      // looks. Flat top-level url/sha256/keyHex must NOT be present.
+      expect(row.fileMetadata).toMatchObject({
+        url: 'https://blossom.example.com/abc',
+        sha256: 'eeff0011',
+        mimeType: 'audio/ogg; codecs=opus',
+        size: 1024,
+        keyHex: 'aabb',
+        ivHex: 'ccdd',
+        duration: 4,
+        waveform: 'AAAA',
+        mediaType: 'voice',
+        servers: ['https://mirror1.example.com/abc']
+      });
+      expect((row as any).url).toBeUndefined();
+      expect((row as any).sha256).toBeUndefined();
+      expect((row as any).keyHex).toBeUndefined();
+      expect((row as any).mimeType).toBeUndefined();
+    });
+
     it('should dispatch progress and completion events', async () => {
       const queue = new VoiceUploadQueue();
       await new Promise(r => setTimeout(r, 10));

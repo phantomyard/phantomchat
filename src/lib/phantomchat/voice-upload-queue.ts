@@ -99,7 +99,17 @@ export interface FlushChatAPI {
   ): Promise<string>;
 }
 
-/** Minimal message-store surface for flush completion */
+/**
+ * Minimal message-store surface for flush completion.
+ *
+ * SAVE CONTRACT: flush MUST write the exact same row shape the normal send
+ * path lands via the VMT send bridge (see phantomchatSendFile's ctx.saveMessage
+ * in virtual-mtproto-server.ts): full identity triple (mid + twebPeerId +
+ * timestamp), deliveryState, isOutgoing, and media fields NESTED under
+ * `fileMetadata` — never as flat top-level columns. getHistory builds media
+ * exclusively from `stored.fileMetadata`; a flat row has no media and renders
+ * as an empty (or raw-JSON) text bubble after reload — the #105 regression.
+ */
 export interface FlushMessageStore {
   getConversationId(ownPubkey: string, peerPubkey: string): string;
   saveMessage(params: {
@@ -107,19 +117,26 @@ export interface FlushMessageStore {
     conversationId: string;
     senderPubkey: string;
     content: string;
-    type: string;
-    mimeType: string;
-    size: number;
-    url: string;
-    sha256: string;
-    keyHex: string;
-    ivHex: string;
-    width?: number;
-    height?: number;
-    duration?: number;
-    waveform?: string;
-    mediaType?: VoiceUploadFileType;
-    servers?: string[];
+    type: 'file';
+    timestamp: number;
+    deliveryState: 'sent';
+    mid: number;
+    twebPeerId: number;
+    isOutgoing: boolean;
+    fileMetadata: {
+      url: string;
+      sha256: string;
+      mimeType: string;
+      size: number;
+      width?: number;
+      height?: number;
+      keyHex: string;
+      ivHex: string;
+      duration?: number;
+      waveform?: string;
+      mediaType?: VoiceUploadFileType;
+      servers?: string[];
+    };
   }): Promise<void>;
 }
 
@@ -383,7 +400,15 @@ export class VoiceUploadQueue {
           }
         );
 
-        // Step 5: Save to local message store
+        // Step 5: Save to local message store — the AUTHORITATIVE row, same
+        // contract as the normal send bridge (see FlushMessageStore doc). This
+        // merges over ChatAPI's durable-write-first row (keyed by the same
+        // rumor id, content = raw file-envelope JSON, no fileMetadata): the
+        // caption replaces the JSON text and the nested fileMetadata heals the
+        // row so getHistory renders media instead of a raw-JSON bubble.
+        // `timestamp` pins the same second the mid was derived from, keeping
+        // the identity triple coherent; msSlot is intentionally NOT passed so
+        // the pre-saved row's value survives the merge.
         const conversationId = messageStore.getConversationId(entry.ownPubkey, entry.peerPubkey);
         await messageStore.saveMessage({
           eventId,
@@ -391,18 +416,25 @@ export class VoiceUploadQueue {
           senderPubkey: entry.ownPubkey,
           content: entry.caption || '',
           type: 'file',
-          mimeType: effectiveMime,
-          size: entry.size,
-          url,
-          sha256: entry.sha256Hex,
-          keyHex: entry.keyHex,
-          ivHex: entry.ivHex,
-          width: entry.width,
-          height: entry.height,
-          duration: entry.duration,
-          waveform: entry.waveform,
-          mediaType: entry.type,
-          servers: mirrors
+          timestamp: timestampSec,
+          deliveryState: 'sent',
+          mid,
+          twebPeerId: Math.abs(entry.peerId),
+          isOutgoing: true,
+          fileMetadata: {
+            url,
+            sha256: entry.sha256Hex,
+            mimeType: effectiveMime,
+            size: entry.size,
+            width: entry.width,
+            height: entry.height,
+            keyHex: entry.keyHex,
+            ivHex: entry.ivHex,
+            duration: entry.duration,
+            waveform: entry.waveform,
+            mediaType: entry.type,
+            ...(mirrors.length ? {servers: mirrors} : {})
+          }
         });
 
         // Step 6: Dispatch completion event

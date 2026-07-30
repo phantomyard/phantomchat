@@ -293,6 +293,53 @@ describe('PhantomChatMTProtoServer', () => {
       expect(msg.date).toBe(1700000000);
     });
 
+    it('heals a file row missing fileMetadata (raw envelope JSON in content) into a media bubble', async () => {
+      // Regression for the #105 queue-flush bug: rows written without nested
+      // fileMetadata rendered the raw envelope JSON as bubble text after
+      // reload. getHistory must recover the media from the envelope and show
+      // the caption ('' here) instead of the JSON.
+      const corruptRow = {
+        ...mockMessage,
+        type: 'file' as const,
+        content: JSON.stringify({
+          url: 'https://nostr.download/67f8.bin',
+          sha256: '67f8f9ad',
+          mimeType: 'audio/ogg; codecs=opus',
+          size: 25403,
+          key: 'be5a71d6',
+          iv: 'de1d5379',
+          mediaType: 'voice',
+          servers: ['https://nostr.download/67f8.bin'],
+          duration: 4,
+          waveform: [0, 4, 240, 255, 191]
+        })
+        // no fileMetadata — the corruption being healed
+      };
+      mockStore.getMessagesPage.mockResolvedValueOnce({
+        messages: [corruptRow],
+        total: 1,
+        offsetIdOffset: 0
+      });
+
+      const result = await server.handleMethod('messages.getHistory', {
+        peer: {user_id: PEER_ID}
+      });
+
+      expect(result.messages.length).toBe(1);
+      const msg = result.messages[0];
+      // Media recovered — voice document, not a text bubble
+      expect(msg.media).toBeDefined();
+      expect(msg.media._).toBe('messageMediaDocument');
+      expect(msg.media.document.type).toBe('voice');
+      expect(msg.media.document.phantomchatFileMetadata).toMatchObject({
+        url: 'https://nostr.download/67f8.bin',
+        keyHex: 'be5a71d6',
+        ivHex: 'de1d5379'
+      });
+      // Bubble text is the recovered caption (empty), NOT the raw JSON
+      expect(msg.message).toBe('');
+    });
+
     it('returns empty when no pubkey for peerId', async () => {
       mockGetPubkey.mockResolvedValueOnce(null);
 
