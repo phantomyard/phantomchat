@@ -775,6 +775,14 @@ export class PhantomChatMTProtoServer {
             readInboxMaxId: readCursor,
             readOutboxMaxId: readCursor
           });
+          // Rule 8 on the RESPONSE path: attach the full message object so
+          // the sidebar preview renders from `dialog.topMessage` directly,
+          // without a getMessageByPeer round-trip against main-thread mirrors
+          // that may not hold the row yet — same contract the live
+          // dialogs_multiupdate dispatches already follow (see
+          // bridge-invariants.ts). Without this, chats with no live traffic
+          // since boot render name-only rows in the chat list.
+          (dialog as any).topMessage = msg;
 
           dialogs.push(dialog);
           messages.push(msg);
@@ -809,6 +817,7 @@ export class PhantomChatMTProtoServer {
 
           let mid = 0;
           let topDate = group.createdAt;
+          let topMsg: any;
 
           if(latest) {
             if(latest.mid == null) {
@@ -839,6 +848,7 @@ export class PhantomChatMTProtoServer {
                 }
               };
               messages.push(serviceMsg);
+              topMsg = serviceMsg;
             } else {
               const fromPeerId = isOutgoing ? undefined : fromUserId;
               const msg = this.mapper.createTwebMessage({
@@ -851,6 +861,7 @@ export class PhantomChatMTProtoServer {
                 ...(latest.replyToMid !== undefined ? {replyToMid: latest.replyToMid} : {})
               });
               messages.push(msg);
+              topMsg = msg;
             }
           }
 
@@ -870,6 +881,9 @@ export class PhantomChatMTProtoServer {
             readInboxMaxId: mid,
             readOutboxMaxId: mid
           });
+          // Rule 8 on the response path (see the 1:1 branch above). Skip
+          // message-less groups — there is no preview to render.
+          if(topMsg) (dialog as any).topMessage = topMsg;
 
           dialogs.push(dialog);
           chats.push(chat);
@@ -2135,15 +2149,21 @@ export class PhantomChatMTProtoServer {
         }
       } catch(e: any) { console.debug(LOG_PREFIX, 'history_append dispatch failed:', e?.message); }
 
-      // THEN push to the Worker's history storage (so later getHistory calls
-      // include the message) — but FIRE-AND-FORGET. Under incoming-message load
-      // the worker queue backs up; AWAITING this write here is what stalled the
-      // user's own bubble for seconds, because it sat between the mirror write
-      // and the paint above. It is a best-effort cache push (ChatAPI.sendText is
-      // the authoritative persister), so a failure was already swallowed.
+      // THEN push to the Worker's history structures (so later getHistory calls
+      // AND chat close/reopen include the message) — but FIRE-AND-FORGET. Under
+      // incoming-message load the worker queue backs up; AWAITING this write
+      // here is what stalled the user's own bubble for seconds, because it sat
+      // between the mirror write and the paint above.
+      //
+      // `appendLocalHistoryMessage` stores the message object AND inserts the
+      // mid into the worker's history slice + bumps the dialog top_message.
+      // The plain `setMessageToStorage` it replaces stored only the object, so
+      // a sent message vanished when the chat was closed and reopened (the
+      // cached mid slice never referenced it) and only reappeared after a full
+      // app restart forced a real getHistory from IndexedDB.
       void Promise.resolve(
-        rs.managers.appMessagesManager.setMessageToStorage(`${peerId}_history` as any, msg)
-      ).catch((e: any) => console.debug(LOG_PREFIX, 'setMessageToStorage failed:', e?.message));
+        rs.managers.appMessagesManager.appendLocalHistoryMessage(msg)
+      ).catch((e: any) => console.debug(LOG_PREFIX, 'appendLocalHistoryMessage failed:', e?.message));
 
       // Bump (or create) the sidebar dialog for the outgoing message.
       // Without this dispatch the chat list never reflects a live send —

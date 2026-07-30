@@ -290,10 +290,12 @@ export async function injectIntoMirrors(
     proxy.mirrors.messages[storageKey][msg.mid || msg.id] = msg;
   }
 
-  // Push into Worker's history storage for subsequent getHistory calls
+  // Push into Worker's history structures for subsequent getHistory calls AND
+  // chat close/reopen. `appendLocalHistoryMessage` stores the object AND
+  // inserts the mid into the history slice (plain setMessageToStorage left the
+  // slice stale, so live-received messages vanished on reopen until restart).
   try {
-    const storageKey = `${peerId}_history` as any;
-    await rootScope.managers.appMessagesManager.setMessageToStorage(storageKey, msg);
+    await rootScope.managers.appMessagesManager.appendLocalHistoryMessage(msg);
   } catch(e: any) { console.debug('[MessageHandler] non-critical:', e?.message); }
 
   const result = await ensureSenderUserInjected({

@@ -90,6 +90,7 @@ vi.mock('@lib/phantomchat/phantomchat-peer-mapper', () => ({
 // Mock rootScope
 const mockDispatchEvent = vi.fn();
 const mockSetMessageToStorage = vi.fn().mockResolvedValue(undefined);
+const mockAppendLocalHistoryMessage = vi.fn().mockResolvedValue(undefined);
 const mockInvalidateHistoryCache = vi.fn().mockResolvedValue(undefined);
 const mockSetDialogTopMessage = vi.fn().mockResolvedValue(undefined);
 const mockInjectP2PUser = vi.fn().mockResolvedValue(undefined);
@@ -101,6 +102,7 @@ vi.mock('@lib/rootScope', () => ({
     managers: {
       appMessagesManager: {
         setMessageToStorage: (...args: any[]) => mockSetMessageToStorage(...args),
+        appendLocalHistoryMessage: (...args: any[]) => mockAppendLocalHistoryMessage(...args),
         invalidateHistoryCache: (...args: any[]) => mockInvalidateHistoryCache(...args),
         setDialogTopMessage: (...args: any[]) => mockSetDialogTopMessage(...args)
       },
@@ -196,14 +198,11 @@ describe('phantomchat-message-handler', () => {
       expect(MOUNT_CLASS_TO.apiManagerProxy.mirrors.messages[storageKey][2000000001]).toBe(msg);
     });
 
-    it('pushes to Worker storage via setMessageToStorage', async() => {
+    it('pushes to Worker history via appendLocalHistoryMessage (object + mid slice)', async() => {
       const msg = {mid: 2000000001, id: 2000000001};
       await injectIntoMirrors(PEER_ID, msg, SENDER_PUBKEY);
 
-      expect(mockSetMessageToStorage).toHaveBeenCalledWith(
-        `${PEER_ID}_history`,
-        msg
-      );
+      expect(mockAppendLocalHistoryMessage).toHaveBeenCalledWith(msg);
     });
 
     it('auto-adds unknown sender as peer', async() => {
@@ -344,8 +343,8 @@ describe('phantomchat-message-handler', () => {
       setItemSpy.mockRestore();
     });
 
-    it('injectIntoMirrors: setMessageToStorage rejection is swallowed + logged', async() => {
-      mockSetMessageToStorage.mockRejectedValueOnce(new Error('IDB closed'));
+    it('injectIntoMirrors: appendLocalHistoryMessage rejection is swallowed + logged', async() => {
+      mockAppendLocalHistoryMessage.mockRejectedValueOnce(new Error('IDB closed'));
 
       const msg = {mid: 3000000002, id: 3000000002};
       const result = await injectIntoMirrors(PEER_ID, msg, SENDER_PUBKEY);

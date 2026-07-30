@@ -35,6 +35,7 @@ const MID = 999000000001;
 const dispatchEventSpy = vi.fn();
 const dispatchEventSingleSpy = vi.fn();
 const setMessageToStorageMock = vi.fn().mockResolvedValue(undefined);
+const appendLocalHistoryMessageMock = vi.fn().mockResolvedValue(undefined);
 
 const apiProxyStub: any = {mirrors: {messages: {}, dialogs: {}, peers: {}}};
 
@@ -56,6 +57,7 @@ beforeAll(async() => {
       managers: {
         appMessagesManager: {
           setMessageToStorage: setMessageToStorageMock,
+          appendLocalHistoryMessage: appendLocalHistoryMessageMock,
           invalidateHistoryCache: vi.fn().mockResolvedValue(undefined)
         }
       }
@@ -145,6 +147,8 @@ describe('VMT sendMessage: outgoing dialog bump (regression)', () => {
     dispatchEventSingleSpy.mockClear();
     setMessageToStorageMock.mockClear();
     setMessageToStorageMock.mockResolvedValue(undefined);
+    appendLocalHistoryMessageMock.mockClear();
+    appendLocalHistoryMessageMock.mockResolvedValue(undefined);
     for(const k of Object.keys(apiProxyStub.mirrors.dialogs)) delete apiProxyStub.mirrors.dialogs[k];
     for(const k of Object.keys(apiProxyStub.mirrors.messages)) delete apiProxyStub.mirrors.messages[k];
 
@@ -220,11 +224,11 @@ describe('VMT sendMessage: outgoing dialog bump (regression)', () => {
   });
 
   // Perf regression (Phase 1 — optimistic bubble must never wait on a worker
-  // round-trip). The worker's setMessageToStorage write is fire-and-forget; the
-  // history_append paint must fire even if that write never resolves (the
+  // round-trip). The worker's appendLocalHistoryMessage write is fire-and-forget;
+  // the history_append paint must fire even if that write never resolves (the
   // "saturated worker" case that stalled the user's own bubble for seconds).
   it('paints the bubble even when the worker storage write never resolves', async() => {
-    setMessageToStorageMock.mockReturnValueOnce(new Promise(() => {})); // hangs forever
+    appendLocalHistoryMessageMock.mockReturnValueOnce(new Promise(() => {})); // hangs forever
 
     await server.handleMethod('messages.sendMessage', {
       peer: {user_id: PEER_ID},
