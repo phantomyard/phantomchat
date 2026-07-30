@@ -208,7 +208,7 @@ export class NostrRelay {
   // if processing then fails we must hand the id back, or the wrap is poisoned
   // in the shared seen-set and no replay path can ever recover it. Set by the
   // pool alongside claimEvent. No-op when unset.
-  private releaseEvent: ((eventId: string) => void) | null = null;
+  private releaseEvent: ((eventId: string, error?: Error) => void) | null = null;
 
   // Success counterpart of `releaseEvent`: the wrap unwrapped cleanly, so the
   // pool can forget any failure count it accrued (see wrapFailures). Without it
@@ -929,7 +929,7 @@ export class NostrRelay {
    * claimed wrap fails to process, so the id leaves the shared seen-set and a
    * later replay can retry it instead of being silently deduped into the void.
    */
-  setEventRelease(fn: (eventId: string) => void): void {
+  setEventRelease(fn: (eventId: string, error?: Error) => void): void {
     this.releaseEvent = fn;
   }
 
@@ -1414,7 +1414,7 @@ export class NostrRelay {
       // rejections above (non-giftwrap kind, empty content, receipt) are
       // terminal verdicts and KEEP the claim; only failures are released.
       if(event.id && this.releaseEvent) {
-        this.releaseEvent(event.id);
+        this.releaseEvent(event.id, err instanceof Error ? err : undefined);
       }
     }
   }
@@ -1563,7 +1563,7 @@ export class NostrRelay {
       // event, so they KEEP the claim and are not retried. Only failures —
       // where we never reached a verdict — are released.
       if(event.id && this.releaseEvent) {
-        this.releaseEvent(event.id);
+        this.releaseEvent(event.id, err instanceof Error ? err : undefined);
       }
       // Don't throw - just log the error and skip this message
     }

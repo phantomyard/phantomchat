@@ -1373,7 +1373,7 @@ export class NostrRelayPool {
     instance.setEventDedup?.((eventId) => this.claimWrapId(eventId));
     // ...and the rollback, so a wrap whose processing dies is not poisoned in
     // the seen-set and can be retried by a replay.
-    instance.setEventRelease?.((eventId) => this.releaseWrapId(eventId));
+    instance.setEventRelease?.((eventId, error) => this.releaseWrapId(eventId, error));
     // ...and the success signal, so a wrap that unwraps cleanly stops carrying
     // the failure strikes it accrued while the worker/network was broken.
     instance.setEventCommit?.((eventId) => this.commitWrapId(eventId));
@@ -1468,8 +1468,27 @@ export class NostrRelayPool {
    * The message is on the relay, retrievable, and permanently invisible to this
    * session. Only a reload clears it. Releasing the claim closes that hole.
    */
-  public releaseWrapId(eventId: string): void {
-    // Bound the retry loop, but never permanently.
+  public releaseWrapId(eventId: string, error?: Error): void {
+    // TERMINAL PATH — deterministic errors: the wrap is structurally invalid
+    // (bad signature, corrupt seal, mismatched pubkey, bad rumor hash) and will
+    // NEVER succeed on retry. Remove from the seen-set so it doesn't block a
+    // relay copy, but do NOT queue a refetch — re-fetching a wrap we proved
+    // cannot unwrap is pure waste. No failure counter, no parking — gone.
+    const deterministic = error && 'deterministic' in error && (error as any).deterministic === true;
+    if(deterministic) {
+      this.seenWrapIds.delete(eventId);
+      const idx = this.seenWrapOrder.lastIndexOf(eventId);
+      if(idx !== -1) this.seenWrapOrder.splice(idx, 1);
+      this.pendingWrapRefetch.delete(eventId);
+      this.wrapFailures.delete(eventId);
+      this.log(
+        '[NostrRelayPool] deterministic unwrap error — terminal, no retry:',
+        eventId.slice(0, 8), error!.message
+      );
+      return;
+    }
+
+    // TRANSIENT PATH — bound the retry loop, but never permanently.
     //
     // An unconditional release re-opens a known freeze (FIND-poll-reunwrap): a
     // deterministically-corrupt wrap sitting near the watermark is re-fetched by
@@ -1486,11 +1505,6 @@ export class NostrRelayPool {
     // environmental cause has plausibly cleared and a retry is newly
     // informative. Net: corrupt wrap => <=N attempts per resume (bounded CPU);
     // transient wrap => always recovers on the next resume, no reload needed.
-    //
-    // A count can't distinguish "bad wrap" from "sleeping device" — only the
-    // error can. A future pass should make DETERMINISTIC errors (malformed rumor
-    // JSON, AEAD failure) terminal and leave everything else retryable; the cap
-    // is the coarse stand-in until then.
     const failures = (this.wrapFailures.get(eventId) ?? 0) + 1;
     this.wrapFailures.set(eventId, failures);
     if(failures >= WRAP_RETRY_LIMIT) {

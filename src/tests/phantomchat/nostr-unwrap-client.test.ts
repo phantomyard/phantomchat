@@ -42,4 +42,21 @@ describe('NostrUnwrapClient (synchronous fallback)', () => {
       wrapsAndIds.map(({wraps}) => client.unwrap(wraps[0] as NTNostrEvent, recipientSk)));
     rumors.forEach((rumor, i) => expect(rumor.content).toBe(`msg-${i}`));
   });
+
+  it('marks verification errors as deterministic except no_matching_key', () => {
+    const det = new GiftWrapVerificationError('wrap_sig', 'bad sig');
+    expect(det.deterministic).toBe(true);
+
+    const det2 = new GiftWrapVerificationError('seal_sig', 'bad seal');
+    expect(det2.deterministic).toBe(true);
+
+    const det3 = new GiftWrapVerificationError('pubkey_binding', 'mismatch');
+    expect(det3.deterministic).toBe(true);
+
+    const det4 = new GiftWrapVerificationError('rumor_id', 'bad hash');
+    expect(det4.deterministic).toBe(true);
+
+    const trans = new GiftWrapVerificationError('no_matching_key', 'cache miss');
+    expect(trans.deterministic).toBe(false);
+  });
 });

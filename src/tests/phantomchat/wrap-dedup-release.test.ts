@@ -13,6 +13,7 @@
 
 import '../setup';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
+import {GiftWrapVerificationError} from '@lib/phantomchat/nostr-crypto';
 
 const {unwrapMock} = vi.hoisted(() => ({unwrapMock: vi.fn()}));
 
@@ -70,7 +71,7 @@ describe('gift-wrap dedup claim/release', () => {
       seen.add(id);
       return true;
     });
-    relay.setEventRelease((id: string) => {
+    relay.setEventRelease((id: string, _error?: Error) => {
       releases.push(id);
       seen.delete(id);
     });
@@ -128,5 +129,38 @@ describe('gift-wrap dedup claim/release', () => {
 
     expect(releases).toEqual([]);
     expect(delivered).toHaveLength(1); // deduped, not doubled
+  });
+
+  it('releases with error for deterministic unwrap failures (bad signature)', async() => {
+    const delivered: any[] = [];
+    relay.onMessage((m) => delivered.push(m));
+
+    // Simulate a deterministic failure: wrap signature invalid.
+    const detError = new GiftWrapVerificationError('wrap_sig', 'gift-wrap signature invalid');
+    unwrapMock.mockRejectedValueOnce(detError);
+
+    const wrap = makeWrap('wrap-det');
+    await relay.ingestExternalEvent(wrap);
+
+    expect(delivered).toHaveLength(0);
+    // The release was called with the error object.
+    expect(releases).toEqual(['wrap-det']);
+    expect(seen.has('wrap-det')).toBe(false);
+  });
+
+  it('releases with error for transient unwrap failures (no_matching_key)', async() => {
+    const delivered: any[] = [];
+    relay.onMessage((m) => delivered.push(m));
+
+    // Simulate a transient failure: worker cache miss.
+    const transientError = new GiftWrapVerificationError('no_matching_key', 'no matching symmetric key');
+    unwrapMock.mockRejectedValueOnce(transientError);
+
+    const wrap = makeWrap('wrap-trans');
+    await relay.ingestExternalEvent(wrap);
+
+    expect(delivered).toHaveLength(0);
+    expect(releases).toEqual(['wrap-trans']);
+    expect(seen.has('wrap-trans')).toBe(false);
   });
 });
