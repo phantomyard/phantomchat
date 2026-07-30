@@ -330,7 +330,14 @@ export class MessageStore {
       const store = tx.objectStore(STORE_NAME);
       const index = store.index('eventId');
 
-      tx.oncomplete = () => resolve();
+      // Mark event as seen ONLY on full commit — if the transaction aborts
+      // (e.g. pruneConversationInTx fails), the insert rolls back and the
+      // event must remain retryable. marking in onsuccess (pre-commit) creates
+      // a silent drop on retry — see review #113 by Kai.
+      tx.oncomplete = () => {
+        this.markSeen(msg.eventId);
+        resolve();
+      };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
 
@@ -349,8 +356,7 @@ export class MessageStore {
             if(existing?.twebPeerId && !msg.twebPeerId) merged.twebPeerId = existing.twebPeerId;
             if(existing?.isOutgoing !== undefined && msg.isOutgoing === undefined) merged.isOutgoing = existing.isOutgoing;
             if(existing?.editedAt && !msg.editedAt) merged.editedAt = existing.editedAt;
-            const putReq = store.put(merged, getReq.result);
-            putReq.onsuccess = () => this.markSeen(msg.eventId);
+            store.put(merged, getReq.result);
           };
         } else {
           // Insert new. Only INSERTs grow the row count — upsert-updates can
@@ -358,7 +364,6 @@ export class MessageStore {
           // only on this path, keeping zero work on the update path.
           const addReq = store.add(msg);
           addReq.onsuccess = () => {
-            this.markSeen(msg.eventId);
             if(msg.conversationId) {
               this.pruneConversationInTx(store, msg.conversationId);
             }

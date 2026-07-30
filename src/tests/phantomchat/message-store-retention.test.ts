@@ -150,4 +150,33 @@ describe('MessageStore retention cap (#107)', () => {
     expect(all.some((m) => m.eventId === doomed.eventId)).toBe(false);
     expect(all.map((m) => m.content)).toEqual(['msg m2', 'msg m1', 'msg m0']);
   });
+
+  it('dedup cache is cleared on abort: same eventId is retryable after prune failure', async () => {
+    // PR #113 Kai review: markSeen was called in addReq.onsuccess (pre-commit).
+    // If the transaction aborts during pruning, the dedup cache says "seen" but
+    // the row never persisted. Retry gets silently dropped. Fix: markSeen is now
+    // called in tx.oncomplete only.
+    const store = new MessageStore({messageCap: 3});
+    const conv = uniqueConvId();
+    for(let i = 0; i < 3; i++) {
+      await store.saveMessage(makeMsg(conv, BASE_TS + i, `r${i}`));
+    }
+
+    const target = makeMsg(conv, BASE_TS + 3, 'retry-target');
+
+    // Attempt 1: sabotage prune → abort → insert rolls back
+    vi.spyOn(IDBCursor.prototype, 'delete').mockImplementation(() => {
+      throw new DOMException('injected prune failure', 'UnknownError');
+    });
+    await expect(store.saveMessage(target)).rejects.toThrow();
+    vi.restoreAllMocks();
+
+    // Dedup cache must NOT retain the failed eventId
+    expect(store.hasSeenEventId(target.eventId)).toBe(false);
+
+    // Attempt 2: same eventId, prune works → should succeed and persist
+    await store.saveMessage(target);
+    const all = await store.getMessages(conv, 100);
+    expect(all.some((m) => m.eventId === target.eventId)).toBe(true);
+  });
 });
