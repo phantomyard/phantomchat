@@ -10,7 +10,7 @@
 
 import '../setup';
 import 'fake-indexeddb/auto';
-import {describe, it, expect} from 'vitest';
+import {describe, it, expect, afterEach, vi} from 'vitest';
 import {MessageStore, StoredMessage, MESSAGE_CAP_PER_CHAT} from '@lib/phantomchat/message-store';
 
 const PK_B = 'bbbb'.repeat(16);
@@ -38,6 +38,10 @@ function makeMsg(conversationId: string, timestamp: number, tag: string): Stored
 const BASE_TS = 1_700_000_000;
 
 describe('MessageStore retention cap (#107)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('exports a default cap of 500 per chat', () => {
     expect(MESSAGE_CAP_PER_CHAT).toBe(500);
     expect((new MessageStore() as any).messageCap).toBe(500);
@@ -118,5 +122,32 @@ describe('MessageStore retention cap (#107)', () => {
       await store.saveMessage(makeMsg(conv, BASE_TS + i, `x${i}`));
     }
     expect(await store.getMessages(conv, 100)).toHaveLength(12);
+  });
+
+  it('is failure-atomic: a prune failure rolls back the triggering insert', async () => {
+    // PR #113 review: insert + count + prune must live in ONE readwrite
+    // transaction. If the prune step throws, the transaction aborts and the
+    // just-inserted row must NOT persist — the store never sits over the cap
+    // with a stranded write.
+    const store = new MessageStore({messageCap: 3});
+    const conv = uniqueConvId();
+    for(let i = 0; i < 3; i++) {
+      await store.saveMessage(makeMsg(conv, BASE_TS + i, `m${i}`));
+    }
+
+    // Sabotage the prune: every cursor delete fails from here on.
+    vi.spyOn(IDBCursor.prototype, 'delete').mockImplementation(() => {
+      throw new DOMException('injected prune failure', 'UnknownError');
+    });
+
+    const doomed = makeMsg(conv, BASE_TS + 3, 'doomed');
+    await expect(store.saveMessage(doomed)).rejects.toThrow();
+
+    // The insert rolled back with the aborted transaction: still at cap,
+    // and the doomed row is nowhere to be found.
+    const all = await store.getMessages(conv, 100);
+    expect(all).toHaveLength(3);
+    expect(all.some((m) => m.eventId === doomed.eventId)).toBe(false);
+    expect(all.map((m) => m.content)).toEqual(['msg m2', 'msg m1', 'msg m0']);
   });
 });

@@ -12,6 +12,8 @@
  * Retention: each conversation is capped at MESSAGE_CAP_PER_CHAT rows (default
  * 500). On every INSERT (not upsert-update) the store prunes the oldest rows
  * by timestamp beyond the cap, keeping read cost bounded (closes #107).
+ * Insert + count + prune run in ONE readwrite transaction, so retention is
+ * failure-atomic — a prune failure aborts the insert with it.
  */
 
 /**
@@ -319,10 +321,18 @@ export class MessageStore {
     }
 
     const db = await this.getDB();
-    const inserted = await new Promise<boolean>((resolve, reject) => {
+    // Upsert + retention prune run in ONE readwrite transaction (#107, PR #113
+    // review): if the prune step fails, the transaction aborts and the insert
+    // rolls back with it — the store can never persist a row that breaches the
+    // cap invariant, and readers never observe an over-cap conversation.
+    await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const index = store.index('eventId');
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
 
       // Check if exists
       const getReq = index.getKey(msg.eventId);
@@ -340,26 +350,22 @@ export class MessageStore {
             if(existing?.isOutgoing !== undefined && msg.isOutgoing === undefined) merged.isOutgoing = existing.isOutgoing;
             if(existing?.editedAt && !msg.editedAt) merged.editedAt = existing.editedAt;
             const putReq = store.put(merged, getReq.result);
-            putReq.onerror = () => reject(putReq.error);
-            putReq.onsuccess = () => { this.markSeen(msg.eventId); resolve(false); };
+            putReq.onsuccess = () => this.markSeen(msg.eventId);
           };
-          readReq.onerror = () => reject(readReq.error);
         } else {
-          // Insert new
+          // Insert new. Only INSERTs grow the row count — upsert-updates can
+          // never push a conversation over the cap, so pruning is scheduled
+          // only on this path, keeping zero work on the update path.
           const addReq = store.add(msg);
-          addReq.onerror = () => reject(addReq.error);
-          addReq.onsuccess = () => { this.markSeen(msg.eventId); resolve(true); };
+          addReq.onsuccess = () => {
+            this.markSeen(msg.eventId);
+            if(msg.conversationId) {
+              this.pruneConversationInTx(store, msg.conversationId);
+            }
+          };
         }
       };
-      getReq.onerror = () => reject(getReq.error);
     });
-
-    // Retention cap (#107): only INSERTs grow the row count — upsert-updates
-    // can never push a conversation over the cap, so pruning here keeps the
-    // invariant with zero work on the update path.
-    if(inserted && msg.conversationId) {
-      await this.pruneConversation(msg.conversationId);
-    }
   }
 
   /**
@@ -367,42 +373,33 @@ export class MessageStore {
    * (by authoritative `timestamp`, NOT insertion order — backfill legitimately
    * inserts old messages late, and those must be the first to fall off).
    *
-   * Count + delete run in ONE readwrite transaction so concurrent saves can't
-   * interleave between the check and the prune. The composite index cursor
-   * walks oldest-first, so cost is O(excess) — at steady state one delete per
-   * insert.
+   * Must be called from WITHIN the saveMessage write transaction: the count
+   * request queues after the insert, so it sees the new row, and any request
+   * failure aborts the whole transaction — insert included — making retention
+   * failure-atomic. The composite index cursor walks oldest-first, so cost is
+   * O(excess) — at steady state one delete per insert.
    */
-  private async pruneConversation(conversationId: string): Promise<void> {
+  private pruneConversationInTx(store: IDBObjectStore, conversationId: string): void {
     const cap = this.messageCap;
     if(!Number.isFinite(cap) || cap <= 0) return; // pruning disabled
 
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const index = tx.objectStore(STORE_NAME).index('conversationTimestamp');
-      // Timestamps are unix seconds (>= 0); bound covers the whole conversation.
-      const range = IDBKeyRange.bound([conversationId, 0], [conversationId, Number.MAX_SAFE_INTEGER]);
+    const index = store.index('conversationTimestamp');
+    // Timestamps are unix seconds (>= 0); bound covers the whole conversation.
+    const range = IDBKeyRange.bound([conversationId, 0], [conversationId, Number.MAX_SAFE_INTEGER]);
 
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-
-      const countReq = index.count(range);
-      countReq.onerror = () => reject(countReq.error);
-      countReq.onsuccess = () => {
-        let remaining = countReq.result - cap;
-        if(remaining <= 0) return; // within cap — nothing to do
-        const cursorReq = index.openCursor(range);
-        cursorReq.onerror = () => reject(cursorReq.error);
-        cursorReq.onsuccess = () => {
-          const cursor = cursorReq.result;
-          if(!cursor || remaining <= 0) return;
-          cursor.delete();
-          remaining--;
-          cursor.continue();
-        };
+    const countReq = index.count(range);
+    countReq.onsuccess = () => {
+      let remaining = countReq.result - cap;
+      if(remaining <= 0) return; // within cap — nothing to do
+      const cursorReq = index.openCursor(range);
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if(!cursor || remaining <= 0) return;
+        cursor.delete();
+        remaining--;
+        cursor.continue();
       };
-    });
+    };
   }
 
   /**
