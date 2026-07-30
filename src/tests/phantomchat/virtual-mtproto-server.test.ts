@@ -232,6 +232,22 @@ describe('PhantomChatMTProtoServer', () => {
       expect(typeof dialog.unread_count).toBe('number');
     });
 
+    // Rule 8 on the response path: the sidebar preview must render from
+    // `dialog.topMessage` directly, without a getMessageByPeer round-trip
+    // against main-thread mirrors. Chats with no live traffic since boot
+    // rendered name-only rows before this contract held here.
+    it('attaches the full topMessage object to the dialog (Rule 8 response path)', async () => {
+      const result = await server.handleMethod('messages.getDialogs', {});
+      const dialog = result.dialogs[0];
+
+      expect(typeof dialog.topMessage).toBe('object');
+      expect(dialog.topMessage.mid).toBe(MID);
+      expect(dialog.topMessage.message).toBe('hello world');
+      // Same object identity as the entry in the messages[] array — one
+      // source of truth, no divergent copies.
+      expect(result.messages).toContain(dialog.topMessage);
+    });
+
     it('routes messages.getPinnedDialogs to same handler', async () => {
       const result = await server.handleMethod('messages.getPinnedDialogs', {});
 

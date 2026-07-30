@@ -3482,6 +3482,65 @@ export class AppMessagesManager extends AppManager {
     this.scheduleHandleNewDialogs(message.peerId, dialog);
   }
 
+  /**
+   * [PhantomChat.chat] Persist a locally injected message (P2P outgoing bubble,
+   * incoming relay message) into the Worker's history structures so it survives
+   * a chat close/reopen WITHOUT an app restart.
+   *
+   * The PhantomChat injection paths paint via a main-thread `history_append`
+   * dispatch plus a direct mirror write, and previously only called
+   * `setMessageToStorage` — which stores the message OBJECT but never inserts
+   * the mid into `historyStorage.history` (the mid slice the chat view renders
+   * from on reopen when the bottom slice is already cached). Result: a sent
+   * (or live-received) message showed in the preview and the open chat, but
+   * was MISSING after leaving and reopening the chat, and only reappeared
+   * after a full app restart forced a real getHistory from IndexedDB.
+   *
+   * The ordered slice insert below replicates `updateNewMessage`'s logic
+   * (see the isExisting/firstSlice block there) so the mid lands in the same
+   * position core would have put it.
+   */
+  public appendLocalHistoryMessage(message: MyMessage) {
+    const peerId = message.peerId;
+    if(!peerId || message.mid == null) return;
+
+    this.setMessageToStorage(this.getHistoryMessagesStorage(peerId), message);
+
+    const historyStorage = this.getHistoryStorage(peerId);
+    const isExisting = !!historyStorage.history.findSlice(message.mid);
+    if(!isExisting) {
+      const firstSlice = historyStorage.history.first;
+      let inserted = false;
+      if(firstSlice?.isEnd(SliceEnd.Bottom)) {
+        let i = 0;
+        for(const length = firstSlice.length; i < length; ++i) {
+          if(message.mid > firstSlice[i]) {
+            break;
+          }
+        }
+
+        if(i > 0) {
+          firstSlice.splice(i, 0, message.mid);
+          inserted = true;
+        }
+      }
+
+      if(!inserted) {
+        historyStorage.history.unshift(message.mid);
+      }
+
+      if(historyStorage.count !== null) {
+        ++historyStorage.count;
+      }
+    }
+
+    if(!historyStorage.maxId || message.mid > historyStorage.maxId) {
+      historyStorage._maxId = message.mid;
+    }
+
+    this.setDialogTopMessage(message);
+  }
+
   public cancelPendingMessage(randomId: string) {
     const pendingData = this.pendingByRandomId[randomId];
 
