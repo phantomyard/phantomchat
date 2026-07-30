@@ -10,9 +10,11 @@
 
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
+import type {StoredMessage} from './message-store';
 import {loadCachedPeerProfile, refreshPeerProfileFromRelays} from './peer-profile-cache';
 import type {NostrBotCommand} from './nostr-profile';
 import {buildPhantomChatMedia, healStoredFileRow} from './phantomchat-media-shape';
+import type {HealedFileRow, PhantomChatFileMetadata} from './phantomchat-media-shape';
 import {getPubkey, getMapping, removeMapping} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
 import {isGroupPeer} from './group-types';
@@ -986,13 +988,15 @@ export class PhantomChatMTProtoServer {
         const fromPeerId = isOutgoing ? undefined : absPeerId;
 
         // Heal rows written without nested fileMetadata (queue-flush regression
-        // / interrupted durable-write-first): media is recovered from the raw
-        // envelope JSON in `content`, and the bubble text becomes the caption
+        // / interrupted durable-write-first) and hybrid rows whose fileMetadata
+        // survived but whose content still holds the raw envelope JSON: media is
+        // recovered from the envelope, and the bubble text becomes the caption
         // instead of the JSON. See healStoredFileRow.
         const healed = healStoredFileRow(stored);
         const fm = stored.fileMetadata ?? healed?.fileMetadata;
         const media = fm ? buildPhantomChatMedia(mid, fm) : undefined;
         const text = healed ? healed.caption : stored.content;
+        if(healed && fm) await this.persistHealedRow(store, stored, healed, fm);
 
         const msg = this.mapper.createTwebMessage({
           mid,
@@ -1012,6 +1016,26 @@ export class PhantomChatMTProtoServer {
     }
 
     return this.buildHistoryResult({messages, users, chats: [], total, offsetIdOffset});
+  }
+
+  /**
+   * Persist a healed file row back to the store so the corruption self-repairs
+   * once instead of re-healing on every read. The merge in saveMessage lets the
+   * healed content/fileMetadata overwrite the corrupt fields while the identity
+   * triple is preserved. Best-effort: a failed write-back must never break
+   * history rendering — the next read simply heals again.
+   */
+  private async persistHealedRow(
+    store: ReturnType<typeof getMessageStore>,
+    stored: StoredMessage,
+    healed: HealedFileRow,
+    fm: PhantomChatFileMetadata
+  ): Promise<void> {
+    try {
+      await store.saveMessage({...stored, content: healed.caption, fileMetadata: fm});
+    } catch(err) {
+      console.warn(LOG_PREFIX, 'getHistory: heal write-back failed', stored.eventId, err);
+    }
   }
 
   /**
@@ -1150,6 +1174,7 @@ export class PhantomChatMTProtoServer {
         const fm = stored.fileMetadata ?? healed?.fileMetadata;
         const media = fm ? buildPhantomChatMedia(mid, fm) : undefined;
         const text = healed ? healed.caption : stored.content;
+        if(healed && fm) await this.persistHealedRow(store, stored, healed, fm);
 
         const msg = this.mapper.createTwebMessage({
           mid,

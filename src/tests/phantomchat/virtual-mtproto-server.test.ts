@@ -338,6 +338,84 @@ describe('PhantomChatMTProtoServer', () => {
       });
       // Bubble text is the recovered caption (empty), NOT the raw JSON
       expect(msg.message).toBe('');
+
+      // Self-repair: the healed shape is persisted back so the next read
+      // starts healthy instead of re-healing forever.
+      expect(mockStore.saveMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: corruptRow.eventId,
+          content: '',
+          fileMetadata: expect.objectContaining({url: 'https://nostr.download/67f8.bin'})
+        })
+      );
+    });
+
+    it('heals a hybrid row (fileMetadata present, content still raw envelope JSON) into a clean media bubble', async () => {
+      // Regression for the post-#111 hybrid state: the bubble showed the
+      // player (fileMetadata ✓) AND the raw envelope JSON as text. The heal
+      // must treat envelope JSON as transport — never user text — even when
+      // fileMetadata is present.
+      const envelope = {
+        url: 'https://nostr.download/67f8.bin',
+        sha256: '67f8f9ad',
+        mimeType: 'audio/ogg; codecs=opus',
+        size: 25403,
+        key: 'be5a71d6',
+        iv: 'de1d5379',
+        mediaType: 'voice',
+        duration: 4
+      };
+      const hybridRow = {
+        ...mockMessage,
+        type: 'file' as const,
+        content: JSON.stringify(envelope),
+        fileMetadata: {
+          url: envelope.url,
+          sha256: envelope.sha256,
+          mimeType: envelope.mimeType,
+          size: envelope.size,
+          keyHex: envelope.key,
+          ivHex: envelope.iv,
+          mediaType: 'voice' as const,
+          duration: 4
+        }
+      };
+      mockStore.getMessagesPage.mockResolvedValueOnce({
+        messages: [hybridRow],
+        total: 1,
+        offsetIdOffset: 0
+      });
+
+      const result = await server.handleMethod('messages.getHistory', {
+        peer: {user_id: PEER_ID}
+      });
+
+      expect(result.messages.length).toBe(1);
+      const msg = result.messages[0];
+      // Media renders from the row's own (authoritative) fileMetadata
+      expect(msg.media).toBeDefined();
+      expect(msg.media._).toBe('messageMediaDocument');
+      expect(msg.media.document.type).toBe('voice');
+      // Bubble text is the caption — NOT the raw envelope JSON
+      expect(msg.message).toBe('');
+
+      // Self-repair persists the cleaned row (JSON content overwritten)
+      expect(mockStore.saveMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: hybridRow.eventId,
+          content: '',
+          fileMetadata: hybridRow.fileMetadata
+        })
+      );
+    });
+
+    it('does not write back healthy rows', async () => {
+      const result = await server.handleMethod('messages.getHistory', {
+        peer: {user_id: PEER_ID}
+      });
+
+      expect(result.messages.length).toBeGreaterThan(0);
+      expect(mockStore.saveMessage).not.toHaveBeenCalled();
     });
 
     it('returns empty when no pubkey for peerId', async () => {
