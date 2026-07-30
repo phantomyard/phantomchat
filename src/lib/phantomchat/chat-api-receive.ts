@@ -529,9 +529,16 @@ export async function handleRelayMessage(
           ...(fileMetadata.servers?.length ? {servers: fileMetadata.servers} : {})
         } : undefined
       };
-      store.saveMessage(row).catch((err) => {
+      // AWAIT the put — durability ordering, not style. The relay pool holds
+      // lastSeenTimestamp until this handler completes; fire-and-forget here
+      // meant the watermark claimed delivery of a row a PWA close could still
+      // drop (bubble rendered from memory, put never committed, and every
+      // replay path keys off the watermark → the message was gone for good).
+      try {
+        await store.saveMessage(row);
+      } catch(err) {
         ctx.log.warn('[ChatAPI] failed to save incoming message:', err);
-      });
+      }
     }
   } catch(err) {
     ctx.log.warn('[ChatAPI] message store error:', err);

@@ -768,8 +768,42 @@ describe('NostrRelayPool', () => {
       const timestamp = 1700001000;
       mockRelayInstances[0].simulateMessage(makeMessage('msg-ts-1', timestamp));
 
+      // The watermark now advances only after the (awaited) handler completes
+      // — flush microtasks so the delivery continuation runs.
+      for(let i = 0; i < 5; i++) await Promise.resolve();
       const stored = localStorage.getItem('phantomchat-last-seen-timestamp');
       expect(stored).toBe(String(timestamp));
+    });
+
+    it('advances lastSeenTimestamp only after the onMessage handler completes', async() => {
+      // Durability contract: the watermark is the claim "everything at or
+      // below this has been delivered". It may only be persisted once the
+      // handler (which awaits the IndexedDB put) has finished — otherwise a
+      // PWA close in the delivery window loses the row while every replay
+      // path has already moved past it (the vanishing-reply bug).
+      let openGate!: () => void;
+      const gate = new Promise<void>((resolve) => { openGate = resolve; });
+      const onMessage = vi.fn(() => gate);
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const timestamp = 1700002000;
+      mockRelayInstances[0].simulateMessage(makeMessage('msg-ts-gated', timestamp));
+
+      // Delivered to the handler (synchronously), but the handler is still
+      // in flight — the watermark must NOT be claimed yet.
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      for(let i = 0; i < 5; i++) await Promise.resolve();
+      expect(localStorage.getItem('phantomchat-last-seen-timestamp')).toBeNull();
+
+      // Handler completes → the watermark may now advance.
+      openGate();
+      for(let i = 0; i < 5; i++) await Promise.resolve();
+      expect(localStorage.getItem('phantomchat-last-seen-timestamp')).toBe(String(timestamp));
     });
   });
 

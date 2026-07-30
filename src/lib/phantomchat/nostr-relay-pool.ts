@@ -64,7 +64,7 @@ export interface PublishResult {
 
 export interface RelayPoolOptions {
   relays?: RelayConfig[];
-  onMessage: (msg: DecryptedMessage) => void;
+  onMessage: (msg: DecryptedMessage) => void | Promise<void>;
   // eligibleCount = relays the pool is currently trying to keep connected
   // (active set). Benched relays (flap/connect-fail cooldown) are excluded so
   // consumers like the device-sync all-green hard rule aren't held hostage by
@@ -237,7 +237,7 @@ export class NostrRelayPool {
   private log: Logger;
   private relayEntries: RelayEntry[] = [];
   private configs: RelayConfig[];
-  private onMessageCb: (msg: DecryptedMessage) => void;
+  private onMessageCb: (msg: DecryptedMessage) => void | Promise<void>;
   private onStateChangeCb?: (connectedCount: number, totalCount: number, eligibleCount: number) => void;
 
   // Dedup LRU — keyed by the DECRYPTED rumor/message id (post-unwrap).
@@ -409,7 +409,7 @@ export class NostrRelayPool {
 
   // ─── Callback setters (for DI / test path) ─────────────────────
 
-  setOnMessage(cb: (msg: DecryptedMessage) => void): void {
+  setOnMessage(cb: (msg: DecryptedMessage) => void | Promise<void>): void {
     this.onMessageCb = cb;
   }
 
@@ -1367,7 +1367,10 @@ export class NostrRelayPool {
 
     // Wire up message handler with dedup
     instance.onMessage((msg: DecryptedMessage) => {
-      this.handleIncomingMessage(msg);
+      // Fire-and-forget at the socket boundary is fine: the watermark only
+      // advances once handleIncomingMessage (and its awaited store put)
+      // completes, so a close mid-processing leaves the replay window open.
+      void this.handleIncomingMessage(msg);
     });
 
     // Wire receipt handler if registered
@@ -1654,7 +1657,7 @@ export class NostrRelayPool {
     }
   }
 
-  private handleIncomingMessage(msg: DecryptedMessage): void {
+  private async handleIncomingMessage(msg: DecryptedMessage): Promise<void> {
     // Dedup check
     if(this.seenIds.has(msg.id)) {
       return;
@@ -1749,13 +1752,26 @@ export class NostrRelayPool {
     // watermark still. backfillRecent() resumes the walk from its saved cursor
     // on the next tick and clears the flag when the range is finally exhausted;
     // the watermark then jumps forward normally.
+    // DELIVER FIRST, then advance the watermark. The watermark is a durable
+    // claim — "everything at or below this has been delivered" — persisted to
+    // localStorage and used as the `since` floor for every replay path. The
+    // old order (advance, then dispatch) made that claim before the handler's
+    // IndexedDB write had even started: a PWA close in that window lost the
+    // row while the watermark already said "delivered", and once the relay's
+    // gift-wrap TTL expired the message was unrecoverable (the vanishing-
+    // reply bug). Awaiting delivery — which itself awaits the store put —
+    // means a close mid-processing leaves the OLD watermark in place, so the
+    // next session's replay re-fetches the message.
+    try {
+      await this.onMessageCb(msg);
+    } catch(err) {
+      this.log.error('[NostrRelayPool] onMessage handler threw:', err);
+    }
+
     if(msg.timestamp > this.lastSeenTimestamp && !this.backfillGapOpen) {
       this.lastSeenTimestamp = msg.timestamp;
       localStorage.setItem(LS_LAST_SEEN_KEY, String(this.lastSeenTimestamp));
     }
-
-    // Deliver
-    this.onMessageCb(msg);
   }
 
   /**
@@ -2041,7 +2057,7 @@ export class NostrRelayPool {
       try {
         const messages = await entry.instance.getMessages(since);
         for(const msg of messages) {
-          this.handleIncomingMessage(msg);
+          await this.handleIncomingMessage(msg);
         }
       } catch(err) {
         this.log.error('[NostrRelayPool] backfill failed for:', entry.config.url, err);
@@ -2065,7 +2081,7 @@ export class NostrRelayPool {
     try {
       const messages = await entry.instance.getMessages(since);
       for(const msg of messages) {
-        this.handleIncomingMessage(msg);
+        await this.handleIncomingMessage(msg);
       }
     } catch(err) {
       this.log.error('[NostrRelayPool] reconnect backfill failed for:', entry.config.url, err);
@@ -2222,7 +2238,7 @@ export class NostrRelayPool {
       for(const page of pages) {
         if(!page) continue;
         for(const msg of page.messages) {
-          this.handleIncomingMessage(msg);
+          await this.handleIncomingMessage(msg);
         }
       }
 

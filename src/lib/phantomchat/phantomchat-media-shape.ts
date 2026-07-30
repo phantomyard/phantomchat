@@ -54,20 +54,27 @@ export interface HealedFileRow {
  *    flat top-level media fields and (via merge) could leave the pre-saved
  *    JSON content in place.
  *
- * In both cases the row's `content` still holds the full file envelope that
+ * A third corrupt shape is the HYBRID row: `fileMetadata` is present (so the
+ * bubble renders a player) but `content` still holds the raw transport
+ * envelope — the state rows flushed by the old queue contract ended in once
+ * the flush re-attached media to the live bubble. The envelope JSON is not
+ * user text; the heal swaps it for the caption and keeps the row's own
+ * (authoritative) fileMetadata.
+ *
+ * In all cases the row's `content` still holds the full file envelope that
  * ChatAPI.sendFileMessage built ({url, sha256, mimeType, size, key, iv,
  * mediaType, servers, duration, waveform, caption?}), so the media is fully
- * recoverable at render time. Render-only heal — the row in IndexedDB is not
- * rewritten; a corrupt row simply heals on every read. Returns undefined when
- * the row has no recoverable media (healthy text row, non-envelope JSON, or
- * an empty-content row whose media info is genuinely gone).
+ * recoverable at render time. Callers persist the healed shape back to
+ * IndexedDB (best-effort) so a corrupt row self-repairs instead of healing
+ * on every read. Returns undefined when the row has nothing to heal (healthy
+ * row, non-envelope JSON) or nothing recoverable (an empty-content row whose
+ * media info is genuinely gone).
  */
 export function healStoredFileRow(stored: {
   type?: string;
   content?: string;
   fileMetadata?: PhantomChatFileMetadata;
 }): HealedFileRow | undefined {
-  if(stored.fileMetadata) return undefined; // healthy row — nothing to heal
   if(stored.type !== 'file' || !stored.content) return undefined;
 
   let parsed: any;
@@ -83,6 +90,13 @@ export function healStoredFileRow(stored: {
     typeof parsed.key !== 'string' ||
     typeof parsed.iv !== 'string') {
     return undefined;
+  }
+
+  const caption = typeof parsed.caption === 'string' ? parsed.caption : '';
+
+  // Hybrid row: media intact, text corrupt. Heal the text only.
+  if(stored.fileMetadata) {
+    return {caption, fileMetadata: stored.fileMetadata};
   }
 
   // Waveform travels as a base64 string on healthy rows, but some send paths
@@ -103,7 +117,7 @@ export function healStoredFileRow(stored: {
   }
 
   return {
-    caption: typeof parsed.caption === 'string' ? parsed.caption : '',
+    caption,
     fileMetadata: {
       url: parsed.url,
       sha256: parsed.sha256,

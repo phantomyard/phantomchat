@@ -99,4 +99,33 @@ describe('healStoredFileRow', () => {
     expect(healed.fileMetadata.waveform).toBeUndefined();
     expect((healed.fileMetadata as any).servers).toBeUndefined();
   });
+
+  describe('hybrid rows (fileMetadata present, content still the raw envelope)', () => {
+    const fm = {url: 'u', sha256: 's', mimeType: 'audio/ogg', size: 1, keyHex: 'k', ivHex: 'i'};
+
+    it('swaps the envelope JSON for the caption, keeping the row\'s own fileMetadata', () => {
+      // The post-#111 state of old queue-flushed rows: media renders (player),
+      // but the bubble ALSO shows the raw JSON. The heal must treat the
+      // envelope as transport, not user text.
+      const healed = healStoredFileRow({type: 'file', content: makeEnvelope(), fileMetadata: fm});
+
+      expect(healed).toBeDefined();
+      expect(healed!.caption).toBe('');
+      expect(healed!.fileMetadata).toBe(fm); // authoritative metadata untouched
+    });
+
+    it('recovers the envelope caption on a hybrid row', () => {
+      const healed = healStoredFileRow({
+        type: 'file',
+        content: makeEnvelope({caption: 'listen to this'}),
+        fileMetadata: fm
+      });
+      expect(healed!.caption).toBe('listen to this');
+    });
+
+    it('leaves a healthy file row (plain caption content) alone', () => {
+      expect(healStoredFileRow({type: 'file', content: 'my caption', fileMetadata: fm})).toBeUndefined();
+      expect(healStoredFileRow({type: 'file', content: '{"note":"not an envelope"}', fileMetadata: fm})).toBeUndefined();
+    });
+  });
 });

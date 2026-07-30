@@ -299,6 +299,9 @@ describe('message-loss recovery', () => {
       // A message lands live at t0 — this sets the watermark.
       relay.simulateMessage(makeMsg('rumor-seen', t0));
       expect(onMessage).toHaveBeenCalledTimes(1);
+      // The watermark advances only after the (awaited) handler completes —
+      // flush microtasks so it lands before the poll below reads it.
+      for(let i = 0; i < 5; i++) await Promise.resolve();
       onMessage.mockClear();
 
       // Kai answers 60s later. The tab is frozen: the socket is deaf, nothing
@@ -484,6 +487,8 @@ describe('message-loss recovery', () => {
       // And the watermark is free to move again — preserving gap state on
       // ignorance must not curdle into a watermark that is frozen forever.
       relay.simulateMessage(makeMsg('rumor-after-gap', t0 + 950));
+      // Watermark advances after the awaited handler completes — flush.
+      for(let i = 0; i < 5; i++) await Promise.resolve();
       expect((pool as any).lastSeenTimestamp).toBe(t0 + 950);
     });
   });
