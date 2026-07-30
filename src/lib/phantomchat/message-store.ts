@@ -5,8 +5,13 @@
  * chat load without relay queries. Messages are stored per conversation
  * with indexes for efficient retrieval and pagination.
  *
- * DB: phantomchat-messages, version 1
- * Store: messages (auto-increment key, indexes: conversationId, timestamp, eventId)
+ * DB: phantomchat-messages, version 4
+ * Store: messages (auto-increment key, indexes: conversationId, timestamp, eventId,
+ *        conversationTimestamp [v4, composite — drives retention pruning])
+ *
+ * Retention: each conversation is capped at MESSAGE_CAP_PER_CHAT rows (default
+ * 500). On every INSERT (not upsert-update) the store prunes the oldest rows
+ * by timestamp beyond the cap, keeping read cost bounded (closes #107).
  */
 
 /**
@@ -115,8 +120,15 @@ export type PartialStoredMessage = Omit<StoredMessage, 'mid' | 'twebPeerId'> & {
 // ─── Constants ─────────────────────────────────────────────────────
 
 const DB_NAME = 'phantomchat-messages';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_NAME = 'messages';
+
+/**
+ * Per-conversation retention cap. Once a conversation exceeds this many rows,
+ * the oldest (by timestamp) are pruned on the next insert. Keeps
+ * `getAllMessagesSorted` (full-conversation scan) bounded at O(cap).
+ */
+export const MESSAGE_CAP_PER_CHAT = 500;
 const CURSOR_STORE = 'read-cursors';
 const TOMBSTONE_STORE = 'conversation-tombstones';
 const DEFAULT_LIMIT = 50;
@@ -141,8 +153,22 @@ export function getMessageStore(): MessageStore {
 /**
  * IndexedDB message cache per conversation.
  */
+export interface MessageStoreOptions {
+  /**
+   * Retention cap per conversation (default MESSAGE_CAP_PER_CHAT = 500).
+   * Pass `Infinity` (or <= 0) to disable pruning. Exposed mainly for tests
+   * and future per-chat settings.
+   */
+  messageCap?: number;
+}
+
 export class MessageStore {
   private dbPromise: Promise<IDBDatabase> | null = null;
+  private readonly messageCap: number;
+
+  constructor(options: MessageStoreOptions = {}) {
+    this.messageCap = options.messageCap ?? MESSAGE_CAP_PER_CHAT;
+  }
 
   // ─── Per-message read caches (perf, Phase 2) ────────────────────────
   // getTombstone + the getByEventId dedup run on EVERY incoming message. Both
@@ -239,6 +265,15 @@ export class MessageStore {
           store.createIndex('conversationId', 'conversationId', {unique: false});
           store.createIndex('timestamp', 'timestamp', {unique: false});
           store.createIndex('eventId', 'eventId', {unique: true});
+          store.createIndex('conversationTimestamp', ['conversationId', 'timestamp'], {unique: false});
+        } else {
+          // v4 upgrade path: add the composite index to existing databases.
+          // Composite key sorts rows oldest-first per conversation, so the
+          // retention prune can delete exactly the excess via one cursor walk.
+          const store = (event.target as IDBOpenDBRequest).transaction!.objectStore(STORE_NAME);
+          if(!store.indexNames.contains('conversationTimestamp')) {
+            store.createIndex('conversationTimestamp', ['conversationId', 'timestamp'], {unique: false});
+          }
         }
         if(!db.objectStoreNames.contains(CURSOR_STORE)) {
           db.createObjectStore(CURSOR_STORE, {keyPath: 'conversationId'});
@@ -284,7 +319,7 @@ export class MessageStore {
     }
 
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
+    const inserted = await new Promise<boolean>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const index = store.index('eventId');
@@ -306,17 +341,67 @@ export class MessageStore {
             if(existing?.editedAt && !msg.editedAt) merged.editedAt = existing.editedAt;
             const putReq = store.put(merged, getReq.result);
             putReq.onerror = () => reject(putReq.error);
-            putReq.onsuccess = () => { this.markSeen(msg.eventId); resolve(); };
+            putReq.onsuccess = () => { this.markSeen(msg.eventId); resolve(false); };
           };
           readReq.onerror = () => reject(readReq.error);
         } else {
           // Insert new
           const addReq = store.add(msg);
           addReq.onerror = () => reject(addReq.error);
-          addReq.onsuccess = () => { this.markSeen(msg.eventId); resolve(); };
+          addReq.onsuccess = () => { this.markSeen(msg.eventId); resolve(true); };
         }
       };
       getReq.onerror = () => reject(getReq.error);
+    });
+
+    // Retention cap (#107): only INSERTs grow the row count — upsert-updates
+    // can never push a conversation over the cap, so pruning here keeps the
+    // invariant with zero work on the update path.
+    if(inserted && msg.conversationId) {
+      await this.pruneConversation(msg.conversationId);
+    }
+  }
+
+  /**
+   * Enforce the per-conversation retention cap by deleting the oldest rows
+   * (by authoritative `timestamp`, NOT insertion order — backfill legitimately
+   * inserts old messages late, and those must be the first to fall off).
+   *
+   * Count + delete run in ONE readwrite transaction so concurrent saves can't
+   * interleave between the check and the prune. The composite index cursor
+   * walks oldest-first, so cost is O(excess) — at steady state one delete per
+   * insert.
+   */
+  private async pruneConversation(conversationId: string): Promise<void> {
+    const cap = this.messageCap;
+    if(!Number.isFinite(cap) || cap <= 0) return; // pruning disabled
+
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const index = tx.objectStore(STORE_NAME).index('conversationTimestamp');
+      // Timestamps are unix seconds (>= 0); bound covers the whole conversation.
+      const range = IDBKeyRange.bound([conversationId, 0], [conversationId, Number.MAX_SAFE_INTEGER]);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+
+      const countReq = index.count(range);
+      countReq.onerror = () => reject(countReq.error);
+      countReq.onsuccess = () => {
+        let remaining = countReq.result - cap;
+        if(remaining <= 0) return; // within cap — nothing to do
+        const cursorReq = index.openCursor(range);
+        cursorReq.onerror = () => reject(cursorReq.error);
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if(!cursor || remaining <= 0) return;
+          cursor.delete();
+          remaining--;
+          cursor.continue();
+        };
+      };
     });
   }
 
