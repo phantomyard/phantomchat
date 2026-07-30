@@ -284,6 +284,24 @@ export class NostrRelayPool {
   // History backfill
   private lastSeenTimestamp: number = 0;
 
+  // Serializes live socket deliveries: each message's handler (and its
+  // awaited store put + watermark advance) must fully complete before the
+  // next live delivery starts. Without this, concurrent live messages can
+  // complete out of timestamp order — t=101 finishing while t=100's
+  // IndexedDB save is still in flight advances lastSeenTimestamp past an
+  // unsaved row, and a tab close in that window loses t=100 permanently
+  // (every replay path floors at the persisted watermark). The first
+  // message starts synchronously (up to its first await) so a lone live
+  // delivery behaves exactly as it did before serialization; messages
+  // arriving while one is in flight queue behind it in arrival order.
+  // (Backfill paths are already serialized — they await
+  // handleIncomingMessage in their loops.)
+  private liveDeliveryQueue: DecryptedMessage[] = [];
+  private liveDeliveryRunning = false;
+  // Resolves when the current pump drains — tests await this to observe
+  // the serialized end state without guessing at microtask counts.
+  private liveDeliveryDone: Promise<void> = Promise.resolve();
+
   // Subscription state
   private isSubscribedFlag: boolean = false;
 
@@ -1366,12 +1384,7 @@ export class NostrRelayPool {
     instance.liveSubscribeSince = () => this.catchUpSince();
 
     // Wire up message handler with dedup
-    instance.onMessage((msg: DecryptedMessage) => {
-      // Fire-and-forget at the socket boundary is fine: the watermark only
-      // advances once handleIncomingMessage (and its awaited store put)
-      // completes, so a close mid-processing leaves the replay window open.
-      void this.handleIncomingMessage(msg);
-    });
+    instance.onMessage((msg: DecryptedMessage) => this.enqueueLiveDelivery(msg));
 
     // Wire receipt handler if registered
     if(this._onReceiptCb) {
@@ -1655,6 +1668,32 @@ export class NostrRelayPool {
     } finally {
       this.refetchInFlight = false;
     }
+  }
+
+  /**
+   * Serialize a live socket delivery onto the pool-wide pump — see the
+   * field comment on liveDeliveryQueue for why. The pump body runs
+   * synchronously up to the first message's first await, preserving the
+   * pre-serialization behavior for a lone delivery (dedup, envelope
+   * classifiers, and the onMessage callback all fire in the delivery
+   * tick). A handler throw is logged and the pump continues, so one bad
+   * message can never strand the queue.
+   */
+  private enqueueLiveDelivery(msg: DecryptedMessage): void {
+    this.liveDeliveryQueue.push(msg);
+    if(this.liveDeliveryRunning) return;
+    this.liveDeliveryRunning = true;
+    this.liveDeliveryDone = (async(): Promise<void> => {
+      while(this.liveDeliveryQueue.length > 0) {
+        const next = this.liveDeliveryQueue.shift()!;
+        try {
+          await this.handleIncomingMessage(next);
+        } catch(err) {
+          this.log.error('[NostrRelayPool] live delivery failed:', err);
+        }
+      }
+      this.liveDeliveryRunning = false;
+    })();
   }
 
   private async handleIncomingMessage(msg: DecryptedMessage): Promise<void> {

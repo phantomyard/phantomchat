@@ -410,11 +410,16 @@ describe('NostrRelayPool', () => {
         mockRelayInstances[0].simulateMessage(makeMessage(`msg-${i}`));
       }
 
+      // Live deliveries are serialized behind the first one — drain the
+      // pump so all 10,001 have been processed (and evicted msg-0).
+      await (pool as any).liveDeliveryDone;
+
       expect(onMessage).toHaveBeenCalledTimes(10001);
 
       // Now deliver the very first message again — it should have been evicted
       onMessage.mockClear();
       mockRelayInstances[0].simulateMessage(makeMessage('msg-0'));
+      await (pool as any).liveDeliveryDone;
       expect(onMessage).toHaveBeenCalledTimes(1);
     });
   });
@@ -804,6 +809,53 @@ describe('NostrRelayPool', () => {
       openGate();
       for(let i = 0; i < 5; i++) await Promise.resolve();
       expect(localStorage.getItem('phantomchat-last-seen-timestamp')).toBe(String(timestamp));
+    });
+
+    it('serializes live deliveries so out-of-order completion cannot advance the watermark past an in-flight save', async() => {
+      // Regression (Kai, PR #112): the live socket callback used to launch
+      // handleIncomingMessage fire-and-forget. An older message (t=100)
+      // awaiting its IndexedDB save could be overtaken by a newer one
+      // (t=101) completing first, persisting lastSeen=101; a tab close
+      // before t=100 finished then replayed with since=101 and skipped the
+      // older message forever — the same loss window this PR closed for
+      // backfill. Live deliveries must be serialized: t=101's handler may
+      // not even START until t=100's has fully completed.
+      let openOldGate!: () => void;
+      const oldGate = new Promise<void>((resolve) => { openOldGate = resolve; });
+      const order: string[] = [];
+      const onMessage = vi.fn((msg: any) => {
+        order.push(`start-${msg.id}`);
+        if(msg.id === 'msg-old') {
+          return oldGate.then(() => { order.push('end-msg-old'); });
+        }
+        order.push(`end-${msg.id}`);
+        return Promise.resolve();
+      });
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage});
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      const tOld = 1700003000;
+      const tNew = 1700003001;
+      mockRelayInstances[0].simulateMessage(makeMessage('msg-old', tOld));
+      mockRelayInstances[0].simulateMessage(makeMessage('msg-new', tNew));
+
+      // The old message is in flight; the newer one must be QUEUED BEHIND
+      // it — not delivered, and certainly not completing.
+      for(let i = 0; i < 10; i++) await Promise.resolve();
+      expect(order).toEqual(['start-msg-old']);
+      expect(localStorage.getItem('phantomchat-last-seen-timestamp')).toBeNull();
+
+      // Old message's save finishes → only now may the newer one deliver,
+      // and the watermark lands on the newest timestamp with BOTH rows
+      // already durable.
+      openOldGate();
+      for(let i = 0; i < 10; i++) await Promise.resolve();
+      expect(order).toEqual(['start-msg-old', 'end-msg-old', 'start-msg-new', 'end-msg-new']);
+      expect(localStorage.getItem('phantomchat-last-seen-timestamp')).toBe(String(tNew));
     });
   });
 
