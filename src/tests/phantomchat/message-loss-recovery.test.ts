@@ -127,7 +127,7 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       this.claimEvent = fn;
     }
 
-    setEventRelease(fn: (id: string) => void): void {
+    setEventRelease(fn: (id: string, error?: Error) => void): void {
       this.releaseEvent = fn;
     }
 

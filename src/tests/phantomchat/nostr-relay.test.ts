@@ -656,7 +656,9 @@ describe('NostrRelay', () => {
       expect(claim).toHaveBeenCalledWith(wrap.id);
       // The wrap was claimed, never delivered, and the claim MUST come back —
       // otherwise the next poll tick dedups it away and it is lost until reload.
-      expect(release).toHaveBeenCalledWith(wrap.id);
+      // The error object is passed so the pool can distinguish deterministic
+      // from transient failures (see #78).
+      expect(release).toHaveBeenCalledWith(wrap.id, expect.any(Error));
     });
   });
 

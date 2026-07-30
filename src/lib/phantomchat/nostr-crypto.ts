@@ -639,10 +639,25 @@ function sealAndWrapRumor(
  */
 export class GiftWrapVerificationError extends Error {
   readonly code: 'wrap_sig' | 'seal_sig' | 'pubkey_binding' | 'rumor_id' | 'no_matching_key';
+  /**
+   * True when the error proves the wrap is structurally invalid and will NEVER
+   * succeed on retry (bad signature, corrupt seal, mismatched pubkey, bad rumor
+   * hash). False for transient/environmental failures (no_matching_key = worker
+   * cache miss or frozen worker). The pool uses this to make deterministic
+   * errors TERMINAL — no retry counter, no refetch queue — instead of burning
+   * attempts on a wrap that can never unwrap.
+   */
+  readonly deterministic: boolean;
   constructor(code: 'wrap_sig' | 'seal_sig' | 'pubkey_binding' | 'rumor_id' | 'no_matching_key', message: string) {
     super(message);
     this.name = 'GiftWrapVerificationError';
     this.code = code;
+    // no_matching_key is the only transient code: the recipient's key may
+    // genuinely not match (deterministic), but it also fires when the worker's
+    // symmetric-key cache is cold (transient — the main-thread bounce fixes it).
+    // Conservatively treat it as non-terminal so a cache-miss doesn't silently
+    // drop a valid message.
+    this.deterministic = code !== 'no_matching_key';
   }
 }
 
