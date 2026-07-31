@@ -270,6 +270,12 @@ export class NostrRelayPool {
   // Catch-up poll (delivery backbone — recovers wraps the live push dropped)
   private backfillPollInterval: ReturnType<typeof setInterval> | null = null;
   private backfillPollInFlight = false;
+  // Wall-clock of the last completed catch-up (startup backfill or poll tick).
+  // The visible-triggered dormancy catch-up keys off this: a backgrounded PWA
+  // freezes the poll timer, so on wake a stale timestamp means "the poll could
+  // not have covered the gap — run one now". A fresh timestamp means the poll
+  // is alive and the visible transition was a flicker — don't double-fetch.
+  private lastCatchUpAt = 0;
 
   // Resume state for a backfill that ran out of pages before exhausting the
   // range. `backfillCursor` is the `until` to continue from next tick;
@@ -370,6 +376,7 @@ export class NostrRelayPool {
     if(typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this.resetWrapRetryBudget();
       this.resetRelayCooldowns();
+      this.catchUpAfterDormancy();
     }
   };
   private onOnline = (): void => {
@@ -1563,6 +1570,27 @@ export class NostrRelayPool {
   }
 
   /**
+   * Dormancy catch-up, fired on visibilitychange -> visible.
+   *
+   * A backgrounded PWA gets its timers frozen: the 15s catch-up poll simply
+   * does not run while the tab is hidden/frozen, and the live REQ stream is
+   * dead with the sockets. Wraps that arrived during the gap sit on the relay,
+   * retrievable — but only once something asks. On wake, resetting cooldowns
+   * (above) restores CONNECTIVITY; this restores COVERAGE: if the last catch-up
+   * is older than one poll interval, the poll provably missed a span of time,
+   * so run one immediately rather than waiting out the remainder of the
+   * current (post-thaw) interval. If the last catch-up is fresh the poll is
+   * alive and this was a visibility flicker — skip, so rapid app-switching
+   * doesn't burst a REQ per relay per flicker.
+   */
+  private catchUpAfterDormancy(): void {
+    if(!this.isSubscribedFlag) return;
+    if(Date.now() - this.lastCatchUpAt < BACKFILL_POLL_INTERVAL_MS) return;
+    this.log('[NostrRelayPool] visible: catch-up poll is overdue (dormancy gap), running now');
+    void this.backfillRecent();
+  }
+
+  /**
    * Clear the per-wrap retry budget and un-park everything it parked.
    *
    * Called on the resume triggers (visibilitychange -> visible, online, relay
@@ -2105,6 +2133,7 @@ export class NostrRelayPool {
   private async backfill(): Promise<void> {
     const readEntries = this.relayEntries.filter(e => e.config.read);
     const since = this.catchUpSince();
+    this.lastCatchUpAt = Date.now();
 
     const promises = readEntries.map(async(entry) => {
       try {
@@ -2173,6 +2202,7 @@ export class NostrRelayPool {
     if(this.backfillPollInFlight) return;
     if(!this.isSubscribedFlag) return;
     this.backfillPollInFlight = true;
+    this.lastCatchUpAt = Date.now();
     try {
       // Reach back to the WATERMARK, not to a fixed wall-clock window.
       //

@@ -6,7 +6,7 @@
  */
 
 import '../setup';
-import {describe, it, expect, beforeEach, afterAll, vi} from 'vitest';
+import {describe, it, expect, beforeEach, afterEach, afterAll, vi} from 'vitest';
 
 // With isolate: false, vi.mock factories persist across files.
 // Explicitly unmock rootScope so later test files get the real module.
@@ -137,6 +137,7 @@ import {
   dispatchDialogUpdate,
   handleIncomingMessage,
   handleIncomingEdit,
+  rehydrateOpenChatOnVisible,
   resetUnreadForPeer
 } from '@lib/phantomchat/phantomchat-message-handler';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -520,6 +521,64 @@ describe('phantomchat-message-handler', () => {
       delete (window as any).__phantomchatOwnPubkey;
       // Should not throw — just no-ops because conv resolution returns null.
       await expect(resetUnreadForPeer(PEER_ID)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('visible-transition rehydration (#117)', () => {
+    afterEach(() => {
+      delete (MOUNT_CLASS_TO as any).appImManager;
+    });
+
+    it('invalidates the open chat cache and dispatches history_reload', async() => {
+      (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID}};
+
+      await rehydrateOpenChatOnVisible(100_000);
+
+      expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(PEER_ID);
+      const reloadCalls = mockDispatchEvent.mock.calls.filter((c) => c[0] === 'history_reload');
+      expect(reloadCalls.length).toBe(1);
+      expect(reloadCalls[0][1]).toBe(PEER_ID);
+    });
+
+    it('no-ops when no chat is open', async() => {
+      (MOUNT_CLASS_TO as any).appImManager = {chat: null};
+
+      await rehydrateOpenChatOnVisible(200_000);
+
+      expect(mockInvalidateHistoryCache).not.toHaveBeenCalled();
+      expect(mockDispatchEvent.mock.calls.filter((c) => c[0] === 'history_reload').length).toBe(0);
+    });
+
+    it('no-ops when appImManager is not mounted yet', async() => {
+      delete (MOUNT_CLASS_TO as any).appImManager;
+
+      await rehydrateOpenChatOnVisible(250_000);
+
+      expect(mockInvalidateHistoryCache).not.toHaveBeenCalled();
+    });
+
+    it('throttles rapid hide/show flicker', async() => {
+      (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID}};
+
+      await rehydrateOpenChatOnVisible(300_000);
+      await rehydrateOpenChatOnVisible(305_000); // inside the 10s window
+      expect(mockInvalidateHistoryCache).toHaveBeenCalledTimes(1);
+
+      await rehydrateOpenChatOnVisible(311_000); // past the window
+      expect(mockInvalidateHistoryCache).toHaveBeenCalledTimes(2);
+    });
+
+    it('module-level visibilitychange listener triggers rehydration on visible', async() => {
+      (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID}};
+      // jsdom visibilityState defaults to 'visible'; real Date.now() is far
+      // past the injected timestamps above, so the throttle does not block.
+      document.dispatchEvent(new Event('visibilitychange'));
+      // The listener fire-and-forgets an async fn: flush past the awaited
+      // invalidateHistoryCache + dispatch (microtask chain, macrotask covers it).
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(PEER_ID);
+      expect(mockDispatchEvent.mock.calls.filter((c) => c[0] === 'history_reload').length).toBe(1);
     });
   });
 });
