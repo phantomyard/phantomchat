@@ -138,7 +138,9 @@ import {
   handleIncomingMessage,
   handleIncomingEdit,
   rehydrateOpenChatOnVisible,
-  resetUnreadForPeer
+  resetUnreadForPeer,
+  startRecoveryWatchdog,
+  cancelRecoveryWatchdog
 } from '@lib/phantomchat/phantomchat-message-handler';
 import {MOUNT_CLASS_TO} from '@config/debug';
 
@@ -566,6 +568,19 @@ describe('phantomchat-message-handler', () => {
 
       await rehydrateOpenChatOnVisible(311_000); // past the window
       expect(mockInvalidateHistoryCache).toHaveBeenCalledTimes(2);
+    });
+
+    it('does NOT arm the recovery watchdog (watchdog is owned by bubbles)', async() => {
+      (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID}};
+      const spy = vi.spyOn(globalThis, 'setTimeout');
+
+      await rehydrateOpenChatOnVisible(400_000);
+
+      // startRecoveryWatchdog uses two setTimeout calls (button at 8s, reload at 15s)
+      const watchdogTimeouts = spy.mock.calls.filter(([, ms]) => ms === 8_000 || ms === 15_000);
+      expect(watchdogTimeouts.length).toBe(0);
+
+      spy.mockRestore();
     });
 
     it('module-level visibilitychange listener triggers rehydration on visible', async() => {

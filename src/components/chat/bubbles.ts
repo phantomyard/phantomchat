@@ -225,6 +225,7 @@ import {NoForwardsRequestContent, NoForwardsRequestReplyMarkup} from '@component
 import tsNow from '@helpers/tsNow';
 import wrapMessageForReply from '@components/wrappers/messageForReply';
 import canSeeMessageMedia from '@lib/appManagers/utils/messages/canSeeMessageMedia';
+import {cancelRecoveryWatchdog, startRecoveryWatchdog} from '@lib/phantomchat/phantomchat-message-handler';
 
 // TODO: fix new message won't be rendered if an old one is rendering in the moment
 
@@ -1831,6 +1832,7 @@ export default class ChatBubbles {
         return;
       }
 
+      startRecoveryWatchdog();
       this.onHistoryReload();
     });
 
@@ -1968,6 +1970,8 @@ export default class ChatBubbles {
   }
 
   private reloadOverlay: HTMLElement | null = null;
+  private reloadOverlayShownAt = 0;
+  private static readonly OVERLAY_MIN_DISPLAY_MS = 500;
 
   private showReloadOverlay() {
     if(this.reloadOverlay) return; // already showing
@@ -1977,12 +1981,23 @@ export default class ChatBubbles {
     el.style.cssText = 'position:sticky;top:0;z-index:10;text-align:center;padding:6px 12px;font-size:12px;opacity:0.7;pointer-events:none;';
     this.scrollable.container.prepend(el);
     this.reloadOverlay = el;
+    this.reloadOverlayShownAt = Date.now();
   }
 
   private hideReloadOverlay() {
     if(!this.reloadOverlay) return;
-    this.reloadOverlay.remove();
-    this.reloadOverlay = null;
+    const elapsed = Date.now() - this.reloadOverlayShownAt;
+    const remaining = ChatBubbles.OVERLAY_MIN_DISPLAY_MS - elapsed;
+    if(remaining > 0) {
+      // Keep the banner visible for at least the minimum so the browser paints it
+      setTimeout(() => {
+        this.reloadOverlay?.remove();
+        this.reloadOverlay = null;
+      }, remaining);
+    } else {
+      this.reloadOverlay.remove();
+      this.reloadOverlay = null;
+    }
   }
 
   private async onHistoryReload() {
@@ -2002,6 +2017,7 @@ export default class ChatBubbles {
     const middleware = this.getMiddleware();
     this.managers.appMessagesManager.reloadMessages(peerId, mids).then((messages) => {
       this.hideReloadOverlay();
+      cancelRecoveryWatchdog();
       if(!middleware()) return;
 
       const toDelete: FullMid[] = [];
@@ -2040,6 +2056,7 @@ export default class ChatBubbles {
     }).catch(() => {
       // Ensure the overlay is always hidden, even on IndexedDB/API failure
       this.hideReloadOverlay();
+      cancelRecoveryWatchdog();
     });
   }
 
