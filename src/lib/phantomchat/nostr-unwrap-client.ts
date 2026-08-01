@@ -29,10 +29,10 @@ interface PendingEntry {
   timer: ReturnType<typeof setTimeout>;
 }
 
-// Generous ceiling: the worker serialises crypto, so a deep backfill drains in
-// N×(a few ms). 8s never trips under real load but guarantees no permanent hang
-// if the worker dies silently.
-const UNWRAP_TIMEOUT_MS = 8000;
+// Tight ceiling: the worker serialises crypto, so a deep backfill drains in
+// N×(a few ms). 3s catches a dead/wedged worker fast enough that the UI
+// doesn't freeze waiting, while still generous for cold-load backfill bursts.
+const UNWRAP_TIMEOUT_MS = 3000;
 
 // Worker-death recovery. Previously a single `worker.onerror` wedged the client
 // in synchronous-fallback mode for the life of the tab — every later unwrap ran

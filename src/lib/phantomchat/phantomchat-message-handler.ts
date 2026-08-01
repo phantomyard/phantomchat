@@ -138,6 +138,65 @@ export async function rehydrateOpenChatOnVisible(now = Date.now()): Promise<void
   try {
     rootScope.dispatchEvent('history_reload' as any, peerId as any);
   } catch(e) { logSwallow('MessageHandler.rehydrate.history_reload', e); }
+  startRecoveryWatchdog();
+}
+
+// ─── Recovery watchdog ───────────────────────────────────────────────────
+// On wakeup, if the UI is still frozen after RECOVERY_WATCHDOG_RESTART_MS
+// (e.g. unwrap worker died and all crypto ran synchronously on the main
+// thread), force a page reload — the nuclear option. A floating restart
+// button appears after RECOVERY_WATCHDOG_BUTTON_MS so the user can recover
+// manually before the automatic reload.
+const RECOVERY_WATCHDOG_BUTTON_MS = 8_000;
+const RECOVERY_WATCHDOG_RESTART_MS = 15_000;
+let recoveryWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
+let recoveryButtonTimer: ReturnType<typeof setTimeout> | null = null;
+let recoveryRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let recoveryButton: HTMLElement | null = null;
+
+function clearRecoveryWatchdog(): void {
+  if(recoveryWatchdogTimer !== null) { clearTimeout(recoveryWatchdogTimer); recoveryWatchdogTimer = null; }
+  if(recoveryButtonTimer !== null) { clearTimeout(recoveryButtonTimer); recoveryButtonTimer = null; }
+  if(recoveryRestartTimer !== null) { clearTimeout(recoveryRestartTimer); recoveryRestartTimer = null; }
+  removeRecoveryButton();
+}
+
+export {clearRecoveryWatchdog as cancelRecoveryWatchdog};
+
+function removeRecoveryButton(): void {
+  if(recoveryButton) { recoveryButton.remove(); recoveryButton = null; }
+}
+
+function startRecoveryWatchdog(): void {
+  clearRecoveryWatchdog();
+  // Show restart button after 8s — the user can recover manually
+  recoveryButtonTimer = setTimeout(() => {
+    if(recoveryButton) return; // already showing
+    const btn = document.createElement('div');
+    btn.id = 'pc-recovery-restart';
+    btn.textContent = '⟳';
+    btn.title = 'Restart app (recovery)';
+    btn.style.cssText = 'position:fixed;bottom:80px;right:16px;z-index:9999;width:48px;height:48px;border-radius:50%;background:rgba(0,0,0,0.7);color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+    btn.addEventListener('click', () => {
+      clearRecoveryWatchdog();
+      location.reload();
+    });
+    document.body.appendChild(btn);
+    recoveryButton = btn;
+  }, RECOVERY_WATCHDOG_BUTTON_MS);
+  // Force reload after 15s — the UI is unrecoverable
+  recoveryRestartTimer = setTimeout(() => {
+    console.warn('[PhantomChat] recovery watchdog: UI unresponsive for', RECOVERY_WATCHDOG_RESTART_MS, 'ms — forcing reload');
+    location.reload();
+  }, RECOVERY_WATCHDOG_RESTART_MS);
+}
+
+// Cancel watchdog on hide — if the user backgrounds the app again, the
+// current recovery cycle is abandoned.
+if(typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'hidden') clearRecoveryWatchdog();
+  });
 }
 
 function isChatOpenFor(peerId: number): boolean {
