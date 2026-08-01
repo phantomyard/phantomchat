@@ -376,7 +376,19 @@ export class NostrRelayPool {
     if(typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this.resetWrapRetryBudget();
       this.resetRelayCooldowns();
-      this.catchUpAfterDormancy();
+      // Deliberately NO catch-up backfill here. A wake used to fire a global
+      // paged backfill across every read relay the instant the tab went
+      // visible (catchUpAfterDormancy, removed): after a long background spell
+      // that meant hundreds of wraps hitting unwrap + IDB + dispatch in one
+      // burst, on top of the chat rehydration re-render — the main thread
+      // saturated and the PWA sat on a black screen until it drained (or the
+      // user force-closed). Coverage does not need the burst: every relay
+      // socket that died while backgrounded reconnects here via
+      // resetRelayCooldowns -> superviseConnections, each reconnect re-arms
+      // the live REQ with a `since` watermark (liveSubscribeSince) AND fires
+      // the throttled per-relay reconnect backfill, and the 15s catch-up poll
+      // resumes on its own. The gap is filled incrementally through the normal
+      // delivery path instead of in one paint-blocking storm.
     }
   };
   private onOnline = (): void => {
@@ -1567,27 +1579,6 @@ export class NostrRelayPool {
     // once and then succeeded would generate an ids-query on every 15s tick for
     // the rest of the session.
     this.pendingWrapRefetch.delete(eventId);
-  }
-
-  /**
-   * Dormancy catch-up, fired on visibilitychange -> visible.
-   *
-   * A backgrounded PWA gets its timers frozen: the 15s catch-up poll simply
-   * does not run while the tab is hidden/frozen, and the live REQ stream is
-   * dead with the sockets. Wraps that arrived during the gap sit on the relay,
-   * retrievable — but only once something asks. On wake, resetting cooldowns
-   * (above) restores CONNECTIVITY; this restores COVERAGE: if the last catch-up
-   * is older than one poll interval, the poll provably missed a span of time,
-   * so run one immediately rather than waiting out the remainder of the
-   * current (post-thaw) interval. If the last catch-up is fresh the poll is
-   * alive and this was a visibility flicker — skip, so rapid app-switching
-   * doesn't burst a REQ per relay per flicker.
-   */
-  private catchUpAfterDormancy(): void {
-    if(!this.isSubscribedFlag) return;
-    if(Date.now() - this.lastCatchUpAt < BACKFILL_POLL_INTERVAL_MS) return;
-    this.log('[NostrRelayPool] visible: catch-up poll is overdue (dormancy gap), running now');
-    void this.backfillRecent();
   }
 
   /**

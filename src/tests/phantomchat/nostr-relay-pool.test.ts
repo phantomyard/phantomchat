@@ -90,6 +90,24 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       this.messageHandler = handler;
     }
 
+    // Dedup/release/commit hooks the pool wires up per relay — captured so
+    // tests can drive the wrap retry-budget lifecycle directly.
+    claimEvent: ((id: string) => boolean) | null = null;
+    releaseEvent: ((id: string, error?: Error) => void) | null = null;
+    commitEvent: ((id: string) => void) | null = null;
+
+    setEventDedup(fn: (id: string) => boolean): void {
+      this.claimEvent = fn;
+    }
+
+    setEventRelease(fn: (id: string, error?: Error) => void): void {
+      this.releaseEvent = fn;
+    }
+
+    setEventCommit(fn: (id: string) => void): void {
+      this.commitEvent = fn;
+    }
+
     getPublicKey(): string {
       return 'abcd1234pubkey';
     }
@@ -1058,8 +1076,8 @@ describe('NostrRelayPool', () => {
     });
   });
 
-  describe('dormancy catch-up on visible (#117)', () => {
-    it('runs a catch-up poll on visible only when the last catch-up is overdue', async() => {
+  describe('visible transition must not burst a backfill (wake black-screen regression)', () => {
+    it('never fires a paged backfill on visible, however stale the last catch-up', async() => {
       const onMessage = vi.fn();
       const pool = new NostrRelayPool({
         relays: [{url: 'wss://relay1.test', read: true, write: true}],
@@ -1072,47 +1090,51 @@ describe('NostrRelayPool', () => {
       const relay = mockRelayInstances.filter((r: any) => r.connected)[0];
       const pagedSpy = vi.spyOn(relay, 'getMessagesPaged');
 
-      // Poll is alive (last catch-up just happened): a visible flicker must
-      // NOT double-fetch — the 15s poll has the gap covered.
+      // Fresh poll: no backfill on visible.
       (pool as any).lastCatchUpAt = Date.now();
       document.dispatchEvent(new Event('visibilitychange'));
       await vi.advanceTimersByTimeAsync(0);
       expect(pagedSpy).not.toHaveBeenCalled();
 
-      // Simulate dormancy: a backgrounded/frozen PWA suspends the poll timer,
-      // so on wake the last catch-up is an hour stale — the gap is uncovered
-      // and the visible transition must fire the catch-up NOW.
+      // An hour of dormancy: STILL no backfill on visible. The gap is covered
+      // incrementally — reconnecting relays re-arm the live REQ with a `since`
+      // watermark and fire the throttled per-relay reconnect backfill, and the
+      // 15s poll resumes on its own. A global paged burst on the visible
+      // transition is what saturated the main thread and black-screened the
+      // PWA on wake; it must not come back.
       (pool as any).lastCatchUpAt = Date.now() - 3_600_000;
       document.dispatchEvent(new Event('visibilitychange'));
       await vi.advanceTimersByTimeAsync(0);
-      expect(pagedSpy).toHaveBeenCalledTimes(1);
-
-      // Immediate second visible (app-switch flicker): throttled — the
-      // dormancy catch-up above refreshed the timestamp.
-      document.dispatchEvent(new Event('visibilitychange'));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(pagedSpy).toHaveBeenCalledTimes(1);
+      expect(pagedSpy).not.toHaveBeenCalled();
 
       pool.disconnect();
     });
 
-    it('does not fire when not subscribed', async() => {
+    it('still runs the cheap resume work on visible: un-park wraps, clear cooldowns', async() => {
       const onMessage = vi.fn();
       const pool = new NostrRelayPool({
         relays: [{url: 'wss://relay1.test', read: true, write: true}],
         onMessage
       });
       await pool.initialize();
+      pool.subscribeMessages();
+      await vi.advanceTimersByTimeAsync(0);
 
       const relay = mockRelayInstances.filter((r: any) => r.connected)[0];
-      const pagedSpy = vi.spyOn(relay, 'getMessagesPaged');
-      // Overdue by construction (never caught up), but with no subscription
-      // there is nothing to catch up TO — backfillRecent guards on this too.
-      (pool as any).lastCatchUpAt = 0;
+      const claim = relay.claimEvent!;
+      const release = relay.releaseEvent!;
 
+      // Park a wrap by burning its retry budget (frozen-worker burst).
+      for(let i = 0; i < 3; i++) {
+        claim('wrap-parked-on-wake');
+        release('wrap-parked-on-wake');
+      }
+      expect(claim('wrap-parked-on-wake')).toBe(false); // parked
+
+      // Visible must still un-park it — only the backfill burst was removed.
       document.dispatchEvent(new Event('visibilitychange'));
       await vi.advanceTimersByTimeAsync(0);
-      expect(pagedSpy).not.toHaveBeenCalled();
+      expect(claim('wrap-parked-on-wake')).toBe(true);
 
       pool.disconnect();
     });
