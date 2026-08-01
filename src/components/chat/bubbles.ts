@@ -2037,6 +2037,9 @@ export default class ChatBubbles {
       this.setLoaded('top', false);
       this.setLoaded('bottom', false);
       this.scrollable.checkForTriggers();
+    }).catch(() => {
+      // Ensure the overlay is always hidden, even on IndexedDB/API failure
+      this.hideReloadOverlay();
     });
   }
 
