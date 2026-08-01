@@ -176,6 +176,12 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // --- Mount chat page ---
       pageIm.default.mount();
 
+      // Chat UI is rendered — dismiss the boot splash so the user sees the
+      // app instead of the loading screen. This is the authoritative dismiss
+      // for the cold-start path; the splash stays visible through all the
+      // heavy init work above (identity decrypt, bridge, VMT, pageIm import).
+      requestAnimationFrame(() => (window as any).__hideBootSplash?.());
+
       // Kick off background relay fetch to pick up edits made from other devices.
       refreshOwnProfileFromRelaysFn?.(identity.publicKey).catch((err) => {
         console.warn('[PhantomChatOnboardingIntegration] own profile relay refresh failed:', err);

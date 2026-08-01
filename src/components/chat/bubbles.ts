@@ -1967,17 +1967,41 @@ export default class ChatBubbles {
     return this.batchProcessor.queuePromise;
   }
 
+  private reloadOverlay: HTMLElement | null = null;
+
+  private showReloadOverlay() {
+    if(this.reloadOverlay) return; // already showing
+    const el = document.createElement('div');
+    el.className = 'bubbles-reload-overlay';
+    el.textContent = 'Updating…';
+    el.style.cssText = 'position:sticky;top:0;z-index:10;text-align:center;padding:6px 12px;font-size:12px;opacity:0.7;pointer-events:none;';
+    this.scrollable.container.prepend(el);
+    this.reloadOverlay = el;
+  }
+
+  private hideReloadOverlay() {
+    if(!this.reloadOverlay) return;
+    this.reloadOverlay.remove();
+    this.reloadOverlay = null;
+  }
+
   private async onHistoryReload() {
     const {peerId} = this;
     const wasLikeGroup = this.chat.isLikeGroup;
     this.chat.isLikeGroup = await this.chat._isLikeGroup(peerId);
     const finishPeerChange = wasLikeGroup !== this.chat.isLikeGroup &&  await this.finishPeerChange();
 
+    // Show stale messages with a subtle "Updating…" banner while IndexedDB
+    // re-reads. The banner disappears once the reload completes — no black
+    // screen, no cleared DOM.
+    this.showReloadOverlay();
+
     // * filter local and outgoing
     const fullMids = this.getRenderedHistory('desc', true);
     const mids = fullMids.map((fullMid) => splitFullMid(fullMid).mid);
     const middleware = this.getMiddleware();
     this.managers.appMessagesManager.reloadMessages(peerId, mids).then((messages) => {
+      this.hideReloadOverlay();
       if(!middleware()) return;
 
       const toDelete: FullMid[] = [];
