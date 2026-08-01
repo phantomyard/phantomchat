@@ -5749,6 +5749,14 @@ export default class ChatBubbles {
 
       if(!result) {
         this.skippedMids.add(fullMid);
+      } else if(isMessage(message)) {
+        // Hydrate persisted PhantomChat reaction badges on initial bubble
+        // construction. The phantomchat_reactions_changed listener only fires
+        // on live store mutations, so reactions committed in a prior session
+        // (still sitting in the IDB-backed phantomchatReactionsStore) never
+        // re-render after a reload/re-open — the badge silently disappears
+        // even though the row is intact. This pass reads them back per bubble.
+        this.hydratePhantomChatReactions(bubble, message.peerId, message.mid, realMiddleware);
       }
     } catch(err) {
       this.log.error('renderMessage error:', err);
@@ -8849,6 +8857,28 @@ export default class ChatBubbles {
         messageDiv.append(reactionsElement);
       }
     }
+  }
+
+  // Hydrate reaction badges from the persisted store during initial bubble
+  // construction (reload/scroll-in), independent of the live
+  // phantomchat_reactions_changed event. Fire-and-forget: an IDB read must not
+  // block the render return, and a missed hydration self-heals on the next live
+  // dispatch. Mirrors the peer gate + error swallowing of the event listener.
+  private hydratePhantomChatReactions(bubble: HTMLElement, peerId: PeerId, mid: number, middleware: () => boolean): void {
+    const numericPeer = Number(peerId);
+    const isPhantomChatDM = numericPeer >= 1e15;
+    const isPhantomChatGroup = numericPeer <= -2e15;
+    if(!isPhantomChatDM && !isPhantomChatGroup) return;
+    (async() => {
+      try {
+        const {phantomchatReactionsLocal} = await import('@lib/phantomchat/phantomchat-reactions-local');
+        const emojis = await phantomchatReactionsLocal.getReactionsFresh(peerId as number, mid);
+        if(!emojis.length || !middleware()) return;
+        this.renderPhantomChatReactions(bubble, emojis);
+      } catch(err) {
+        this.log.warn('phantomchat reactions hydrate failed', err);
+      }
+    })();
   }
 
   private renderPhantomChatReactions(bubble: HTMLElement, emojis: string[]): void {
