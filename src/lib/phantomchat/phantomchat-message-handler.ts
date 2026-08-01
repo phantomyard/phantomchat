@@ -138,7 +138,6 @@ export async function rehydrateOpenChatOnVisible(now = Date.now()): Promise<void
   try {
     rootScope.dispatchEvent('history_reload' as any, peerId as any);
   } catch(e) { logSwallow('MessageHandler.rehydrate.history_reload', e); }
-  startRecoveryWatchdog();
 }
 
 // ─── Recovery watchdog ───────────────────────────────────────────────────
@@ -162,6 +161,7 @@ function clearRecoveryWatchdog(): void {
 }
 
 export {clearRecoveryWatchdog as cancelRecoveryWatchdog};
+export {startRecoveryWatchdog};
 
 function removeRecoveryButton(): void {
   if(recoveryButton) { recoveryButton.remove(); recoveryButton = null; }

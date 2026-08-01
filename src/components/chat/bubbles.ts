@@ -225,7 +225,7 @@ import {NoForwardsRequestContent, NoForwardsRequestReplyMarkup} from '@component
 import tsNow from '@helpers/tsNow';
 import wrapMessageForReply from '@components/wrappers/messageForReply';
 import canSeeMessageMedia from '@lib/appManagers/utils/messages/canSeeMessageMedia';
-import {cancelRecoveryWatchdog} from '@lib/phantomchat/phantomchat-message-handler';
+import {cancelRecoveryWatchdog, startRecoveryWatchdog} from '@lib/phantomchat/phantomchat-message-handler';
 
 // TODO: fix new message won't be rendered if an old one is rendering in the moment
 
@@ -1832,6 +1832,7 @@ export default class ChatBubbles {
         return;
       }
 
+      startRecoveryWatchdog();
       this.onHistoryReload();
     });
 
