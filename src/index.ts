@@ -429,12 +429,12 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   // If this value is cached, and a different tab locks/unlocks, we'll see the wrong state of the app.
   await preventCrossTabDynamicImportDeadlock();
 
-  // Boot plumbing is complete — reveal whatever the app wants to render next
-  // (passcode screen, onboarding, or the chat list). The splash was mounted
-  // inline in index.html; see the comment there for why we rely on an explicit
-  // hook rather than MutationObserver.
+  // Boot plumbing is complete — signal ready but do NOT dismiss the splash yet.
+  // The splash stays visible through the heavy init work (loadAllStates,
+  // mountPhantomChatOnboarding, pageIm.mount) and is dismissed from within
+  // those paths once the chat UI is actually rendered. This eliminates the
+  // cold-start black screen between splash dismissal and first paint.
   bootProgress?.(4, 4, 'Ready');
-  requestAnimationFrame(() => (window as any).__hideBootSplash?.());
 
   // Poll for a newer deployed build and surface a prominent "Update" pill that
   // hard-clears the app-shell cache on tap — kills the "am I on a stale bundle?"
@@ -710,6 +710,11 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
         await pagePromise;
       }
 
+      // Auth page is mounted — dismiss the boot splash. The scrollable is
+      // still opacity:0 until fadeInWhenFontsReady, so the user sees splash
+      // → auth page transition with no black gap.
+      requestAnimationFrame(() => (window as any).__hideBootSplash?.());
+
       const promise = 'fonts' in document ?
         Promise.race([
           pause(1000),
@@ -769,6 +774,9 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
       await page.mount();
       console.timeLog(TIME_LABEL, 'await page.mount()');
 
+      // Chat list is mounted — dismiss the boot splash.
+      requestAnimationFrame(() => (window as any).__hideBootSplash?.());
+
       await fontsPromise;
       console.timeLog(TIME_LABEL, 'await fontsPromise');
 
@@ -780,6 +788,8 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
       page.pageEl.classList.remove('main-screen-enter', 'main-screen-entering');
     } else {
       await page.mount();
+      // Chat list is mounted — dismiss the boot splash.
+      requestAnimationFrame(() => (window as any).__hideBootSplash?.());
     }
   }
 });
