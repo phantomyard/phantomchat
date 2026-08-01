@@ -174,7 +174,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       }
 
       // --- Mount chat page ---
-      pageIm.default.mount();
+      // Await the mount: Page.mount() awaits onFirstMount (module imports,
+      // font loading, pagesManager.setPage), so the chat UI is genuinely
+      // rendered before we dismiss the splash — otherwise the rAF below can
+      // fire first and recreate the black gap this fix eliminates.
+      await pageIm.default.mount();
 
       // Chat UI is rendered — dismiss the boot splash so the user sees the
       // app instead of the loading screen. This is the authoritative dismiss
