@@ -17,17 +17,41 @@
  *              (and to ACTIVE if foreground) the moment a new message lands or
  *              the user does anything.
  *
- * The controller owns ONLY the state machine: the inactivity/visibility
- * triggers, the mode transitions and the backoff curve. It never touches a
- * socket directly — the pool supplies three hooks (`suspend`, `resume`,
- * `pollOnce`) and the controller decides when to call them. That split keeps
- * the risky, well-tested reconnect logic intact in the pool and makes the state
- * machine unit-testable in complete isolation (see transport-idle-controller.test.ts).
+ * ─── What triggers IDLE (revised per #125 discussion) ───
+ *
+ * A *visible* page is NEVER frozen or discarded by the browser — it keeps its
+ * socket alive on every platform. So we do NOT idle a foreground chat: there is
+ * no "walked away with the window on screen" timer by default (the browser won't
+ * sleep us, and dropping a socket out from under a chat you're looking at is
+ * pure loss). Idle keys off VISIBILITY + LIFECYCLE only:
+ *
+ *   • hidden (visibilitychange → hidden) — start a ~60s GRACE timer, don't close.
+ *     A quick glance at another tab/app keeps the live socket. Only if still
+ *     hidden after the grace do we tear down to tick mode. Cheap flicks are free.
+ *   • freeze / pagehide — HARD close immediately. These are the "the browser is
+ *     suspending/unloading us right now" signals (Page Lifecycle API); there is
+ *     no advance warning, so we close cleanly rather than resume into a half-dead
+ *     socket. Cancels any pending grace.
+ *   • visible / resume — straight back to ACTIVE (reopen + resume streaming),
+ *     cancelling any pending grace.
+ *
+ * The foreground-inactivity timer is kept as PLUMBING but defaults OFF
+ * (`inactivityMs` unset ⇒ disabled). If battery complaints ever appear for
+ * "chat left open, screen on, nobody touching it", flip it on via options —
+ * no need to reintroduce the machinery.
+ *
+ * The controller owns ONLY the state machine: the visibility/lifecycle triggers,
+ * the mode transitions and the backoff curve. It never touches a socket directly
+ * — the pool supplies three hooks (`suspend`, `resume`, `pollOnce`) and the
+ * controller decides when to call them. That split keeps the risky, well-tested
+ * reconnect logic intact in the pool and makes the state machine unit-testable
+ * in complete isolation (see transport-idle-controller.test.ts).
  *
  * Mobile caveat (per #125): a fully-backgrounded PWA has its JS timers throttled
  * or suspended by the OS, so the idle tick is unreliable there. That is fine —
- * the `onForeground()` catch-up REQ is the recovery path after full background,
- * and Phase 2's desktop shell (which *can* tick backgrounded) fixes it properly.
+ * the foreground/`resume` catch-up REQ is the recovery path after full
+ * background, and Phase 2's desktop shell (which *can* tick backgrounded) fixes
+ * it properly.
  */
 
 import {logger, Logger} from '@lib/logger';
@@ -54,7 +78,16 @@ export interface IdleTransportHooks {
 
 export interface IdleTransportOptions {
   hooks: IdleTransportHooks;
-  /** Grace after the last activity before we close sockets (thrash guard). */
+  /**
+   * Grace after the page goes HIDDEN before we close sockets. A quick glance
+   * away keeps the live socket; only sustained hidden tears down. Default 60s.
+   */
+  hiddenGraceMs?: number;
+  /**
+   * Foreground-inactivity timeout (visible-but-untouched → idle). PLUMBING,
+   * DEFAULT OFF: unset/0 ⇒ never idle a visible page. Set >0 only if battery
+   * cost of a held-open socket on a visible-idle chat ever becomes a problem.
+   */
   inactivityMs?: number;
   /** First (fast) idle tick interval. */
   minTickMs?: number;
@@ -69,27 +102,35 @@ export interface IdleTransportOptions {
   /** Is the app foreground-visible right now? Defaults to document.visibilityState. */
   isVisible?: () => boolean;
   /**
-   * Bind visibility/focus listeners to document/window. Default true. Tests set
-   * false and drive onForeground()/onBackground() directly.
+   * Bind visibility/lifecycle listeners to document/window. Default true. Tests
+   * set false and drive onForeground()/onBackground()/onFreeze()/onResume()
+   * directly.
    */
   bindEnvironment?: boolean;
 }
 
 export type TransportMode = 'active' | 'idle';
 
-/** Close a few seconds after the last activity — not instantly (avoids thrashing on brief pauses). */
-export const DEFAULT_INACTIVITY_MS = 8_000;
+/** How long a page may stay hidden before we drop the socket (thrash guard). */
+export const DEFAULT_HIDDEN_GRACE_MS = 60_000;
 /** 10s fast tick (issue #125). */
 export const DEFAULT_MIN_TICK_MS = 10_000;
 /** 2min backoff ceiling (issue #125). */
 export const DEFAULT_MAX_TICK_MS = 120_000;
 /** 10s → 20s → 40s → 80s → 120s(cap). */
 export const DEFAULT_BACKOFF_FACTOR = 2;
+/**
+ * Suggested value for the OPT-IN foreground-inactivity timer. Not applied by
+ * default — pass `inactivityMs: DEFAULT_INACTIVITY_MS` to enable it.
+ */
+export const DEFAULT_INACTIVITY_MS = 120_000;
 
 export class IdleTransportController {
   private readonly log: Logger;
   private readonly hooks: IdleTransportHooks;
 
+  private readonly hiddenGraceMs: number;
+  /** 0 ⇒ foreground-inactivity idling disabled (the default). */
   private readonly inactivityMs: number;
   private readonly minTickMs: number;
   private readonly maxTickMs: number;
@@ -105,6 +146,9 @@ export class IdleTransportController {
   private started = false;
   private destroyed = false;
 
+  /** Pending "hidden long enough → go idle" timer (null unless counting down). */
+  private hiddenGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Opt-in foreground-inactivity timer (null unless enabled and armed). */
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private tickTimer: ReturnType<typeof setTimeout> | null = null;
   /** Current idle tick interval — starts at minTickMs, backs off toward maxTickMs. */
@@ -117,14 +161,15 @@ export class IdleTransportController {
     if(this.isVisibleFn()) this.onForeground();
     else this.onBackground();
   };
-  private readonly onWindowFocus = (): void => this.onForeground();
-  private readonly onWindowBlur = (): void => this.onBackground();
-  private readonly onPageHide = (): void => this.onBackground();
+  private readonly onFreezeEvent = (): void => this.onFreeze();
+  private readonly onResumeEvent = (): void => this.onResume();
+  private readonly onPageHideEvent = (): void => this.onPageHide();
 
   constructor(options: IdleTransportOptions) {
     this.log = logger('IdleTransport');
     this.hooks = options.hooks;
-    this.inactivityMs = options.inactivityMs ?? DEFAULT_INACTIVITY_MS;
+    this.hiddenGraceMs = options.hiddenGraceMs ?? DEFAULT_HIDDEN_GRACE_MS;
+    this.inactivityMs = options.inactivityMs ?? 0;
     this.minTickMs = options.minTickMs ?? DEFAULT_MIN_TICK_MS;
     this.maxTickMs = options.maxTickMs ?? DEFAULT_MAX_TICK_MS;
     this.backoffFactor = options.backoffFactor ?? DEFAULT_BACKOFF_FACTOR;
@@ -142,16 +187,17 @@ export class IdleTransportController {
     return this._mode;
   }
 
-  /** Begin in ACTIVE mode (the pool has just connected). Arms the inactivity timer. */
+  /** Begin in ACTIVE mode (the pool has just connected). */
   start(): void {
     if(this.started || this.destroyed) return;
     this.started = true;
     this._mode = 'active';
     this.bindEnvironmentListeners();
-    // If we launch hidden, close down to idle right away rather than holding a
-    // socket open behind a backgrounded tab.
+    // If we launch hidden, start the grace countdown rather than holding a
+    // socket open behind a backgrounded tab. If visible, just stay ACTIVE —
+    // a visible page is never put to sleep, so there's nothing to arm.
     if(!this.isVisibleFn()) {
-      void this.goIdle('launched-hidden');
+      this.onBackground();
     } else {
       this.armInactivity();
     }
@@ -159,7 +205,7 @@ export class IdleTransportController {
 
   /**
    * The user is actively using chat (typing, opened a conversation, sending).
-   * Wakes to ACTIVE if idle, and (re)arms the inactivity grace either way.
+   * Wakes to ACTIVE if idle, and (re)arms the opt-in inactivity grace either way.
    */
   noteActivity(): void {
     if(this.destroyed) return;
@@ -170,28 +216,68 @@ export class IdleTransportController {
     this.armInactivity();
   }
 
-  /** Foreground/visible (tab shown, window focused). Catch up immediately. */
+  /**
+   * Page became visible (tab shown, window unminimised). A visible page is never
+   * frozen, so we return to live streaming and cancel any pending teardown.
+   */
   onForeground(): void {
     if(this.destroyed) return;
-    if(this._mode !== 'idle') return;
-    // Opening/navigating catches up immediately via one-shot REQ (#125), and
-    // resets the backoff so we're responsive again. We stay IDLE (foreground-but-
-    // idle keeps ticking) unless the catch-up itself finds a message.
-    this.resetBackoff();
-    this.clearTick();
-    void this.runTick();
+    this.clearHiddenGrace();
+    if(this._mode === 'idle') {
+      void this.goActive('foreground');
+    } else {
+      // Already active — grace cancelled, socket still held. Re-arm the opt-in
+      // inactivity timer (no-op when disabled).
+      this.armInactivity();
+    }
   }
 
-  /** Background/hidden (tab hidden, window blurred). Drop the socket now. */
+  /**
+   * Page became hidden (tab switch, minimise, screen lock). Do NOT close now —
+   * a quick glance away should keep the socket. Start the grace countdown; only
+   * if we're still hidden when it fires do we drop to tick mode.
+   */
   onBackground(): void {
     if(this.destroyed) return;
-    // The tab is gone — no grace, close immediately and flip to ticks.
-    if(this._mode === 'active') void this.goIdle('backgrounded');
+    if(this._mode !== 'active') return;
+    this.armHiddenGrace();
+  }
+
+  /**
+   * Page Lifecycle `freeze`: the browser is suspending us RIGHT NOW. No grace —
+   * close cleanly so we don't resume into a half-dead socket.
+   */
+  onFreeze(): void {
+    this.hardSuspend('freeze');
+  }
+
+  /** `pagehide`: navigating away / unloading. Same hard cutover as freeze. */
+  onPageHide(): void {
+    this.hardSuspend('pagehide');
+  }
+
+  /**
+   * Page Lifecycle `resume`: we were frozen and are running again. If we're
+   * visible, go straight back to ACTIVE; if still hidden (unfrozen in the
+   * background), resume the idle tick loop that the freeze had suspended.
+   */
+  onResume(): void {
+    if(this.destroyed) return;
+    if(this.isVisibleFn()) {
+      this.onForeground();
+      return;
+    }
+    if(this._mode === 'idle') {
+      this.resetBackoff();
+      this.clearTick();
+      void this.runTick();
+    }
   }
 
   destroy(): void {
     if(this.destroyed) return;
     this.destroyed = true;
+    this.clearHiddenGrace();
     this.clearInactivity();
     this.clearTick();
     this.unbindEnvironmentListeners();
@@ -199,9 +285,16 @@ export class IdleTransportController {
 
   // ─── Transitions ───────────────────────────────────────────────
 
+  private hardSuspend(reason: string): void {
+    if(this.destroyed) return;
+    this.clearHiddenGrace();
+    if(this._mode === 'active') void this.goIdle(reason);
+  }
+
   private async goIdle(reason: string): Promise<void> {
     if(this.destroyed || this._mode === 'idle') return;
     this._mode = 'idle';
+    this.clearHiddenGrace();
     this.clearInactivity();
     this.log('[IdleTransport] → idle (' + reason + '): closing sockets, tick mode');
     try {
@@ -278,10 +371,29 @@ export class IdleTransportController {
     this.currentTickMs = this.minTickMs;
   }
 
-  // ─── Inactivity grace (ACTIVE → IDLE) ──────────────────────────
+  // ─── Hidden grace (ACTIVE → IDLE after sustained hidden) ────────
+
+  private armHiddenGrace(): void {
+    this.clearHiddenGrace();
+    if(this.destroyed || this._mode !== 'active') return;
+    this.hiddenGraceTimer = this.setTimeoutFn(() => {
+      this.hiddenGraceTimer = null;
+      void this.goIdle('hidden');
+    }, this.hiddenGraceMs);
+  }
+
+  private clearHiddenGrace(): void {
+    if(this.hiddenGraceTimer !== null) {
+      this.clearTimeoutFn(this.hiddenGraceTimer);
+      this.hiddenGraceTimer = null;
+    }
+  }
+
+  // ─── Opt-in foreground inactivity (disabled unless inactivityMs > 0) ──
 
   private armInactivity(): void {
     this.clearInactivity();
+    if(this.inactivityMs <= 0) return;
     if(this.destroyed || this._mode !== 'active') return;
     this.inactivityTimer = this.setTimeoutFn(() => {
       this.inactivityTimer = null;
@@ -309,11 +421,13 @@ export class IdleTransportController {
     if(!this.bindEnvironment) return;
     if(typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.onVisibilityChange);
+      // Page Lifecycle API — not on every browser; addEventListener is harmless
+      // where unsupported (the events simply never fire).
+      document.addEventListener('freeze', this.onFreezeEvent);
+      document.addEventListener('resume', this.onResumeEvent);
     }
     if(typeof window !== 'undefined') {
-      window.addEventListener('focus', this.onWindowFocus);
-      window.addEventListener('blur', this.onWindowBlur);
-      window.addEventListener('pagehide', this.onPageHide);
+      window.addEventListener('pagehide', this.onPageHideEvent);
     }
   }
 
@@ -321,11 +435,11 @@ export class IdleTransportController {
     if(!this.bindEnvironment) return;
     if(typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this.onVisibilityChange);
+      document.removeEventListener('freeze', this.onFreezeEvent);
+      document.removeEventListener('resume', this.onResumeEvent);
     }
     if(typeof window !== 'undefined') {
-      window.removeEventListener('focus', this.onWindowFocus);
-      window.removeEventListener('blur', this.onWindowBlur);
-      window.removeEventListener('pagehide', this.onPageHide);
+      window.removeEventListener('pagehide', this.onPageHideEvent);
     }
   }
 
@@ -334,5 +448,10 @@ export class IdleTransportController {
   /** Current idle tick interval in ms (exposed for tests/diagnostics). */
   get tickIntervalMs(): number {
     return this.currentTickMs;
+  }
+
+  /** True while the hidden→idle grace countdown is pending (tests/diagnostics). */
+  get hiddenGracePending(): boolean {
+    return this.hiddenGraceTimer !== null;
   }
 }
