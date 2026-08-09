@@ -164,6 +164,8 @@ export class IdleTransportController {
   private readonly onFreezeEvent = (): void => this.onFreeze();
   private readonly onResumeEvent = (): void => this.onResume();
   private readonly onPageHideEvent = (): void => this.onPageHide();
+  private readonly onPageShowEvent = (e: Event): void =>
+    this.onPageShow((e as PageTransitionEvent).persisted === true);
 
   constructor(options: IdleTransportOptions) {
     this.log = logger('IdleTransport');
@@ -254,6 +256,21 @@ export class IdleTransportController {
   /** `pagehide`: navigating away / unloading. Same hard cutover as freeze. */
   onPageHide(): void {
     this.hardSuspend('pagehide');
+  }
+
+  /**
+   * `pageshow`: fires on every load and on back-forward-cache restore. Only the
+   * persisted (bfcache) restore matters here — a fresh load already runs start().
+   * A bfcache entry was hard-suspended into IDLE by the preceding `pagehide`, and
+   * on restore neither `visibilitychange` (the page was visible before and after)
+   * nor `resume` (Safari/Firefox don't implement the Page Lifecycle events) is
+   * guaranteed to fire. Without this, a restored foreground page strands in IDLE
+   * tick mode with no live socket. Route persisted restores back to the live path.
+   */
+  onPageShow(persisted: boolean): void {
+    if(this.destroyed) return;
+    if(!persisted) return;
+    this.onResume();
   }
 
   /**
@@ -428,6 +445,8 @@ export class IdleTransportController {
     }
     if(typeof window !== 'undefined') {
       window.addEventListener('pagehide', this.onPageHideEvent);
+      // bfcache restore signal — the only guaranteed wake on Safari/Firefox.
+      window.addEventListener('pageshow', this.onPageShowEvent);
     }
   }
 
@@ -440,6 +459,7 @@ export class IdleTransportController {
     }
     if(typeof window !== 'undefined') {
       window.removeEventListener('pagehide', this.onPageHideEvent);
+      window.removeEventListener('pageshow', this.onPageShowEvent);
     }
   }
 

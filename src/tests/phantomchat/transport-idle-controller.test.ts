@@ -200,6 +200,52 @@ describe('IdleTransportController', () => {
     expect(calls.suspend).toBe(1);
   });
 
+  it('bfcache restore (persisted pageshow) wakes a stranded visible page back to ACTIVE', async() => {
+    // Repro of the Safari/Firefox strand: pagehide → IDLE, then the page is
+    // restored from bfcache. visibilitychange does NOT fire (visible before and
+    // after) and resume is not implemented on those browsers — pageshow is the
+    // only restore signal, so without it the foreground page sits in IDLE.
+    const clock = makeClock();
+    const {hooks, calls} = makeHooks();
+    let visible = true;
+    const c = makeController({clock, hooks, visible: () => visible});
+    c.start();
+
+    // Navigate away → page frozen into bfcache → hard-closed to IDLE.
+    visible = false;
+    c.onPageHide();
+    await flush();
+    expect(c.mode).toBe('idle');
+    expect(calls.suspend).toBe(1);
+
+    // Navigate back: bfcache restore fires pageshow(persisted=true) while the
+    // page is once again visible. No visibilitychange, no resume.
+    visible = true;
+    c.onPageShow(true);
+    await flush();
+    expect(c.mode).toBe('active');
+    expect(calls.resume).toBe(1);
+  });
+
+  it('non-persisted pageshow (a normal load) is a no-op — does not disturb state', async() => {
+    const clock = makeClock();
+    const {hooks, calls} = makeHooks();
+    let visible = true;
+    const c = makeController({clock, hooks, visible: () => visible});
+    c.start();
+
+    visible = false;
+    c.onPageHide();
+    await flush();
+    expect(c.mode).toBe('idle');
+
+    // A fresh (non-bfcache) load reports persisted=false; start() owns that path.
+    c.onPageShow(false);
+    await flush();
+    expect(c.mode).toBe('idle');
+    expect(calls.resume).toBe(0);
+  });
+
   it('resume while visible goes straight back to ACTIVE', async() => {
     const clock = makeClock();
     const {hooks, calls} = makeHooks();
