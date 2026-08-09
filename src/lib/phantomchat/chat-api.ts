@@ -231,6 +231,10 @@ export class ChatAPI {
         // radio isn't slammed with a burst of handshakes ("insufficient
         // resources" → stuck reconnecting).
         dialStaggerMs: RELAY_DIAL_STAGGER_MS,
+        // Phase 1 idle transport (#125): stop holding a socket open while idle —
+        // close on inactivity/background and heartbeat with one-shot REQs,
+        // reopening for live streaming on activity or a new message.
+        idleTransport: true,
         onMessage: (msg: DecryptedMessage) => this.handleRelayMessage(msg),
         onStateChange: (connectedCount: number, _totalCount: number) => {
           this.handlePoolStateChange(connectedCount);

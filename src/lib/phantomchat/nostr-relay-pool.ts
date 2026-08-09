@@ -17,6 +17,7 @@ import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage'
 import {importFromStored} from './nostr-identity';
 import rootScope from '@lib/rootScope';
 import {swallowHandler} from './log-swallow';
+import {IdleTransportController, TransportMode} from './transport-idle-controller';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -92,6 +93,15 @@ export interface RelayPoolOptions {
    * production passes RELAY_DIAL_STAGGER_MS.
    */
   dialStaggerMs?: number;
+  /**
+   * Phase 1 idle transport (issue #125). When true, the pool stops holding a
+   * WebSocket open while idle: after a few seconds of inactivity (or on tab
+   * background) it closes every socket and switches to a periodic one-shot REQ
+   * "tick" (10s → 2min backoff), reopening for live streaming the moment there's
+   * activity or a new message. Defaults to false so existing behaviour (and the
+   * existing test suite) is unchanged; the app bootstrap opts in.
+   */
+  idleTransport?: boolean;
 }
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -358,6 +368,24 @@ export class NostrRelayPool {
   // can't resurrect a socket after teardown.
   private dialTimers: Set<ReturnType<typeof setTimeout>> = new Set();
 
+  // ─── Idle transport (Phase 1 / issue #125) ────────────────────
+  // Opt-in (see RelayPoolOptions.idleTransport). When idle, we close every
+  // socket and heartbeat with one-shot REQs instead of holding a socket open.
+  private idleTransportEnabled = false;
+  private idleController: IdleTransportController | null = null;
+  // While gated, superviseConnections() is a no-op: nothing auto-redials, so the
+  // pool can sit at zero sockets without the supervisor fighting to reopen them.
+  private idleGated = false;
+  // Guard + bookkeeping for the ephemeral sockets an idle tick opens.
+  private idleTickInFlight = false;
+  private idleTickUrls: Set<string> = new Set();
+  // Monotonic count of NEW chat messages actually dispatched (post-dedup,
+  // post-control-envelope). An idle tick compares this before/after to tell
+  // whether it delivered anything, which is the "wake up" signal.
+  private deliveredMessageCount = 0;
+  private static readonly IDLE_TICK_RELAY_COUNT = 3;
+  private static readonly IDLE_TICK_CONNECT_TIMEOUT_MS = 6_000;
+
   // Identity key for NIP-65 signing
   private privateKeyBytes: Uint8Array | null = null;
   private _preloadedIdentity?: { publicKey: string; privateKeyHex: string };
@@ -442,6 +470,7 @@ export class NostrRelayPool {
       Math.max(1, options.maxActiveRelays) :
       Number.POSITIVE_INFINITY;
     this.dialStaggerMs = Math.max(0, options.dialStaggerMs ?? 0);
+    this.idleTransportEnabled = options.idleTransport === true;
   }
 
   // ─── Callback setters (for DI / test path) ─────────────────────
@@ -734,6 +763,11 @@ export class NostrRelayPool {
     // Start the catch-up poll — the delivery backbone that no longer relies on
     // relays pushing live events reliably.
     this.startBackfillPoll();
+
+    // Phase 1 idle transport (#125): once connected (ACTIVE), hand socket
+    // lifecycle to the idle controller so we stop holding a socket open while
+    // idle. No-op unless opted in via options.idleTransport.
+    this.startIdleTransport();
   }
 
   /**
@@ -770,6 +804,14 @@ export class NostrRelayPool {
 
   disconnect(): void {
     this.log('[NostrRelayPool] disconnecting all relays');
+
+    // Tear down the idle controller first so no pending tick/inactivity timer
+    // fires a suspend/resume against a pool that's being destroyed.
+    if(this.idleController) {
+      this.idleController.destroy();
+      this.idleController = null;
+    }
+    this.idleGated = false;
 
     // Zero + null the private key bytes FIRST, before any other cleanup.
     // A later step could suspend (indexedDB, fetch) and leave the key
@@ -833,6 +875,12 @@ export class NostrRelayPool {
   ): Promise<PublishResult> {
     const successes: string[] = [];
     const failures: {url: string; error: string}[] = [];
+
+    // Sending is activity: wake to ACTIVE if we were idle so sockets reopen for
+    // this publish (and its live reply). Until they finish reconnecting, the
+    // relay-level pendingPublishes buffer holds the wrap and flushes on open, so
+    // a send that races the reconnect is not dropped.
+    this.noteActivity();
 
     const writeEntries = this.relayEntries.filter(e =>
       e.config.write && this.enabled.get(e.config.url) !== false
@@ -1834,6 +1882,11 @@ export class NostrRelayPool {
     // reply bug). Awaiting delivery — which itself awaits the store put —
     // means a close mid-processing leaves the OLD watermark in place, so the
     // next session's replay re-fetches the message.
+    // Count genuinely-new chat deliveries (post-dedup, post-control-envelope).
+    // An idle tick reads this before/after to decide whether it delivered
+    // anything — the signal to reset the backoff and wake to ACTIVE (#125).
+    this.deliveredMessageCount++;
+
     try {
       await this.onMessageCb(msg);
     } catch(err) {
@@ -2034,6 +2087,11 @@ export class NostrRelayPool {
    * relay to "soonest").
    */
   private async superviseConnections(): Promise<void> {
+    // Idle-gated: we are deliberately socket-less (Phase 1 tick mode). Do not
+    // redial — that is exactly the always-on behaviour we are suppressing. The
+    // idle controller reopens sockets via resumeFromIdle() when it wakes.
+    if(this.idleGated) return;
+
     const now = Date.now();
     const toOpen: RelayEntry[] = [];
 
@@ -2331,6 +2389,156 @@ export class NostrRelayPool {
     // cooldown. Recovery is simply topping the active set back up to target —
     // superviseConnections() promotes standby relays whose cooldown has expired.
     void this.superviseConnections();
+  }
+
+  // ─── Idle transport (Phase 1 / issue #125) ────────────────────
+
+  /**
+   * UI signal: the user is actively using chat (typing, opened a conversation,
+   * sending). Wakes the transport to ACTIVE (reopens sockets for live
+   * streaming) if it was idle, and defers the next idle transition. No-op when
+   * idle transport is disabled.
+   */
+  noteActivity(): void {
+    this.idleController?.noteActivity();
+  }
+
+  /** Current transport mode ('active' | 'idle'), for diagnostics and tests. */
+  getTransportMode(): TransportMode {
+    return this.idleController?.mode ?? 'active';
+  }
+
+  private startIdleTransport(): void {
+    if(!this.idleTransportEnabled || this.idleController) return;
+    this.idleController = new IdleTransportController({
+      hooks: {
+        suspend: () => this.suspendForIdle(),
+        resume: () => this.resumeFromIdle(),
+        pollOnce: () => this.idlePollOnce()
+      }
+    });
+    this.idleController.start();
+  }
+
+  /**
+   * Idle hook: enter socket-less mode. Gate the supervisor, stop the held-open
+   * delivery machinery (catch-up poll + recovery), cancel pending dials, and
+   * close every live socket. relayEntries and isSubscribedFlag are KEPT so
+   * resumeFromIdle() can re-dial and re-arm the live REQ; only the sockets and
+   * the active-set claims are dropped.
+   */
+  private suspendForIdle(): void {
+    if(this.idleGated) return;
+    this.idleGated = true;
+    this.log('[NostrRelayPool] idle: closing sockets, entering tick mode');
+
+    if(this.backfillPollInterval) {
+      clearInterval(this.backfillPollInterval);
+      this.backfillPollInterval = null;
+    }
+    if(this.recoveryInterval) {
+      clearInterval(this.recoveryInterval);
+      this.recoveryInterval = null;
+    }
+    for(const timer of this.dialTimers) {
+      clearTimeout(timer);
+    }
+    this.dialTimers.clear();
+
+    for(const entry of this.relayEntries) {
+      entry.instance.disconnect();
+    }
+    this.activeUrls.clear();
+    this.notifyStateChange();
+  }
+
+  /**
+   * Idle hook: return to ACTIVE. Un-gate the supervisor, restart the delivery
+   * backbone timers, and re-dial every relay. openRelaySocket() re-subscribes
+   * the live REQ because isSubscribedFlag stayed true through idle.
+   */
+  private resumeFromIdle(): void {
+    if(!this.idleGated) return;
+    this.idleGated = false;
+    this.log('[NostrRelayPool] active: reopening sockets, live streaming');
+
+    if(!this.backfillPollInterval) this.startBackfillPoll();
+    if(!this.recoveryInterval) this.startRecovery();
+
+    void this.superviseConnections();
+    this.notifyStateChange();
+  }
+
+  /**
+   * Idle hook: one heartbeat tick — `open → REQ → EOSE → close`. Briefly
+   * connects a small set of read relays, runs the existing (well-tested)
+   * paginated since-walk to pull anything new, dispatches it through the normal
+   * ingest path, then closes the sockets again. Resolves true iff at least one
+   * new chat message was delivered. Never throws.
+   */
+  private async idlePollOnce(): Promise<boolean> {
+    if(this.idleTickInFlight) return false;
+    this.idleTickInFlight = true;
+    const before = this.deliveredMessageCount;
+    try {
+      await this.openRelaysForTick();
+      // backfillRecent() walks connected read relays since the watermark and
+      // dispatches through handleIncomingMessage (which advances deliveredMessageCount).
+      await this.backfillRecent();
+    } catch(err) {
+      this.log.warn('[NostrRelayPool] idle tick failed:', err);
+    } finally {
+      this.closeRelaysAfterTick();
+      this.idleTickInFlight = false;
+    }
+    return this.deliveredMessageCount > before;
+  }
+
+  /**
+   * Open (briefly) up to IDLE_TICK_RELAY_COUNT read relays for a single idle
+   * tick and wait for them to connect. Tracked in idleTickUrls so
+   * closeRelaysAfterTick() drops exactly the sockets this opened. Best-effort:
+   * a relay that fails to connect in time is simply skipped by backfillRecent's
+   * connected-only filter.
+   */
+  private async openRelaysForTick(): Promise<void> {
+    const allRead = this.relayEntries.filter(
+      (e) => e.config.read && this.enabled.get(e.config.url) !== false
+    );
+    const readEntries = allRead.slice(0, NostrRelayPool.IDLE_TICK_RELAY_COUNT);
+
+    this.idleTickUrls.clear();
+    await Promise.all(readEntries.map(async(entry) => {
+      this.idleTickUrls.add(entry.config.url);
+      try {
+        if(entry.instance.getState() === 'disconnected') {
+          await entry.instance.initialize();
+          entry.instance.connect();
+        }
+        await this.waitForConnected(entry, NostrRelayPool.IDLE_TICK_CONNECT_TIMEOUT_MS);
+      } catch(err) {
+        this.log.warn('[NostrRelayPool] idle tick connect failed:', entry.config.url, err);
+      }
+    }));
+  }
+
+  private waitForConnected(entry: RelayEntry, timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const start = Date.now();
+      const check = (): void => {
+        if(entry.instance.getState() === 'connected') return resolve();
+        if(Date.now() - start >= timeoutMs) return resolve();
+        setTimeout(check, 50);
+      };
+      check();
+    });
+  }
+
+  private closeRelaysAfterTick(): void {
+    for(const url of this.idleTickUrls) {
+      this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
+    }
+    this.idleTickUrls.clear();
   }
 
   /**
