@@ -216,4 +216,45 @@ describe('NostrRelayPool idle transport (#125)', () => {
     expect(pool.idleController).toBeNull();
     expect(pool.getTransportMode()).toBe('active');
   });
+
+  it('fires onTransportMode on suspend (idle) and resume (active) — the mesh gate signal', async() => {
+    const modes: string[] = [];
+    const mod = await import('@lib/phantomchat/nostr-relay-pool');
+    const pool: any = new mod.NostrRelayPool({
+      relays: [...RELAYS],
+      maxActiveRelays: RELAYS.length,
+      onMessage: () => {},
+      onTransportMode: (m: string) => modes.push(m)
+    });
+    await pool.initialize();
+    pool.subscribeMessages();
+
+    pool.suspendForIdle();
+    pool.resumeFromIdle();
+    await flush();
+
+    // The mesh follows exactly this: idle → disconnectAll, active → re-dial.
+    expect(modes).toEqual(['idle', 'active']);
+  });
+
+  it('onTransportMode is edge-triggered — a redundant suspend/resume does not re-fire', async() => {
+    const modes: string[] = [];
+    const mod = await import('@lib/phantomchat/nostr-relay-pool');
+    const pool: any = new mod.NostrRelayPool({
+      relays: [...RELAYS],
+      maxActiveRelays: RELAYS.length,
+      onMessage: () => {},
+      onTransportMode: (m: string) => modes.push(m)
+    });
+    await pool.initialize();
+    pool.subscribeMessages();
+
+    pool.suspendForIdle();
+    pool.suspendForIdle(); // already gated → guarded no-op, must not re-emit
+    pool.resumeFromIdle();
+    pool.resumeFromIdle(); // already un-gated → guarded no-op, must not re-emit
+    await flush();
+
+    expect(modes).toEqual(['idle', 'active']);
+  });
 });

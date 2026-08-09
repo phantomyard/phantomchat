@@ -102,6 +102,16 @@ export interface RelayPoolOptions {
    * existing test suite) is unchanged; the app bootstrap opts in.
    */
   idleTransport?: boolean;
+  /**
+   * Phase 1 idle transport (issue #125). Fired on every ACTIVE⇄IDLE transition of
+   * the idle controller — 'idle' when sockets are closed and the pool drops to
+   * tick mode, 'active' when they reopen for live streaming. The idle controller
+   * is the single source of truth for the transport's activity state, so higher
+   * layers (e.g. the WebRTC mesh, which is a foreground-only optimisation over the
+   * relay floor) subscribe to this instead of re-deriving activity themselves.
+   * No-op when idleTransport is disabled or the callback is omitted.
+   */
+  onTransportMode?: (mode: TransportMode) => void;
 }
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -373,6 +383,9 @@ export class NostrRelayPool {
   // socket and heartbeat with one-shot REQs instead of holding a socket open.
   private idleTransportEnabled = false;
   private idleController: IdleTransportController | null = null;
+  // Notified on every ACTIVE⇄IDLE transition so higher layers (the WebRTC mesh)
+  // can follow the transport's activity state instead of re-deriving it.
+  private onTransportModeChange: ((mode: TransportMode) => void) | null = null;
   // While gated, superviseConnections() is a no-op: nothing auto-redials, so the
   // pool can sit at zero sockets without the supervisor fighting to reopen them.
   private idleGated = false;
@@ -471,6 +484,7 @@ export class NostrRelayPool {
       Number.POSITIVE_INFINITY;
     this.dialStaggerMs = Math.max(0, options.dialStaggerMs ?? 0);
     this.idleTransportEnabled = options.idleTransport === true;
+    this.onTransportModeChange = options.onTransportMode ?? null;
   }
 
   // ─── Callback setters (for DI / test path) ─────────────────────
@@ -2450,6 +2464,9 @@ export class NostrRelayPool {
     }
     this.activeUrls.clear();
     this.notifyStateChange();
+    // Tell higher layers we've gone socket-less. The mesh tears down here so P2P
+    // is strictly a foreground feature (relay remains the delivery floor).
+    this.emitTransportMode('idle');
   }
 
   /**
@@ -2467,6 +2484,22 @@ export class NostrRelayPool {
 
     void this.superviseConnections();
     this.notifyStateChange();
+    // Back to live: higher layers may re-establish (the mesh re-dials its
+    // capability-gated peers now that a foreground session has resumed).
+    this.emitTransportMode('active');
+  }
+
+  /**
+   * Notify the transport-mode subscriber (if any) of an ACTIVE⇄IDLE transition.
+   * Isolated + swallowed so a listener throwing can never wedge suspend/resume.
+   */
+  private emitTransportMode(mode: TransportMode): void {
+    if(!this.onTransportModeChange) return;
+    try {
+      this.onTransportModeChange(mode);
+    } catch(err) {
+      this.log.warn('[NostrRelayPool] onTransportMode listener threw:', err);
+    }
   }
 
   /**

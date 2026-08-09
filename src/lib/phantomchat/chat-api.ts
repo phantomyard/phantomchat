@@ -235,6 +235,13 @@ export class ChatAPI {
         // close on inactivity/background and heartbeat with one-shot REQs,
         // reopening for live streaming on activity or a new message.
         idleTransport: true,
+        // Re-broadcast the transport's ACTIVE⇄IDLE transitions as an app event so
+        // the WebRTC mesh can follow them (P2P is a foreground-only optimisation;
+        // the relay stays the delivery floor). Kept as a thin re-dispatch here —
+        // ChatAPI owns the pool, the bridge owns the mesh.
+        onTransportMode: (mode) => {
+          rootScope.dispatchEvent('phantomchat_transport_mode', {mode});
+        },
         onMessage: (msg: DecryptedMessage) => this.handleRelayMessage(msg),
         onStateChange: (connectedCount: number, _totalCount: number) => {
           this.handlePoolStateChange(connectedCount);
