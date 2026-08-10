@@ -237,6 +237,33 @@ describe('NostrRelayPool idle transport (#125)', () => {
     expect(modes).toEqual(['idle', 'active']);
   });
 
+  it('a tick that finishes AFTER resume must not close the sockets resume re-dialed', async() => {
+    // The race: resumeFromIdle() (user foregrounds) fires while an idle tick is
+    // still in flight. Resume un-gates and re-dials every relay for live
+    // streaming; the tick then reaches its cleanup. It must NOT disconnect the
+    // freshly-reopened sockets, or the stream is dead until the supervisor's
+    // next redial. We reproduce the race deterministically by driving the tick's
+    // real open/close steps around a resume.
+    const pool = await makePool(() => {});
+    pool.suspendForIdle();
+    expect(connectedCount()).toBe(0);
+
+    // Tick begins: it opens its read relays (idleTickUrls now tracks them).
+    await pool.openRelaysForTick();
+    expect(connectedCount()).toBeGreaterThan(0);
+
+    // Resume races in mid-tick: un-gate + re-dial every relay for live streaming.
+    pool.resumeFromIdle();
+    expect(pool.idleGated).toBe(false);
+    await flush();
+    expect(connectedCount()).toBe(RELAYS.length);
+
+    // Tick now finishes and runs its cleanup. Guarded by !idleGated, it must
+    // leave resume's sockets alone.
+    pool.closeRelaysAfterTick();
+    expect(connectedCount()).toBe(RELAYS.length); // live sockets survived the race
+  });
+
   it('onTransportMode is edge-triggered — a redundant suspend/resume does not re-fire', async() => {
     const modes: string[] = [];
     const mod = await import('@lib/phantomchat/nostr-relay-pool');

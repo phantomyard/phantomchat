@@ -2568,6 +2568,16 @@ export class NostrRelayPool {
   }
 
   private closeRelaysAfterTick(): void {
+    // Tick/resume race guard. resumeFromIdle() can fire while this tick is still
+    // in flight (user foregrounds mid-poll): it flips idleGated=false and re-dials
+    // every relay for live streaming. If we then disconnect our tick URLs we would
+    // kill the socket resume just reopened — a dead stream that only self-heals on
+    // the supervisor's next redial. When ungated, resume owns the sockets: drop
+    // our tracking and leave them open (our tick set is a subset of resume's).
+    if(!this.idleGated) {
+      this.idleTickUrls.clear();
+      return;
+    }
     for(const url of this.idleTickUrls) {
       this.relayEntries.find((e) => e.config.url === url)?.instance.disconnect();
     }
