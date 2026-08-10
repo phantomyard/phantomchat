@@ -91,6 +91,14 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
 
     MTProtoMessagePort.INSTANCE = this;
 
+    // Blanket backstop for the MTProto bridge: a wedged invoke (frozen tab,
+    // dropped worker reply) self-rejects after 60s instead of hanging the UI
+    // indefinitely. 60s sits well above any normal RPC. Relay-bound and media
+    // conversion types are exempt — they are legitimately unbounded and carry
+    // their own timeouts.
+    this.defaultInvokeTimeout = 60000;
+    this.invokeTimeoutExempt = new Set(['phantomchatBridge', 'convertWebp', 'convertOpus']);
+
     MOUNT_CLASS_TO && (MOUNT_CLASS_TO.mtprotoMessagePort = this);
   }
 
