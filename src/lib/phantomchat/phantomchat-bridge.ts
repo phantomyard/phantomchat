@@ -377,18 +377,40 @@ export class PhantomChatBridge {
       attachSignal();
       rootScope.addEventListener('phantomchat_backfill_complete', attachSignal);
 
-      // Auto-connect to contacts after backfill — GATED by capability (#61).
-      // Previously this fired a WebRTC offer at EVERY contact unconditionally.
-      // Now a peer is only dialed if it has advertised P2P capability, so no
-      // signaling traffic or connection attempt happens for the all-relay peers
-      // that make up 100% of the network until phantombot#258 ships.
-      rootScope.addEventListener('phantomchat_backfill_complete', () => {
+      // Auto-connect to contacts — GATED by capability (#61). Previously this
+      // fired a WebRTC offer at EVERY contact unconditionally. Now a peer is only
+      // dialed if it has advertised P2P capability, so no signaling traffic or
+      // connection attempt happens for the all-relay peers that make up 100% of
+      // the network until phantombot#258 ships. Staggered so a mesh of contacts
+      // doesn't burst simultaneous handshakes.
+      const reconnectMeshPeers = (): void => {
         const contacts = (window as any).__phantomchatContacts || [];
         for(const pubkey of contacts) {
           if(!capability.has(pubkey)) continue;
           setTimeout(() => {
             meshManager.connect(pubkey).catch(swallowHandler('PhantomChatBridge.autoConnectMesh'));
           }, Math.random() * 5000);
+        }
+      };
+
+      rootScope.addEventListener('phantomchat_backfill_complete', reconnectMeshPeers);
+
+      // Phase 1 (#125): P2P follows the relay transport's activity state. The mesh
+      // is a foreground-only optimisation on top of the relay floor, so:
+      //   • IDLE  → tear every peer down. WebRTC signaling (kind-21050) is
+      //             ephemeral, so a socket-less client can neither receive an
+      //             offer nor renegotiate a dropped channel; keeping half-dead
+      //             peers around would just stall. Torn down, delivery falls back
+      //             to the relay catch-up REQ (the guaranteed floor).
+      //   • ACTIVE → re-dial capability-gated peers, paying the ICE/DTLS handshake
+      //             once, at the moment a foreground session resumes.
+      // This collapses the whole ephemeral-signaling-while-idle problem: we never
+      // try to signal while idle, so there is nothing to miss.
+      rootScope.addEventListener('phantomchat_transport_mode', ({mode}) => {
+        if(mode === 'idle') {
+          meshManager.disconnectAll();
+        } else {
+          reconnectMeshPeers();
         }
       });
     }

@@ -251,6 +251,11 @@ export type BroadcastEvents = {
 
   'phantomchat_mesh_peer_connected': {pubkey: string; latency: number},
   'phantomchat_mesh_peer_disconnected': {pubkey: string},
+  // Phase 1 idle transport (#125): the relay transport's idle controller is the
+  // single source of truth for active/idle. P2P follows it — the mesh is only
+  // established/maintained while ACTIVE and is torn down on IDLE (relay stays the
+  // delivery floor). Dispatched by ChatAPI off the pool's onTransportMode hook.
+  'phantomchat_transport_mode': {mode: 'active' | 'idle'},
   'phantomchat_relay_state': {
     url: string;
     connected: boolean;
