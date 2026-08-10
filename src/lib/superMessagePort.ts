@@ -97,6 +97,14 @@ type Listeners = Record<string, ListenerCallback>;
 const USE_LOCKS = true;
 const USE_BATCHING = true;
 
+// When the tab regains visibility after a background suspension, in-flight
+// invokes whose counterpart reply was dropped mid-freeze never resolve and
+// wedge whatever awaits them (the multi-minute sludge on wake). On wake we
+// reject any invoke that has been outstanding longer than this — old enough to
+// have spanned the suspension — while leaving young invokes (an RPC mid-flight
+// during a quick tab switch) untouched.
+const WAKE_STALE_INVOKE_THRESHOLD = 10000;
+
 // const PING_INTERVAL = DEBUG && false ? 0x7FFFFFFF : 5000;
 // const PING_TIMEOUT = DEBUG && false ? 0x7FFFFFFF : 10000;
 
@@ -118,7 +126,8 @@ class SuperMessagePort<
       resolve: any,
       reject: any,
       taskType: string,
-      port?: SendPort
+      port?: SendPort,
+      startTime: number
     }
   };
   protected pending: Map<SendPort, Task[]>;
@@ -126,6 +135,16 @@ class SuperMessagePort<
   protected log: ReturnType<typeof logger>;
   protected debug: boolean;
   protected releasingPending: boolean;
+
+  // Blanket backstop: when > 0, every invoke self-rejects with TIMEOUT after
+  // this many ms unless the call passes an explicit timeout or its type is
+  // exempt. 0 disables it (base default). Subclasses opt in — see
+  // MTProtoMessagePort. Also enables visibility wake-recovery for this port.
+  protected defaultInvokeTimeout: number;
+  // Invoke types excluded from both the blanket timeout and the wake reject —
+  // for legitimately unbounded, network/relay-bound, or streaming operations
+  // that carry their own timeouts.
+  protected invokeTimeoutExempt: Set<string>;
 
   protected processTaskMap: TaskMap;
 
@@ -148,6 +167,14 @@ class SuperMessagePort<
     this.debug = DEBUG;
     this.heldLocks = new Map();
     this.requestedLocks = new Map();
+    this.defaultInvokeTimeout = 0;
+    this.invokeTimeoutExempt = new Set();
+
+    // Wake-recovery lives on the side that owns a document (the tab). Worker
+    // sides have no visibilitychange and rely on defaultInvokeTimeout instead.
+    if(typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', this.onVisibilityChange);
+    }
 
     this.processTaskMap = {
       result: this.processResultTask,
@@ -281,6 +308,35 @@ class SuperMessagePort<
       }
     }
   }
+
+  protected onVisibilityChange = () => {
+    if(typeof document === 'undefined' || document.visibilityState !== 'visible') {
+      return;
+    }
+
+    // Only ports that opted into the blanket backstop participate in wake
+    // recovery — keeps the blast radius to the configured (MTProto) port.
+    if(!this.defaultInvokeTimeout) {
+      return;
+    }
+
+    const now = Date.now();
+    const error = makeError('TAB_SUSPENDED');
+    for(const id in this.awaiting) {
+      const task = this.awaiting[id];
+      if(this.invokeTimeoutExempt.has(task.taskType)) {
+        continue;
+      }
+
+      if(now - task.startTime < WAKE_STALE_INVOKE_THRESHOLD) {
+        continue;
+      }
+
+      this.log.error('rejecting stale invoke on wake', task.taskType, id);
+      task.reject(error);
+      delete this.awaiting[id];
+    }
+  };
 
   protected postMessage(port: SendPort | SendPort[], task: Task) {
     const ports = Array.isArray(port) ? port : (port ? [port] : this.sendPorts);
@@ -610,15 +666,27 @@ class SuperMessagePort<
     let task: InvokeTask;
     const promise = new Promise<Awaited<ReturnType<Send[T]>>>((resolve, reject) => {
       task = this.createInvokeTask(type as string, payload, withAck, undefined, transfer);
-      this.awaiting[task.id] = {resolve, reject, taskType: type as string, port};
+      this.awaiting[task.id] = {resolve, reject, taskType: type as string, port, startTime: Date.now()};
       this.pushTask(task, port);
     });
 
-    if(timeout) {
-      const {reject} = this.awaiting[task.id];
-      setTimeout(() => {
-        reject(makeError('TIMEOUT'));
-      }, timeout);
+    // Explicit per-call timeout wins; otherwise fall back to the port's blanket
+    // backstop, unless the type is exempt (unbounded/relay-bound operations).
+    const effectiveTimeout = timeout ??
+      (this.invokeTimeoutExempt.has(type as string) ? 0 : this.defaultInvokeTimeout);
+
+    if(effectiveTimeout) {
+      const timeoutId = ctx.setTimeout(() => {
+        const deferred = this.awaiting[task.id];
+        if(!deferred) {
+          return;
+        }
+
+        delete this.awaiting[task.id];
+        deferred.reject(makeError('TIMEOUT'));
+      }, effectiveTimeout);
+
+      promise.finally(() => ctx.clearTimeout(timeoutId)).catch(() => {});
     }
 
     if(IS_WORKER/*  || true */) {
