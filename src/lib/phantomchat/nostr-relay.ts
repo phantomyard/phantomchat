@@ -76,6 +76,12 @@ export const NOSTR_KIND_P2P_SIGNAL = 21050;
 export const NOSTR_KIND_PRESENCE = 30315;
 
 /**
+ * NIP-42 auth event kind (kind 22242) — the signed answer to a relay's
+ * ["AUTH", <challenge>] frame. See handleAuthChallenge().
+ */
+export const NOSTR_KIND_AUTH = 22242;
+
+/**
  * Hard cap on the initial replay a REQ pulls before going live. Per NIP-01
  * `limit` applies only to the stored-event phase; live events still stream
  * afterwards. Bounds the gift-wrap firehose on (re)connect even when a `since`
@@ -317,9 +323,34 @@ export class NostrRelay {
   // deletes, reactions, metadata) when the socket isn't OPEN and flush them on
   // the next onopen. Ephemeral events (typing/presence, kind 20000–29999) are
   // worthless once stale, so they are NOT buffered.
-  private pendingPublishes: {payload: string; expiresAt: number}[] = [];
+  private pendingPublishes: {payload: string; eventId?: string; kind?: number; expiresAt: number}[] = [];
   private readonly maxPendingPublishes: number = 50;
   private readonly pendingPublishTtlMs: number = 30000;
+
+  // NIP-42 AUTH state (phantomchat #130, mirror of phantombot #370). A relay
+  // with `nip42_auth = true` (nostr-rs-relay) demands an authenticated session
+  // before it stores our publishes — without it the relay answers OK:true and
+  // silently DROPS the event: the worst failure class a transport can have.
+  // The challenge is PER-CONNECTION, so authState resets on every onopen and
+  // the relay re-challenges each fresh socket. Publishes rejected with
+  // `auth-required:` are queued and retried once the handshake completes.
+  private authState: 'none' | 'authed' = 'none';
+  // Publishes rejected with auth-required:, awaiting retry post-auth. TTL- and
+  // count-bounded like pendingPublishes so a broken relay can't grow it.
+  private authRejectedPublishes: {eventId: string; payload: string; expiresAt: number}[] = [];
+  // One retry per event: an id lands here on first auth-required rejection; a
+  // second rejection after the retry means the relay still refuses — give up
+  // with a loud warning instead of looping forever.
+  private authRetriedIds: Set<string> = new Set();
+  // Recently-sent STORED-event payloads by event id — the lookup that lets an
+  // OK:false rejection be mapped back to its payload for requeue. FIFO-capped;
+  // entries are deleted as soon as the relay ACKs.
+  private recentPublishes: Map<string, string> = new Map();
+  private readonly maxRecentPublishes: number = 50;
+  // Read-back verification timing (phantomchat #130). Fields (not literals) so
+  // tests can shrink them — same pattern as latencyPingTimeoutMs.
+  private readBackSettleMs: number = 1500;
+  private readBackTimeoutMs: number = 5000;
 
   // Latency tracking
   private latencyMs: number = -1;
@@ -430,6 +461,9 @@ export class NostrRelay {
         this.setConnectionState('connected');
         this.reconnectAttempts = 0;
         this.inCooldown = false;
+        // NIP-42: the AUTH challenge is per-connection — a fresh socket must
+        // re-authenticate when the relay challenges it again.
+        this.authState = 'none';
         // Fresh socket — treat as just-heard-from so the first health check
         // doesn't probe a socket we know is alive.
         this.lastInboundAt = Date.now();
@@ -582,7 +616,11 @@ export class NostrRelay {
 
       // Publish ALL wraps to relay (self-send + recipient)
       for(const wrap of wraps) {
-        this.safeSend(JSON.stringify(['EVENT', wrap]));
+        const payload = JSON.stringify(['EVENT', wrap]);
+        if(this.safeSend(payload)) {
+          this.trackPublishedEvent(wrap, payload);
+          void this.verifyStored(wrap);
+        }
       }
 
       // Return the first event ID (recipient wrap)
@@ -983,6 +1021,8 @@ export class NostrRelay {
 
     // Fast path: socket OPEN → send live.
     if(this.connectionState === 'connected' && this.safeSend(payload)) {
+      this.trackPublishedEvent(event, payload);
+      void this.verifyStored(event);
       return;
     }
 
@@ -996,19 +1036,26 @@ export class NostrRelay {
       throw new Error('Not connected to relay');
     }
 
-    this.bufferPendingPublish(payload);
+    this.bufferPendingPublish(payload, event);
   }
 
   /**
    * Queue a stored-event payload for delivery on the next successful connect.
    * Bounded by count and TTL so a long offline stretch can't grow unbounded or
    * flush hopelessly-stale events. Kicks a connect if we're fully disconnected.
+   * Carries the event id/kind so a flushed publish still enters the NIP-42
+   * retry tracking + read-back verification like a live send.
    */
-  private bufferPendingPublish(payload: string): void {
+  private bufferPendingPublish(payload: string, event?: NostrEvent): void {
     const now = Date.now();
     // Evict expired before appending.
     this.pendingPublishes = this.pendingPublishes.filter(p => p.expiresAt > now);
-    this.pendingPublishes.push({payload, expiresAt: now + this.pendingPublishTtlMs});
+    this.pendingPublishes.push({
+      payload,
+      eventId: event?.id,
+      kind: event?.kind,
+      expiresAt: now + this.pendingPublishTtlMs
+    });
     // Drop oldest if over cap.
     while(this.pendingPublishes.length > this.maxPendingPublishes) {
       this.pendingPublishes.shift();
@@ -1039,6 +1086,13 @@ export class NostrRelay {
       }
       if(this.safeSend(p.payload)) {
         flushed++;
+        // A flushed publish is a live send: track it for NIP-42 retry and run
+        // the read-back check like any other publish.
+        if(p.eventId && p.kind !== undefined) {
+          const flushedEvent = {id: p.eventId, kind: p.kind};
+          this.trackPublishedEvent(flushedEvent, p.payload);
+          void this.verifyStored(flushedEvent);
+        }
       } else {
         // Socket flapped between onopen and here — requeue for the next open.
         this.pendingPublishes.push(p);
@@ -1047,6 +1101,144 @@ export class NostrRelay {
     if(flushed || dropped) {
       this.log(`[NostrRelay] flushed ${flushed} buffered publish(es), dropped ${dropped} expired`);
     }
+  }
+
+  /**
+   * NIP-42: answer the relay's AUTH challenge (phantomchat #130, mirror of
+   * phantombot #370). Signs a kind-22242 event scoped to THIS relay (the
+   * `relay` tag means the signed answer is only valid for the challenger — no
+   * identity leak to third parties), sends it, then retries any publishes the
+   * relay rejected with `auth-required:` while the session was unauthenticated.
+   */
+  private handleAuthChallenge(challenge: string): void {
+    if(!this.privateKey.length) {
+      this.log.warn('[NostrRelay] relay requested AUTH but no identity is loaded:', this.relayUrl);
+      return;
+    }
+    try {
+      const authEvent = finalizeEvent({
+        kind: NOSTR_KIND_AUTH,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['relay', this.relayUrl], ['challenge', challenge]],
+        content: ''
+      }, this.privateKey);
+      if(this.safeSend(JSON.stringify(['AUTH', authEvent]))) {
+        this.authState = 'authed';
+        this.log('[NostrRelay] answered AUTH challenge for', this.relayUrl);
+        this.flushAuthRejectedPublishes();
+      }
+    } catch(err) {
+      this.log.error('[NostrRelay] failed to answer AUTH challenge:', err);
+    }
+  }
+
+  /**
+   * Queue a publish the relay rejected with `auth-required:` for retry once
+   * the NIP-42 handshake completes. One retry per event — a second rejection
+   * after the retry means the relay still refuses, so we warn loudly and drop
+   * rather than loop forever.
+   */
+  private queueAuthRejectedPublish(eventId: string, payload: string): void {
+    if(this.authRetriedIds.has(eventId)) {
+      this.log.warn('[NostrRelay] relay still rejects after AUTH — giving up on event',
+        eventId.slice(0, 8) + '...', 'relay:', this.relayUrl);
+      return;
+    }
+    this.authRetriedIds.add(eventId);
+    const now = Date.now();
+    this.authRejectedPublishes = this.authRejectedPublishes.filter(p => p.expiresAt > now);
+    this.authRejectedPublishes.push({eventId, payload, expiresAt: now + this.pendingPublishTtlMs});
+    while(this.authRejectedPublishes.length > this.maxPendingPublishes) {
+      this.authRejectedPublishes.shift();
+    }
+    this.log.warn('[NostrRelay] relay demands AUTH — queued publish for post-auth retry:',
+      this.relayUrl, eventId.slice(0, 8) + '...');
+    if(this.authState === 'authed') {
+      this.flushAuthRejectedPublishes();
+    }
+  }
+
+  /**
+   * Re-send publishes queued by queueAuthRejectedPublish. Called after the
+   * AUTH answer goes out. Re-sent payloads re-enter recentPublishes so a
+   * repeat rejection is still visible to the OK handler (and stopped there by
+   * the authRetriedIds guard).
+   */
+  private flushAuthRejectedPublishes(): void {
+    if(this.authRejectedPublishes.length === 0) return;
+    const now = Date.now();
+    const queued = this.authRejectedPublishes;
+    this.authRejectedPublishes = [];
+    let retried = 0;
+    for(const p of queued) {
+      if(p.expiresAt <= now) continue;
+      if(this.safeSend(p.payload)) {
+        retried++;
+        this.recentPublishes.set(p.eventId, p.payload);
+      } else {
+        // Socket flapped mid-flush — keep for the next challenge/open.
+        this.authRejectedPublishes.push(p);
+      }
+    }
+    if(retried) {
+      this.log('[NostrRelay] retried', retried, 'publish(es) after AUTH on', this.relayUrl);
+    }
+  }
+
+  /**
+   * Remember a just-sent STORED-event payload so an OK:false rejection can be
+   * mapped back to it for requeue (see the OK handler). Ephemeral events
+   * (kinds 20000–29999) are worthless once stale — never tracked. FIFO-capped;
+   * entries are deleted when the relay ACKs.
+   */
+  private trackPublishedEvent(event: {kind: number; id?: string}, payload: string): void {
+    if(!event.id) return;
+    if(event.kind >= 20000 && event.kind < 30000) return;
+    this.recentPublishes.set(event.id, payload);
+    if(this.recentPublishes.size > this.maxRecentPublishes) {
+      const oldest = this.recentPublishes.keys().next().value;
+      if(oldest !== undefined) this.recentPublishes.delete(oldest);
+    }
+  }
+
+  /**
+   * Read-back check for a freshly published event (phantomchat #130, mirror
+   * of phantombot #370's verifyStored). After a short settle delay, re-query
+   * THIS relay for the event id; a relay that ACK'd with OK:true but never
+   * stored the event (nostr-rs-relay's ACK-then-drop on non-conformant
+   * events) gets named in a warning. Resolves true when confirmed. Never
+   * throws — a failed read-back is only a warning; the periodic catch-up
+   * poll remains the delivery backstop.
+   *
+   * Skipped for EPHEMERAL events (kinds 20000–29999, NIP-16 — typing ticks):
+   * relays don't store those by design, so a read-back would always "fail".
+   *
+   * `timing` overrides the settle delay / query timeout — tests only.
+   */
+  async verifyStored(
+    event: {kind: number; id?: string},
+    timing?: {settleMs?: number; timeoutMs?: number},
+  ): Promise<boolean> {
+    if(event.kind >= 20000 && event.kind < 30000) return true;
+    if(!event.id) return true;
+    await new Promise(r => setTimeout(r, timing?.settleMs ?? this.readBackSettleMs));
+    const timeoutMs = timing?.timeoutMs ?? this.readBackTimeoutMs;
+    let timedOut = false;
+    const found = await Promise.race([
+      this.queryRawEvents({ids: [event.id]}).then(events => events.some(e => e.id === event.id)),
+      new Promise<boolean>(resolve => setTimeout(() => {
+        timedOut = true;
+        resolve(false);
+      }, timeoutMs))
+    ]);
+    if(!found) {
+      this.log.warn(
+        '[NostrRelay] publish NOT confirmed stored — relay ACKed but never stored the event:',
+        this.relayUrl, 'event:', event.id.slice(0, 8) + '...', 'kind:', event.kind,
+        timedOut ? '(read-back timed out)' : '(read-back returned nothing)',
+      );
+    }
+    return found;
   }
 
   /**
@@ -1085,9 +1277,12 @@ export class NostrRelay {
     };
 
     const signedEvent = finalizeEvent(eventTemplate, this.privateKey);
-    if(!this.safeSend(JSON.stringify(['EVENT', signedEvent]))) {
+    const payload = JSON.stringify(['EVENT', signedEvent]);
+    if(!this.safeSend(payload)) {
       throw new Error('Not connected to relay');
     }
+    this.trackPublishedEvent(signedEvent, payload);
+    void this.verifyStored(signedEvent);
 
     const eventId = (signedEvent as any).id || '';
     this.log('[NostrRelay] published metadata event:', eventId.slice(0, 8) + '...');
@@ -1102,9 +1297,12 @@ export class NostrRelay {
       throw new Error('Not connected to relay');
     }
 
-    if(!this.safeSend(JSON.stringify(['EVENT', event]))) {
+    const payload = JSON.stringify(['EVENT', event]);
+    if(!this.safeSend(payload)) {
       throw new Error('Not connected to relay');
     }
+    this.trackPublishedEvent(event, payload);
+    void this.verifyStored(event);
   }
 
   /**
@@ -1324,6 +1522,13 @@ export class NostrRelay {
           }
           break;
         }
+        case 'AUTH': {
+          // NIP-42: the relay demands an authenticated session. Sign the
+          // kind-22242 answer and retry any publishes it rejected.
+          const [, challenge] = message as [string, string];
+          this.handleAuthChallenge(challenge);
+          break;
+        }
         case 'NOTICE': {
           const [, notice] = message as [string, string];
           this.log('[NostrRelay] relay notice:', notice);
@@ -1339,8 +1544,21 @@ export class NostrRelay {
           const [, okEventId, accepted, reason] = message as [string, string, boolean, string?];
           if(accepted === false) {
             this.log.warn('[NostrRelay] relay REJECTED event', okEventId?.slice(0, 8) + '...', 'reason:', reason || '(no reason)');
+            // NIP-42: `auth-required:` means the relay wants an authenticated
+            // session before it stores our events. Map the id back to its
+            // payload and queue it — handleAuthChallenge() flushes the queue
+            // once the handshake completes. If we're already authed on this
+            // connection the retry goes out immediately.
+            if(okEventId && typeof reason === 'string' && reason.startsWith('auth-required')) {
+              const payload = this.recentPublishes.get(okEventId);
+              if(payload) {
+                this.recentPublishes.delete(okEventId);
+                this.queueAuthRejectedPublish(okEventId, payload);
+              }
+            }
           } else {
             this.log.debug('[NostrRelay] relay accepted event:', okEventId?.slice(0, 8) + '...');
+            if(okEventId) this.recentPublishes.delete(okEventId);
           }
           break;
         }
