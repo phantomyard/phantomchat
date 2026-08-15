@@ -170,6 +170,21 @@ describe('read-back write quarantine', () => {
     expect(urls).not.toContain('wss://r7');
   });
 
+  it('getReadBackHealth hands out a DEEP frozen copy, not live state', () => {
+    drop('wss://r1');
+    const snap = pool.getReadBackHealth();
+    const rec = snap.get('wss://r1')!;
+    expect(rec.quarantinedUntil).toBeGreaterThan(0);
+
+    // A diagnostics/UI caller must not be able to reach through the snapshot
+    // and un-quarantine a relay. The record is frozen, so the write is inert
+    // (silently in sloppy mode, throwing in strict) and live state is intact.
+    expect(Object.isFrozen(rec)).toBe(true);
+    try { (rec as any).quarantinedUntil = 0; } catch { /* strict mode throws */ }
+    expect(pool.getReadBackHealth().get('wss://r1')!.quarantinedUntil).toBe(rec.quarantinedUntil);
+    expect(pool.isWriteQuarantined('wss://r1', 1)).toBe(true);
+  });
+
   it('wires the relay read-back hook through createRelayEntry', () => {
     const entry = pool.createRelayEntry({url: 'wss://hooked', read: true, write: true});
     expect(typeof entry.instance.onReadBackResult).toBe('function');

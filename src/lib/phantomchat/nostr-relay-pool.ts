@@ -371,6 +371,10 @@ export class NostrRelayPool {
    * the write set is pure bookkeeping, with no reconnect and no wait.
    */
   private readBackHealth: Map<string, ReadBackHealth> = new Map();
+  // Relays announced by the below-floor liveness revive during the CURRENT
+  // below-floor episode. Cleared the moment we are back at the floor, so each
+  // dip logs once per relay instead of once per supervision sweep.
+  private floorRevived: Set<string> = new Set();
   // Timestamps of recent connected→dropped transitions across the whole pool,
   // for correlated-drop (network event) detection. Pruned to the window above.
   // Keyed by url: ONE relay dropping repeatedly is a sick relay, not a network
@@ -1516,9 +1520,18 @@ export class NostrRelayPool {
     return (this.readBackHealth.get(url)?.quarantinedUntil ?? 0) > now;
   }
 
-  /** Read-back health snapshot, for diagnostics / the relay settings UI. */
-  getReadBackHealth(): Map<string, ReadBackHealth> {
-    return new Map(this.readBackHealth);
+  /**
+   * Read-back health snapshot, for diagnostics / the relay settings UI.
+   *
+   * A DEEP copy: the records are cloned and frozen, so a caller cannot reach
+   * through the snapshot and mutate live quarantine state. A shallow `new Map`
+   * would have shared the record objects — the map is the copy, the values
+   * would not have been.
+   */
+  getReadBackHealth(): ReadonlyMap<string, Readonly<ReadBackHealth>> {
+    const snapshot = new Map<string, Readonly<ReadBackHealth>>();
+    for(const [url, rec] of this.readBackHealth) snapshot.set(url, Object.freeze({...rec}));
+    return snapshot;
   }
 
   /**
@@ -2250,6 +2263,14 @@ export class NostrRelayPool {
     // its single surviving relay has no headroom and may not even overlap with
     // the far end. Force-revive the soonest-cooldown relays, ignoring their
     // cooldown, until we're back at the floor (or we run out of relays).
+    //
+    // Known trade-off (reviewed, deliberate): this revive IGNORES cooldowns, so
+    // a client whose relays are nearly all permanently dead will re-dial up to
+    // MIN_WRITE_RELAYS of them on every sweep rather than resting. That is the
+    // price of the floor — resting below it is the failure mode we are buying
+    // our way out of. The churn is bounded (at most the floor, staggered, and
+    // ordered by soonest-cooldown so it rotates), and the announce set below
+    // keeps it from also becoming per-sweep log spam.
     if(this.activeUrls.size < MIN_WRITE_RELAYS) {
       const candidates = this.relayEntries.filter(
         (e) => this.enabled.get(e.config.url) !== false && !this.activeUrls.has(e.config.url)
@@ -2263,10 +2284,21 @@ export class NostrRelayPool {
       });
       for(const revive of candidates) {
         if(this.activeUrls.size >= MIN_WRITE_RELAYS) break;
-        this.log('[NostrRelayPool] below relay floor — liveness revive of', revive.config.url);
-        this.activeUrls.add(revive.config.url);
+        const url = revive.config.url;
+        // Announce once per below-floor EPISODE, not once per sweep: while we
+        // are stuck under the floor this loop re-picks the same dead relays
+        // every tick, and logging each time buries everything else.
+        if(!this.floorRevived.has(url)) {
+          this.floorRevived.add(url);
+          this.log('[NostrRelayPool] below relay floor — liveness revive of', url);
+        }
+        this.activeUrls.add(url);
         toOpen.push(revive);
       }
+    } else if(this.floorRevived.size > 0) {
+      // Back at or above the floor — the episode is over, so the next dip
+      // announces itself again.
+      this.floorRevived.clear();
     }
 
     // Open the collected sockets one at a time (staggered).
