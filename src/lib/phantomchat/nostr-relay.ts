@@ -351,6 +351,15 @@ export class NostrRelay {
   // tests can shrink them — same pattern as latencyPingTimeoutMs.
   private readBackSettleMs: number = 1500;
   private readBackTimeoutMs: number = 5000;
+  /**
+   * Read-back outcome hook (issue #359). Set by the pool so every read-back —
+   * which we were ALREADY running after each publish (#130) — feeds the
+   * per-relay health score that drives write quarantine. This is why relay
+   * health costs no extra traffic and no health-check loop: it is a pure
+   * by-product of sends we were making anyway. Null when unowned (tests,
+   * standalone relay use).
+   */
+  public onReadBackResult: ((url: string, confirmed: boolean) => void) | null = null;
 
   // Latency tracking
   private latencyMs: number = -1;
@@ -1237,6 +1246,13 @@ export class NostrRelay {
         this.relayUrl, 'event:', event.id.slice(0, 8) + '...', 'kind:', event.kind,
         timedOut ? '(read-back timed out)' : '(read-back returned nothing)',
       );
+    }
+    // Feed the pool's health tracker (issue #359). Guarded: a throwing owner
+    // must never turn a diagnostic into a publish-path failure.
+    try {
+      this.onReadBackResult?.(this.relayUrl, found);
+    } catch(err) {
+      this.log.warn('[NostrRelay] onReadBackResult threw', err);
     }
     return found;
   }

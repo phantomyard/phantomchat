@@ -91,12 +91,18 @@ describe('relay flap cooldown', () => {
   });
 
   it('recovery sweep skips a cooled-down relay (while another stays active), then revives it', () => {
-    // A healthy relay holds a live slot so the pool is never fully benched —
-    // that keeps the liveness floor from firing so we can observe the pure
+    // Healthy relays hold live slots so the pool is never below the liveness
+    // floor — that keeps the floor from firing, so we can observe the pure
     // cooldown-skip behaviour on the flapping relay.
-    const healthy = addRelay('wss://healthy');
-    healthy._set('connected');
-    pool.activeUrls.add('wss://healthy');
+    //
+    // There must be MIN_WRITE_RELAYS (3) of them: issue #359 raised the
+    // liveness floor from 1 to 3, so a single healthy relay is no longer
+    // enough to satisfy it and the floor would force-revive the flapper.
+    for(const url of ['wss://healthy1', 'wss://healthy2', 'wss://healthy3']) {
+      const healthy = addRelay(url);
+      healthy._set('connected');
+      pool.activeUrls.add(url);
+    }
 
     const url = 'wss://flap';
     const instance = addRelay(url);
@@ -133,6 +139,35 @@ describe('relay flap cooldown', () => {
     expect(pool.relayHealth.get(url).cooldownUntil).toBeGreaterThan(Date.now());
     pool.recoverFailedRelays();
     expect(instance.initialize).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces a below-floor revive once per EPISODE, not once per sweep', () => {
+    const url = 'wss://flap';
+    const instance = addRelay(url);
+    flap(url, instance, 1_000);
+    flap(url, instance, 1_000);
+    flap(url, instance, 1_000); // benched; zero active relays
+
+    const logged = () => (pool.log as any).mock.calls.filter(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('below relay floor')
+    ).length;
+    pool.log = vi.fn();
+
+    // While stuck under the floor the sweep re-picks the same dead relay every
+    // tick. It must dial it (that is the floor doing its job) but announce it
+    // only once, or the log drowns everything else.
+    pool.recoverFailedRelays();
+    pool.recoverFailedRelays();
+    pool.recoverFailedRelays();
+    expect(logged()).toBe(1);
+    expect(instance.initialize.mock.calls.length).toBeGreaterThan(0);
+
+    // Back above the floor, the episode closes and the next dip speaks again.
+    pool.activeUrls.add('wss://x1');
+    pool.activeUrls.add('wss://x2');
+    pool.activeUrls.add('wss://x3');
+    pool.recoverFailedRelays();
+    expect(pool.floorRevived.size).toBe(0);
   });
 
   it('keeps the cooldown flat at 60s on continued flapping (no long benches)', () => {

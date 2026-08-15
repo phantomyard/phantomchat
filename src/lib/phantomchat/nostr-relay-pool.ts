@@ -18,6 +18,15 @@ import {importFromStored} from './nostr-identity';
 import rootScope from '@lib/rootScope';
 import {swallowHandler} from './log-swallow';
 import {IdleTransportController, TransportMode} from './transport-idle-controller';
+import {
+  ReadBackHealth,
+  emptyReadBackHealth,
+  quarantineSpanMs,
+  selectWriteTargets,
+  MIN_WRITE_RELAYS,
+  READBACK_QUARANTINE_JITTER,
+  READBACK_STRIKE_THRESHOLD
+} from './relay-ranking';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -343,6 +352,29 @@ export class NostrRelayPool {
   // ms deadline; while it's in the future the pool recovery sweep skips the
   // relay and its self-reconnect has been stopped via disconnect().
   private relayHealth: Map<string, {connectedAt: number; flaps: number; cooldownUntil: number; lastState: string; failedConnects: number}> = new Map();
+  /**
+   * Per-relay READ-BACK health (issue #359) — deliberately SEPARATE from
+   * `relayHealth` above, because the two describe different illnesses and have
+   * different cures:
+   *
+   *   relayHealth  = can we hold a SOCKET to this relay? A sick one is benched,
+   *                  which DISCONNECTS it to stop its retry loop.
+   *   readBackHealth = does this relay actually STORE what we publish? Jeroen's
+   *                  4 bad relays connect perfectly and ACK every publish —
+   *                  they are invisible to the flap machinery above. A sick one
+   *                  is quarantined from WRITES ONLY and keeps its socket and
+   *                  its read subscription.
+   *
+   * Keeping the socket is the point, not an oversight: (a) a relay that drops
+   * writes may still deliver reads, and the catch-up poll keeps using it, and
+   * (b) a quarantined relay is therefore a WARM SPARE — promoting it back into
+   * the write set is pure bookkeeping, with no reconnect and no wait.
+   */
+  private readBackHealth: Map<string, ReadBackHealth> = new Map();
+  // Relays announced by the below-floor liveness revive during the CURRENT
+  // below-floor episode. Cleared the moment we are back at the floor, so each
+  // dip logs once per relay instead of once per supervision sweep.
+  private floorRevived: Set<string> = new Set();
   // Timestamps of recent connected→dropped transitions across the whole pool,
   // for correlated-drop (network event) detection. Pruned to the window above.
   // Keyed by url: ONE relay dropping repeatedly is a sick relay, not a network
@@ -673,9 +705,8 @@ export class NostrRelayPool {
     }
     if(!selfWrap) return;
 
-    const writeEntries = this.relayEntries.filter(e =>
-      e.config.write && this.enabled.get(e.config.url) !== false
-    );
+    // Write set minus read-back-quarantined relays, floor of 3 (issue #359).
+    const writeEntries = this.writeEntries();
     for(const entry of writeEntries) {
       try {
         entry.instance.publishRawEvent(selfWrap);
@@ -896,9 +927,8 @@ export class NostrRelayPool {
     // a send that races the reconnect is not dropped.
     this.noteActivity();
 
-    const writeEntries = this.relayEntries.filter(e =>
-      e.config.write && this.enabled.get(e.config.url) !== false
-    );
+    // Write set minus read-back-quarantined relays, floor of 3 (issue #359).
+    const writeEntries = this.writeEntries();
 
     // Wrap once, publish to all relays (avoids wrapping N times for N relays)
     let wraps: NostrEvent[];
@@ -1006,9 +1036,8 @@ export class NostrRelayPool {
       wrap = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
     }
 
-    const writeEntries = this.relayEntries.filter(e =>
-      e.config.write && this.enabled.get(e.config.url) !== false
-    );
+    // Write set minus read-back-quarantined relays, floor of 3 (issue #359).
+    const writeEntries = this.writeEntries();
     for(const entry of writeEntries) {
       try {
         entry.instance.publishRawEvent(wrap);
@@ -1062,9 +1091,8 @@ export class NostrRelayPool {
     const successes: string[] = [];
     const failures: {url: string; error: string}[] = [];
 
-    const writeEntries = this.relayEntries.filter(e =>
-      e.config.write && this.enabled.get(e.config.url) !== false
-    );
+    // Write set minus read-back-quarantined relays, floor of 3 (issue #359).
+    const writeEntries = this.writeEntries();
 
     const promises = writeEntries.map(async(entry) => {
       try {
@@ -1119,9 +1147,8 @@ export class NostrRelayPool {
     }
     if(!recipientWrap) return;
 
-    const writeEntries = this.relayEntries.filter(e =>
-      e.config.write && this.enabled.get(e.config.url) !== false
-    );
+    // Write set minus read-back-quarantined relays, floor of 3 (issue #359).
+    const writeEntries = this.writeEntries();
     for(const entry of writeEntries) {
       try {
         entry.instance.publishRawEvent(recipientWrap);
@@ -1139,9 +1166,8 @@ export class NostrRelayPool {
     const successes: string[] = [];
     const failures: {url: string; error: string}[] = [];
 
-    const writeEntries = this.relayEntries.filter(e =>
-      e.config.write && this.enabled.get(e.config.url) !== false
-    );
+    // Write set minus read-back-quarantined relays, floor of 3 (issue #359).
+    const writeEntries = this.writeEntries();
 
     for(const entry of writeEntries) {
       try {
@@ -1440,6 +1466,97 @@ export class NostrRelayPool {
     }
   }
 
+  /**
+   * Record one read-back outcome for a relay (issue #359). Called by every
+   * NostrRelay after the read-back check it already performs post-publish
+   * (#130), so this is the entire cost of relay health: no probe, no poller,
+   * no timer.
+   *
+   * `confirmed` = the relay returned the event we just published to it, i.e.
+   * it genuinely stored it. A single confirmation clears the strike streak —
+   * quarantine is for relays that are CONSISTENTLY dropping, not ones that
+   * hiccuped or indexed slowly. A confirmation while quarantined releases the
+   * relay early: it has proved itself, so there is nothing left to wait for.
+   */
+  recordReadBackResult(url: string, confirmed: boolean, now: number = Date.now()): void {
+    let h = this.readBackHealth.get(url);
+    if(!h) {
+      h = emptyReadBackHealth();
+      this.readBackHealth.set(url, h);
+    }
+
+    if(confirmed) {
+      h.confirmed++;
+      h.strikes = 0;
+      if(h.quarantinedUntil > now) {
+        h.quarantinedUntil = 0;
+        this.log('[NostrRelayPool] relay confirmed a store while quarantined — releasing', url);
+      }
+      return;
+    }
+
+    h.dropped++;
+    h.strikes++;
+    if(h.strikes < READBACK_STRIKE_THRESHOLD) return;
+    if(h.quarantinedUntil > now) return; // already serving one
+
+    // Exponential backoff with ±10% jitter, so a fleet that all watched the
+    // same relay die doesn't un-quarantine it in lockstep and stampede it.
+    const span = quarantineSpanMs(h.quarantineCount);
+    const jitter = 1 + (Math.random() * 2 - 1) * READBACK_QUARANTINE_JITTER;
+    const jittered = Math.round(span * jitter);
+    h.quarantinedUntil = now + jittered;
+    h.quarantineCount++;
+    h.strikes = 0; // streak consumed by the quarantine
+    this.log(
+      '[NostrRelayPool] relay quarantined from WRITES (ACKs but does not store):',
+      url, 'for', Math.round(jittered / 60000), 'min, offence', h.quarantineCount,
+      '(confirmed', h.confirmed, '/ dropped', h.dropped + ')'
+    );
+  }
+
+  /** True if `url` is currently quarantined from the write set. */
+  isWriteQuarantined(url: string, now: number = Date.now()): boolean {
+    return (this.readBackHealth.get(url)?.quarantinedUntil ?? 0) > now;
+  }
+
+  /**
+   * Read-back health snapshot, for diagnostics / the relay settings UI.
+   *
+   * A DEEP copy: the records are cloned and frozen, so a caller cannot reach
+   * through the snapshot and mutate live quarantine state. A shallow `new Map`
+   * would have shared the record objects — the map is the copy, the values
+   * would not have been.
+   */
+  getReadBackHealth(): ReadonlyMap<string, Readonly<ReadBackHealth>> {
+    const snapshot = new Map<string, Readonly<ReadBackHealth>>();
+    for(const [url, rec] of this.readBackHealth) snapshot.set(url, Object.freeze({...rec}));
+    return snapshot;
+  }
+
+  /**
+   * The relay entries to publish to right now: enabled + write-capable, minus
+   * any under read-back quarantine, but NEVER fewer than MIN_WRITE_RELAYS —
+   * if quarantine would take us below the floor, the best-ranked quarantined
+   * relays are promoted back to fill it (the floor is a hard constraint, a
+   * quarantine only an opinion). Promotion is free: quarantined relays kept
+   * their sockets, so they are warm spares.
+   *
+   * This is the single chokepoint every publish path goes through, and the
+   * ONLY place quarantine expiry is evaluated — lazily, against `now`. Nothing
+   * wakes up to expire a quarantine.
+   */
+  private writeEntries(now: number = Date.now()): RelayEntry[] {
+    const eligible = this.relayEntries.filter(e =>
+      e.config.write && this.enabled.get(e.config.url) !== false
+    );
+    if(eligible.length <= MIN_WRITE_RELAYS) return eligible; // nothing to trim
+    const chosen = new Set(
+      selectWriteTargets(eligible.map(e => e.config.url), this.readBackHealth, now)
+    );
+    return eligible.filter(e => chosen.has(e.config.url));
+  }
+
   // ─── Private ───────────────────────────────────────────────────
 
   private createRelayEntry(config: RelayConfig): RelayEntry {
@@ -1455,6 +1572,9 @@ export class NostrRelayPool {
     // ...and the rollback, so a wrap whose processing dies is not poisoned in
     // the seen-set and can be retried by a replay.
     instance.setEventRelease?.((eventId, error) => this.releaseWrapId(eventId, error));
+    // Read-back outcomes drive write quarantine (issue #359). Assigned rather
+    // than set via a method so a test mock lacking the field is harmless.
+    instance.onReadBackResult = (url, confirmed) => this.recordReadBackResult(url, confirmed);
     // ...and the success signal, so a wrap that unwraps cleanly stops carrying
     // the failure strikes it accrued while the worker/network was broken.
     instance.setEventCommit?.((eventId) => this.commitWrapId(eventId));
@@ -2136,23 +2256,49 @@ export class NostrRelayPool {
       need--;
     }
 
-    // Liveness floor: if nothing is active/dialing, force-revive the
-    // soonest-cooldown relay so the pool can never deadlock at zero connections.
-    if(this.activeUrls.size === 0) {
+    // Liveness floor: the pool must never sit below MIN_WRITE_RELAYS relays
+    // active/dialing. Raised from 1 to 3 with issue #359 — a floor of ONE was
+    // enough to prove the pool wasn't deadlocked, but not enough to deliver:
+    // sender and recipient bench relays INDEPENDENTLY, so a client sitting on
+    // its single surviving relay has no headroom and may not even overlap with
+    // the far end. Force-revive the soonest-cooldown relays, ignoring their
+    // cooldown, until we're back at the floor (or we run out of relays).
+    //
+    // Known trade-off (reviewed, deliberate): this revive IGNORES cooldowns, so
+    // a client whose relays are nearly all permanently dead will re-dial up to
+    // MIN_WRITE_RELAYS of them on every sweep rather than resting. That is the
+    // price of the floor — resting below it is the failure mode we are buying
+    // our way out of. The churn is bounded (at most the floor, staggered, and
+    // ordered by soonest-cooldown so it rotates), and the announce set below
+    // keeps it from also becoming per-sweep log spam.
+    if(this.activeUrls.size < MIN_WRITE_RELAYS) {
       const candidates = this.relayEntries.filter(
-        (e) => this.enabled.get(e.config.url) !== false
+        (e) => this.enabled.get(e.config.url) !== false && !this.activeUrls.has(e.config.url)
       );
-      if(candidates.length) {
-        candidates.sort((a, b) => {
-          const ca = this.relayHealth.get(a.config.url)?.cooldownUntil ?? 0;
-          const cb = this.relayHealth.get(b.config.url)?.cooldownUntil ?? 0;
-          return ca - cb;
-        });
-        const revive = candidates[0];
-        this.log('[NostrRelayPool] all relays benched — liveness revive of', revive.config.url);
-        this.activeUrls.add(revive.config.url);
+      candidates.sort((a, b) => {
+        const ca = this.relayHealth.get(a.config.url)?.cooldownUntil ?? 0;
+        const cb = this.relayHealth.get(b.config.url)?.cooldownUntil ?? 0;
+        if(ca !== cb) return ca - cb;
+        // Deterministic tiebreak so clients converge on the same subset.
+        return a.config.url < b.config.url ? -1 : a.config.url > b.config.url ? 1 : 0;
+      });
+      for(const revive of candidates) {
+        if(this.activeUrls.size >= MIN_WRITE_RELAYS) break;
+        const url = revive.config.url;
+        // Announce once per below-floor EPISODE, not once per sweep: while we
+        // are stuck under the floor this loop re-picks the same dead relays
+        // every tick, and logging each time buries everything else.
+        if(!this.floorRevived.has(url)) {
+          this.floorRevived.add(url);
+          this.log('[NostrRelayPool] below relay floor — liveness revive of', url);
+        }
+        this.activeUrls.add(url);
         toOpen.push(revive);
       }
+    } else if(this.floorRevived.size > 0) {
+      // Back at or above the floor — the episode is over, so the next dip
+      // announces itself again.
+      this.floorRevived.clear();
     }
 
     // Open the collected sockets one at a time (staggered).
