@@ -5,7 +5,9 @@
  */
 
 import '../setup';
-import {loadCanonicalRelays} from '@lib/phantomchat/nostr-relay-pool';
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {DEFAULT_RELAYS, loadCanonicalRelays} from '@lib/phantomchat/nostr-relay-pool';
 
 describe('loadCanonicalRelays', () => {
   const realFetch = globalThis.fetch;
@@ -79,5 +81,35 @@ describe('loadCanonicalRelays', () => {
     });
     expect(await loadCanonicalRelays()).toBeNull();
     expect(fetched).toBe(false);
+  });
+});
+
+/**
+ * public/relays.json is the single source of truth at runtime (phantombot fetches
+ * the same URL over HTTP), and DEFAULT_RELAYS is the build-time disaster net used
+ * only when that fetch fails. They are two hand-maintained copies of one list, so
+ * they silently drift — a cold-start client would then dial a relay set nobody
+ * validated. This test is the only thing that couples them.
+ */
+describe('relays.json / DEFAULT_RELAYS parity', () => {
+  const canonical: string[] = JSON.parse(
+    readFileSync(resolve(__dirname, '../../../public/relays.json'), 'utf8')
+  ).relays;
+
+  it('public/relays.json contains only wss:// URLs and no duplicates', () => {
+    expect(canonical.length).toBeGreaterThan(0);
+    for(const url of canonical) expect(url.startsWith('wss://')).toBe(true);
+    expect(new Set(canonical).size).toBe(canonical.length);
+  });
+
+  it('DEFAULT_RELAYS matches public/relays.json exactly, in order', () => {
+    expect(DEFAULT_RELAYS.map((r) => r.url)).toEqual(canonical);
+  });
+
+  it('every DEFAULT_RELAYS entry is read+write', () => {
+    for(const r of DEFAULT_RELAYS) {
+      expect(r.read).toBe(true);
+      expect(r.write).toBe(true);
+    }
   });
 });
