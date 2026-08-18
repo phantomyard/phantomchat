@@ -129,13 +129,13 @@ export interface RelayPoolOptions {
 // the app loads (via Playwright addInitScript). Production uses the hardcoded list.
 const _testRelays = typeof window !== 'undefined' && (window as any).__phantomchatTestRelays;
 export const DEFAULT_RELAYS: RelayConfig[] = Array.isArray(_testRelays) ? _testRelays : [
-  {url: 'wss://nostr.mom', read: true, write: true},
-  {url: 'wss://relay.nostr.com', read: true, write: true},
-  {url: 'wss://relay.nostr.hu', read: true, write: true},
-  {url: 'wss://relay.primal.net', read: true, write: true},
-  {url: 'wss://relay.damus.io', read: true, write: true},
   {url: 'wss://nos.lol', read: true, write: true},
-  {url: 'wss://relay.nostr.info', read: true, write: true}
+  {url: 'wss://relay.nostr.com', read: true, write: true},
+  {url: 'wss://relay.primal.net', read: true, write: true},
+  {url: 'wss://relay.kaleidoswap.com', read: true, write: true},
+  {url: 'wss://offchain.pub', read: true, write: true},
+  {url: 'wss://relay.nostrhub.fr', read: true, write: true},
+  {url: 'wss://nostr.sathoarder.com', read: true, write: true}
 ];
 
 /**

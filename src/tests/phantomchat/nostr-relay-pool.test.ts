@@ -882,9 +882,15 @@ describe('NostrRelayPool', () => {
       expect(DEFAULT_RELAYS).toHaveLength(7);
     });
 
-    it('DEFAULT_RELAYS includes nostr.mom', () => {
+    // Pinning one relay by name made this test a tripwire on every list change
+    // without asserting anything that matters. What matters is that the entries
+    // are distinct hosts: nostr.mom and nos.lol resolved to the SAME machine and
+    // the same operator pubkey, so carrying both bought zero redundancy while
+    // looking like two relays.
+    it('DEFAULT_RELAYS entries are unique wss:// hosts', () => {
       const urls = DEFAULT_RELAYS.map((r: any) => r.url);
-      expect(urls).toContain('wss://nostr.mom');
+      for(const url of urls) expect(url.startsWith('wss://')).toBe(true);
+      expect(new Set(urls).size).toBe(urls.length);
     });
   });
 
