@@ -9,7 +9,7 @@ import InputField from '@components/inputField';
 import EditPeer from '@components/editPeer';
 import Row, {CreateRowFromCheckboxField} from '@components/row';
 import CheckboxField from '@components/checkboxField';
-import Button from '@components/button';
+import Button, {replaceButtonIcon} from '@components/button';
 import PeerTitle from '@components/peerTitle';
 import rootScope from '@lib/rootScope';
 import PopupPeer from '@components/popups/peer';
@@ -45,6 +45,13 @@ export default class AppEditContactTab extends SliderSuperTab {
     ]);
     const isNew = !isContact;
     this.setTitle('Edit');
+    replaceButtonIcon(this.closeBtn, 'close');
+
+    this.closeBtn.addEventListener('click', (e) => {
+      e.stopImmediatePropagation();
+      this.close();
+      appSidebarRight.toggleSidebar(false);
+    }, {capture: true});
 
     {
       const section = new SettingSection({noDelimiter: true});
@@ -282,6 +289,7 @@ export default class AppEditContactTab extends SliderSuperTab {
 
       this.editPeer.nextBtn.removeAttribute('disabled');
       this.close();
+      appSidebarRight.toggleSidebar(false);
     }, {listenerSetter: this.listenerSetter});
   }
 }
