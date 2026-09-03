@@ -5,7 +5,7 @@
  */
 
 import {SliderSuperTab} from '@components/slider';
-import appDialogsManager from '@lib/appDialogsManager';
+import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG} from '@lib/appDialogsManager';
 import InputSearch from '@components/inputSearch';
 import {IS_MOBILE} from '@environment/userAgent';
 import {canFocus} from '@helpers/dom/canFocus';
@@ -18,6 +18,10 @@ import replaceContent from '@helpers/dom/replaceContent';
 import rootScope from '@lib/rootScope';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
 import {showAddContactPopup as showAddContactPopupShared} from '@components/popups/addContact';
+import createContextMenu from '@helpers/dom/createContextMenu';
+import findUpTag from '@helpers/dom/findUpTag';
+import confirmationPopup from '@components/confirmationPopup';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
 
 // TODO: поиск по людям глобальный, если не нашло в контактах никого
 
@@ -88,7 +92,105 @@ export default class AppContactsTab extends SliderSuperTab {
       withContext: undefined,
       autonomous: true
     });
+    this.attachContactContextMenu(list);
     return sortedUserList;
+  }
+
+  /**
+   * [PhantomChat.chat] Right-click / long-press a contact to delete it along
+   * with its whole conversation. P2P peers route through ChatAPI
+   * .deleteConversation (3-level cleanup: local messages + tombstone +
+   * virtual-peers mapping + peer notification + relay NIP-09), regular
+   * MTProto contacts through contacts.deleteContacts + history flush.
+   */
+  private attachContactContextMenu(list: HTMLUListElement) {
+    let targetPeerId: PeerId;
+    let targetRawId = 0;
+
+    createContextMenu({
+      listenTo: list,
+      findElement: (e): HTMLElement => findUpTag(e.target as HTMLElement, DIALOG_LIST_ELEMENT_TAG),
+      onOpen: (_e, li) => {
+        targetPeerId = (li as HTMLElement).dataset.peerId.toPeerId();
+        targetRawId = Number((li as HTMLElement).dataset.peerId);
+      },
+      buttons: [{
+        icon: 'delete',
+        className: 'danger',
+        text: 'DeleteContact',
+        verify: () => !!targetPeerId,
+        onClick: () => {
+          const peerId = targetPeerId;
+          const rawId = targetRawId;
+          this.confirmDeleteContactAndChat(peerId, rawId);
+        }
+      }]
+    });
+  }
+
+  private async confirmDeleteContactAndChat(peerId: PeerId, rawId: number) {
+    const peerTitleElement = await wrapPeerTitle({peerId}).catch((): undefined => undefined);
+
+    // Compose the confirmation copy manually: there is no lang-pack key for
+    // the combined contact + chat deletion wording, and i18n() renders a
+    // missing key verbatim.
+    const description = document.createElement('span');
+    if(peerTitleElement) {
+      description.append(peerTitleElement, document.createTextNode(' '));
+    }
+    description.append(document.createTextNode('will be deleted along with the entire conversation history. This cannot be undone.'));
+
+    try {
+      await confirmationPopup({
+        title: 'DeleteContact',
+        description,
+        button: {
+          langKey: 'Delete',
+          isDanger: true,
+          callback: () => {
+            this.deleteContactAndChat(peerId, rawId);
+          }
+        }
+      });
+    } catch{
+      // cancelled / dismissed — nothing to do
+    }
+  }
+
+  private async deleteContactAndChat(peerId: PeerId, rawId: number) {
+    const {toast} = await import('@components/toast');
+
+    // P2P peers live in the synthetic range (>= 1e15); the raw dataset id is
+    // the virtual peer id used for the reverse pubkey lookup.
+    const isP2P = rawId >= 1e15;
+
+    try {
+      if(isP2P) {
+        const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
+        const pubkey = await getPubkey(rawId);
+        if(!pubkey) {
+          toast('Could not resolve contact to delete');
+          return;
+        }
+
+        const chatAPI = (window as any).__phantomchatChatAPI;
+        if(!chatAPI?.deleteConversation) {
+          toast('Chat is not ready yet');
+          return;
+        }
+
+        await chatAPI.deleteConversation(pubkey);
+      } else {
+        await this.managers.appUsersManager.deleteContacts([peerId.toUserId()]);
+        await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});
+      }
+
+      this.sortedUserList?.delete(peerId);
+      toast('Contact deleted');
+    } catch(err) {
+      console.error('[PhantomChat.chat] failed to delete contact:', err);
+      toast('Failed to delete contact');
+    }
   }
 
   protected onClose() {
