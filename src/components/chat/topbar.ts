@@ -277,6 +277,7 @@ export default class ChatTopbar {
     attachClickEvent(this.container, (e) => {
       if(
         findUpClassName(e.target, 'topbar-search-container') ||
+        findUpClassName(e.target, 'chat-utils') ||
         !(e.target as HTMLElement).isConnected ||
         findUpClassName(e.target, 'pinned-translation') ||
         findUpClassName(e.target, 'chat-search-top')
@@ -303,14 +304,12 @@ export default class ChatTopbar {
         const avatar = findUpAvatar(e.target);
         if(mediaSizes.activeScreen === ScreenSize.medium && document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)) {
           onBtnBackClick();
-        } else if(avatar) {
-          if(avatar.classList.contains('has-stories')) {
-            return;
-          }
-
-          this.appSidebarRight.toggleSidebar(!document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME));
+        } else if(avatar && avatar.classList.contains('has-stories')) {
+          return;
         } else {
-          // Intercept topbar click for PhantomChat.chat group peers
+          // Intercept topbar / avatar click:
+          // For groups: open AppPhantomChatGroupInfoTab.
+          // For direct contacts / users: open AppEditContactTab directly on the right.
           if(isGroupPeer(+this.peerId)) {
             if(!this.appSidebarRight.isTabExists(AppPhantomChatGroupInfoTab)) {
               const tab = this.appSidebarRight.createTab(AppPhantomChatGroupInfoTab);
@@ -319,6 +318,17 @@ export default class ChatTopbar {
               this.appSidebarRight.toggleSidebar(true);
             } else {
               this.appSidebarRight.toggleSidebar(!document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME));
+            }
+          } else if(this.peerId) {
+            const isSidebarOpen = document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME);
+            const existingTab = this.appSidebarRight.getTab(AppEditContactTab);
+            if(isSidebarOpen && existingTab && existingTab.peerId === this.peerId) {
+              this.appSidebarRight.toggleSidebar(false);
+            } else {
+              const tab = this.appSidebarRight.createTab(AppEditContactTab, true);
+              tab.peerId = this.peerId;
+              tab.open();
+              this.appSidebarRight.toggleSidebar(true);
             }
           } else {
             this.appSidebarRight.toggleSidebar(true);
