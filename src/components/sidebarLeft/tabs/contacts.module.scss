@@ -1,0 +1,189 @@
+@import "../../../scss/variables.scss";
+@import "../../../scss/mixins.scss";
+
+.contactsHeaderWrap {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+
+.contactsHeaderSearch {
+  flex: 1;
+  min-width: 0;
+}
+
+.selectModeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--secondary-text-color);
+  cursor: pointer;
+  font-size: 20px;
+  transition: background-color 0.2s, color 0.2s;
+
+  &:hover {
+    background: var(--light-surface-color, rgba(127, 127, 127, 0.15));
+    color: var(--primary-text-color);
+  }
+}
+
+.selectionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--surface-color, #fff);
+  border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
+  box-sizing: border-box;
+  width: 100%;
+  gap: 8px;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.selectionLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.selectionCount {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--primary-text-color);
+  user-select: none;
+}
+
+.selectionRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.selectionBtn {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  color: var(--primary-color, #3390ec);
+  transition: background-color 0.2s;
+
+  &:hover {
+    background: var(--light-surface-color, rgba(51, 144, 236, 0.1));
+  }
+}
+
+.deleteBatchBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background: var(--danger-color, #ef4444);
+  color: #fff;
+  transition: opacity 0.2s, transform 0.1s;
+
+  &:hover:not(:disabled) {
+    opacity: 0.9;
+    transform: scale(1.02);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+.contactRowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 8px;
+  z-index: 2;
+}
+
+.actionBadgeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--secondary-text-color);
+  cursor: pointer;
+  font-size: 15px;
+  transition: background-color 0.15s, color 0.15s, transform 0.1s;
+
+  &:hover {
+    transform: scale(1.1);
+  }
+}
+
+.actionBadgeEdit:hover {
+  background: rgba(51, 144, 236, 0.15);
+  color: var(--primary-color, #3390ec);
+}
+
+.actionBadgeDelete:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger-color, #ef4444);
+}
+
+.contactSelectCheckbox {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--secondary-text-color);
+  margin-right: 12px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  transition: background-color 0.15s, border-color 0.15s;
+
+  :global(.contacts-selection-mode) & {
+    display: inline-flex;
+  }
+}
+
+.contactSelected .contactSelectCheckbox {
+  background-color: var(--primary-color, #3390ec);
+  border-color: var(--primary-color, #3390ec);
+  color: #fff;
+}
+
+:global(.contacts-selection-mode) .contactRowActions {
+  display: none !important;
+}
+
+:global(.contacts-selection-mode) :global(.row.chatlist-chat) {
+  user-select: none;
+  cursor: pointer;
+}

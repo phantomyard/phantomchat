@@ -11,6 +11,8 @@ import {IS_MOBILE} from '@environment/userAgent';
 import {canFocus} from '@helpers/dom/canFocus';
 import windowSize from '@helpers/windowSize';
 import ButtonCorner from '@components/buttonCorner';
+import ButtonIcon from '@components/buttonIcon';
+import Icon from '@components/icon';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import SortedUserList from '@components/sortedUserList';
 import {getMiddleware} from '@helpers/middleware';
@@ -18,10 +20,12 @@ import replaceContent from '@helpers/dom/replaceContent';
 import rootScope from '@lib/rootScope';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
 import {showAddContactPopup as showAddContactPopupShared} from '@components/popups/addContact';
+import {showEditContactPopup} from '@components/popups/editContact';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpTag from '@helpers/dom/findUpTag';
 import confirmationPopup from '@components/confirmationPopup';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import styles from './contacts.module.scss';
 
 // TODO: поиск по людям глобальный, если не нашло в контактах никого
 
@@ -31,6 +35,16 @@ export default class AppContactsTab extends SliderSuperTab {
   private middlewareHelperLoad: ReturnType<typeof getMiddleware>;
   private sortedUserList: SortedUserList;
   private listsContainer: HTMLElement;
+
+  // Multi-select & batch delete state
+  private isSelectionMode = false;
+  private selectedPeerIds = new Set<PeerId>();
+  private headerWrap: HTMLElement;
+  private selectModeBtn: HTMLElement;
+  private selectionBar: HTMLElement;
+  private selectionCountEl: HTMLElement;
+  private selectAllBtn: HTMLButtonElement;
+  private batchDeleteBtn: HTMLButtonElement;
 
   public init() {
     this.container.id = 'contacts-container';
@@ -59,11 +73,33 @@ export default class AppContactsTab extends SliderSuperTab {
     this.listenerSetter.add(rootScope)('contacts_update', async(userId) => {
       const isContact = await this.managers.appUsersManager.isContact(userId);
       const peerId = userId.toPeerId();
-      if(isContact) this.sortedUserList.add(peerId);
-      else this.sortedUserList.delete(peerId);
+      if(isContact) {
+        this.sortedUserList.add(peerId);
+        this.decorateContactElement(peerId);
+      } else {
+        this.sortedUserList.delete(peerId);
+      }
     });
 
-    this.title.replaceWith(this.inputSearch.container);
+    // Header wrap with search input and select mode button
+    const headerWrap = this.headerWrap = document.createElement('div');
+    headerWrap.classList.add(styles.contactsHeaderWrap);
+
+    this.inputSearch.container.classList.add(styles.contactsHeaderSearch);
+    headerWrap.append(this.inputSearch.container);
+
+    const selectModeBtn = this.selectModeBtn = ButtonIcon('checklist_done');
+    selectModeBtn.classList.add(styles.selectModeBtn);
+    selectModeBtn.title = 'Select contacts';
+    attachClickEvent(selectModeBtn, () => {
+      this.toggleSelectionMode();
+    }, {listenerSetter: this.listenerSetter});
+    headerWrap.append(selectModeBtn);
+
+    this.title.replaceWith(headerWrap);
+
+    // Multi-select sticky action bar
+    this.createSelectionBar();
 
     this.middlewareHelperLoad = getMiddleware();
 
@@ -76,6 +112,153 @@ export default class AppContactsTab extends SliderSuperTab {
     // appUsersManager.getContacts();
   }
 
+  private createSelectionBar() {
+    const bar = this.selectionBar = document.createElement('div');
+    bar.classList.add(styles.selectionBar);
+    bar.style.display = 'none';
+
+    // Left side: Exit button & count
+    const left = document.createElement('div');
+    left.classList.add(styles.selectionLeft);
+
+    const exitBtn = ButtonIcon('close');
+    exitBtn.title = 'Cancel selection';
+    attachClickEvent(exitBtn, () => {
+      this.toggleSelectionMode(false);
+    }, {listenerSetter: this.listenerSetter});
+
+    const countEl = this.selectionCountEl = document.createElement('span');
+    countEl.classList.add(styles.selectionCount);
+    countEl.textContent = '0 selected';
+
+    left.append(exitBtn, countEl);
+
+    // Right side: Select All & Batch Delete
+    const right = document.createElement('div');
+    right.classList.add(styles.selectionRight);
+
+    const selectAllBtn = this.selectAllBtn = document.createElement('button');
+    selectAllBtn.type = 'button';
+    selectAllBtn.classList.add(styles.selectionBtn);
+    selectAllBtn.textContent = 'Select All';
+    attachClickEvent(selectAllBtn, () => {
+      this.toggleSelectAll();
+    }, {listenerSetter: this.listenerSetter});
+
+    const batchDeleteBtn = this.batchDeleteBtn = document.createElement('button');
+    batchDeleteBtn.type = 'button';
+    batchDeleteBtn.classList.add(styles.deleteBatchBtn);
+    batchDeleteBtn.disabled = true;
+    batchDeleteBtn.append(Icon('delete'), document.createTextNode(' Delete (0)'));
+    attachClickEvent(batchDeleteBtn, () => {
+      this.confirmBatchDeleteSelected();
+    }, {listenerSetter: this.listenerSetter});
+
+    right.append(selectAllBtn, batchDeleteBtn);
+    bar.append(left, right);
+
+    this.header.after(bar);
+  }
+
+  public toggleSelectionMode(enable?: boolean) {
+    this.isSelectionMode = enable !== undefined ? enable : !this.isSelectionMode;
+    this.container.classList.toggle('contacts-selection-mode', this.isSelectionMode);
+
+    if(this.isSelectionMode) {
+      this.selectedPeerIds.clear();
+      this.updateSelectionUI();
+      this.selectionBar.style.display = 'flex';
+      this.headerWrap.style.display = 'none';
+    } else {
+      this.selectedPeerIds.clear();
+      this.selectionBar.style.display = 'none';
+      this.headerWrap.style.display = 'flex';
+      this.listsContainer.querySelectorAll(`.${styles.contactSelected}`).forEach((el) => {
+        el.classList.remove(styles.contactSelected);
+      });
+    }
+  }
+
+  private togglePeerSelection(peerId: PeerId, listEl?: HTMLElement) {
+    if(this.selectedPeerIds.has(peerId)) {
+      this.selectedPeerIds.delete(peerId);
+      listEl?.classList.remove(styles.contactSelected);
+    } else {
+      this.selectedPeerIds.add(peerId);
+      listEl?.classList.add(styles.contactSelected);
+    }
+    this.updateSelectionUI();
+  }
+
+  private toggleSelectAll() {
+    const allElements = Array.from(this.listsContainer.querySelectorAll(`.${DIALOG_LIST_ELEMENT_TAG}`)) as HTMLElement[];
+    const allPeerIds = allElements.map((el) => el.dataset.peerId.toPeerId());
+
+    if(this.selectedPeerIds.size === allPeerIds.length && allPeerIds.length > 0) {
+      // Deselect all
+      this.selectedPeerIds.clear();
+      allElements.forEach((el) => el.classList.remove(styles.contactSelected));
+    } else {
+      // Select all
+      allPeerIds.forEach((p) => this.selectedPeerIds.add(p));
+      allElements.forEach((el) => el.classList.add(styles.contactSelected));
+    }
+    this.updateSelectionUI();
+  }
+
+  private updateSelectionUI() {
+    const count = this.selectedPeerIds.size;
+    this.selectionCountEl.textContent = `${count} selected`;
+    this.batchDeleteBtn.disabled = count === 0;
+    this.batchDeleteBtn.replaceChildren(Icon('delete'), document.createTextNode(` Delete (${count})`));
+
+    const totalContacts = this.listsContainer.querySelectorAll(`.${DIALOG_LIST_ELEMENT_TAG}`).length;
+    this.selectAllBtn.textContent = (count === totalContacts && totalContacts > 0) ? 'Deselect All' : 'Select All';
+  }
+
+  private async confirmBatchDeleteSelected() {
+    const count = this.selectedPeerIds.size;
+    if(count === 0) return;
+
+    const description = document.createElement('span');
+    description.textContent = `Delete ${count} selected contact${count > 1 ? 's' : ''} along with their entire conversation history? This cannot be undone.`;
+
+    try {
+      await confirmationPopup({
+        title: 'DeleteContacts',
+        description,
+        button: {
+          langKey: 'Delete',
+          isDanger: true,
+          callback: async() => {
+            await this.deleteBatchContactsAndChats();
+          }
+        }
+      });
+    } catch{
+      // dismissed
+    }
+  }
+
+  private async deleteBatchContactsAndChats() {
+    const {toast} = await import('@components/toast');
+    const peersToDelete = Array.from(this.selectedPeerIds);
+    let deletedCount = 0;
+
+    for(const peerId of peersToDelete) {
+      const sortedUser = (this.sortedUserList as any)?.elements?.get(peerId);
+      const listEl = sortedUser?.dom?.listEl as HTMLElement;
+      const rawId = Number(listEl?.dataset?.peerId || peerId);
+      const success = await this.deleteContactAndChat(peerId, rawId, false);
+      if(success !== false) {
+        deletedCount++;
+      }
+    }
+
+    this.toggleSelectionMode(false);
+    toast(`${deletedCount} contact${deletedCount > 1 ? 's' : ''} deleted`);
+  }
+
   protected createList() {
     const sortedUserList = new SortedUserList({
       managers: this.managers,
@@ -86,7 +269,12 @@ export default class AppContactsTab extends SliderSuperTab {
     list.classList.add('contacts-container');
     appDialogsManager.setListClickListener({
       list,
-      onFound: () => {
+      onFound: (target) => {
+        if(this.isSelectionMode) {
+          const peerId = target.dataset.peerId.toPeerId();
+          this.togglePeerSelection(peerId, target);
+          return false;
+        }
         this.close();
       },
       withContext: undefined,
@@ -94,6 +282,73 @@ export default class AppContactsTab extends SliderSuperTab {
     });
     this.attachContactContextMenu(list);
     return sortedUserList;
+  }
+
+  /**
+   * Decorate a contact row with inline Edit & Delete action badges and selection checkbox.
+   */
+  private decorateContactElement(peerId: PeerId) {
+    const sortedUser = (this.sortedUserList as any)?.elements?.get(peerId);
+    if(!sortedUser?.dom?.listEl) return;
+    const listEl = sortedUser.dom.listEl as HTMLElement;
+
+    // Avoid duplicate badges
+    if(listEl.querySelector(`.${styles.contactRowActions}`)) return;
+
+    const rawId = Number(listEl.dataset.peerId || peerId);
+
+    // 1. Selection Checkbox
+    const checkEl = document.createElement('div');
+    checkEl.classList.add(styles.contactSelectCheckbox);
+    checkEl.append(Icon('check'));
+    listEl.prepend(checkEl);
+
+    // 2. Row Action Badges (Edit & Delete)
+    const actionsEl = document.createElement('div');
+    actionsEl.classList.add(styles.contactRowActions);
+
+    const btnEdit = document.createElement('button');
+    btnEdit.type = 'button';
+    btnEdit.classList.add(styles.actionBadgeBtn, styles.actionBadgeEdit);
+    btnEdit.title = 'Edit contact';
+    btnEdit.append(Icon('edit'));
+    btnEdit.addEventListener('mousedown', (e) => e.stopPropagation());
+    attachClickEvent(btnEdit, (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this.openEditContact(peerId, rawId);
+    }, {listenerSetter: this.listenerSetter});
+
+    const btnDelete = document.createElement('button');
+    btnDelete.type = 'button';
+    btnDelete.classList.add(styles.actionBadgeBtn, styles.actionBadgeDelete);
+    btnDelete.title = 'Delete contact';
+    btnDelete.append(Icon('delete'));
+    btnDelete.addEventListener('mousedown', (e) => e.stopPropagation());
+    attachClickEvent(btnDelete, (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this.confirmDeleteContactAndChat(peerId, rawId);
+    }, {listenerSetter: this.listenerSetter});
+
+    actionsEl.append(btnEdit, btnDelete);
+
+    if(sortedUser.dialogElement?.titleRight) {
+      sortedUser.dialogElement.titleRight.append(actionsEl);
+    } else {
+      listEl.append(actionsEl);
+    }
+  }
+
+  private openEditContact(peerId: PeerId, rawId: number) {
+    showEditContactPopup({
+      peerId,
+      rawId,
+      managers: this.managers,
+      onSave: () => {
+        this.sortedUserList?.update(peerId);
+      }
+    });
   }
 
   /**
@@ -115,10 +370,19 @@ export default class AppContactsTab extends SliderSuperTab {
         targetRawId = Number((li as HTMLElement).dataset.peerId);
       },
       buttons: [{
+        icon: 'edit',
+        text: 'Edit',
+        verify: () => !this.isSelectionMode && !!targetPeerId,
+        onClick: () => {
+          const peerId = targetPeerId;
+          const rawId = targetRawId;
+          this.openEditContact(peerId, rawId);
+        }
+      }, {
         icon: 'delete',
         className: 'danger',
         text: 'DeleteContact',
-        verify: () => !!targetPeerId,
+        verify: () => !this.isSelectionMode && !!targetPeerId,
         onClick: () => {
           const peerId = targetPeerId;
           const rawId = targetRawId;
@@ -157,7 +421,7 @@ export default class AppContactsTab extends SliderSuperTab {
     }
   }
 
-  private async deleteContactAndChat(peerId: PeerId, rawId: number) {
+  private async deleteContactAndChat(peerId: PeerId, rawId: number, showToast = true) {
     const {toast} = await import('@components/toast');
 
     // P2P peers live in the synthetic range (>= 1e15); the raw dataset id is
@@ -169,14 +433,14 @@ export default class AppContactsTab extends SliderSuperTab {
         const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
         const pubkey = await getPubkey(rawId);
         if(!pubkey) {
-          toast('Could not resolve contact to delete');
-          return;
+          if(showToast) toast('Could not resolve contact to delete');
+          return false;
         }
 
         const chatAPI = (window as any).__phantomchatChatAPI;
         if(!chatAPI?.deleteConversation) {
-          toast('Chat is not ready yet');
-          return;
+          if(showToast) toast('Chat is not ready yet');
+          return false;
         }
 
         await chatAPI.deleteConversation(pubkey);
@@ -186,15 +450,20 @@ export default class AppContactsTab extends SliderSuperTab {
       }
 
       this.sortedUserList?.delete(peerId);
-      toast('Contact deleted');
+      if(showToast) toast('Contact deleted');
+      return true;
     } catch(err) {
       console.error('[PhantomChat.chat] failed to delete contact:', err);
-      toast('Failed to delete contact');
+      if(showToast) toast('Failed to delete contact');
+      return false;
     }
   }
 
   protected onClose() {
     this.middlewareHelperLoad.clean();
+    if(this.isSelectionMode) {
+      this.toggleSelectionMode(false);
+    }
     /* // need to clear, and left 1 page for smooth slide
     let pageCount = appPhotosManager.windowH / 56 * 1.25 | 0;
     (Array.from(this.list.children) as HTMLElement[]).slice(pageCount).forEach((el) => el.remove()); */
@@ -233,6 +502,7 @@ export default class AppContactsTab extends SliderSuperTab {
 
       arr.forEach((peerId) => {
         sortedUserList.add(peerId);
+        this.decorateContactElement(peerId);
       });
 
       if(!contacts.length) {

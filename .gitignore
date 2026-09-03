@@ -40,6 +40,7 @@ src/langPackLocalVersion.ts
 test-results/
 
 # Misc
+certs/
 vendor/
 !src/vendor/
 *.log
