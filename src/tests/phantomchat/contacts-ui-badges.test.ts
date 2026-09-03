@@ -26,9 +26,11 @@ describe('Contacts UI — action badges & dynamic delete button', () => {
   });
 
   it('stops event propagation on all row button clicks so contact chat navigation is prevented', () => {
-    expect(contactsSrc).toMatch(/checkBtn\.addEventListener\('mousedown',\s*\(e\)\s*=>\s*e\.stopPropagation\(\)\)/);
-    expect(contactsSrc).toMatch(/btnEdit\.addEventListener\('mousedown',\s*\(e\)\s*=>\s*e\.stopPropagation\(\)\)/);
-    expect(contactsSrc).toMatch(/btnDelete\.addEventListener\('mousedown',\s*\(e\)\s*=>\s*e\.stopPropagation\(\)\)/);
+    expect(contactsSrc).toMatch(/checkBtn\.addEventListener\('mousedown'/);
+    expect(contactsSrc).toMatch(/btnEdit\.addEventListener\('mousedown'/);
+    expect(contactsSrc).toMatch(/btnDelete\.addEventListener\('mousedown'/);
+    expect(contactsSrc).toMatch(/data-no-open-chat/);
+    expect(contactsSrc).toMatch(/cancelMouseDown:\s*true/);
   });
 
   it('has a dynamic red Delete button in the header that updates with ticked checkboxes', () => {

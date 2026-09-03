@@ -1844,6 +1844,10 @@ export class AppDialogsManager {
       this.log('dialogs click list');
       const target = e.target as HTMLElement;
 
+      if(target.closest('[data-no-open-chat], .contact-row-actions, [cancel-mouse-down], button')) {
+        return;
+      }
+
       const archiveElem = findUpTag(target, archiveDialogTagName);
       if(archiveElem) {
         appSidebarLeft.openArchiveTab();
@@ -1952,6 +1956,11 @@ export class AppDialogsManager {
     // cancel link click
     // ! do not change it to attachClickEvent
     list.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if(target.closest('[data-no-open-chat], .contact-row-actions, [cancel-mouse-down], button')) {
+        return;
+      }
+
       if(e.button === 0) {
         cancelEvent(e);
       }

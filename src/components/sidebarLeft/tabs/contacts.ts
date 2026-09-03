@@ -182,6 +182,9 @@ export default class AppContactsTab extends SliderSuperTab {
     appDialogsManager.setListClickListener({
       list,
       onFound: (target) => {
+        if((target as HTMLElement)?.closest('[data-no-open-chat], .contact-row-actions, button')) {
+          return false;
+        }
         this.close();
       },
       withContext: undefined,
@@ -205,49 +208,59 @@ export default class AppContactsTab extends SliderSuperTab {
     const rawId = Number(listEl.dataset.peerId || peerId);
 
     const actionsEl = document.createElement('div');
-    actionsEl.classList.add(styles.contactRowActions);
+    actionsEl.classList.add(styles.contactRowActions, 'contact-row-actions');
+    actionsEl.setAttribute('data-no-open-chat', 'true');
 
     // 1. Check Box
     const checkBtn = document.createElement('button');
     checkBtn.type = 'button';
+    checkBtn.setAttribute('data-no-open-chat', 'true');
     checkBtn.classList.add(styles.contactCheckbox);
     if(this.selectedPeerIds.has(peerId)) {
       checkBtn.classList.add(styles.isChecked);
     }
     checkBtn.title = 'Select contact';
     checkBtn.append(Icon('check'));
-    checkBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+    checkBtn.addEventListener('mousedown', (e) => e.stopPropagation(), {capture: true});
+    checkBtn.addEventListener('pointerdown', (e) => e.stopPropagation(), {capture: true});
+    checkBtn.addEventListener('touchstart', (e) => e.stopPropagation(), {capture: true});
     attachClickEvent(checkBtn, (e) => {
       e.stopPropagation();
       e.preventDefault();
       this.togglePeerSelection(peerId, checkBtn);
-    }, {listenerSetter: this.listenerSetter});
+    }, {listenerSetter: this.listenerSetter, cancelMouseDown: true});
 
     // 2. Edit badge (pencil)
     const btnEdit = document.createElement('button');
     btnEdit.type = 'button';
+    btnEdit.setAttribute('data-no-open-chat', 'true');
     btnEdit.classList.add(styles.actionBadgeBtn, styles.actionBadgeEdit);
     btnEdit.title = 'Edit contact';
     btnEdit.append(Icon('edit'));
-    btnEdit.addEventListener('mousedown', (e) => e.stopPropagation());
+    btnEdit.addEventListener('mousedown', (e) => e.stopPropagation(), {capture: true});
+    btnEdit.addEventListener('pointerdown', (e) => e.stopPropagation(), {capture: true});
+    btnEdit.addEventListener('touchstart', (e) => e.stopPropagation(), {capture: true});
     attachClickEvent(btnEdit, (e) => {
       e.stopPropagation();
       e.preventDefault();
       this.openEditContact(peerId, rawId);
-    }, {listenerSetter: this.listenerSetter});
+    }, {listenerSetter: this.listenerSetter, cancelMouseDown: true});
 
     // 3. Delete badge (trash can)
     const btnDelete = document.createElement('button');
     btnDelete.type = 'button';
+    btnDelete.setAttribute('data-no-open-chat', 'true');
     btnDelete.classList.add(styles.actionBadgeBtn, styles.actionBadgeDelete);
     btnDelete.title = 'Delete contact';
     btnDelete.append(Icon('delete'));
-    btnDelete.addEventListener('mousedown', (e) => e.stopPropagation());
+    btnDelete.addEventListener('mousedown', (e) => e.stopPropagation(), {capture: true});
+    btnDelete.addEventListener('pointerdown', (e) => e.stopPropagation(), {capture: true});
+    btnDelete.addEventListener('touchstart', (e) => e.stopPropagation(), {capture: true});
     attachClickEvent(btnDelete, (e) => {
       e.stopPropagation();
       e.preventDefault();
       this.confirmDeleteContactAndChat(peerId, rawId);
-    }, {listenerSetter: this.listenerSetter});
+    }, {listenerSetter: this.listenerSetter, cancelMouseDown: true});
 
     actionsEl.append(checkBtn, btnEdit, btnDelete);
     listEl.append(actionsEl);
