@@ -51,16 +51,16 @@ const handlebarsPlugin = handlebars({
   }
 });
 
-const USE_SSL = false;
-const USE_SIGNED_CERTS = USE_SSL && true;
-const USE_SELF_SIGNED_CERTS = USE_SSL && false;
+const USE_SSL = process.env.VITE_SSL === 'true';
+const USE_SIGNED_CERTS = USE_SSL && false;
+const USE_SELF_SIGNED_CERTS = USE_SSL && !USE_SIGNED_CERTS;
 
 // * mkdir certs; cd certs
 // * mkcert web.telegram.org
 // * chmod 644 web.telegram.org-key.pem
 // * nano /etc/hosts
 // * 127.0.0.1 web.telegram.org
-const host = USE_SSL ? 'web.telegram.org' : 'localhost';
+const host = process.env.VITE_HOST ?? (USE_SSL ? 'web.telegram.org' : 'localhost');
 const serverOptions: ServerOptions = {
   host,
   port: USE_SSL ? 443 : 8080,
@@ -70,8 +70,8 @@ const serverOptions: ServerOptions = {
       sourcePath.includes('eventListenerBase');
   },
   https: USE_SIGNED_CERTS ? {
-    key: path.join(certsDir, host + '-key.pem'),
-    cert: path.join(certsDir, host + '.pem')
+    key: path.join(certsDir, (typeof host === 'string' ? host : 'web.telegram.org') + '-key.pem'),
+    cert: path.join(certsDir, (typeof host === 'string' ? host : 'web.telegram.org') + '.pem')
   } : undefined
 };
 
@@ -83,7 +83,7 @@ const USE_OWN_SOLID = existsSync(resolve(rootDir, SOLID_PATH));
 
 const NO_MINIFY = false;
 const BASIC_SSL_CONFIG: Parameters<typeof basicSsl>[0] = USE_SELF_SIGNED_CERTS ? {
-  name: host,
+  name: typeof host === 'string' ? host : undefined,
   certDir: certsDir
 } : undefined;
 

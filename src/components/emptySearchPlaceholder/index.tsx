@@ -1,8 +1,6 @@
 import {Show} from 'solid-js';
 import {i18n} from '@lib/langPack';
-import lottieLoader from '@lib/rlottie/lottieLoader';
 import defineSolidElement, {PassedProps} from '@lib/solidjs/defineSolidElement';
-import LottieAnimation from '@components/lottieAnimation';
 import ripple from '@components/ripple';
 import styles from '@components/emptySearchPlaceholder/styles.module.scss';
 ripple;
@@ -21,12 +19,12 @@ const EmptySearchPlaceholder = defineSolidElement({
 
     return (
       <>
-        <LottieAnimation
-          class={styles.LottieAnimation}
-          size={156}
-          lottieLoader={lottieLoader}
-          restartOnClick
-          name="UtyanSearch"
+        <img
+          src="assets/img/PhantomScout.svg"
+          alt="No results"
+          width="156"
+          height="156"
+          class={styles.ScoutIllustration}
         />
 
         <div class={styles.NoResults}>

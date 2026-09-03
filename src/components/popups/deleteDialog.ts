@@ -183,13 +183,6 @@ export default class PopupDeleteDialog {
           callback: callbackDelete
         }];
 
-        checkboxes = [{
-          text: 'DeleteMessagesOptionAlso',
-          textArgs: [
-            await wrapPeerTitle({peerId})
-          ]
-        }];
-
         break;
       }
 

@@ -62,7 +62,6 @@ import assumeType from '@helpers/assumeType';
 import PinnedContainer from '@components/chat/pinnedContainer';
 import IS_LIVE_STREAM_SUPPORTED from '@environment/liveStreamSupport';
 import ChatTranslation from '@components/chat/translation';
-import PopupSendGift from '@components/popups/sendGift';
 import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMessagesInterceptor';
 import ChatRemoveFee, {openRemoveFeePopup} from '@components/chat/removeFee';
 import ChatTopbarSponsored from '@components/chat/topbarSponsored';
@@ -70,6 +69,7 @@ import pause from '@helpers/schedulers/pause';
 import appImManager from '@lib/appImManager';
 import AppPhantomChatGroupInfoTab from '@components/sidebarRight/tabs/phantomchatGroupInfo';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
+import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import namedPromises from '@helpers/namedPromises';
 import appDialogsManager from '@lib/appDialogsManager';
@@ -86,7 +86,6 @@ import {getDefaultOptions} from '@components/sidebarLeft/tabs/autoDeleteMessages
 import {createAutoDeleteIcon} from '@components/chat/utils';
 import PopupBoost from '@components/popups/boost';
 import PopupPremium from '@components/popups/premium';
-import showNoForwardsPopup from '@components/popups/noForwards';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
 
@@ -277,6 +276,7 @@ export default class ChatTopbar {
     attachClickEvent(this.container, (e) => {
       if(
         findUpClassName(e.target, 'topbar-search-container') ||
+        findUpClassName(e.target, 'chat-utils') ||
         !(e.target as HTMLElement).isConnected ||
         findUpClassName(e.target, 'pinned-translation') ||
         findUpClassName(e.target, 'chat-search-top')
@@ -303,14 +303,13 @@ export default class ChatTopbar {
         const avatar = findUpAvatar(e.target);
         if(mediaSizes.activeScreen === ScreenSize.medium && document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)) {
           onBtnBackClick();
-        } else if(avatar) {
-          if(avatar.classList.contains('has-stories')) {
-            return;
-          }
-
-          this.appSidebarRight.toggleSidebar(!document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME));
+        } else if(avatar && avatar.classList.contains('has-stories')) {
+          return;
         } else {
-          // Intercept topbar click for PhantomChat.chat group peers
+          // Intercept topbar / avatar click:
+          // For synthetic Phantom groups: open AppPhantomChatGroupInfoTab.
+          // For direct contacts / users (P2P peers or MTProto users): open AppEditContactTab directly on the right.
+          // For standard MTProto groups / channels: retain the standard peer-info sidebar.
           if(isGroupPeer(+this.peerId)) {
             if(!this.appSidebarRight.isTabExists(AppPhantomChatGroupInfoTab)) {
               const tab = this.appSidebarRight.createTab(AppPhantomChatGroupInfoTab);
@@ -319,6 +318,17 @@ export default class ChatTopbar {
               this.appSidebarRight.toggleSidebar(true);
             } else {
               this.appSidebarRight.toggleSidebar(!document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME));
+            }
+          } else if(isP2PPeerId(+this.peerId) || this.peerId?.isUser?.()) {
+            const isSidebarOpen = document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME);
+            const existingTab = this.appSidebarRight.getTab(AppEditContactTab);
+            if(isSidebarOpen && existingTab && existingTab.peerId === this.peerId) {
+              this.appSidebarRight.toggleSidebar(false);
+            } else {
+              const tab = this.appSidebarRight.createTab(AppEditContactTab, true);
+              tab.peerId = this.peerId;
+              tab.open();
+              this.appSidebarRight.toggleSidebar(true);
             }
           } else {
             this.appSidebarRight.toggleSidebar(true);
@@ -492,13 +502,6 @@ export default class ChatTopbar {
     };
 
     this.menuButtons = [this.autoDeleteBtnMenuOptions, {
-      icon: 'search',
-      text: 'Search',
-      onClick: () => {
-        this.chat.initSearch();
-      },
-      verify: () => mediaSizes.isMobile
-    }, {
       icon: 'filter',
       text: 'FilterActions',
       onClick: () => {
@@ -659,13 +662,6 @@ export default class ChatTopbar {
       },
       verify: async() => rootScope.myId !== this.peerId && this.peerId.isUser() && (await this.managers.appPeersManager.isContact(this.peerId)) && !!(await this.managers.appUsersManager.getUser(this.peerId.toUserId())).phone
     }, {
-      icon: 'gift',
-      text: 'Chat.Menu.SendGift',
-      onClick: () => PopupElement.createPopup(PopupSendGift, {peerId: this.peerId}),
-      verify: async() => (
-        this.chat.isChannel || (this.chat.peerId.isUser() && this.managers.appUsersManager.isRegularUser(this.peerId))
-      ) && !(this.chat.type === ChatType.Logs)
-    }, {
       icon: 'message',
       text: 'ChannelDirectMessages.Manage',
       onClick: () => this.onDirectMessagesClick(),
@@ -746,57 +742,6 @@ export default class ChatTopbar {
       verify: async() => {
         const userFull = await this.managers.appProfileManager.getCachedFullUser(this.peerId.toUserId());
         return !!userFull?.pFlags?.blocked;
-      }
-    }, {
-      icon: 'sharingoff',
-      text: 'DisableSharing',
-      onClick: () => {
-        if(!rootScope.premium) {
-          PopupPremium.show({feature: 'pm_noforwards'});
-          return;
-        }
-
-        const cb = () => this.managers.appProfileManager.toggleNoForwards(this.peerId, true);
-        if(this.chat.appSettings.seenTooltips.noForwards) {
-          cb();
-        } else {
-          showNoForwardsPopup(() => {
-            setAppSettings('seenTooltips', 'noForwards', true);
-            cb();
-          });
-        }
-      },
-      verify: async() => {
-        if(!this.peerId.isUser() || this.peerId === rootScope.myId) return false;
-        const userFull = this.chat.fullPeer() as UserFull.userFull;
-        if(!userFull) return false;
-        return !userFull.pFlags.noforwards_my_enabled && !userFull.pFlags.noforwards_peer_enabled;
-      }
-    }, {
-      icon: 'sharingon',
-      text: 'EnableSharing',
-      onClick: async() => {
-        const userFull = this.chat.fullPeer() as UserFull.userFull;
-        const {peerId} = this;
-
-        if(userFull.pFlags.noforwards_peer_enabled) {
-          await confirmationPopup({
-            titleLangKey: 'EnableSharing',
-            descriptionLangKey: 'EnableSharingCaption',
-            descriptionLangArgs: [new PeerTitle({peerId}).element],
-            button: {
-              langKey: 'SendRequest'
-            }
-          });
-        }
-
-        this.managers.appProfileManager.toggleNoForwards(peerId, false);
-      },
-      verify: async() => {
-        if(!this.peerId.isUser() || this.peerId === rootScope.myId) return false;
-        const userFull = this.chat.fullPeer() as UserFull.userFull;
-        if(!userFull) return false;
-        return !!(userFull?.pFlags?.noforwards_my_enabled || userFull?.pFlags?.noforwards_peer_enabled);
       }
     }, {
       icon: 'dollar_circle',

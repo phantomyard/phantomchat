@@ -49,6 +49,7 @@ import type {ActiveAccountNumber} from '@lib/accounts/types';
 import {getCurrentAccount} from '@lib/accounts/getCurrentAccount';
 import {appSettings} from '@stores/appSettings';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 import {getPubkey} from '@lib/phantomchat/virtual-peers-db';
 import {createAutoDeleteIcon} from '@components/chat/utils';
 import {resolveElements} from '@solid-primitives/refs';
@@ -689,11 +690,14 @@ export const AvatarNew = (props: {
         return;
       }
 
-      // Try dicebear fun-emoji avatar from peer's hex pubkey
+      // Try phantom avatar from peer's hex pubkey or peer ID
       const peerIdNum = typeof peerId === 'number' ? peerId : +peerId;
+      const isGroup = isGroupPeer(peerIdNum) || peerIdNum < 0 || (peer as any)?._ === 'chat' || (peer as any)?._ === 'channel' || (peer as any)?._ === 'chatForbidden' || (peer as any)?._ === 'channelForbidden' || !!(peer as any)?.isGroup || !!(peer as any)?.p2pIsGroup;
       const hexPubkey = (peer as any)?.p2pPubkey || (peerIdNum >= 1e15 ? await getPubkey(peerIdNum) : null);
-      if(hexPubkey) {
-        const dicebearUrl = await generateDicebearAvatar(hexPubkey);
+      const rawSeed = hexPubkey || (peerId ? String(peerId) : (peer?.id ? String(peer.id) : ''));
+      const avatarSeed = rawSeed.replace(/^-/, '');
+      if(avatarSeed) {
+        const dicebearUrl = await generateDicebearAvatar(avatarSeed, isGroup);
         if(!middleware()) return;
         const img = document.createElement('img');
         img.className = 'avatar-photo';

@@ -9,7 +9,7 @@ import InputField from '@components/inputField';
 import EditPeer from '@components/editPeer';
 import Row, {CreateRowFromCheckboxField} from '@components/row';
 import CheckboxField from '@components/checkboxField';
-import Button from '@components/button';
+import Button, {replaceButtonIcon} from '@components/button';
 import PeerTitle from '@components/peerTitle';
 import rootScope from '@lib/rootScope';
 import PopupPeer from '@components/popups/peer';
@@ -24,8 +24,9 @@ import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {wrapEmojiTextWithEntities} from '@lib/richTextProcessor/wrapEmojiText';
 import EditFolderInput from '@components/sidebarLeft/tabs/editFolderInput';
 import {InputFieldEmoji} from '@components/inputFieldEmoji';
-import {toastNew} from '@components/toast';
-import showBirthdayPopup, {suggestUserBirthday} from '@components/popups/birthday';
+import {toastNew, toast} from '@components/toast';
+import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
+import appSidebarRight from '..';
 
 export default class AppEditContactTab extends SliderSuperTab {
   private nameInputField: InputField;
@@ -40,13 +41,20 @@ export default class AppEditContactTab extends SliderSuperTab {
     const userId = peerId.toUserId();
     this.container.classList.add('edit-peer-container', 'edit-contact-container');
     const [isContact, privacy] = await Promise.all([
-      this.managers.appUsersManager.isContact(userId),
+      userId ? this.managers.appUsersManager.isContact(userId) : Promise.resolve(false),
       this.managers.appPrivacyManager.getPrivacy('inputPrivacyKeyPhoneNumber')
     ]);
     const isNew = !isContact;
-    this.setTitle(isNew ? 'AddContactTitle' : 'Edit');
+    this.setTitle('Edit');
+    const newCloseBtn = this.closeBtn.cloneNode(true) as HTMLElement;
+    this.closeBtn.replaceWith(newCloseBtn);
+    this.closeBtn = newCloseBtn;
+    replaceButtonIcon(this.closeBtn, 'close');
 
-    let suggestBirthdayRow: Row | undefined;
+    attachClickEvent(this.closeBtn, () => {
+      this.close();
+      appSidebarRight.toggleSidebar(false);
+    }, {listenerSetter: this.listenerSetter});
 
     {
       const section = new SettingSection({noDelimiter: true});
@@ -70,12 +78,14 @@ export default class AppEditContactTab extends SliderSuperTab {
       if(userId) {
         const user = await this.managers.appUsersManager.getUser(userId);
 
-        if(isNew) {
-          this.nameInputField.setDraftValue(user.first_name);
-          this.lastNameInputField.setDraftValue(user.last_name);
-        } else {
-          this.nameInputField.setOriginalValue(user.first_name);
-          this.lastNameInputField.setOriginalValue(user.last_name);
+        if(user) {
+          if(isNew && !user.first_name && !user.last_name) {
+            this.nameInputField.setDraftValue('');
+            this.lastNameInputField.setDraftValue('');
+          } else {
+            this.nameInputField.setOriginalValue(user.first_name || '');
+            this.lastNameInputField.setOriginalValue(user.last_name || '');
+          }
         }
       }
 
@@ -90,24 +100,11 @@ export default class AppEditContactTab extends SliderSuperTab {
           maxLength: 128,
           withLinebreaks: true
         });
-        if(fullUser.note) {
+        if(fullUser?.note) {
           this.noteInputField.setRichOriginalValue(fullUser.note);
         }
         inputFields.push(this.noteInputField);
         inputWrapper.append(this.noteInputField.container);
-
-        if(!fullUser.birthday) {
-          suggestBirthdayRow = new Row({
-            title: i18n('SuggestBirthdayRow'),
-            icon: 'gift',
-            clickable: () => {
-              showBirthdayPopup({
-                suggestForPeer: peerId,
-                onSave: it => suggestUserBirthday(userId, it)
-              })
-            }
-          })
-        }
       }
 
       this.editPeer = new EditPeer({
@@ -138,8 +135,8 @@ export default class AppEditContactTab extends SliderSuperTab {
 
         this.listenerSetter.add(rootScope)('notify_settings', async(update) => {
           if(update.peer._ !== 'notifyPeer') return;
-          const peerId = getPeerId(update.peer.peer);
-          if(peerId === peerId) {
+          const updatedPeerId = getPeerId(update.peer.peer);
+          if(updatedPeerId === peerId) {
             const enabled = !(await this.managers.appNotificationsManager.isMuted(update.notify_settings));
             if(enabled !== notificationsCheckboxField.checked) {
               notificationsCheckboxField.checked = enabled;
@@ -159,33 +156,27 @@ export default class AppEditContactTab extends SliderSuperTab {
 
         section.content.append(div, profileNameDiv, profileSubtitleDiv, inputWrapper);
 
-        if(!isNew) {
-          const notificationsRow = new Row({
-            checkboxField: notificationsCheckboxField,
-            withCheckboxSubtitle: true,
-            listenerSetter: this.listenerSetter
-          });
+        const notificationsRow = new Row({
+          checkboxField: notificationsCheckboxField,
+          withCheckboxSubtitle: true,
+          listenerSetter: this.listenerSetter
+        });
 
-          const enabled = !(await this.managers.appNotificationsManager.isPeerLocalMuted({peerId, respectType: false}));
-          notificationsCheckboxField.checked = enabled;
+        const enabled = !(await this.managers.appNotificationsManager.isPeerLocalMuted({peerId, respectType: false}));
+        notificationsCheckboxField.checked = enabled;
 
-          section.content.append(notificationsRow.container);
+        section.content.append(notificationsRow.container);
 
-          if(suggestBirthdayRow) {
-            section.content.append(suggestBirthdayRow.container);
-          }
-        } else {
+        if(userId) {
           const user = await this.managers.appUsersManager.getUser(userId);
-
-          const phoneRow = new Row({
-            icon: 'phone',
-            titleLangKey: user.phone ? undefined : 'MobileHidden',
-            title: user.phone ? formatUserPhone(user.phone)  : undefined,
-            subtitleLangKey: user.phone ? 'Phone' : 'MobileHiddenExceptionInfo',
-            subtitleLangArgs: user.phone ? undefined : [new PeerTitle({peerId: peerId}).element]
-          });
-
-          section.content.append(phoneRow.container);
+          if(user?.phone) {
+            const phoneRow = new Row({
+              icon: 'phone',
+              title: formatUserPhone(user.phone),
+              subtitleLangKey: 'Phone'
+            });
+            section.content.append(phoneRow.container);
+          }
         }
       } else {
         section.content.append(inputWrapper);
@@ -194,7 +185,7 @@ export default class AppEditContactTab extends SliderSuperTab {
       this.scrollable.append(section.container);
     }
 
-    if(!isNew) {
+    if(peerId) {
       const section = new SettingSection();
 
       const btnDelete = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'PeerInfo.DeleteContact'});
@@ -206,14 +197,46 @@ export default class AppEditContactTab extends SliderSuperTab {
           descriptionLangKey: 'AreYouSureDeleteContact',
           buttons: addCancelButton([{
             langKey: 'Delete',
-            callback: () => {
+            callback: async() => {
               const toggle = toggleDisability([btnDelete], true);
 
-              this.managers.appUsersManager.deleteContacts([userId]).then(() => {
+              try {
+                const isP2P = isP2PPeerId(Number(userId));
+                if(isP2P) {
+                  const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
+                  const pubkey = await getPubkey(Number(userId));
+                  if(!pubkey) {
+                    toggle();
+                    toast(i18n('Contact.Delete.CouldNotResolve'));
+                    return;
+                  }
+
+                  const chatAPI = (window as any).__phantomchatChatAPI;
+                  if(!chatAPI?.deleteConversation) {
+                    toggle();
+                    toast(i18n('Contact.Delete.ChatNotReady'));
+                    return;
+                  }
+
+                  await chatAPI.deleteConversation(pubkey);
+                } else {
+                  if(userId) {
+                    await this.managers.appUsersManager.deleteContacts([userId]);
+                  }
+                  await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});
+                }
+
+                // Ensure UI removes active chat & dialog everywhere
+                rootScope.dispatchEvent('dialog_drop', {peerId} as any);
+
                 this.close();
-              }, () => {
+                appSidebarRight.toggleSidebar(false);
+                toast(i18n('Contact.Delete.Success'));
+              } catch(err) {
+                console.error('[PhantomChat] failed to delete contact:', err);
                 toggle();
-              });
+                toast(i18n('Contact.Delete.Failed'));
+              }
             },
             isDanger: true
           }])
@@ -262,10 +285,10 @@ export default class AppEditContactTab extends SliderSuperTab {
             (await this.managers.appUsersManager.getUser(userId)).phone,
             this.sharePhoneCheckboxField?.checked
           )
+        }
 
-          if(this.noteInputField.isChanged()) {
-            await this.managers.appProfileManager.updateUserNote(userId, this.noteInputField.richValue);
-          }
+        if(this.noteInputField?.isChanged()) {
+          await this.managers.appProfileManager.updateUserNote(userId, this.noteInputField.richValue).catch(() => {});
         }
       } catch(error) {
         console.error(error)
@@ -275,6 +298,7 @@ export default class AppEditContactTab extends SliderSuperTab {
 
       this.editPeer.nextBtn.removeAttribute('disabled');
       this.close();
+      appSidebarRight.toggleSidebar(false);
     }, {listenerSetter: this.listenerSetter});
   }
 }

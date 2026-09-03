@@ -65,6 +65,7 @@ export class PhantomChatOnboarding {
     } catch{}
 
     this.showWelcome();
+    requestAnimationFrame(() => (window as any).__hideBootSplash?.());
   }
 
   private notifyIdentityCreated(): void {
