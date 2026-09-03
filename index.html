@@ -80,7 +80,7 @@
       // Telegram Web K ships #auth-pages / #main-columns / #page-chats as static
       // HTML wireframe wrappers in the body — the observer fired instantly,
       // dropped the splash before the app had even parsed, and prod users saw a
-      // blank page. The explicit hook is the authoritative signal. 30s safety
+      // blank page. The explicit hook is the authoritative signal. 120s safety
       // timer catches the pathological case where the main bundle never calls
       // the hook (e.g. unhandled boot rejection); in that case the splash fades
       // so the user is not trapped forever.
@@ -115,7 +115,7 @@
           bar.setAttribute('aria-valuenow',String(pct));
           if(step>=total){splash.classList.add('complete');}
         }
-        safety=setTimeout(remove,30000);
+        safety=setTimeout(remove,120000);
         window.__hideBootSplash=remove;
         window.__bootProgress=setProgress;
       })();

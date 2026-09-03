@@ -526,9 +526,6 @@ export class AppDialogsManager {
 
   private lastActiveElements: Set<HTMLElement> = new Set();
 
-  public loadContacts: () => void;
-  public processContact: (peerId: PeerId) => void;
-
   private initedListeners = false;
 
   public onListLengthChange: () => Promise<void>;
@@ -823,10 +820,6 @@ export class AppDialogsManager {
       } else {
         this.setFilterUnreadCount(folder.id);
       }
-    });
-
-    rootScope.addEventListener('contacts_update', (userId) => {
-      this.processContact?.(userId.toPeerId());
     });
 
     appImManager.addEventListener('peer_changed', ({peerId, threadId, monoforumThreadId, isForum}) => {
@@ -1501,16 +1494,6 @@ export class AppDialogsManager {
 
       return users.length;
     });
-  }
-
-  private removeContactsPlaceholder() {
-    const chatList = this.chatList;
-    const parts = chatList?.parentElement?.parentElement;
-    const bottom = chatList?.parentElement?.nextElementSibling as HTMLElement;
-    parts?.classList.remove('with-contacts');
-    bottom?.replaceChildren();
-    this.loadContacts = undefined;
-    this.processContact = undefined;
   }
 
   private _onListLengthChange = () => {

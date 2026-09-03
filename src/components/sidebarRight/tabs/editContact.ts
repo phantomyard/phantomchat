@@ -25,6 +25,7 @@ import {wrapEmojiTextWithEntities} from '@lib/richTextProcessor/wrapEmojiText';
 import EditFolderInput from '@components/sidebarLeft/tabs/editFolderInput';
 import {InputFieldEmoji} from '@components/inputFieldEmoji';
 import {toastNew, toast} from '@components/toast';
+import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
 import appSidebarRight from '..';
 
 export default class AppEditContactTab extends SliderSuperTab {
@@ -45,13 +46,15 @@ export default class AppEditContactTab extends SliderSuperTab {
     ]);
     const isNew = !isContact;
     this.setTitle('Edit');
+    const newCloseBtn = this.closeBtn.cloneNode(true) as HTMLElement;
+    this.closeBtn.replaceWith(newCloseBtn);
+    this.closeBtn = newCloseBtn;
     replaceButtonIcon(this.closeBtn, 'close');
 
-    this.closeBtn.addEventListener('click', (e) => {
-      e.stopImmediatePropagation();
+    attachClickEvent(this.closeBtn, () => {
       this.close();
       appSidebarRight.toggleSidebar(false);
-    }, {capture: true});
+    }, {listenerSetter: this.listenerSetter});
 
     {
       const section = new SettingSection({noDelimiter: true});
@@ -76,12 +79,9 @@ export default class AppEditContactTab extends SliderSuperTab {
         const user = await this.managers.appUsersManager.getUser(userId);
 
         if(user) {
-          if(user.first_name || user.last_name) {
-            this.nameInputField.setOriginalValue(user.first_name || '');
-            this.lastNameInputField.setOriginalValue(user.last_name || '');
-          } else if(isNew) {
-            this.nameInputField.setDraftValue(user.first_name || '');
-            this.lastNameInputField.setDraftValue(user.last_name || '');
+          if(isNew && !user.first_name && !user.last_name) {
+            this.nameInputField.setDraftValue('');
+            this.lastNameInputField.setDraftValue('');
           } else {
             this.nameInputField.setOriginalValue(user.first_name || '');
             this.lastNameInputField.setOriginalValue(user.last_name || '');
@@ -201,32 +201,41 @@ export default class AppEditContactTab extends SliderSuperTab {
               const toggle = toggleDisability([btnDelete], true);
 
               try {
-                const isP2P = Number(userId) >= 1e15;
+                const isP2P = isP2PPeerId(Number(userId));
                 if(isP2P) {
                   const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
                   const pubkey = await getPubkey(Number(userId));
-                  const chatAPI = (window as any).__phantomchatChatAPI;
-                  if(pubkey && chatAPI?.deleteConversation) {
-                    await chatAPI.deleteConversation(pubkey);
+                  if(!pubkey) {
+                    toggle();
+                    toast(i18n('Contact.Delete.CouldNotResolve'));
+                    return;
                   }
-                }
 
-                if(userId) {
-                  await this.managers.appUsersManager.deleteContacts([userId]).catch(() => {});
-                }
+                  const chatAPI = (window as any).__phantomchatChatAPI;
+                  if(!chatAPI?.deleteConversation) {
+                    toggle();
+                    toast(i18n('Contact.Delete.ChatNotReady'));
+                    return;
+                  }
 
-                await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true}).catch(() => {});
+                  await chatAPI.deleteConversation(pubkey);
+                } else {
+                  if(userId) {
+                    await this.managers.appUsersManager.deleteContacts([userId]);
+                  }
+                  await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});
+                }
 
                 // Ensure UI removes active chat & dialog everywhere
                 rootScope.dispatchEvent('dialog_drop', {peerId} as any);
 
                 this.close();
                 appSidebarRight.toggleSidebar(false);
-                toast('Contact deleted');
+                toast(i18n('Contact.Delete.Success'));
               } catch(err) {
                 console.error('[PhantomChat] failed to delete contact:', err);
                 toggle();
-                toast('Failed to delete contact');
+                toast(i18n('Contact.Delete.Failed'));
               }
             },
             isDanger: true

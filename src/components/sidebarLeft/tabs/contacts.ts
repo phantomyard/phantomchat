@@ -22,6 +22,8 @@ import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpTag from '@helpers/dom/findUpTag';
 import confirmationPopup from '@components/confirmationPopup';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import {i18n} from '@lib/langPack';
+import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
 
 // TODO: поиск по людям глобальный, если не нашло в контактах никого
 
@@ -131,14 +133,11 @@ export default class AppContactsTab extends SliderSuperTab {
   private async confirmDeleteContactAndChat(peerId: PeerId, rawId: number) {
     const peerTitleElement = await wrapPeerTitle({peerId}).catch((): undefined => undefined);
 
-    // Compose the confirmation copy manually: there is no lang-pack key for
-    // the combined contact + chat deletion wording, and i18n() renders a
-    // missing key verbatim.
     const description = document.createElement('span');
     if(peerTitleElement) {
       description.append(peerTitleElement, document.createTextNode(' '));
     }
-    description.append(document.createTextNode('will be deleted along with the entire conversation history. This cannot be undone.'));
+    description.append(i18n('Contact.Delete.ConfirmationDesc'));
 
     try {
       await confirmationPopup({
@@ -162,20 +161,20 @@ export default class AppContactsTab extends SliderSuperTab {
 
     // P2P peers live in the synthetic range (>= 1e15); the raw dataset id is
     // the virtual peer id used for the reverse pubkey lookup.
-    const isP2P = rawId >= 1e15;
+    const isP2P = isP2PPeerId(rawId);
 
     try {
       if(isP2P) {
         const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
         const pubkey = await getPubkey(rawId);
         if(!pubkey) {
-          toast('Could not resolve contact to delete');
+          toast(i18n('Contact.Delete.CouldNotResolve'));
           return;
         }
 
         const chatAPI = (window as any).__phantomchatChatAPI;
         if(!chatAPI?.deleteConversation) {
-          toast('Chat is not ready yet');
+          toast(i18n('Contact.Delete.ChatNotReady'));
           return;
         }
 
@@ -186,10 +185,10 @@ export default class AppContactsTab extends SliderSuperTab {
       }
 
       this.sortedUserList?.delete(peerId);
-      toast('Contact deleted');
+      toast(i18n('Contact.Delete.Success'));
     } catch(err) {
       console.error('[PhantomChat.chat] failed to delete contact:', err);
-      toast('Failed to delete contact');
+      toast(i18n('Contact.Delete.Failed'));
     }
   }
 

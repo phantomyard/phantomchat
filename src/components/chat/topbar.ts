@@ -106,6 +106,7 @@ export default class ChatTopbar {
   private btnGroupCall: HTMLButtonElement;
   private btnGroupCallMenu: HTMLElement;
   private btnMute: HTMLButtonElement;
+  private btnSearch: HTMLButtonElement;
   private btnLogFilters: HTMLButtonElement;
   private btnMore: HTMLElement;
   private btnDirectMessages: HTMLElement;
@@ -237,6 +238,7 @@ export default class ChatTopbar {
       this.btnGroupCall,
       this.btnGroupCallMenu,
       this.btnMute,
+      this.btnSearch,
       this.btnLogFilters,
       this.btnMore
     ].filter(Boolean));
@@ -787,6 +789,11 @@ export default class ChatTopbar {
       verify: this.verifyIfCanDeleteChat
     }];
 
+    this.btnSearch = ButtonIcon('search');
+    this.attachClickEvent(this.btnSearch, (e) => {
+      this.chat.initSearch();
+    }, true);
+
     this.btnLogFilters = ButtonIcon('filter');
     this.attachClickEvent(this.btnLogFilters, () => {
       this.onFilterActionsClick();
@@ -1241,6 +1248,7 @@ export default class ChatTopbar {
 
     return () => {
       const canHaveSomeButtons = !(this.chat.type === ChatType.Pinned || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Static || this.chat.type === ChatType.Logs);
+      const canHaveSearch = canHaveSomeButtons || this.chat.type === ChatType.Logs;
 
       this.btnMute && this.btnMute.classList.toggle('hide', !isBroadcast || !canHaveSomeButtons);
       if(this.btnJoin) {
@@ -1250,6 +1258,10 @@ export default class ChatTopbar {
         } else {
           this.btnJoin.classList.add('hide');
         }
+      }
+
+      if(this.btnSearch) {
+        this.btnSearch.classList.toggle('hide', !canHaveSearch);
       }
 
       if(this.btnLogFilters) {

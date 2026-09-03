@@ -113,7 +113,6 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
         }
 
         this.updateDialog(dialog);
-        this.appDialogsManager.processContact?.(peerId.toPeerId());
       }
     });
 
@@ -123,7 +122,6 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       }
 
       this.deleteDialogByKey(this.getDialogKey(dialog));
-      this.appDialogsManager.processContact?.(dialog.peerId);
     });
 
     this.listenerSetter.add(rootScope)('dialog_unread', ({dialog}) => {
@@ -152,8 +150,6 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       } else {
         this.updateDialog(dialog);
       }
-
-      this.appDialogsManager.processContact?.(peerId);
     });
 
     this.listenerSetter.add(rootScope)('filter_update', async(filter) => {
@@ -414,10 +410,6 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
 
   protected onScrolledBottom() {
     super.onScrolledBottom();
-
-    if(this.hasReachedTheEnd) {
-      this.appDialogsManager.loadContacts?.();
-    }
   }
 
   public toggleAvatarUnreadBadges(value: boolean, useRafs: number) {
