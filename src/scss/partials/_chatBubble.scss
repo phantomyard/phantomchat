@@ -99,7 +99,16 @@
   user-select: none;
   display: flex;
   flex-wrap: wrap;
+  width: 100%;
   box-sizing: border-box;
+
+  &.is-in {
+    justify-content: flex-start;
+  }
+
+  &.is-out {
+    justify-content: flex-start;
+  }
   //flex-direction: column; // fix 'Unread messages', still need to refactor it
 
   &.is-sponsored {
@@ -123,7 +132,7 @@
 
   &:not(.service) {
     @include respond-to(not-handhelds) {
-      --max-width: 85%;
+      --max-width: 90%;
     }
   }
 
@@ -3366,10 +3375,10 @@
       }
 
       @include respond-to(medium-screens) {
-        transform: translateX(calc((var(--chat-input-size) + #{$btn-send-margin}) * var(--reflect) * -1)) scale(1);
+        transform: translateX(0) scale(1);
 
         &.zoom-fade {
-          transform: translateX(calc((var(--chat-input-size) + #{$btn-send-margin}) * var(--reflect) * -1)) scale3d(.8, .8, 1);
+          transform: translateX(0) scale3d(.8, .8, 1);
         }
 
         @include animation-level(2) {
