@@ -139,7 +139,7 @@ function renderPhantomBody(cx: number, cy: number, scale: number, bg: BgGradient
 }
 
 export function generatePhantomAvatarSvg(seed: string): string {
-  const clean = (seed || '').trim().toLowerCase() || 'phantom-seed';
+  const clean = (seed || '').trim().toLowerCase().replace(/^-/, '') || 'phantom-seed';
   const hashes = hashString(clean);
 
   const bg = bgGradients[hashes[0] % bgGradients.length];
@@ -182,7 +182,7 @@ export function generatePhantomAvatarSvg(seed: string): string {
 }
 
 export function generatePhantomSquadAvatarSvg(seed: string): string {
-  const clean = (seed || '').trim().toLowerCase() || 'phantom-group-seed';
+  const clean = (seed || '').trim().toLowerCase().replace(/^-/, '') || 'phantom-group-seed';
   const hashes = hashString(clean);
   const id = (hashes[0].toString(36) + hashes[1].toString(36)).slice(0, 10);
 
@@ -256,13 +256,14 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
  * Results are cached in memory — same seed + isGroup flag always returns same blob URL.
  */
 export async function generateDicebearAvatar(hex: string, isGroup = false): Promise<string> {
-  const cacheKey = isGroup ? `group:${hex}` : hex;
+  const normalizedHex = typeof hex === 'string' ? hex.replace(/^-/, '') : String(hex).replace(/^-/, '');
+  const cacheKey = isGroup ? `group:${normalizedHex}` : normalizedHex;
   const cached = cache.get(cacheKey);
   if(cached) {
     return cached;
   }
 
-  const svg = isGroup ? generatePhantomSquadAvatarSvg(hex) : generatePhantomAvatarSvg(hex);
+  const svg = isGroup ? generatePhantomSquadAvatarSvg(normalizedHex) : generatePhantomAvatarSvg(normalizedHex);
   const blob = new Blob([svg], {type: 'image/svg+xml'});
   const url = URL.createObjectURL(blob);
   cache.set(cacheKey, url);

@@ -62,7 +62,6 @@ import assumeType from '@helpers/assumeType';
 import PinnedContainer from '@components/chat/pinnedContainer';
 import IS_LIVE_STREAM_SUPPORTED from '@environment/liveStreamSupport';
 import ChatTranslation from '@components/chat/translation';
-import PopupSendGift from '@components/popups/sendGift';
 import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMessagesInterceptor';
 import ChatRemoveFee, {openRemoveFeePopup} from '@components/chat/removeFee';
 import ChatTopbarSponsored from '@components/chat/topbarSponsored';
@@ -86,7 +85,6 @@ import {getDefaultOptions} from '@components/sidebarLeft/tabs/autoDeleteMessages
 import {createAutoDeleteIcon} from '@components/chat/utils';
 import PopupBoost from '@components/popups/boost';
 import PopupPremium from '@components/popups/premium';
-import showNoForwardsPopup from '@components/popups/noForwards';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
 
@@ -108,7 +106,6 @@ export default class ChatTopbar {
   private btnGroupCall: HTMLButtonElement;
   private btnGroupCallMenu: HTMLElement;
   private btnMute: HTMLButtonElement;
-  private btnSearch: HTMLButtonElement;
   private btnLogFilters: HTMLButtonElement;
   private btnMore: HTMLElement;
   private btnDirectMessages: HTMLElement;
@@ -240,7 +237,6 @@ export default class ChatTopbar {
       this.btnGroupCall,
       this.btnGroupCallMenu,
       this.btnMute,
-      this.btnSearch,
       this.btnLogFilters,
       this.btnMore
     ].filter(Boolean));
@@ -502,13 +498,6 @@ export default class ChatTopbar {
     };
 
     this.menuButtons = [this.autoDeleteBtnMenuOptions, {
-      icon: 'search',
-      text: 'Search',
-      onClick: () => {
-        this.chat.initSearch();
-      },
-      verify: () => mediaSizes.isMobile
-    }, {
       icon: 'filter',
       text: 'FilterActions',
       onClick: () => {
@@ -669,13 +658,6 @@ export default class ChatTopbar {
       },
       verify: async() => rootScope.myId !== this.peerId && this.peerId.isUser() && (await this.managers.appPeersManager.isContact(this.peerId)) && !!(await this.managers.appUsersManager.getUser(this.peerId.toUserId())).phone
     }, {
-      icon: 'gift',
-      text: 'Chat.Menu.SendGift',
-      onClick: () => PopupElement.createPopup(PopupSendGift, {peerId: this.peerId}),
-      verify: async() => (
-        this.chat.isChannel || (this.chat.peerId.isUser() && this.managers.appUsersManager.isRegularUser(this.peerId))
-      ) && !(this.chat.type === ChatType.Logs)
-    }, {
       icon: 'message',
       text: 'ChannelDirectMessages.Manage',
       onClick: () => this.onDirectMessagesClick(),
@@ -758,57 +740,6 @@ export default class ChatTopbar {
         return !!userFull?.pFlags?.blocked;
       }
     }, {
-      icon: 'sharingoff',
-      text: 'DisableSharing',
-      onClick: () => {
-        if(!rootScope.premium) {
-          PopupPremium.show({feature: 'pm_noforwards'});
-          return;
-        }
-
-        const cb = () => this.managers.appProfileManager.toggleNoForwards(this.peerId, true);
-        if(this.chat.appSettings.seenTooltips.noForwards) {
-          cb();
-        } else {
-          showNoForwardsPopup(() => {
-            setAppSettings('seenTooltips', 'noForwards', true);
-            cb();
-          });
-        }
-      },
-      verify: async() => {
-        if(!this.peerId.isUser() || this.peerId === rootScope.myId) return false;
-        const userFull = this.chat.fullPeer() as UserFull.userFull;
-        if(!userFull) return false;
-        return !userFull.pFlags.noforwards_my_enabled && !userFull.pFlags.noforwards_peer_enabled;
-      }
-    }, {
-      icon: 'sharingon',
-      text: 'EnableSharing',
-      onClick: async() => {
-        const userFull = this.chat.fullPeer() as UserFull.userFull;
-        const {peerId} = this;
-
-        if(userFull.pFlags.noforwards_peer_enabled) {
-          await confirmationPopup({
-            titleLangKey: 'EnableSharing',
-            descriptionLangKey: 'EnableSharingCaption',
-            descriptionLangArgs: [new PeerTitle({peerId}).element],
-            button: {
-              langKey: 'SendRequest'
-            }
-          });
-        }
-
-        this.managers.appProfileManager.toggleNoForwards(peerId, false);
-      },
-      verify: async() => {
-        if(!this.peerId.isUser() || this.peerId === rootScope.myId) return false;
-        const userFull = this.chat.fullPeer() as UserFull.userFull;
-        if(!userFull) return false;
-        return !!(userFull?.pFlags?.noforwards_my_enabled || userFull?.pFlags?.noforwards_peer_enabled);
-      }
-    }, {
       icon: 'dollar_circle',
       text: 'PaidMessages.ChargeFee',
       onClick: () => this.onToggleFeeClick(true),
@@ -855,11 +786,6 @@ export default class ChatTopbar {
       },
       verify: this.verifyIfCanDeleteChat
     }];
-
-    this.btnSearch = ButtonIcon('search');
-    this.attachClickEvent(this.btnSearch, (e) => {
-      this.chat.initSearch();
-    }, true);
 
     this.btnLogFilters = ButtonIcon('filter');
     this.attachClickEvent(this.btnLogFilters, () => {
@@ -1315,7 +1241,6 @@ export default class ChatTopbar {
 
     return () => {
       const canHaveSomeButtons = !(this.chat.type === ChatType.Pinned || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Static || this.chat.type === ChatType.Logs);
-      const canHaveSearch = canHaveSomeButtons || this.chat.type === ChatType.Logs;
 
       this.btnMute && this.btnMute.classList.toggle('hide', !isBroadcast || !canHaveSomeButtons);
       if(this.btnJoin) {
@@ -1325,10 +1250,6 @@ export default class ChatTopbar {
         } else {
           this.btnJoin.classList.add('hide');
         }
-      }
-
-      if(this.btnSearch) {
-        this.btnSearch.classList.toggle('hide', !canHaveSearch);
       }
 
       if(this.btnLogFilters) {

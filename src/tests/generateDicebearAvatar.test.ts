@@ -57,6 +57,16 @@ describe('generateDicebearAvatar', () => {
     expect(squadSvg).toContain('stroke-dasharray="2 2"');
   });
 
+  it('should return identical avatar for positive and negative peer ID seeds', async() => {
+    const posSvg = generatePhantomSquadAvatarSvg('12345678');
+    const negSvg = generatePhantomSquadAvatarSvg('-12345678');
+    expect(posSvg).toBe(negSvg);
+
+    const posUrl = await generateDicebearAvatar('12345678', true);
+    const negUrl = await generateDicebearAvatar('-12345678', true);
+    expect(posUrl).toBe(negUrl);
+  });
+
   it('should clear cache when clearDicebearCache is called', async() => {
     const hex = 'c'.repeat(64);
     const url1 = await generateDicebearAvatar(hex);
