@@ -69,6 +69,7 @@ import pause from '@helpers/schedulers/pause';
 import appImManager from '@lib/appImManager';
 import AppPhantomChatGroupInfoTab from '@components/sidebarRight/tabs/phantomchatGroupInfo';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
+import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import namedPromises from '@helpers/namedPromises';
 import appDialogsManager from '@lib/appDialogsManager';
@@ -306,8 +307,9 @@ export default class ChatTopbar {
           return;
         } else {
           // Intercept topbar / avatar click:
-          // For groups: open AppPhantomChatGroupInfoTab.
-          // For direct contacts / users: open AppEditContactTab directly on the right.
+          // For synthetic Phantom groups: open AppPhantomChatGroupInfoTab.
+          // For direct contacts / users (P2P peers or MTProto users): open AppEditContactTab directly on the right.
+          // For standard MTProto groups / channels: retain the standard peer-info sidebar.
           if(isGroupPeer(+this.peerId)) {
             if(!this.appSidebarRight.isTabExists(AppPhantomChatGroupInfoTab)) {
               const tab = this.appSidebarRight.createTab(AppPhantomChatGroupInfoTab);
@@ -317,7 +319,7 @@ export default class ChatTopbar {
             } else {
               this.appSidebarRight.toggleSidebar(!document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME));
             }
-          } else if(this.peerId) {
+          } else if(isP2PPeerId(+this.peerId) || this.peerId?.isUser?.()) {
             const isSidebarOpen = document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME);
             const existingTab = this.appSidebarRight.getTab(AppEditContactTab);
             if(isSidebarOpen && existingTab && existingTab.peerId === this.peerId) {
