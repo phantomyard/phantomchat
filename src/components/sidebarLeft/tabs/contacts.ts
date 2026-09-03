@@ -11,7 +11,6 @@ import {IS_MOBILE} from '@environment/userAgent';
 import {canFocus} from '@helpers/dom/canFocus';
 import windowSize from '@helpers/windowSize';
 import ButtonCorner from '@components/buttonCorner';
-import Icon from '@components/icon';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import SortedUserList from '@components/sortedUserList';
 import {getMiddleware} from '@helpers/middleware';
@@ -19,12 +18,10 @@ import replaceContent from '@helpers/dom/replaceContent';
 import rootScope from '@lib/rootScope';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
 import {showAddContactPopup as showAddContactPopupShared} from '@components/popups/addContact';
-import {showEditContactPopup} from '@components/popups/editContact';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpTag from '@helpers/dom/findUpTag';
 import confirmationPopup from '@components/confirmationPopup';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
-import styles from './contacts.module.scss';
 
 // TODO: поиск по людям глобальный, если не нашло в контактах никого
 
@@ -34,11 +31,6 @@ export default class AppContactsTab extends SliderSuperTab {
   private middlewareHelperLoad: ReturnType<typeof getMiddleware>;
   private sortedUserList: SortedUserList;
   private listsContainer: HTMLElement;
-
-  // Multi-select & batch delete state
-  private selectedPeerIds = new Set<PeerId>();
-  private headerWrap: HTMLElement;
-  private headerDeleteBtn: HTMLButtonElement;
 
   public init() {
     this.container.id = 'contacts-container';
@@ -67,33 +59,11 @@ export default class AppContactsTab extends SliderSuperTab {
     this.listenerSetter.add(rootScope)('contacts_update', async(userId) => {
       const isContact = await this.managers.appUsersManager.isContact(userId);
       const peerId = userId.toPeerId();
-      if(isContact) {
-        this.sortedUserList.add(peerId);
-        this.decorateContactElement(peerId);
-      } else {
-        this.sortedUserList.delete(peerId);
-      }
+      if(isContact) this.sortedUserList.add(peerId);
+      else this.sortedUserList.delete(peerId);
     });
 
-    // Header wrap with search input and dynamic red Delete button
-    const headerWrap = this.headerWrap = document.createElement('div');
-    headerWrap.classList.add(styles.contactsHeaderWrap);
-
-    this.inputSearch.container.classList.add(styles.contactsHeaderSearch);
-    headerWrap.append(this.inputSearch.container);
-
-    const headerDeleteBtn = this.headerDeleteBtn = document.createElement('button');
-    headerDeleteBtn.type = 'button';
-    headerDeleteBtn.classList.add(styles.headerDeleteBtn);
-    headerDeleteBtn.title = 'Delete selected contacts';
-    headerDeleteBtn.style.display = 'none'; // Only appears if any check box is ticked
-    headerDeleteBtn.append(Icon('delete'), document.createTextNode(' Delete'));
-    attachClickEvent(headerDeleteBtn, () => {
-      this.confirmBatchDeleteSelected();
-    }, {listenerSetter: this.listenerSetter});
-    headerWrap.append(headerDeleteBtn);
-
-    this.title.replaceWith(headerWrap);
+    this.title.replaceWith(this.inputSearch.container);
 
     this.middlewareHelperLoad = getMiddleware();
 
@@ -106,71 +76,6 @@ export default class AppContactsTab extends SliderSuperTab {
     // appUsersManager.getContacts();
   }
 
-  private togglePeerSelection(peerId: PeerId, checkBtn?: HTMLElement) {
-    if(this.selectedPeerIds.has(peerId)) {
-      this.selectedPeerIds.delete(peerId);
-      checkBtn?.classList.remove(styles.isChecked);
-    } else {
-      this.selectedPeerIds.add(peerId);
-      checkBtn?.classList.add(styles.isChecked);
-    }
-    this.updateSelectionUI();
-  }
-
-  private updateSelectionUI() {
-    const count = this.selectedPeerIds.size;
-    if(count > 0) {
-      this.headerDeleteBtn.style.display = 'inline-flex';
-      this.headerDeleteBtn.replaceChildren(Icon('delete'), document.createTextNode(` Delete (${count})`));
-    } else {
-      this.headerDeleteBtn.style.display = 'none';
-    }
-  }
-
-  private async confirmBatchDeleteSelected() {
-    const count = this.selectedPeerIds.size;
-    if(count === 0) return;
-
-    const description = document.createElement('span');
-    description.textContent = `Delete ${count} selected contact${count > 1 ? 's' : ''} along with their entire conversation history? This cannot be undone.`;
-
-    try {
-      await confirmationPopup({
-        title: 'DeleteContacts',
-        description,
-        button: {
-          langKey: 'Delete',
-          isDanger: true,
-          callback: async() => {
-            await this.deleteBatchContactsAndChats();
-          }
-        }
-      });
-    } catch{
-      // dismissed
-    }
-  }
-
-  private async deleteBatchContactsAndChats() {
-    const {toast} = await import('@components/toast');
-    const peersToDelete = Array.from(this.selectedPeerIds);
-    let deletedCount = 0;
-
-    for(const peerId of peersToDelete) {
-      const sortedUser = (this.sortedUserList as any)?.elements?.get(peerId);
-      const listEl = sortedUser?.dom?.listEl as HTMLElement;
-      const rawId = Number(listEl?.dataset?.peerId || peerId);
-      const success = await this.deleteContactAndChat(peerId, rawId, false);
-      if(success !== false) {
-        deletedCount++;
-      }
-    }
-
-    this.selectedPeerIds.clear();
-    this.updateSelectionUI();
-    toast(`${deletedCount} contact${deletedCount > 1 ? 's' : ''} deleted`);
-  }
-
   protected createList() {
     const sortedUserList = new SortedUserList({
       managers: this.managers,
@@ -181,10 +86,7 @@ export default class AppContactsTab extends SliderSuperTab {
     list.classList.add('contacts-container');
     appDialogsManager.setListClickListener({
       list,
-      onFound: (target) => {
-        if((target as HTMLElement)?.closest('[data-no-open-chat], .contact-row-actions, button')) {
-          return false;
-        }
+      onFound: () => {
         this.close();
       },
       withContext: undefined,
@@ -192,89 +94,6 @@ export default class AppContactsTab extends SliderSuperTab {
     });
     this.attachContactContextMenu(list);
     return sortedUserList;
-  }
-
-  /**
-   * Decorate a contact row with inline Checkbox, Edit (pencil), and Delete (trash) action buttons.
-   */
-  private decorateContactElement(peerId: PeerId) {
-    const sortedUser = (this.sortedUserList as any)?.elements?.get(peerId);
-    if(!sortedUser?.dom?.listEl) return;
-    const listEl = sortedUser.dom.listEl as HTMLElement;
-
-    // Avoid duplicate action badges
-    if(listEl.querySelector(`.${styles.contactRowActions}`)) return;
-
-    const rawId = Number(listEl.dataset.peerId || peerId);
-
-    const actionsEl = document.createElement('div');
-    actionsEl.classList.add(styles.contactRowActions, 'contact-row-actions');
-    actionsEl.setAttribute('data-no-open-chat', 'true');
-
-    // 1. Check Box
-    const checkBtn = document.createElement('button');
-    checkBtn.type = 'button';
-    checkBtn.setAttribute('data-no-open-chat', 'true');
-    checkBtn.classList.add(styles.contactCheckbox);
-    if(this.selectedPeerIds.has(peerId)) {
-      checkBtn.classList.add(styles.isChecked);
-    }
-    checkBtn.title = 'Select contact';
-    checkBtn.append(Icon('check'));
-    checkBtn.addEventListener('mousedown', (e) => e.stopPropagation(), {capture: true});
-    checkBtn.addEventListener('pointerdown', (e) => e.stopPropagation(), {capture: true});
-    checkBtn.addEventListener('touchstart', (e) => e.stopPropagation(), {capture: true});
-    attachClickEvent(checkBtn, (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      this.togglePeerSelection(peerId, checkBtn);
-    }, {listenerSetter: this.listenerSetter, cancelMouseDown: true});
-
-    // 2. Edit badge (pencil)
-    const btnEdit = document.createElement('button');
-    btnEdit.type = 'button';
-    btnEdit.setAttribute('data-no-open-chat', 'true');
-    btnEdit.classList.add(styles.actionBadgeBtn, styles.actionBadgeEdit);
-    btnEdit.title = 'Edit contact';
-    btnEdit.append(Icon('edit'));
-    btnEdit.addEventListener('mousedown', (e) => e.stopPropagation(), {capture: true});
-    btnEdit.addEventListener('pointerdown', (e) => e.stopPropagation(), {capture: true});
-    btnEdit.addEventListener('touchstart', (e) => e.stopPropagation(), {capture: true});
-    attachClickEvent(btnEdit, (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      this.openEditContact(peerId, rawId);
-    }, {listenerSetter: this.listenerSetter, cancelMouseDown: true});
-
-    // 3. Delete badge (trash can)
-    const btnDelete = document.createElement('button');
-    btnDelete.type = 'button';
-    btnDelete.setAttribute('data-no-open-chat', 'true');
-    btnDelete.classList.add(styles.actionBadgeBtn, styles.actionBadgeDelete);
-    btnDelete.title = 'Delete contact';
-    btnDelete.append(Icon('delete'));
-    btnDelete.addEventListener('mousedown', (e) => e.stopPropagation(), {capture: true});
-    btnDelete.addEventListener('pointerdown', (e) => e.stopPropagation(), {capture: true});
-    btnDelete.addEventListener('touchstart', (e) => e.stopPropagation(), {capture: true});
-    attachClickEvent(btnDelete, (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      this.confirmDeleteContactAndChat(peerId, rawId);
-    }, {listenerSetter: this.listenerSetter, cancelMouseDown: true});
-
-    actionsEl.append(checkBtn, btnEdit, btnDelete);
-    listEl.append(actionsEl);
-  }
-
-  private openEditContact(peerId: PeerId, rawId: number) {
-    showEditContactPopup({
-      peerId,
-      rawId,
-      managers: this.managers,
-      onSave: () => {
-        this.sortedUserList?.update(peerId);
-      }
-    });
   }
 
   /**
@@ -296,15 +115,6 @@ export default class AppContactsTab extends SliderSuperTab {
         targetRawId = Number((li as HTMLElement).dataset.peerId);
       },
       buttons: [{
-        icon: 'edit',
-        text: 'Edit',
-        verify: () => !!targetPeerId,
-        onClick: () => {
-          const peerId = targetPeerId;
-          const rawId = targetRawId;
-          this.openEditContact(peerId, rawId);
-        }
-      }, {
         icon: 'delete',
         className: 'danger',
         text: 'DeleteContact',
@@ -347,7 +157,7 @@ export default class AppContactsTab extends SliderSuperTab {
     }
   }
 
-  private async deleteContactAndChat(peerId: PeerId, rawId: number, showToast = true) {
+  private async deleteContactAndChat(peerId: PeerId, rawId: number) {
     const {toast} = await import('@components/toast');
 
     // P2P peers live in the synthetic range (>= 1e15); the raw dataset id is
@@ -359,14 +169,14 @@ export default class AppContactsTab extends SliderSuperTab {
         const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
         const pubkey = await getPubkey(rawId);
         if(!pubkey) {
-          if(showToast) toast('Could not resolve contact to delete');
-          return false;
+          toast('Could not resolve contact to delete');
+          return;
         }
 
         const chatAPI = (window as any).__phantomchatChatAPI;
         if(!chatAPI?.deleteConversation) {
-          if(showToast) toast('Chat is not ready yet');
-          return false;
+          toast('Chat is not ready yet');
+          return;
         }
 
         await chatAPI.deleteConversation(pubkey);
@@ -375,22 +185,16 @@ export default class AppContactsTab extends SliderSuperTab {
         await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});
       }
 
-      this.selectedPeerIds.delete(peerId);
-      this.updateSelectionUI();
       this.sortedUserList?.delete(peerId);
-      if(showToast) toast('Contact deleted');
-      return true;
+      toast('Contact deleted');
     } catch(err) {
       console.error('[PhantomChat.chat] failed to delete contact:', err);
-      if(showToast) toast('Failed to delete contact');
-      return false;
+      toast('Failed to delete contact');
     }
   }
 
   protected onClose() {
     this.middlewareHelperLoad.clean();
-    this.selectedPeerIds.clear();
-    this.updateSelectionUI();
     /* // need to clear, and left 1 page for smooth slide
     let pageCount = appPhotosManager.windowH / 56 * 1.25 | 0;
     (Array.from(this.list.children) as HTMLElement[]).slice(pageCount).forEach((el) => el.remove()); */
@@ -406,8 +210,6 @@ export default class AppContactsTab extends SliderSuperTab {
     const middleware = this.middlewareHelperLoad.get();
     this.scrollable.onScrolledBottom = null;
     this.listsContainer.replaceChildren();
-    this.selectedPeerIds.clear();
-    this.updateSelectionUI();
 
     this.managers.appUsersManager.getContactsPeerIds(query, undefined, 'online').then((contacts) => {
       if(!middleware()) {
@@ -431,7 +233,6 @@ export default class AppContactsTab extends SliderSuperTab {
 
       arr.forEach((peerId) => {
         sortedUserList.add(peerId);
-        this.decorateContactElement(peerId);
       });
 
       if(!contacts.length) {
