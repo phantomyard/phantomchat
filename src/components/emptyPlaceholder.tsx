@@ -28,31 +28,43 @@ export default async function emptyPlaceholder({
   height?: number,
   isFullSize?: boolean
 }) {
-  const {container, promise} = await wrapLocalSticker({
-    width,
-    height,
-    assetName,
-    middleware,
-    loop: true
-  });
+  let stickerElement: HTMLElement;
+  if(assetName === 'UtyanSearch') {
+    const img = document.createElement('img');
+    img.src = 'assets/img/PhantomScout.svg';
+    img.width = width;
+    img.height = height;
+    img.classList.add('selector-empty-placeholder-sticker');
+    img.alt = '';
+    stickerElement = img;
+  } else {
+    const {container, promise} = await wrapLocalSticker({
+      width,
+      height,
+      assetName,
+      middleware,
+      loop: true
+    });
 
-  if(!middleware()) {
-    return;
+    if(!middleware()) {
+      return;
+    }
+
+    await promise;
+    if(!middleware()) {
+      return;
+    }
+
+    container.classList.add('selector-empty-placeholder-sticker');
+    stickerElement = container;
   }
-
-  await promise;
-  if(!middleware()) {
-    return;
-  }
-
-  container.classList.add('selector-empty-placeholder-sticker');
 
   let ret: JSX.Element;
   createRoot((disposer) => {
     middleware.onClean(disposer);
     ret = (
       <div class="selector-empty-placeholder" classList={{'hide': hide(), 'is-full': isFullSize}}>
-        {container}
+        {stickerElement}
         <div class="selector-empty-placeholder-title">
           {title()}
         </div>

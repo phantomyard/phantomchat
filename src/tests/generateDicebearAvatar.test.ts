@@ -1,5 +1,10 @@
 import {describe, it, expect, beforeEach, vi} from 'vitest';
-import {generateDicebearAvatar, clearDicebearCache} from '@helpers/generateDicebearAvatar';
+import {
+  generateDicebearAvatar,
+  generatePhantomAvatarSvg,
+  generatePhantomSquadAvatarSvg,
+  clearDicebearCache
+} from '@helpers/generateDicebearAvatar';
 
 // jsdom does not implement URL.createObjectURL — provide a simple stub
 let blobCounter = 0;
@@ -30,6 +35,26 @@ describe('generateDicebearAvatar', () => {
     const url1 = await generateDicebearAvatar('a'.repeat(64));
     const url2 = await generateDicebearAvatar('b'.repeat(64));
     expect(url1).not.toBe(url2);
+  });
+
+  it('should differentiate group avatars from user avatars for same seed', async() => {
+    const seed = 'test-group-seed';
+    const userUrl = await generateDicebearAvatar(seed, false);
+    const groupUrl = await generateDicebearAvatar(seed, true);
+    expect(userUrl).not.toBe(groupUrl);
+  });
+
+  it('should generate valid pure SVG markup for user and squad avatars', () => {
+    const userSvg = generatePhantomAvatarSvg('user-key-123');
+    expect(userSvg).toContain('<svg');
+    expect(userSvg).toContain('viewBox="0 0 128 128"');
+    expect(userSvg).toContain('clip-path="url(#clip-');
+
+    const squadSvg = generatePhantomSquadAvatarSvg('group-key-456');
+    expect(squadSvg).toContain('<svg');
+    expect(squadSvg).toContain('viewBox="0 0 128 128"');
+    expect(squadSvg).toContain('hero-shadow-');
+    expect(squadSvg).toContain('stroke-dasharray="2 2"');
   });
 
   it('should clear cache when clearDicebearCache is called', async() => {

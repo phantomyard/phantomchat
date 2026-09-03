@@ -6,13 +6,15 @@
   padding: 80px 24px;
 }
 
-.LottieAnimation {
+.LottieAnimation,
+.ScoutIllustration {
   position: relative;
   aspect-ratio: 1 / 1;
-  width: var(--size);
-  max-width: var(--size, 100%);
+  width: var(--size, 156px);
+  max-width: var(--size, 156px);
 
   cursor: pointer;
+  user-select: none;
 }
 
 .NoResults {
