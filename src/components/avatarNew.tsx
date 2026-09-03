@@ -689,11 +689,12 @@ export const AvatarNew = (props: {
         return;
       }
 
-      // Try dicebear fun-emoji avatar from peer's hex pubkey
+      // Try phantom avatar from peer's hex pubkey or peer ID
       const peerIdNum = typeof peerId === 'number' ? peerId : +peerId;
       const hexPubkey = (peer as any)?.p2pPubkey || (peerIdNum >= 1e15 ? await getPubkey(peerIdNum) : null);
-      if(hexPubkey) {
-        const dicebearUrl = await generateDicebearAvatar(hexPubkey);
+      const avatarSeed = hexPubkey || (peerId ? String(peerId) : (peer?.id ? String(peer.id) : ''));
+      if(avatarSeed) {
+        const dicebearUrl = await generateDicebearAvatar(avatarSeed);
         if(!middleware()) return;
         const img = document.createElement('img');
         img.className = 'avatar-photo';
