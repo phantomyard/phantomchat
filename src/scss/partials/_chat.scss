@@ -1834,15 +1834,15 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 	margin: 0 auto;
 	min-height: 100%;
 	justify-content: flex-end;
-	// padding: 0 $chat-padding;
-	max-width: calc(100% - var(--chat-input-padding) * 2);
+	padding: 0 5%;
+	max-width: 100%;
 
 	//padding-top: 10000px;
 	transition: transform var(--transition-standard-out);
 	transform: translateY(0);
 	/* transition: margin-top var(--layer-transition);
 	transition-delay: .2s; */
-  box-sizing: content-box;
+  box-sizing: border-box;
 
 	@include animation-level(0) {
 		transition: none !important;
@@ -1850,7 +1850,7 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 
 	@include respond-to(medium-screens) {
 		body.is-right-column-shown & {
-			width: calc(100% - var(--right-column-width) - var(--chat-input-padding) * 2);
+			width: calc(100% - var(--right-column-width));
 		}
 	}
 
