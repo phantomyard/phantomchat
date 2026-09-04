@@ -12,12 +12,12 @@ if(!(Number.prototype as any).isUser) {
 }
 
 describe('Topbar click routing logic', () => {
-  type TabType = 'AppPhantomChatGroupInfoTab' | 'AppEditContactTab' | 'StandardPeerInfo';
+  type TabType = 'AppPhantomChatGroupEditTab' | 'AppEditContactTab' | 'StandardPeerInfo';
 
   function resolveTopbarClickRoute(peerId: any): TabType {
     const numericPeerId = +peerId;
     if(isGroupPeer(numericPeerId)) {
-      return 'AppPhantomChatGroupInfoTab';
+      return 'AppPhantomChatGroupEditTab';
     } else if(isP2PPeerId(numericPeerId) || (peerId && typeof peerId.isUser === 'function' ? peerId.isUser() : numericPeerId >= 0)) {
       return 'AppEditContactTab';
     } else {
@@ -25,10 +25,18 @@ describe('Topbar click routing logic', () => {
     }
   }
 
-  it('routes synthetic Phantom groups (< -2e15) to AppPhantomChatGroupInfoTab', () => {
+  it('routes synthetic Phantom groups (< -2e15) directly to AppPhantomChatGroupEditTab', () => {
     const syntheticGroupPeerId = -2000000000000001;
     expect(isGroupPeer(syntheticGroupPeerId)).toBe(true);
-    expect(resolveTopbarClickRoute(syntheticGroupPeerId)).toBe('AppPhantomChatGroupInfoTab');
+    expect(resolveTopbarClickRoute(syntheticGroupPeerId)).toBe('AppPhantomChatGroupEditTab');
+  });
+
+  it('replaces a group editor that belongs to a different group', async() => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('src/components/chat/topbar.ts', 'utf-8');
+
+    expect(source).toContain('existingTab.groupPeerId === +this.peerId');
+    expect(source).toContain('createTab(AppPhantomChatGroupEditTab, true)');
   });
 
   it('routes synthetic P2P direct peers (>= 1e15) to AppEditContactTab', () => {

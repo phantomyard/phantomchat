@@ -83,6 +83,7 @@ vi.mock('@lib/logger', () => ({
 import {GroupAPI} from '@lib/phantomchat/group-api';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import rootScope from '@lib/rootScope';
+import {getGroupMemberChanges} from '@components/sidebarRight/tabs/phantomchatGroupEditState';
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -147,7 +148,7 @@ describe('Group UI Integration', () => {
       const dialogsStorage = (rootScope.managers as any).dialogsStorage;
       const group = makeGroup();
 
-      // Simulate what AppPhantomChatGroupInfoTab now does directly
+      // Simulate what AppPhantomChatGroupEditTab now does directly
       await dialogsStorage.dropP2PDialog(group.peerId.toPeerId(true));
       rootScope.dispatchEvent('dialog_drop', {peerId: group.peerId.toPeerId(true)} as any);
 
@@ -170,7 +171,7 @@ describe('Group UI Integration', () => {
       const group = makeGroup();
       await store.save(group);
 
-      // Simulate what AppPhantomChatGroupInfoTab does on Leave Group click
+      // Simulate what AppPhantomChatGroupEditTab does on Leave Group click
       await api.leaveGroup(group.groupId);
 
       const dialogsStorage = (rootScope.managers as any).dialogsStorage;
@@ -187,11 +188,11 @@ describe('Group UI Integration', () => {
   });
 
   describe('Bug 3: Lang key correctness', () => {
-    it('phantomchatGroupInfo uses ChatList.Context.LeaveGroup key', async() => {
+    it('phantomchat group editor uses the correct destructive-action keys', async() => {
       // Read the source to verify the correct lang key is used
       const fs = await import('fs');
       const source = fs.readFileSync(
-        'src/components/sidebarRight/tabs/phantomchatGroupInfo.ts',
+        'src/components/sidebarRight/tabs/phantomchatGroupEdit.ts',
         'utf-8'
       );
 
@@ -199,6 +200,19 @@ describe('Group UI Integration', () => {
       expect(source).toContain('Permissions.RemoveFromGroup');
       // Should NOT contain the old raw 'AreYouSure' cast
       expect(source).not.toContain("'AreYouSure'");
+    });
+  });
+
+  describe('Unified group editor membership draft', () => {
+    it('calculates additions and removals without mutating the saved roster', () => {
+      const original = [ownPubkey, bobPubkey];
+      const charliePubkey = 'cccc2222222222222222222222222222222222222222222222222222222222cc';
+
+      expect(getGroupMemberChanges(original, [ownPubkey, charliePubkey])).toEqual({
+        added: [charliePubkey],
+        removed: [bobPubkey]
+      });
+      expect(original).toEqual([ownPubkey, bobPubkey]);
     });
   });
 

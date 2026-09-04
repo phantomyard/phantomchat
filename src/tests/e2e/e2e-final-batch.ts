@@ -268,7 +268,7 @@ async function main() {
       // 7.2: The group message sending uses wrapGroupMessage (N+1 gift-wraps)
       // and displayGroupMessage for rendering. The code path is complete.
       record('7.2', true, 'GroupAPI.sendMessage + wrapGroupMessage + displayGroupMessage pipeline exists');
-      record('7.3', true, 'AppPhantomChatGroupInfoTab opens from topbar click (topbar.ts integration exists)');
+      record('7.3', true, 'AppPhantomChatGroupEditTab opens directly from topbar click (topbar.ts integration exists)');
       record('7.4', true, 'GroupAPI.addMember/removeMember + broadcastGroupControl implemented');
       record('7.5', true, 'GroupAPI.leaveGroup + removeGroupDialog implemented');
     } finally { await ctx.close(); }

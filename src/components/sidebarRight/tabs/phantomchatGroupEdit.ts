@@ -3,6 +3,7 @@ import SettingSection from '@components/settingSection';
 import Row from '@components/row';
 import InputField from '@components/inputField';
 import ButtonCorner from '@components/buttonCorner';
+import {replaceButtonIcon} from '@components/button';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import AppAddMembersTab from '@components/sidebarLeft/tabs/addMembers';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
@@ -13,8 +14,11 @@ import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
 import {loadIdentity} from '@lib/phantomchat/identity';
 import rootScope from '@lib/rootScope';
 import type {LangPackKey} from '@lib/langPack';
+import {toastNew} from '@components/toast';
+import appSidebarRight from '..';
+import {getGroupMemberChanges} from './phantomchatGroupEditState';
 
-export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
+export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
   public groupPeerId: number;
   private groupId: string;
 
@@ -27,8 +31,17 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
     }
 
     this.groupId = group.groupId;
-    this.container.classList.add('phantomchat-group-info-container');
-    this.setTitle(group.name as LangPackKey);
+    this.container.classList.add('edit-peer-container', 'phantomchat-group-edit-container');
+    this.setTitle('Edit');
+
+    const newCloseBtn = this.closeBtn.cloneNode(true) as HTMLElement;
+    this.closeBtn.replaceWith(newCloseBtn);
+    this.closeBtn = newCloseBtn;
+    replaceButtonIcon(this.closeBtn, 'close');
+    attachClickEvent(this.closeBtn, () => {
+      this.close();
+      appSidebarRight.toggleSidebar(false);
+    }, {listenerSetter: this.listenerSetter});
 
     // Load member display names
     const allMappings = await getAllMappings();
@@ -46,6 +59,10 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
     }
 
     const isAdmin = ownPubkey === group.adminPubkey;
+    const originalMembers = [...group.members];
+    let draftMembers = [...originalMembers];
+    let refreshSave = () => {};
+    let renderMembers = () => {};
 
     // Admin-only: edit group name + description. This replaces the native
     // Telegram AppEditChatTab for P2P groups (which is Telegram-backed — its
@@ -69,10 +86,11 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
       const saveBtn = ButtonCorner({icon: 'check'});
       this.content.append(saveBtn);
 
-      const refreshSave = () => {
+      refreshSave = () => {
         const name = nameInput.value.trim();
         const desc = descInput.value.trim();
-        const changed = name !== group.name || desc !== (group.description || '');
+        const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
+        const changed = name !== group.name || desc !== (group.description || '') || !!added.length || !!removed.length;
         saveBtn.classList.toggle('is-visible', changed && !!name);
       };
       this.listenerSetter.add(nameInput.input)('input', refreshSave);
@@ -83,18 +101,30 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
         if(!name) return;
         const toggle = toggleDisability([saveBtn], true);
         try {
-          await getGroupAPI().updateGroupInfo(this.groupId, {
-            name,
-            description: descInput.value.trim() || undefined
-          });
+          const api = getGroupAPI();
+          const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
+          for(const pubkey of removed) {
+            await api.removeMember(this.groupId, pubkey);
+            originalMembers.splice(originalMembers.indexOf(pubkey), 1);
+          }
+          for(const pubkey of added) {
+            await api.addMember(this.groupId, pubkey);
+            originalMembers.push(pubkey);
+          }
+          const description = descInput.value.trim() || undefined;
+          if(name !== group.name || description !== group.description) {
+            await api.updateGroupInfo(this.groupId, {name, description});
+          }
           group.name = name;
-          group.description = descInput.value.trim() || undefined;
-          this.setTitle(name as LangPackKey);
+          group.description = description;
+          group.members = [...draftMembers];
           saveBtn.classList.remove('is-visible');
         } catch(err) {
-          console.error('[PhantomChatGroupInfo] updateGroupInfo failed:', err);
+          console.error('[PhantomChatGroupEdit] save failed:', err);
+          toastNew({langPackKey: 'Error.AnError'});
         } finally {
           toggle();
+          refreshSave();
         }
       }, {listenerSetter: this.listenerSetter});
 
@@ -108,7 +138,6 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
 
     // Build one member row (admin-only remove handler). Reused for the initial
     // roster AND for members added live via "Add Members" below.
-    const renderedMembers = new Set<string>();
     const appendMemberRow = (pubkey: string) => {
       const displayName = mappingByPubkey.get(pubkey) || 'P2P ' + pubkey.slice(0, 6).toUpperCase();
       const isAdminMember = pubkey === group.adminPubkey;
@@ -128,9 +157,9 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
               descriptionLangArgs: [displayName],
               button: {langKey: 'Remove' as LangPackKey, isDanger: true}
             });
-            await getGroupAPI().removeMember(this.groupId, pubkey);
-            row.container.remove();
-            renderedMembers.delete(pubkey);
+            draftMembers = draftMembers.filter((member) => member !== pubkey);
+            renderMembers();
+            refreshSave();
           } catch{
             // user cancelled
           }
@@ -138,52 +167,50 @@ export default class AppPhantomChatGroupInfoTab extends SliderSuperTab {
       }
 
       membersSection.content.append(row.container);
-      renderedMembers.add(pubkey);
     };
 
-    for(const pubkey of group.members) {
-      appendMemberRow(pubkey);
-    }
+    renderMembers = () => {
+      membersSection.content.replaceChildren();
+      for(const pubkey of draftMembers) appendMemberRow(pubkey);
+      if(isAdmin) membersSection.content.append(addRow.container);
+    };
 
-    // Admin can ADD members after creation (addMember is admin-only). Opens the
-    // contacts picker; selected peers are mapped back to pubkeys and added one
-    // by one, with their rows appended live.
+    let addRow: Row;
     if(isAdmin) {
       const addEl = document.createElement('span');
       addEl.style.color = 'var(--primary-color)';
-      addEl.textContent = 'Add Members';
+      addEl.textContent = 'Add or Remove Members';
 
-      const addRow = new Row({
+      addRow = new Row({
         title: addEl,
         listenerSetter: this.listenerSetter
       });
 
       attachClickEvent(addRow.container, () => {
+        const selectedPeerIds = draftMembers
+        .map((pubkey) => allMappings.find((mapping) => mapping.pubkey === pubkey)?.peerId)
+        .filter((peerId): peerId is number => peerId !== undefined)
+        .map((peerId) => peerId.toPeerId());
         this.slider.createTab(AppAddMembersTab).open({
           type: 'chat',
           skippable: false,
           title: 'GroupAddMembers' as LangPackKey,
           placeholder: 'SendMessageTo' as LangPackKey,
+          selectedPeerIds,
           takeOut: async(peerIds: PeerId[]) => {
             const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
             const resolved = await Promise.all(peerIds.map((pid) => getPubkey(+pid)));
-            const pubkeys = resolved.filter((pk): pk is string => !!pk);
-            for(const pk of pubkeys) {
-              if(renderedMembers.has(pk)) continue;
-              try {
-                await getGroupAPI().addMember(this.groupId, pk);
-                appendMemberRow(pk);
-              } catch(err) {
-                console.error('[PhantomChatGroupInfo] addMember failed:', err);
-              }
-            }
+            const selected = resolved.filter((pk): pk is string => !!pk);
+            const unmappedMembers = draftMembers.filter((pubkey) => !mappingByPubkey.has(pubkey));
+            draftMembers = Array.from(new Set([...selected, ...unmappedMembers, group.adminPubkey]));
+            renderMembers();
+            refreshSave();
           }
         });
       }, {listenerSetter: this.listenerSetter});
-
-      membersSection.content.append(addRow.container);
     }
 
+    renderMembers();
     this.scrollable.append(membersSection.container);
 
     // Leave group section
