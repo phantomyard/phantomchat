@@ -49,7 +49,7 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 	position: relative;
 
 	&-container {
-		--padding-horizontal: var(--chat-input-padding);
+		--padding-horizontal: var(--messages-inline-padding);
 		display: flex;
 		align-items: flex-end;
 		justify-content: center;
@@ -980,7 +980,7 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 	position: absolute;
 	top: 0;
 	width: 28.75rem;
-	max-width: calc(100% - (var(--chat-input-padding) * 2));
+	max-width: calc(100% - (var(--messages-inline-padding) * 2));
 }
 
 .selection-wrapper,
@@ -1834,7 +1834,7 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 	margin: 0 auto;
 	min-height: 100%;
 	justify-content: flex-end;
-	padding: 0 5%;
+	padding: 0 var(--messages-inline-padding);
 	max-width: 100%;
 
 	//padding-top: 10000px;
@@ -1990,7 +1990,7 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 }
 
 .bubbles-corner-button {
-	inset-inline-end: var(--chat-input-padding);
+	inset-inline-end: var(--messages-inline-padding);
 	//top: calc((var(--chat-input-size) * -1) - 6px);
 	bottom: calc(var(--chat-input-size) + var(--bottom) + 10px);
 	z-index: 2;

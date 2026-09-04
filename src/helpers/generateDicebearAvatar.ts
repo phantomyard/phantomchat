@@ -188,8 +188,9 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
 
   const bg = bgGradients[hashes[0] % bgGradients.length];
   const wingmanBg = bgGradients[(hashes[0] + 7) % bgGradients.length];
-  const ringColor = eyePalettes[hashes[1] % eyePalettes.length];
-  const accentColor = eyePalettes[(hashes[2] + 4) % eyePalettes.length];
+  const ringColorIdx = hashes[1] % eyePalettes.length;
+  const ringColor = eyePalettes[ringColorIdx];
+  const accentColor = eyePalettes[(ringColorIdx + 5) % eyePalettes.length];
   const leaderEyeColor = eyePalettes[(hashes[3] + 2) % eyePalettes.length];
   const wingmanEyeColor = eyePalettes[(hashes[3] + 5) % eyePalettes.length];
 
