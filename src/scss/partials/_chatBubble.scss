@@ -1058,7 +1058,7 @@
       max-width: 15rem;
 
       @include respond-to(handhelds) {
-        max-width: calc(100vw - #{$chat-padding-handhelds * 2} - 10px - 100%);
+        max-width: calc(100vw - (var(--messages-inline-padding) * 2) - 10px - 100%);
       }
     }
 

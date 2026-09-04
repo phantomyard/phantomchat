@@ -201,6 +201,7 @@
     --chat-input-size: #{$chat-input-handhelds-size};
     --chat-input-padding: #{$chat-padding-handhelds};
     --chat-input-inner-padding: #{$chat-input-inner-padding-handhelds};
+    --messages-inline-padding: clamp(#{$chat-padding-handhelds}, 5%, 4rem);
   }
 
   @include respond-to(not-handhelds) {
@@ -209,6 +210,7 @@
     --chat-input-size: #{$chat-input-size};
     --chat-input-padding: #{$chat-padding};
     --chat-input-inner-padding: #{$chat-input-inner-padding};
+    --messages-inline-padding: clamp(#{$chat-padding}, 5%, 4rem);
   }
 
   @include respond-to(esg-bottom) {
