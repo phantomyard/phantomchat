@@ -67,7 +67,7 @@ import ChatRemoveFee, {openRemoveFeePopup} from '@components/chat/removeFee';
 import ChatTopbarSponsored from '@components/chat/topbarSponsored';
 import pause from '@helpers/schedulers/pause';
 import appImManager from '@lib/appImManager';
-import AppPhantomChatGroupInfoTab from '@components/sidebarRight/tabs/phantomchatGroupInfo';
+import AppPhantomChatGroupEditTab from '@components/sidebarRight/tabs/phantomchatGroupEdit';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
@@ -307,17 +307,19 @@ export default class ChatTopbar {
           return;
         } else {
           // Intercept topbar / avatar click:
-          // For synthetic Phantom groups: open AppPhantomChatGroupInfoTab.
+          // For synthetic Phantom groups: open AppPhantomChatGroupEditTab directly.
           // For direct contacts / users (P2P peers or MTProto users): open AppEditContactTab directly on the right.
           // For standard MTProto groups / channels: retain the standard peer-info sidebar.
           if(isGroupPeer(+this.peerId)) {
-            if(!this.appSidebarRight.isTabExists(AppPhantomChatGroupInfoTab)) {
-              const tab = this.appSidebarRight.createTab(AppPhantomChatGroupInfoTab);
+            const isSidebarOpen = document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME);
+            const existingTab = this.appSidebarRight.getTab(AppPhantomChatGroupEditTab);
+            if(isSidebarOpen && existingTab && existingTab.groupPeerId === +this.peerId) {
+              this.appSidebarRight.toggleSidebar(false);
+            } else {
+              const tab = this.appSidebarRight.createTab(AppPhantomChatGroupEditTab, true);
               tab.groupPeerId = +this.peerId;
               tab.open();
               this.appSidebarRight.toggleSidebar(true);
-            } else {
-              this.appSidebarRight.toggleSidebar(!document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME));
             }
           } else if(isP2PPeerId(+this.peerId) || this.peerId?.isUser?.()) {
             const isSidebarOpen = document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME);

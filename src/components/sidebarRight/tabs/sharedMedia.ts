@@ -10,7 +10,7 @@ import SidebarSlider, {SliderSuperTab} from '@components/slider';
 import TransitionSlider from '@components/transition';
 import AppEditChatTab from '@components/sidebarRight/tabs/editChat';
 import AppEditContactTab from '@components/sidebarRight/tabs/editContact';
-import AppPhantomChatGroupInfoTab from '@components/sidebarRight/tabs/phantomchatGroupInfo';
+import AppPhantomChatGroupEditTab from '@components/sidebarRight/tabs/phantomchatGroupEdit';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import Button from '@components/button';
 import ButtonIcon from '@components/buttonIcon';
@@ -254,9 +254,9 @@ export default class AppSharedMediaTab extends SliderSuperTab {
       // PhantomChat P2P groups use their own info/edit tab. The native
       // AppEditChatTab is Telegram-backed — its Administrators/Members/
       // Permissions/Invite-Links sub-tabs query a server that doesn't exist and
-      // render the empty "No Results" state. Route to phantomchatGroupInfo.
+      // render the empty "No Results" state. Route to the Phantom group editor.
       if(isGroupPeer(+this.peerId)) {
-        const groupTab = this.slider.createTab(AppPhantomChatGroupInfoTab);
+        const groupTab = this.slider.createTab(AppPhantomChatGroupEditTab);
         groupTab.groupPeerId = +this.peerId;
         groupTab.open();
         return;
