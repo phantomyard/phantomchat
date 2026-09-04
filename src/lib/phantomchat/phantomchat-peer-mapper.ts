@@ -11,6 +11,7 @@ import {PhantomChatBridge} from './phantomchat-bridge';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
 import {renderMarkdownTables} from '@lib/phantomchat/markdown-tables';
+import {renderMarkdownStructures} from '@lib/phantomchat/markdown-structures';
 
 export interface CreateUserOpts {
   peerId: number;
@@ -179,15 +180,16 @@ export class PhantomChatPeerMapper {
     // bubble renders them richly — Lena (an LLM) emits Markdown, and aligned/0xchat
     // peers may too. parseMarkdown strips the delimiters and returns the clean
     // display text + entities; wrapMessageEntities then layers emoji entities on
-    // top. NOTE: tables/lists/headings have no Telegram entity, so they remain raw
-    // (a full Markdown→HTML renderer would be a separate, larger change).
+    // top. Block-level Markdown is then converted into native entities or clean
+    // display markers without introducing an HTML/XSS rendering path.
     let displayText = opts.text;
     let entities: MessageEntity[] | undefined;
     let totalEntities: MessageEntity[] | undefined;
     if(opts.text) {
       // Reflow GFM tables into aligned monospace blocks first (no table entity
       // exists), then parse the rest of the Markdown into entities.
-      const [mdText, mdEntities] = parseMarkdown(renderMarkdownTables(opts.text));
+      const [inlineText, inlineEntities] = parseMarkdown(renderMarkdownTables(opts.text));
+      const [mdText, mdEntities] = renderMarkdownStructures(inlineText, inlineEntities);
       displayText = mdText;
       const wrapped = wrapMessageEntities(mdText, mdEntities.slice());
       entities = wrapped.totalEntities;
