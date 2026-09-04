@@ -166,6 +166,22 @@ describe('PhantomChatPeerMapper', () => {
       expect(msg.message).toBe('just plain text');
     });
 
+    it('renders headings, lists, tasks, and blockquotes as structured text', () => {
+      mapper = getMapper();
+      const msg = mapper.createTwebMessage({
+        mid: MID,
+        peerId: SAMPLE_PEER_ID,
+        date: DATE,
+        text: '# Plan\n- Item\n- [x] Done\n> Note',
+        isOutgoing: false
+      });
+
+      expect(msg.message).toBe('Plan\n• Item\n☑ Done\nNote');
+      const types = (msg.entities ?? []).map((entity) => entity._);
+      expect(types).toContain('messageEntityBold');
+      expect(types).toContain('messageEntityBlockquote');
+    });
+
     it('creates an incoming message with from_id set', () => {
       mapper = getMapper();
       const FROM_ID = 9876543210987654;
