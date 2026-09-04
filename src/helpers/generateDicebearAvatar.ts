@@ -187,24 +187,18 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
   const id = (hashes[0].toString(36) + hashes[1].toString(36)).slice(0, 10);
 
   const bg = bgGradients[hashes[0] % bgGradients.length];
+  const wingmanBg = bgGradients[(hashes[0] + 7) % bgGradients.length];
+  const ringColor = eyePalettes[hashes[1] % eyePalettes.length];
+  const accentColor = eyePalettes[(hashes[2] + 4) % eyePalettes.length];
+  const leaderEyeColor = eyePalettes[(hashes[3] + 2) % eyePalettes.length];
+  const wingmanEyeColor = eyePalettes[(hashes[3] + 5) % eyePalettes.length];
 
-  // Hero phantom (foreground center leader)
-  const heroBg = bgGradients[hashes[1] % bgGradients.length];
-  const heroEyeColor = eyePalettes[hashes[2] % eyePalettes.length];
-  const heroEyeStyle = (hashes[1] >> 4) % 6;
-  const heroEyeSvg = renderEyeSvg(heroEyeStyle, heroEyeColor, `glow-${id}`);
+  const eyeStyle = hashes[2] % 6;
+  const leaderEyeSvg = renderEyeSvg(eyeStyle, leaderEyeColor, `glow-${id}`);
+  const wingmanEyeSvg = renderEyeSvg((eyeStyle + 1) % 6, wingmanEyeColor, `glow-w-${id}`);
 
-  // Left sentinel
-  const leftBg = bgGradients[(hashes[2] + 7) % bgGradients.length];
-  const leftEyeColor = eyePalettes[(hashes[3] + 3) % eyePalettes.length];
-  const leftEyeStyle = (hashes[2] >> 2) % 6;
-  const leftEyeSvg = renderEyeSvg(leftEyeStyle, leftEyeColor, `glow-${id}`);
-
-  // Right sentinel
-  const rightBg = bgGradients[(hashes[3] + 13) % bgGradients.length];
-  const rightEyeColor = eyePalettes[(hashes[0] + 9) % eyePalettes.length];
-  const rightEyeStyle = (hashes[3] >> 5) % 6;
-  const rightEyeSvg = renderEyeSvg(rightEyeStyle, rightEyeColor, `glow-${id}`);
+  // Deterministic orbital ring rotation
+  const rot = (hashes[0] % 12) * 30;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
@@ -219,8 +213,15 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
-    <filter id="hero-shadow-${id}" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.7"/>
+    <filter id="glow-w-${id}" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shadow-${id}" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="-2" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.7"/>
     </filter>
     <clipPath id="clip-${id}">
       <circle cx="64" cy="64" r="64"/>
@@ -228,24 +229,40 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
   </defs>
   <g clip-path="url(#clip-${id})">
     <circle cx="64" cy="64" r="64" fill="url(#bg-${id})"/>
-    <circle cx="64" cy="64" r="62" fill="none" stroke="${bg.stroke}" stroke-width="2" opacity="0.4"/>
+    <circle cx="64" cy="64" r="62" fill="none" stroke="${bg.stroke}" stroke-width="2" opacity="0.5"/>
     
-    <!-- Mesh Whisper Lines -->
-    <g opacity="0.3" stroke-dasharray="2 2">
-      <line x1="36" y1="56" x2="64" y2="82" stroke="${leftBg.stroke}" stroke-width="1"/>
-      <line x1="92" y1="56" x2="64" y2="82" stroke="${rightBg.stroke}" stroke-width="1"/>
-      <line x1="36" y1="56" x2="92" y2="56" stroke="${heroBg.stroke}" stroke-width="1" opacity="0.5"/>
+    <!-- Orbital Encryption Ring / Key Sigil -->
+    <g transform="rotate(${rot} 64 64)">
+      <!-- Outer Segmented Encryption Ring -->
+      <circle cx="64" cy="64" r="54" fill="none" stroke="${ringColor}" stroke-width="2.5" stroke-dasharray="24 10 14 10 32 10" opacity="0.85"/>
+      <circle cx="64" cy="64" r="48" fill="none" stroke="${accentColor}" stroke-width="1" stroke-dasharray="3 5" opacity="0.45"/>
+      
+      <!-- Key Ring Sigil Brackets / Hash Markers -->
+      <path d="M 64 8 L 64 16 M 64 112 L 64 120 M 8 64 L 16 64 M 112 64 L 120 64" stroke="${ringColor}" stroke-width="2" stroke-linecap="round"/>
+      <path d="M 24 24 L 30 30 M 98 98 L 104 104 M 104 24 L 98 30 M 24 104 L 30 98" stroke="${accentColor}" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+
+      <!-- Glowing Orbital Key Nodes -->
+      <circle cx="64" cy="10" r="3.5" fill="${ringColor}" filter="url(#glow-${id})"/>
+      <circle cx="64" cy="10" r="1.5" fill="#ffffff"/>
+      <circle cx="118" cy="64" r="3.5" fill="${ringColor}" filter="url(#glow-${id})"/>
+      <circle cx="118" cy="64" r="1.5" fill="#ffffff"/>
+      <circle cx="10" cy="64" r="3" fill="${accentColor}" filter="url(#glow-${id})"/>
+      <circle cx="10" cy="64" r="1.2" fill="#ffffff"/>
+      <circle cx="64" cy="118" r="3" fill="${accentColor}" filter="url(#glow-${id})"/>
+      <circle cx="64" cy="118" r="1.2" fill="#ffffff"/>
     </g>
 
-    <!-- Left Background Sentinel -->
-    ${renderPhantomBody(36, 56, 0.52, leftBg, leftEyeSvg)}
+    <!-- Whisper Sync Trace between Duo -->
+    <line x1="48" y1="56" x2="74" y2="70" stroke="${accentColor}" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.6"/>
 
-    <!-- Right Background Sentinel -->
-    ${renderPhantomBody(92, 56, 0.52, rightBg, rightEyeSvg)}
+    <!-- Wingman Phantom (Back Left, Scaled Down) -->
+    <g opacity="0.82">
+      ${renderPhantomBody(48, 56, 0.54, wingmanBg, wingmanEyeSvg)}
+    </g>
 
-    <!-- Center Hero Leader (Foreground) -->
-    <g filter="url(#hero-shadow-${id})">
-      ${renderPhantomBody(64, 82, 0.72, heroBg, heroEyeSvg)}
+    <!-- Foreground Leader Phantom (Right Center, Drop Shadow) -->
+    <g filter="url(#shadow-${id})">
+      ${renderPhantomBody(74, 70, 0.70, bg, leaderEyeSvg)}
     </g>
   </g>
 </svg>`;

@@ -53,8 +53,8 @@ describe('generateDicebearAvatar', () => {
     const squadSvg = generatePhantomSquadAvatarSvg('group-key-456');
     expect(squadSvg).toContain('<svg');
     expect(squadSvg).toContain('viewBox="0 0 128 128"');
-    expect(squadSvg).toContain('hero-shadow-');
-    expect(squadSvg).toContain('stroke-dasharray="2 2"');
+    expect(squadSvg).toContain('Orbital Encryption Ring');
+    expect(squadSvg).toContain('stroke-dasharray="24 10 14 10 32 10"');
   });
 
   it('should return identical avatar for positive and negative peer ID seeds', async() => {
