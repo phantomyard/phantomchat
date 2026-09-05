@@ -570,9 +570,16 @@ export class PhantomChatBridge {
     displayName?: string,
     opts?: {allowTombstoned?: boolean}
   ): Promise<void> {
-    await storeMapping(pubkey, peerId, displayName, undefined, opts);
-    // Ensure cache is also populated so future lookups hit memory
-    this.pubkeyCache.set(pubkey, peerId);
+    const wrote = await storeMapping(pubkey, peerId, displayName, undefined, opts);
+    // Cache only what actually persisted: storeMapping returns false when
+    // the tombstone guard suppressed a re-creation, and populating the
+    // in-memory cache anyway would leave memory and IndexedDB disagreeing
+    // for the rest of the session (the mapping would look alive to every
+    // lookup until reload).
+    if(wrote) {
+      // Ensure cache is also populated so future lookups hit memory
+      this.pubkeyCache.set(pubkey, peerId);
+    }
   }
 
   /**

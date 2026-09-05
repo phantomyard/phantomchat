@@ -114,14 +114,17 @@ export async function storeMapping(
   displayName?: string,
   nostrProfile?: NostrProfile,
   opts?: {allowTombstoned?: boolean}
-): Promise<void> {
+): Promise<boolean> {
   const db = await getDB();
 
-  // Pre-check: does a mapping already exist? Two transactions instead of one,
-  // because the tombstone guard below needs an async lookup BEFORE we can
-  // decide whether to write — and awaiting inside an IDB onsuccess callback
-  // lets the transaction auto-commit mid-flight.
-  const existing = await new Promise<VirtualPeerMapping | undefined>((resolve, reject) => {
+  // Advisory pre-read: the tombstone guard below only matters when creating
+  // a NEW mapping, and the async cross-DB tombstone lookup can't run inside
+  // the readwrite transaction (awaiting there auto-commits it). This read
+  // only DECIDES whether to run the tombstone check — the authoritative
+  // read-modify-write happens atomically in the single readwrite
+  // transaction below, so two concurrent calls can no longer both read
+  // undefined and lose one caller's displayName/addedAt.
+  const preExisting = await new Promise<VirtualPeerMapping | undefined>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const req = tx.objectStore(STORE_NAME).get(pubkey);
     req.onerror = () => reject(req.error);
@@ -136,7 +139,7 @@ export async function storeMapping(
   // and the group-members picker on every sync cycle. Deliberate re-adds go
   // through addP2PContact, which clears the tombstone first; the strictly-
   // newer-message revive path passes {allowTombstoned: true} explicitly.
-  if(!existing && !opts?.allowTombstoned) {
+  if(!preExisting && !opts?.allowTombstoned) {
     try {
       const own = (window as any).__phantomchatOwnPubkey || '';
       if(own) {
@@ -146,7 +149,7 @@ export async function storeMapping(
         const tomb = await mstore.getTombstone(convId);
         if(tomb > 0) {
           console.warn('[virtual-peers] suppressing mapping re-creation for tombstoned peer', pubkey.slice(0, 8));
-          return;
+          return false;
         }
       }
     } catch(e) { /* guard is best-effort — never block a legit write on it */ }
@@ -155,26 +158,34 @@ export async function storeMapping(
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    const now = Date.now();
-    // updatedAt only advances on an IDENTITY-meaningful change: a brand-new
-    // contact, or a caller explicitly supplying a name/profile. The
-    // idempotent message-path (pubkey+peerId only) preserves the prior
-    // updatedAt so received messages don't churn the contacts-sync blob.
-    const identityChanged = !existing ||
-        displayName !== undefined ||
-        nostrProfile !== undefined;
-    const record: VirtualPeerMapping = {
-      pubkey,
-      peerId,
-      // Preserve prior values when the caller doesn't supply them.
-      displayName: displayName ?? existing?.displayName,
-      nostrProfile: nostrProfile ?? existing?.nostrProfile,
-      addedAt: existing?.addedAt ?? now,
-      updatedAt: identityChanged ? now : (existing?.updatedAt ?? existing?.addedAt ?? now)
+    // Authoritative read INSIDE the write transaction: get + put commit
+    // together, so concurrent burst-writes (receive path on reconnect)
+    // serialize instead of last-write-losing a displayName.
+    const getReq = store.get(pubkey);
+    getReq.onerror = () => reject(getReq.error);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as VirtualPeerMapping | undefined;
+      const now = Date.now();
+      // updatedAt only advances on an IDENTITY-meaningful change: a brand-new
+      // contact, or a caller explicitly supplying a name/profile. The
+      // idempotent message-path (pubkey+peerId only) preserves the prior
+      // updatedAt so received messages don't churn the contacts-sync blob.
+      const identityChanged = !existing ||
+          displayName !== undefined ||
+          nostrProfile !== undefined;
+      const record: VirtualPeerMapping = {
+        pubkey,
+        peerId,
+        // Preserve prior values when the caller doesn't supply them.
+        displayName: displayName ?? existing?.displayName,
+        nostrProfile: nostrProfile ?? existing?.nostrProfile,
+        addedAt: existing?.addedAt ?? now,
+        updatedAt: identityChanged ? now : (existing?.updatedAt ?? existing?.addedAt ?? now)
+      };
+      const putReq = store.put(record);
+      putReq.onerror = () => reject(putReq.error);
+      putReq.onsuccess = () => resolve(true);
     };
-    const putReq = store.put(record);
-    putReq.onerror = () => reject(putReq.error);
-    putReq.onsuccess = () => resolve();
   });
 }
 

@@ -106,6 +106,11 @@ export default class AppAddMembersTab extends SliderSuperTab {
       this.close();
     }, () => {
       removeLoader();
+      // On rejection still close: the takeOut caller toasts the error, and
+      // the tab's default back handler has been cloned away when
+      // takeOutOnClose is set — staying open would leave the user in a
+      // picker with no working way out.
+      this.close();
     });
   }
 

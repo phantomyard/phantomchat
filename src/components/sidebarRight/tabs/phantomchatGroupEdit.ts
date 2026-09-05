@@ -91,6 +91,11 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
     avatarSection.content.append(avatarWrap);
 
     let avatarElem: ReturnType<typeof avatarNew>;
+    // The avatar element must live inside the click-to-change host when the
+    // viewer is admin (avatarEdit.container), otherwise directly in the wrap
+    // — and it must keep rendering into that host on every re-render, or the
+    // first avatar change leaves the edit overlay empty.
+    let avatarHost: HTMLElement = avatarWrap;
     const renderAvatarPreview = () => {
       avatarElem?.node.remove();
       avatarElem = avatarNew({
@@ -99,7 +104,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         peerId: this.groupPeerId.toPeerId(true)
       });
       avatarElem.node.classList.add('avatar-placeholder');
-      avatarWrap.append(avatarElem.node);
+      avatarHost.append(avatarElem.node);
     };
     renderAvatarPreview();
 
@@ -115,6 +120,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
           toastNew({langPackKey: 'Error.AnError'});
         }
       });
+      avatarHost = avatarEdit.container;
       avatarEdit.container.append(avatarElem.node);
       avatarWrap.append(avatarEdit.container);
       avatarEdit.container.title = i18n('PhantomChat.GroupEdit.ChangePhoto').textContent;
@@ -145,13 +151,16 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       this.content.append(saveBtn);
 
       // Save only appears when something actually changed (name, description
-      // or a staged member removal via the per-row X). The picker's arrow
-      // commits immediately, so it re-hides the button via refreshSave too.
+      // or a staged member removal via the per-row X) AND the name is
+      // non-empty — a visible button that silently does nothing on click is
+      // worse than a hidden one. The picker's arrow commits immediately, so
+      // it re-hides the button via refreshSave too.
       refreshSave = () => {
         const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
-        const dirty = nameInput.value.trim() !== group.name ||
+        const dirty = !!nameInput.value.trim() &&
+          (nameInput.value.trim() !== group.name ||
           (descInput.value.trim() || undefined) !== group.description ||
-          added.length > 0 || removed.length > 0;
+          added.length > 0 || removed.length > 0);
         saveBtn.classList.toggle('is-visible', dirty);
       };
       this.listenerSetter.add(nameInput.input)('input', refreshSave);
@@ -290,17 +299,30 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
             const selected = resolved.filter((pk): pk is string => !!pk);
             const unmappedMembers = draftMembers.filter((pubkey) => !mappingByPubkey.has(pubkey));
             draftMembers = Array.from(new Set([...selected, ...unmappedMembers, group.adminPubkey]));
-            renderMembers();
-            // The picker's arrow is the apply affordance members expect: commit
-            // the membership change right away instead of waiting for the
-            // editor's check button. attachToPromise keeps the loader on the
-            // arrow until this resolves and closes the tab on success.
+            // Commit FIRST, render AFTER: the roster must never show members
+            // that were not actually persisted. On failure the rejection
+            // propagates to the picker's attachToPromise (which stops the
+            // loader and closes the tab — its only working close affordance
+            // is the close itself), and the draft resyncs from what really
+            // landed in the store before the editor re-renders.
             try {
               await applyMemberChanges();
             } catch(err) {
               console.error('[PhantomChatGroupEdit] member change from picker failed:', err);
+              try {
+                const fresh = await getGroupStore().get(this.groupId);
+                draftMembers = [...(fresh?.members ?? originalMembers)];
+                originalMembers.splice(0, originalMembers.length, ...draftMembers);
+              } catch{}
+              renderMembers();
+              refreshSave();
               toastNew({langPackKey: 'Error.AnError'});
+              throw err;
             }
+            renderMembers();
+            // The picker's arrow is the apply affordance members expect: it
+            // commits the membership change right away instead of waiting
+            // for the editor's check button.
             refreshSave();
           }
         });

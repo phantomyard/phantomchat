@@ -28,6 +28,38 @@ export const DEFAULT_BLOSSOM_SERVERS: readonly string[] = [
   'https://cdn.hzrd149.com'
 ];
 
+// ─── Group avatar URL allowlist ───────────────────────────────────
+
+/**
+ * Allowlisted avatar URLs. group_info_update carries a URL that every
+ * member's client fetches when rendering the group avatar — without this
+ * gate any member (or a compromised one) could make all peers beacon an
+ * arbitrary host. Restrict to the canonical Blossom servers the upload
+ * path itself uses (list above); Blossom URLs are content-addressed, so
+ * mirrors add nothing here. Kept in this dependency-free module so both
+ * the receive path (group-api) and the render path (avatarNew) can import
+ * it without cycles or bundle bloat.
+ */
+const AVATAR_ALLOWED_HOSTS: ReadonlySet<string> = new Set(
+  DEFAULT_BLOSSOM_SERVERS.map((s) => {
+    try {
+      return new URL(s).hostname;
+    } catch{
+      return s.replace(/^https?:\/\//, '');
+    }
+  })
+);
+
+export function isSafeGroupAvatarUrl(url: string | undefined | null): boolean {
+  if(!url) return true; // absent avatar is not an attack
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && AVATAR_ALLOWED_HOSTS.has(parsed.hostname);
+  } catch{
+    return false;
+  }
+}
+
 /** Prefer ≥2 successful totals so a single CDN dying mid-day cannot brick the note. */
 export const BLOSSOM_MIRROR_MIN = 2;
 

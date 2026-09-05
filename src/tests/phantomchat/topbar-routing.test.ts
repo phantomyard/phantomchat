@@ -33,10 +33,18 @@ describe('Topbar click routing logic', () => {
 
   it('replaces a group editor that belongs to a different group', async() => {
     const fs = await import('fs');
-    const source = fs.readFileSync('src/components/chat/topbar.ts', 'utf-8');
+    // The routing logic moved out of topbar.ts into the shared
+    // peerActionsMenu module (#138) so the context menu, hamburger and
+    // topbar click can never drift apart.
+    const source = fs.readFileSync('src/components/peerActionsMenu.ts', 'utf-8');
+    const topbarSource = fs.readFileSync('src/components/chat/topbar.ts', 'utf-8');
 
-    expect(source).toContain('existingTab.groupPeerId === +this.peerId');
-    expect(source).toContain('createTab(AppPhantomChatGroupEditTab, true)');
+    // Topbar routes through the shared entry point...
+    expect(topbarSource).toContain('openPeerEditor(this.peerId)');
+    // ...and the shared module still replaces a group editor belonging to a
+    // different group instead of stacking a second one.
+    expect(source).toContain('existingTab.groupPeerId === numId');
+    expect(source).toContain('createTab(GroupEditTab, true)');
   });
 
   it('routes synthetic P2P direct peers (>= 1e15) to AppEditContactTab', () => {

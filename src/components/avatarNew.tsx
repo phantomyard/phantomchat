@@ -51,6 +51,7 @@ import {appSettings} from '@stores/appSettings';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import {getPubkey} from '@lib/phantomchat/virtual-peers-db';
+import {isSafeGroupAvatarUrl} from '@lib/phantomchat/blossom-servers';
 import {createAutoDeleteIcon} from '@components/chat/utils';
 import {resolveElements} from '@solid-primitives/refs';
 import toArray from '@helpers/array/toArray';
@@ -58,6 +59,13 @@ import computeLockColor from '@helpers/computeLockColor';
 
 const FADE_IN_DURATION = 200;
 const TEST_SWAPPING = 0;
+
+// Memoised custom-group-avatar lookup: avatarNew renders for every chat-list
+// row, topbar and dialog, and each render did an IndexedDB getByPeerId
+// round-trip. Cache the URL briefly — a stale hit only delays a changed
+// avatar until the next render cycle (group info updates re-render peers).
+const GROUP_AVATAR_TTL = 30_000;
+const groupAvatarCache = new Map<number, {url: string | undefined, at: number}>();
 
 const avatarsMap: Map<string, Set<ReturnType<typeof AvatarNew>>> = new Map();
 const believeMe: Map<string, Set<ReturnType<typeof AvatarNew>>> = new Map();
@@ -702,12 +710,20 @@ export const AvatarNew = (props: {
       // before falling back to the deterministic Key Sigil generator.
       if(isGroup) {
         try {
-          const {getGroupStore} = await import('@lib/phantomchat/group-store');
-          const rec = await getGroupStore().getByPeerId(peerIdNum);
-          if(rec?.avatar && middleware()) {
+          let cached = groupAvatarCache.get(peerIdNum);
+          if(!cached || Date.now() - cached.at > GROUP_AVATAR_TTL) {
+            const {getGroupStore} = await import('@lib/phantomchat/group-store');
+            const rec = await getGroupStore().getByPeerId(peerIdNum);
+            cached = {url: rec?.avatar, at: Date.now()};
+            groupAvatarCache.set(peerIdNum, cached);
+          }
+          // Render-time defense in depth alongside the receive-path gate in
+          // handleInfoUpdate: never dereference a URL that isn't a Blossom
+          // host (an arbitrary URL here would beacon every viewer's IP).
+          if(cached.url && isSafeGroupAvatarUrl(cached.url) && middleware()) {
             const img = document.createElement('img');
             img.className = 'avatar-photo';
-            await renderImageFromUrlPromise(img, rec.avatar, props.useCache);
+            await renderImageFromUrlPromise(img, cached.url, props.useCache);
             if(!middleware()) return;
             _setMedia(img);
             return {loadThumbPromise: Promise.resolve()} as any;
