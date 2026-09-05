@@ -894,6 +894,27 @@ export class GroupAPI {
       }
     }
 
+    // STALENESS GATE. The tombstone gate above only protects deleted
+    // groups; this one protects LIVE ones. Relays replay their backlog on
+    // every reload, and group_create / group_add_member carry the FULL
+    // member list — a replayed add would overwrite a member the admin
+    // already removed (and the replayed create even stamps updatedAt with
+    // Date.now(), winning the CRDT merge). So drop any control message
+    // older than the group's last local mutation, with a 60s grace for
+    // clock skew between members' devices.
+    if(payload?.groupId) {
+      try {
+        const live = await this.store.get(payload.groupId);
+        const ts = typeof rumor.created_at === 'number' ? rumor.created_at : Math.floor(Date.now() / 1000);
+        if(live && ts * 1000 < live.updatedAt - 60_000) {
+          this.log('[GroupAPI] dropping stale control message', payload.type, payload.groupId.slice(0, 8), {ts, localUpdatedAt: live.updatedAt});
+          return;
+        }
+      } catch(err) {
+        this.log.warn('[GroupAPI] control staleness gate check failed; continuing:', err);
+      }
+    }
+
     switch(payload.type) {
       case 'group_create':
         await this.handleGroupCreate(payload, senderPubkey);
@@ -914,7 +935,7 @@ export class GroupAPI {
         await this.handleInfoUpdate(payload);
         break;
       case 'group_admin_transfer':
-        await this.handleAdminTransfer(payload);
+        await this.handleAdminTransfer(payload, senderPubkey);
         break;
       case 'group_edit_message':
         await this.handleEditMessageControl(payload, senderPubkey);
@@ -972,6 +993,19 @@ export class GroupAPI {
 
   private async handleGroupCreate(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
     const peerId = await groupIdToPeerId(payload.groupId);
+
+    // NON-DESTRUCTIVE REPLAY GUARD: we already hold a live record for this
+    // group. A create event replayed from the relay backlog must not clobber
+    // it — the record's own mutations (renames, member changes) are newer
+    // than the original create. Belt and braces with the staleness gate in
+    // handleControlMessage: even if a skewed clock smuggles a stale create
+    // past that gate, it still can't overwrite a live record.
+    const existing = await this.store.get(payload.groupId);
+    if(existing) {
+      this.log('[GroupAPI] group_create replay for live group ignored:', payload.groupId.slice(0, 8));
+      return;
+    }
+
     const record: GroupRecord = {
       groupId: payload.groupId,
       name: payload.groupName || 'Group',
@@ -1124,13 +1158,67 @@ export class GroupAPI {
     }
   }
 
-  private async handleAdminTransfer(payload: GroupControlPayload): Promise<void> {
+  private async handleAdminTransfer(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
     const group = await this.store.get(payload.groupId);
     if(group && payload.adminPubkey) {
+      // Only the current admin may transfer. senderPubkey is the proven
+      // rumor pubkey (same validation as group_delete) — without this check
+      // any member could gift-wrap themselves into power.
+      if(group.adminPubkey !== senderPubkey) {
+        this.log.warn('[GroupAPI] ignoring group_admin_transfer from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+        return;
+      }
       group.adminPubkey = payload.adminPubkey;
       group.updatedAt = Date.now();
       await this.store.save(group);
     }
+  }
+
+  /**
+   * Transfer admin rights to another member. Only the current admin can
+   * transfer. Broadcasts `group_admin_transfer` so every member's client
+   * updates its record, then applies locally. The receive handler existed
+   * but nothing ever sent the message type — there was no voluntary
+   * transfer path (an old admin could only hand over by leaving).
+   */
+  async transferAdmin(groupId: string, newAdminPubkey: string): Promise<void> {
+    const group = await this.store.get(groupId);
+    if(!group) throw new Error(`Group not found: ${groupId}`);
+    if(group.adminPubkey !== this.ownPubkey) throw new Error('Only admin can transfer admin rights');
+    if(!group.members.includes(newAdminPubkey)) {
+      throw new Error(`transferAdmin: target ${newAdminPubkey.slice(0, 8)}… is not a member`);
+    }
+    if(newAdminPubkey === this.ownPubkey) return; // idempotent no-op
+
+    const payload: GroupControlPayload = {
+      type: 'group_admin_transfer',
+      groupId,
+      adminPubkey: newAdminPubkey
+    };
+
+    let controlWraps;
+    try {
+      controlWraps = broadcastGroupControl(this.ownSk, group.members, payload);
+    } catch(err) {
+      this.log.warn('[GroupAPI] transferAdmin: broadcastGroupControl threw before local mutation:', err);
+      throw err;
+    }
+
+    group.adminPubkey = newAdminPubkey;
+    group.updatedAt = Date.now();
+    await this.store.save(group);
+
+    try {
+      await this.publishFn(controlWraps);
+    } catch(err) {
+      // Roll the local view back so it re-converges with peers on next merge.
+      group.adminPubkey = this.ownPubkey;
+      await this.store.save(group);
+      throw err;
+    }
+
+    this.log('[GroupAPI] admin transferred:', groupId.slice(0, 8), '->', newAdminPubkey.slice(0, 8));
+    schedulePublish('groups');
   }
 
   // ─── Accessors ────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import {setButtonLoader} from '@components/putPreloader';
 import {LangPackKey, _i18n} from '@lib/langPack';
 import ButtonCorner from '@components/buttonCorner';
 import AppNewGroupTab from '@components/sidebarLeft/tabs/newGroup';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
 // providedTabs registered lazily at bottom to avoid circular import
 
 export default class AppAddMembersTab extends SliderSuperTab {
@@ -27,7 +28,9 @@ export default class AppAddMembersTab extends SliderSuperTab {
     type: AppAddMembersTab['peerType'],
     takeOut?: AppAddMembersTab['takeOut'],
     skippable: boolean,
-    selectedPeerIds?: PeerId[]
+    selectedPeerIds?: PeerId[],
+    /** Back arrow also applies the selection (takeOut) instead of discarding. */
+    takeOutOnClose?: boolean
   }) {
     this.container.classList.add('add-members-container');
     this.nextBtn = ButtonCorner({icon: 'arrow_next'});
@@ -74,6 +77,26 @@ export default class AppAddMembersTab extends SliderSuperTab {
 
     this.nextBtn.disabled = false;
     this.nextBtn.classList.toggle('is-visible', this.skippable);
+
+    // The back arrow must behave like the apply arrow: commit the selection
+    // diff, then leave. Discarding silently made users think their change
+    // was lost (no Save was ever shown for it).
+    if(options.takeOutOnClose) {
+      // Drop the slider's default close handler by replacing the node, then
+      // wire our own apply-then-close.
+      const newCloseBtn = this.closeBtn.cloneNode(true) as HTMLElement;
+      this.closeBtn.replaceWith(newCloseBtn);
+      this.closeBtn = newCloseBtn;
+      attachClickEvent(this.closeBtn, () => {
+        const peerIds = this.selector.getSelected().map((sel) => sel.toPeerId());
+        const result = this.takeOut(peerIds);
+        if(result instanceof Promise) {
+          this.attachToPromise(result);
+        } else {
+          this.close();
+        }
+      }, {listenerSetter: this.listenerSetter});
+    }
   }
 
   public attachToPromise(promise: Promise<any>) {

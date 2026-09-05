@@ -112,37 +112,69 @@ export async function storeMapping(
   pubkey: string,
   peerId: number,
   displayName?: string,
-  nostrProfile?: NostrProfile
+  nostrProfile?: NostrProfile,
+  opts?: {allowTombstoned?: boolean}
 ): Promise<void> {
   const db = await getDB();
+
+  // Pre-check: does a mapping already exist? Two transactions instead of one,
+  // because the tombstone guard below needs an async lookup BEFORE we can
+  // decide whether to write — and awaiting inside an IDB onsuccess callback
+  // lets the transaction auto-commit mid-flight.
+  const existing = await new Promise<VirtualPeerMapping | undefined>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(pubkey);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(req.result as VirtualPeerMapping | undefined);
+  });
+
+  // Tombstone guard — the resurrection fix. A deleted contact's mapping is
+  // removed by deleteConversation (Level 1c) and its conversation carries a
+  // deletion watermark. Automatic paths that re-persist mappings (contacts-sync
+  // apply, history backfill, receive-path persistence, kind 0 upgrades) must
+  // NOT re-create the mapping — otherwise the contact reappears in Contacts
+  // and the group-members picker on every sync cycle. Deliberate re-adds go
+  // through addP2PContact, which clears the tombstone first; the strictly-
+  // newer-message revive path passes {allowTombstoned: true} explicitly.
+  if(!existing && !opts?.allowTombstoned) {
+    try {
+      const own = (window as any).__phantomchatOwnPubkey || '';
+      if(own) {
+        const ms = await import('./message-store');
+        const mstore = ms.getMessageStore();
+        const convId = mstore.getConversationId(own, pubkey);
+        const tomb = await mstore.getTombstone(convId);
+        if(tomb > 0) {
+          console.warn('[virtual-peers] suppressing mapping re-creation for tombstoned peer', pubkey.slice(0, 8));
+          return;
+        }
+      }
+    } catch(e) { /* guard is best-effort — never block a legit write on it */ }
+  }
+
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
-    const getReq = store.get(pubkey);
-    getReq.onerror = () => reject(getReq.error);
-    getReq.onsuccess = () => {
-      const existing = getReq.result as VirtualPeerMapping | undefined;
-      const now = Date.now();
-      // updatedAt only advances on an IDENTITY-meaningful change: a brand-new
-      // contact, or a caller explicitly supplying a name/profile. The
-      // idempotent message-path (pubkey+peerId only) preserves the prior
-      // updatedAt so received messages don't churn the contacts-sync blob.
-      const identityChanged = !existing ||
+    const now = Date.now();
+    // updatedAt only advances on an IDENTITY-meaningful change: a brand-new
+    // contact, or a caller explicitly supplying a name/profile. The
+    // idempotent message-path (pubkey+peerId only) preserves the prior
+    // updatedAt so received messages don't churn the contacts-sync blob.
+    const identityChanged = !existing ||
         displayName !== undefined ||
         nostrProfile !== undefined;
-      const record: VirtualPeerMapping = {
-        pubkey,
-        peerId,
-        // Preserve prior values when the caller doesn't supply them.
-        displayName: displayName ?? existing?.displayName,
-        nostrProfile: nostrProfile ?? existing?.nostrProfile,
-        addedAt: existing?.addedAt ?? now,
-        updatedAt: identityChanged ? now : (existing?.updatedAt ?? existing?.addedAt ?? now)
-      };
-      const putReq = store.put(record);
-      putReq.onerror = () => reject(putReq.error);
-      putReq.onsuccess = () => resolve();
+    const record: VirtualPeerMapping = {
+      pubkey,
+      peerId,
+      // Preserve prior values when the caller doesn't supply them.
+      displayName: displayName ?? existing?.displayName,
+      nostrProfile: nostrProfile ?? existing?.nostrProfile,
+      addedAt: existing?.addedAt ?? now,
+      updatedAt: identityChanged ? now : (existing?.updatedAt ?? existing?.addedAt ?? now)
     };
+    const putReq = store.put(record);
+    putReq.onerror = () => reject(putReq.error);
+    putReq.onsuccess = () => resolve();
   });
 }
 

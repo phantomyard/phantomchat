@@ -339,6 +339,10 @@ export async function handleRelayMessage(
     return handleSelfEcho(msg, ctx);
   }
 
+  // Set by the tombstone gate below when a strictly-newer message revives a
+  // previously deleted conversation — the peer mapping may be re-created.
+  let revivedTombstone = false;
+
   // 4b. Tombstone gate — suppress relay replays of a deleted conversation.
   // Relays re-deliver kind-1059 gift-wraps (24h TTL) on every reconnect; without
   // this a message from a chat/contact the user just deleted re-creates the
@@ -355,6 +359,10 @@ export async function handleRelayMessage(
     if(deletedAt > 0 && msg.timestamp <= deletedAt) {
       return {action: 'skipped', reason: 'tombstoned'};
     }
+    // Strictly-newer message on a tombstoned conversation = Signal-style
+    // revive. Tell the mapping persistence below it's allowed to re-create
+    // the (previously deleted) peer mapping for this revived conversation.
+    revivedTombstone = deletedAt > 0;
   } catch(err) {
     ctx.log.warn('[ChatAPI] tombstone gate check failed:', err);
   }
@@ -374,7 +382,7 @@ export async function handleRelayMessage(
       const {PhantomChatBridge} = await import('./phantomchat-bridge');
       const bridge = PhantomChatBridge.getInstance();
       const peerId = await bridge.mapPubkeyToPeerId(msg.from);
-      await bridge.storePeerMapping(msg.from, peerId);
+      await bridge.storePeerMapping(msg.from, peerId, undefined, {allowTombstoned: revivedTombstone});
     } catch(err) {
       ctx.log.warn('[ChatAPI] failed to persist peer mapping:', err);
     }

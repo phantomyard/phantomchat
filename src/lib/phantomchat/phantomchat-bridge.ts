@@ -567,9 +567,10 @@ export class PhantomChatBridge {
   async storePeerMapping(
     pubkey: string,
     peerId: number,
-    displayName?: string
+    displayName?: string,
+    opts?: {allowTombstoned?: boolean}
   ): Promise<void> {
-    await storeMapping(pubkey, peerId, displayName);
+    await storeMapping(pubkey, peerId, displayName, undefined, opts);
     // Ensure cache is also populated so future lookups hit memory
     this.pubkeyCache.set(pubkey, peerId);
   }

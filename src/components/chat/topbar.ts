@@ -7,7 +7,6 @@
 import type {Channel} from '@appManagers/appChatsManager';
 import type {AppSidebarRight} from '@components/sidebarRight';
 import type Chat from '@components/chat/chat';
-import {RIGHT_COLUMN_ACTIVE_CLASSNAME} from '@components/sidebarRight';
 import mediaSizes, {ScreenSize} from '@helpers/mediaSizes';
 import {IS_SAFARI} from '@environment/userAgent';
 import rootScope, {BroadcastEvents} from '@lib/rootScope';
@@ -67,9 +66,7 @@ import ChatRemoveFee, {openRemoveFeePopup} from '@components/chat/removeFee';
 import ChatTopbarSponsored from '@components/chat/topbarSponsored';
 import pause from '@helpers/schedulers/pause';
 import appImManager from '@lib/appImManager';
-import AppPhantomChatGroupEditTab from '@components/sidebarRight/tabs/phantomchatGroupEdit';
-import {isGroupPeer} from '@lib/phantomchat/group-types';
-import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
+import {openPeerEditor, peerEditMenuButton} from '@components/peerActionsMenu';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import namedPromises from '@helpers/namedPromises';
 import appDialogsManager from '@lib/appDialogsManager';
@@ -306,35 +303,10 @@ export default class ChatTopbar {
         } else if(avatar && avatar.classList.contains('has-stories')) {
           return;
         } else {
-          // Intercept topbar / avatar click:
-          // For synthetic Phantom groups: open AppPhantomChatGroupEditTab directly.
-          // For direct contacts / users (P2P peers or MTProto users): open AppEditContactTab directly on the right.
-          // For standard MTProto groups / channels: retain the standard peer-info sidebar.
-          if(isGroupPeer(+this.peerId)) {
-            const isSidebarOpen = document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME);
-            const existingTab = this.appSidebarRight.getTab(AppPhantomChatGroupEditTab);
-            if(isSidebarOpen && existingTab && existingTab.groupPeerId === +this.peerId) {
-              this.appSidebarRight.toggleSidebar(false);
-            } else {
-              const tab = this.appSidebarRight.createTab(AppPhantomChatGroupEditTab, true);
-              tab.groupPeerId = +this.peerId;
-              tab.open();
-              this.appSidebarRight.toggleSidebar(true);
-            }
-          } else if(isP2PPeerId(+this.peerId) || this.peerId?.isUser?.()) {
-            const isSidebarOpen = document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME);
-            const existingTab = this.appSidebarRight.getTab(AppEditContactTab);
-            if(isSidebarOpen && existingTab && existingTab.peerId === this.peerId) {
-              this.appSidebarRight.toggleSidebar(false);
-            } else {
-              const tab = this.appSidebarRight.createTab(AppEditContactTab, true);
-              tab.peerId = this.peerId;
-              tab.open();
-              this.appSidebarRight.toggleSidebar(true);
-            }
-          } else {
-            this.appSidebarRight.toggleSidebar(true);
-          }
+          // Intercept topbar / avatar click: route to the shared peer editor
+          // (Phantom groups -> group edit tab, contacts/users -> edit contact
+          // tab, MTProto -> native peer-info sidebar).
+          openPeerEditor(this.peerId);
         }
       }
     }, {listenerSetter: this.listenerSetter});
@@ -503,7 +475,7 @@ export default class ChatTopbar {
       }
     };
 
-    this.menuButtons = [this.autoDeleteBtnMenuOptions, {
+    this.menuButtons = [peerEditMenuButton(() => this.peerId), this.autoDeleteBtnMenuOptions, {
       icon: 'filter',
       text: 'FilterActions',
       onClick: () => {

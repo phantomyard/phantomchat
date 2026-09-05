@@ -257,15 +257,16 @@ export default class AppContactsTab extends SliderSuperTab {
       const allMappings = await getAllMappings();
       if(!middleware()) return;
 
-      // Backstop against delete-boomerang: even though the delete paths now call
-      // removeMapping, drop any peer whose conversation carries a tombstone. This
-      // keeps a deleted contact from reappearing if a stale mapping survives (e.g.
-      // re-injected by an in-flight relay event between delete and reload).
+      // Tombstoned peers still carrying a stale mapping are listed at the
+      // BOTTOM as "Deleted Account" instead of being hidden: they are exactly
+      // the ghost members that keep reappearing in groups, and the Contacts
+      // pane is where users can finally delete them (right-click > Delete).
+      // (Own pubkey comes from the window global - loadIdentity() reads a
+      // store production code never writes.)
       let mappings = allMappings;
+      const tombstoned = new Set<string>();
       try {
-        const {loadIdentity} = await import('@lib/phantomchat/identity');
-        const identity = await loadIdentity();
-        const ownPubkey = identity?.publicKey ?? null;
+        const ownPubkey = (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey ?? null;
         if(ownPubkey) {
           const {getMessageStore} = await import('@lib/phantomchat/message-store');
           const store = getMessageStore();
@@ -278,7 +279,14 @@ export default class AppContactsTab extends SliderSuperTab {
               return false;
             }
           }));
-          mappings = allMappings.filter((_, i) => !checks[i]);
+          allMappings.forEach((m, i) => {
+            if(checks[i]) tombstoned.add(m.pubkey);
+          });
+          // Live contacts first, deleted ones last.
+          mappings = [
+            ...allMappings.filter((m) => !tombstoned.has(m.pubkey)),
+            ...allMappings.filter((m) => tombstoned.has(m.pubkey))
+          ];
         }
       } catch(err) {
         console.warn('[PhantomChat.chat] tombstone backstop skipped:', err);
@@ -314,7 +322,9 @@ export default class AppContactsTab extends SliderSuperTab {
 
       const peerIds: PeerId[] = [];
       for(const m of filtered) {
-        const displayName = m.displayName || 'npub...' + m.pubkey.slice(0, 16);
+        const displayName = tombstoned.has(m.pubkey) ?
+          'Deleted Account' :
+          (m.displayName || 'npub...' + m.pubkey.slice(0, 16));
         const avatar = bridge.deriveAvatarFromPubkeySync(m.pubkey);
         // Worker injection
         try {

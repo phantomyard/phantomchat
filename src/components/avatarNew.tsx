@@ -696,6 +696,25 @@ export const AvatarNew = (props: {
       const hexPubkey = (peer as any)?.p2pPubkey || (peerIdNum >= 1e15 ? await getPubkey(peerIdNum) : null);
       const rawSeed = hexPubkey || (peerId ? String(peerId) : (peer?.id ? String(peer.id) : ''));
       const avatarSeed = rawSeed.replace(/^-/, '');
+
+      // Custom group avatar (PhantomChat): the group record's `avatar` field
+      // is a Blossom URL set by the admin via the group edit tab. Render it
+      // before falling back to the deterministic Key Sigil generator.
+      if(isGroup) {
+        try {
+          const {getGroupStore} = await import('@lib/phantomchat/group-store');
+          const rec = await getGroupStore().getByPeerId(peerIdNum);
+          if(rec?.avatar && middleware()) {
+            const img = document.createElement('img');
+            img.className = 'avatar-photo';
+            await renderImageFromUrlPromise(img, rec.avatar, props.useCache);
+            if(!middleware()) return;
+            _setMedia(img);
+            return {loadThumbPromise: Promise.resolve()} as any;
+          }
+        } catch{}
+      }
+
       if(avatarSeed) {
         const dicebearUrl = await generateDicebearAvatar(avatarSeed, isGroup);
         if(!middleware()) return;

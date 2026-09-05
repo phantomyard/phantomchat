@@ -85,6 +85,19 @@ export async function addP2PContact(opts: AddP2PContactOptions): Promise<AddP2PC
     existingDisplayName ||
     'npub...' + hexPubkey.slice(0, 12);
 
+  // Deliberate add: if this peer's conversation was previously deleted, the
+  // tombstone would make storeMapping refuse to re-create the mapping (the
+  // resurrection guard). The user's explicit add (or a contacts-sync LWW
+  // re-add of a newer remote entry) means the contact is wanted again — clear
+  // the watermark so the guard lets it through.
+  try {
+    const ownPk = (window as any).__phantomchatOwnPubkey;
+    if(ownPk) {
+      const ms = await import('./message-store');
+      await ms.getMessageStore().clearTombstone(ms.getMessageStore().getConversationId(ownPk, hexPubkey));
+    }
+  } catch{ /* best-effort */ }
+
   await bridge.storePeerMapping(hexPubkey, peerId, userNickname || existingDisplayName);
 
   // Inject User into Worker BEFORE we touch the main-thread mirrors — the
