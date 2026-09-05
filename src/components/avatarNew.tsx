@@ -67,6 +67,13 @@ const TEST_SWAPPING = 0;
 const GROUP_AVATAR_TTL = 30_000;
 const groupAvatarCache = new Map<number, {url: string | undefined, at: number}>();
 
+/** Drop the memoised custom-avatar URL for a group after an info update, so
+ *  a changed avatar renders on the next cycle instead of lagging up to
+ *  GROUP_AVATAR_TTL. Called from GroupAPI.handleInfoUpdate. */
+export function invalidateGroupAvatarCache(peerId: number): void {
+  groupAvatarCache.delete(peerId);
+}
+
 const avatarsMap: Map<string, Set<ReturnType<typeof AvatarNew>>> = new Map();
 const believeMe: Map<string, Set<ReturnType<typeof AvatarNew>>> = new Map();
 const seen: Set<PeerId> = new Set();

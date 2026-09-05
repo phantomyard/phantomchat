@@ -111,6 +111,13 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
     if(isAdmin) {
       const avatarEdit = new AvatarEdit(async(_upload, blob) => {
         try {
+          // Uses the default server list (DEFAULT_BLOSSOM_SERVERS via
+          // BlossomClient) — the receive-path allowlist isSafeGroupAvatarUrl
+          // unions that list with /blossom.json hosts (getBlossomServers),
+          // so the two lists are load-bearing together: if this upload ever
+          // switches to getBlossomServers()-rotated hosts, the receive check
+          // already accepts them, but a host outside both lists would store
+          // an avatar every other member refuses to render.
           const client = new BlossomClient();
           const descriptor = await client.upload(await blob.arrayBuffer(), blob.type || 'image/jpeg');
           await getGroupAPI().updateGroupInfo(this.groupId, {avatar: descriptor.url});

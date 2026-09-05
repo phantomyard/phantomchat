@@ -34,27 +34,37 @@ export const DEFAULT_BLOSSOM_SERVERS: readonly string[] = [
  * Allowlisted avatar URLs. group_info_update carries a URL that every
  * member's client fetches when rendering the group avatar — without this
  * gate any member (or a compromised one) could make all peers beacon an
- * arbitrary host. Restrict to the canonical Blossom servers the upload
- * path itself uses (list above); Blossom URLs are content-addressed, so
- * mirrors add nothing here. Kept in this dependency-free module so both
- * the receive path (group-api) and the render path (avatarNew) can import
- * it without cycles or bundle bloat.
+ * arbitrary host. Restrict to Blossom hosts: the hardcoded canonical list
+ * unioned with the live /blossom.json servers (see avatarAllowedHosts).
+ * Blossom URLs are content-addressed, so mirrors add nothing here. Kept in
+ * this dependency-free module so both the receive path (group-api) and the
+ * render path (avatarNew) can import it without cycles or bundle bloat.
  */
-const AVATAR_ALLOWED_HOSTS: ReadonlySet<string> = new Set(
-  DEFAULT_BLOSSOM_SERVERS.map((s) => {
+function avatarAllowedHosts(): ReadonlySet<string> {
+  // Union the hardcoded defaults with the live /blossom.json list: the
+  // avatar upload surface uses getBlossomServers() so /blossom.json can
+  // rotate hosts without a client release, and this receive-path check
+  // must accept whatever the upload path can legitimately produce. The
+  // two lists are load-bearing together — see the BlossomClient note in
+  // phantomchatGroupEdit.
+  const hosts = new Set<string>();
+  const add = (server: string) => {
     try {
-      return new URL(s).hostname;
+      hosts.add(new URL(server).hostname);
     } catch{
-      return s.replace(/^https?:\/\//, '');
+      hosts.add(server.replace(/^https?:\/\//, ''));
     }
-  })
-);
+  };
+  DEFAULT_BLOSSOM_SERVERS.forEach(add);
+  getBlossomServersSync().forEach(add);
+  return hosts;
+}
 
 export function isSafeGroupAvatarUrl(url: string | undefined | null): boolean {
   if(!url) return true; // absent avatar is not an attack
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'https:' && AVATAR_ALLOWED_HOSTS.has(parsed.hostname);
+    return parsed.protocol === 'https:' && avatarAllowedHosts().has(parsed.hostname);
   } catch{
     return false;
   }

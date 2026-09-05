@@ -184,7 +184,12 @@ export async function storeMapping(
       };
       const putReq = store.put(record);
       putReq.onerror = () => reject(putReq.error);
-      putReq.onsuccess = () => resolve(true);
+      // Resolve on transaction completion, not put success: the transaction
+      // can still abort afterwards, and the caller (bridge) caches the
+      // mapping only if this resolves — a mapped-but-not-committed cache
+      // entry would disagree with IndexedDB for the rest of the session.
+      tx.oncomplete = () => resolve(true);
+      tx.onabort = () => reject(tx.error || new Error('storeMapping transaction aborted'));
     };
   });
 }

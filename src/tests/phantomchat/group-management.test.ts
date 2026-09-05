@@ -429,6 +429,62 @@ describe('Group Management', () => {
       expect(store().updateMembers).toHaveBeenCalledTimes(1);
     });
 
+    it('does not let a future-dated members event poison the watermark (PR #138 review 2)', async() => {
+      const gid = 'watermarkfuture0000000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeAddRumor = (ts: number, id: string, mems: string[]): any => ({
+        id, kind: 14,
+        content: JSON.stringify({type: 'group_add_member', groupId: gid, targetPubkey: NEW_MEMBER, memberPubkeys: mems} as GroupControlPayload),
+        pubkey: MEMBER_B, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      // A member dates an add ten years out — this must not be applied AND
+      // must not pin the persisted members watermark, which would freeze
+      // the group's membership forever (every later event then fails the
+      // replay gate).
+      await api.handleControlMessage(
+        makeAddRumor(now + 315360000, 'ctrl-wm-future', [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]), MEMBER_B);
+      expect(store().updateMembers).toHaveBeenCalledTimes(0);
+
+      // A legitimate add that follows must still apply...
+      await api.handleControlMessage(
+        makeAddRumor(now, 'ctrl-wm-legit', [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+
+      // ...and the watermark must be sane: an older backlog replay is still
+      // dropped (proving the watermark advanced to ~now, not to the future).
+      await api.handleControlMessage(
+        makeAddRumor(now - 300, 'ctrl-wm-old', [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not advance the watermark when the handler applied nothing (PR #138 review 2)', async() => {
+      const gid = 'watermarknoop000000000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeAddRumor = (ts: number, id: string, mems?: string[]): any => ({
+        id, kind: 14,
+        content: JSON.stringify({type: 'group_add_member', groupId: gid, targetPubkey: NEW_MEMBER, ...(mems ? {memberPubkeys: mems} : {})} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      // An add with no member list is a complete no-op — it must not
+      // advance the members watermark, otherwise a legitimate older add
+      // still queued in the backlog behind it is dropped.
+      await api.handleControlMessage(makeAddRumor(now, 'ctrl-wm-noop'), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(0);
+
+      // The older legitimate add behind it in the backlog must apply.
+      await api.handleControlMessage(
+        makeAddRumor(now - 300, 'ctrl-wm-real', [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+    });
+
     it('ignores group_admin_transfer from a non-admin', async() => {
       store().get.mockResolvedValue(makeGroup({adminPubkey: OWN_PUBKEY}));
       const payload: GroupControlPayload = {
