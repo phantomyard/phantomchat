@@ -350,7 +350,20 @@ export class MessageStore {
           const readReq = store.get(getReq.result);
           readReq.onsuccess = () => {
             const existing = readReq.result as StoredMessage | undefined;
-            const merged = {...(existing || {}), ...msg};
+            // A spread copies EXPLICITLY-undefined keys over the existing value,
+            // so a partial writer that carries `senderPubkey: undefined` (e.g. a
+            // device-sync row pulled from another device, where the field is
+            // typed required but is wire data and absent on legacy rows) blanks
+            // the sender of a row we already had. That loss is invisible until
+            // the next reload: getGroupHistory can then emit no `from_id`, and
+            // tweb's saveMessages falls back to `fromId = peerId` — the CHAT —
+            // so the bubble renders the group's own title and avatar as the
+            // sender. Strip undefined keys so an OMITTED field always falls back
+            // to the existing row and can never erase it.
+            const incoming = Object.fromEntries(
+              Object.entries(msg).filter(([, v]) => v !== undefined)
+            ) as PartialStoredMessage;
+            const merged = {...(existing || {}), ...incoming};
             // Preserve non-null fields from existing record
             if(existing?.mid && !msg.mid) merged.mid = existing.mid;
             if(existing?.twebPeerId && !msg.twebPeerId) merged.twebPeerId = existing.twebPeerId;
