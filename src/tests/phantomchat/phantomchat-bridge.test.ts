@@ -205,7 +205,8 @@ describe('PhantomChat.chat Bridge Round-Trip (IndexedDB)', () => {
     const recoveredPubkey = await bridge.reverseLookup(peerId);
     expect(recoveredPubkey).toBe(pubkey);
     expect(getPubkeySpy).toHaveBeenCalledWith(peerId);
-    expect(storeMappingSpy).toHaveBeenCalledWith(pubkey, peerId, 'Test User');
+    // Bridge passes the tombstone opt-out through as the 5th arg.
+    expect(storeMappingSpy).toHaveBeenCalledWith(pubkey, peerId, 'Test User', undefined, undefined);
   });
 
   it('reverseLookup returns null for unknown peerId', async () => {

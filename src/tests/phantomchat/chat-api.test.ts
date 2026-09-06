@@ -992,7 +992,10 @@ describe('ChatAPI', () => {
 
       // Bridge should have been called to auto-store the unknown sender
       expect(bridgeMocks.mapPubkeyToPeerId).toHaveBeenCalledWith(unknownSenderPubkey);
-      expect(bridgeMocks.storePeerMapping).toHaveBeenCalledWith(unknownSenderPubkey, 9999999999);
+      // Receive path persists with the revive opt-out flag (tombstone guard
+      // pass-through), hence the extra args.
+      expect(bridgeMocks.storePeerMapping).toHaveBeenCalledWith(
+        unknownSenderPubkey, 9999999999, undefined, {allowTombstoned: expect.any(Boolean)});
 
       // Message should still be delivered to onMessage callback (not filtered away)
       expect(receivedMessage).toBeDefined();
@@ -1025,7 +1028,8 @@ describe('ChatAPI', () => {
       // IndexedDB so the Virtual MTProto send path can resolve the recipient
       // ("VMT returned no phantomchatMid" bug). Receiving used to be the only
       // path that skipped persistence for known peers.
-      expect(bridgeMocks.storePeerMapping).toHaveBeenCalledWith(knownSenderPubkey, 9999999999);
+      expect(bridgeMocks.storePeerMapping).toHaveBeenCalledWith(
+        knownSenderPubkey, 9999999999, undefined, {allowTombstoned: expect.any(Boolean)});
 
       // ...but a *known* sender must not raise a message-request prompt.
       const requestDispatched = (rootScope.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls

@@ -112,12 +112,55 @@ export async function storeMapping(
   pubkey: string,
   peerId: number,
   displayName?: string,
-  nostrProfile?: NostrProfile
-): Promise<void> {
+  nostrProfile?: NostrProfile,
+  opts?: {allowTombstoned?: boolean}
+): Promise<boolean> {
   const db = await getDB();
+
+  // Advisory pre-read: the tombstone guard below only matters when creating
+  // a NEW mapping, and the async cross-DB tombstone lookup can't run inside
+  // the readwrite transaction (awaiting there auto-commits it). This read
+  // only DECIDES whether to run the tombstone check — the authoritative
+  // read-modify-write happens atomically in the single readwrite
+  // transaction below, so two concurrent calls can no longer both read
+  // undefined and lose one caller's displayName/addedAt.
+  const preExisting = await new Promise<VirtualPeerMapping | undefined>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(pubkey);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(req.result as VirtualPeerMapping | undefined);
+  });
+
+  // Tombstone guard — the resurrection fix. A deleted contact's mapping is
+  // removed by deleteConversation (Level 1c) and its conversation carries a
+  // deletion watermark. Automatic paths that re-persist mappings (contacts-sync
+  // apply, history backfill, receive-path persistence, kind 0 upgrades) must
+  // NOT re-create the mapping — otherwise the contact reappears in Contacts
+  // and the group-members picker on every sync cycle. Deliberate re-adds go
+  // through addP2PContact, which clears the tombstone first; the strictly-
+  // newer-message revive path passes {allowTombstoned: true} explicitly.
+  if(!preExisting && !opts?.allowTombstoned) {
+    try {
+      const own = (window as any).__phantomchatOwnPubkey || '';
+      if(own) {
+        const ms = await import('./message-store');
+        const mstore = ms.getMessageStore();
+        const convId = mstore.getConversationId(own, pubkey);
+        const tomb = await mstore.getTombstone(convId);
+        if(tomb > 0) {
+          console.warn('[virtual-peers] suppressing mapping re-creation for tombstoned peer', pubkey.slice(0, 8));
+          return false;
+        }
+      }
+    } catch(e) { /* guard is best-effort — never block a legit write on it */ }
+  }
+
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
+    // Authoritative read INSIDE the write transaction: get + put commit
+    // together, so concurrent burst-writes (receive path on reconnect)
+    // serialize instead of last-write-losing a displayName.
     const getReq = store.get(pubkey);
     getReq.onerror = () => reject(getReq.error);
     getReq.onsuccess = () => {
@@ -128,8 +171,8 @@ export async function storeMapping(
       // idempotent message-path (pubkey+peerId only) preserves the prior
       // updatedAt so received messages don't churn the contacts-sync blob.
       const identityChanged = !existing ||
-        displayName !== undefined ||
-        nostrProfile !== undefined;
+          displayName !== undefined ||
+          nostrProfile !== undefined;
       const record: VirtualPeerMapping = {
         pubkey,
         peerId,
@@ -141,7 +184,12 @@ export async function storeMapping(
       };
       const putReq = store.put(record);
       putReq.onerror = () => reject(putReq.error);
-      putReq.onsuccess = () => resolve();
+      // Resolve on transaction completion, not put success: the transaction
+      // can still abort afterwards, and the caller (bridge) caches the
+      // mapping only if this resolves — a mapped-but-not-committed cache
+      // entry would disagree with IndexedDB for the rest of the session.
+      tx.oncomplete = () => resolve(true);
+      tx.onabort = () => reject(tx.error || new Error('storeMapping transaction aborted'));
     };
   });
 }

@@ -30,6 +30,7 @@ import memoizeAsyncWithTTL from '@helpers/memoizeAsyncWithTTL';
 import {MonoforumDialog} from '@lib/storages/monoforumDialogs';
 import {openRemoveFeePopup} from '@components/chat/removeFee';
 import apiManagerProxy from '@lib/apiManagerProxy';
+import {peerEditMenuButton} from '@components/peerActionsMenu';
 
 
 export default class DialogsContextMenu {
@@ -102,7 +103,7 @@ export default class DialogsContextMenu {
   }
 
   private getButtons() {
-    this.buttons ??= [{
+    this.buttons ??= [peerEditMenuButton(() => this.peerId), {
       icon: 'newtab',
       text: 'OpenInNewTab',
       onClick: (e) => {

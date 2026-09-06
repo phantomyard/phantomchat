@@ -312,6 +312,211 @@ describe('Group Management', () => {
       expect(store().save).toHaveBeenCalledTimes(1);
     });
 
+    // ─── Replay guards (PR #138 review: source-event watermarks) ──
+    it('ignores a replayed group_create for a live record (non-destructive)', async() => {
+      store().get.mockResolvedValue(makeGroup());
+      const payload: GroupControlPayload = {
+        type: 'group_create', groupId: GROUP_ID, groupName: 'Clobber Attempt',
+        memberPubkeys: [MEMBER_A], adminPubkey: MEMBER_A
+      };
+      const rumor = {
+        id: 'ctrl-replay-create', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_A, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+      // The live record must survive untouched.
+      expect(store().save).not.toHaveBeenCalled();
+    });
+
+    it('drops group_info_update from a non-admin (name + avatar spoof)', async() => {
+      store().get.mockResolvedValue(makeGroup({adminPubkey: OWN_PUBKEY}));
+      const payload: GroupControlPayload = {
+        type: 'group_info_update', groupId: GROUP_ID,
+        groupName: 'Spoofed', groupAvatar: 'https://evil.example/beacon.jpg'
+      };
+      const rumor = {
+        id: 'ctrl-info-spoof', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_B, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_B);
+      expect(store().updateInfo).not.toHaveBeenCalled();
+    });
+
+    it('drops a group_info_update whose avatar is not a Blossom host', async() => {
+      store().get.mockResolvedValue(makeGroup({adminPubkey: OWN_PUBKEY}));
+      const payload: GroupControlPayload = {
+        type: 'group_info_update', groupId: GROUP_ID,
+        groupName: 'Still Mine', groupAvatar: 'https://evil.example/beacon.jpg'
+      };
+      const rumor = {
+        id: 'ctrl-info-avatar', kind: 14, content: JSON.stringify(payload),
+        pubkey: OWN_PUBKEY, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, OWN_PUBKEY);
+      expect(store().updateInfo).not.toHaveBeenCalled();
+    });
+
+    it('applies an admin info update, then drops a replayed older one (watermark)', async() => {
+      const gid = 'watermarkinfo000000000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeInfoRumor = (ts: number, name: string): any => ({
+        id: 'ctrl-info-' + name, kind: 14,
+        content: JSON.stringify({type: 'group_info_update', groupId: gid, groupName: name} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      await api.handleControlMessage(makeInfoRumor(now, 'Newer Name'), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(1);
+
+      // Backlog replay of an event sent BEFORE the applied one (>60s older)
+      // must not clobber the newer name.
+      await api.handleControlMessage(makeInfoRumor(now - 300, 'Older Name'), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(1);
+    });
+
+    it('still applies a delayed members event after a newer info event (per-field)', async() => {
+      const gid = 'watermarkfield000000000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const infoRumor: any = {
+        id: 'ctrl-wm-info', kind: 14,
+        content: JSON.stringify({type: 'group_info_update', groupId: gid, groupName: 'Renamed'} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: now,
+        tags: [['control', 'true'], ['group', gid]]
+      };
+      const addRumor: any = {
+        id: 'ctrl-wm-add', kind: 14,
+        content: JSON.stringify({type: 'group_add_member', groupId: gid, targetPubkey: NEW_MEMBER, memberPubkeys: [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: now - 300, // sent long before the rename
+        tags: [['control', 'true'], ['group', gid]]
+      };
+
+      await api.handleControlMessage(infoRumor, OWN_PUBKEY);
+      await api.handleControlMessage(addRumor, OWN_PUBKEY);
+      // The rename must not mask the (older) membership event: watermarks
+      // are per field, so a delayed add still applies.
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops a members event older than the applied members watermark', async() => {
+      const gid = 'watermarkmem0000000000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeAddRumor = (ts: number, id: string): any => ({
+        id, kind: 14,
+        content: JSON.stringify({type: 'group_add_member', groupId: gid, targetPubkey: NEW_MEMBER, memberPubkeys: [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      await api.handleControlMessage(makeAddRumor(now, 'ctrl-wm-a1'), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+
+      // Relay backlog replay of the same/older add must not re-clobber the
+      // member list (e.g. re-adding a member the admin removed since).
+      await api.handleControlMessage(makeAddRumor(now - 300, 'ctrl-wm-a2'), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let a future-dated members event poison the watermark (PR #138 review 2)', async() => {
+      const gid = 'watermarkfuture0000000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeAddRumor = (ts: number, id: string, mems: string[]): any => ({
+        id, kind: 14,
+        content: JSON.stringify({type: 'group_add_member', groupId: gid, targetPubkey: NEW_MEMBER, memberPubkeys: mems} as GroupControlPayload),
+        pubkey: MEMBER_B, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      // A member dates an add ten years out — this must not be applied AND
+      // must not pin the persisted members watermark, which would freeze
+      // the group's membership forever (every later event then fails the
+      // replay gate).
+      await api.handleControlMessage(
+        makeAddRumor(now + 315360000, 'ctrl-wm-future', [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]), MEMBER_B);
+      expect(store().updateMembers).toHaveBeenCalledTimes(0);
+
+      // A legitimate add that follows must still apply...
+      await api.handleControlMessage(
+        makeAddRumor(now, 'ctrl-wm-legit', [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+
+      // ...and the watermark must be sane: an older backlog replay is still
+      // dropped (proving the watermark advanced to ~now, not to the future).
+      await api.handleControlMessage(
+        makeAddRumor(now - 300, 'ctrl-wm-old', [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not advance the watermark when the handler applied nothing (PR #138 review 2)', async() => {
+      const gid = 'watermarknoop000000000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeAddRumor = (ts: number, id: string, mems?: string[]): any => ({
+        id, kind: 14,
+        content: JSON.stringify({type: 'group_add_member', groupId: gid, targetPubkey: NEW_MEMBER, ...(mems ? {memberPubkeys: mems} : {})} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      // An add with no member list is a complete no-op — it must not
+      // advance the members watermark, otherwise a legitimate older add
+      // still queued in the backlog behind it is dropped.
+      await api.handleControlMessage(makeAddRumor(now, 'ctrl-wm-noop'), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(0);
+
+      // The older legitimate add behind it in the backlog must apply.
+      await api.handleControlMessage(
+        makeAddRumor(now - 300, 'ctrl-wm-real', [MEMBER_A, OWN_PUBKEY, NEW_MEMBER]), OWN_PUBKEY);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores group_admin_transfer from a non-admin', async() => {
+      store().get.mockResolvedValue(makeGroup({adminPubkey: OWN_PUBKEY}));
+      const payload: GroupControlPayload = {
+        type: 'group_admin_transfer', groupId: GROUP_ID, adminPubkey: MEMBER_B
+      };
+      const rumor = {
+        id: 'ctrl-at-spoof', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_B, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_B);
+      expect(store().save).not.toHaveBeenCalled();
+    });
+
+    it('applies group_admin_transfer from the current admin', async() => {
+      store().get.mockResolvedValue(makeGroup({adminPubkey: OWN_PUBKEY}));
+      const payload: GroupControlPayload = {
+        type: 'group_admin_transfer', groupId: GROUP_ID, adminPubkey: MEMBER_A
+      };
+      const rumor = {
+        id: 'ctrl-at-real', kind: 14, content: JSON.stringify(payload),
+        pubkey: OWN_PUBKEY, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, OWN_PUBKEY);
+      expect(store().save).toHaveBeenCalledTimes(1);
+      const saved = store().save.mock.calls[0][0] as GroupRecord;
+      expect(saved.adminPubkey).toBe(MEMBER_A);
+    });
+
     it('group_delete from the admin tears the group down locally', async() => {
       store().get.mockResolvedValue(makeGroup({adminPubkey: MEMBER_A}));
       const payload: GroupControlPayload = {type: 'group_delete', groupId: GROUP_ID};

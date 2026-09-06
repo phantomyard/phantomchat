@@ -729,6 +729,14 @@ export class AppSidebarLeft extends SidebarSlider {
         });
       }
     }, {
+      icon: 'folder',
+      text: 'Filters',
+      onClick: () => {
+        closeTabsBefore(() => {
+          this.createTab(AppChatFoldersTab).open();
+        });
+      }
+    }, {
       id: 'settings',
       icon: 'settings',
       text: 'Settings',

@@ -51,6 +51,7 @@ import {appSettings} from '@stores/appSettings';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import {getPubkey} from '@lib/phantomchat/virtual-peers-db';
+import {isSafeGroupAvatarUrl} from '@lib/phantomchat/blossom-servers';
 import {createAutoDeleteIcon} from '@components/chat/utils';
 import {resolveElements} from '@solid-primitives/refs';
 import toArray from '@helpers/array/toArray';
@@ -58,6 +59,20 @@ import computeLockColor from '@helpers/computeLockColor';
 
 const FADE_IN_DURATION = 200;
 const TEST_SWAPPING = 0;
+
+// Memoised custom-group-avatar lookup: avatarNew renders for every chat-list
+// row, topbar and dialog, and each render did an IndexedDB getByPeerId
+// round-trip. Cache the URL briefly — a stale hit only delays a changed
+// avatar until the next render cycle (group info updates re-render peers).
+const GROUP_AVATAR_TTL = 30_000;
+const groupAvatarCache = new Map<number, {url: string | undefined, at: number}>();
+
+/** Drop the memoised custom-avatar URL for a group after an info update, so
+ *  a changed avatar renders on the next cycle instead of lagging up to
+ *  GROUP_AVATAR_TTL. Called from GroupAPI.handleInfoUpdate. */
+export function invalidateGroupAvatarCache(peerId: number): void {
+  groupAvatarCache.delete(peerId);
+}
 
 const avatarsMap: Map<string, Set<ReturnType<typeof AvatarNew>>> = new Map();
 const believeMe: Map<string, Set<ReturnType<typeof AvatarNew>>> = new Map();
@@ -696,6 +711,33 @@ export const AvatarNew = (props: {
       const hexPubkey = (peer as any)?.p2pPubkey || (peerIdNum >= 1e15 ? await getPubkey(peerIdNum) : null);
       const rawSeed = hexPubkey || (peerId ? String(peerId) : (peer?.id ? String(peer.id) : ''));
       const avatarSeed = rawSeed.replace(/^-/, '');
+
+      // Custom group avatar (PhantomChat): the group record's `avatar` field
+      // is a Blossom URL set by the admin via the group edit tab. Render it
+      // before falling back to the deterministic Key Sigil generator.
+      if(isGroup) {
+        try {
+          let cached = groupAvatarCache.get(peerIdNum);
+          if(!cached || Date.now() - cached.at > GROUP_AVATAR_TTL) {
+            const {getGroupStore} = await import('@lib/phantomchat/group-store');
+            const rec = await getGroupStore().getByPeerId(peerIdNum);
+            cached = {url: rec?.avatar, at: Date.now()};
+            groupAvatarCache.set(peerIdNum, cached);
+          }
+          // Render-time defense in depth alongside the receive-path gate in
+          // handleInfoUpdate: never dereference a URL that isn't a Blossom
+          // host (an arbitrary URL here would beacon every viewer's IP).
+          if(cached.url && isSafeGroupAvatarUrl(cached.url) && middleware()) {
+            const img = document.createElement('img');
+            img.className = 'avatar-photo';
+            await renderImageFromUrlPromise(img, cached.url, props.useCache);
+            if(!middleware()) return;
+            _setMedia(img);
+            return {loadThumbPromise: Promise.resolve()} as any;
+          }
+        } catch{}
+      }
+
       if(avatarSeed) {
         const dicebearUrl = await generateDicebearAvatar(avatarSeed, isGroup);
         if(!middleware()) return;

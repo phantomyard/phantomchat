@@ -20,9 +20,59 @@ import {writeGroupCreateServiceMessage} from './group-service-messages';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
 import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {getMessageStore} from './message-store';
+import {isSafeGroupAvatarUrl} from './blossom-servers';
 import type {GroupStore} from './group-store';
 import type {GroupRecord, GroupControlPayload} from './group-types';
 import type {NTNostrEvent} from './nostr-crypto';
+
+// ─── Source-event watermarks (per-field LWW on event time) ────────
+
+/** Which mutable field-set a control message kind writes to. */
+type GroupEventField = 'members' | 'info' | 'admin';
+
+const WATERMARK_PREFIX = 'phantomchat:group-wm:';
+/** Grace for clock skew between members' devices, in seconds. */
+const WATERMARK_GRACE_SEC = 60;
+
+function watermarkFieldFor(type: string): GroupEventField | null {
+  switch(type) {
+    case 'group_add_member':
+    case 'group_remove_member':
+    case 'group_leave':
+      return 'members';
+    case 'group_info_update':
+      return 'info';
+    case 'group_admin_transfer':
+      return 'admin';
+    default:
+      return null;
+  }
+}
+
+function readEventWatermark(groupId: string, field: GroupEventField): number {
+  try {
+    const wm = parseInt(localStorage.getItem(WATERMARK_PREFIX + groupId + ':' + field) || '0', 10) || 0;
+    // Heal a poisoned watermark: created_at is sender-chosen, so an event
+    // dated in the far future (pre-clamp release, or a malicious member)
+    // could have persisted a watermark years ahead — it would then drop
+    // every legitimate event forever, freezing the group's membership.
+    // Clamp to "now" so anti-replay protection survives but live events
+    // can apply; the next applied event stamps a sane value.
+    const nowSec = Math.floor(Date.now() / 1000);
+    if(wm > nowSec + WATERMARK_GRACE_SEC) {
+      return nowSec;
+    }
+    return wm;
+  } catch{
+    return 0;
+  }
+}
+
+function writeEventWatermark(groupId: string, field: GroupEventField, tsSec: number): void {
+  try {
+    localStorage.setItem(WATERMARK_PREFIX + groupId + ':' + field, String(tsSec));
+  } catch{ /* best-effort — private mode etc. */ }
+}
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -894,27 +944,66 @@ export class GroupAPI {
       }
     }
 
+    // PER-FIELD EVENT WATERMARK GATE. The tombstone gate above only
+    // protects deleted groups; this one protects LIVE ones against
+    // relay-replay resurrection: group_create / group_add_member carry the
+    // FULL member list, so a replayed old event must not clobber newer
+    // mutations.
+    //
+    // This is source-event last-writer-wins, NOT a wall-clock comparison
+    // against the record's updatedAt: the watermark is the newest
+    // created_at we have actually APPLIED, kept per group AND per field
+    // (members / info / admin) so that a delayed event of one kind is never
+    // dropped just because another kind applied more recently. The
+    // watermark persists in localStorage, so a backlog replayed after a
+    // reload can't resurrect removed members. group_create itself has no
+    // watermark — the non-destructive replay guard in handleGroupCreate
+    // already makes a replayed create a no-op for live records.
+    const ts = typeof rumor.created_at === 'number' ? rumor.created_at : Math.floor(Date.now() / 1000);
+    const wmField: GroupEventField | null = payload?.groupId ? watermarkFieldFor(payload.type) : null;
+    if(wmField) {
+      // FUTURE-TIMESTAMP CLAMP. created_at is attacker-chosen and the
+      // watermark is persisted: a single members event dated years ahead
+      // would pin the watermark beyond every legitimate future event and
+      // permanently freeze the group's membership (survives reload).
+      // An event dated beyond the skew grace is simply not valid yet —
+      // drop it; when its real time arrives a fresh delivery applies it.
+      const nowSec = Math.floor(Date.now() / 1000);
+      if(ts > nowSec + WATERMARK_GRACE_SEC) {
+        this.log('[GroupAPI] dropping control message dated in the future', payload.type, payload.groupId.slice(0, 8), {ts, nowSec});
+        return;
+      }
+      const wm = readEventWatermark(payload.groupId, wmField);
+      if(ts < wm - WATERMARK_GRACE_SEC) {
+        this.log('[GroupAPI] dropping replayed control message older than watermark', payload.type, payload.groupId.slice(0, 8), {ts, watermark: wm});
+        return;
+      }
+    }
+
+    // Field-bearing handlers report whether they actually applied (false =
+    // validation dropped it) so the watermark only advances on real applies.
+    let applied = false;
     switch(payload.type) {
       case 'group_create':
         await this.handleGroupCreate(payload, senderPubkey);
         break;
       case 'group_add_member':
-        await this.handleAddMember(payload);
+        applied = (await this.handleAddMember(payload)) !== false;
         break;
       case 'group_remove_member':
-        await this.handleRemoveMember(payload);
+        applied = (await this.handleRemoveMember(payload)) !== false;
         break;
       case 'group_leave':
-        await this.handleMemberLeave(payload, senderPubkey);
+        applied = (await this.handleMemberLeave(payload, senderPubkey)) !== false;
         break;
       case 'group_delete':
         await this.handleGroupDelete(payload, senderPubkey);
         break;
       case 'group_info_update':
-        await this.handleInfoUpdate(payload);
+        applied = (await this.handleInfoUpdate(payload, senderPubkey)) !== false;
         break;
       case 'group_admin_transfer':
-        await this.handleAdminTransfer(payload);
+        applied = (await this.handleAdminTransfer(payload, senderPubkey)) !== false;
         break;
       case 'group_edit_message':
         await this.handleEditMessageControl(payload, senderPubkey);
@@ -924,6 +1013,16 @@ export class GroupAPI {
         break;
       default:
         this.log.warn('[GroupAPI] unknown control message type:', payload.type);
+    }
+
+    // Advance the source-event watermark only when the event actually
+    // applied — a validation-dropped event must not mask an older, legitimate
+    // one still to arrive from the backlog.
+    if(wmField && applied) {
+      // Cap the persisted value at the local clock: ts was already clamped
+      // above, but defense in depth — a stored watermark may never exceed
+      // now + grace no matter what the sender claimed.
+      writeEventWatermark(payload.groupId, wmField, Math.min(ts, Math.floor(Date.now() / 1000)));
     }
   }
 
@@ -972,6 +1071,19 @@ export class GroupAPI {
 
   private async handleGroupCreate(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
     const peerId = await groupIdToPeerId(payload.groupId);
+
+    // NON-DESTRUCTIVE REPLAY GUARD: we already hold a live record for this
+    // group. A create event replayed from the relay backlog must not clobber
+    // it — the record's own mutations (renames, member changes) are newer
+    // than the original create. Belt and braces with the staleness gate in
+    // handleControlMessage: even if a skewed clock smuggles a stale create
+    // past that gate, it still can't overwrite a live record.
+    const existing = await this.store.get(payload.groupId);
+    if(existing) {
+      this.log('[GroupAPI] group_create replay for live group ignored:', payload.groupId.slice(0, 8));
+      return;
+    }
+
     const record: GroupRecord = {
       groupId: payload.groupId,
       name: payload.groupName || 'Group',
@@ -1017,29 +1129,36 @@ export class GroupAPI {
     this.log('[GroupAPI] group_create received:', payload.groupId);
   }
 
-  private async handleAddMember(payload: GroupControlPayload): Promise<void> {
-    if(payload.memberPubkeys) {
-      await this.store.updateMembers(payload.groupId, payload.memberPubkeys);
+  private async handleAddMember(payload: GroupControlPayload): Promise<boolean> {
+    if(!payload.memberPubkeys || payload.memberPubkeys.length === 0) {
+      return false;
     }
+    await this.store.updateMembers(payload.groupId, payload.memberPubkeys);
     this.log('[GroupAPI] group_add_member:', payload.targetPubkey?.slice(0, 8));
+    return true;
   }
 
-  private async handleRemoveMember(payload: GroupControlPayload): Promise<void> {
+  private async handleRemoveMember(payload: GroupControlPayload): Promise<boolean> {
     if(payload.targetPubkey === this.ownPubkey) {
       // We were removed — delete group locally + clean up the injected Chat
       // from main-thread mirrors so INV-group-no-orphan-mirror-peer holds
-      // and the chat list doesn't flash the removed group on refresh.
+      // and the chat list doesn't flash the removed group on refresh. The
+      // teardown runs even without a local record (zombie-mirror cleanup);
+      // only a record that actually existed counts as applied.
+      const group = await this.store.get(payload.groupId);
       const peerId = await groupIdToPeerId(payload.groupId);
       await this.store.delete(payload.groupId);
       await cleanupGroupChatInjection(peerId);
       this.log('[GroupAPI] removed from group:', payload.groupId);
-    } else {
-      const group = await this.store.get(payload.groupId);
-      if(group) {
-        const remaining = group.members.filter(m => m !== payload.targetPubkey);
-        await this.store.updateMembers(payload.groupId, remaining);
-      }
+      return !!group;
     }
+    const group = await this.store.get(payload.groupId);
+    if(!group || !group.members.includes(payload.targetPubkey)) {
+      return false;
+    }
+    const remaining = group.members.filter(m => m !== payload.targetPubkey);
+    await this.store.updateMembers(payload.groupId, remaining);
+    return true;
   }
 
   /**
@@ -1060,43 +1179,72 @@ export class GroupAPI {
     this.log('[GroupAPI] group deleted by admin:', payload.groupId.slice(0, 8));
   }
 
-  private async handleMemberLeave(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
+  private async handleMemberLeave(payload: GroupControlPayload, senderPubkey: string): Promise<boolean> {
     const group = await this.store.get(payload.groupId);
-    if(group) {
-      const remaining = group.members.filter(m => m !== senderPubkey);
+    if(!group || !group.members.includes(senderPubkey)) {
+      return false;
+    }
+    const remaining = group.members.filter(m => m !== senderPubkey);
 
-      // Admin-orphan protection: if the departing member was the admin, the
-      // remaining record would keep `adminPubkey` pointing at the gone admin
-      // — violating INV-group-admin-is-member. Auto-transfer admin to the
-      // lex-smallest remaining pubkey so every member derives the same new
-      // admin deterministically without a separate control-message round.
-      const wasAdminLeaving = group.adminPubkey === senderPubkey;
-      const newAdmin = wasAdminLeaving && remaining.length > 0 ?
-        [...remaining].sort()[0] :
-        group.adminPubkey;
+    // Admin-orphan protection: if the departing member was the admin, the
+    // remaining record would keep `adminPubkey` pointing at the gone admin
+    // — violating INV-group-admin-is-member. Auto-transfer admin to the
+    // lex-smallest remaining pubkey so every member derives the same new
+    // admin deterministically without a separate control-message round.
+    const wasAdminLeaving = group.adminPubkey === senderPubkey;
+    const newAdmin = wasAdminLeaving && remaining.length > 0 ?
+      [...remaining].sort()[0] :
+      group.adminPubkey;
 
-      if(wasAdminLeaving && newAdmin !== group.adminPubkey) {
-        const updated = {
-          ...group,
-          members: remaining,
-          adminPubkey: newAdmin,
-          updatedAt: Date.now()
-        };
-        await this.store.save(updated);
-        this.log('[GroupAPI] admin left; auto-promoted new admin:', newAdmin.slice(0, 8), 'in group', payload.groupId.slice(0, 8));
-      } else {
-        await this.store.updateMembers(payload.groupId, remaining);
-      }
+    if(wasAdminLeaving && newAdmin !== group.adminPubkey) {
+      const updated = {
+        ...group,
+        members: remaining,
+        adminPubkey: newAdmin,
+        updatedAt: Date.now()
+      };
+      await this.store.save(updated);
+      this.log('[GroupAPI] admin left; auto-promoted new admin:', newAdmin.slice(0, 8), 'in group', payload.groupId.slice(0, 8));
+    } else {
+      await this.store.updateMembers(payload.groupId, remaining);
     }
     this.log('[GroupAPI] member left group:', senderPubkey.slice(0, 8));
+    return true;
   }
 
-  private async handleInfoUpdate(payload: GroupControlPayload): Promise<void> {
+  private async handleInfoUpdate(payload: GroupControlPayload, senderPubkey: string): Promise<boolean | void> {
+    const group = await this.store.get(payload.groupId);
+    if(!group) {
+      this.log('[GroupAPI] group_info_update for unknown group, ignoring:', payload.groupId.slice(0, 8));
+      return false;
+    }
+    // Only the current admin may broadcast info changes — same sender
+    // validation as group_delete / group_admin_transfer. Without this, any
+    // member could rename the group for everyone, and (since the avatar
+    // field is now actually dereferenced) make every other member's client
+    // fetch an arbitrary URL — an IP/User-Agent beacon plus identity spoof.
+    if(group.adminPubkey !== senderPubkey) {
+      this.log.warn('[GroupAPI] ignoring group_info_update from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+      return false;
+    }
+    if(!isSafeGroupAvatarUrl(payload.groupAvatar)) {
+      this.log.warn('[GroupAPI] ignoring group_info_update with non-Blossom avatar URL for', payload.groupId.slice(0, 8));
+      return false;
+    }
     await this.store.updateInfo(payload.groupId, {
       name: payload.groupName,
       description: payload.groupDescription,
       avatar: payload.groupAvatar
     });
+
+    // Drop the avatarNew memo so a changed avatar renders on the next
+    // cycle instead of lagging up to the 30s TTL.
+    try {
+      const {invalidateGroupAvatarCache} = await import('@components/avatarNew');
+      invalidateGroupAvatarCache(group.peerId);
+    } catch(err) {
+      this.log.warn('[GroupAPI] avatar cache invalidation non-critical:', err);
+    }
 
     // Sync the main-thread mirror so the receiver's chat-list + topbar
     // pick up the new title. Without this, FIND-3f07bfd3 δ — the rename
@@ -1124,13 +1272,71 @@ export class GroupAPI {
     }
   }
 
-  private async handleAdminTransfer(payload: GroupControlPayload): Promise<void> {
+  private async handleAdminTransfer(payload: GroupControlPayload, senderPubkey: string): Promise<boolean | void> {
     const group = await this.store.get(payload.groupId);
-    if(group && payload.adminPubkey) {
-      group.adminPubkey = payload.adminPubkey;
-      group.updatedAt = Date.now();
-      await this.store.save(group);
+    if(!group || !payload.adminPubkey) {
+      // Applied nothing: the record is gone or the target is missing, so
+      // the watermark must not advance (a falsy return reads as applied).
+      return false;
     }
+    // Only the current admin may transfer. senderPubkey is the proven
+    // rumor pubkey (same validation as group_delete) — without this check
+    // any member could gift-wrap themselves into power.
+    if(group.adminPubkey !== senderPubkey) {
+      this.log.warn('[GroupAPI] ignoring group_admin_transfer from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+      return false;
+    }
+    group.adminPubkey = payload.adminPubkey;
+    group.updatedAt = Date.now();
+    await this.store.save(group);
+    return true;
+  }
+
+  /**
+   * Transfer admin rights to another member. Only the current admin can
+   * transfer. Broadcasts `group_admin_transfer` so every member's client
+   * updates its record, then applies locally. The receive handler existed
+   * but nothing ever sent the message type — there was no voluntary
+   * transfer path (an old admin could only hand over by leaving).
+   */
+  async transferAdmin(groupId: string, newAdminPubkey: string): Promise<void> {
+    const group = await this.store.get(groupId);
+    if(!group) throw new Error(`Group not found: ${groupId}`);
+    if(group.adminPubkey !== this.ownPubkey) throw new Error('Only admin can transfer admin rights');
+    if(!group.members.includes(newAdminPubkey)) {
+      throw new Error(`transferAdmin: target ${newAdminPubkey.slice(0, 8)}… is not a member`);
+    }
+    if(newAdminPubkey === this.ownPubkey) return; // idempotent no-op
+
+    const payload: GroupControlPayload = {
+      type: 'group_admin_transfer',
+      groupId,
+      adminPubkey: newAdminPubkey
+    };
+
+    let controlWraps;
+    try {
+      controlWraps = broadcastGroupControl(this.ownSk, group.members, payload);
+    } catch(err) {
+      this.log.warn('[GroupAPI] transferAdmin: broadcastGroupControl threw before local mutation:', err);
+      throw err;
+    }
+
+    group.adminPubkey = newAdminPubkey;
+    group.updatedAt = Date.now();
+    await this.store.save(group);
+
+    try {
+      await this.publishFn(controlWraps);
+    } catch(err) {
+      // Roll the local view back so it re-converges with peers on next merge.
+      group.adminPubkey = this.ownPubkey;
+      await this.store.save(group);
+      throw err;
+    }
+
+    this.log('[GroupAPI] admin transferred:', groupId.slice(0, 8), '->', newAdminPubkey.slice(0, 8));
+    schedulePublish('groups');
   }
 
   // ─── Accessors ────────────────────────────────────────────────

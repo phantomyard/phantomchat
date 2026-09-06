@@ -3,6 +3,9 @@ import SettingSection from '@components/settingSection';
 import Row from '@components/row';
 import InputField from '@components/inputField';
 import ButtonCorner from '@components/buttonCorner';
+import Button from '@components/button';
+import AvatarEdit from '@components/avatarEdit';
+import {avatarNew} from '@components/avatarNew';
 import {replaceButtonIcon} from '@components/button';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import AppAddMembersTab from '@components/sidebarLeft/tabs/addMembers';
@@ -11,9 +14,9 @@ import confirmationPopup from '@components/confirmationPopup';
 import {getGroupAPI} from '@lib/phantomchat/group-api';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
-import {loadIdentity} from '@lib/phantomchat/identity';
+import {BlossomClient} from '@lib/phantomchat/blossom-client';
 import rootScope from '@lib/rootScope';
-import type {LangPackKey} from '@lib/langPack';
+import {i18n, LangPackKey} from '@lib/langPack';
 import {toastNew} from '@components/toast';
 import appSidebarRight from '..';
 import {getGroupMemberChanges} from './phantomchatGroupEditState';
@@ -49,20 +52,88 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       allMappings.map(m => [m.pubkey, m.displayName || 'P2P ' + m.pubkey.slice(0, 6).toUpperCase()])
     );
 
-    // Determine own pubkey for admin check
-    let ownPubkey: string | null = null;
-    try {
-      const identity = await loadIdentity();
-      ownPubkey = identity?.publicKey ?? null;
-    } catch{
-      // identity not available
-    }
+    // Determine own pubkey for admin check. The canonical runtime source is
+    // window.__phantomchatOwnPubkey (set once onboarding completes, see
+    // bridge-invariants Rule 4). loadIdentity() reads an IndexedDB store that
+    // production code never writes, so it returns null in real sessions and
+    // silently demoted group admins (FIND: group admin check always false).
+    const ownPubkey: string | null =
+      (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey ?? null;
 
     const isAdmin = ownPubkey === group.adminPubkey;
     const originalMembers = [...group.members];
     let draftMembers = [...originalMembers];
     let refreshSave = () => {};
     let renderMembers = () => {};
+
+    // Commit the current member diff through GroupAPI. Shared by the check
+    // button (staged changes from the per-row X buttons) and the member
+    // picker's apply arrow, so both paths persist identically.
+    const applyMemberChanges = async() => {
+      const api = getGroupAPI();
+      const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
+      for(const pubkey of removed) {
+        await api.removeMember(this.groupId, pubkey);
+        originalMembers.splice(originalMembers.indexOf(pubkey), 1);
+      }
+      for(const pubkey of added) {
+        await api.addMember(this.groupId, pubkey);
+        originalMembers.push(pubkey);
+      }
+    };
+
+    // Avatar section: click to change (admin only). Uploads the cropped image
+    // to Blossom (public URL) and broadcasts it via updateGroupInfo so every
+    // member's client picks it up. Non-admins see the current avatar.
+    const avatarSection = new SettingSection({noDelimiter: true});
+    const avatarWrap = document.createElement('div');
+    avatarWrap.classList.add('avatar-edit');
+    avatarSection.content.append(avatarWrap);
+
+    let avatarElem: ReturnType<typeof avatarNew>;
+    // The avatar element must live inside the click-to-change host when the
+    // viewer is admin (avatarEdit.container), otherwise directly in the wrap
+    // — and it must keep rendering into that host on every re-render, or the
+    // first avatar change leaves the edit overlay empty.
+    let avatarHost: HTMLElement = avatarWrap;
+    const renderAvatarPreview = () => {
+      avatarElem?.node.remove();
+      avatarElem = avatarNew({
+        middleware: this.middlewareHelper.get(),
+        size: 120,
+        peerId: this.groupPeerId.toPeerId(true)
+      });
+      avatarElem.node.classList.add('avatar-placeholder');
+      avatarHost.append(avatarElem.node);
+    };
+    renderAvatarPreview();
+
+    if(isAdmin) {
+      const avatarEdit = new AvatarEdit(async(_upload, blob) => {
+        try {
+          // Uses the default server list (DEFAULT_BLOSSOM_SERVERS via
+          // BlossomClient) — the receive-path allowlist isSafeGroupAvatarUrl
+          // unions that list with /blossom.json hosts (getBlossomServers),
+          // so the two lists are load-bearing together: if this upload ever
+          // switches to getBlossomServers()-rotated hosts, the receive check
+          // already accepts them, but a host outside both lists would store
+          // an avatar every other member refuses to render.
+          const client = new BlossomClient();
+          const descriptor = await client.upload(await blob.arrayBuffer(), blob.type || 'image/jpeg');
+          await getGroupAPI().updateGroupInfo(this.groupId, {avatar: descriptor.url});
+          renderAvatarPreview();
+        } catch(err) {
+          console.error('[PhantomChatGroupEdit] avatar upload failed:', err);
+          toastNew({langPackKey: 'Error.AnError'});
+        }
+      });
+      avatarHost = avatarEdit.container;
+      avatarEdit.container.append(avatarElem.node);
+      avatarWrap.append(avatarEdit.container);
+      avatarEdit.container.title = i18n('PhantomChat.GroupEdit.ChangePhoto').textContent;
+    }
+
+    this.scrollable.append(avatarSection.container);
 
     // Admin-only: edit group name + description. This replaces the native
     // Telegram AppEditChatTab for P2P groups (which is Telegram-backed — its
@@ -86,12 +157,18 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       const saveBtn = ButtonCorner({icon: 'check'});
       this.content.append(saveBtn);
 
+      // Save only appears when something actually changed (name, description
+      // or a staged member removal via the per-row X) AND the name is
+      // non-empty — a visible button that silently does nothing on click is
+      // worse than a hidden one. The picker's arrow commits immediately, so
+      // it re-hides the button via refreshSave too.
       refreshSave = () => {
-        const name = nameInput.value.trim();
-        const desc = descInput.value.trim();
         const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
-        const changed = name !== group.name || desc !== (group.description || '') || !!added.length || !!removed.length;
-        saveBtn.classList.toggle('is-visible', changed && !!name);
+        const dirty = !!nameInput.value.trim() &&
+          (nameInput.value.trim() !== group.name ||
+          (descInput.value.trim() || undefined) !== group.description ||
+          added.length > 0 || removed.length > 0);
+        saveBtn.classList.toggle('is-visible', dirty);
       };
       this.listenerSetter.add(nameInput.input)('input', refreshSave);
       this.listenerSetter.add(descInput.input)('input', refreshSave);
@@ -101,24 +178,19 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         if(!name) return;
         const toggle = toggleDisability([saveBtn], true);
         try {
-          const api = getGroupAPI();
-          const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
-          for(const pubkey of removed) {
-            await api.removeMember(this.groupId, pubkey);
-            originalMembers.splice(originalMembers.indexOf(pubkey), 1);
-          }
-          for(const pubkey of added) {
-            await api.addMember(this.groupId, pubkey);
-            originalMembers.push(pubkey);
-          }
+          await applyMemberChanges();
           const description = descInput.value.trim() || undefined;
           if(name !== group.name || description !== group.description) {
-            await api.updateGroupInfo(this.groupId, {name, description});
+            await getGroupAPI().updateGroupInfo(this.groupId, {name, description});
           }
           group.name = name;
           group.description = description;
           group.members = [...draftMembers];
-          saveBtn.classList.remove('is-visible');
+
+          // Close the editor on save: an empty screen where the pane was
+          // reads as "saved", whereas staying open reads as "nothing happened".
+          this.close();
+          appSidebarRight.toggleSidebar(false);
         } catch(err) {
           console.error('[PhantomChatGroupEdit] save failed:', err);
           toastNew({langPackKey: 'Error.AnError'});
@@ -133,24 +205,54 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
 
     // Members section
     const membersSection = new SettingSection({
-      name: 'Members' as LangPackKey
+      name: 'GroupMembers'
     });
 
     // Build one member row (admin-only remove handler). Reused for the initial
-    // roster AND for members added live via "Add Members" below.
+    // roster AND for members added live via "Add Members" below. Removal is an
+    // explicit per-row button with a confirmation, not a hidden row click.
     const appendMemberRow = (pubkey: string) => {
       const displayName = mappingByPubkey.get(pubkey) || 'P2P ' + pubkey.slice(0, 6).toUpperCase();
       const isAdminMember = pubkey === group.adminPubkey;
 
-      const row = new Row({
+      const rowOptions: ConstructorParameters<typeof Row>[0] = {
         title: displayName,
-        subtitle: isAdminMember ? 'admin' : undefined,
+        subtitleLangKey: isAdminMember ? 'PhantomChat.GroupEdit.AdminSubtitle' : undefined,
         listenerSetter: this.listenerSetter
-      });
+      };
 
-      // Admin can remove non-admin members
+      // Admin can manage non-admin members: explicit per-row buttons for
+      // admin transfer and removal (no hidden gestures).
       if(isAdmin && !isAdminMember) {
-        attachClickEvent(row.container, async() => {
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex;align-items:center;gap:.25rem;';
+
+        const makeAdminBtn = Button('btn-icon btn-transparent', {icon: 'person'});
+        makeAdminBtn.title = i18n('PhantomChat.GroupEdit.MakeAdmin').textContent;
+        attachClickEvent(makeAdminBtn, async() => {
+          let cancelled = false;
+          try {
+            await confirmationPopup({
+              descriptionLangKey: 'PhantomChat.GroupEdit.MakeAdminDescription' as LangPackKey,
+              descriptionLangArgs: [displayName],
+              button: {langKey: 'PhantomChat.GroupEdit.MakeAdmin' as LangPackKey}
+            });
+          } catch{
+            cancelled = true;
+          }
+          if(cancelled) return;
+          try {
+            await getGroupAPI().transferAdmin(this.groupId, pubkey);
+            group.adminPubkey = pubkey;
+            renderMembers();
+          } catch(err) {
+            console.error('[PhantomChatGroupEdit] admin transfer failed:', err);
+            toastNew({langPackKey: 'Error.AnError'});
+          }
+        }, {listenerSetter: this.listenerSetter});
+
+        const removeBtn = Button('btn-icon btn-transparent danger', {icon: 'close'});
+        attachClickEvent(removeBtn, async() => {
           try {
             await confirmationPopup({
               descriptionLangKey: 'Permissions.RemoveFromGroup' as LangPackKey,
@@ -164,8 +266,11 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
             // user cancelled
           }
         }, {listenerSetter: this.listenerSetter});
+        actions.append(makeAdminBtn, removeBtn);
+        rowOptions.buttonRight = actions;
       }
 
+      const row = new Row(rowOptions);
       membersSection.content.append(row.container);
     };
 
@@ -177,12 +282,9 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
 
     let addRow: Row;
     if(isAdmin) {
-      const addEl = document.createElement('span');
-      addEl.style.color = 'var(--primary-color)';
-      addEl.textContent = 'Add or Remove Members';
-
       addRow = new Row({
-        title: addEl,
+        titleLangKey: 'PhantomChat.GroupEdit.GroupMembers',
+        clickable: true,
         listenerSetter: this.listenerSetter
       });
 
@@ -194,16 +296,40 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         this.slider.createTab(AppAddMembersTab).open({
           type: 'chat',
           skippable: false,
-          title: 'GroupAddMembers' as LangPackKey,
+          title: 'PhantomChat.GroupEdit.GroupMembers',
           placeholder: 'SendMessageTo' as LangPackKey,
           selectedPeerIds,
+          takeOutOnClose: true,
           takeOut: async(peerIds: PeerId[]) => {
             const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
             const resolved = await Promise.all(peerIds.map((pid) => getPubkey(+pid)));
             const selected = resolved.filter((pk): pk is string => !!pk);
             const unmappedMembers = draftMembers.filter((pubkey) => !mappingByPubkey.has(pubkey));
             draftMembers = Array.from(new Set([...selected, ...unmappedMembers, group.adminPubkey]));
+            // Commit FIRST, render AFTER: the roster must never show members
+            // that were not actually persisted. On failure the rejection
+            // propagates to the picker's attachToPromise (which stops the
+            // loader and closes the tab — its only working close affordance
+            // is the close itself), and the draft resyncs from what really
+            // landed in the store before the editor re-renders.
+            try {
+              await applyMemberChanges();
+            } catch(err) {
+              console.error('[PhantomChatGroupEdit] member change from picker failed:', err);
+              try {
+                const fresh = await getGroupStore().get(this.groupId);
+                draftMembers = [...(fresh?.members ?? originalMembers)];
+                originalMembers.splice(0, originalMembers.length, ...draftMembers);
+              } catch{}
+              renderMembers();
+              refreshSave();
+              toastNew({langPackKey: 'Error.AnError'});
+              throw err;
+            }
             renderMembers();
+            // The picker's arrow is the apply affordance members expect: it
+            // commits the membership change right away instead of waiting
+            // for the editor's check button.
             refreshSave();
           }
         });
@@ -213,19 +339,21 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
     renderMembers();
     this.scrollable.append(membersSection.container);
 
-    // Leave group section
+    // Leave group section. Danger actions use the same full-width red Button
+    // as the contact editor (editContact.ts) so both editors share one
+    // design language (Row has no danger styling of its own).
     const leaveSection = new SettingSection({noDelimiter: true});
 
-    const leaveEl = document.createElement('span');
-    leaveEl.style.color = 'var(--danger-color)';
-    leaveEl.textContent = 'Leave Group';
+    const btnLeave = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'ChatList.Context.LeaveGroup'});
 
-    const leaveRow = new Row({
-      title: leaveEl,
-      listenerSetter: this.listenerSetter
-    });
+    // Admins can't leave: they must transfer admin (or delete the group).
+    // Grey the button out and explain why on hover.
+    if(isAdmin) {
+      btnLeave.disabled = true;
+      btnLeave.title = i18n('PhantomChat.GroupEdit.AdminLeaveHint' as LangPackKey).textContent;
+    }
 
-    attachClickEvent(leaveRow.container, async() => {
+    attachClickEvent(btnLeave, async() => {
       try {
         await confirmationPopup({
           titleLangKey: 'ChatList.Context.LeaveGroup' as LangPackKey,
@@ -248,26 +376,19 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       }
     }, {listenerSetter: this.listenerSetter});
 
-    leaveSection.content.append(leaveRow.container);
+    leaveSection.content.append(btnLeave);
 
     // Admin-only: delete the group for EVERYONE (no restrictions). Broadcasts a
     // group_delete so other members' clients drop it too, then tears it down
     // locally. Non-admins only get "Leave Group" above.
     if(isAdmin) {
-      const deleteEl = document.createElement('span');
-      deleteEl.style.color = 'var(--danger-color)';
-      deleteEl.textContent = 'Delete Group';
+      const btnDelete = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'PhantomChat.GroupEdit.DeleteGroup' as LangPackKey});
 
-      const deleteRow = new Row({
-        title: deleteEl,
-        listenerSetter: this.listenerSetter
-      });
-
-      attachClickEvent(deleteRow.container, async() => {
+      attachClickEvent(btnDelete, async() => {
         try {
           await confirmationPopup({
-            title: 'Delete Group',
-            description: 'Delete this group for everyone? It will be removed for all members and cannot be undone.',
+            titleLangKey: 'PhantomChat.GroupEdit.DeleteGroup' as LangPackKey,
+            descriptionLangKey: 'PhantomChat.GroupEdit.DeleteGroupDescription' as LangPackKey,
             button: {langKey: 'Delete' as LangPackKey, isDanger: true}
           });
           await getGroupAPI().deleteGroup(this.groupId);
@@ -286,7 +407,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         }
       }, {listenerSetter: this.listenerSetter});
 
-      leaveSection.content.append(deleteRow.container);
+      leaveSection.content.append(btnDelete);
     }
 
     this.scrollable.append(leaveSection.container);

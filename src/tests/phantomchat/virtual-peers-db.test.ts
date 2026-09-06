@@ -150,7 +150,10 @@ class MockIDBObjectStore {
       if(!existing.includes(key)) existing.push(key);
       this.indexes.set(record.peerId, existing);
     }
-    Promise.resolve().then(() => req._fireSuccess());
+    Promise.resolve().then(() => req._fireSuccess()).then(() => {
+      const tx = (this as any)._tx as MockIDBTransaction | undefined;
+      if(tx?.oncomplete) tx.oncomplete();
+    });
     return req;
   }
 
@@ -240,8 +243,13 @@ class MockIDBTransaction {
   objectStore(name: string): MockIDBObjectStore {
     // Return the original store instance (created during onupgradeneeded) so that
     // keyPath and other settings are preserved.
-    return this.objectStoreInstances.get(name) ??
+    const s = this.objectStoreInstances.get(name) ??
       new MockIDBObjectStore(name, this.stores, this.storeIndexes);
+    // Link the store to this transaction so request-completion can fire
+    // the transaction's oncomplete (mirrors real IndexedDB semantics —
+    // storeMapping resolves on tx.oncomplete, not put.onsuccess).
+    (s as any)._tx = this;
+    return s;
   }
 }
 
