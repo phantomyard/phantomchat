@@ -1173,6 +1173,18 @@ export class PhantomChatMTProtoServer {
         // the rebuilt bubble has a valid peer to resolve against.
         const senderPubkey = isOutgoing ? this.ownPubkey : stored.senderPubkey;
         let fromPeerId: number | undefined;
+        if(!senderPubkey) {
+          // No sender to attribute this row to. tweb's saveMessages falls back
+          // to `fromId = peer_id` when `from_id` is absent, which for a group
+          // resolves to the CHAT — the bubble then renders the group's own
+          // title and avatar as if the group had authored the message, hiding
+          // the real sender. We cannot recover the pubkey here (it is not
+          // derivable from the stored row), so surface it loudly instead of
+          // shipping a confidently-wrong attribution: the store-level merge
+          // guard stops new rows losing their sender, and this names any row
+          // already blanked by a pre-fix build.
+          console.error(LOG_PREFIX, 'getGroupHistory: stored group message has no senderPubkey — bubble will be mis-attributed to the group', {eventId: stored.eventId, mid, isOutgoing, ownPubkeyResolved: !!this.ownPubkey});
+        }
         if(senderPubkey) {
           fromPeerId = await this.mapper.mapPubkey(senderPubkey);
           if(!usersById.has(fromPeerId)) {
