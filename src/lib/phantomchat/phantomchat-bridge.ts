@@ -18,6 +18,7 @@ import {getRtcConfigDirect} from '@lib/phantomchat/webrtc-config';
 import {PeerCapabilityRegistry} from '@lib/phantomchat/transport/capability';
 import {CapabilityIngestor} from '@lib/phantomchat/transport/capability-ingest';
 import {TransportSelector} from '@lib/phantomchat/transport/transport-selector';
+import {handlePeerFrame} from '@lib/phantomchat/transport/p2p-receipts';
 import {getTransportStatus} from '@lib/phantomchat/transport/transport-status';
 import rootScope from '@lib/rootScope';
 import {swallowHandler} from '@lib/phantomchat/log-swallow';
@@ -236,21 +237,19 @@ export class PhantomChatBridge {
           }
         },
         onPeerMessage: (pubkey, message) => {
-          miniRelayWorker.postMessage({type: 'peer-message', peerId: pubkey, data: message});
-          // #61: a P2P-delivered message is a standard `["EVENT", wrap]` frame.
-          // Feed the wrap through the SAME relay-pool ingest a relay message
-          // takes so it unwraps, dedups (against the relay copy) and renders
-          // through one code path. Non-EVENT frames (mesh control) are ignored
-          // here and handled by the mini-relay worker above.
-          try {
-            const frame = JSON.parse(message);
-            if(Array.isArray(frame) && frame[0] === 'EVENT' && frame[1]) {
-              const pool = (window as any).__phantomchatPool;
-              pool?.ingestP2PEvent?.(frame[1]);
-            }
-          } catch(err) {
-            swallowHandler('PhantomChatBridge.onPeerMessage')(err);
-          }
+          // #61: a P2P-delivered message is a standard `["EVENT", wrap]` frame,
+          // fed through the SAME relay-pool ingest a relay message takes so it
+          // unwraps, dedups (against the relay copy) and renders through one
+          // code path — and then acknowledged with `["OK", id, true, "p2p"]` so
+          // the sender can stop waiting on relays (#542/#140). An inbound OK
+          // settles our own pending send. See transport/p2p-receipts.ts.
+          handlePeerFrame(pubkey, message, {
+            ownPubkey: this._userPubkey ?? '',
+            ingest: (wrap) => (window as any).__phantomchatPool?.ingestP2PEvent?.(wrap),
+            send: (peer, frame) => meshManager.send(peer, frame),
+            onAck: (peer, eventId) => (window as any).__phantomchatTransportSelector?.handleAck?.(peer, eventId),
+            forwardToMiniRelay: (peer, data) => miniRelayWorker.postMessage({type: 'peer-message', peerId: peer, data})
+          }).catch(swallowHandler('PhantomChatBridge.onPeerMessage'));
         },
         onPeerConnected: (pubkey) => {
           miniRelayWorker.postMessage({type: 'peer-connected', peerId: pubkey, pubkey});

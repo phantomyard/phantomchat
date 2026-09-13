@@ -236,3 +236,43 @@ describe('TransportSelector.liveDirectTier — the live badge probe', () => {
     expect(sel.liveDirectTier(PK)).toBeNull();
   });
 });
+
+
+describe('TransportSelector — P2P delivery receipts (#140)', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('awaitAck resolves true when the recipient acks its wrap', async() => {
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh()});
+    const pending = sel.awaitAck(PK, makeWraps());
+    sel.handleAck(PK, 'wrap-recipient');
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it('an ack that lands before awaitAck is not lost', async() => {
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh()});
+    sel.handleAck(PK, 'wrap-recipient');
+    await expect(sel.awaitAck(PK, makeWraps())).resolves.toBe(true);
+  });
+
+  it('only the peer we sent to can confirm — an ack from another peer is ignored', async() => {
+    vi.useFakeTimers();
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh(), ackTimeoutMs: 100});
+    const pending = sel.awaitAck(PK, makeWraps());
+    sel.handleAck(SELF, 'wrap-recipient');
+    vi.advanceTimersByTime(150);
+    await expect(pending).resolves.toBe(false);
+  });
+
+  it('resolves false after the ack window with no receipt', async() => {
+    vi.useFakeTimers();
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh(), ackTimeoutMs: 100});
+    const pending = sel.awaitAck(PK, makeWraps());
+    vi.advanceTimersByTime(150);
+    await expect(pending).resolves.toBe(false);
+  });
+
+  it('no recipient wrap → false immediately', async() => {
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh()});
+    await expect(sel.awaitAck(PK, [])).resolves.toBe(false);
+  });
+});
