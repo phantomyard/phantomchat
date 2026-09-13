@@ -42,6 +42,8 @@ import {getVoiceUploadQueue} from './voice-upload-queue';
  */
 export interface P2PFastPath {
   tryDeliver(recipientPubkey: string, wraps: NostrEvent[]): Promise<{tier: string}>;
+  /** Resolves true once the peer acknowledged the wrap over P2P (#140). */
+  awaitAck?(recipientPubkey: string, wraps: NostrEvent[]): Promise<boolean>;
 }
 
 /**
@@ -969,7 +971,22 @@ export class ChatAPI {
         // relay round-trips.
         if(this.transportSelector && result.wraps?.length) {
           const p2pPeer = peerOwnId!;
-          this.transportSelector.tryDeliver(p2pPeer, result.wraps)
+          const selector = this.transportSelector;
+          const p2pWraps = result.wraps;
+          selector.tryDeliver(p2pPeer, p2pWraps)
+          .then(async(res) => {
+            // A `webrtc` tier only means "handed to the data channel". When the
+            // selector supports receipts, count it as a direct delivery only if
+            // the peer acknowledged it; otherwise it went relay-only (#140).
+            if(res.tier === 'webrtc' && selector.awaitAck) {
+              const acked = await selector.awaitAck(p2pPeer, p2pWraps);
+              if(!acked) {
+                this.log('[ChatAPI] P2P copy not acknowledged, relay carries it:', messageId);
+                return {...res, tier: 'relay'};
+              }
+            }
+            return res;
+          })
           .then((res) => {
             // Feed the UI-facing transport status so the P2P badge (#52) reflects
             // which tier this send actually used. Best-effort, never on the hot path.

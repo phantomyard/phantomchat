@@ -35,10 +35,11 @@
  * second net). Reusing the wrap means the P2P copy inherits every existing
  * crypto, signature-verify, presence-filter, receipt and dispatch guarantee.
  *
- * FIRE-AND-FORGET. Delivery is best-effort: there is no app-level ack, so a
- * `webrtc` tier here means "handed to the data channel", not "confirmed
- * rendered". The relay copy is the guaranteed floor, so a silently-dropped P2P
- * copy is invisible to the user. Tracked in #61.
+ * FIRE-AND-FORGET. `tryDeliver` itself is best-effort: a `webrtc` tier means
+ * "handed to the data channel". Confirmation is separate — the receiver answers
+ * with a `["OK", id, true, "p2p"]` receipt (see p2p-receipts.ts) and
+ * `awaitAck` resolves true when it lands. The relay copy stays the floor either
+ * way, so a silently-dropped P2P copy is still invisible to the user.
  */
 
 import {logSwallow, swallowHandler} from '@lib/phantomchat/log-swallow';
@@ -69,20 +70,89 @@ export interface TransportSelectorDeps {
   rtcConnectTimeoutMs?: number;
   /** Poll granularity while waiting for the mesh to connect. Default 50ms. */
   rtcPollMs?: number;
+  /** How long `awaitAck` waits for the peer's OK receipt. Default 2000ms. */
+  ackTimeoutMs?: number;
 }
 
 const DEFAULT_RTC_CONNECT_TIMEOUT_MS = 1500;
 const DEFAULT_RTC_POLL_MS = 50;
+const DEFAULT_ACK_TIMEOUT_MS = 2000;
+/** Receipts that arrived before anyone awaited them (bounded, oldest evicted). */
+const MAX_EARLY_ACKS = 256;
 
 export class TransportSelector {
   private deps: TransportSelectorDeps;
   private rtcConnectTimeoutMs: number;
   private rtcPollMs: number;
+  private ackTimeoutMs: number;
+  /** `pubkey:eventId` → resolvers waiting for that peer's receipt. */
+  private ackWaiters = new Map<string, Array<(acked: boolean) => void>>();
+  /** `pubkey:eventId` receipts that landed before `awaitAck` was called. */
+  private earlyAcks = new Set<string>();
 
   constructor(deps: TransportSelectorDeps) {
     this.deps = deps;
     this.rtcConnectTimeoutMs = deps.rtcConnectTimeoutMs ?? DEFAULT_RTC_CONNECT_TIMEOUT_MS;
     this.rtcPollMs = deps.rtcPollMs ?? DEFAULT_RTC_POLL_MS;
+    this.ackTimeoutMs = deps.ackTimeoutMs ?? DEFAULT_ACK_TIMEOUT_MS;
+  }
+
+  /**
+   * A P2P receipt arrived from `pubkey` for wrap `eventId`. Keyed by peer, so
+   * only the peer we actually sent to can confirm a send.
+   */
+  handleAck(pubkey: string, eventId: string): void {
+    if(!pubkey || !eventId) return;
+    const key = `${pubkey}:${eventId}`;
+    const waiters = this.ackWaiters.get(key);
+    if(waiters) {
+      this.ackWaiters.delete(key);
+      for(const resolve of waiters) resolve(true);
+      return;
+    }
+    this.earlyAcks.add(key);
+    if(this.earlyAcks.size > MAX_EARLY_ACKS) {
+      const oldest = this.earlyAcks.values().next().value;
+      if(oldest !== undefined) this.earlyAcks.delete(oldest);
+    }
+  }
+
+  /**
+   * Resolve true once `recipientPubkey` acknowledges the recipient-addressed
+   * wrap in `wraps` over the data channel, false after the ack window (or when
+   * there is no such wrap). Never throws.
+   */
+  awaitAck(recipientPubkey: string, wraps: NostrEvent[]): Promise<boolean> {
+    try {
+      const wrap = this.pickRecipientWrap(wraps, recipientPubkey);
+      if(!wrap?.id) return Promise.resolve(false);
+      const key = `${recipientPubkey}:${wrap.id}`;
+      if(this.earlyAcks.delete(key)) return Promise.resolve(true);
+      return new Promise<boolean>((resolve) => {
+        const list = this.ackWaiters.get(key) ?? [];
+        let done = false;
+        const finish = (acked: boolean) => {
+          if(done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(acked);
+        };
+        const timer = setTimeout(() => {
+          const current = this.ackWaiters.get(key);
+          if(current) {
+            const rest = current.filter((r) => r !== finish);
+            if(rest.length) this.ackWaiters.set(key, rest);
+            else this.ackWaiters.delete(key);
+          }
+          finish(false);
+        }, this.ackTimeoutMs);
+        list.push(finish);
+        this.ackWaiters.set(key, list);
+      });
+    } catch(e) {
+      logSwallow('TransportSelector.awaitAck', e);
+      return Promise.resolve(false);
+    }
   }
 
   /**
