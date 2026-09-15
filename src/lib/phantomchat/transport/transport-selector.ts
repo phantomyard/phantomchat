@@ -87,8 +87,11 @@ export class TransportSelector {
   private ackTimeoutMs: number;
   /** `pubkey:eventId` → resolvers waiting for that peer's receipt. */
   private ackWaiters = new Map<string, Array<(acked: boolean) => void>>();
-  /** `pubkey:eventId` receipts that landed before `awaitAck` was called. */
-  private earlyAcks = new Set<string>();
+  /**
+   * `pubkey:eventId` → outcome of a receipt that landed before `awaitAck` was
+   * called (true = accepted, false = rejected).
+   */
+  private earlyAcks = new Map<string, boolean>();
 
   constructor(deps: TransportSelectorDeps) {
     this.deps = deps;
@@ -102,17 +105,32 @@ export class TransportSelector {
    * only the peer we actually sent to can confirm a send.
    */
   handleAck(pubkey: string, eventId: string): void {
+    this.settleReceipt(pubkey, eventId, true);
+  }
+
+  /**
+   * A P2P rejection (`["OK", id, false]`) arrived from `pubkey` for `eventId`.
+   * Not a delivery, but an answer: resolve the waiter false now rather than
+   * holding the send for the whole ack window (phantomchat#142).
+   */
+  handleReject(pubkey: string, eventId: string): void {
+    this.settleReceipt(pubkey, eventId, false);
+  }
+
+  private settleReceipt(pubkey: string, eventId: string, accepted: boolean): void {
     if(!pubkey || !eventId) return;
     const key = `${pubkey}:${eventId}`;
     const waiters = this.ackWaiters.get(key);
     if(waiters) {
       this.ackWaiters.delete(key);
-      for(const resolve of waiters) resolve(true);
+      for(const resolve of waiters) resolve(accepted);
       return;
     }
-    this.earlyAcks.add(key);
+    // Re-insert so a repeated receipt refreshes its eviction position.
+    this.earlyAcks.delete(key);
+    this.earlyAcks.set(key, accepted);
     if(this.earlyAcks.size > MAX_EARLY_ACKS) {
-      const oldest = this.earlyAcks.values().next().value;
+      const oldest = this.earlyAcks.keys().next().value;
       if(oldest !== undefined) this.earlyAcks.delete(oldest);
     }
   }
@@ -127,7 +145,11 @@ export class TransportSelector {
       const wrap = this.pickRecipientWrap(wraps, recipientPubkey);
       if(!wrap?.id) return Promise.resolve(false);
       const key = `${recipientPubkey}:${wrap.id}`;
-      if(this.earlyAcks.delete(key)) return Promise.resolve(true);
+      const early = this.earlyAcks.get(key);
+      if(early !== undefined) {
+        this.earlyAcks.delete(key);
+        return Promise.resolve(early);
+      }
       return new Promise<boolean>((resolve) => {
         const list = this.ackWaiters.get(key) ?? [];
         let done = false;

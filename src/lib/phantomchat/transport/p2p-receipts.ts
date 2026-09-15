@@ -55,6 +55,12 @@ export interface PeerFrameDeps {
   send: (pubkey: string, frame: string) => boolean;
   /** A receipt arrived from `pubkey` for a wrap we sent it. */
   onAck: (pubkey: string, eventId: string) => void;
+  /**
+   * A rejection (`["OK", id, false, ...]`) arrived from `pubkey` for a wrap we
+   * sent it: settle the pending send immediately instead of waiting out the
+   * ack window (phantomchat#142). Optional — absent means "treat as silence".
+   */
+  onReject?: (pubkey: string, eventId: string) => void;
   /** Hand a non-receipt frame to the mini-relay worker (pre-existing path). */
   forwardToMiniRelay: (pubkey: string, message: string) => void;
 }
@@ -71,6 +77,7 @@ export async function handlePeerFrame(pubkey: string, message: string, deps: Pee
     const ok = parseOkFrame(message);
     if(ok) {
       if(ok.accepted) deps.onAck(pubkey, ok.eventId);
+      else deps.onReject?.(pubkey, ok.eventId);
       return;
     }
 
@@ -92,7 +99,18 @@ export async function handlePeerFrame(pubkey: string, message: string, deps: Pee
     const tags = Array.isArray(wrap.tags) ? wrap.tags : [];
     const toUs = !!deps.ownPubkey && tags.some((t: any) => Array.isArray(t) && t[0] === 'p' && t[1] === deps.ownPubkey);
     if(!toUs) return;
-    deps.send(pubkey, buildOkFrame(id));
+    // A receipt that can't go out means the sender silently falls back to
+    // relays; record why. Wrap id prefix only — never payload (phantomchat#142).
+    let sent = false;
+    let reason = 'channel not open';
+    try {
+      sent = deps.send(pubkey, buildOkFrame(id)) === true;
+    } catch(err) {
+      reason = `send threw: ${(err as Error)?.message ?? String(err)}`;
+    }
+    if(!sent) {
+      console.debug(`[P2PReceipts] could not send receipt ${id.slice(0, 8)} to ${pubkey.slice(0, 8)}: ${reason}`);
+    }
   } catch(err) {
     console.debug('[P2PReceipts] handlePeerFrame failed', err);
   }
