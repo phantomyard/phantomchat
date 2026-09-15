@@ -1038,6 +1038,156 @@ describe('ChatAPI', () => {
     });
   });
 
+  // ─── P2P-first delivery (phantomchat#143) ─────────────────────
+  describe('P2P-first delivery (#143)', () => {
+    const RUMOR_ID = 'r'.repeat(64);
+    const RUMOR = {id: RUMOR_ID, kind: 14, pubkey: 'own', created_at: 1, tags: [], content: 'hi'} as any;
+    const RECIPIENT_WRAP = {id: 'wrap-to-peer', kind: 1059, pubkey: 'x', created_at: 1, tags: [['p', 'DDDDDD.EEEEE.FFFFF']], content: 'c', sig: 's'};
+    const SELF_WRAP = {id: 'wrap-to-self', kind: 1059, pubkey: 'x', created_at: 1, tags: [['p', OWN_ID]], content: 'c', sig: 's'};
+
+    let order: string[];
+    let pool: MockRelayPool & Record<string, any>;
+    let queue: MockOfflineQueue & Record<string, any>;
+    let api: ChatAPI;
+    let tracker: Record<string, any>;
+    let selector: Record<string, any>;
+
+    const build = (opts: {live: boolean; acked: boolean; relaysUp: boolean; relayHandOff?: boolean}) => {
+      order = [];
+      pool = new MockRelayPool() as any;
+      if(opts.relaysUp) pool.simulateConnect();
+      pool.wrapForSend = vi.fn(async() => {
+        order.push('wrap');
+        return {wraps: [RECIPIENT_WRAP, SELF_WRAP], rumorId: RUMOR_ID, rumor: RUMOR};
+      });
+      pool.publishWraps = vi.fn((_wraps: any[]): {successes: string[]; failures: {url: string; error: string}[]} => {
+        order.push('relays');
+        return opts.relayHandOff === false ?
+          {successes: [], failures: [{url: 'wss://r', error: 'x'}]} :
+          {successes: ['wrap-to-peer'], failures: []};
+      });
+      pool.rewrapAndPublish = vi.fn(async(): Promise<PublishResult> => ({successes: ['x'], failures: []}));
+
+      queue = new MockOfflineQueue() as any;
+      queue.queueArgs = [] as any[];
+      const origQueue = queue.queue.bind(queue);
+      queue.queue = vi.fn(async(peer: string, payload: string, appMessageId?: string, prebuilt?: any) => {
+        queue.queueArgs.push({peer, payload, appMessageId, prebuilt});
+        return origQueue(peer, payload);
+      });
+
+      api = new ChatAPI(OWN_ID, pool as unknown as NostrRelayPool, queue as unknown as OfflineQueue);
+      tracker = {
+        markSending: vi.fn(), rekey: vi.fn(), registerOutgoing: vi.fn(),
+        markSent: vi.fn(), markDeliveredDirect: vi.fn()
+      };
+      (api as any).deliveryTracker = tracker;
+      selector = {
+        liveDirectTier: vi.fn(() => opts.live ? 'webrtc' : null),
+        tryDeliver: vi.fn(async() => {
+          order.push('direct');
+          return {tier: 'webrtc'};
+        }),
+        awaitAck: vi.fn(async() => opts.acked)
+      };
+      api.transportSelector = selector as any;
+      (api as any).activePeer = PEER_ID;
+      (api as any).state = 'connected';
+    };
+
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+
+    afterEach(() => {
+      api?.destroy();
+    });
+
+    test('direct-success: the wrap goes over P2P BEFORE the relay fan-out, and the ack marks it delivered', async() => {
+      build({live: true, acked: true, relaysUp: true});
+      const id = await api.sendText('hi');
+      await flush();
+
+      expect(order).toEqual(['wrap', 'direct', 'relays']);
+      expect(pool.publishCalls).toHaveLength(0); // no second wrap via publish()
+      expect(tracker.rekey).toHaveBeenCalledWith(id, RUMOR_ID);
+      expect(tracker.markDeliveredDirect).toHaveBeenCalledWith(RUMOR_ID);
+      expect(queue.queue).not.toHaveBeenCalled();
+    });
+
+    test('both-path dedupe: direct and relay copies are the SAME wraps (same wrap id + rumor id)', async() => {
+      build({live: true, acked: true, relaysUp: true});
+      await api.sendText('hi');
+      const directWraps = selector.tryDeliver.mock.calls[0][1];
+      const relayWraps = pool.publishWraps.mock.calls[0][0];
+      expect(relayWraps).toBe(directWraps);
+      expect(directWraps.map((w: any) => w.id)).toContain('wrap-to-peer');
+    });
+
+    test('relays down + direct ack: delivered without waiting on relays; same rumor queued as backstop', async() => {
+      build({live: true, acked: true, relaysUp: false});
+      const id = await api.sendText('hi');
+      await flush();
+
+      expect(pool.publishWraps).not.toHaveBeenCalled();
+      expect(tracker.markDeliveredDirect).toHaveBeenCalledWith(RUMOR_ID);
+      expect(api.getHistory().find((m) => m.id === id)?.status).toBe('delivered');
+      expect(queue.queueArgs).toHaveLength(1);
+      expect(queue.queueArgs[0].appMessageId).toBeUndefined();
+      expect(queue.queueArgs[0].prebuilt).toEqual({rumor: RUMOR, rumorId: RUMOR_ID});
+    });
+
+    test('direct-fail → relay fallback: no ack and no relay hand-off queues the SAME rumor', async() => {
+      build({live: true, acked: false, relaysUp: false});
+      const id = await api.sendText('hi');
+      await flush();
+
+      expect(tracker.markDeliveredDirect).not.toHaveBeenCalled();
+      expect(queue.queueArgs).toHaveLength(1);
+      expect(queue.queueArgs[0].appMessageId).toBe(id);
+      expect(queue.queueArgs[0].prebuilt?.rumorId).toBe(RUMOR_ID);
+    });
+
+    test('ack-window timeout with relays up: relay copy stands, send is marked sent, not delivered', async() => {
+      build({live: true, acked: false, relaysUp: true});
+      const id = await api.sendText('hi');
+      await flush();
+
+      expect(tracker.markSent).toHaveBeenCalledWith(RUMOR_ID);
+      expect(tracker.markDeliveredDirect).not.toHaveBeenCalled();
+      expect(api.getHistory().find((m) => m.id === id)?.status).toBe('sent');
+      expect(queue.queue).not.toHaveBeenCalled();
+    });
+
+    test('the send does not wait for the direct ack when relays took the hand-off', async() => {
+      build({live: true, acked: true, relaysUp: true});
+      let release!: (v: boolean) => void;
+      selector.awaitAck = vi.fn(() => new Promise<boolean>((r) => { release = r; }));
+      await api.sendText('hi'); // resolves while the ack is still pending
+      expect(tracker.markDeliveredDirect).not.toHaveBeenCalled();
+      release(true);
+      await flush();
+      expect(tracker.markDeliveredDirect).toHaveBeenCalledWith(RUMOR_ID);
+    });
+
+    test('offline peer (no live channel): relay path unchanged — publish(), no direct-first wrap', async() => {
+      build({live: false, acked: true, relaysUp: true});
+      pool.publishResult = {successes: ['e'], failures: [], rumorId: RUMOR_ID, rumor: RUMOR, wraps: [RECIPIENT_WRAP] as any};
+      await api.sendText('hi');
+
+      expect(pool.wrapForSend).not.toHaveBeenCalled();
+      expect(pool.publishWraps).not.toHaveBeenCalled();
+      expect(pool.publishCalls).toHaveLength(1);
+      expect(tracker.markDeliveredDirect).not.toHaveBeenCalled();
+    });
+
+    test('offline peer + relays down: queued exactly as before (no prebuilt rumor)', async() => {
+      build({live: false, acked: true, relaysUp: false});
+      const id = await api.sendText('hi');
+      expect(queue.queueArgs).toHaveLength(1);
+      expect(queue.queueArgs[0].appMessageId).toBe(id);
+      expect(queue.queueArgs[0].prebuilt).toBeUndefined();
+    });
+  });
+
   describe('window.__phantomchatChatAPI exposure', () => {
     test('exposes ChatAPI instance for debug inspection', () => {
       // The instance should be exposed on window

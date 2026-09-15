@@ -273,6 +273,22 @@ export class DeliveryTracker {
   }
 
   /**
+   * The peer acknowledged this message over a direct P2P data channel
+   * (`["OK", id, true, "p2p"]`, phantomchat#141/#143). That receipt means the
+   * peer's process ingested the wrap, which is what a NIP-17 delivery receipt
+   * proves too, so the message goes straight to 'delivered' (from 'sending' or
+   * 'sent' — never showing a pending relay confirm) and relay retries stop.
+   * The event carries `via: 'webrtc'` so the UI can tell the path apart.
+   */
+  markDeliveredDirect(eventId: string): void {
+    this.clearRetry(eventId);
+    if(!this.tryTransition(eventId, 'delivered')) return;
+    const info = this.states.get(eventId)!;
+    info.deliveredAt = Date.now();
+    rootScope.dispatchEvent('phantomchat_delivery_update', {eventId, state: 'delivered', via: 'webrtc'});
+  }
+
+  /**
    * Handle an incoming receipt rumor event.
    * Routes to delivery or read receipt handling based on receipt-type tag.
    *

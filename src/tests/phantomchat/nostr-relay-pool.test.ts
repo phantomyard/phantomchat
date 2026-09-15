@@ -391,6 +391,38 @@ describe('NostrRelayPool', () => {
       expect(result.successes.length).toBe(1);
       expect(result.failures.length).toBe(1);
     });
+
+    // phantomchat#143: publish() = wrapForSend + publishWraps, split so the
+    // P2P-first path can ship the wrap directly before any relay fan-out.
+    it('publishWraps hands every wrap to each write relay and reports per-relay failures', async() => {
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true},
+        {url: 'wss://relay2.test', read: true, write: true},
+        {url: 'wss://relay3.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage: vi.fn()});
+      await pool.initialize();
+      const sent: Record<string, string[]> = {};
+      for(const inst of mockRelayInstances) {
+        inst.publishRawEvent = vi.fn((w: any) => {
+          if(inst.url === 'wss://relay2.test') throw new Error('socket gone');
+          (sent[inst.url] ??= []).push(w.id);
+        });
+      }
+
+      const wraps = [{id: 'w-peer'}, {id: 'w-self'}] as any;
+      const result = pool.publishWraps(wraps);
+
+      expect(sent['wss://relay1.test']).toEqual(['w-peer', 'w-self']);
+      expect(sent['wss://relay3.test']).toEqual(['w-peer', 'w-self']);
+      expect(result.successes).toEqual(['w-peer', 'w-peer']);
+      expect(result.failures).toEqual([{url: 'wss://relay2.test', error: 'socket gone'}]);
+    });
+
+    it('wrapForSend throws without an identity key instead of returning a bogus wrap', async() => {
+      const pool = new NostrRelayPool({relays: [{url: 'wss://relay1.test', read: true, write: true}], onMessage: vi.fn()});
+      await expect(pool.wrapForSend('recipient', 'hi')).rejects.toThrow(/private key/);
+    });
   });
 
   describe('deduplication', () => {

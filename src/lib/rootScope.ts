@@ -270,7 +270,7 @@ export type BroadcastEvents = {
     enabled: boolean;
   }>,
   'phantomchat_message_queued': {messageId: string; status: 'queued' | 'sent'},
-  'phantomchat_delivery_update': {eventId: string; state: 'sending' | 'sent' | 'delivered' | 'read'},
+  'phantomchat_delivery_update': {eventId: string; state: 'sending' | 'sent' | 'delivered' | 'read'; via?: 'webrtc' | 'relay'},
   'phantomchat_message_request': {pubkey: string; firstMessage: string},
   'phantomchat_contact_accepted': {pubkey: string; peerId: number},
   'phantomchat_new_message': {peerId: number; mid: number; senderPubkey: string; message: {content: string}; timestamp: number},

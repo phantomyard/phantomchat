@@ -955,8 +955,8 @@ export class NostrRelayPool {
         return {successes, failures};
       }
 
-      const wrapped = await getNostrWrapClient().wrap(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
-      wraps = wrapped.wraps as unknown as NostrEvent[];
+      const wrapped = await this.wrapForSend(recipientPubkey, plaintext, replyTo);
+      wraps = wrapped.wraps;
       rumorId = wrapped.rumorId;
       rumor = wrapped.rumor;
     } catch(err) {
@@ -966,8 +966,36 @@ export class NostrRelayPool {
       };
     }
 
-    // Publish all wraps to all write relays
-    const promises = writeEntries.map(async(entry) => {
+    const fanOut = this.publishWraps(wraps, writeEntries);
+    return {successes: fanOut.successes, failures: fanOut.failures, rumorId, wraps, rumor};
+  }
+
+  /**
+   * Build the gift-wraps (recipient + self) for a message WITHOUT publishing
+   * them. `publish()` is exactly `wrapForSend` + `publishWraps`; the split exists
+   * so the P2P-first send path (phantomchat#143) can hand the recipient wrap to a
+   * live data channel BEFORE any relay fan-out, and can still build the wrap when
+   * no relay socket is up. Throws when there is no identity key or wrapping fails.
+   */
+  async wrapForSend(
+    recipientPubkey: string,
+    plaintext: string,
+    replyTo?: {eventId: string; relayUrl?: string}
+  ): Promise<{wraps: NostrEvent[]; rumorId: string; rumor: UnsignedEvent}> {
+    if(!this.privateKeyBytes) throw new Error('no private key available for wrap');
+    const wrapped = await getNostrWrapClient().wrap(this.privateKeyBytes, recipientPubkey, plaintext, replyTo);
+    return {wraps: wrapped.wraps as unknown as NostrEvent[], rumorId: wrapped.rumorId, rumor: wrapped.rumor};
+  }
+
+  /**
+   * Hand already-built wraps to every write relay (minus quarantined ones, floor
+   * of 3). Synchronous hand-off: `publishRawEvent` buffers while a socket is not
+   * open and does not await relay OKs, so a "success" means "handed to that relay".
+   */
+  publishWraps(wraps: NostrEvent[], writeEntries = this.writeEntries()): {successes: string[]; failures: {url: string; error: string}[]} {
+    const successes: string[] = [];
+    const failures: {url: string; error: string}[] = [];
+    for(const entry of writeEntries) {
       try {
         for(const wrap of wraps) {
           entry.instance.publishRawEvent(wrap);
@@ -979,10 +1007,8 @@ export class NostrRelayPool {
           error: err instanceof Error ? err.message : String(err)
         });
       }
-    });
-
-    await Promise.all(promises);
-    return {successes, failures, rumorId, wraps, rumor};
+    }
+    return {successes, failures};
   }
 
   /**

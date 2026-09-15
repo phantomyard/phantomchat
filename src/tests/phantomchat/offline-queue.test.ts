@@ -628,6 +628,29 @@ describe('OfflineQueue', () => {
       expect(items[0].rumorId).toBe('r'.repeat(64));
     });
 
+    // phantomchat#143: a message that already went out over P2P under rumor R
+    // must reach relays as R too, or the receiver renders it twice.
+    test('queue() with a prebuilt rumor never mints a new one — connected publish and later flush both re-wrap it', async() => {
+      const rumor = {kind: 14, content: 'sent p2p', pubkey: 'x', created_at: 0, tags: [], id: 'p'.repeat(64)} as any;
+      const publishSpy = vi.fn(mockRelayPool.publish.bind(mockRelayPool));
+      mockRelayPool.publish = publishSpy;
+      mockRelayPool.simulateConnect();
+      mockRelayPool.rewrapAndPublish = vi.fn(async(_to: string, r: any): Promise<PublishResult> => ({
+        successes: [], failures: [{url: 'wss://relay.test', error: 'flaky'}], rumorId: r.id, rumor: r, wraps: []
+      }));
+
+      await queue.queue(PEER, 'sent p2p', undefined, {rumor, rumorId: rumor.id});
+
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(mockRelayPool.rewrapAndPublish).toHaveBeenCalledWith(PEER, expect.objectContaining({id: 'p'.repeat(64)}));
+      expect(queue.getQueued(PEER)[0].rumorId).toBe('p'.repeat(64));
+
+      await queue.flush(PEER);
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(mockRelayPool.rewrapAndPublish).toHaveBeenCalledTimes(2);
+      expect((mockRelayPool.rewrapAndPublish as any).mock.calls[1][1].id).toBe('p'.repeat(64));
+    });
+
     test('flush() re-wraps the same rumor on retry, producing a stable rumor id', async() => {
       // Queue offline
       await queue.queue(PEER, 'hello ghost');

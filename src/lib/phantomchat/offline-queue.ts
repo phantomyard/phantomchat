@@ -297,9 +297,18 @@ export class OfflineQueue {
    * @param appMessageId - Optional app message id (`chat-…`) of the local row
    *        this payload belongs to, so a later flush can re-key it to the
    *        canonical rumor id.
+   * @param prebuilt - The rumor this message ALREADY went out under (e.g. over a
+   *        direct P2P channel, phantomchat#143). When given, every relay attempt
+   *        re-wraps THIS rumor instead of minting a new one, so the receiver
+   *        dedups the relay copy against the direct copy by rumor id.
    * @returns Generated message ID
    */
-  async queue(recipientPubkey: string, payload: string, appMessageId?: string): Promise<string> {
+  async queue(
+    recipientPubkey: string,
+    payload: string,
+    appMessageId?: string,
+    prebuilt?: {rumor: UnsignedEvent; rumorId: string}
+  ): Promise<string> {
     const messageId = this.generateMessageId();
     const timestamp = Date.now();
 
@@ -308,10 +317,13 @@ export class OfflineQueue {
     let relayEventId: string | undefined;
 
     // Attempt to publish via relay pool if connected
-    let publishResult: { rumor?: UnsignedEvent; rumorId?: string } | undefined;
+    let publishResult: { rumor?: UnsignedEvent; rumorId?: string } | undefined =
+      prebuilt ? {rumor: prebuilt.rumor, rumorId: prebuilt.rumorId} : undefined;
     try {
       if(this.relayPool.isConnected()) {
-        const result = await this.relayPool.publish(recipientPubkey, payload);
+        const result = prebuilt ?
+          await this.relayPool.rewrapAndPublish(recipientPubkey, prebuilt.rumor) :
+          await this.relayPool.publish(recipientPubkey, payload);
         if(result.successes.length > 0) {
           relayEventId = result.successes[0];
           this.log('[OfflineQueue] published to relay pool, event ID:', relayEventId.slice(0, 8) + '…');
