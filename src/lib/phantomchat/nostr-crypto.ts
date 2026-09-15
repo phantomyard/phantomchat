@@ -494,6 +494,37 @@ export async function rewrapV2(
   return finalizeEvent(eventTemplate, ephemeralSk) as unknown as NTNostrEvent;
 }
 
+/**
+ * PhantomChat Protocol v2: re-wrap an existing rumor for the recipient AND for
+ * our own other devices (phantomchat#143, review on #144).
+ *
+ * `rewrapV2` mints only the recipient-addressed event — right for a delivery
+ * RETRY, where the self copy already went out on the first publish. A rumor that
+ * has never reached a relay (it went out over a direct P2P channel while relays
+ * were down) needs the multi-device self copy too, or our other devices never
+ * see the message. Mirrors `wrapV2`: the self event reuses the SAME encrypted
+ * content (identical rumor → identical rumor id, decryptable with the cached
+ * (self, recipient) key) under its own ephemeral key and a `p` tag to self only.
+ */
+export async function rewrapV2WithSelf(
+  senderSk: Uint8Array,
+  recipientPubHex: string,
+  rumor: UnsignedEvent
+): Promise<{event: NTNostrEvent; selfEvent: NTNostrEvent}> {
+  const event = await rewrapV2(senderSk, recipientPubHex, rumor);
+  const senderPubHex = getPublicKey(senderSk);
+  const selfTags: string[][] = [['p', senderPubHex], ['v', 'pc-v2']];
+  const reply = (rumor.tags || []).find((t) => t[0] === 'e' && t[3] === 'reply');
+  if(reply) selfTags.push(reply);
+  const selfEvent = finalizeEvent({
+    kind: 1059,
+    created_at: event.created_at,
+    tags: selfTags,
+    content: event.content
+  }, generateSecretKey()) as unknown as NTNostrEvent;
+  return {event, selfEvent};
+}
+
 // ==================== NIP-44 Conversation Key (legacy, used by NIP-17 path) ====================
 
 /**

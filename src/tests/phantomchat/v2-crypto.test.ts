@@ -6,6 +6,7 @@ import {
   wrapV2,
   unwrapV2,
   rewrapV2,
+  rewrapV2WithSelf,
   wrapEditV2,
   wrapReceiptV2,
   isV2Event,
@@ -254,6 +255,31 @@ describe('PhantomChat Protocol v2 (AES-256-GCM)', () => {
       const rumor = await unwrapV2(original, skB);
       const rewrapped = await rewrapV2(skA, pkB, rumor as any);
       expect(rewrapped.id).not.toBe(original.id);
+    });
+  });
+
+  // phantomchat#143 (review on #144): a rumor whose only copy so far went over a
+  // direct P2P channel must reach our OWN other devices on its first relay publish.
+  describe('rewrapV2WithSelf', () => {
+    it('re-wraps the SAME rumor for the recipient and a self-addressed copy', async() => {
+      const {skA, pkA, skB, pkB} = freshKeys();
+      await getSymmetricKey(skA, pkB); // warm cache for the self-device unwrap
+      const {event: original, rumor} = await wrapV2(skA, pkB, 'sent p2p, relays down', {eventId: 'abc123'});
+      const {event, selfEvent} = await rewrapV2WithSelf(skA, pkB, rumor as any);
+
+      expect(event.tags.find((t: string[]) => t[0] === 'p')![1]).toBe(pkB);
+      expect(selfEvent.tags.filter((t: string[]) => t[0] === 'p').map((t: string[]) => t[1])).toEqual([pkA]);
+      expect(isV2Event(selfEvent as any)).toBe(true);
+      expect(verifyEvent(selfEvent as any)).toBe(true);
+      expect(selfEvent.pubkey).not.toBe(event.pubkey);
+      expect(event.id).not.toBe(original.id);
+      expect(selfEvent.tags.find((t: string[]) => t[0] === 'e')![1]).toBe('abc123');
+
+      const selfRumor = await unwrapV2(selfEvent, skA);
+      const recipientRumor = await unwrapV2(event, skB);
+      expect(selfRumor.id).toBe(rumor.id);
+      expect(recipientRumor.id).toBe(rumor.id);
+      expect(selfRumor.content).toBe('sent p2p, relays down');
     });
   });
 

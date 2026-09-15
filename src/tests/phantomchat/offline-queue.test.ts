@@ -50,11 +50,11 @@ class MockRelayPool {
 
   lastRumorId = '';
 
-  rewrapCalls: Array<{recipientPubkey: string; rumorId: string}> = [];
+  rewrapCalls: Array<{recipientPubkey: string; rumorId: string; includeSelf?: boolean}> = [];
 
-  async rewrapAndPublish(_recipientPubkey: string, rumor: any): Promise<PublishResult> {
+  async rewrapAndPublish(_recipientPubkey: string, rumor: any, opts?: {includeSelf?: boolean}): Promise<PublishResult> {
     this.publishCalls.push({recipientPubkey: _recipientPubkey, plaintext: `rewrap:${rumor.id}`});
-    this.rewrapCalls.push({recipientPubkey: _recipientPubkey, rumorId: rumor.id});
+    this.rewrapCalls.push({recipientPubkey: _recipientPubkey, rumorId: rumor.id, includeSelf: opts?.includeSelf});
     return {
       successes: [`rewrap-${Date.now()}-${this.publishCalls.length}`],
       failures: [],
@@ -626,6 +626,60 @@ describe('OfflineQueue', () => {
       const items = queue.getQueued(PEER);
       expect(items).toHaveLength(1); // Still queued
       expect(items[0].rumorId).toBe('r'.repeat(64));
+    });
+
+    // phantomchat#143: a message that already went out over P2P under rumor R
+    // must reach relays as R too, or the receiver renders it twice.
+    test('queue() with a prebuilt rumor never mints a new one — connected publish and later flush both re-wrap it', async() => {
+      const rumor = {kind: 14, content: 'sent p2p', pubkey: 'x', created_at: 0, tags: [], id: 'p'.repeat(64)} as any;
+      const publishSpy = vi.fn(mockRelayPool.publish.bind(mockRelayPool));
+      mockRelayPool.publish = publishSpy;
+      mockRelayPool.simulateConnect();
+      mockRelayPool.rewrapAndPublish = vi.fn(async(_to: string, r: any): Promise<PublishResult> => ({
+        successes: [], failures: [{url: 'wss://relay.test', error: 'flaky'}], rumorId: r.id, rumor: r, wraps: []
+      }));
+
+      await queue.queue(PEER, 'sent p2p', undefined, {rumor, rumorId: rumor.id});
+
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(mockRelayPool.rewrapAndPublish).toHaveBeenCalledWith(PEER, expect.objectContaining({id: 'p'.repeat(64)}), {includeSelf: true});
+      expect(queue.getQueued(PEER)[0].rumorId).toBe('p'.repeat(64));
+
+      await queue.flush(PEER);
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(mockRelayPool.rewrapAndPublish).toHaveBeenCalledTimes(2);
+      expect((mockRelayPool.rewrapAndPublish as any).mock.calls[1][1].id).toBe('p'.repeat(64));
+    });
+
+    // Review on #144: a prebuilt rumor has never reached a relay, so its first
+    // relay publish must ALSO carry the self-addressed copy (our other devices).
+    test('prebuilt rumor queued while relays are down: the reconnect flush emits the self copy', async() => {
+      const rumor = {kind: 14, content: 'sent p2p', pubkey: 'x', created_at: 0, tags: [], id: 'q'.repeat(64)} as any;
+      mockRelayPool.simulateDisconnect();
+      await queue.queue(PEER, 'sent p2p', undefined, {rumor, rumorId: rumor.id});
+      expect(mockRelayPool.rewrapCalls).toHaveLength(0);
+      expect(queue.getQueued(PEER)[0].selfCopyPending).toBe(true);
+
+      mockRelayPool.simulateConnect();
+      expect(await queue.flush(PEER)).toBe(1);
+      expect(mockRelayPool.rewrapCalls).toEqual([{recipientPubkey: PEER, rumorId: rumor.id, includeSelf: true}]);
+    });
+
+    test('once a relay took the prebuilt rumor, later re-wraps are recipient-only', async() => {
+      const rumor = {kind: 14, content: 'sent p2p', pubkey: 'x', created_at: 0, tags: [], id: 's'.repeat(64)} as any;
+      mockRelayPool.simulateConnect();
+      await queue.queue(PEER, 'sent p2p', undefined, {rumor, rumorId: rumor.id});
+      expect(mockRelayPool.rewrapCalls[0].includeSelf).toBe(true);
+      expect(queue.getQueued(PEER)[0].selfCopyPending).toBeUndefined();
+
+      await queue.flush(PEER);
+      expect(mockRelayPool.rewrapCalls[1]).toEqual({recipientPubkey: PEER, rumorId: rumor.id, includeSelf: undefined});
+    });
+
+    test('a plain (non-prebuilt) retry never asks for a self copy', async() => {
+      mockRelayPool.simulateDisconnect();
+      await queue.queue(PEER, 'hello');
+      expect(queue.getQueued(PEER)[0].selfCopyPending).toBeUndefined();
     });
 
     test('flush() re-wraps the same rumor on retry, producing a stable rumor id', async() => {

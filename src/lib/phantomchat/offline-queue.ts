@@ -22,7 +22,7 @@
  */
 
 import {Logger, logger} from '@lib/logger';
-import {NostrRelayPool} from './nostr-relay-pool';
+import {NostrRelayPool, type PublishResult} from './nostr-relay-pool';
 import {UnsignedEvent} from './nostr-crypto';
 
 /**
@@ -48,6 +48,14 @@ export interface QueuedMessage {
    * returns. Absent for callers that don't track a local row.
    */
   appMessageId?: string;
+  /**
+   * True while a PREBUILT rumor (one that already went out over a direct P2P
+   * channel, phantomchat#143) has not yet reached any relay. Its first relay
+   * publish must also emit the self-addressed copy for our own other devices —
+   * a plain re-wrap only addresses the recipient (review on #144). Cleared by
+   * the first successful relay publish.
+   */
+  selfCopyPending?: boolean;
   /**
    * The immutable inner rumor (kind 14) produced on the first wrap attempt.
    * Stored so that retry flushes can re-wrap the SAME rumor — preserving its
@@ -297,22 +305,38 @@ export class OfflineQueue {
    * @param appMessageId - Optional app message id (`chat-…`) of the local row
    *        this payload belongs to, so a later flush can re-key it to the
    *        canonical rumor id.
+   * @param prebuilt - The rumor this message ALREADY went out under (e.g. over a
+   *        direct P2P channel, phantomchat#143). When given, every relay attempt
+   *        re-wraps THIS rumor instead of minting a new one, so the receiver
+   *        dedups the relay copy against the direct copy by rumor id.
    * @returns Generated message ID
    */
-  async queue(recipientPubkey: string, payload: string, appMessageId?: string): Promise<string> {
+  async queue(
+    recipientPubkey: string,
+    payload: string,
+    appMessageId?: string,
+    prebuilt?: {rumor: UnsignedEvent; rumorId: string}
+  ): Promise<string> {
     const messageId = this.generateMessageId();
     const timestamp = Date.now();
 
     this.log('[OfflineQueue] queuing message for:', recipientPubkey.slice(0, 8) + '…', 'id:', messageId);
 
     let relayEventId: string | undefined;
+    // A prebuilt rumor has never touched a relay: its self copy is owed until a
+    // relay publish succeeds.
+    let selfCopyPending = !!prebuilt;
 
     // Attempt to publish via relay pool if connected
-    let publishResult: { rumor?: UnsignedEvent; rumorId?: string } | undefined;
+    let publishResult: { rumor?: UnsignedEvent; rumorId?: string } | undefined =
+      prebuilt ? {rumor: prebuilt.rumor, rumorId: prebuilt.rumorId} : undefined;
     try {
       if(this.relayPool.isConnected()) {
-        const result = await this.relayPool.publish(recipientPubkey, payload);
+        const result = prebuilt ?
+          await this.relayPool.rewrapAndPublish(recipientPubkey, prebuilt.rumor, {includeSelf: true}) :
+          await this.relayPool.publish(recipientPubkey, payload);
         if(result.successes.length > 0) {
+          selfCopyPending = false;
           relayEventId = result.successes[0];
           this.log('[OfflineQueue] published to relay pool, event ID:', relayEventId.slice(0, 8) + '…');
         } else {
@@ -338,7 +362,8 @@ export class OfflineQueue {
       timestamp,
       relayEventId,
       ...(publishResult ? publishResult : {}),
-      ...(appMessageId ? {appMessageId} : {})
+      ...(appMessageId ? {appMessageId} : {}),
+      ...(selfCopyPending ? {selfCopyPending: true} : {})
     };
 
     const peerQueue = this._queue.get(recipientPubkey) || [];
@@ -376,6 +401,17 @@ export class OfflineQueue {
     return run;
   }
 
+  /**
+   * Re-wrap a queued message's rumor for the relays. Adds the self-addressed
+   * copy only while one is still owed (see QueuedMessage.selfCopyPending); a
+   * plain retry stays recipient-only, as before.
+   */
+  private rewrapQueued(msg: QueuedMessage, rumor: UnsignedEvent): Promise<PublishResult> {
+    return msg.selfCopyPending ?
+      this.relayPool.rewrapAndPublish(msg.to, rumor, {includeSelf: true}) :
+      this.relayPool.rewrapAndPublish(msg.to, rumor);
+  }
+
   private async doFlush(recipientPubkey: string): Promise<number> {
     if(!this.relayPool.isConnected()) {
       this.log.debug('[OfflineQueue] flush skipped: relay pool not connected');
@@ -409,7 +445,7 @@ export class OfflineQueue {
         if(msg.rumor) {
           // Retry with re-wrap: fresh outer gift-wrap, same inner rumor id
           // so the receiver dedups. (GitHub issue #84)
-          const result = await this.relayPool.rewrapAndPublish(msg.to, msg.rumor);
+          const result = await this.rewrapQueued(msg, msg.rumor);
           if(result.successes.length > 0) {
             successes = result.successes;
             rumorId = msg.rumorId;
@@ -556,7 +592,7 @@ export class OfflineQueue {
         if(this.relayPool.isConnected()) {
           try {
             if(msg.rumor) {
-              const result = await this.relayPool.rewrapAndPublish(msg.to, msg.rumor);
+              const result = await this.rewrapQueued(msg, msg.rumor);
               if(result.successes.length > 0) {
                 this.acknowledge(msg.id);
                 deleteFromIndexedDB(msg.id).catch((e) => console.debug('[OfflineQueue] IndexedDB delete failed:', e?.message));

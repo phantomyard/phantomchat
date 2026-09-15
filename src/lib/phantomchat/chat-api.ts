@@ -44,6 +44,9 @@ export interface P2PFastPath {
   tryDeliver(recipientPubkey: string, wraps: NostrEvent[]): Promise<{tier: string}>;
   /** Resolves true once the peer acknowledged the wrap over P2P (#140). */
   awaitAck?(recipientPubkey: string, wraps: NostrEvent[]): Promise<boolean>;
+  /** 'webrtc' when a VERIFIED-live data channel to the peer is open right now,
+   * else null. Selects the P2P-first send path (phantomchat#143). */
+  liveDirectTier?(recipientPubkey: string): string | null;
 }
 
 /**
@@ -949,7 +952,22 @@ export class ChatAPI {
     // the rumor: from=pubkey, to=p-tag, timestamp=created_at, id=rumor id.
     const wirePayload = type === 'text' ? content : wireEnvelope;
 
-    if(this.relayPool.isConnected()) {
+    // P2P-FIRST (phantomchat#143). With a VERIFIED-live data channel to the peer,
+    // the wrap goes over it BEFORE the relay fan-out, and the peer's P2P receipt
+    // settles the send even when no relay socket is up. Returns null (and touches
+    // nothing) for every peer without a live channel, so offline peers take the
+    // relay path below exactly as before.
+    let directAcked = false;
+    let directRumor: {rumor: NonNullable<PublishResult['rumor']>; rumorId: string} | undefined;
+    const direct = await this.sendDirectFirst(peerOwnId, wirePayload, messageId, opts?.replyTo, opts?.onPublishedRumorId);
+
+    if(direct) {
+      publishedRumorId = direct.rumorId;
+      trackId = direct.rumorId;
+      publishSucceeded = direct.relayHandedOff;
+      directAcked = direct.acked;
+      directRumor = {rumor: direct.rumor, rumorId: direct.rumorId};
+    } else if(this.relayPool.isConnected()) {
       try {
         const result: PublishResult = await this.relayPool.publish(peerOwnId!, wirePayload, opts?.replyTo);
         publishedRumorId = result.rumorId;
@@ -1050,7 +1068,7 @@ export class ChatAPI {
           await store.reKeyEventId(storedRow.eventId, publishedRumorId);
           storedRow = {...storedRow, eventId: publishedRumorId, appMessageId: messageId};
         }
-        if(publishSucceeded && storedRow.deliveryState !== 'sent') {
+        if((publishSucceeded || directAcked) && storedRow.deliveryState === 'sending') {
           storedRow = {...storedRow, deliveryState: 'sent'};
           await store.saveMessage(storedRow);
         }
@@ -1067,13 +1085,26 @@ export class ChatAPI {
       if(this.deliveryTracker) {
         this.deliveryTracker.markSent(trackId);
       }
+    } else if(directAcked && directRumor && peerOwnId) {
+      // The peer already has it over P2P; relays were unreachable. Queue the SAME
+      // rumor as a store-and-forward backstop for the peer's other devices and
+      // our own history. No appMessageId: the row and tracker already sit on the
+      // rumor id, so the flush must not touch them.
+      const msg = this.history.find((m) => m.id === messageId);
+      if(msg) msg.status = 'delivered';
+      if(this.offlineQueue) {
+        this.offlineQueue.queue(peerOwnId, wirePayload, undefined, directRumor)
+        .catch((e) => this.log.warn('[ChatAPI] relay backstop queue failed:', e?.message));
+      }
     } else {
       // Either offline, disconnected, or every relay rejected. Queue the same
       // wire payload we'd have published (plain text for NIP-17 text, envelope
       // for files) for later redelivery, so the flushed rumor parses on the
       // receiver exactly like a live send. The stored row (if any) has
       // deliveryState='sending' and will transition when the queue flushes.
-      await this.queueMessage(messageId, wirePayload);
+      // A direct attempt that went unacknowledged hands its rumor over, so a
+      // copy that did land silently dedups against the relay one.
+      await this.queueMessage(messageId, wirePayload, directRumor);
     }
 
     return messageId;
@@ -1254,7 +1285,92 @@ export class ChatAPI {
    *   receiver JSON.parses the rumor content, so a raw-text payload is dropped
    *   as malformed (FIND-ghost-first-msg).
    */
-  private async queueMessage(messageId: string, payload: string): Promise<void> {
+  /**
+   * P2P-first send (phantomchat#143). Runs only when the peer has a VERIFIED-live
+   * WebRTC channel; returns null otherwise so the caller keeps today's relay path.
+   *
+   *  1. Build the wraps once (same outer + rumor id for both paths → the
+   *     receiver dedups whichever copy lands second; the dedupe key is the rumor
+   *     id, with the outer wrap id as the first gate).
+   *  2. Push the recipient wrap over the data channel FIRST.
+   *  3. Hand the wraps to the relays right after — never gated on the direct ack,
+   *     so the peer's other devices and our own devices still get a copy.
+   *  4. The peer's `["OK", id, true, "p2p"]` receipt marks the message delivered.
+   *     With relays up that happens in the background (the send returns at once);
+   *     with no relay hand-off we wait the short ack window to decide between
+   *     "delivered directly" and the offline queue.
+   */
+  private async sendDirectFirst(
+    peer: string | null,
+    wirePayload: string,
+    messageId: string,
+    replyTo: {eventId: string; relayUrl?: string} | undefined,
+    onPublishedRumorId: ((rumorId: string) => void) | undefined
+  ): Promise<null | {rumorId: string; rumor: NonNullable<PublishResult['rumor']>; relayHandedOff: boolean; acked: boolean}> {
+    const selector = this.transportSelector;
+    const pool = this.relayPool as NostrRelayPool & Partial<Pick<NostrRelayPool, 'wrapForSend' | 'publishWraps'>>;
+    if(!peer || !selector?.liveDirectTier || !selector.awaitAck) return null;
+    if(typeof pool.wrapForSend !== 'function' || typeof pool.publishWraps !== 'function') return null;
+    if(selector.liveDirectTier(peer) !== 'webrtc') return null;
+
+    let built: Awaited<ReturnType<NostrRelayPool['wrapForSend']>>;
+    try {
+      built = await pool.wrapForSend(peer, wirePayload, replyTo);
+    } catch(err: any) {
+      this.log.warn('[ChatAPI] direct-first wrap failed, using relay path:', err?.message);
+      return null;
+    }
+    const {wraps, rumorId, rumor} = built;
+    onPublishedRumorId?.(rumorId);
+
+    // Arm receipt matching on the rumor id BEFORE anything can acknowledge it.
+    if(this.deliveryTracker) {
+      this.deliveryTracker.rekey(messageId, rumorId);
+      this.deliveryTracker.registerOutgoing(rumorId, () => {
+        this.relayPool.rewrapAndPublish(peer, rumor);
+      });
+    }
+
+    const awaitAck = selector.awaitAck.bind(selector);
+    const directDone: Promise<boolean> = selector.tryDeliver(peer, wraps)
+    .then((res) => res.tier === 'webrtc' ? awaitAck(peer, wraps) : false)
+    .catch(() => false);
+
+    let relayHandedOff = false;
+    if(this.relayPool.isConnected()) {
+      try {
+        relayHandedOff = pool.publishWraps(wraps).successes.length > 0;
+      } catch(err: any) {
+        this.log.warn('[ChatAPI] relay fan-out after direct send failed:', err?.message);
+      }
+    }
+
+    const settle = (acked: boolean) => {
+      if(acked) {
+        this.deliveryTracker?.markDeliveredDirect(rumorId);
+        this.log('[ChatAPI] delivered over P2P:', messageId);
+      } else {
+        this.log('[ChatAPI] P2P copy not acknowledged, relay carries it:', messageId);
+      }
+      import('./transport/transport-status').then(({getTransportStatus}) => {
+        getTransportStatus().record(peer, acked ? 'webrtc' : 'relay');
+      }).catch(swallowHandler('ChatAPI.p2pStatusRecord'));
+    };
+
+    if(relayHandedOff) {
+      directDone.then(settle).catch(swallowHandler('ChatAPI.directFirstSettle'));
+      return {rumorId, rumor, relayHandedOff, acked: false};
+    }
+    const acked = await directDone;
+    settle(acked);
+    return {rumorId, rumor, relayHandedOff, acked};
+  }
+
+  private async queueMessage(
+    messageId: string,
+    payload: string,
+    prebuilt?: {rumor: NonNullable<PublishResult['rumor']>; rumorId: string}
+  ): Promise<void> {
     const peerOwnId = this.activePeer;
 
     if(!peerOwnId) {
@@ -1273,7 +1389,7 @@ export class ChatAPI {
       // Pass the app message id so the queue can hand it back on flush and we
       // can migrate the row + tracker to the canonical rumor id (see
       // handleQueueFlushed). Without it an offline text send stays single-check.
-      await this.offlineQueue.queue(peerOwnId, payload, messageId);
+      await this.offlineQueue.queue(peerOwnId, payload, messageId, prebuilt);
       this.updateMessageStatus(messageId, 'sent');
       this.log('[ChatAPI] message queued:', messageId);
     } catch(err) {

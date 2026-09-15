@@ -343,6 +343,29 @@ describe('DeliveryTracker retry (always-on)', () => {
     expect(resendFn).toHaveBeenCalledTimes(2);
   });
 
+  it('markDeliveredDirect (P2P receipt, #143): delivered straight from sent, retries stop, event says via webrtc', async() => {
+    const rootScope = (await import('@lib/rootScope')).default as any;
+    tracker.registerOutgoing('rumor-direct', wraps);
+    tracker.markSent('rumor-direct');
+
+    tracker.markDeliveredDirect('rumor-direct');
+
+    expect(tracker.getState('rumor-direct')?.state).toBe('delivered');
+    expect(rootScope.dispatchEvent).toHaveBeenCalledWith('phantomchat_delivery_update', {eventId: 'rumor-direct', state: 'delivered', via: 'webrtc'});
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(resendFn).not.toHaveBeenCalled();
+  });
+
+  it('markDeliveredDirect never regresses a read message', () => {
+    tracker.markSent('rumor-read');
+    tracker.handleReceipt({
+      kind: 14, content: '', pubkey: 'peer', created_at: 0,
+      tags: [['e', 'rumor-read'], ['receipt-type', 'read']], id: 'rcpt-r'
+    });
+    tracker.markDeliveredDirect('rumor-read');
+    expect(tracker.getState('rumor-read')?.state).toBe('read');
+  });
+
   it('stops retrying once a delivery receipt arrives', async() => {
     tracker.registerOutgoing('chat-2-0', wraps);
     tracker.markSent('chat-2-0');
