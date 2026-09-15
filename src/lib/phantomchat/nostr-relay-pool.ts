@@ -8,7 +8,8 @@
 
 import {Logger, logger} from '@lib/logger';
 import {NostrRelay, DecryptedMessage, NostrEvent} from './nostr-relay';
-import {wrapNip17Message, wrapEditV2, wrapNip17Edit, rewrapNip17Message, rewrapV2, isLegacyWrap, warmSymmetricKeyCache, UnsignedEvent} from './nostr-crypto';
+import {wrapNip17Message, wrapEditV2, wrapNip17Edit, rewrapNip17Message, rewrapV2,
+  rewrapV2WithSelf, isLegacyWrap, warmSymmetricKeyCache, UnsignedEvent} from './nostr-crypto';
 import {getNostrWrapClient} from './nostr-wrap-client';
 import {getNostrUnwrapClient} from './nostr-unwrap-client';
 import {getMessageStore} from './message-store';
@@ -1044,8 +1045,18 @@ export class NostrRelayPool {
    * event id is new, so relays re-forward it to an already-live subscriber —
    * which a verbatim resend of the original wrap cannot do. Returns the freshly
    * minted wraps (mainly for tests/inspection). Best-effort per relay.
+   *
+   * `includeSelf` also mints the self-addressed copy for our own other devices.
+   * A retry must NOT set it (the self copy went out with the first publish), but
+   * the FIRST relay publish of a rumor that so far only travelled over a direct
+   * P2P channel must (phantomchat#143, review on #144) — otherwise that message
+   * never reaches our other devices.
    */
-  async rewrapAndPublish(recipientPubkey: string, rumor: UnsignedEvent): Promise<PublishResult> {
+  async rewrapAndPublish(
+    recipientPubkey: string,
+    rumor: UnsignedEvent,
+    opts: {includeSelf?: boolean} = {}
+  ): Promise<PublishResult> {
     if(!this.privateKeyBytes) {
       return {successes: [], failures: [{url: 'wrap', error: 'no private key available for re-wrap'}]};
     }
@@ -1053,21 +1064,30 @@ export class NostrRelayPool {
     const successes: string[] = [];
     const failures: {url: string; error: string}[] = [];
 
-    // Use v2 re-wrap (AES-256-GCM) with fallback to legacy NIP-17
-    let wrap: NostrEvent;
+    // Use v2 re-wrap (AES-256-GCM) with fallback to legacy NIP-17.
+    // wraps[0] is always the recipient copy; wraps[1] (includeSelf) the self copy.
+    let wraps: NostrEvent[];
     try {
-      wrap = await rewrapV2(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
+      if(opts.includeSelf) {
+        const {event, selfEvent} = await rewrapV2WithSelf(this.privateKeyBytes, recipientPubkey, rumor);
+        wraps = [event, selfEvent] as unknown as NostrEvent[];
+      } else {
+        wraps = [await rewrapV2(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent];
+      }
     } catch{
-      // Fallback to legacy NIP-17 re-wrap
-      wrap = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent;
+      // Fallback to legacy NIP-17 re-wrap: [recipientWrap, selfWrap]
+      const legacy = rewrapNip17Message(this.privateKeyBytes, recipientPubkey, rumor) as unknown as NostrEvent[];
+      wraps = opts.includeSelf ? legacy : [legacy[0]];
     }
 
     // Write set minus read-back-quarantined relays, floor of 3 (issue #359).
     const writeEntries = this.writeEntries();
     for(const entry of writeEntries) {
       try {
-        entry.instance.publishRawEvent(wrap);
-        successes.push(wrap.id);
+        for(const wrap of wraps) {
+          entry.instance.publishRawEvent(wrap);
+        }
+        successes.push(wraps[0].id);
       } catch(err) {
         failures.push({
           url: entry.config.url,
@@ -1075,7 +1095,7 @@ export class NostrRelayPool {
         });
       }
     }
-    return {successes, failures, rumorId: rumor.id, wraps: [wrap], rumor};
+    return {successes, failures, rumorId: rumor.id, wraps, rumor};
   }
 
   /**

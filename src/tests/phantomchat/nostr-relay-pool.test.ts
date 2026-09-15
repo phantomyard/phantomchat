@@ -419,6 +419,43 @@ describe('NostrRelayPool', () => {
       expect(result.failures).toEqual([{url: 'wss://relay2.test', error: 'socket gone'}]);
     });
 
+    // Review on #144: the first relay publish of a rumor that only went over P2P
+    // must reach our own other devices too — includeSelf adds the self copy.
+    it('rewrapAndPublish(includeSelf) hands each relay the recipient AND the self-addressed copy of the same rumor', async() => {
+      const {generateSecretKey, getPublicKey} = await import('nostr-tools/pure');
+      const {wrapV2, unwrapV2, getSymmetricKey} = await import('@lib/phantomchat/nostr-crypto');
+      const relays = [
+        {url: 'wss://relay1.test', read: true, write: true},
+        {url: 'wss://relay2.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage: vi.fn()});
+      await pool.initialize();
+      const skA = generateSecretKey();
+      const pkA = getPublicKey(skA);
+      const skB = generateSecretKey();
+      const pkB = getPublicKey(skB);
+      (pool as any).privateKeyBytes = skA;
+      await getSymmetricKey(skA, pkB);
+      const {rumor, rumorId} = await wrapV2(skA, pkB, 'direct first');
+      const sent: Record<string, any[]> = {};
+      for(const inst of mockRelayInstances) {
+        inst.publishRawEvent = vi.fn((w: any) => { (sent[inst.url] ??= []).push(w); });
+      }
+
+      const withSelf = await pool.rewrapAndPublish(pkB, rumor, {includeSelf: true});
+      const pTo = (w: any) => w.tags.find((t: string[]) => t[0] === 'p')[1];
+      for(const url of ['wss://relay1.test', 'wss://relay2.test']) {
+        expect(sent[url].map(pTo)).toEqual([pkB, pkA]);
+      }
+      expect(withSelf.successes).toEqual([withSelf.wraps![0].id, withSelf.wraps![0].id]);
+      expect((await unwrapV2(sent['wss://relay1.test'][1], skA)).id).toBe(rumorId);
+      expect((await unwrapV2(sent['wss://relay1.test'][0], skB)).id).toBe(rumorId);
+
+      for(const k of Object.keys(sent)) delete sent[k];
+      await pool.rewrapAndPublish(pkB, rumor);
+      expect(sent['wss://relay1.test'].map(pTo)).toEqual([pkB]);
+    });
+
     it('wrapForSend throws without an identity key instead of returning a bogus wrap', async() => {
       const pool = new NostrRelayPool({relays: [{url: 'wss://relay1.test', read: true, write: true}], onMessage: vi.fn()});
       await expect(pool.wrapForSend('recipient', 'hi')).rejects.toThrow(/private key/);
