@@ -88,10 +88,12 @@ export class TransportSelector {
   /** `pubkey:eventId` → resolvers waiting for that peer's receipt. */
   private ackWaiters = new Map<string, Array<(acked: boolean) => void>>();
   /**
-   * `pubkey:eventId` → outcome of a receipt that landed before `awaitAck` was
-   * called (true = accepted, false = rejected).
+   * `pubkey:eventId` of ACCEPTED receipts that landed before `awaitAck` was
+   * called. Early rejections are deliberately not stored (phantomchat#146): an
+   * unsolicited or re-ordered `["OK", id, false]` must never pre-empt a genuine
+   * ack arriving later inside the ack window.
    */
-  private earlyAcks = new Map<string, boolean>();
+  private earlyAcks = new Set<string>();
 
   constructor(deps: TransportSelectorDeps) {
     this.deps = deps;
@@ -110,8 +112,9 @@ export class TransportSelector {
 
   /**
    * A P2P rejection (`["OK", id, false]`) arrived from `pubkey` for `eventId`.
-   * Not a delivery, but an answer: resolve the waiter false now rather than
-   * holding the send for the whole ack window (phantomchat#142).
+   * Not a delivery, but an answer: an ALREADY-ARMED waiter resolves false now
+   * rather than holding the send for the whole ack window (phantomchat#142). A
+   * rejection with no waiter yet is discarded (phantomchat#146).
    */
   handleReject(pubkey: string, eventId: string): void {
     this.settleReceipt(pubkey, eventId, false);
@@ -126,9 +129,13 @@ export class TransportSelector {
       for(const resolve of waiters) resolve(accepted);
       return;
     }
+    // No waiter armed yet. Only an acceptance is remembered; an early rejection
+    // is discarded so it can neither settle a later send nor downgrade an ack
+    // we already hold (#146). A send then waits out its normal ack window.
+    if(!accepted) return;
     // Re-insert so a repeated receipt refreshes its eviction position.
     this.earlyAcks.delete(key);
-    this.earlyAcks.set(key, accepted);
+    this.earlyAcks.add(key);
     if(this.earlyAcks.size > MAX_EARLY_ACKS) {
       const oldest = this.earlyAcks.keys().next().value;
       if(oldest !== undefined) this.earlyAcks.delete(oldest);
@@ -145,11 +152,7 @@ export class TransportSelector {
       const wrap = this.pickRecipientWrap(wraps, recipientPubkey);
       if(!wrap?.id) return Promise.resolve(false);
       const key = `${recipientPubkey}:${wrap.id}`;
-      const early = this.earlyAcks.get(key);
-      if(early !== undefined) {
-        this.earlyAcks.delete(key);
-        return Promise.resolve(early);
-      }
+      if(this.earlyAcks.delete(key)) return Promise.resolve(true);
       return new Promise<boolean>((resolve) => {
         const list = this.ackWaiters.get(key) ?? [];
         let done = false;
