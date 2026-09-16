@@ -1242,7 +1242,8 @@ export class NostrRelayPool {
    * would lose the message, not merely fail to recover it.
    *
    * Same fetch-everything-first discipline as backfillRecent(): a walk that
-   * truncated (page cap hit, range unexhausted) raises backfillGapOpen BEFORE
+   * truncated (page cap hit, range unexhausted) — or timed out after collecting
+   * a partial page ('unknown' with messages) — raises backfillGapOpen BEFORE
    * any dispatch, so the newest message of the partial walk cannot drag the
    * watermark over wraps nobody fetched. The catch-up poll owns clearing it.
    *
@@ -1278,11 +1279,18 @@ export class NostrRelayPool {
       } else if(page?.outcome === 'truncated') {
         responded++;
         truncated = true;
+      } else if(page?.outcome === 'unknown' && page.messages.length > 0) {
+        // A page that timed out mid-walk still hands back what it collected
+        // (getMessagesPaged). Those messages are real and must be delivered, but
+        // the range below them was never proven exhausted — same hazard as a
+        // truncated walk, so hold the watermark before dispatch. Not counted as
+        // responded: it proves nothing about the range.
+        truncated = true;
       }
     }
 
     if(truncated && !this.backfillGapOpen) {
-      this.log.warn('[NostrRelayPool] inbox catch-up truncated - holding watermark until the catch-up poll closes the gap');
+      this.log.warn('[NostrRelayPool] inbox catch-up unexhausted (truncated or timed out with partial results) - holding watermark until the catch-up poll closes the gap');
       this.backfillGapOpen = true;
     }
 

@@ -828,5 +828,31 @@ describe('message-loss recovery', () => {
       expect((pool as any).backfillGapOpen).toBe(true);
       expect((pool as any).lastSeenTimestamp).toBe(0);
     });
+
+    it('a page that timed out with partial results delivers but holds the watermark', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, onMessage} = await connectedPool();
+      mockRelayInstances[0].getMessagesPaged = vi.fn().mockResolvedValue({
+        messages: [makeMsg('rumor-partial', t0 + 900)],
+        outcome: 'unknown',
+        oldestReached: t0 + 800
+      });
+
+      const result = await pool.catchUpInbox(t0);
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage.mock.calls[0][0].id).toBe('rumor-partial');
+      expect(result).toEqual({delivered: 1, completed: 0, responded: 0, queried: 1});
+      expect((pool as any).backfillGapOpen).toBe(true);
+      expect((pool as any).lastSeenTimestamp).toBe(0);
+    });
+
+    it('an empty timed-out page does not open a gap on its own', async() => {
+      const {pool} = await connectedPool();
+      mockRelayInstances[0].unknownNext = true;
+
+      await pool.catchUpInbox(1);
+      expect((pool as any).backfillGapOpen).toBe(false);
+    });
   });
 });
