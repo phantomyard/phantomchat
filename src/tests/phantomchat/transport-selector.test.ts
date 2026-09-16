@@ -286,14 +286,42 @@ describe('TransportSelector — P2P delivery receipts (#140)', () => {
     expect(settled).toBe(false);
   });
 
-  it('a rejection that lands before awaitAck resolves false immediately (#142)', async() => {
+  it('a rejection that lands before awaitAck settles false after a short grace, well under the ack window (#142/#146)', async() => {
     vi.useFakeTimers();
     const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh(), ackTimeoutMs: 2000});
     sel.handleReject(PK, 'wrap-recipient');
     let settled: boolean | undefined;
     sel.awaitAck(PK, makeWraps()).then((v) => { settled = v; });
     await vi.advanceTimersByTimeAsync(10);
+    expect(settled).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(300);
     expect(settled).toBe(false);
+  });
+
+  it('an early rejection cannot pre-empt a genuine ack that arrives after awaitAck (#146)', async() => {
+    vi.useFakeTimers();
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh(), ackTimeoutMs: 2000});
+    sel.handleReject(PK, 'wrap-recipient');
+    let settled: boolean | undefined;
+    sel.awaitAck(PK, makeWraps()).then((v) => { settled = v; });
+    await vi.advanceTimersByTimeAsync(50);
+    sel.handleAck(PK, 'wrap-recipient');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
+  });
+
+  it('a rejection arriving after an early ack does not downgrade it (#146)', async() => {
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh()});
+    sel.handleAck(PK, 'wrap-recipient');
+    sel.handleReject(PK, 'wrap-recipient');
+    await expect(sel.awaitAck(PK, makeWraps())).resolves.toBe(true);
+  });
+
+  it('an ack arriving after an early rejection wins before awaitAck is armed (#146)', async() => {
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh()});
+    sel.handleReject(PK, 'wrap-recipient');
+    sel.handleAck(PK, 'wrap-recipient');
+    await expect(sel.awaitAck(PK, makeWraps())).resolves.toBe(true);
   });
 
   it('a rejection from another peer does not settle the send', async() => {

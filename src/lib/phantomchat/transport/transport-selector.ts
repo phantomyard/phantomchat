@@ -79,6 +79,13 @@ const DEFAULT_RTC_POLL_MS = 50;
 const DEFAULT_ACK_TIMEOUT_MS = 2000;
 /** Receipts that arrived before anyone awaited them (bounded, oldest evicted). */
 const MAX_EARLY_ACKS = 256;
+/**
+ * How long a send keeps listening for a genuine ack after it finds an EARLY
+ * rejection already stored for its wrap (phantomchat#146). A stored rejection
+ * only shortens the wait; it never settles the send on its own, so an
+ * unsolicited or guessed `["OK", id, false]` cannot pre-empt real confirmation.
+ */
+const EARLY_REJECT_GRACE_MS = 250;
 
 export class TransportSelector {
   private deps: TransportSelectorDeps;
@@ -126,6 +133,9 @@ export class TransportSelector {
       for(const resolve of waiters) resolve(accepted);
       return;
     }
+    // An early ack is sticky: a rejection arriving after it (spoofed, guessed
+    // or re-ordered) must not downgrade a confirmation we already hold (#146).
+    if(!accepted && this.earlyAcks.get(key) === true) return;
     // Re-insert so a repeated receipt refreshes its eviction position.
     this.earlyAcks.delete(key);
     this.earlyAcks.set(key, accepted);
@@ -146,10 +156,13 @@ export class TransportSelector {
       if(!wrap?.id) return Promise.resolve(false);
       const key = `${recipientPubkey}:${wrap.id}`;
       const early = this.earlyAcks.get(key);
-      if(early !== undefined) {
-        this.earlyAcks.delete(key);
-        return Promise.resolve(early);
-      }
+      if(early !== undefined) this.earlyAcks.delete(key);
+      if(early === true) return Promise.resolve(true);
+      // An early rejection is a hint, not an answer (#146): keep listening for a
+      // genuine ack, but only for a short grace window instead of the full one.
+      const windowMs = early === false ?
+        Math.min(EARLY_REJECT_GRACE_MS, this.ackTimeoutMs) :
+        this.ackTimeoutMs;
       return new Promise<boolean>((resolve) => {
         const list = this.ackWaiters.get(key) ?? [];
         let done = false;
@@ -167,7 +180,7 @@ export class TransportSelector {
             else this.ackWaiters.delete(key);
           }
           finish(false);
-        }, this.ackTimeoutMs);
+        }, windowMs);
         list.push(finish);
         this.ackWaiters.set(key, list);
       });
