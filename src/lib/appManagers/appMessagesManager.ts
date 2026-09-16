@@ -4654,7 +4654,9 @@ export class AppMessagesManager extends AppManager {
           );
           const currentState = this.apiUpdatesManager.updatesState;
           const {state} = result;
-          if(currentState.pts && currentState.pts !== state.pts) {
+          // PhantomChat's virtual server returns no `state` (there is no server
+          // pts sequence for dialogs); without this guard a missing state threw.
+          if(state && currentState.pts && currentState.pts !== state.pts) {
             this.log.warn('current pts is different, will try again', currentState.pts, state.pts);
             await pause(500);
             continue;

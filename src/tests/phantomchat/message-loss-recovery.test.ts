@@ -734,4 +734,125 @@ describe('message-loss recovery', () => {
       expect(relay.rawQueries[0]?.ids).toContain('wrap-offline');
     });
   });
+
+  // PR #148 review: the on-demand chat-open / conversation catch-up used to
+  // await a query and DISCARD its results. The relay's query path claims each
+  // wrap id before decrypting, so a discarded wrap was deduped on every later
+  // replay — lost, not merely unrecovered. And an all-relays failure resolved
+  // like a success, crediting the catch-up throttle off a walk that learned nothing.
+  describe('on-demand inbox catch-up (catchUpInbox)', () => {
+    const MULTI = [
+      {url: 'wss://r1.test', read: true, write: true},
+      {url: 'wss://r2.test', read: true, write: true}
+    ];
+
+    async function connectedPool(relays = RELAYS, onMessage = vi.fn()) {
+      const pool = new NostrRelayPool({relays: [...relays], onMessage});
+      await pool.initialize();
+      mockRelayInstances.forEach((r: any) => r.connect());
+      return {pool, onMessage};
+    }
+
+    it('DELIVERS a missed wrap through onMessage, not just returns it', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, onMessage} = await connectedPool();
+      mockRelayInstances[0].stored.push(makeMsg('rumor-missed', t0 + 10));
+
+      const result = await pool.catchUpInbox(t0);
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage.mock.calls[0][0].id).toBe('rumor-missed');
+      expect(result).toEqual({delivered: 1, completed: 1, responded: 1, queried: 1});
+      expect((pool as any).lastSeenTimestamp).toBe(t0 + 10);
+    });
+
+    it('dedups a wrap two relays both return', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, onMessage} = await connectedPool(MULTI);
+      mockRelayInstances.forEach((r: any) => r.stored.push(makeMsg('rumor-both', t0 + 1)));
+
+      const result = await pool.catchUpInbox(t0);
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(result.delivered).toBe(1);
+      expect(result.completed).toBe(2);
+    });
+
+    it('all relays erroring is NOT a completed walk', async() => {
+      const {pool} = await connectedPool(MULTI);
+      mockRelayInstances.forEach((r: any) => {
+        r.getMessagesPaged = vi.fn().mockRejectedValue(new Error('socket died'));
+      });
+
+      expect(await pool.catchUpInbox(1)).toEqual({delivered: 0, completed: 0, responded: 0, queried: 2});
+    });
+
+    it('all relays timing out (unknown) is NOT a completed walk', async() => {
+      const {pool} = await connectedPool(MULTI);
+      mockRelayInstances.forEach((r: any) => { r.unknownNext = true; });
+
+      expect(await pool.catchUpInbox(1)).toEqual({delivered: 0, completed: 0, responded: 0, queried: 2});
+    });
+
+    it('one relay completing is enough; the erroring one does not block delivery', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, onMessage} = await connectedPool(MULTI);
+      mockRelayInstances[0].getMessagesPaged = vi.fn().mockRejectedValue(new Error('boom'));
+      mockRelayInstances[1].stored.push(makeMsg('rumor-r2', t0 + 5));
+
+      const result = await pool.catchUpInbox(t0);
+      expect(result).toEqual({delivered: 1, completed: 1, responded: 1, queried: 2});
+      expect(onMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips disconnected relays rather than counting them as queried', async() => {
+      const {pool} = await connectedPool(MULTI);
+      mockRelayInstances[1].disconnect();
+
+      const result = await pool.catchUpInbox(1);
+      expect(result.queried).toBe(1);
+      expect(mockRelayInstances[1].pagedCalls).toHaveLength(0);
+    });
+
+    it('a truncated walk delivers but holds the watermark and is not completed', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, onMessage} = await connectedPool();
+      const relay = mockRelayInstances[0];
+      relay.stored.push(makeMsg('rumor-newest', t0 + 900));
+      relay.truncateAt = t0 + 500;
+
+      const result = await pool.catchUpInbox(t0);
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({delivered: 1, completed: 0, responded: 1, queried: 1});
+      expect((pool as any).backfillGapOpen).toBe(true);
+      expect((pool as any).lastSeenTimestamp).toBe(0);
+    });
+
+    it('a page that timed out with partial results delivers but holds the watermark', async() => {
+      const t0 = 1_800_000_000;
+      const {pool, onMessage} = await connectedPool();
+      mockRelayInstances[0].getMessagesPaged = vi.fn().mockResolvedValue({
+        messages: [makeMsg('rumor-partial', t0 + 900)],
+        outcome: 'unknown',
+        oldestReached: t0 + 800
+      });
+
+      const result = await pool.catchUpInbox(t0);
+
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(onMessage.mock.calls[0][0].id).toBe('rumor-partial');
+      expect(result).toEqual({delivered: 1, completed: 0, responded: 0, queried: 1});
+      expect((pool as any).backfillGapOpen).toBe(true);
+      expect((pool as any).lastSeenTimestamp).toBe(0);
+    });
+
+    it('an empty timed-out page does not open a gap on its own', async() => {
+      const {pool} = await connectedPool();
+      mockRelayInstances[0].unknownNext = true;
+
+      await pool.catchUpInbox(1);
+      expect((pool as any).backfillGapOpen).toBe(false);
+    });
+  });
 });

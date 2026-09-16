@@ -41,7 +41,8 @@ const messageStoreMocks = {
   getAllConversationIds: vi.fn().mockResolvedValue([]),
   getMessages: vi.fn().mockResolvedValue([]),
   getByEventId: vi.fn().mockResolvedValue(null),
-  getByAppMessageId: vi.fn().mockResolvedValue(null)
+  getByAppMessageId: vi.fn().mockResolvedValue(null),
+  getLatestTimestamp: vi.fn().mockResolvedValue(0)
 };
 vi.mock('@lib/phantomchat/message-store', () => ({
   getMessageStore: () => messageStoreMocks
@@ -55,7 +56,7 @@ vi.mock('@lib/rootScope', () => ({
   }
 }));
 
-import {ChatAPI, createChatAPI, ChatMessage, ChatState} from '@lib/phantomchat/chat-api';
+import {ChatAPI, createChatAPI, ChatMessage, ChatState, CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS, CHAT_OPEN_CATCHUP_OVERLAP_S} from '@lib/phantomchat/chat-api';
 import rootScope from '@lib/rootScope';
 import {DecryptedMessage} from '@lib/phantomchat/nostr-relay';
 import type {PublishResult, RelayConfig, NostrRelayPool} from '@lib/phantomchat/nostr-relay-pool';
@@ -133,6 +134,10 @@ class MockRelayPool {
       responded,
       queried: Math.max(this._relays.length, this._connectedCount, 1)
     };
+  }
+
+  async catchUpInbox(_since?: number): Promise<{delivered: number; completed: number; responded: number; queried: number}> {
+    return {delivered: 0, completed: 0, responded: 0, queried: 0};
   }
 
   disconnect(): void {
@@ -853,6 +858,127 @@ describe('ChatAPI', () => {
       // connected, so no further edge will ever come to drain the queue.
       mockPool.simulateStateChange(1, 7);
       expect(mockQueue.flushCallCount).toBe(2);
+    });
+  });
+
+  describe('catchUpConversation() — chat-open relay catch-up', () => {
+    const PEER_HEX = 'ab'.repeat(32);
+    const DONE = {delivered: 0, completed: 1, responded: 1, queried: 1};
+    let catchUpInbox: ReturnType<typeof vi.fn>;
+    let now: number;
+
+    beforeEach(() => {
+      now = 1_800_000_000_000;
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      catchUpInbox = vi.fn().mockResolvedValue(DONE);
+      (mockPool as any).catchUpInbox = catchUpInbox;
+      messageStoreMocks.getLatestTimestamp.mockReset().mockResolvedValue(1_700_000_000);
+      mockPool.simulateConnect();
+    });
+
+    afterEach(() => {
+      vi.mocked(Date.now).mockRestore();
+    });
+
+    test('walks our wrap inbox (pool delivers) since the chat\'s newest message, less the overlap', async() => {
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+      expect(messageStoreMocks.getConversationId).toHaveBeenCalledWith(OWN_ID, PEER_HEX);
+      expect(catchUpInbox).toHaveBeenCalledTimes(1);
+      expect(catchUpInbox).toHaveBeenCalledWith(1_700_000_000 - CHAT_OPEN_CATCHUP_OVERLAP_S);
+    });
+
+    test('an empty chat asks without a since floor', async() => {
+      messageStoreMocks.getLatestTimestamp.mockResolvedValue(0);
+      await chatApi.catchUpConversation(PEER_HEX);
+      expect(catchUpInbox.mock.calls[0][0]).toBeUndefined();
+    });
+
+    test('skips a chat caught up within the last minute, runs again after it', async() => {
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+      now += CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS - 1;
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('skipped');
+      expect(catchUpInbox).toHaveBeenCalledTimes(1);
+
+      now += 1;
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+      expect(catchUpInbox).toHaveBeenCalledTimes(2);
+    });
+
+    test('the throttle is per chat', async() => {
+      await chatApi.catchUpConversation(PEER_HEX);
+      expect(await chatApi.catchUpConversation('cd'.repeat(32))).toBe('ran');
+      expect(catchUpInbox).toHaveBeenCalledTimes(2);
+    });
+
+    test('a completed full backfill counts as caught up', async() => {
+      messageStoreMocks.getAllConversationIds.mockResolvedValueOnce(['conv-1']);
+      await chatApi.backfillConversations();
+      catchUpInbox.mockClear();
+
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('skipped');
+      expect(catchUpInbox).not.toHaveBeenCalled();
+    });
+
+    test('full backfill: one inbox walk floored at the oldest conversation\'s newest message', async() => {
+      messageStoreMocks.getAllConversationIds.mockResolvedValueOnce(['conv-a', 'conv-b', 'conv-empty']);
+      messageStoreMocks.getLatestTimestamp.mockImplementation(async(id: string) =>
+        id === 'conv-a' ? 1_700_000_900 : id === 'conv-b' ? 1_700_000_100 : 0);
+      await chatApi.backfillConversations();
+      expect(catchUpInbox).toHaveBeenCalledTimes(1);
+      expect(catchUpInbox).toHaveBeenCalledWith(1_700_000_100 - CHAT_OPEN_CATCHUP_OVERLAP_S);
+    });
+
+    test.each([
+      ['every relay errored', {delivered: 0, completed: 0, responded: 0, queried: 3}],
+      ['every relay timed out / unknown', {delivered: 0, completed: 0, responded: 0, queried: 2}],
+      ['no read relay connected', {delivered: 0, completed: 0, responded: 0, queried: 0}],
+      ['walks only truncated', {delivered: 4, completed: 0, responded: 1, queried: 1}]
+    ])('a full backfill where %s does NOT count as caught up', async(_label, result) => {
+      catchUpInbox.mockResolvedValueOnce(result);
+      messageStoreMocks.getAllConversationIds.mockResolvedValueOnce(['conv-1']);
+      await chatApi.backfillConversations();
+      catchUpInbox.mockClear();
+
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+      expect(catchUpInbox).toHaveBeenCalledTimes(1);
+    });
+
+    test('offline: no query and nothing recorded, so the next open retries', async() => {
+      mockPool.simulateDisconnect();
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('offline');
+      expect(catchUpInbox).not.toHaveBeenCalled();
+
+      mockPool.simulateConnect();
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+    });
+
+    test('a thrown query is not recorded as caught up', async() => {
+      catchUpInbox.mockRejectedValueOnce(new Error('boom'));
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('failed');
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+    });
+
+    test.each([
+      ['every relay errored', {delivered: 0, completed: 0, responded: 0, queried: 3}],
+      ['every relay timed out / unknown', {delivered: 0, completed: 0, responded: 0, queried: 2}],
+      ['walks only truncated', {delivered: 4, completed: 0, responded: 1, queried: 1}]
+    ])('a chat catch-up where %s is \'failed\' and the next open retries', async(_label, result) => {
+      catchUpInbox.mockResolvedValueOnce(result);
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('failed');
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+      expect(catchUpInbox).toHaveBeenCalledTimes(2);
+    });
+
+    test('concurrent opens of the same chat share one query', async() => {
+      let release!: () => void;
+      catchUpInbox.mockImplementationOnce(() => new Promise<any>((r) => { release = () => r(DONE); }));
+      const a = chatApi.catchUpConversation(PEER_HEX);
+      const b = chatApi.catchUpConversation(PEER_HEX);
+      await vi.waitFor(() => expect(catchUpInbox).toHaveBeenCalledTimes(1));
+      release();
+      expect(await a).toBe('ran');
+      expect(await b).toBe('ran');
+      expect(catchUpInbox).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -463,6 +463,9 @@ export class PhantomChatMTProtoServer {
       case 'messages.getPinnedDialogs':
         return this.getDialogs(params);
 
+      case 'messages.getPeerDialogs':
+        return this.getPeerDialogs(params);
+
       case 'messages.getHistory':
         return this.getHistory(params);
 
@@ -700,7 +703,40 @@ export class PhantomChatMTProtoServer {
 
   // ─── Private implementations ──────────────────────────────────────
 
-  private async getDialogs(_params: any): Promise<any> {
+  /**
+   * `messages.getPeerDialogs` — tweb's per-peer dialog reload. appMessagesManager
+   * calls it (via `reloadConversation`) whenever a cached dialog's top message is
+   * missing from the worker's message storage, which is exactly the state a
+   * restored chat list boots into. It used to fall through to an empty static
+   * stub, so those previews stayed blank until the chat was opened.
+   *
+   * Served from the same store read as getDialogs, restricted to the requested
+   * peers. No `state` is returned: PhantomChat has no server pts sequence for
+   * dialogs, and reloadConversation treats a missing state as authoritative
+   * (a mismatched one would make it retry forever).
+   */
+  private async getPeerDialogs(params: any): Promise<any> {
+    const peerIds = new Set<number>();
+    for(const item of (params?.peers ?? []) as any[]) {
+      const peerId = extractPeerId(item?._ === 'inputDialogPeer' ? item.peer : item);
+      if(peerId !== null && Number.isFinite(peerId)) peerIds.add(peerId);
+    }
+
+    if(peerIds.size === 0) {
+      return {_: 'messages.peerDialogs', dialogs: [], messages: [], users: [], chats: []};
+    }
+
+    const result = await this.getDialogs({}, peerIds);
+    return {
+      _: 'messages.peerDialogs',
+      dialogs: result.dialogs,
+      messages: result.messages,
+      users: result.users,
+      chats: result.chats
+    };
+  }
+
+  private async getDialogs(_params: any, onlyPeerIds?: ReadonlySet<number>): Promise<any> {
     const store = getMessageStore();
     const dialogs: any[] = [];
     const messages: any[] = [];
@@ -732,6 +768,7 @@ export class PhantomChatMTProtoServer {
 
           const latest = latestMsgs[0];
           const peerId = await this.mapper.mapPubkey(peerPubkey);
+          if(onlyPeerIds && !onlyPeerIds.has(peerId)) continue;
 
           // Identity-triple contract: `latest.mid` is set at creation and
           // never recomputed. If it's missing, an upstream write path is
@@ -802,6 +839,7 @@ export class PhantomChatMTProtoServer {
       const groups = await groupStore.getAll();
 
       for(const group of groups) {
+        if(onlyPeerIds && !onlyPeerIds.has(group.peerId)) continue;
         try {
           const convId = group.groupId;
           const latestMsgs = await store.getMessages(convId, 1);

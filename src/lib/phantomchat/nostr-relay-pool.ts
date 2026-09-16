@@ -1231,48 +1231,85 @@ export class NostrRelayPool {
   }
 
   /**
-   * Query all read-enabled relays with a filter and return deduplicated results.
-   * Used by ChatAPI for relay backfill.
+   * On-demand inbox catch-up (ChatAPI chat-open / conversation backfill): walk
+   * our kind-1059 inbox on every enabled, connected read relay since `since`,
+   * and DELIVER what comes back through the normal receive pump
+   * (handleIncomingMessage: dedup, control-envelope routing, onMessage, watermark).
+   *
+   * Delivery is not optional. The relay's query path claims each outer wrap id
+   * before decrypting, so a wrap returned here and then dropped is deduped away
+   * on every later replay — returning results to a caller that ignores them
+   * would lose the message, not merely fail to recover it.
+   *
+   * Same fetch-everything-first discipline as backfillRecent(): a walk that
+   * truncated (page cap hit, range unexhausted) — or timed out after collecting
+   * a partial page ('unknown' with messages) — raises backfillGapOpen BEFORE
+   * any dispatch, so the newest message of the partial walk cannot drag the
+   * watermark over wraps nobody fetched. The catch-up poll owns clearing it.
+   *
+   * The result is EVIDENCE, not a boolean. `completed` counts relays whose walk
+   * reached the bottom of the range ('exhausted'); only that proves the range
+   * was caught up. `responded` also counts truncated walks. A walk that threw,
+   * timed out or was never connected ('unknown') counts toward neither — an
+   * all-relays failure resolves `{completed: 0, responded: 0}`, never as success.
    */
-  async getMessages(filter: {kinds: number[]; '#p'?: string[]; since?: number; limit?: number}): Promise<NostrEvent[]> {
+  async catchUpInbox(since?: number): Promise<{delivered: number; completed: number; responded: number; queried: number}> {
     const readEntries = this.relayEntries.filter(e =>
-      e.config.read && this.enabled.get(e.config.url) !== false
+      e.config.read &&
+      this.enabled.get(e.config.url) !== false &&
+      e.instance.getState() === 'connected'
     );
 
-    const seenIds = new Set<string>();
-    const results: NostrEvent[] = [];
-
-    const promises = readEntries.map(async(entry) => {
+    const pages = await Promise.all(readEntries.map(async(entry) => {
       try {
-        const messages = await entry.instance.getMessages(filter.since);
-        for(const msg of messages) {
-          if(msg.id && !seenIds.has(msg.id)) {
-            seenIds.add(msg.id);
-            // Convert DecryptedMessage to NostrEvent-like structure for backfill
-            results.push({
-              id: msg.id,
-              pubkey: msg.from,
-              created_at: msg.timestamp,
-              kind: msg.rumorKind || 14,
-              tags: msg.tags || [],
-              content: msg.content
-            });
-          }
-        }
+        return await entry.instance.getMessagesPaged(since);
       } catch(err) {
-        this.log.error('[NostrRelayPool] getMessages failed for:', entry.config.url, err);
+        this.log.error('[NostrRelayPool] inbox catch-up failed for:', entry.config.url, err);
+        return null;
       }
-    });
+    }));
 
-    await Promise.all(promises);
-    return results;
+    let completed = 0;
+    let responded = 0;
+    let truncated = false;
+    for(const page of pages) {
+      if(page?.outcome === 'exhausted') {
+        completed++;
+        responded++;
+      } else if(page?.outcome === 'truncated') {
+        responded++;
+        truncated = true;
+      } else if(page?.outcome === 'unknown' && page.messages.length > 0) {
+        // A page that timed out mid-walk still hands back what it collected
+        // (getMessagesPaged). Those messages are real and must be delivered, but
+        // the range below them was never proven exhausted — same hazard as a
+        // truncated walk, so hold the watermark before dispatch. Not counted as
+        // responded: it proves nothing about the range.
+        truncated = true;
+      }
+    }
+
+    if(truncated && !this.backfillGapOpen) {
+      this.log.warn('[NostrRelayPool] inbox catch-up unexhausted (truncated or timed out with partial results) - holding watermark until the catch-up poll closes the gap');
+      this.backfillGapOpen = true;
+    }
+
+    const before = this.deliveredMessageCount;
+    for(const page of pages) {
+      if(!page) continue;
+      for(const msg of page.messages) {
+        await this.handleIncomingMessage(msg);
+      }
+    }
+
+    return {delivered: this.deliveredMessageCount - before, completed, responded, queried: readEntries.length};
   }
 
   /**
    * Fan-out generic raw query across all enabled read relays.
    * Dedupes by event.id. Used by ChatAPI.queryLatestEvent to fetch
    * replaceable events (e.g., kind 30078 folder snapshots) that
-   * getMessages() does not support.
+   * catchUpInbox() does not support.
    */
   async queryRawEvents(filter: Record<string, unknown>): Promise<NostrEvent[]> {
     return (await this.queryRawEventsWithMeta(filter)).events;
