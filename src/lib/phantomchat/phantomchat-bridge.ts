@@ -248,6 +248,7 @@ export class PhantomChatBridge {
             ingest: (wrap) => (window as any).__phantomchatPool?.ingestP2PEvent?.(wrap),
             send: (peer, frame) => meshManager.send(peer, frame),
             onAck: (peer, eventId) => (window as any).__phantomchatTransportSelector?.handleAck?.(peer, eventId),
+            onReject: (peer, eventId) => (window as any).__phantomchatTransportSelector?.handleReject?.(peer, eventId),
             forwardToMiniRelay: (peer, data) => miniRelayWorker.postMessage({type: 'peer-message', peerId: peer, data})
           }).catch(swallowHandler('PhantomChatBridge.onPeerMessage'));
         },
