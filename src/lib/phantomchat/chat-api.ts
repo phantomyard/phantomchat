@@ -1259,7 +1259,6 @@ export class ChatAPI {
 
   private async doBackfillConversations(): Promise<void> {
     this.log('[ChatAPI] starting relay backfill');
-    const startedConnected = this.relayPool.isConnected();
 
     try {
       const store = getMessageStore();
@@ -1272,28 +1271,30 @@ export class ChatAPI {
 
       this.log('[ChatAPI] backfilling', conversationIds.length, 'conversation(s)');
 
+      // Gift wraps are p-tagged to US, not to a conversation, so one inbox walk
+      // covers every chat: floor it at the OLDEST conversation's newest stored
+      // message (less the overlap). A conversation with nothing stored yet adds
+      // no floor — the pool's watermark backfill owns cold history.
+      let floor: number | undefined;
       for(const convId of conversationIds) {
         try {
-          const since = await store.getLatestTimestamp(convId);
-
-          // Query relay pool for missed messages
-          // Limit to 50 events per conversation to avoid flooding
-          await this.relayPool.getMessages({
-            'kinds': [1059],
-            '#p': [this.ownId],
-            'since': since > 0 ? since : undefined,
-            'limit': 50
-          });
-          // Note: actual messages come through the subscription handler
-          // and get processed via handleRelayMessage -> dedup by eventId
+          const latest = await store.getLatestTimestamp(convId);
+          if(latest > 0 && (floor === undefined || latest < floor)) floor = latest;
         } catch(err) {
-          this.log.warn('[ChatAPI] backfill failed for conversation:', convId, err);
+          this.log.warn('[ChatAPI] backfill: no latest timestamp for conversation:', convId, err);
         }
       }
+      const since = floor === undefined ? undefined : Math.max(0, floor - CHAT_OPEN_CATCHUP_OVERLAP_S);
 
-      // Only a pass that could actually reach a relay counts as "caught up" for
-      // the chat-open throttle; an offline pass learned nothing.
-      if(startedConnected) this.lastFullBackfillAt = Date.now();
+      // Results are DELIVERED by the pool through its normal receive pump; the
+      // query claims wrap ids, so discarding them here would lose messages.
+      const result = await this.relayPool.catchUpInbox(since);
+      this.log('[ChatAPI] backfill walk:', result);
+
+      // Only a walk that some relay finished counts as "caught up" for the
+      // chat-open throttle. All relays erroring / timing out / truncating learned
+      // nothing conclusive and must not suppress chat-open recovery.
+      if(result.completed > 0) this.lastFullBackfillAt = Date.now();
 
       // Dispatch completion event
       rootScope.dispatchEvent('phantomchat_backfill_complete', undefined);
@@ -1308,10 +1309,11 @@ export class ChatAPI {
    *
    * Gift wraps are p-tagged only to the recipient (the sender is hidden inside),
    * so relays can't be asked for "this chat" — the query is our kind-1059 inbox
-   * since this conversation's newest stored message (less a small overlap). Any
-   * wraps it returns flow through the normal receive path and dedup, exactly
-   * like the launch/reconnect backfill; wraps belonging to other chats are simply
-   * delivered early.
+   * since this conversation's newest stored message (less a small overlap). Every
+   * wrap it returns is delivered by the pool through the normal receive pump and
+   * dedup (NostrRelayPool.catchUpInbox); wraps belonging to other chats are simply
+   * delivered early. Only a walk some relay FINISHED is recorded as caught up —
+   * an all-relays error/timeout resolves 'failed' and the next open retries.
    *
    * Skipped when this conversation, or everything via the full backfill, was
    * caught up within CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS, and when relays aren't
@@ -1340,12 +1342,14 @@ export class ChatAPI {
         const latest = await store.getLatestTimestamp(convId);
         const since = latest > 0 ? Math.max(0, latest - CHAT_OPEN_CATCHUP_OVERLAP_S) : undefined;
         this.log('[ChatAPI] chat catch-up:', peerPubkey.slice(0, 8), 'since', since);
-        await this.relayPool.getMessages({
-          'kinds': [1059],
-          '#p': [this.ownId],
-          'since': since,
-          'limit': 50
-        });
+        // Delivered through the pool's receive pump (see catchUpInbox).
+        const result = await this.relayPool.catchUpInbox(since);
+        if(result.completed === 0) {
+          // No relay finished the walk (all errored, timed out, or truncated):
+          // record nothing, so the next open of this chat retries.
+          this.log.warn('[ChatAPI] chat catch-up inconclusive:', peerPubkey.slice(0, 8), result);
+          return 'failed';
+        }
         this.lastChatCatchUpAt.set(peerPubkey, Date.now());
         return 'ran';
       } catch(err: any) {
