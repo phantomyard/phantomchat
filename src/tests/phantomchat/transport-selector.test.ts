@@ -286,16 +286,29 @@ describe('TransportSelector — P2P delivery receipts (#140)', () => {
     expect(settled).toBe(false);
   });
 
-  it('a rejection that lands before awaitAck settles false after a short grace, well under the ack window (#142/#146)', async() => {
+  it('a rejection that lands before awaitAck is discarded: the send waits out the ack window (#142/#146)', async() => {
     vi.useFakeTimers();
     const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh(), ackTimeoutMs: 2000});
     sel.handleReject(PK, 'wrap-recipient');
     let settled: boolean | undefined;
     sel.awaitAck(PK, makeWraps()).then((v) => { settled = v; });
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(1990);
     expect(settled).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(20);
     expect(settled).toBe(false);
+  });
+
+  it('an early rejection cannot pre-empt a genuine ack arriving late in the ack window (>250ms) (#146)', async() => {
+    vi.useFakeTimers();
+    const sel = new TransportSelector({capability: new PeerCapabilityRegistry(), mesh: makeMesh(), ackTimeoutMs: 2000});
+    sel.handleReject(PK, 'wrap-recipient');
+    let settled: boolean | undefined;
+    sel.awaitAck(PK, makeWraps()).then((v) => { settled = v; });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(settled).toBeUndefined();
+    sel.handleAck(PK, 'wrap-recipient');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
   });
 
   it('an early rejection cannot pre-empt a genuine ack that arrives after awaitAck (#146)', async() => {
