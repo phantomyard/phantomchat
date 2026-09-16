@@ -59,6 +59,10 @@ export interface OnboardingMount {
  * Mount PhantomChatOnboarding into a container element.
  */
 export async function mountPhantomChatOnboarding(container: HTMLElement): Promise<OnboardingMount> {
+  // Captured before the chat page mounts and its hash handler rewrites the URL:
+  // a launch that targets a specific chat must not be overridden by the desktop
+  // "open the top chat" default.
+  const launchHash = typeof location !== 'undefined' ? location.hash : '';
   const onboarding = new PhantomChatOnboarding();
   container.appendChild(onboarding.container);
 
@@ -579,6 +583,37 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       setTimeout(() => {
         rootScope.dispatchEvent('dialogs_multiupdate', new Map());
       }, 1000);
+
+      // Launch dialog hygiene: refresh every chat-list preview once from the
+      // local store, open the top chat on desktop, and catch up a chat from the
+      // relays when it's opened. Background work — never blocks boot.
+      void (async() => {
+        try {
+          const [{installLaunchDialogs, isChatDeepLink}, {default: mediaSizes, ScreenSize}] = await Promise.all([
+            import('@lib/phantomchat/phantomchat-launch-dialogs'),
+            import('@helpers/mediaSizes')
+          ]);
+          // appImManager can land a beat after mount (see attachUnreadReset).
+          let appImManager = (MOUNT_CLASS_TO as any).appImManager;
+          for(let i = 0; !appImManager?.addEventListener && i < 20; i++) {
+            await new Promise((r) => setTimeout(r, 500));
+            appImManager = (MOUNT_CLASS_TO as any).appImManager;
+          }
+          if(!appImManager?.addEventListener) {
+            console.warn('[PhantomChatOnboardingIntegration] launch dialogs: appImManager never mounted');
+            return;
+          }
+          installLaunchDialogs({
+            rootScope,
+            appImManager,
+            chatAPI,
+            launchedWithDeepLink: isChatDeepLink(launchHash),
+            isMobile: () => mediaSizes.activeScreen === ScreenSize.mobile
+          });
+        } catch(err) {
+          console.warn('[PhantomChatOnboardingIntegration] launch dialogs init failed:', err);
+        }
+      })();
 
       // --- Initialize presence (#52): honest online / last-seen via the
       // gift-wrapped ping/pong handshake. ---

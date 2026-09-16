@@ -617,7 +617,6 @@ export class ApiManager extends ApiManagerMethods {
     'messages.getSuggestedDialogFilters': [],
     'messages.updateDialogFilter': true,
     'messages.updateDialogFiltersOrder': true,
-    'messages.getPeerDialogs': {_: 'messages.peerDialogs', dialogs: [], messages: [], chats: [], users: [], state: {_: 'updates.state', pts: 1, qts: 0, date: 0, seq: 1, unread_count: 0}},
     'messages.getStickers': {_: 'messages.stickers', hash: 0, stickers: []},
     'messages.getAllStickers': {_: 'messages.allStickers', hash: 0, sets: []},
     'messages.getEmojiKeywordsDifference': {_: 'emojiKeywordsDifference', lang_code: 'en', from_version: 0, version: 1, keywords: []},
@@ -870,6 +869,10 @@ export class ApiManager extends ApiManagerMethods {
     'messages.getHistory',
     'messages.getDialogs',
     'messages.getPinnedDialogs',
+    // Per-peer dialog reload (reloadConversation). Was an empty static stub, so
+    // a restored chat list whose top messages weren't in worker storage kept
+    // blank previews until each chat was opened.
+    'messages.getPeerDialogs',
     'messages.search',
     'messages.readHistory',
     'messages.deleteMessages',

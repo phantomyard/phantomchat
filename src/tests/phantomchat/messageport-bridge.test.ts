@@ -82,3 +82,30 @@ describe('PhantomChatMTProtoServer bridge integration', () => {
     }
   });
 });
+
+describe('messages.getPeerDialogs routing (chat-list preview reload)', () => {
+  // Read the real source: a static stub shadows the bridge (statics are checked
+  // first in the worker), and an empty stub is exactly what left restored
+  // chat-list previews blank until each chat was opened.
+  const {readFileSync} = require('fs');
+  const {resolve} = require('path');
+  const apiSrc: string = readFileSync(resolve(__dirname, '../../lib/appManagers/apiManager.ts'), 'utf8');
+  const block = (name: string) => {
+    const start = apiSrc.indexOf(name);
+    expect(start).toBeGreaterThan(-1);
+    const end = apiSrc.indexOf(name === 'PHANTOMCHAT_STATIC:' ? '\n  };' : '\n  ]);', start);
+    return apiSrc.slice(start, end);
+  };
+
+  it('is a bridge method, not a static stub', () => {
+    expect(block('PHANTOMCHAT_BRIDGE_METHODS = new Set([')).toContain('\'messages.getPeerDialogs\'');
+    expect(block('PHANTOMCHAT_STATIC:')).not.toContain('\'messages.getPeerDialogs\'');
+  });
+
+  it('reloadConversation tolerates a peerDialogs result without state', () => {
+    const amm: string = readFileSync(resolve(__dirname, '../../lib/appManagers/appMessagesManager.ts'), 'utf8');
+    const i = amm.indexOf('\'messages.getPeerDialogs\'');
+    const window = amm.slice(i, i + 1200);
+    expect(window).toMatch(/if\(state && currentState\.pts && currentState\.pts !== state\.pts\)/);
+  });
+});

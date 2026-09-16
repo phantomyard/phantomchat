@@ -283,6 +283,62 @@ describe('PhantomChatMTProtoServer', () => {
     });
   });
 
+  // ─── getPeerDialogs ───────────────────────────────────────────────
+  // tweb's reloadConversation (fired for every restored dialog whose top message
+  // is missing from worker storage) calls this. It used to be an empty static
+  // stub, so those chat-list previews stayed blank until the chat was opened.
+
+  describe('messages.getPeerDialogs', () => {
+    const GROUP_PEER_ID = -777000111;
+    const group = {groupId: 'ab'.repeat(16), peerId: GROUP_PEER_ID, name: 'Team', members: ['a', 'b'], createdAt: 1690000000};
+    const userPeer = (id: number) => ({_: 'inputDialogPeer', peer: {_: 'inputPeerUser', user_id: id, access_hash: 0}});
+
+    it('returns the requested 1:1 dialog with its top message attached', async () => {
+      const result = await server.handleMethod('messages.getPeerDialogs', {peers: [userPeer(PEER_ID)]});
+
+      expect(result._).toBe('messages.peerDialogs');
+      expect(result.dialogs).toHaveLength(1);
+      expect(result.dialogs[0].top_message).toBe(MID);
+      expect(result.dialogs[0].topMessage?.message).toBe('hello world');
+      expect(result.messages).toHaveLength(1);
+      expect(result.users).toHaveLength(1);
+      // No pts sequence here: a state would make reloadConversation compare
+      // pts and retry forever on a mismatch.
+      expect(result.state).toBeUndefined();
+    });
+
+    it('omits dialogs that were not requested', async () => {
+      mockGroupStore.getAll.mockResolvedValue([group]);
+
+      const result = await server.handleMethod('messages.getPeerDialogs', {peers: [userPeer(PEER_ID)]});
+      expect(result.dialogs.map((d: any) => d.peer._)).toEqual(['peerUser']);
+      expect(result.chats).toHaveLength(0);
+
+      const other = await server.handleMethod('messages.getPeerDialogs', {peers: [userPeer(PEER_ID + 1)]});
+      expect(other.dialogs).toHaveLength(0);
+      expect(other.messages).toHaveLength(0);
+    });
+
+    it('serves a requested group dialog', async () => {
+      mockGroupStore.getAll.mockResolvedValue([group]);
+
+      const result = await server.handleMethod('messages.getPeerDialogs', {
+        peers: [{_: 'inputDialogPeer', peer: {_: 'inputPeerChat', chat_id: Math.abs(GROUP_PEER_ID)}}]
+      });
+      expect(result.dialogs).toHaveLength(1);
+      expect(result.dialogs[0].peer._).toBe('peerChat');
+      expect(result.dialogs[0].topMessage).toBeDefined();
+      expect(result.chats).toHaveLength(1);
+      expect(result.users).toHaveLength(0);
+    });
+
+    it('returns an empty, well-shaped result for no peers without reading the store', async () => {
+      const result = await server.handleMethod('messages.getPeerDialogs', {peers: []});
+      expect(result).toEqual({_: 'messages.peerDialogs', dialogs: [], messages: [], users: [], chats: []});
+      expect(mockStore.getAllConversationIds).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── getHistory ───────────────────────────────────────────────────
 
   describe('messages.getHistory', () => {

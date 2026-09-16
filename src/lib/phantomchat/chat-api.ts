@@ -140,6 +140,23 @@ export type StatusChangeCallback = (peerId: string, status: string) => void;
  */
 const RECONNECT_RECOVERY_MIN_INTERVAL_MS = 30_000;
 
+/**
+ * Chat-open relay catch-up throttle. Opening a chat asks the relays for anything
+ * missed since that conversation's newest stored message, but a conversation
+ * caught up (by chat-open OR by the all-conversation backfill) within this window
+ * is skipped, so flicking between chats doesn't flood the relays.
+ */
+export const CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS = 60_000;
+
+/**
+ * Seconds of overlap below the newest stored timestamp. A wrap's created_at is the
+ * SENDER's clock, which can trail ours; a small overlap costs only duplicate wraps
+ * the dedup gate drops before decrypting.
+ */
+export const CHAT_OPEN_CATCHUP_OVERLAP_S = 300;
+
+export type ChatCatchUpOutcome = 'ran' | 'skipped' | 'offline' | 'failed';
+
 export class ChatAPI {
   private ownId: string;
   private log: Logger;
@@ -164,6 +181,10 @@ export class ChatAPI {
   private lastPoolConnectedCount = 0;
   private lastReconnectRecoveryAt = 0;
   private backfillInFlight: Promise<void> | null = null;
+  // Chat-open catch-up state (see CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS).
+  private lastFullBackfillAt = 0;
+  private lastChatCatchUpAt = new Map<string, number>();
+  private chatCatchUpInFlight = new Map<string, Promise<ChatCatchUpOutcome>>();
 
   // Message history (in-memory)
   private history: ChatMessage[] = [];
@@ -1238,6 +1259,7 @@ export class ChatAPI {
 
   private async doBackfillConversations(): Promise<void> {
     this.log('[ChatAPI] starting relay backfill');
+    const startedConnected = this.relayPool.isConnected();
 
     try {
       const store = getMessageStore();
@@ -1269,12 +1291,72 @@ export class ChatAPI {
         }
       }
 
+      // Only a pass that could actually reach a relay counts as "caught up" for
+      // the chat-open throttle; an offline pass learned nothing.
+      if(startedConnected) this.lastFullBackfillAt = Date.now();
+
       // Dispatch completion event
       rootScope.dispatchEvent('phantomchat_backfill_complete', undefined);
       this.log('[ChatAPI] relay backfill complete');
     } catch(err) {
       this.log.error('[ChatAPI] backfill error:', err);
     }
+  }
+
+  /**
+   * Relay catch-up for ONE conversation, run when the user opens that chat.
+   *
+   * Gift wraps are p-tagged only to the recipient (the sender is hidden inside),
+   * so relays can't be asked for "this chat" — the query is our kind-1059 inbox
+   * since this conversation's newest stored message (less a small overlap). Any
+   * wraps it returns flow through the normal receive path and dedup, exactly
+   * like the launch/reconnect backfill; wraps belonging to other chats are simply
+   * delivered early.
+   *
+   * Skipped when this conversation, or everything via the full backfill, was
+   * caught up within CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS, and when relays aren't
+   * connected (the reconnect backfill covers that). Concurrent calls for the
+   * same chat share one query. Never throws.
+   */
+  catchUpConversation(peerPubkey: string): Promise<ChatCatchUpOutcome> {
+    if(!peerPubkey || peerPubkey === this.ownId) return Promise.resolve('skipped');
+
+    const inFlight = this.chatCatchUpInFlight.get(peerPubkey);
+    if(inFlight) return inFlight;
+
+    const now = Date.now();
+    const lastAt = Math.max(this.lastChatCatchUpAt.get(peerPubkey) ?? 0, this.lastFullBackfillAt);
+    if(lastAt && now - lastAt < CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS) {
+      this.log.debug('[ChatAPI] chat catch-up skipped (recent):', peerPubkey.slice(0, 8));
+      return Promise.resolve('skipped');
+    }
+
+    if(!this.relayPool.isConnected()) return Promise.resolve('offline');
+
+    const run = (async(): Promise<ChatCatchUpOutcome> => {
+      try {
+        const store = getMessageStore();
+        const convId = store.getConversationId(this.ownId, peerPubkey);
+        const latest = await store.getLatestTimestamp(convId);
+        const since = latest > 0 ? Math.max(0, latest - CHAT_OPEN_CATCHUP_OVERLAP_S) : undefined;
+        this.log('[ChatAPI] chat catch-up:', peerPubkey.slice(0, 8), 'since', since);
+        await this.relayPool.getMessages({
+          'kinds': [1059],
+          '#p': [this.ownId],
+          'since': since,
+          'limit': 50
+        });
+        this.lastChatCatchUpAt.set(peerPubkey, Date.now());
+        return 'ran';
+      } catch(err: any) {
+        this.log.warn('[ChatAPI] chat catch-up failed:', peerPubkey.slice(0, 8), err?.message);
+        return 'failed';
+      }
+    })().finally(() => {
+      this.chatCatchUpInFlight.delete(peerPubkey);
+    });
+    this.chatCatchUpInFlight.set(peerPubkey, run);
+    return run;
   }
 
   /**

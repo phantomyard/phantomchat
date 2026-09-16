@@ -41,7 +41,8 @@ const messageStoreMocks = {
   getAllConversationIds: vi.fn().mockResolvedValue([]),
   getMessages: vi.fn().mockResolvedValue([]),
   getByEventId: vi.fn().mockResolvedValue(null),
-  getByAppMessageId: vi.fn().mockResolvedValue(null)
+  getByAppMessageId: vi.fn().mockResolvedValue(null),
+  getLatestTimestamp: vi.fn().mockResolvedValue(0)
 };
 vi.mock('@lib/phantomchat/message-store', () => ({
   getMessageStore: () => messageStoreMocks
@@ -55,7 +56,7 @@ vi.mock('@lib/rootScope', () => ({
   }
 }));
 
-import {ChatAPI, createChatAPI, ChatMessage, ChatState} from '@lib/phantomchat/chat-api';
+import {ChatAPI, createChatAPI, ChatMessage, ChatState, CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS, CHAT_OPEN_CATCHUP_OVERLAP_S} from '@lib/phantomchat/chat-api';
 import rootScope from '@lib/rootScope';
 import {DecryptedMessage} from '@lib/phantomchat/nostr-relay';
 import type {PublishResult, RelayConfig, NostrRelayPool} from '@lib/phantomchat/nostr-relay-pool';
@@ -853,6 +854,106 @@ describe('ChatAPI', () => {
       // connected, so no further edge will ever come to drain the queue.
       mockPool.simulateStateChange(1, 7);
       expect(mockQueue.flushCallCount).toBe(2);
+    });
+  });
+
+  describe('catchUpConversation() — chat-open relay catch-up', () => {
+    const PEER_HEX = 'ab'.repeat(32);
+    let getMessages: ReturnType<typeof vi.fn>;
+    let now: number;
+
+    beforeEach(() => {
+      now = 1_800_000_000_000;
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      getMessages = vi.fn().mockResolvedValue([]);
+      (mockPool as any).getMessages = getMessages;
+      messageStoreMocks.getLatestTimestamp.mockReset().mockResolvedValue(1_700_000_000);
+      mockPool.simulateConnect();
+    });
+
+    afterEach(() => {
+      vi.mocked(Date.now).mockRestore();
+    });
+
+    test('queries our wrap inbox since the chat\'s newest message, less the overlap', async() => {
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+      expect(messageStoreMocks.getConversationId).toHaveBeenCalledWith(OWN_ID, PEER_HEX);
+      expect(getMessages).toHaveBeenCalledTimes(1);
+      expect(getMessages).toHaveBeenCalledWith({
+        'kinds': [1059],
+        '#p': [OWN_ID],
+        'since': 1_700_000_000 - CHAT_OPEN_CATCHUP_OVERLAP_S,
+        'limit': 50
+      });
+    });
+
+    test('an empty chat asks without a since floor', async() => {
+      messageStoreMocks.getLatestTimestamp.mockResolvedValue(0);
+      await chatApi.catchUpConversation(PEER_HEX);
+      expect(getMessages.mock.calls[0][0].since).toBeUndefined();
+    });
+
+    test('skips a chat caught up within the last minute, runs again after it', async() => {
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+      now += CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS - 1;
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('skipped');
+      expect(getMessages).toHaveBeenCalledTimes(1);
+
+      now += 1;
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+      expect(getMessages).toHaveBeenCalledTimes(2);
+    });
+
+    test('the throttle is per chat', async() => {
+      await chatApi.catchUpConversation(PEER_HEX);
+      expect(await chatApi.catchUpConversation('cd'.repeat(32))).toBe('ran');
+      expect(getMessages).toHaveBeenCalledTimes(2);
+    });
+
+    test('a recent connected full backfill counts as caught up', async() => {
+      messageStoreMocks.getAllConversationIds.mockResolvedValueOnce(['conv-1']);
+      await chatApi.backfillConversations();
+      getMessages.mockClear();
+
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('skipped');
+      expect(getMessages).not.toHaveBeenCalled();
+    });
+
+    test('a full backfill that started offline does NOT count as caught up', async() => {
+      mockPool.simulateDisconnect();
+      messageStoreMocks.getAllConversationIds.mockResolvedValueOnce(['conv-1']);
+      await chatApi.backfillConversations();
+      mockPool.simulateConnect();
+      getMessages.mockClear();
+
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+    });
+
+    test('offline: no query and nothing recorded, so the next open retries', async() => {
+      mockPool.simulateDisconnect();
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('offline');
+      expect(getMessages).not.toHaveBeenCalled();
+
+      mockPool.simulateConnect();
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+    });
+
+    test('a failed query is not recorded as caught up', async() => {
+      getMessages.mockRejectedValueOnce(new Error('boom'));
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('failed');
+      expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('ran');
+    });
+
+    test('concurrent opens of the same chat share one query', async() => {
+      let release!: () => void;
+      getMessages.mockImplementationOnce(() => new Promise<any[]>((r) => { release = () => r([]); }));
+      const a = chatApi.catchUpConversation(PEER_HEX);
+      const b = chatApi.catchUpConversation(PEER_HEX);
+      await vi.waitFor(() => expect(getMessages).toHaveBeenCalledTimes(1));
+      release();
+      expect(await a).toBe('ran');
+      expect(await b).toBe('ran');
+      expect(getMessages).toHaveBeenCalledTimes(1);
     });
   });
 
