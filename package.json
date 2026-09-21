@@ -1,8 +1,8 @@
 {
   "name": "phantomchat",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "PhantomChat \u2014 privacy-first messaging with end-to-end encryption",
+  "main": "electron/dist/main.cjs",
   "scripts": {
     "prepare": "husky",
     "preinstall": "npx only-allow pnpm",
@@ -38,9 +38,16 @@
     "watch-lang": "node watch-lang.js",
     "lint": "npx eslint \"src/**/*.{ts,tsx}\"",
     "build:solid": "node ./src/scripts/build_solid.js",
-    "format-lang": "node ./src/scripts/format_lang.js"
+    "format-lang": "node ./src/scripts/format_lang.js",
+    "app:build:electron": "node electron/build.mjs",
+    "app:dev": "concurrently -k -n vite,electron \"pnpm run start\" \"pnpm run app:start:dev\"",
+    "app:start:dev": "wait-on http://localhost:8080 && cross-env VITE_DEV_SERVER_URL=http://localhost:8080 electron electron/dist/main.cjs",
+    "app:start": "pnpm run build && pnpm run app:build:electron && electron electron/dist/main.cjs",
+    "app:build": "pnpm run build && pnpm run app:build:electron && electron-builder --linux --publish never",
+    "app:pack": "pnpm run build && pnpm run app:build:electron && electron-builder --linux --dir --publish never",
+    "typecheck:electron": "tsc -p electron/tsconfig.json"
   },
-  "author": "",
+  "author": "PhantomChat <chat@phantomyard.ai>",
   "license": "GPL-3.0-only",
   "devDependencies": {
     "@babel/cli": "^7.23.4",
@@ -58,6 +65,7 @@
     "@types/chrome": "0.0.183",
     "@types/dom-webcodecs": "^0.1.13",
     "@types/express": "^4.17.21",
+    "@types/node": "20.10.6",
     "@types/prismjs": "^1.26.3",
     "@types/proper-lockfile": "^4.1.4",
     "@typescript-eslint/eslint-plugin": "^8.24.0",
@@ -69,7 +77,12 @@
     "big-integer": "^1.6.52",
     "browserslist": "^4.22.2",
     "compression": "^1.7.4",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
     "csstype": "^3.1.3",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.27.7",
     "eslint": "^9.20.0",
     "express": "^4.18.2",
     "fake-indexeddb": "^6.2.5",
@@ -100,6 +113,7 @@
     "vite-plugin-handlebars": "^1.6.0",
     "vite-plugin-solid": "^2.8.0",
     "vitest": "^0.34.6",
+    "wait-on": "^8.0.3",
     "zod": "^3.23.8"
   },
   "packageManager": "pnpm@9.15.3+sha512.1f79bc245a66eb0b07c5d4d83131240774642caaa86ef7d0434ab47c0d16f66b04e21e0c086eb61e62c77efc4d7f7ec071afad3796af64892fae66509173893a",
@@ -115,5 +129,6 @@
   },
   "lint-staged": {
     "src/**/*.{ts,tsx}": "eslint"
-  }
+  },
+  "desktopName": "phantomchat.desktop"
 }

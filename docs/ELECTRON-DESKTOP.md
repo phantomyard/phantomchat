@@ -1,0 +1,105 @@
+# PhantomChat Desktop (Electron)
+
+Reference for the Electron desktop app — development, packaging, releases,
+channels and installation. Part of issue #150; the web/PWA build is
+unaffected and continues to deploy via GitHub Pages (`docs/RELEASE.md`).
+
+## Architecture
+
+- `electron/main.ts` — main process. Serves the packaged frontend through a
+  private `app://` protocol (standard + secure, so the renderer gets a real
+  origin and the immutable bundle never loads from a remote origin).
+- `electron/preload.ts` — contextIsolation preload exposing exactly one
+  narrow typed API, `window.phantomchatDesktop` (version, platform,
+  https-only `openExternal`). No other IPC surface exists.
+- `electron/desktopIntegration.ts` — AppImage menu integration
+  (`phantomchat --install` / `--uninstall`).
+- `electron/build.mjs` — esbuild bundling of main/preload + strict CSP
+  generation (inline boot-splash scripts are pinned by sha256 hash at build
+  time; no `unsafe-inline` for scripts).
+- `electron-builder.yml` — packaging (PR#1: Linux x64 AppImage + `.deb`).
+
+Security posture: `contextIsolation: true`, `nodeIntegration: false`,
+`sandbox: true`, permission requests denied, navigation away from `app://`
+blocked, window creation denied, https links handed to the OS browser, CSP
+enforced on every `app://` response.
+
+## Development
+
+```bash
+pnpm install
+pnpm run app:dev          # vite dev server + electron window (hot reload)
+pnpm run app:start        # production build loaded in electron, unpackaged
+pnpm run typecheck:electron
+```
+
+## Packaging (Linux — PR#1)
+
+```bash
+pnpm run app:build        # PWA build + electron bundle + AppImage/.deb into release/<version>/
+pnpm run app:pack         # same but unpacked dir only (faster iteration)
+```
+
+Targets per issue #150: x64 **AppImage** and **.deb**. RPM, Snap and
+Flatpak are deliberately out of scope for the first release. Artifacts are
+unsigned (acceptable on Linux) and always ship with `SHA256SUMS.txt`.
+
+### AppImage menu integration
+
+The AppImage runs without installation. To create an application-menu entry
+(installs the icon to `~/.local/share/icons/hicolor/512x512/apps/` and a
+launcher to `~/.local/share/applications/phantomchat.desktop`):
+
+```bash
+./PhantomChat-<version>.AppImage --install
+```
+
+`--uninstall` removes both files again. The `.deb` needs none of this — it
+installs its own menu entry and is removed cleanly with
+`sudo apt remove phantomchat`.
+
+## Release channels (preview / stable)
+
+Same release-ring model as PhantomBot:
+
+1. **Every new build is a preview release.** Tag `desktop-v<version>`
+   (e.g. `desktop-v1.0.42`) — or run the **app-release** workflow manually.
+   The workflow builds from a clean checkout and publishes the artifacts +
+   `SHA256SUMS.txt` as a GitHub **prerelease**. Stable users see nothing.
+2. **Promote to stable** via the **app-promote** workflow (`confirm: PROMOTE`,
+   tag optional — defaults to the newest prerelease). Promotion:
+   - verifies every required artifact is present on the release,
+   - re-verifies every checksum (`sha256sum --strict`) and cross-checks that
+     no artifact ships without a checksum,
+   - then flips release metadata only: prerelease flag cleared, marked
+     latest. **Nothing is rebuilt, re-signed, retagged or re-uploaded** — the
+     exact artifacts tested on preview become stable.
+   - Fails closed on any missing artifact or checksum mismatch.
+3. **Rollback** = promote an older known-good tag by name (e.g.
+   `desktop-v1.0.40`). Same metadata-only contract.
+
+Required artifacts for promotion live in `scripts/promote-release.sh`
+(`REQUIRED_ARTIFACTS`); the Windows/macOS PRs append their artifacts there
+so promotion fails closed until the full matrix exists.
+
+## Signing (deferred — Axelera B.V.)
+
+Unsigned for now per issue #150. Reserved CI secret names for the Windows
+and macOS PRs:
+
+| Secret | Purpose |
+|---|---|
+| `AXELERA_WINDOWS_SIGNING_PFX` | Axelera B.V. Authenticode certificate (base64) |
+| `AXELERA_WINDOWS_SIGNING_PASSWORD` | PFX password |
+| `AXELERA_MACOS_CERTIFICATE_P12` | Axelera B.V. Apple Developer signing certificate |
+| `AXELERA_MACOS_CERTIFICATE_PASSWORD` | P12 password |
+| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | Apple notarization |
+
+No private key or credential is ever committed to the repository.
+
+## Windows / macOS (upcoming PRs)
+
+The same repo structure (main + preload + build script + workflows) is
+reused; platform PRs add their electron-builder targets, workflow jobs,
+install/uninstall docs and the signing wiring above. Iteration happens
+against the GitHub Actions runners (`windows-latest`, `macos-latest`).

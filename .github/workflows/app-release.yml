@@ -1,0 +1,98 @@
+name: app-release
+
+# Desktop-app release pipeline (issue #150).
+#
+# Triggered by a `desktop-v*` tag (e.g. desktop-v1.0.42) or manually. Builds
+# the platform artifacts from a clean checkout and publishes them to a GitHub
+# **prerelease** — the preview channel. Stable users never see it until the
+# "app-promote" workflow explicitly promotes the tested candidate; promotion
+# changes release metadata only and never rebuilds.
+#
+# PR#1 (issue #150): Linux only — x64 AppImage + .deb, unsigned, with
+# SHA-256 checksums. Windows/macOS targets are added by their own PRs; the
+# promote workflow fails closed until every required artifact exists.
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch/ref to build from (defaults to the current branch)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Versioning: the tag (or 1.0.<run_number> for manual runs) feeds both
+      # the bundled UI version (APP_VERSION, same scheme as the PWA) and the
+      # packaged app version via electron-builder's extraMetadata override —
+      # the checked-in package.json version is never mutated.
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/desktop-v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/desktop-v}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "tag=desktop-v1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build frontend + electron main/preload
+        run: |
+          pnpm run build
+          node electron/build.mjs
+        env:
+          APP_VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Package Linux artifacts (AppImage + deb, x64)
+        run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version=${{ steps.ver.outputs.version }}
+
+      - name: Generate checksums
+        run: |
+          cd release/${{ steps.ver.outputs.version }}
+          sha256sum PhantomChat-*.AppImage phantomchat_*.deb > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create prerelease (preview channel)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          cd release/${{ steps.ver.outputs.version }}
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease \
+            --title "PhantomChat Desktop ${VERSION} (preview)" \
+            --notes "Desktop preview build ${VERSION} (Linux x64: AppImage + .deb, unsigned — SHA-256 checksums published).
+
+          Install and channel docs: docs/ELECTRON-DESKTOP.md.
+
+          **Preview channel:** this prerelease does not affect stable users.
+          Promote it with the **app-promote** workflow once tested." \
+            "PhantomChat-${VERSION}.AppImage" "phantomchat_${VERSION}_amd64.deb" "SHA256SUMS.txt"

@@ -57,3 +57,32 @@ jobs:
       # `run` mode (not watch). The vitest config already excludes the
       # browser/Tor e2e suites and runs unit tests under jsdom.
       - run: pnpm exec vitest run
+
+  build-linux:
+    # Proves the desktop pipeline (issue #150, PR#1) builds from a clean
+    # checkout on every PR: PWA build, electron main/preload bundle + CSP,
+    # and the AppImage/deb packaging. Artifacts are NOT published here —
+    # releases go through app-release.yml (tag/manual, prerelease-first).
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-build-linux-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck:electron
+      - run: pnpm run build
+      - run: node electron/build.mjs
+      - run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version=0.0.0-ci.${{ github.run_number }}
+      - run: |
+          cd release/0.0.0-ci.${{ github.run_number }}
+          test -f PhantomChat-*.AppImage
+          test -f phantomchat_*_amd64.deb
+          sha256sum PhantomChat-*.AppImage phantomchat_*_amd64.deb > SHA256SUMS.txt
+          sha256sum --check --strict SHA256SUMS.txt

@@ -1,0 +1,58 @@
+name: app-promote
+
+# Manually dispatched promotion of a tested desktop release candidate from
+# the preview channel (GitHub prerelease) to stable (latest, non-prerelease).
+# All verification and the metadata-only flip live in
+# scripts/promote-release.sh — this workflow is the authenticated wrapper.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to promote (e.g. desktop-v1.0.42). Leave empty to promote the newest prerelease.'
+        required: false
+        default: ''
+      confirm:
+        description: 'Type PROMOTE to confirm — promotion changes what stable users receive.'
+        required: true
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard rails
+        run: |
+          if [[ "${{ github.event.inputs.confirm }}" != "PROMOTE" ]]; then
+            echo "::error::Confirmation required: set the confirm input to PROMOTE."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag (default: newest prerelease)
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          INPUT="${{ github.event.inputs.tag }}"
+          if [[ -n "$INPUT" ]]; then
+            echo "tag=$INPUT" >> "$GITHUB_OUTPUT"
+          else
+            NEWEST="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease)][0].tagName')"
+            if [[ -z "$NEWEST" || "$NEWEST" == "null" ]]; then
+              echo "::error::No prerelease found to promote."
+              exit 1
+            fi
+            echo "tag=$NEWEST" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Promote to stable (verify artifacts + checksums, flip metadata)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x scripts/promote-release.sh
+          ./scripts/promote-release.sh "${{ steps.tag.outputs.tag }}" "$GITHUB_REPOSITORY"

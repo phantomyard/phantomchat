@@ -86,3 +86,4 @@ docs/explorer-reports/areas-coverage.json
 docs/explorer-reports/allowlist.ts
 docs/explorer-reports/triage-rejected.jsonl
 chat-session-*.md
+release/

@@ -100,6 +100,7 @@
     "public",
     "dist",
     "coverage",
+    "electron",
     "src/scripts/*.js",
     "src/scripts/icomoon",
     "src/scripts/in",
