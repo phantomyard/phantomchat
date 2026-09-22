@@ -24,14 +24,17 @@ export type PermissionRequest = {
 
 export function isTrustedAppUrl(url: string | undefined, devUrl?: string): boolean {
   if(!url) return false;
+  // setPermissionCheckHandler hands us the ORIGIN, not a full URL — for the
+  // non-special app:// scheme that is exactly "app://localhost" (no path),
+  // and Chromium may also report the string "null". Accept the bare origin
+  // as well as any page under it.
+  if(url === APP_ORIGIN || url.startsWith(APP_ORIGIN + '/')) return true;
   let origin: string;
   try {
     origin = new URL(url).origin;
   } catch{
     return false;
   }
-  // Non-special schemes report origin "null" in WHATWG URL — compare by prefix.
-  if(url.startsWith(APP_ORIGIN + '/')) return true;
   if(devUrl) {
     try {
       return origin !== 'null' && origin === new URL(devUrl).origin;
@@ -50,6 +53,43 @@ export function isPermissionAllowed(req: PermissionRequest, devUrl?: string): bo
     // An empty list means "enumerate/any" — fine, the devices are still gated
     // to audio/video by Chromium. Anything else (e.g. screen capture) is denied.
     return types.every((t) => ALLOWED_MEDIA_TYPES.has(t));
+  }
+  return true;
+}
+
+/** Shape of Electron's setPermissionCheckHandler callback arguments. */
+export type PermissionCheck = {
+  permission: string;
+  // Origin of the frame asking (requestingOrigin in the check handler — for
+  // app:// that is the bare "app://localhost", not a page URL).
+  requestingOrigin?: string;
+  // Full URL of the frame asking when available (details.requestingUrl).
+  requestingUrl?: string;
+  // For 'media': the single media type being checked (details.mediaType —
+  // the check handler gets ONE device type, not the request handler's list).
+  mediaType?: string;
+};
+
+/**
+ * Synchronous check-side twin of {@link isPermissionAllowed}.
+ *
+ * Electron 39 requires setPermissionCheckHandler for complete permission
+ * handling: most APIs CHECK first and only REQUEST after a check denies, so
+ * without this handler the request handler above is not the documented
+ * default-deny boundary (review blocker on #153). Same policy: mic, camera
+ * and notifications for the app's own origin only; when both a page URL and
+ * an origin are supplied either may vouch for the frame.
+ */
+export function isPermissionCheckAllowed(req: PermissionCheck, devUrl?: string): boolean {
+  if(!ALLOWED_PERMISSIONS.has(req.permission)) return false;
+  const trusted = isTrustedAppUrl(req.requestingUrl, devUrl)
+    || isTrustedAppUrl(req.requestingOrigin, devUrl);
+  if(!trusted) return false;
+  if(req.permission === 'media') {
+    // No mediaType = a general "is media allowed here" probe — defer to the
+    // device types the request handler will see. Otherwise the single type
+    // must be one we allow ('screen' and friends are denied here).
+    return req.mediaType === undefined || ALLOWED_MEDIA_TYPES.has(req.mediaType);
   }
   return true;
 }

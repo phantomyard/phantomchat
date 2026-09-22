@@ -15,7 +15,7 @@ import {readFileSync, existsSync} from 'fs';
 import {join, normalize, relative, isAbsolute, extname} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
-import {isPermissionAllowed} from './permissions';
+import {isPermissionAllowed, isPermissionCheckAllowed} from './permissions';
 
 // NOTE: this module is bundled to CommonJS by electron/build.mjs, so the
 // Node globals __dirname/__filename are available at runtime and point at
@@ -177,13 +177,24 @@ function createWindow(): void {
   });
 
   // Default-deny permissions: only mic, camera and notifications, and only
-  // for the app's own pages (see permissions.ts).
+  // for the app's own pages (see permissions.ts). Electron 39 requires BOTH
+  // handlers for a complete boundary — most APIs CHECK first and only REQUEST
+  // after a check denies, so the check handler is not optional (review
+  // blocker on #153).
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
     callback(isPermissionAllowed({
       permission,
       requestingUrl: details.requestingUrl,
       mediaTypes: (details as {mediaTypes?: string[]}).mediaTypes
     }, isDev ? DEV_URL : undefined));
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
+    return isPermissionCheckAllowed({
+      permission,
+      requestingOrigin,
+      requestingUrl: (details as {requestingUrl?: string}).requestingUrl,
+      mediaType: (details as {mediaType?: string}).mediaType
+    }, isDev ? DEV_URL : undefined);
   });
 
   if(isDev) {
