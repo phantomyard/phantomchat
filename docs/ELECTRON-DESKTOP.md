@@ -20,7 +20,9 @@ unaffected and continues to deploy via GitHub Pages (`docs/RELEASE.md`).
 - `electron-builder.yml` — packaging (PR#1: Linux x64 AppImage + `.deb`).
 
 Security posture: `contextIsolation: true`, `nodeIntegration: false`,
-`sandbox: true`, permission requests denied, navigation away from `app://`
+`sandbox: true`, permissions default-deny (only microphone, camera and
+notifications are granted, and only to the app's own `app://` pages; see
+`electron/permissions.ts`), navigation away from `app://`
 blocked, window creation denied, https links handed to the OS browser, CSP
 enforced on every `app://` response.
 
@@ -99,10 +101,11 @@ run counter, never by hand.
 
 1. **Every merge to main cuts a preview release.** The **app-release**
    workflow fires on each push to main (except docs-only merges) and
-   publishes `phantomchat-v1.0.<run_number>` — the workflow's per-run counter,
-   the same scheme phantombot uses for `v1.1.<run_number>` and the PWA
-   deploy uses for its `APP_VERSION`. Run numbers never regress (PR numbers
-   can), and each one maps to exactly one Actions run. The workflow builds
+   publishes `phantomchat-v1.0.<N>`, where `<N>` is the run number of the
+   PWA **deploy** run for the same commit, so the desktop app and the PWA
+   from one merge show the same version. Run numbers never regress (PR
+   numbers can); desktop versions skip numbers when a docs-only merge or a
+   manual branch deploy bumps the PWA without a desktop release. The workflow builds
    from a clean checkout and publishes the artifacts + `SHA256SUMS.txt` as
    a GitHub **prerelease** — the preview channel. Stable users see
    nothing; `/releases/latest` does not return prereleases. The originating

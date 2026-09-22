@@ -4,8 +4,8 @@
  * Runs the real script against a stub `gh` CLI on PATH that models remote
  * tag/release state in a state file — no network, no real repo involved.
  *
- * The app-release workflow synthesizes phantomchat-v1.0.<run_number> tags from
- * its monotonic run counter (phantombot's naming model), so the contract
+ * The app-release workflow synthesizes phantomchat-v1.0.<N> tags from the
+ * PWA deploy run's monotonic counter (same version as the PWA), so the contract
  * here is: the release must not exist, the synthesized tag must not exist,
  * the tag must be pinned to the built commit (--target), the release must
  * be a prerelease (preview ring), and every listed artifact must actually

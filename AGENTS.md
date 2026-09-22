@@ -92,7 +92,14 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    dedup or delivery-tick (✓→✓✓) paths requires a regression test — these have
    bitten us before (duplicate rows, wrong-size `['e']` tags, lingering ticks).
 
-10. **A cross-device sync write is not fire-and-forget.** A delete/rename that
+10. **Desktop app (Electron): permissions stay default-deny, versions stay in
+   sync with the PWA.** Grant a new Chromium permission only by adding it to
+   `electron/permissions.ts` (app-origin only, with a test). The desktop
+   release version is the PWA deploy run number for the same commit
+   (`app-release.yml` "Resolve version"); never version it from its own
+   `github.run_number`.
+
+11. **A cross-device sync write is not fire-and-forget.** A delete/rename that
    publishes to the shared kind-30078 blob must retry until the relay confirms
    (`CrdtSync.publishWithRetry`) and must log loudly when it gives up — a
    silently dropped publish is an invisible cross-device outage (deleted

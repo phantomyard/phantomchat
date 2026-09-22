@@ -4,8 +4,9 @@
 # Mirrors phantombot's release.yml contract, kept as a script so the guards
 # stay contract-tested (src/tests/publishReleaseScript.test.ts):
 #
-#  - The version/tag are synthesized by the app-release workflow from its
-#    monotonic github.run_number (phantomchat-v1.0.<run_number>) — nobody pushes
+#  - The version/tag are synthesized by the app-release workflow from the
+#    monotonic run_number of the PWA deploy run for the same commit
+#    (phantomchat-v1.0.<N>, same version as the PWA) — nobody pushes
 #    a phantomchat-v* tag by hand and there is no dispatch input, so no
 #    user-controlled text reaches this shell. The strict semver grammar
 #    check below is defense in depth, not the primary control.
@@ -46,7 +47,7 @@ if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
 fi
 
 # --- the synthesized tag must not exist either ------------------------------
-# phantomchat-v1.0.<run_number> is unique per workflow run by construction. If the
+# phantomchat-v1.0.<N> is unique per merge commit by construction (one deploy run each). If the
 # ref already exists it points at a commit we did not build (or a run is
 # being replayed) — fail closed rather than publishing onto or moving it.
 if gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
