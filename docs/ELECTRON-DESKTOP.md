@@ -60,16 +60,23 @@ installs its own menu entry and is removed cleanly with
 
 ## Release channels (preview / stable)
 
-Same release-ring model as PhantomBot:
+Same release-ring model as PhantomBot — including the naming: releases
+are cut automatically and tagged with the release workflow's own monotonic
+run counter, never by hand.
 
-1. **Every new build is a preview release.** Tag `desktop-v<version>`
-   (e.g. `desktop-v1.0.42`) — or run the **app-release** workflow manually
-   (the synthesized `desktop-v1.0.<run_number>` tag is created pinned to the
-   built commit; an existing tag pointing elsewhere fails the run).
-   The workflow builds from a clean checkout and publishes the artifacts +
-   `SHA256SUMS.txt` as a GitHub **prerelease**. Stable users see nothing.
-2. **Promote to stable** via the **app-promote** workflow (`confirm: PROMOTE`,
-   tag optional — defaults to the newest prerelease). Promotion:
+1. **Every merge to main cuts a preview release.** The **app-release**
+   workflow fires on each push to main (except docs-only merges) and
+   publishes `desktop-v1.0.<run_number>` — the workflow's per-run counter,
+   the same scheme phantombot uses for `v1.1.<run_number>` and the PWA
+   deploy uses for its `APP_VERSION`. Run numbers never regress (PR numbers
+   can), and each one maps to exactly one Actions run. The workflow builds
+   from a clean checkout and publishes the artifacts + `SHA256SUMS.txt` as
+   a GitHub **prerelease** — the preview channel. Stable users see
+   nothing; `/releases/latest` does not return prereleases. The originating
+   PR is preserved in the release title and notes.
+2. **Promote to stable** via the **app-promote** workflow (tag optional —
+   defaults to the newest prerelease; pressing the button is the human act
+   that makes it stable). Promotion:
    - verifies every required artifact is present on the release,
    - re-verifies every checksum (`sha256sum --strict`) and cross-checks that
      no artifact ships without a checksum,

@@ -1,12 +1,15 @@
 /*
- * publish-release.sh contract tests (issue #150 PR#1 review, round 2).
+ * publish-release.sh contract tests (issue #150 PR#1).
  *
  * Runs the real script against a stub `gh` CLI on PATH that models remote
  * tag/release state in a state file — no network, no real repo involved.
- * Covers Kai's round-2 blocker: `--verify-tag` made the manual-dispatch
- * release path impossible (the synthesized desktop-v1.0.<run_number> tag
- * does not exist remotely), and the fix must still fail closed if a tag of
- * that name already exists pointing at a different commit (tag drift).
+ *
+ * The app-release workflow synthesizes desktop-v1.0.<run_number> tags from
+ * its monotonic run counter (phantombot's naming model), so the contract
+ * here is: the release must not exist, the synthesized tag must not exist,
+ * the tag must be pinned to the built commit (--target), the release must
+ * be a prerelease (preview ring), and every listed artifact must actually
+ * be present as a file before `gh release create` runs.
  */
 import {describe, it, expect} from 'vitest';
 import {spawnSync} from 'node:child_process';
@@ -16,13 +19,14 @@ import {join} from 'node:path';
 
 const SCRIPT = join(process.cwd(), 'scripts', 'publish-release.sh');
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
-const OTHER_COMMIT = 'ffffffffffffffffffffffffffffffffffffffff';
-const TAG = 'desktop-v1.0.42';
+const VERSION = '1.0.42';
+const TAG = `desktop-v${VERSION}`;
+const ASSETS = [`PhantomChat-${VERSION}.AppImage`, `phantomchat_${VERSION}_amd64.deb`, 'SHA256SUMS.txt'];
 
 // Stub gh: state file lines look like `key=value`. `release-<tag>` present
-// means the release exists; `<tag>=<sha>` is the remote tag → commit map.
-// `release create` enforces the real contract: --verify-tag must be passed
-// and --target must match the remote tag's commit.
+// means the release exists; `<tag>=<sha>` is the remote tag -> commit map;
+// `created-<tag>` is set when `release create` succeeds (with the sha the
+// tag was pinned to via --target).
 const GH_SHIM = `#!/usr/bin/env bash
 set -u
 STATE="\${GH_STUB_STATE:?}"
@@ -33,46 +37,15 @@ fail() { echo "stub: $*" >&2; exit 1; }
 cmd="\${1:-}"; shift || true
 case "$cmd" in
   api)
-    # extract the --jq filter (gh applies it client-side); the first
-    # non-flag argument is the API path.
-    path=""; jq=""; prev=""
+    path=""
     for a in "$@"; do
-      [[ "$prev" == "--jq" ]] && jq="$a"
-      if [[ "$a" != -* && "$prev" != "--jq" && -z "$path" ]]; then path="$a"; fi
-      prev="$a"
+      [[ "$a" != -* && -z "$path" ]] && path="$a"
     done
     case "$path" in
-      repos/*/git/refs)
-        # POST creating a ref: -f ref=refs/tags/<t> -f sha=<sha>
-        ref=""; sha=""
-        while [[ $# -gt 0 ]]; do
-          case "$1" in
-            -f) key="\${2%%=*}"; val="\${2#*=}"; [[ "$key" == ref ]] && ref="$val"; [[ "$key" == sha ]] && sha="$val"; shift 2 ;;
-            *) shift ;;
-          esac
-        done
-        t="\${ref#refs/tags/}"
-        [[ -n "$(get "$t")" ]] && fail "ref \${ref} already exists (422)"
-        setkv "$t" "$sha"
-        echo '{"ref": "'"$ref"'"}' ;;
       repos/*/git/ref/tags/*)
         t="\${path##*/tags/}"
-        sha="$(get "$t")"
-        [[ -z "$sha" ]] && fail "tag \${t} not found (404)"
-        if [[ "$jq" == ".object.sha" ]]; then
-          echo "$sha"
-        elif [[ "$jq" == ".object.type" ]]; then
-          echo "\${GH_FAKE_TAG_TYPE:-commit}"
-        else
-          echo "{\"object\": {\"sha\": \"\$sha\", \"type\": \"\${GH_FAKE_TAG_TYPE:-commit}\"}}"
-        fi ;;
-      repos/*/git/tags/*)
-        # annotated-tag deref: object.sha is the underlying commit
-        if [[ "$jq" == ".object.sha" ]]; then
-          echo "\${GH_FAKE_ANNOTATED_TARGET:-$COMMIT}"
-        else
-          echo "{\"object\": {\"sha\": \"\${GH_FAKE_ANNOTATED_TARGET:-$COMMIT}\", \"type\": \"commit\"}}"
-        fi ;;
+        [[ -n "$(get "$t")" ]] || exit 1
+        echo "{\"ref\": \"refs/tags/$t\", \"object\": {\"sha\": \"$(get "$t")\", \"type\": \"commit\"}}" ;;
       *) fail "unexpected api path: \${path}" ;;
     esac ;;
   release)
@@ -82,27 +55,26 @@ case "$cmd" in
         t="\${1:-}"; [[ "$t" == view ]] && { t="\${2:-}"; shift; } || true
         [[ -n "$(get "release-$t")" ]] || exit 1 ;;
       create)
-        t=""; target=""; verify=0
+        t=""; target=""; prerelease=0; notes_file=""; assets=()
         while [[ $# -gt 0 ]]; do
           case "$1" in
-            --verify-tag) verify=1; shift ;;
             --target) target="\${2:-}"; shift 2 ;;
-            --repo) shift 2 ;;
-            --prerelease) shift ;;
-            --title|--notes) shift 2 ;;
+            --notes-file) notes_file="\${2:-}"; shift 2 ;;
+            --prerelease) prerelease=1; shift ;;
+            --repo|--title|--notes) shift 2 ;;
             --*) shift ;;
-            *) [[ -z "$t" ]] && t="$1" || shift ;;
+            *) if [[ -z "$t" ]]; then t="$1"; else assets+=("$1"); fi; shift ;;
           esac
         done
         [[ -n "$(get "release-$t")" ]] && fail "release \${t} already exists"
-        [[ "$verify" == 1 ]] || fail "release create without --verify-tag"
-        # Compare --target against the tag's *resolved* commit — for an
-        # annotated tag the ref's object sha is the annotation object, and
-        # the deref goes through the git/tags endpoint like the real gh.
-        expected="$(get "$t")"
-        [[ "\${GH_FAKE_TAG_TYPE:-commit}" == "tag" ]] && expected="$GH_FAKE_ANNOTATED_TARGET"
-        [[ "$target" == "$expected" ]] || fail "release create --target \${target} != tag commit \${expected}"
-        setkv "release-$t" 1
+        [[ -n "$(get "$t")" ]] && fail "tag \${t} already exists (stub refuses to move refs)"
+        [[ "$prerelease" == 1 ]] || fail "release create without --prerelease (preview ring is mandatory)"
+        [[ -n "$target" ]] || fail "release create without --target (tag must be pinned to the built commit)"
+        [[ -n "$notes_file" ]] && [[ ! -f "$notes_file" ]] && fail "notes file missing: \${notes_file}"
+        # every listed asset must exist as a file before the create call
+        for f in "\${assets[@]}"; do [[ -f "$f" ]] || fail "asset file missing: $f"; done
+        setkv "$t" "$target"
+        setkv "created-$t" "prerelease"
         echo "https://github.com/phantomyard/phantomchat/releases/tag/\${t}" ;;
       *) fail "unexpected release subcommand: \${sub}" ;;
     esac ;;
@@ -117,12 +89,13 @@ interface RunResult {
 }
 
 function runPublish(opts: {
-  trigger: 'tag' | 'manual';
   remoteTagSha?: string; // absent = tag not on remote
   releaseExists?: boolean;
-  annotatedTarget?: string;
-  annotated?: boolean; // remote tag object is an annotated tag (type "tag")
   tag?: string;
+  version?: string;
+  notesFile?: string | false; // false = unset; string path = RELEASE_NOTES_FILE
+  title?: string;
+  missingAsset?: string; // asset name to omit from the artifacts dir
 }): RunResult & {state: string} {
   const sandbox = mkdtempSync(join(tmpdir(), 'publish-release-test-'));
   try {
@@ -135,22 +108,28 @@ function runPublish(opts: {
     if (opts.remoteTagSha) lines.push(`${opts.tag ?? TAG}=${opts.remoteTagSha}`);
     if (opts.releaseExists) lines.push(`release-${opts.tag ?? TAG}=1`);
     writeFileSync(state, lines.join('\n') + (lines.length ? '\n' : ''));
+    for (const asset of ASSETS) {
+      if (asset === opts.missingAsset) continue;
+      writeFileSync(join(artifacts, asset), `fixture-${asset}\n`);
+    }
     const shim = join(binDir, 'gh');
     writeFileSync(shim, GH_SHIM);
     chmodSync(shim, 0o755);
+    const notesPath = typeof opts.notesFile === 'string' ? opts.notesFile : undefined;
+    if (notesPath !== undefined && opts.notesFile !== 'does-not-exist.md') {
+      writeFileSync(join(artifacts, notesPath), 'notes body\n');
+    }
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      GH_STUB_STATE: state
+    };
+    if (notesPath !== undefined) env.RELEASE_NOTES_FILE = notesPath;
+    if (opts.title !== undefined) env.RELEASE_TITLE = opts.title;
     const res = spawnSync(
       'bash',
-      [SCRIPT, opts.tag ?? TAG, '1.0.42', COMMIT, opts.trigger, artifacts, 'phantomyard/phantomchat'],
-      {
-        env: {
-          ...process.env,
-          PATH: `${binDir}:${process.env.PATH}`,
-          GH_STUB_STATE: state,
-          GH_FAKE_ANNOTATED_TARGET: opts.annotatedTarget ?? COMMIT,
-          GH_FAKE_TAG_TYPE: opts.annotated ? 'tag' : 'commit'
-        },
-        encoding: 'utf8'
-      }
+      [SCRIPT, opts.tag ?? TAG, opts.version ?? VERSION, COMMIT, artifacts, 'phantomyard/phantomchat'],
+      {env, encoding: 'utf8'}
     ) as unknown as RunResult;
     return {...res, state: readFileSync(state, 'utf8')};
   } finally {
@@ -159,65 +138,54 @@ function runPublish(opts: {
 }
 
 describe('publish-release.sh', () => {
-  it('manual run: creates the missing tag at the built commit, then publishes', () => {
-    const res = runPublish({trigger: 'manual'});
+  it('publishes a preview release with the tag pinned to the built commit', () => {
+    const res = runPublish({});
     expect(res.status).toBe(0);
-    // The synthesized tag now exists on the "remote" at the built commit...
+    expect(res.state).toContain(`created-${TAG}=prerelease`);
     expect(res.state).toContain(`${TAG}=${COMMIT}`);
-    // ...and the release was created (stub enforces --verify-tag + --target).
-    expect(res.state).toContain(`release-${TAG}=1`);
   });
 
-  it('manual run: an existing tag pointing at the same commit is accepted', () => {
-    const res = runPublish({trigger: 'manual', remoteTagSha: COMMIT});
+  it('passes the custom title and notes file through to gh release create', () => {
+    const res = runPublish({notesFile: 'release-notes.md', title: `${TAG} (PR #151)`});
     expect(res.status).toBe(0);
-    expect(res.state).toContain(`release-${TAG}=1`);
-  });
-
-  it('manual run: fails closed when the tag exists but points elsewhere (tag drift)', () => {
-    const res = runPublish({trigger: 'manual', remoteTagSha: OTHER_COMMIT});
-    expect(res.status).not.toBe(0);
-    expect(res.stderr).toContain('tag drift');
-    expect(res.state).not.toContain(`release-${TAG}`);
-  });
-
-  it('tag run: a tag resolving to the built commit publishes', () => {
-    const res = runPublish({trigger: 'tag', remoteTagSha: COMMIT});
-    expect(res.status).toBe(0);
-    expect(res.state).toContain(`release-${TAG}=1`);
-  });
-
-  it('tag run: fails when the tag is missing from the remote', () => {
-    const res = runPublish({trigger: 'tag'});
-    expect(res.status).not.toBe(0);
-    expect(res.stderr).toContain('not found on the remote');
-    expect(res.state).not.toContain(`release-${TAG}`);
-  });
-
-  it('tag run: fails closed on tag drift (tag points at another commit)', () => {
-    const res = runPublish({trigger: 'tag', remoteTagSha: OTHER_COMMIT});
-    expect(res.status).not.toBe(0);
-    expect(res.stderr).toContain('tag drift');
-    expect(res.state).not.toContain(`release-${TAG}`);
+    expect(res.state).toContain(`created-${TAG}=prerelease`);
   });
 
   it('fails closed when the release already exists (immutability)', () => {
-    const res = runPublish({trigger: 'manual', remoteTagSha: COMMIT, releaseExists: true});
+    const res = runPublish({releaseExists: true});
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('immutable');
   });
 
-  it('resolves annotated tags to the underlying commit', () => {
-    // Remote tag object is type "tag" (annotated); the stub's git/tags
-    // endpoint returns the underlying commit (GH_FAKE_ANNOTATED_TARGET).
-    const res = runPublish({trigger: 'tag', remoteTagSha: 'aaaannotatedobjectsha', annotated: true, annotatedTarget: COMMIT});
-    expect(res.status).toBe(0);
-    expect(res.state).toContain(`release-${TAG}=1`);
+  it('fails closed when the synthesized tag already exists on the remote', () => {
+    const res = runPublish({remoteTagSha: COMMIT});
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('already exists on the remote');
+    expect(res.state).not.toContain(`created-${TAG}`);
   });
 
-  it('rejects an annotated tag whose underlying commit is not the built commit', () => {
-    const res = runPublish({trigger: 'tag', remoteTagSha: 'aaaannotatedobjectsha', annotated: true, annotatedTarget: OTHER_COMMIT});
+  it('refuses a version outside the strict numeric semver grammar', () => {
+    const res = runPublish({version: '1.0.42$(boom)', tag: 'desktop-v1.0.42$(boom)'});
     expect(res.status).not.toBe(0);
-    expect(res.stderr).toContain('tag drift');
+    expect(res.stderr).toContain('unsupported version');
+  });
+
+  it('refuses a tag that does not match its version', () => {
+    const res = runPublish({tag: 'desktop-v9.9.9'});
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('must be desktop-v<version>');
+  });
+
+  it('fails closed when a required artifact file is missing', () => {
+    const res = runPublish({missingAsset: `phantomchat_${VERSION}_amd64.deb`});
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('PUBLISH FAILED');
+    expect(res.state).not.toContain(`created-${TAG}`);
+  });
+
+  it('fails closed when RELEASE_NOTES_FILE points at a missing file', () => {
+    const res = runPublish({notesFile: 'does-not-exist.md'});
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('RELEASE_NOTES_FILE not found');
   });
 });
