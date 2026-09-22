@@ -268,6 +268,9 @@ const onFetch = (event: FetchEvent): void => {
   if(
     import.meta.env.PROD &&
     !IS_SAFARI &&
+    // Cache API rejects non-http(s) requests (desktop app:// origin), so
+    // those skip the asset cache and go straight to the protocol handler.
+    /^https?:$/.test(location.protocol) &&
     event.request.url.indexOf(location.origin + '/') === 0 &&
     event.request.url.match(/\.(js|css|jpe?g|json|wasm|png|mp3|svg|tgs|ico|woff2?|ttf|webmanifest?)(?:\?.*)?$/)
   ) {

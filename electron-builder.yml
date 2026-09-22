@@ -49,8 +49,13 @@ linux:
 deb:
   packageCategory: net
   artifactName: phantomchat_${version}_${arch}.${ext}
-  afterInstall: scripts/deb-after-install.sh
-  afterRemove: scripts/deb-after-remove.sh
+  # No afterInstall/afterRemove on purpose: electron-builder's stock
+  # maintainer scripts create /usr/bin/phantomchat (update-alternatives),
+  # set chrome-sandbox permissions, install + load the bundled AppArmor
+  # profile (Ubuntu 24+) and refresh the desktop/MIME databases. A custom
+  # script REPLACES all of that, and the previous one left the package with
+  # no command on PATH and an app that aborted with a FATAL sandbox error.
+  # scripts/check-deb-install.sh (CI) installs the .deb and asserts it.
 
 appImage:
   # Artifacts must keep a predictable, versioned name for the checksums and

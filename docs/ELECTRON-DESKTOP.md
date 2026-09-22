@@ -44,6 +44,39 @@ Targets per issue #150: x64 **AppImage** and **.deb**. RPM, Snap and
 Flatpak are deliberately out of scope for the first release. Artifacts are
 unsigned (acceptable on Linux) and always ship with `SHA256SUMS.txt`.
 
+**Local builds need `APP_VERSION`.** Without it the bundle bakes build 0.
+A profile that has already run a release stores its build number, sees a
+"newer" build was there before, and deactivates itself (the "another tab is
+running a newer version" popup). Build local test packages with a version
+at least as high as the installed one:
+`APP_VERSION=1.0.<n> pnpm run app:build`.
+
+The packaged UI is served from `app://localhost`. That scheme is registered
+with `allowServiceWorkers` (see `electron/scheme.ts`), and the Cache API
+store keys use a synthetic `https://phantomchat.invalid/` base there,
+because Chromium's Cache API rejects `app://` request URLs.
+
+### .deb install
+
+```bash
+sudo apt install ./phantomchat_<version>_amd64.deb
+phantomchat
+```
+
+The package installs to `/opt/PhantomChat/` and uses electron-builder's
+stock maintainer scripts, which put `phantomchat` on PATH
+(`/usr/bin/phantomchat` via update-alternatives), set the `chrome-sandbox`
+permissions, install and load the bundled AppArmor profile on Ubuntu 24+,
+and undo all of it on `sudo apt remove phantomchat`. Do not add a custom
+`afterInstall`/`afterRemove` in `electron-builder.yml`: it replaces the
+stock scripts entirely (1.0.1 shipped with no command on PATH and a FATAL
+sandbox abort on launch). CI installs the built `.deb` and checks all of
+this via `scripts/check-deb-install.sh`.
+
+If an already-installed 1.0.1 aborts on launch, either upgrade to a fixed
+release or run once:
+`sudo chmod 4755 /opt/PhantomChat/chrome-sandbox && sudo ln -sf /opt/PhantomChat/phantomchat /usr/bin/phantomchat`.
+
 ### AppImage menu integration
 
 The AppImage runs without installation. To create an application-menu entry

@@ -86,3 +86,5 @@ jobs:
           test -f phantomchat_*_amd64.deb
           sha256sum PhantomChat-*.AppImage phantomchat_*_amd64.deb > SHA256SUMS.txt
           sha256sum --check --strict SHA256SUMS.txt
+      - name: Install the .deb and check maintainer scripts
+        run: scripts/check-deb-install.sh release/0.0.0-ci.${{ github.run_number }}/phantomchat_*_amd64.deb
