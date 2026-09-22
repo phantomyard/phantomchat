@@ -10,6 +10,7 @@
  */
 
 import '../setup';
+import {vi} from 'vitest';
 import {
   VirtualPeersDB,
   VirtualPeerRecord,
@@ -758,6 +759,37 @@ describe('updateMappingProfile', () => {
 
     const result = await getMapping('0'.repeat(64));
     expect(result).toBeUndefined();
+  });
+
+  // #155: the kind-0 refresh paths call updateMappingProfile on every profile
+  // fetch. updatedAt is the CRDT clock for the contacts sync — bumping it on
+  // a no-op write re-armed a stale live contact with a fresh stamp that
+  // outranked the tombstone, resurrecting deleted contacts. This is the
+  // mutation test for that bug: an identical payload must NOT move the clock,
+  // a real change must.
+  test('does not bump updatedAt on a cosmetic no-op write, but does on a real change', async() => {
+    const pubkey = 'd'.repeat(64);
+    const t0 = 1_700_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(t0);
+    try {
+      await storeMapping(pubkey, 800, 'Alice', {display_name: 'Alice', name: 'alice'});
+      expect((await getMapping(pubkey))!.updatedAt).toBe(t0);
+
+      // 5s later the same kind-0 payload arrives again — nothing changed.
+      vi.setSystemTime(t0 + 5000);
+      await updateMappingProfile(pubkey, 'Alice', {display_name: 'Alice', name: 'alice'});
+      expect((await getMapping(pubkey))!.updatedAt).toBe(t0); // clock did NOT move
+
+      // A real rebrand moves the clock so the rename propagates cross-device.
+      vi.setSystemTime(t0 + 9000);
+      await updateMappingProfile(pubkey, 'Alice Rebranded', {display_name: 'Alice Rebranded', name: 'alice'});
+      const changed = (await getMapping(pubkey))!;
+      expect(changed.displayName).toBe('Alice Rebranded');
+      expect(changed.updatedAt).toBe(t0 + 9000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

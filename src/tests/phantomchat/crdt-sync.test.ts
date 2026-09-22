@@ -44,7 +44,10 @@ function makeAdapter(initial: SyncMap<Item> = {}) {
     applied: []
   };
   const adapter: LocalAdapter<Item> = {
-    read: async() => state.map,
+    // Snapshot, like the real adapter: a pass that already read local must NOT
+    // see a mutation that lands while it is still in flight — otherwise tests
+    // for the in-flight race (#155) pass trivially.
+    read: async() => ({...state.map}),
     apply: async(merged) => {
       state.applied.push(merged);
       state.map = merged;
@@ -253,5 +256,127 @@ describe('CrdtSync.publish', () => {
     await sync.reconcile();
     // exactly one publish: the reconcile's own, not the re-entrant one
     expect(relay.publishes).toBe(1);
+  });
+
+  it('reports unconfirmed (false) when the relay is unavailable and writes nothing', async() => {
+    relay.failQuery = true;
+    const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+
+    expect(await makeSync(relay, adapter).publish()).toBe(false);
+    expect(relay.publishes).toBe(0);
+  });
+
+  it('applies the merged view locally, so a publishing device converges too', async() => {
+    // #155: publish used to converge only the relay. A device holding a stale
+    // live entry kept re-merging it over the remote tombstone it had just
+    // helped publish, resurrecting the contact from its own local state.
+    relay.seed({a: tombstone<Item>('a', 200), b: liveEntry('b', {id: 'b', name: 'B'}, 150)});
+    const {adapter, state} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+
+    expect(await makeSync(relay, adapter).publish()).toBe(true);
+    expect(state.map.a.deleted).toBe(true);          // remote tombstone applied locally
+    expect(state.map.b.data!.name).toBe('B');         // remote add applied locally
+    expect(relay.publishes).toBe(0);                  // relay already current
+  });
+
+  it('re-runs when a second publish lands mid-pass, so no mutation is dropped', async() => {
+    // #155 in-flight race: the old code returned immediately while a pass was
+    // in flight, silently dropping the second call's mutation because the
+    // in-flight pass had read the local view BEFORE it.
+    const {adapter, state} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+
+    // Gate the relay query so pass 1 is still in flight when pass 2 lands.
+    let releaseQuery: () => void = () => {};
+    const queryGate = new Promise<void>((r) => { releaseQuery = r; });
+    const origQuery = relay.queryLatestEvent;
+    let gated = true;
+    relay.queryLatestEvent = vi.fn(async() => {
+      if(gated) {
+        gated = false;
+        await queryGate;
+      }
+      return origQuery();
+    });
+
+    const sync = makeSync(relay, adapter);
+    const p1 = sync.publish();
+    const p2 = sync.publish();          // lands while pass 1 is querying the relay
+    state.map.b = liveEntry('b', {id: 'b', name: 'B'}, 200); // the mutation that scheduled p2
+    releaseQuery();
+
+    expect(await p2).toBe(true);
+    await p1;
+
+    // Pass 1 published the pre-mutation view; the queued re-run published b.
+    // Old behavior: relay held only `a` and the delete/add was lost.
+    expect(Object.keys(relay.decoded().items).sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('CrdtSync.publishWithRetry', () => {
+  it('retries a publish whose relay query hiccuped, until the relay confirms', async() => {
+    // #155 fire-once publish: a transient relay hiccup used to silently
+    // swallow a delete's tombstone — no retry, nothing rescheduled.
+    const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+    relay.seed({b: liveEntry('b', {id: 'b', name: 'B'}, 200)});
+
+    const origQuery = relay.queryLatestEvent;
+    let failsLeft = 2;
+    relay.queryLatestEvent = vi.fn(async() => {
+      if(failsLeft-- > 0) throw new Error('relay down');
+      return origQuery();
+    });
+    const sleeps: number[] = [];
+
+    const ok = await makeSync(relay, adapter).publishWithRetry({
+      backoffMs: 10,
+      sleep: (ms) => { sleeps.push(ms); return Promise.resolve(); }
+    });
+
+    expect(ok).toBe(true);
+    expect(sleeps).toEqual([10, 20]);                 // backoff scaled per attempt
+    expect(Object.keys(relay.decoded().items).sort()).toEqual(['a', 'b']);
+  });
+
+  it('treats a write the relay never exposes as unconfirmed (enqueue != stored)', async() => {
+    // Review blocker on #156: ChatAPI.publishEvent resolves once the event is
+    // HANDED OFF to the write relays — the pool records success at send and
+    // its verifyStored read-back is a background warning, never a gate. A
+    // relay that ACKs but never stores (or a cold socket that merely buffers)
+    // therefore used to make publish() return true after attempt one, and
+    // publishWithRetry stopped — the exact #155 failure. The regression: the
+    // publish call resolves, but the relay slot still serves the pre-write
+    // snapshot, so every attempt must count as unconfirmed.
+    const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+    relay.seed({b: liveEntry('b', {id: 'b', name: 'B'}, 200)});
+    const origPublish = relay.publishEvent;
+    relay.publishEvent = vi.fn(async(ev: any) => {
+      await origPublish(ev);                    // resolves like a real ACK...
+      relay.seed({b: liveEntry('b', {id: 'b', name: 'B'}, 200)}); // ...but the relay never stores it
+    });
+
+    const ok = await makeSync(relay, adapter).publishWithRetry({
+      maxAttempts: 3,
+      sleep: () => Promise.resolve()
+    });
+
+    expect(ok).toBe(false);
+    expect(relay.publishes).toBe(3);                   // retried, not stopped after one
+    expect(Object.keys(relay.decoded().items)).toEqual(['b']); // tombstone never landed
+  });
+
+  it('gives up after maxAttempts and reports unconfirmed without writing', async() => {
+    relay.failQuery = true;
+    const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+
+    const sleeps: number[] = [];
+    const ok = await makeSync(relay, adapter).publishWithRetry({
+      maxAttempts: 3,
+      sleep: (ms) => { sleeps.push(ms); return Promise.resolve(); }
+    });
+
+    expect(ok).toBe(false);
+    expect(sleeps).toHaveLength(2);                    // no sleep after the last attempt
+    expect(relay.publishes).toBe(0);
   });
 });
