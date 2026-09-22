@@ -47,11 +47,18 @@ echo "Downloading all assets of ${TAG} for verification..."
 gh release download "$TAG" --repo "$REPO" --dir . || fail "asset download failed"
 
 # --- every required artifact must exist -------------------------------------
+# NOTE: a plain `matches=( $pattern )` fails open — with nullglob disabled an
+# unmatched glob stays a literal string and the length check passes even when
+# nothing was downloaded. nullglob keeps the check honest.
+shopt -s nullglob
 for pattern in "${REQUIRED_ARTIFACTS[@]}"; do
-  # shellcheck disable=SC2206  # intentional glob expansion
   matches=( $pattern )
   [[ ${#matches[@]} -gt 0 ]] || fail "required artifact missing on ${TAG}: ${pattern}"
+  for match in "${matches[@]}"; do
+    [[ -f "$match" ]] || fail "required artifact pattern ${pattern} matched a non-regular file: ${match}"
+  done
 done
+shopt -u nullglob
 
 # --- checksums must verify ---------------------------------------------------
 [[ -f "SHA256SUMS.txt" ]] || fail "SHA256SUMS.txt missing"
@@ -75,4 +82,12 @@ gh release edit "$TAG" --repo "$REPO" --prerelease=false --latest=true \
   || fail "gh release edit failed"
 
 echo "Promoted ${TAG} to stable latest."
-gh release view "$TAG" --repo "$REPO" --json tagName,isPrerelease,isLatest --jq '"tag=\(.tagName) prerelease=\(.isPrerelease) latest=\(.isLatest)"'
+
+# --- postcondition: the promotion actually took effect -----------------------
+# gh release view has no isLatest JSON field, so verify through the REST
+# endpoint that serves the current latest stable release.
+LATEST_TAG="$(gh api "repos/${REPO}/releases/latest" --jq .tag_name 2>/dev/null)" \
+  || fail "postcondition check failed: could not verify the latest release (the promotion itself already succeeded — inspect ${TAG} manually)"
+[[ "$LATEST_TAG" == "$TAG" ]] \
+  || fail "postcondition failed: latest release is ${LATEST_TAG}, expected ${TAG} (the promotion metadata was applied — inspect the release before retrying)"
+echo "Verified: ${TAG} is the stable latest."

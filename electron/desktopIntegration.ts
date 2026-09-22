@@ -25,6 +25,23 @@ function appImage(): string | undefined {
   return process.env.APPIMAGE || process.argv[0] || undefined;
 }
 
+/**
+ * Escape a path for the desktop entry's Exec key per the Desktop Entry
+ * Specification: the argument is wrapped in double quotes, the characters
+ * with special meaning inside Exec quotes (backslash, double quote,
+ * backtick, dollar) are backslash-escaped, and a literal % is doubled so it
+ * is never parsed as a field code.
+ */
+export function execTokenForDesktopEntry(execPath: string): string {
+  const escaped = execPath
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/`/g, '\\`')
+    .replace(/\$/g, '\\$')
+    .replace(/%/g, '%%');
+  return `"${escaped}"`;
+}
+
 function desktopEntry(execPath: string): string {
   return [
     '[Desktop Entry]',
@@ -32,7 +49,7 @@ function desktopEntry(execPath: string): string {
     `Name=${APP_NAME}`,
     `Comment=${APP_COMMENT}`,
     `GenericName=${GENERIC_NAME}`,
-    `Exec=${execPath}`,
+    `Exec=${execTokenForDesktopEntry(execPath)}`,
     'Terminal=false',
     'Type=Application',
     `Categories=${CATEGORIES}`,

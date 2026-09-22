@@ -12,7 +12,7 @@
  */
 import {app, BrowserWindow, session, shell, protocol, net, ipcMain} from 'electron';
 import {readFileSync, existsSync} from 'fs';
-import {join, normalize, extname} from 'path';
+import {join, normalize, relative, isAbsolute, extname} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
 
 // NOTE: this module is bundled to CommonJS by electron/build.mjs, so the
@@ -49,6 +49,9 @@ if(!app.requestSingleInstanceLock()) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+// The strict CSP, resolved once at startup (throws — fail closed — when the
+// packaged CSP is broken). createWindow consumes it after whenReady.
+let activeCsp: string | undefined;
 
 // IPC surface — keep it in lockstep with the preload allowlist.
 ipcMain.handle('desktop:get-version', () => app.getVersion());
@@ -69,9 +72,13 @@ function serveFile(url: URL): Response {
     pathname = '/index.html';
   }
 
-  // Resolve inside DIST_DIR only — reject any traversal attempt.
+  // Resolve inside DIST_DIR only — reject any traversal attempt. path.relative
+  // is the real containment check: a startsWith() prefix test would accept a
+  // sibling directory sharing the prefix (<dist>/../dist-evil/x). An empty
+  // relative path means DIST_DIR itself, also rejected.
   const resolved = normalize(join(DIST_DIR!, pathname));
-  if(!resolved.startsWith(DIST_DIR!)) {
+  const rel = relative(DIST_DIR!, resolved);
+  if(rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
     return new Response('forbidden', {status: 403});
   }
 
@@ -85,13 +92,24 @@ function serveFile(url: URL): Response {
 }
 
 function getCsp(): string | undefined {
+  if(isDev) {
+    // Dev builds load from the Vite dev server, which supplies its own
+    // headers; there is no packaged CSP to apply.
+    return undefined;
+  }
   try {
     const parsed = JSON.parse(readFileSync(CSP_FILE, 'utf8')) as {header?: string};
+    if(typeof parsed.header !== 'string' || parsed.header.length === 0) {
+      throw new Error('missing or empty "header" field');
+    }
     return parsed.header;
-  } catch {
-    // csp.json ships inside the package; a missing file would be a packaging
-    // bug. Dev builds (VITE_DEV_SERVER_URL) legitimately have no packaged CSP.
-    return undefined;
+  } catch(err) {
+    // Fail closed: a packaged build without its strict CSP must not start —
+    // shipping an unprotected renderer would silently void the security
+    // posture this app is built around.
+    throw new Error(
+      `packaged CSP missing or malformed (${CSP_FILE}) — refusing to start without the Content-Security-Policy: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }
 
@@ -129,12 +147,11 @@ function createWindow(): void {
     }
   });
 
-  const csp = getCsp();
-  if(csp) {
+  if(activeCsp) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       // CSP only for the packaged app:// origin; the dev server is exempt.
       if(details.url.startsWith('app://')) {
-        callback({responseHeaders: {...details.responseHeaders, 'Content-Security-Policy': [csp]}});
+        callback({responseHeaders: {...details.responseHeaders, 'Content-Security-Policy': [activeCsp!]}});
       } else {
         callback({});
       }
@@ -179,6 +196,9 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
+  // Resolved before anything is served — a broken packaged CSP aborts the
+  // boot instead of starting an unprotected renderer.
+  activeCsp = getCsp();
   if(!isDev) {
     protocol.handle('app', (request) => serveFile(new URL(request.url)));
   }
@@ -187,6 +207,9 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if(BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch((err) => {
+  console.error(err instanceof Error ? err.message : err);
+  app.exit(1);
 });
 
 app.on('window-all-closed', () => {

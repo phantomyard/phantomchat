@@ -25,8 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Guard rails
+        env:
+          CONFIRM_INPUT: ${{ github.event.inputs.confirm }}
         run: |
-          if [[ "${{ github.event.inputs.confirm }}" != "PROMOTE" ]]; then
+          # Dispatch input is bound through env, never interpolated into the
+          # script text — this step holds contents:write.
+          if [[ "$CONFIRM_INPUT" != "PROMOTE" ]]; then
             echo "::error::Confirmation required: set the confirm input to PROMOTE."
             exit 1
           fi
@@ -37,10 +41,17 @@ jobs:
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_INPUT: ${{ github.event.inputs.tag }}
         run: |
-          INPUT="${{ github.event.inputs.tag }}"
-          if [[ -n "$INPUT" ]]; then
-            echo "tag=$INPUT" >> "$GITHUB_OUTPUT"
+          # Dispatch input bound through env; the explicit-tag path is also
+          # validated to a safe charset so it can never inject into the
+          # output file or the downstream promote script.
+          if [[ -n "$TAG_INPUT" ]]; then
+            if [[ ! "$TAG_INPUT" =~ ^desktop-v[0-9A-Za-z._-]+$ ]]; then
+              echo "::error::Invalid tag '${TAG_INPUT}' — expected desktop-v<version>."
+              exit 1
+            fi
+            echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"
           else
             NEWEST="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease)][0].tagName')"
             if [[ -z "$NEWEST" || "$NEWEST" == "null" ]]; then
@@ -53,6 +64,7 @@ jobs:
       - name: Promote to stable (verify artifacts + checksums, flip metadata)
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           chmod +x scripts/promote-release.sh
-          ./scripts/promote-release.sh "${{ steps.tag.outputs.tag }}" "$GITHUB_REPOSITORY"
+          ./scripts/promote-release.sh "$RELEASE_TAG" "$GITHUB_REPOSITORY"

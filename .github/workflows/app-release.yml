@@ -11,17 +11,16 @@ name: app-release
 # PR#1 (issue #150): Linux only — x64 AppImage + .deb, unsigned, with
 # SHA-256 checksums. Windows/macOS targets are added by their own PRs; the
 # promote workflow fails closed until every required artifact exists.
+#
+# Manual runs build from the branch they are dispatched from (GitHub
+# dispatches on the selected branch's head; there is no ref input, keeping
+# the built commit and the run's provenance in lockstep by construction).
 
 on:
   push:
     tags:
       - 'desktop-v*'
   workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Branch/ref to build from (defaults to the current branch)'
-        required: false
-        default: ''
 
 permissions:
   contents: write
@@ -83,10 +82,16 @@ jobs:
         run: |
           cd release/${{ steps.ver.outputs.version }}
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            echo "::error::Release ${TAG} already exists — release tags are immutable and are never deleted or recreated. Use a new desktop-v* tag."
+            exit 1
           fi
+          # --verify-tag fails instead of silently creating the tag from the
+          # default branch; --target pins the source commit if gh ever has
+          # to create the tag itself.
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --target "$GITHUB_SHA" \
             --prerelease \
             --title "PhantomChat Desktop ${VERSION} (preview)" \
             --notes "Desktop preview build ${VERSION} (Linux x64: AppImage + .deb, unsigned — SHA-256 checksums published).
