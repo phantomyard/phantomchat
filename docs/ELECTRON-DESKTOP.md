@@ -66,7 +66,7 @@ run counter, never by hand.
 
 1. **Every merge to main cuts a preview release.** The **app-release**
    workflow fires on each push to main (except docs-only merges) and
-   publishes `desktop-v1.0.<run_number>` — the workflow's per-run counter,
+   publishes `phantomchat-v1.0.<run_number>` — the workflow's per-run counter,
    the same scheme phantombot uses for `v1.1.<run_number>` and the PWA
    deploy uses for its `APP_VERSION`. Run numbers never regress (PR numbers
    can), and each one maps to exactly one Actions run. The workflow builds
@@ -85,7 +85,7 @@ run counter, never by hand.
      exact artifacts tested on preview become stable.
    - Fails closed on any missing artifact or checksum mismatch.
 3. **Rollback** = promote an older known-good tag by name (e.g.
-   `desktop-v1.0.40`). Same metadata-only contract.
+   `phantomchat-v1.0.40`). Same metadata-only contract.
 
 Required artifacts for promotion live in `scripts/promote-release.sh`
 (`REQUIRED_ARTIFACTS`); the Windows/macOS PRs append their artifacts there

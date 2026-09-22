@@ -4,7 +4,7 @@
  * Runs the real script against a stub `gh` CLI on PATH that models remote
  * tag/release state in a state file — no network, no real repo involved.
  *
- * The app-release workflow synthesizes desktop-v1.0.<run_number> tags from
+ * The app-release workflow synthesizes phantomchat-v1.0.<run_number> tags from
  * its monotonic run counter (phantombot's naming model), so the contract
  * here is: the release must not exist, the synthesized tag must not exist,
  * the tag must be pinned to the built commit (--target), the release must
@@ -20,7 +20,7 @@ import {join} from 'node:path';
 const SCRIPT = join(process.cwd(), 'scripts', 'publish-release.sh');
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
 const VERSION = '1.0.42';
-const TAG = `desktop-v${VERSION}`;
+const TAG = `phantomchat-v${VERSION}`;
 const ASSETS = [`PhantomChat-${VERSION}.AppImage`, `phantomchat_${VERSION}_amd64.deb`, 'SHA256SUMS.txt'];
 
 // Stub gh: state file lines look like `key=value`. `release-<tag>` present
@@ -212,15 +212,15 @@ describe('publish-release.sh', () => {
   });
 
   it('refuses a version outside the strict numeric semver grammar', () => {
-    const res = runPublish({version: '1.0.42$(boom)', tag: 'desktop-v1.0.42$(boom)'});
+    const res = runPublish({version: '1.0.42$(boom)', tag: 'phantomchat-v1.0.42$(boom)'});
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('unsupported version');
   });
 
   it('refuses a tag that does not match its version', () => {
-    const res = runPublish({tag: 'desktop-v9.9.9'});
+    const res = runPublish({tag: 'phantomchat-v9.9.9'});
     expect(res.status).not.toBe(0);
-    expect(res.stderr).toContain('must be desktop-v<version>');
+    expect(res.stderr).toContain('must be phantomchat-v<version>');
   });
 
   it('fails closed when a required artifact file is missing', () => {

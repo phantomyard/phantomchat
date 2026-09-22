@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to promote (e.g. desktop-v1.0.42). Leave empty to promote the newest prerelease.'
+        description: 'Release tag to promote (e.g. phantomchat-v1.0.42). Leave empty to promote the newest prerelease.'
         required: false
         default: ''
 
@@ -40,8 +40,8 @@ jobs:
           # path is validated to a safe charset so it can never inject into
           # the output file or the downstream promote script.
           if [[ -n "$TAG_INPUT" ]]; then
-            if [[ ! "$TAG_INPUT" =~ ^desktop-v[0-9A-Za-z._-]+$ ]]; then
-              echo "::error::Invalid tag '${TAG_INPUT}' — expected desktop-v<version>."
+            if [[ ! "$TAG_INPUT" =~ ^phantomchat-v[0-9A-Za-z._-]+$ ]]; then
+              echo "::error::Invalid tag '${TAG_INPUT}' — expected phantomchat-v<version>."
               exit 1
             fi
             echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"

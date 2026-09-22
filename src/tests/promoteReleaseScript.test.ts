@@ -13,7 +13,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const SCRIPT = join(process.cwd(), 'scripts', 'promote-release.sh');
-const TAG = 'desktop-v1.0.42';
+const TAG = 'phantomchat-v1.0.42';
 
 const GH_SHIM = `#!/usr/bin/env bash
 set -u
@@ -35,9 +35,9 @@ case "$cmd" in
   api)
     # Mimic the real gh: --jq .tag_name prints just the tag.
     if [[ "\${2:-}" == "--jq" && "\${3:-}" == ".tag_name" ]]; then
-      echo "\${GH_FAKE_LATEST_TAG:-desktop-v1.0.0}"
+      echo "\${GH_FAKE_LATEST_TAG:-phantomchat-v1.0.0}"
     else
-      echo "{\\"tag_name\\": \\"\${GH_FAKE_LATEST_TAG:-desktop-v1.0.0}\\"}"
+      echo "{\\"tag_name\\": \\"\${GH_FAKE_LATEST_TAG:-phantomchat-v1.0.0}\\"}"
     fi ;;
   *) exit 64 ;;
 esac

@@ -5,7 +5,7 @@ name: app-release
 # Fires on pushes to main (i.e. PR merges — branch protection requires PRs, so
 # a push to main IS a merge) except docs-only merges, which the paths-ignore
 # denylist below filters out. Cuts a GitHub Release tagged
-# desktop-v1.0.<RUN_NUMBER> with the Linux artifacts (AppImage + deb,
+# phantomchat-v1.0.<RUN_NUMBER> with the Linux artifacts (AppImage + deb,
 # unsigned) and SHA256SUMS.txt.
 #
 # Why github.run_number and not the PR number (same rationale as phantombot):
@@ -17,7 +17,7 @@ name: app-release
 # preserved in the release title/notes so the audit trail stays intact.
 #
 # The version/tag are synthesized BY THIS WORKFLOW from that counter — nobody
-# pushes a desktop-v* tag by hand and there is no dispatch input, so no
+# pushes a phantomchat-v* tag by hand and there is no dispatch input, so no
 # user-controlled text can reach a shell. Every value crosses step boundaries
 # env-bound; there is zero ${{ }} interpolation inside run: blocks (the
 # posture established in review round 3). The strict-semver grammar guard
@@ -113,7 +113,7 @@ jobs:
             exit 1
           fi
           VERSION="1.0.${GITHUB_RUN_NUMBER}"
-          TAG="desktop-v${VERSION}"
+          TAG="phantomchat-v${VERSION}"
           printf 'version=%s\ntag=%s\n' "$VERSION" "$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build frontend + electron main/preload

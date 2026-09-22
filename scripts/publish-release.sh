@@ -5,14 +5,14 @@
 # stay contract-tested (src/tests/publishReleaseScript.test.ts):
 #
 #  - The version/tag are synthesized by the app-release workflow from its
-#    monotonic github.run_number (desktop-v1.0.<run_number>) — nobody pushes
-#    a desktop-v* tag by hand and there is no dispatch input, so no
+#    monotonic github.run_number (phantomchat-v1.0.<run_number>) — nobody pushes
+#    a phantomchat-v* tag by hand and there is no dispatch input, so no
 #    user-controlled text reaches this shell. The strict semver grammar
 #    check below is defense in depth, not the primary control.
 #  - Release tags are immutable: if the release OR the tag already exists,
 #    the run fails closed — tags are never deleted, recreated or moved.
 #  - `--target` pins the created tag to the exact commit that was built, so
-#    `git checkout desktop-v1.0.N` can never lie about what code is in it.
+#    `git checkout phantomchat-v1.0.N` can never lie about what code is in it.
 #  - The release is ALWAYS a prerelease (preview channel). Stable is the
 #    app-promote workflow's job, and it never rebuilds.
 #
@@ -38,7 +38,7 @@ command -v gh >/dev/null || fail "gh CLI not available"
 # counter, but this script consumes VERSION/TAG as arguments too — refuse
 # anything that is not exact numeric semver before any gh call.
 [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail "unsupported version '${VERSION}' (expected numeric semver X.Y.Z)"
-[[ "$TAG" == "desktop-v${VERSION}" ]] || fail "tag '${TAG}' must be desktop-v<version> (version ${VERSION})"
+[[ "$TAG" == "phantomchat-v${VERSION}" ]] || fail "tag '${TAG}' must be phantomchat-v<version> (version ${VERSION})"
 
 # --- the release must not exist (releases/tags are immutable) ---------------
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
@@ -46,7 +46,7 @@ if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
 fi
 
 # --- the synthesized tag must not exist either ------------------------------
-# desktop-v1.0.<run_number> is unique per workflow run by construction. If the
+# phantomchat-v1.0.<run_number> is unique per workflow run by construction. If the
 # ref already exists it points at a commit we did not build (or a run is
 # being replayed) — fail closed rather than publishing onto or moving it.
 if gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
