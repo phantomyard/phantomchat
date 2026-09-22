@@ -31,6 +31,13 @@ fail() { echo "PUBLISH FAILED: $*" >&2; exit 1; }
 command -v gh >/dev/null || fail "gh CLI not available"
 [[ "$TRIGGER" == "tag" || "$TRIGGER" == "manual" ]] || fail "unknown trigger '${TRIGGER}' (expected tag|manual)"
 
+# Defense in depth: the workflow validates the tag-derived version before it
+# is emitted (scripts/resolve-release-version.sh), but this script consumes
+# TAG/VERSION as arguments too — shell metacharacters that pass git
+# check-ref-format are refused here as well, before any gh call.
+[[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail "unsupported version '${VERSION}' (expected numeric semver X.Y.Z)"
+[[ "$TAG" == "desktop-v${VERSION}" ]] || fail "tag '${TAG}' must be desktop-v<version> (version ${VERSION})"
+
 # Resolve a remote tag to the commit it points at. Follows annotated tags
 # (object.type == "tag" → one extra hop to the underlying commit).
 resolve_tag_commit() {

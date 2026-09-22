@@ -50,18 +50,17 @@ jobs:
       # the bundled UI version (APP_VERSION, same scheme as the PWA) and the
       # packaged app version via electron-builder's extraMetadata override —
       # the checked-in package.json version is never mutated.
+      # Validation lives in scripts/resolve-release-version.sh: tag names can
+      # carry shell metacharacters that pass git check-ref-format, so the
+      # version must pass a strict grammar check before any output exists.
+      # Ref/env vars reach run: only via env + quoted variables — never via
+      # ${{ }} interpolation inside run: blocks.
       - name: Resolve version
         id: ver
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/desktop-v* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/desktop-v}" >> "$GITHUB_OUTPUT"
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-            echo "trigger=tag" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-            echo "tag=desktop-v1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-            echo "trigger=manual" >> "$GITHUB_OUTPUT"
-          fi
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: bash scripts/resolve-release-version.sh "$GITHUB_REF" "$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
       - name: Build frontend + electron main/preload
         run: |
@@ -71,13 +70,17 @@ jobs:
           APP_VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Package Linux artifacts (AppImage + deb, x64)
-        run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version=${{ steps.ver.outputs.version }}
+        run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version="$VERSION"
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Generate checksums
         run: |
-          cd release/${{ steps.ver.outputs.version }}
+          cd "release/${VERSION}"
           sha256sum PhantomChat-*.AppImage phantomchat_*.deb > SHA256SUMS.txt
           cat SHA256SUMS.txt
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Create prerelease (preview channel)
         env:
