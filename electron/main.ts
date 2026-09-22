@@ -15,6 +15,7 @@ import {readFileSync, existsSync} from 'fs';
 import {join, normalize, relative, isAbsolute, extname} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
+import {isPermissionAllowed} from './permissions';
 
 // NOTE: this module is bundled to CommonJS by electron/build.mjs, so the
 // Node globals __dirname/__filename are available at runtime and point at
@@ -175,9 +176,14 @@ function createWindow(): void {
     }
   });
 
-  // Lock permissions: the desktop app needs none of Chromium's power APIs.
-  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => {
-    callback(false);
+  // Default-deny permissions: only mic, camera and notifications, and only
+  // for the app's own pages (see permissions.ts).
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    callback(isPermissionAllowed({
+      permission,
+      requestingUrl: details.requestingUrl,
+      mediaTypes: (details as {mediaTypes?: string[]}).mediaTypes
+    }, isDev ? DEV_URL : undefined));
   });
 
   if(isDev) {

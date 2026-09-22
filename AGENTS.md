@@ -92,6 +92,13 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    dedup or delivery-tick (✓→✓✓) paths requires a regression test — these have
    bitten us before (duplicate rows, wrong-size `['e']` tags, lingering ticks).
 
+10. **Desktop app (Electron): permissions stay default-deny, versions stay in
+   sync with the PWA.** Grant a new Chromium permission only by adding it to
+   `electron/permissions.ts` (app-origin only, with a test). The desktop
+   release version is the PWA deploy run number for the same commit
+   (`app-release.yml` "Resolve version"); never version it from its own
+   `github.run_number`.
+
 ## Review checklist (reject a diff that does any of these on a hot path)
 
 - An `await` of a worker/IDB/network call placed *before* a paint or input echo.
