@@ -33,7 +33,7 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Resolve tag (default: newest prerelease)
+      - name: "Resolve tag (default: newest prerelease)"
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
