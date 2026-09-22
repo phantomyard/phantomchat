@@ -15,7 +15,6 @@ import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import opusDecodeController from '@lib/opusDecodeController';
 import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
 import emoticonsDropdown, {EmoticonsDropdown} from '@components/emoticonsDropdown';
-import PopupCreatePoll from '@components/popups/createPoll';
 import PopupForward from '@components/popups/forward';
 import PopupNewMedia, {getCurrentNewMediaPopup} from '@components/popups/newMedia';
 import {toast, toastNew} from '@components/toast';
@@ -135,7 +134,6 @@ import splitStringByLength from '@helpers/string/splitStringByLength';
 import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMessagesInterceptor';
 import asyncThrottle from '@helpers/schedulers/asyncThrottle';
 import focusInput from '@helpers/dom/focusInput';
-import {PopupChecklist} from '@components/popups/checklist';
 import assumeType from '@helpers/assumeType';
 import {formatFullSentTime} from '@helpers/date';
 import useStars from '@stores/stars';
@@ -1101,42 +1099,6 @@ export default class ChatInput {
           this.managers.apiManager.getAppConfig()
         ]).then(([canGift, {premium_gift_attach_menu_icon}]) => canGift && premium_gift_attach_menu_icon);
       }
-    }, {
-      icon: 'poll',
-      text: 'Poll',
-      onClick: async() => {
-        const action: ChatRights = 'send_polls';
-        if(!(await this.chat.canSend(action))) {
-          toastNew({langPackKey: POSTING_NOT_ALLOWED_MAP[action]});
-          return;
-        }
-
-        PopupElement.createPopup(PopupCreatePoll, this.chat).show();
-      },
-      verify: () => {
-        if(this.editMsgId) return;
-        return (!this.chat.isMonoforum && this.chat.peerId.isAnyChat()) || this.chat.isBot;
-      }
-    }, {
-      icon: 'checkround',
-      text: 'Checklist',
-      onClick: async() => {
-        if(this.chat.peerId.isAnyChat()) {
-          const action: ChatRights = 'send_polls';
-          if(!(await this.chat.canSend(action))) {
-            toastNew({langPackKey: POSTING_NOT_ALLOWED_MAP[action]});
-            return;
-          }
-        }
-
-        if(!rootScope.premium) {
-          PopupPremium.show();
-          return;
-        }
-
-        PopupElement.createPopup(PopupChecklist, {chat: this.chat}).show();
-      },
-      verify: () => !this.editMsgId && !this.chat.isMonoforum
     }];
 
     const attachMenuButtons = this.attachMenuButtons.slice();
