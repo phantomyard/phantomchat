@@ -53,15 +53,24 @@ if gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
   fail "tag ${TAG} already exists on the remote — synthesized run-number tags must be unique; refusing to publish onto an existing ref"
 fi
 
+# --- release notes: resolved against the INVOCATION directory, not the ----
+# artifacts dir. The app-release workflow writes release-notes.md at the
+# repository root and passes a relative path, while this script cd's into the
+# artifacts dir below — so anchor a relative path to the directory the script
+# was invoked from (repo root in the workflow) BEFORE changing directory.
+NOTES_ARGS=()
+if [[ -n "${RELEASE_NOTES_FILE:-}" ]]; then
+  NOTES_PATH="${RELEASE_NOTES_FILE}"
+  if [[ "$NOTES_PATH" != /* ]]; then
+    NOTES_PATH="${PWD}/${NOTES_PATH}"
+  fi
+  [[ -f "$NOTES_PATH" ]] || fail "RELEASE_NOTES_FILE not found: ${RELEASE_NOTES_FILE} (resolved to ${NOTES_PATH})"
+  NOTES_ARGS=(--notes-file "$NOTES_PATH")
+fi
+
 cd "$ARTIFACTS_DIR" || fail "artifacts dir not found: ${ARTIFACTS_DIR}"
 
 TITLE="${RELEASE_TITLE:-PhantomChat Desktop ${VERSION} (preview)}"
-
-NOTES_ARGS=()
-if [[ -n "${RELEASE_NOTES_FILE:-}" ]]; then
-  [[ -f "$RELEASE_NOTES_FILE" ]] || fail "RELEASE_NOTES_FILE not found: ${RELEASE_NOTES_FILE}"
-  NOTES_ARGS=(--notes-file "$RELEASE_NOTES_FILE")
-fi
 
 # Artifact list mirrors REQUIRED_ARTIFACTS in scripts/promote-release.sh —
 # the Windows and macOS PRs grow both places together.

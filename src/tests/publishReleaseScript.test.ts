@@ -117,7 +117,11 @@ function runPublish(opts: {
     chmodSync(shim, 0o755);
     const notesPath = typeof opts.notesFile === 'string' ? opts.notesFile : undefined;
     if (notesPath !== undefined && opts.notesFile !== 'does-not-exist.md') {
-      writeFileSync(join(artifacts, notesPath), 'notes body\n');
+      // Production layout: the workflow writes the notes at the INVOCATION
+      // dir (repo root), not inside the artifacts dir — the script must
+      // resolve the relative path against where it is invoked from, before it
+      // cd's into the artifacts directory.
+      writeFileSync(join(sandbox, notesPath), 'notes body\n');
     }
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -129,7 +133,7 @@ function runPublish(opts: {
     const res = spawnSync(
       'bash',
       [SCRIPT, opts.tag ?? TAG, opts.version ?? VERSION, COMMIT, artifacts, 'phantomyard/phantomchat'],
-      {env, encoding: 'utf8'}
+      {cwd: sandbox, env, encoding: 'utf8'}
     ) as unknown as RunResult;
     return {...res, state: readFileSync(state, 'utf8')};
   } finally {
@@ -149,6 +153,49 @@ describe('publish-release.sh', () => {
     const res = runPublish({notesFile: 'release-notes.md', title: `${TAG} (PR #151)`});
     expect(res.status).toBe(0);
     expect(res.state).toContain(`created-${TAG}=prerelease`);
+  });
+
+  it("resolves a relative RELEASE_NOTES_FILE from the invocation dir (workflow layout: notes at repo root, relative artifacts dir, script cd's into artifacts)", () => {
+    // Reproduces the app-release workflow's exact invocation: the notes file
+    // is written at the "repo root", the script is invoked from there with a
+    // RELATIVE artifacts dir (release/<version>), and RELEASE_NOTES_FILE is
+    // passed as a bare relative path. Before the fix this failed with
+    // "RELEASE_NOTES_FILE not found" on every real publication.
+    const sandbox = mkdtempSync(join(tmpdir(), 'publish-release-wf-'));
+    try {
+      const binDir = join(sandbox, 'bin');
+      const artifacts = join(sandbox, `release/${VERSION}`);
+      mkdirSync(binDir, {recursive: true});
+      mkdirSync(artifacts, {recursive: true});
+      const state = join(sandbox, 'state');
+      writeFileSync(state, '');
+      for (const asset of ASSETS) {
+        writeFileSync(join(artifacts, asset), `fixture-${asset}\n`);
+      }
+      const shim = join(binDir, 'gh');
+      writeFileSync(shim, GH_SHIM);
+      chmodSync(shim, 0o755);
+      writeFileSync(join(sandbox, 'release-notes.md'), 'notes body\n');
+      const res = spawnSync(
+        'bash',
+        [SCRIPT, TAG, VERSION, COMMIT, `release/${VERSION}`, 'phantomyard/phantomchat'],
+        {
+          cwd: sandbox,
+          env: {
+            ...process.env,
+            PATH: `${binDir}:${process.env.PATH}`,
+            GH_STUB_STATE: state,
+            RELEASE_NOTES_FILE: 'release-notes.md'
+          },
+          encoding: 'utf8'
+        }
+      ) as unknown as RunResult;
+      expect(res.status).toBe(0);
+      expect(res.stderr).toBe('');
+      expect(readFileSync(state, 'utf8')).toContain(`created-${TAG}=prerelease`);
+    } finally {
+      rmSync(sandbox, {recursive: true, force: true});
+    }
   });
 
   it('fails closed when the release already exists (immutability)', () => {
