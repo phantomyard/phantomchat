@@ -52,6 +52,20 @@ const cacheStorageDbConfig = {
   }
 } satisfies Record<string, CacheStorageDbConfigEntry>;
 
+// The Cache API only stores http(s) request URLs. On the web the key is
+// '/<entryName>', resolved against the page origin as it always has been. In
+// the desktop app the origin is app://localhost, which Chromium rejects
+// ("Request scheme 'app' is unsupported"), so every put/match failed and
+// nothing was ever cached. There the keys live under a synthetic https base
+// instead (used as a cache key only, never fetched).
+export function cacheKeyBase(protocol: string | undefined) {
+  return /^https?:$/.test(protocol || '') ? '/' : 'https://phantomchat.invalid/';
+}
+const CACHE_KEY_BASE = cacheKeyBase(self.location?.protocol);
+function toCacheKey(entryName: string) {
+  return CACHE_KEY_BASE + entryName;
+}
+
 const defaultOperationTimeout = 15e3;
 const minimalBlockingIterationTotalTimeout = defaultOperationTimeout; // make sure this is at least a few seconds if the default one gets modified
 
@@ -155,7 +169,7 @@ export default class CacheStorageController implements FileStorage {
   }
 
   public delete(entryName: string) {
-    return this.timeoutOperation((cache) => cache.delete('/' + entryName));
+    return this.timeoutOperation((cache) => cache.delete(toCacheKey(entryName)));
   }
 
   /**
@@ -200,14 +214,14 @@ export default class CacheStorageController implements FileStorage {
   }
 
   public async has(entryName: string) {
-    const response = await this.timeoutOperation((cache) => cache.match('/' + entryName));
+    const response = await this.timeoutOperation((cache) => cache.match(toCacheKey(entryName)));
     return !!response;
   }
 
   public async get(entryName: string) {
     await this.waitToEnable();
 
-    const response = await this.timeoutOperation((cache) => cache.match('/' + entryName));
+    const response = await this.timeoutOperation((cache) => cache.match(toCacheKey(entryName)));
     if(!response) return undefined;
 
     if(this.config?.encryptable && await DeferredIsUsingPasscode.isUsingPasscode()) {
@@ -250,7 +264,7 @@ export default class CacheStorageController implements FileStorage {
       );
     }
 
-    return this.timeoutOperation((cache) => cache.put('/' + entryName, result));
+    return this.timeoutOperation((cache) => cache.put(toCacheKey(entryName), result));
   }
 
   public getFile(fileName: string, method: 'blob' | 'json' | 'text' = 'blob'): Promise<any> {

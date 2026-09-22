@@ -360,6 +360,12 @@ function onInstanceDeactivated(reason: InstanceDeactivateReason) {
 
   document.body.classList.add('deactivated');
 
+  // The boot splash sits at max z-index until the chat list/auth page mounts.
+  // A deactivation during boot (e.g. 'version' when the stored build is newer)
+  // stops boot before that happens, so this popup rendered BEHIND the splash
+  // and the user saw a frozen "Ready" screen. Drop the splash first.
+  (window as any).__hideBootSplash?.();
+
   popup.addEventListener('close', map[reason].onClick);
   popup.show();
 };

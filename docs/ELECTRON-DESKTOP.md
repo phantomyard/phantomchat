@@ -44,6 +44,18 @@ Targets per issue #150: x64 **AppImage** and **.deb**. RPM, Snap and
 Flatpak are deliberately out of scope for the first release. Artifacts are
 unsigned (acceptable on Linux) and always ship with `SHA256SUMS.txt`.
 
+**Local builds need `APP_VERSION`.** Without it the bundle bakes build 0.
+A profile that has already run a release stores its build number, sees a
+"newer" build was there before, and deactivates itself (the "another tab is
+running a newer version" popup). Build local test packages with a version
+at least as high as the installed one:
+`APP_VERSION=1.0.<n> pnpm run app:build`.
+
+The packaged UI is served from `app://localhost`. That scheme is registered
+with `allowServiceWorkers` (see `electron/scheme.ts`), and the Cache API
+store keys use a synthetic `https://phantomchat.invalid/` base there,
+because Chromium's Cache API rejects `app://` request URLs.
+
 ### .deb install
 
 ```bash

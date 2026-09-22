@@ -14,6 +14,7 @@ import {app, BrowserWindow, session, shell, protocol, net, ipcMain} from 'electr
 import {readFileSync, existsSync} from 'fs';
 import {join, normalize, relative, isAbsolute, extname} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
+import {APP_SCHEME_PRIVILEGES} from './scheme';
 
 // NOTE: this module is bundled to CommonJS by electron/build.mjs, so the
 // Node globals __dirname/__filename are available at runtime and point at
@@ -32,9 +33,11 @@ if(process.argv.includes('--install')) {
 
 // Standard, secure scheme so the renderer gets a proper origin (localStorage,
 // crypto.subtle, fetch all behave like the web app) while still serving the
-// immutable packaged bundle.
+// immutable packaged bundle. allowServiceWorkers is required: without it
+// navigator.serviceWorker.register() rejects on app:// and the SW-backed
+// features (media streaming, notifications, the message port) never start.
 protocol.registerSchemesAsPrivileged([
-  {scheme: 'app', privileges: {standard: true, secure: true, supportFetchAPI: true}}
+  {scheme: 'app', privileges: APP_SCHEME_PRIVILEGES}
 ]);
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
