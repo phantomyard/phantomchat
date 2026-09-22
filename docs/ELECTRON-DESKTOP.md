@@ -63,7 +63,9 @@ installs its own menu entry and is removed cleanly with
 Same release-ring model as PhantomBot:
 
 1. **Every new build is a preview release.** Tag `desktop-v<version>`
-   (e.g. `desktop-v1.0.42`) — or run the **app-release** workflow manually.
+   (e.g. `desktop-v1.0.42`) — or run the **app-release** workflow manually
+   (the synthesized `desktop-v1.0.<run_number>` tag is created pinned to the
+   built commit; an existing tag pointing elsewhere fails the run).
    The workflow builds from a clean checkout and publishes the artifacts +
    `SHA256SUMS.txt` as a GitHub **prerelease**. Stable users see nothing.
 2. **Promote to stable** via the **app-promote** workflow (`confirm: PROMOTE`,

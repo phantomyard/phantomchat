@@ -15,6 +15,9 @@ name: app-release
 # Manual runs build from the branch they are dispatched from (GitHub
 # dispatches on the selected branch's head; there is no ref input, keeping
 # the built commit and the run's provenance in lockstep by construction).
+# scripts/publish-release.sh owns tag/release immutability on both trigger
+# paths: the synthesized manual tag is created pinned to the built commit,
+# and any pre-existing tag pointing elsewhere fails the run.
 
 on:
   push:
@@ -53,9 +56,11 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/desktop-v* ]]; then
             echo "version=${GITHUB_REF#refs/tags/desktop-v}" >> "$GITHUB_OUTPUT"
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "trigger=tag" >> "$GITHUB_OUTPUT"
           else
             echo "version=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
             echo "tag=desktop-v1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "trigger=manual" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build frontend + electron main/preload
@@ -79,25 +84,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.ver.outputs.version }}
           TAG: ${{ steps.ver.outputs.tag }}
-        run: |
-          cd release/${{ steps.ver.outputs.version }}
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::Release ${TAG} already exists — release tags are immutable and are never deleted or recreated. Use a new desktop-v* tag."
-            exit 1
-          fi
-          # --verify-tag fails instead of silently creating the tag from the
-          # default branch; --target pins the source commit if gh ever has
-          # to create the tag itself.
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "PhantomChat Desktop ${VERSION} (preview)" \
-            --notes "Desktop preview build ${VERSION} (Linux x64: AppImage + .deb, unsigned — SHA-256 checksums published).
-
-          Install and channel docs: docs/ELECTRON-DESKTOP.md.
-
-          **Preview channel:** this prerelease does not affect stable users.
-          Promote it with the **app-promote** workflow once tested." \
-            "PhantomChat-${VERSION}.AppImage" "phantomchat_${VERSION}_amd64.deb" "SHA256SUMS.txt"
+          TRIGGER: ${{ steps.ver.outputs.trigger }}
+        run: bash scripts/publish-release.sh "$TAG" "$VERSION" "$GITHUB_SHA" "$TRIGGER" "release/${VERSION}"
