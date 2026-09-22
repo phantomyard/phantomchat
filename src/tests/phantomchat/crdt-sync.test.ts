@@ -338,6 +338,33 @@ describe('CrdtSync.publishWithRetry', () => {
     expect(Object.keys(relay.decoded().items).sort()).toEqual(['a', 'b']);
   });
 
+  it('treats a write the relay never exposes as unconfirmed (enqueue != stored)', async() => {
+    // Review blocker on #156: ChatAPI.publishEvent resolves once the event is
+    // HANDED OFF to the write relays — the pool records success at send and
+    // its verifyStored read-back is a background warning, never a gate. A
+    // relay that ACKs but never stores (or a cold socket that merely buffers)
+    // therefore used to make publish() return true after attempt one, and
+    // publishWithRetry stopped — the exact #155 failure. The regression: the
+    // publish call resolves, but the relay slot still serves the pre-write
+    // snapshot, so every attempt must count as unconfirmed.
+    const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+    relay.seed({b: liveEntry('b', {id: 'b', name: 'B'}, 200)});
+    const origPublish = relay.publishEvent;
+    relay.publishEvent = vi.fn(async(ev: any) => {
+      await origPublish(ev);                    // resolves like a real ACK...
+      relay.seed({b: liveEntry('b', {id: 'b', name: 'B'}, 200)}); // ...but the relay never stores it
+    });
+
+    const ok = await makeSync(relay, adapter).publishWithRetry({
+      maxAttempts: 3,
+      sleep: () => Promise.resolve()
+    });
+
+    expect(ok).toBe(false);
+    expect(relay.publishes).toBe(3);                   // retried, not stopped after one
+    expect(Object.keys(relay.decoded().items)).toEqual(['b']); // tombstone never landed
+  });
+
   it('gives up after maxAttempts and reports unconfirmed without writing', async() => {
     relay.failQuery = true;
     const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});

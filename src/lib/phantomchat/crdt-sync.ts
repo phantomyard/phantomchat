@@ -307,6 +307,21 @@ export class CrdtSync<T> {
       console.warn(this.tag, 'publish write failed (unconfirmed)', err);
       return false;
     }
+
+    // publishEvent resolving only means the event was HANDED OFF to the
+    // write relays: the pool records success at send (or buffers on a cold
+    // socket) and its verifyStored read-back is a background warning, never a
+    // gate. So the write is UNCONFIRMED until the relay actually serves our
+    // merged view back. Re-query the d-tag and confirm; anything else — relay
+    // still absent, still serving the pre-write map, or unreadable — is a
+    // failed attempt the caller (publishWithRetry) must see as `false`, or a
+    // fire-once publisher would again believe a tombstone reached the relay
+    // when it never did (#155, review blocker: enqueue != stored).
+    const verify = await this.fetchRemote();
+    if(verify.status !== 'ok' || differs(merged, verify.map)) {
+      console.warn(this.tag, 'publish not observable on relay yet (unconfirmed)');
+      return false;
+    }
     return true;
   }
 
