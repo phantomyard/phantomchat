@@ -23,14 +23,20 @@ sandbox=/opt/PhantomChat/chrome-sandbox
 mode="$(stat -c %a "$sandbox")"
 case "$mode" in 4755|755) ;; *) fail "chrome-sandbox mode is $mode" ;; esac
 
-# 3. AppArmor profile installed whenever AppArmor is enabled on the host.
+# 3. AppArmor profile installed AND loaded whenever AppArmor is enabled on the
+#    host (installed-but-not-loaded still blocks user namespaces).
+aa_loaded() { sudo cat /sys/kernel/security/apparmor/profiles 2>/dev/null | grep -q '^phantomchat '; }
+aa_enabled=0
 if sudo apparmor_status --enabled >/dev/null 2>&1; then
+  aa_enabled=1
   [ -f /etc/apparmor.d/phantomchat ] || fail "AppArmor enabled but profile not installed"
+  aa_loaded || fail "AppArmor profile installed but not loaded"
 fi
 
 # 4. Removal cleans up after itself.
 sudo apt-get remove -y phantomchat
 [ ! -e /usr/bin/phantomchat ] || fail "/usr/bin/phantomchat left behind after remove"
 [ ! -e /etc/apparmor.d/phantomchat ] || fail "AppArmor profile left behind after remove"
+if [ "$aa_enabled" = 1 ] && aa_loaded; then fail "AppArmor profile still loaded after remove"; fi
 
-echo "deb install check OK (chrome-sandbox mode $mode)"
+echo "deb install check OK (chrome-sandbox mode $mode, apparmor enabled=$aa_enabled)"
