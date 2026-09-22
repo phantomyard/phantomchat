@@ -564,15 +564,38 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
 
           // Debounced publishers, triggered from mutation sites via the
           // trigger registry (addP2PContact, deleteContacts, GroupAPI).
-          const mkDebounced = (fn: () => Promise<void>, tag: string) => {
+          // They ride publishWithRetry — a fire-once publish whose relay query
+          // hiccuped is how a delete's tombstone silently never reached the
+          // relay and the contact resurrected everywhere (#155).
+          const mkDebounced = (fn: () => Promise<boolean>, tag: string) => {
             let timer: ReturnType<typeof setTimeout> | null = null;
             return () => {
               if(timer) clearTimeout(timer);
-              timer = setTimeout(() => { fn().catch((e) => console.warn(tag, 'publish failed', e)); }, 2000);
+              timer = setTimeout(() => {
+                fn().catch((e) => console.warn(tag, 'publish failed', e));
+              }, 2000);
             };
           };
-          registerSyncPublisher('contacts', mkDebounced(() => contactsSync.publish(), '[contacts-sync]'));
-          registerSyncPublisher('groups', mkDebounced(() => groupsSync.publish(), '[groups-sync]'));
+          registerSyncPublisher('contacts', mkDebounced(() => contactsSync.publishWithRetry(), '[contacts-sync]'));
+          registerSyncPublisher('groups', mkDebounced(() => groupsSync.publishWithRetry(), '[groups-sync]'));
+
+          // PERIODIC reconcile — reconcile is not only a boot concern. A
+          // device that stays open for days must still see deletes and adds
+          // published by siblings: boot-only reconcile is why a tombstone
+          // published on one device never reached the long-running others
+          // (#155). Gated on a live read relay (cold device = no-op), and
+          // reconcile itself is idempotent when nothing changed.
+          const RECONCILE_INTERVAL_MS = 30 * 60 * 1000;
+          setInterval(() => {
+            void (async() => {
+              try {
+                const ready = crdtRelayPool && typeof crdtRelayPool.whenSubscribed === 'function' ?
+                  await crdtRelayPool.whenSubscribed(5000) :
+                  true;
+                if(ready) await reconcileOnce();
+              } catch{ /* logged inside reconcile */ }
+            })();
+          }, RECONCILE_INTERVAL_MS);
           console.log('[PhantomChatOnboardingIntegration] Contacts+Groups sync wired');
         } catch(err) {
           console.warn('[PhantomChatOnboardingIntegration] Contacts+Groups sync init failed:', err);

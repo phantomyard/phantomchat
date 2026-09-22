@@ -80,6 +80,14 @@ export type ReconcileOutcome =
   | 'in-sync'
   | 'failed';
 
+/** Options for {@link CrdtSync.publishWithRetry}. */
+export type PublishRetryOptions = {
+  maxAttempts?: number;
+  backoffMs?: number;
+  /** Injectable for tests — defaults to a real setTimeout. */
+  sleep?: (ms: number) => Promise<void>;
+};
+
 /**
  * Result of reading the remote snapshot. The three states must stay distinct:
  * conflating them is how a transient relay hiccup silently overwrites a newer
@@ -100,7 +108,10 @@ type RemoteFetch<T> =
 
 export class CrdtSync<T> {
   private applying = false;
-  private publishing = false;
+  /** The in-flight publish pass, or null. Re-entrant publishes queue on it. */
+  private publishing: Promise<boolean> | null = null;
+  /** A publish arrived while a pass was in flight — run one more after. */
+  private rerunPending = false;
 
   constructor(private deps: CrdtSyncDeps<T>) {}
 
@@ -185,29 +196,118 @@ export class CrdtSync<T> {
    * add it never saw: without it, a debounced publish triggered by a local
    * edit would overwrite the replaceable event with a map missing the other
    * device's concurrent change.
+   *
+   * Returns whether the relay was brought up to date with this device's view
+   * (`true` = published or confirmed already current, `false` = could not
+   * confirm — relay unavailable or the write failed). Callers that must not
+   * lose a write use {@link publishWithRetry}; a fire-once publish whose relay
+   * query happened to hiccup is how a tombstone silently never reached the
+   * relay and a deleted contact resurrected (#155).
+   *
+   * The merged view is also applied LOCALLY when it differs: a publishing
+   * device must converge, not just write — otherwise it keeps a stale live
+   * entry that outranks the tombstone it just published.
+   *
+   * Re-entrancy: a call landing while a pass is in flight cannot be dropped —
+   * the in-flight pass read the local view BEFORE this call's mutation, so
+   * dropping it silently loses the mutation (the in-flight race of #155).
+   * Instead the call queues one more pass and awaits the outcome. A call
+   * landing during reconcile's apply() stays a no-op: apply fires the very
+   * events that trigger publishes, and reconcile republishes the merged view
+   * itself.
    */
-  async publish(): Promise<void> {
-    if(this.applying || this.publishing) return;
-    this.publishing = true;
-    try {
-      const local = await this.deps.adapter.read();
-      const remote = await this.fetchRemote();
+  async publish(): Promise<boolean> {
+    if(this.applying) return false;
 
-      // Transient read failure (or an unreadable snapshot): do NOT publish. A
-      // debounced local edit must not overwrite a remote we couldn't fetch —
-      // that's exactly how a concurrent add on another device gets lost.
-      if(remote.status === 'unavailable') return;
-
-      const remoteMap = remote.status === 'ok' ? remote.map : null;
-      const merged = remoteMap ?
-        gcTombstones(mergeMaps(local, remoteMap), this.deps.nowSeconds()) :
-        local;
-
-      if(remoteMap && !differs(merged, remoteMap)) return; // relay already current
-      await this.publishMap(merged);
-    } finally {
-      this.publishing = false;
+    if(this.publishing) {
+      this.rerunPending = true;
+      return this.publishing;
     }
+
+    this.publishing = this.publishOnce();
+    try {
+      let ok = await this.publishing;
+      while(this.rerunPending) {
+        this.rerunPending = false;
+        this.publishing = this.publishOnce();
+        ok = await this.publishing;
+      }
+      return ok;
+    } finally {
+      this.publishing = null;
+    }
+  }
+
+  /**
+   * Publish until the relay confirms our view, backing off between attempts.
+   * A single failed attempt is a transient relay hiccup; giving up there is
+   * how deletes were lost (#155). Capped so a dead relay doesn't spin forever
+   * — after the cap, the periodic reconcile (and the next mutation) retries.
+   */
+  async publishWithRetry(opts: PublishRetryOptions = {}): Promise<boolean> {
+    const maxAttempts = opts.maxAttempts ?? 6;
+    const backoffMs = opts.backoffMs ?? 4000;
+    const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    for(let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if(await this.publish()) return true;
+      if(attempt === maxAttempts) break;
+      await sleep(backoffMs * attempt);
+    }
+    console.warn(this.tag, 'publish unconfirmed after', maxAttempts, 'attempts — local changes are NOT on the relay; the periodic reconcile will retry');
+    return false;
+  }
+
+  private async publishOnce(): Promise<boolean> {
+    let local: SyncMap<T>;
+    try {
+      local = await this.deps.adapter.read();
+    } catch(err) {
+      console.warn(this.tag, 'publish aborted: local read failed', err);
+      return false;
+    }
+
+    const remote = await this.fetchRemote();
+
+    // Transient read failure (or an unreadable snapshot): do NOT publish. A
+    // debounced local edit must not overwrite a remote we couldn't fetch —
+    // that's exactly how a concurrent add on another device gets lost.
+    if(remote.status === 'unavailable') {
+      console.warn(this.tag, 'publish skipped: relay unavailable (unconfirmed)');
+      return false;
+    }
+
+    const remoteMap = remote.status === 'ok' ? remote.map : null;
+    const merged = remoteMap ?
+      gcTombstones(mergeMaps(local, remoteMap), this.deps.nowSeconds()) :
+      local;
+
+    // Converge locally too: the remote may hold entries this device has not
+    // seen (an add from another device, or a tombstone for a contact that
+    // resurrected here). Without this, the device keeps its stale live entry
+    // and its next publish re-merges the same remote delta forever (#155).
+    if(remoteMap && differs(merged, local)) {
+      this.applying = true;
+      try {
+        await this.deps.adapter.apply(merged, local);
+      } catch(err) {
+        // The relay write below still converges the merged view; a failed
+        // local apply heals on the next reconcile rather than aborting the
+        // publish (local and relay disagree is strictly better than neither
+        // side learning the other's tombstone).
+        console.warn(this.tag, 'apply during publish failed', err);
+      } finally {
+        this.applying = false;
+      }
+    }
+
+    if(remoteMap && !differs(merged, remoteMap)) return true; // relay already current
+    try {
+      await this.publishMap(merged);
+    } catch(err) {
+      console.warn(this.tag, 'publish write failed (unconfirmed)', err);
+      return false;
+    }
+    return true;
   }
 
   private async publishMap(items: SyncMap<T>): Promise<void> {

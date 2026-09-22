@@ -10,6 +10,7 @@
 import type {NostrProfile} from './nostr-profile';
 import {logSwallow} from './log-swallow';
 import {schedulePublish} from './phantomchat-sync-triggers';
+import {stableStringify} from './sync-crdt';
 
 const DB_NAME = 'phantomchat-virtual-peers';
 // v2 (#73): adds `updatedAt` — the per-item mutation timestamp the contacts
@@ -197,6 +198,13 @@ export async function storeMapping(
 /**
  * Update just the nostrProfile and displayName on an existing mapping.
  * Does a get-then-put to preserve other fields.
+ *
+ * COSMETIC WRITES MUST NOT BUMP updatedAt (#155). The kind-0 refresh paths
+ * call this on every profile fetch; updatedAt is the CRDT clock for the
+ * contacts sync, and bumping it on a no-op write re-arms a stale live contact
+ * with a fresh stamp that outranks any tombstone. The stamp moves ONLY when
+ * the persisted payload actually changed — and a real change SHOULD move it,
+ * so the rename propagates cross-device.
  */
 export async function updateMappingProfile(
   pubkey: string,
@@ -221,11 +229,16 @@ export async function updateMappingProfile(
       // kind:0 name) is preserved. Previously `!existing.displayName` dropped
       // every rename once any name was set.
       const prevK0Name = existing.nostrProfile?.display_name || existing.nostrProfile?.name || '';
+      let nameChanged = false;
       if(!existing.displayName || existing.displayName === prevK0Name) {
+        nameChanged = existing.displayName !== displayName;
         existing.displayName = displayName;
       }
+      const profileChanged = stableStringify(existing.nostrProfile) !== stableStringify(nostrProfile);
       existing.nostrProfile = nostrProfile;
-      existing.updatedAt = Date.now();
+      if(nameChanged || profileChanged) {
+        existing.updatedAt = Date.now();
+      }
       const putReq = store.put(existing);
       putReq.onerror = () => reject(putReq.error);
       putReq.onsuccess = () => resolve();

@@ -92,6 +92,16 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    dedup or delivery-tick (✓→✓✓) paths requires a regression test — these have
    bitten us before (duplicate rows, wrong-size `['e']` tags, lingering ticks).
 
+10. **A cross-device sync write is not fire-and-forget.** A delete/rename that
+   publishes to the shared kind-30078 blob must retry until the relay confirms
+   (`CrdtSync.publishWithRetry`) and must log loudly when it gives up — a
+   silently dropped publish is an invisible cross-device outage (deleted
+   contacts resurrected for days, #155). Cosmetic writes (kind-0 profile
+   refreshes) must NEVER bump the CRDT clock: `updatedAt` moves only on a real
+   payload change, or a stale live entry outranks the tombstone. Reconcile runs
+   periodically, not only at boot — long-running devices must see siblings'
+   deletes.
+
 ## Review checklist (reject a diff that does any of these on a hot path)
 
 - An `await` of a worker/IDB/network call placed *before* a paint or input echo.
