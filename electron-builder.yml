@@ -1,0 +1,59 @@
+# PhantomChat desktop packaging (electron-builder).
+# PR#1 covers Linux only (issue #150): x64 AppImage + .deb. Windows and macOS
+# targets land in their own PRs; signing stays out until the Axelera
+# identities exist (see docs/ELECTRON-DESKTOP.md for the reserved secret names).
+appId: ai.phantomyard.chat
+productName: PhantomChat
+copyright: Copyright © 2026 Hodges Enterprises B.V.
+
+directories:
+  buildResources: electron/build
+  output: release/${version}
+
+# The packaged bundle: the built frontend + the compiled electron main/preload.
+# Everything else (sources, tests) stays out of the asar.
+files:
+  - dist/**
+  - electron/dist/**
+  - "!**/node_modules/**"
+
+extraResources:
+  - from: electron/build/icon.png
+    to: icon.png
+
+asar: true
+compression: maximum
+
+linux:
+  icon: electron/build/icon.png
+  category: Network
+  # Unsigned is acceptable for Linux per issue #150; SHA-256 checksums ship
+  # alongside the artifacts.
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  syncDesktopName: true
+  maintainer: PhantomChat <chat@phantomyard.ai>
+  vendor: Hodges Enterprises B.V.
+  synopsis: Privacy-first messaging
+  description: >
+    PhantomChat is a privacy-first messaging app with end-to-end encryption
+    and anonymous relay-based delivery. This package bundles the same UI as
+    the web app into a native desktop window.
+  # electron-builder generates the .desktop entry from productName/
+  # description/category above. AppImage users get the same integration via
+  # `phantomchat --install`.
+
+deb:
+  packageCategory: net
+  artifactName: phantomchat_${version}_${arch}.${ext}
+  afterInstall: scripts/deb-after-install.sh
+  afterRemove: scripts/deb-after-remove.sh
+
+appImage:
+  # Artifacts must keep a predictable, versioned name for the checksums and
+  # the promotion workflow.
+  artifactName: ${productName}-${version}.${ext}
+

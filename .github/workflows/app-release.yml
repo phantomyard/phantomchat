@@ -1,0 +1,196 @@
+name: app-release
+
+# Desktop-app release pipeline (issue #150) — mirrors phantombot's release.yml.
+#
+# Fires on pushes to main (i.e. PR merges — branch protection requires PRs, so
+# a push to main IS a merge) except docs-only merges, which the paths-ignore
+# denylist below filters out. Cuts a GitHub Release tagged
+# phantomchat-v1.0.<RUN_NUMBER> with the Linux artifacts (AppImage + deb,
+# unsigned) and SHA256SUMS.txt.
+#
+# Why github.run_number and not the PR number (same rationale as phantombot):
+# PR numbers can regress if a later-numbered PR merges before an earlier one
+# (v1.0.50 shipping after v1.0.49 confuses humans and breaks ordering
+# heuristics). github.run_number is a per-workflow monotonic counter — it only
+# ever goes up, and every value points at exactly one Actions run, so a
+# deployed artifact pivots to its build in one click. The originating PR is
+# preserved in the release title/notes so the audit trail stays intact.
+#
+# The version/tag are synthesized BY THIS WORKFLOW from that counter — nobody
+# pushes a phantomchat-v* tag by hand and there is no dispatch input, so no
+# user-controlled text can reach a shell. Every value crosses step boundaries
+# env-bound; there is zero ${{ }} interpolation inside run: blocks (the
+# posture established in review round 3). The strict-semver grammar guard
+# stays in scripts/publish-release.sh as defense in depth.
+#
+# RELEASE RINGS — every release cut here is a PRERELEASE (preview channel).
+# `gh release create --prerelease` keeps it out of /releases/latest, which is
+# what a stable client will resolve against once in-app updates land; a merge
+# therefore reaches only preview-ring users. Promotion to stable is a HUMAN
+# act: run the app-promote workflow. It flips metadata on a release that
+# ALREADY EXISTS — no rebuild, no re-tag. The bytes stable users install are
+# byte-for-byte the ones that soaked on preview. Why CI cannot decide this:
+# green tests are the bar for MERGING; if they were also the bar for stable,
+# the two rings would be the same ring. Stable means a human ran the build.
+#
+# paths-ignore is a DENYLIST (fail-open to releasing), not an allowlist:
+# anything NOT listed still triggers a release, so a functional change we
+# forgot to list can never silently skip one. Over-releasing is harmless (a
+# duplicate-content build at a higher version); under-releasing ships a fix
+# to nobody. This repo squash-merges, so the pushed commit carries the PR's
+# FULL diff and a mixed PR (docs + src) still releases.
+#
+# PR#1 (issue #150): Linux only — x64 AppImage + .deb. Windows/macOS targets
+# are added by their own PRs; promotion fails closed until every required
+# artifact exists (REQUIRED_ARTIFACTS in scripts/promote-release.sh).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'LICENSE'
+      - 'docs/**'
+
+permissions:
+  contents: write        # create release + tag + upload assets
+  pull-requests: read    # commits->pulls lookup for the release audit trail
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pushed commit
+        uses: actions/checkout@v4
+        with:
+          # github.sha on a push to main is the merge commit itself.
+          ref: ${{ github.sha }}
+
+      - name: Resolve originating PR (audit trail only)
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          # On a push event there is no github.event.pull_request context,
+          # so recover the PR that introduced this merge commit from the
+          # commits->pulls API. Best-effort: a direct push to main yields an
+          # empty number and the release still cuts — the PR ref is purely
+          # for the audit trail in the title/notes.
+          PR_JSON=$(gh api "repos/${REPO}/commits/${SHA}/pulls" 2>/dev/null || echo '[]')
+          NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number // ""')
+          TITLE=$(echo "$PR_JSON" | jq -r '.[0].title // ""')
+          # Fall back to the commit subject if no PR was found.
+          if [ -z "$TITLE" ]; then
+            TITLE=$(git log -1 --pretty=%s)
+          fi
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "Resolved PR number='$NUMBER' title='$TITLE'"
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Versioning: the per-workflow monotonic counter feeds both the
+      # bundled UI version (APP_VERSION, same 1.0.<run_number> scheme as the
+      # PWA deploy) and the packaged app version via electron-builder's
+      # extraMetadata override — the checked-in package.json is never
+      # mutated. Numeric by construction; publish-release.sh re-checks the
+      # grammar before anything is published.
+      - name: Resolve version
+        id: ver
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if ! [[ "$GITHUB_RUN_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::non-numeric run number '${GITHUB_RUN_NUMBER}'"
+            exit 1
+          fi
+          VERSION="1.0.${GITHUB_RUN_NUMBER}"
+          TAG="phantomchat-v${VERSION}"
+          printf 'version=%s\ntag=%s\n' "$VERSION" "$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build frontend + electron main/preload
+        run: |
+          pnpm run build
+          node electron/build.mjs
+        env:
+          APP_VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Package Linux artifacts (AppImage + deb, x64)
+        run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version="$VERSION"
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Generate checksums
+        run: |
+          cd "release/${VERSION}"
+          sha256sum PhantomChat-*.AppImage phantomchat_*.deb > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Write release notes to file
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_TITLE: ${{ steps.pr.outputs.title }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          SHA: ${{ github.sha }}
+        run: |
+          # PR_NUMBER is empty for a direct push (no PR). Render the
+          # originating-PR lines only when we actually resolved one.
+          if [ -n "$PR_NUMBER" ]; then
+            ORIGIN_LINE="Originating PR: #${PR_NUMBER} — ${PR_TITLE}"
+            PR_LINK_LINE="Pull request: ${SERVER_URL}/${REPO}/pull/${PR_NUMBER}"
+          else
+            ORIGIN_LINE="Originating commit: ${SHA} — ${PR_TITLE}"
+            PR_LINK_LINE="Commit: ${SERVER_URL}/${REPO}/commit/${SHA}"
+          fi
+          cat > release-notes.md <<EOF
+          Automated desktop release from workflow run #${RUN_NUMBER} (run id ${RUN_ID}).
+          ${ORIGIN_LINE}
+
+          Build run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}
+          ${PR_LINK_LINE}
+
+          Artifacts (Linux x64, unsigned):
+          - PhantomChat-${VERSION}.AppImage
+          - phantomchat_${VERSION}_amd64.deb
+
+          Verify with: sha256sum -c SHA256SUMS.txt
+          Install and channel docs: docs/ELECTRON-DESKTOP.md
+
+          Release ring: PREVIEW. This is a prerelease, so it is not served as
+          the stable/latest release. To ship it to everyone, run the
+          app-promote workflow against ${TAG} — that flips this exact release
+          (same artifacts, same checksums) to stable without rebuilding.
+          EOF
+
+      - name: Create prerelease (preview channel)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RELEASE_NOTES_FILE: release-notes.md
+        run: |
+          # Release title carries the PR number when one was resolved, so
+          # the GitHub Releases UI surfaces the originating PR without
+          # opening the notes (same convention as phantombot).
+          if [ -n "$PR_NUMBER" ]; then
+            export RELEASE_TITLE="$TAG (PR #${PR_NUMBER})"
+          fi
+          bash scripts/publish-release.sh "$TAG" "$VERSION" "$SHA" "release/${VERSION}" "$REPO"
