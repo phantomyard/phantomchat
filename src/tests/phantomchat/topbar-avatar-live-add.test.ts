@@ -25,7 +25,11 @@
  * are stubbed — and pins:
  *   - a live-added second dialog flips the topbar 1 → 2 while storage still
  *     reports ONE dialog (the exact round-1 mismatch), through the real
- *     event → list → length-effect → dispatch → topbar chain, and
+ *     event → list → length-effect → dispatch → topbar chain,
+ *   - pinning/unpinning the All Chats archive row (a PINNED row, invisible
+ *     to itemsLength) flips the topbar too — round-2 review: the length
+ *     effect subscribed only to regular items, so an archive-row toggle at
+ *     one rendered row left a stale `single-dialog` class, and
  *   - onTabChange (folder switch) fires chatlist_length_change as well.
  */
 import 'fake-indexeddb/auto';
@@ -238,6 +242,68 @@ describe('top bar avatar — live-added second dialog (PR #161 regression)', () 
       // The round-1 count source would still say "one dialog" — pin the
       // mismatch: storage is stale, rendered rows are not.
       expect((rootScope as any).managers.dialogsStorage.getFolderDialogs(FOLDER_ID_ALL)).toHaveLength(1);
+    } finally {
+      rootScope.removeEventListener('chatlist_length_change', onChatlistChange);
+    }
+  });
+
+  it('flips the topbar when the All Chats archive row is pinned/unpinned', async() => {
+    const {default: appDialogsManager} = await import('@lib/appDialogsManager');
+    const {AutonomousDialogList} = await import('@components/autonomousDialogList/dialogs');
+    const {default: MTProtoMessagePort} = await import('@lib/mainWorker/mainMessagePort');
+    const {default: ChatTopbar} = await import('@components/chat/topbar');
+
+    (MTProtoMessagePort as any).INSTANCE = {invokeVoid: vi.fn()};
+
+    const adm = appDialogsManager as any;
+    adm.checkIfPlaceholderNeeded = vi.fn();
+    adm.addListDialog = (): any => ({dom: {listEl: document.createElement('div')}});
+    adm.onListLengthChange = (): void => void adm._onListLengthChange();
+    adm.filterId = FOLDER_ID_ALL;
+
+    // Real FOLDER_ID_ALL list, so it owns a customPinnedDialog + archive
+    // state exactly as production does.
+    const list = new AutonomousDialogList({filterId: FOLDER_ID_ALL, appDialogsManager: adm});
+    adm.xd = list;
+    adm.xds = {[FOLDER_ID_ALL]: list};
+    list.generateScrollable({id: FOLDER_ID_ALL, localId: FOLDER_ID_ALL} as any);
+
+    const topbar = Object.create(ChatTopbar.prototype) as any;
+    topbar.container = document.createElement('div');
+    const onChatlistChange = (): void => topbar.updateTopbarAvatarVisibility();
+    rootScope.addEventListener('chatlist_length_change', onChatlistChange);
+    try {
+      topbar.updateTopbarAvatarVisibility();
+      expect(topbar.container.classList.contains('single-dialog')).toBe(true);
+      expect(list.sortedList.getVisibleRowsCount()).toBe(0);
+
+      // One regular dialog rendered — a single chat, avatar hidden.
+      const item = await list.sortedList.createItemForKey(dialog1.peerId);
+      list.sortedList.addDeferredItems([item], 1);
+      await vi.waitFor(() => {
+        expect(list.sortedList.getVisibleRowsCount()).toBe(1);
+      });
+      topbar.updateTopbarAvatarVisibility();
+      expect(topbar.container.classList.contains('single-dialog')).toBe(true);
+
+      // An archived dialog appears → onHasArchiveDialogChanged(true) pins the
+      // archive row. The count goes 1 → 2 through a PINNED row: itemsLength
+      // never moves, so the round-2 effect (subscribed to itemsLength only)
+      // stayed silent and the class went stale.
+      await (list as any).onHasArchiveDialogChanged(true);
+
+      await vi.waitFor(() => {
+        expect(topbar.container.classList.contains('single-dialog')).toBe(false);
+      });
+      expect(list.sortedList.getVisibleRowsCount()).toBe(2);
+
+      // Archive empties again → row unpinned, back to a single rendered row.
+      await (list as any).onHasArchiveDialogChanged(false);
+
+      await vi.waitFor(() => {
+        expect(topbar.container.classList.contains('single-dialog')).toBe(true);
+      });
+      expect(list.sortedList.getVisibleRowsCount()).toBe(1);
     } finally {
       rootScope.removeEventListener('chatlist_length_change', onChatlistChange);
     }
