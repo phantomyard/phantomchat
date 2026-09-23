@@ -66,17 +66,29 @@ if([System.IO.Path]::GetFullPath($shortcutTarget) -ne [System.IO.Path]::GetFullP
 }
 
 $previousRunAsNode = $env:ELECTRON_RUN_AS_NODE
+$previousProbePath = $env:PHANTOMCHAT_RUNTIME_PROBE
+$probePath = [System.IO.Path]::GetTempFileName()
 try {
   $env:ELECTRON_RUN_AS_NODE = '1'
-  $actualArchitecture = & $executable -e 'process.stdout.write(process.arch)'
-  if($LASTEXITCODE -ne 0) {
-    throw "Packaged Electron runtime exited with code $LASTEXITCODE"
+  $env:PHANTOMCHAT_RUNTIME_PROBE = $probePath
+  # A Windows GUI-subsystem executable is not awaited by PowerShell's `&`
+  # operator, which can close its stdout pipe before Electron writes to it.
+  # Start-Process -Wait proves the actual installed runtime exits cleanly.
+  $runtime = Start-Process -FilePath $executable -ArgumentList @(
+    '-e',
+    'require(Buffer.from([102,115])).writeFileSync(process.env.PHANTOMCHAT_RUNTIME_PROBE,process.arch)'
+  ) -Wait -PassThru
+  if($runtime.ExitCode -ne 0) {
+    throw "Packaged Electron runtime exited with code $($runtime.ExitCode)"
   }
+  $actualArchitecture = Get-Content $probePath -Raw
   if($actualArchitecture -ne $ExpectedArchitecture) {
     throw "Packaged runtime reports $actualArchitecture, expected $ExpectedArchitecture"
   }
 } finally {
   $env:ELECTRON_RUN_AS_NODE = $previousRunAsNode
+  $env:PHANTOMCHAT_RUNTIME_PROBE = $previousProbePath
+  Remove-Item $probePath -Force -ErrorAction SilentlyContinue
 }
 
 $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
