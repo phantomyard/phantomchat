@@ -21,7 +21,13 @@ const SCRIPT = join(process.cwd(), 'scripts', 'publish-release.sh');
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
 const VERSION = '1.0.42';
 const TAG = `phantomchat-v${VERSION}`;
-const ASSETS = [`PhantomChat-${VERSION}.AppImage`, `phantomchat_${VERSION}_amd64.deb`, 'SHA256SUMS.txt'];
+const ASSETS = [
+  `PhantomChat-${VERSION}.AppImage`,
+  `phantomchat_${VERSION}_amd64.deb`,
+  `PhantomChat-${VERSION}-x64.dmg`,
+  `PhantomChat-${VERSION}-arm64.dmg`,
+  'SHA256SUMS.txt'
+];
 
 // Stub gh: state file lines look like `key=value`. `release-<tag>` present
 // means the release exists; `<tag>=<sha>` is the remote tag -> commit map;
@@ -225,6 +231,13 @@ describe('publish-release.sh', () => {
 
   it('fails closed when a required artifact file is missing', () => {
     const res = runPublish({missingAsset: `phantomchat_${VERSION}_amd64.deb`});
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('PUBLISH FAILED');
+    expect(res.state).not.toContain(`created-${TAG}`);
+  });
+
+  it('fails closed when either macOS architecture is missing', () => {
+    const res = runPublish({missingAsset: `PhantomChat-${VERSION}-arm64.dmg`});
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('PUBLISH FAILED');
     expect(res.state).not.toContain(`created-${TAG}`);

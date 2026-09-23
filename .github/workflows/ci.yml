@@ -88,3 +88,42 @@ jobs:
           sha256sum --check --strict SHA256SUMS.txt
       - name: Install the .deb and check maintainer scripts
         run: scripts/check-deb-install.sh release/0.0.0-ci.${{ github.run_number }}/phantomchat_*_amd64.deb
+
+  build-macos:
+    # Build and mount each architecture on native hardware. Cross-packaging
+    # alone cannot prove the bundled Electron executable starts on that CPU.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    concurrency:
+      group: ci-build-macos-${{ matrix.arch }}-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck:electron
+      - run: pnpm run build
+      - run: node electron/build.mjs
+      - name: Package unsigned DMG
+        run: pnpm exec electron-builder --mac dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: 0.0.0-ci.${{ github.run_number }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Mount and verify packaged app
+        run: scripts/check-macos-package.sh "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg" "$ARCH" "$VERSION"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: 0.0.0-ci.${{ github.run_number }}

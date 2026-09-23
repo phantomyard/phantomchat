@@ -87,8 +87,19 @@ describe('promote-release.sh', () => {
     expect(res.stderr).toContain('required artifact missing');
   });
 
+  it('fails closed when the Apple Silicon DMG is missing', () => {
+    const res = runPromote(
+      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb PhantomChat-1.0.42-x64.dmg'
+    );
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('required artifact missing');
+    expect(res.stderr).toContain('PhantomChat-*-arm64.dmg');
+  });
+
   it('promotes when every required artifact is present and checksums verify', () => {
-    const res = runPromote('PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb');
+    const res = runPromote(
+      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb PhantomChat-1.0.42-x64.dmg PhantomChat-1.0.42-arm64.dmg'
+    );
     expect(res.status).toBe(0);
     expect(res.stdout).toContain('All required artifacts present');
     expect(res.stdout).toContain(`Verified: ${TAG} is the stable latest.`);

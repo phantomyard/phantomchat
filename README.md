@@ -133,9 +133,10 @@ Relay connections are made over **direct TLS WebSockets (`wss://`)**.
   conversations
 - Deployable from any static origin (GitHub Pages today; portable to any host
   or IPFS)
-- Linux desktop app (AppImage + `.deb`) that carries the same version as the
-  PWA; microphone, camera and notifications work, every other permission is
-  denied (see [docs/ELECTRON-DESKTOP.md](docs/ELECTRON-DESKTOP.md))
+- Linux desktop app (AppImage + `.deb`) and macOS app (Apple Silicon + Intel
+  DMGs) that carry the same version as the PWA; microphone, camera and
+  notifications work, every other permission is denied (see
+  [docs/ELECTRON-DESKTOP.md](docs/ELECTRON-DESKTOP.md))
 
 ### Not working / not yet implemented
 

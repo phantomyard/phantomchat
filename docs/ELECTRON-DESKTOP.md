@@ -17,7 +17,8 @@ unaffected and continues to deploy via GitHub Pages (`docs/RELEASE.md`).
 - `electron/build.mjs` — esbuild bundling of main/preload + strict CSP
   generation (inline boot-splash scripts are pinned by sha256 hash at build
   time; no `unsafe-inline` for scripts).
-- `electron-builder.yml` — packaging (PR#1: Linux x64 AppImage + `.deb`).
+- `electron-builder.yml` — Linux x64 AppImage/`.deb` plus separate macOS
+  Apple Silicon and Intel DMGs.
 
 Security posture: `contextIsolation: true`, `nodeIntegration: false`,
 `sandbox: true`, permissions default-deny (only microphone, camera and
@@ -35,7 +36,9 @@ pnpm run app:start        # production build loaded in electron, unpackaged
 pnpm run typecheck:electron
 ```
 
-## Packaging (Linux — PR#1)
+## Packaging
+
+### Linux
 
 ```bash
 pnpm run app:build        # PWA build + electron bundle + AppImage/.deb into release/<version>/
@@ -93,6 +96,31 @@ launcher to `~/.local/share/applications/phantomchat.desktop`):
 installs its own menu entry and is removed cleanly with
 `sudo apt remove phantomchat`.
 
+### macOS
+
+Build on macOS so Electron Builder can create the DMG:
+
+```bash
+APP_VERSION=1.0.<n> pnpm run app:build:mac
+APP_VERSION=1.0.<n> pnpm run app:pack:mac  # unpacked app, faster iteration
+```
+
+CI builds `PhantomChat-<version>-arm64.dmg` natively on Apple Silicon and
+`PhantomChat-<version>-x64.dmg` natively on Intel. Each job mounts its DMG,
+checks the bundle metadata and resources, and runs the packaged Electron
+executable on the matching architecture before publication.
+
+To install, open the DMG and drag **PhantomChat** to **Applications**. Remove
+it by quitting the app and moving `/Applications/PhantomChat.app` to Trash;
+user data remains under `~/Library/Application Support/PhantomChat` unless
+removed separately.
+
+These interim DMGs are intentionally unsigned and unnotarized. On first
+launch macOS will block the unidentified developer: open **System Settings →
+Privacy & Security**, confirm **Open Anyway**, then confirm **Open**. This is
+temporary until the Axelera B.V. Developer ID and notarization credentials
+are available.
+
 ## Release channels (preview / stable)
 
 Same release-ring model as PhantomBot — including the naming: releases
@@ -124,13 +152,16 @@ run counter, never by hand.
    `phantomchat-v1.0.40`). Same metadata-only contract.
 
 Required artifacts for promotion live in `scripts/promote-release.sh`
-(`REQUIRED_ARTIFACTS`); the Windows/macOS PRs append their artifacts there
-so promotion fails closed until the full matrix exists.
+(`REQUIRED_ARTIFACTS`). Both macOS architectures are required now; the
+Windows PR will append its installer so promotion continues to fail closed
+until the full matrix exists.
 
 ## Signing (deferred — Axelera B.V.)
 
-Unsigned for now per issue #150. Reserved CI secret names for the Windows
-and macOS PRs:
+Unsigned for now per issue #150. `electron-builder.yml` explicitly sets the
+macOS identity to `null` and disables Hardened Runtime, while CI also disables
+identity auto-discovery; this prevents accidental signing with a runner or
+developer Keychain identity. Reserved CI secret names for the signing PR:
 
 | Secret | Purpose |
 |---|---|
@@ -142,9 +173,14 @@ and macOS PRs:
 
 No private key or credential is ever committed to the repository.
 
-## Windows / macOS (upcoming PRs)
+When the Apple credentials arrive, replace the explicit unsigned setting with
+Developer ID signing, enable Hardened Runtime, import the P12 from CI secrets,
+notarize using the Apple credentials, and staple both DMGs. The native matrix
+and package checks stay unchanged.
+
+## Windows (upcoming PR)
 
 The same repo structure (main + preload + build script + workflows) is
-reused; platform PRs add their electron-builder targets, workflow jobs,
-install/uninstall docs and the signing wiring above. Iteration happens
-against the GitHub Actions runners (`windows-latest`, `macos-latest`).
+reused; the Windows PR adds its electron-builder target, workflow job,
+install/uninstall docs and signing wiring above. Iteration happens against
+the GitHub Actions `windows-latest` runner.

@@ -5,8 +5,8 @@ name: app-release
 # Fires on pushes to main (i.e. PR merges — branch protection requires PRs, so
 # a push to main IS a merge) except docs-only merges, which the paths-ignore
 # denylist below filters out. Cuts a GitHub Release tagged
-# phantomchat-v1.0.<N> with the Linux artifacts (AppImage + deb,
-# unsigned) and SHA256SUMS.txt.
+# phantomchat-v1.0.<N> with Linux (AppImage + deb) and macOS (Intel +
+# Apple Silicon DMG) artifacts, all unsigned, plus SHA256SUMS.txt.
 #
 # VERSION SYNC: <N> is NOT this workflow's run_number — it is the run_number
 # of the deploy.yml (PWA) run for the same commit, so the desktop app and the
@@ -44,8 +44,7 @@ name: app-release
 # to nobody. This repo squash-merges, so the pushed commit carries the PR's
 # FULL diff and a mixed PR (docs + src) still releases.
 #
-# PR#1 (issue #150): Linux only — x64 AppImage + .deb. Windows/macOS targets
-# are added by their own PRs; promotion fails closed until every required
+# Windows is added by its own PR; promotion fails closed until every required
 # artifact exists (REQUIRED_ARTIFACTS in scripts/promote-release.sh).
 
 on:
@@ -64,6 +63,11 @@ permissions:
 
 jobs:
   linux:
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      pr-number: ${{ steps.pr.outputs.number }}
+      pr-title: ${{ steps.pr.outputs.title }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pushed commit
@@ -150,20 +154,102 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
-      - name: Generate checksums
+      - name: Upload Linux artifacts for publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: |
+            release/${{ steps.ver.outputs.version }}/PhantomChat-${{ steps.ver.outputs.version }}.AppImage
+            release/${{ steps.ver.outputs.version }}/phantomchat_${{ steps.ver.outputs.version }}_amd64.deb
+          if-no-files-found: error
+
+  macos:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout pushed commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build frontend + electron main/preload
+        run: |
+          pnpm run build
+          node electron/build.mjs
+        env:
+          APP_VERSION: ${{ needs.linux.outputs.version }}
+
+      - name: Package unsigned macOS DMG
+        run: pnpm exec electron-builder --mac dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+          # Defense in depth alongside mac.identity=null: never pick up a
+          # certificate that happens to be installed on a runner.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Mount and verify packaged app
+        run: scripts/check-macos-package.sh "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg" "$ARCH" "$VERSION"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+
+      - name: Upload macOS artifact for publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-${{ matrix.arch }}
+          path: release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  publish:
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pushed commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release/${{ needs.linux.outputs.version }}
+
+      - name: Generate and verify checksums
         run: |
           cd "release/${VERSION}"
-          sha256sum PhantomChat-*.AppImage phantomchat_*.deb > SHA256SUMS.txt
+          sha256sum \
+            "PhantomChat-${VERSION}.AppImage" \
+            "phantomchat_${VERSION}_amd64.deb" \
+            "PhantomChat-${VERSION}-x64.dmg" \
+            "PhantomChat-${VERSION}-arm64.dmg" > SHA256SUMS.txt
+          sha256sum --check --strict SHA256SUMS.txt
           cat SHA256SUMS.txt
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.linux.outputs.version }}
 
       - name: Write release notes to file
         env:
-          TAG: ${{ steps.ver.outputs.tag }}
-          VERSION: ${{ steps.ver.outputs.version }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
-          PR_TITLE: ${{ steps.pr.outputs.title }}
+          TAG: ${{ needs.linux.outputs.tag }}
+          VERSION: ${{ needs.linux.outputs.version }}
+          PR_NUMBER: ${{ needs.linux.outputs.pr-number }}
+          PR_TITLE: ${{ needs.linux.outputs.pr-title }}
           RUN_NUMBER: ${{ github.run_number }}
           RUN_ID: ${{ github.run_id }}
           REPO: ${{ github.repository }}
@@ -186,9 +272,13 @@ jobs:
           Build run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}
           ${PR_LINK_LINE}
 
-          Artifacts (Linux x64, unsigned):
+          Artifacts (unsigned):
+          Linux x64:
           - PhantomChat-${VERSION}.AppImage
           - phantomchat_${VERSION}_amd64.deb
+          macOS:
+          - PhantomChat-${VERSION}-arm64.dmg (Apple Silicon)
+          - PhantomChat-${VERSION}-x64.dmg (Intel)
 
           Verify with: sha256sum -c SHA256SUMS.txt
           Install and channel docs: docs/ELECTRON-DESKTOP.md
@@ -202,11 +292,11 @@ jobs:
       - name: Create prerelease (preview channel)
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.ver.outputs.tag }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ needs.linux.outputs.tag }}
+          VERSION: ${{ needs.linux.outputs.version }}
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER: ${{ needs.linux.outputs.pr-number }}
           RELEASE_NOTES_FILE: release-notes.md
         run: |
           # Release title carries the PR number when one was resolved, so
