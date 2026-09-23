@@ -127,3 +127,47 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: 0.0.0-ci.${{ github.run_number }}
+
+  build-windows:
+    # Build, install, launch and uninstall each architecture on native
+    # hardware. The hosted image is fresh, so this also exercises first-time
+    # Start Menu integration without inheriting a previous installation.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    concurrency:
+      group: ci-build-windows-${{ matrix.arch }}-${{ github.head_ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: Copy-Item src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck:electron
+      - run: pnpm run build
+        env:
+          APP_VERSION: 0.0.0-ci.${{ github.run_number }}
+      - run: node electron/build.mjs
+      - name: Package unsigned Windows installer
+        shell: pwsh
+        run: pnpm exec electron-builder --win nsis "--$env:ARCH" --publish never "-c.extraMetadata.version=$env:VERSION"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: 0.0.0-ci.${{ github.run_number }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Install, launch and uninstall packaged app
+        shell: pwsh
+        run: scripts/check-windows-package.ps1 "release/$env:VERSION/PhantomChat-$env:VERSION-windows-$env:ARCH.exe" $env:ARCH $env:VERSION
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: 0.0.0-ci.${{ github.run_number }}

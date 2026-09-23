@@ -5,8 +5,9 @@ name: app-release
 # Fires on pushes to main (i.e. PR merges — branch protection requires PRs, so
 # a push to main IS a merge) except docs-only merges, which the paths-ignore
 # denylist below filters out. Cuts a GitHub Release tagged
-# phantomchat-v1.0.<N> with Linux (AppImage + deb) and macOS (Intel +
-# Apple Silicon DMG) artifacts, all unsigned, plus SHA256SUMS.txt.
+# phantomchat-v1.0.<N> with Linux (AppImage + deb), macOS (Intel +
+# Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, all unsigned,
+# plus SHA256SUMS.txt.
 #
 # VERSION SYNC: <N> is NOT this workflow's run_number — it is the run_number
 # of the deploy.yml (PWA) run for the same commit, so the desktop app and the
@@ -44,8 +45,8 @@ name: app-release
 # to nobody. This repo squash-merges, so the pushed commit carries the PR's
 # FULL diff and a mixed PR (docs + src) still releases.
 #
-# Windows is added by its own PR; promotion fails closed until every required
-# artifact exists (REQUIRED_ARTIFACTS in scripts/promote-release.sh).
+# Promotion fails closed until every required architecture exists
+# (REQUIRED_ARTIFACTS in scripts/promote-release.sh).
 
 on:
   push:
@@ -104,6 +105,7 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
 
       # Versioning: the desktop app ships the SAME version as the PWA built
@@ -184,6 +186,7 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
 
       - name: Build frontend + electron main/preload
@@ -215,8 +218,61 @@ jobs:
           path: release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
+  windows:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout pushed commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: Copy-Item src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build frontend + electron main/preload
+        run: |
+          pnpm run build
+          node electron/build.mjs
+        env:
+          APP_VERSION: ${{ needs.linux.outputs.version }}
+
+      - name: Package unsigned Windows installer
+        shell: pwsh
+        run: pnpm exec electron-builder --win nsis "--$env:ARCH" --publish never "-c.extraMetadata.version=$env:VERSION"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Install, launch and uninstall packaged app
+        shell: pwsh
+        run: scripts/check-windows-package.ps1 "release/$env:VERSION/PhantomChat-$env:VERSION-windows-$env:ARCH.exe" $env:ARCH $env:VERSION
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+
+      - name: Upload Windows artifact for publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-${{ matrix.arch }}
+          path: release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-windows-${{ matrix.arch }}.exe
+          if-no-files-found: error
+
   publish:
-    needs: [linux, macos]
+    needs: [linux, macos, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pushed commit
@@ -238,7 +294,9 @@ jobs:
             "PhantomChat-${VERSION}.AppImage" \
             "phantomchat_${VERSION}_amd64.deb" \
             "PhantomChat-${VERSION}-x64.dmg" \
-            "PhantomChat-${VERSION}-arm64.dmg" > SHA256SUMS.txt
+            "PhantomChat-${VERSION}-arm64.dmg" \
+            "PhantomChat-${VERSION}-windows-x64.exe" \
+            "PhantomChat-${VERSION}-windows-arm64.exe" > SHA256SUMS.txt
           sha256sum --check --strict SHA256SUMS.txt
           cat SHA256SUMS.txt
         env:
@@ -279,6 +337,9 @@ jobs:
           macOS:
           - PhantomChat-${VERSION}-arm64.dmg (Apple Silicon)
           - PhantomChat-${VERSION}-x64.dmg (Intel)
+          Windows:
+          - PhantomChat-${VERSION}-windows-arm64.exe (ARM64)
+          - PhantomChat-${VERSION}-windows-x64.exe (x64)
 
           Verify with: sha256sum -c SHA256SUMS.txt
           Install and channel docs: docs/ELECTRON-DESKTOP.md

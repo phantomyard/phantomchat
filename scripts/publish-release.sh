@@ -85,5 +85,7 @@ gh release create "$TAG" \
   "phantomchat_${VERSION}_amd64.deb" \
   "PhantomChat-${VERSION}-x64.dmg" \
   "PhantomChat-${VERSION}-arm64.dmg" \
+  "PhantomChat-${VERSION}-windows-x64.exe" \
+  "PhantomChat-${VERSION}-windows-arm64.exe" \
   "SHA256SUMS.txt" \
   || fail "gh release create failed for ${TAG}"
