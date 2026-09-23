@@ -113,6 +113,17 @@ body.is-right-column-shown {
     --topbar-avatar-close-gap: 6px;
   }
 
+  // Single item in the left bar: the top bar avatar is redundant, hide it.
+  // Must come after .has-avatar so the overrides win at equal specificity.
+  &.single-dialog {
+    --topbar-avatar-active-size: 0px;
+    --topbar-avatar-close-gap: 2px;
+
+    .person-avatar {
+      display: none;
+    }
+  }
+
 	.pinned-container-wrapper-utils {
 		@include sidebar-transform();
 	}

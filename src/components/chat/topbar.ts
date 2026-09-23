@@ -41,6 +41,7 @@ import groupCallsController from '@lib/calls/groupCallsController';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import {makeMediaSize} from '@helpers/mediaSize';
 import {FOLDER_ID_ALL} from '@appManagers/constants';
+import {shouldShowTopbarAvatar} from '@lib/phantomchat/topbar-avatar';
 import formatNumber from '@helpers/number/formatNumber';
 import PopupElement from '@components/popups';
 import ChatRequests from '@components/chat/requests';
@@ -141,6 +142,19 @@ export default class ChatTopbar {
 
     this.menuButtons = [];
     this.buttonsToVerify = [];
+  }
+
+  /**
+   * Cosmetic rule: hide the top bar avatar while the left bar has a single
+   * item (see src/lib/phantomchat/topbar-avatar.ts).
+   */
+  private async updateTopbarAvatarVisibility() {
+    if(!this.container) {
+      return;
+    }
+
+    const dialogs = await this.managers.dialogsStorage.getFolderDialogs(FOLDER_ID_ALL);
+    this.container.classList.toggle('single-dialog', !shouldShowTopbarAvatar(dialogs.length));
   }
 
   public construct() {
@@ -944,6 +958,9 @@ export default class ChatTopbar {
       // this.btnBack.classList.add(size ? 'tgico-previous' : 'tgico-left');
     });
 
+    this.listenerSetter.add(rootScope)('dialogs_multiupdate', () => this.updateTopbarAvatarVisibility());
+    this.listenerSetter.add(rootScope)('dialog_drop', () => this.updateTopbarAvatarVisibility());
+
     this.listenerSetter.add(rootScope)('chat_update', (chatId) => {
       if(this.peerId === chatId.toPeerId(true)) {
         const chat = this.chat.peer as Channel/*  | Chat */;
@@ -1262,6 +1279,8 @@ export default class ChatTopbar {
         this.avatarMiddlewareHelper = newAvatarMiddlewareHelper;
         this.container.classList.toggle('has-avatar', !!newAvatar);
       }
+
+      this.updateTopbarAvatarVisibility();
 
       callbackify(autoDeletePeriod?.result, (value) => {
         this.avatar?.setAutoDeletePeriod(value);
