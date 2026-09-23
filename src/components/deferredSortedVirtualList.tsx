@@ -80,10 +80,21 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
 
   const itemsLength = createMemo(() => items().length);
 
+  /**
+   * Rows the list actually shows: regular + pinned items (e.g. the archive
+   * row pinned at the top of All Chats). Loading skeletons don't count.
+   *
+   * The length effect must track THIS memo, not itemsLength: pinned rows
+   * appear/disappear through ensurePinnedItems / removePinnedItem (archive
+   * row toggling in All Chats), and surface-visibility consumers (chat
+   * top-bar avatar) must be notified on those transitions too.
+   */
+  const renderedLength = createMemo(() => itemsLength() + pinnedItems().length);
+
   createEffect(() => {
     if(!wasAtLeastOnceFetched()) return;
 
-    itemsLength();
+    renderedLength();
     untrack(() => onListLengthChange?.());
   });
 
@@ -331,6 +342,12 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
     dispose,
 
     list,
+
+    /**
+     * Rows the list actually shows: regular + pinned items (e.g. the archive
+     * row pinned at the top of All Chats). Loading skeletons don't count.
+     */
+    getLength: renderedLength,
 
     setTotalCount,
 

@@ -41,6 +41,7 @@ import groupCallsController from '@lib/calls/groupCallsController';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import {makeMediaSize} from '@helpers/mediaSize';
 import {FOLDER_ID_ALL} from '@appManagers/constants';
+import {shouldShowTopbarAvatar} from '@lib/phantomchat/topbar-avatar';
 import formatNumber from '@helpers/number/formatNumber';
 import PopupElement from '@components/popups';
 import ChatRequests from '@components/chat/requests';
@@ -141,6 +142,26 @@ export default class ChatTopbar {
 
     this.menuButtons = [];
     this.buttonsToVerify = [];
+  }
+
+  /**
+   * Cosmetic rule: hide the top bar avatar while the left bar has a single
+   * item (see src/lib/phantomchat/topbar-avatar.ts).
+   *
+   * The count comes from the ACTIVE left-bar list (`appDialogsManager.xd`) —
+   * the rows actually rendered — not from dialogsStorage: storage lags behind
+   * synthetic rows injected through live `dialogs_multiupdate` traffic, and it
+   * always counts All Chats regardless of the selected folder. Reactivity is
+   * `chatlist_length_change`, fired by the list's own length effect (live
+   * add/drop) and on folder switch.
+   */
+  private updateTopbarAvatarVisibility() {
+    if(!this.container) {
+      return;
+    }
+
+    const leftBarRows = appDialogsManager.xd?.sortedList.getVisibleRowsCount() ?? 0;
+    this.container.classList.toggle('single-dialog', !shouldShowTopbarAvatar(leftBarRows));
   }
 
   public construct() {
@@ -944,6 +965,8 @@ export default class ChatTopbar {
       // this.btnBack.classList.add(size ? 'tgico-previous' : 'tgico-left');
     });
 
+    this.listenerSetter.add(rootScope)('chatlist_length_change', () => this.updateTopbarAvatarVisibility());
+
     this.listenerSetter.add(rootScope)('chat_update', (chatId) => {
       if(this.peerId === chatId.toPeerId(true)) {
         const chat = this.chat.peer as Channel/*  | Chat */;
@@ -1262,6 +1285,8 @@ export default class ChatTopbar {
         this.avatarMiddlewareHelper = newAvatarMiddlewareHelper;
         this.container.classList.toggle('has-avatar', !!newAvatar);
       }
+
+      this.updateTopbarAvatarVisibility();
 
       callbackify(autoDeletePeriod?.result, (value) => {
         this.avatar?.setAutoDeletePeriod(value);

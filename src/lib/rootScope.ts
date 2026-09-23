@@ -71,6 +71,9 @@ export type BroadcastEvents = {
   'changing_folder_from_chatlist': number,
   'changing_folder_from_sidebar': {id: number, dontAnimate?: boolean},
 
+  /** Fired whenever the active left-bar list's rendered row count changes (live add/drop) or the active folder is switched. Consumers must re-read the current count. */
+  'chatlist_length_change': void,
+
   'dialog_draft': {peerId: PeerId, dialog: Dialog | ForumTopic, drop: boolean, draft: MyDraftMessage | undefined},
   'dialog_unread': {peerId: PeerId, dialog: Dialog | ForumTopic},
   'dialog_flush': {peerId: PeerId, dialog: Dialog},
