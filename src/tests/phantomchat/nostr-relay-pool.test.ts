@@ -296,12 +296,16 @@ describe('NostrRelayPool', () => {
       pool.subscribeMessages();
 
       const relay = mockRelayInstances.filter((r: any) => r.connected)[0];
-      const getMessagesSpy = vi.spyOn(relay, 'getMessages');
+      // The reconnect backfill is PAGED now (same walk discipline as the poll),
+      // so count walks, not single-shot queries. The 15s catch-up poll walks
+      // this relay too — compare against a baseline rather than an absolute.
+      const walkSpy = vi.spyOn(relay, 'getMessagesPaged');
+      const walks = () => walkSpy.mock.calls.length;
 
       // Register the first connect (no backfill on first connect by design)
       relay.connectionState = 'connected';
       relay.onStateChange?.();
-      expect(getMessagesSpy).not.toHaveBeenCalled();
+      expect(walks()).toBe(0);
 
       // First reconnect: the idle-gap backfill runs
       relay.connectionState = 'reconnecting';
@@ -309,7 +313,7 @@ describe('NostrRelayPool', () => {
       relay.connectionState = 'connected';
       relay.onStateChange?.();
       await vi.advanceTimersByTimeAsync(0);
-      expect(getMessagesSpy).toHaveBeenCalledTimes(1);
+      expect(walks()).toBe(1);
 
       // Immediate re-flap inside the throttle window: no second backfill —
       // each one re-runs every returned wrap through main-thread unwrap crypto,
@@ -319,17 +323,18 @@ describe('NostrRelayPool', () => {
       relay.connectionState = 'connected';
       relay.onStateChange?.();
       await vi.advanceTimersByTimeAsync(0);
-      expect(getMessagesSpy).toHaveBeenCalledTimes(1);
+      expect(walks()).toBe(1);
 
       // Past the window (and connected long enough to clear the flap counter),
       // a reconnect backfills again.
       await vi.advanceTimersByTimeAsync(35_000);
+      const afterPolls = walks();
       relay.connectionState = 'reconnecting';
       relay.onStateChange?.();
       relay.connectionState = 'connected';
       relay.onStateChange?.();
       await vi.advanceTimersByTimeAsync(0);
-      expect(getMessagesSpy).toHaveBeenCalledTimes(2);
+      expect(walks()).toBe(afterPolls + 1);
     });
   });
 
@@ -790,7 +795,7 @@ describe('NostrRelayPool', () => {
   });
 
   describe('history backfill', () => {
-    it('calls getMessages(since) on initialize when lastSeenTimestamp > 0', async() => {
+    it('walks paged history on initialize when lastSeenTimestamp > 0', async() => {
       localStorage.setItem('phantomchat-last-seen-timestamp', '1700000000');
 
       const onMessage = vi.fn();
@@ -799,18 +804,158 @@ describe('NostrRelayPool', () => {
       ];
       const pool = new NostrRelayPool({relays, onMessage});
 
-      // We need to spy on getMessages before initialize creates the relay.
-      // Since MockNostrRelay instances are tracked, we can spy after construction
-      // by intercepting the prototype.
-      const getMessagesSpy = vi.spyOn(MockNostrRelayClass.prototype, 'getMessages');
+      // We need to spy before initialize creates the relay. Since
+      // MockNostrRelay instances are tracked, we can spy after construction by
+      // intercepting the prototype. The startup walk is PAGED now (truncation
+      // has to be visible, or the watermark jumps over what it didn't fetch).
+      const pagedSpy = vi.spyOn(MockNostrRelayClass.prototype, 'getMessagesPaged');
 
       await pool.initialize();
 
       // Backfill subtracts a small fuzz window (clock skew / out-of-order slack)
       // from lastSeen. Backdating was removed, so this is minutes, not 48h:
       // 5*60 = 300s → 1700000000 - 300 = 1699999700.
-      expect(getMessagesSpy).toHaveBeenCalledWith(1700000000 - 5 * 60);
-      getMessagesSpy.mockRestore();
+      expect(pagedSpy).toHaveBeenCalledWith(1700000000 - 5 * 60, undefined);
+      pagedSpy.mockRestore();
+    });
+
+    it('walks ALL history on a cold profile with no watermark (#154)', async() => {
+      // The fresh-device bug: the deep walk was gated on `lastSeenTimestamp > 0`,
+      // so a brand-new profile on a months-old account never walked history at
+      // all. The live REQ then set the watermark to TODAY and every replay path
+      // floors at the watermark — the account's whole past became unreachable
+      // while the client reported "caught up".
+      expect(localStorage.getItem('phantomchat-last-seen-timestamp')).toBeNull();
+
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://relay1.test', read: true, write: true}],
+        onMessage: vi.fn()
+      });
+      const pagedSpy = vi.spyOn(MockNostrRelayClass.prototype, 'getMessagesPaged');
+
+      await pool.initialize();
+
+      // `since: undefined` = no lower bound = all history.
+      expect(pagedSpy).toHaveBeenCalledWith(undefined, undefined);
+      pagedSpy.mockRestore();
+      pool.disconnect();
+    });
+
+    it('a truncated startup walk holds the watermark and persists the resume cursor', async() => {
+      // Evidence before dispatch: the walk hit the page cap, so the newest
+      // message it DID fetch must not advance the watermark over the tail it
+      // didn't — and the cursor has to outlive the tab.
+      const pagedSpy = vi.spyOn(MockNostrRelayClass.prototype, 'getMessagesPaged')
+      .mockResolvedValue({
+        messages: [makeMessage('cold-newest', 1700009000)],
+        outcome: 'truncated',
+        oldestReached: 1700005000
+      });
+
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://relay1.test', read: true, write: true}],
+        onMessage: vi.fn()
+      });
+      await pool.initialize();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(JSON.parse(localStorage.getItem('phantomchat-backfill-gap')!)).toEqual({
+        cursor: 1700005000,
+        open: true
+      });
+      // Watermark frozen: "caught up" is not true while wraps below the cursor
+      // remain unfetched.
+      expect(localStorage.getItem('phantomchat-last-seen-timestamp')).toBeNull();
+
+      pagedSpy.mockRestore();
+      pool.disconnect();
+    });
+
+    it('an exhausted walk clears the persisted gap', async() => {
+      localStorage.setItem('phantomchat-backfill-gap', JSON.stringify({cursor: 1700005000, open: true}));
+
+      const pagedSpy = vi.spyOn(MockNostrRelayClass.prototype, 'getMessagesPaged')
+      .mockResolvedValue({messages: [], outcome: 'exhausted'});
+
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://relay1.test', read: true, write: true}],
+        onMessage: vi.fn()
+      });
+      await pool.initialize();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(localStorage.getItem('phantomchat-backfill-gap')).toBeNull();
+      pagedSpy.mockRestore();
+      pool.disconnect();
+    });
+
+    it('a cold profile keeps walking ALL history until one walk reaches the bottom', async() => {
+      // The startup walk can learn nothing — on a real cold boot it may run
+      // before any socket finished connecting, and an unknown outcome is not
+      // evidence of anything. The poll must not then fall back to its 90s
+      // window: with no watermark, 90s of a months-old account IS the bug.
+      const pagedSpy = vi.spyOn(MockNostrRelayClass.prototype, 'getMessagesPaged')
+      .mockResolvedValue({messages: [], outcome: 'unknown'});
+
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://relay1.test', read: true, write: true}],
+        onMessage: vi.fn()
+      });
+      await pool.initialize();
+      pool.subscribeMessages();
+
+      pagedSpy.mockClear();
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      expect(pagedSpy).toHaveBeenCalled();
+      expect(pagedSpy.mock.calls[0]![0]).toBeUndefined();
+
+      // One walk reaching the bottom retires it: the poll goes back to its
+      // cheap rolling window.
+      pagedSpy.mockResolvedValue({messages: [], outcome: 'exhausted'});
+      await vi.advanceTimersByTimeAsync(15_000);
+      pagedSpy.mockClear();
+      await vi.advanceTimersByTimeAsync(15_000);
+      const nowAtFire = Math.floor(Date.now() / 1000);
+      expect(pagedSpy.mock.calls[0]![0] as number).toBeGreaterThanOrEqual(nowAtFire - 90 - 3);
+
+      pagedSpy.mockRestore();
+      pool.disconnect();
+    });
+
+    it('resumes an unfinished drain after a reload instead of coming back up "caught up"', async() => {
+      // Close the tab mid-drain: the watermark persisted, the freeze and the
+      // cursor did not, so the next boot looked caught up and the next live
+      // message dragged the watermark past the undrained tail. Both halves of
+      // the state must survive together.
+      localStorage.setItem('phantomchat-last-seen-timestamp', '1700009000');
+      localStorage.setItem('phantomchat-backfill-gap', JSON.stringify({cursor: 1700005000, open: true}));
+
+      const pagedSpy = vi.spyOn(MockNostrRelayClass.prototype, 'getMessagesPaged')
+      .mockResolvedValue({messages: [], outcome: 'truncated', oldestReached: 1700004000});
+
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://relay1.test', read: true, write: true}],
+        onMessage: vi.fn()
+      });
+      await pool.initialize();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Resumed from the persisted cursor (`until`), and the lower bound was
+      // DROPPED: the watermark (1700009000) sits ABOVE the cursor, so asking
+      // {since: watermark, until: cursor} would be an inverted range — the relay
+      // answers short, the walk reads as 'exhausted', and the gap clears over
+      // the very wraps it was protecting.
+      expect(pagedSpy).toHaveBeenCalledWith(undefined, 1700005000);
+
+      // Still frozen, cursor advanced downward: the tail drains across ticks.
+      expect(JSON.parse(localStorage.getItem('phantomchat-backfill-gap')!)).toEqual({
+        cursor: 1700004000,
+        open: true
+      });
+
+      pagedSpy.mockRestore();
+      pool.disconnect();
     });
 
     it('catch-up poll re-queries connected read relays with a tight since', async() => {

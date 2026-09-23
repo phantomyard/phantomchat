@@ -253,6 +253,11 @@ const BACKFILL_POLL_INTERVAL_MS = 15_000;
 const RECENT_BACKFILL_WINDOW_SEC = 90;
 const IDB_RELAY_CONFIG_KEY = 'phantomchat-relay-config';
 const LS_LAST_SEEN_KEY = 'phantomchat-last-seen-timestamp';
+// Resume state for an unfinished backfill walk ({cursor, open}). Persisted
+// beside the watermark because the two are only safe TOGETHER: the watermark
+// survives a reload, so a freeze that does not is a freeze that silently lifts
+// over wraps nobody fetched (#154).
+const LS_BACKFILL_GAP_KEY = 'phantomchat-backfill-gap';
 
 // ─── Relay entry (internal) ────────────────────────────────────────
 
@@ -313,6 +318,13 @@ export class NostrRelayPool {
   // not true while wraps older than the cursor remain unfetched.
   private backfillCursor: number | undefined = undefined;
   private backfillGapOpen = false;
+  // In-flight startup walk (see initialize()). The catch-up poll awaits it
+  // rather than racing it — they share the resume cursor.
+  private startupWalk: Promise<void> | null = null;
+  // Set once ANY walk has reached the bottom of the range. Until then a client
+  // with no watermark has never proven it saw history, so the poll walks
+  // without a lower bound instead of settling for its 90s window (#154).
+  private deepWalkCompleted = false;
 
   // Identity
   private publicKey: string = '';
@@ -786,6 +798,15 @@ export class NostrRelayPool {
       this.lastSeenTimestamp = parseInt(storedTs, 10) || 0;
     }
 
+    // Restore an unfinished walk. `backfillCursor` / `backfillGapOpen` used to
+    // be memory-only while the watermark was persisted, so closing the tab
+    // mid-drain (or a PWA the OS reaped while backgrounded) came back up
+    // "caught up": the freeze was gone, the resume cursor was gone, and the
+    // next live message dragged the watermark past the tail nobody had
+    // fetched. Every replay path floors at that watermark, so the backlog
+    // below it was then unreachable by all of them.
+    this.restoreGapState();
+
     // Connect all relays
     await this.connectAll();
 
@@ -798,10 +819,22 @@ export class NostrRelayPool {
       this._publishNip65Now(pk);
     }
 
-    // History backfill
-    if(this.lastSeenTimestamp > 0) {
-      await this.backfill();
-    }
+    // History backfill — on EVERY boot, including a cold profile.
+    //
+    // This used to be gated on `lastSeenTimestamp > 0`, which skipped the deep
+    // walk in exactly the case that needs it: a fresh device on a months-old
+    // account has no watermark, so it never walked history at all. The live REQ
+    // then set the watermark to TODAY, and since every replay path floors at the
+    // watermark, everything older became unreachable — a client holding one day
+    // of messages, reporting "caught up" (#154).
+    //
+    // Not awaited: on a cold profile this is a full-history paged walk, and
+    // nothing above depends on it. Blocking initialize() would hold up the live
+    // subscription behind a drain that is designed to run in the background and
+    // resume across ticks.
+    this.startupWalk = this.backfill().finally(() => {
+      this.startupWalk = null;
+    });
 
     // Start pool recovery
     this.startRecovery();
@@ -1292,6 +1325,7 @@ export class NostrRelayPool {
     if(truncated && !this.backfillGapOpen) {
       this.log.warn('[NostrRelayPool] inbox catch-up unexhausted (truncated or timed out with partial results) - holding watermark until the catch-up poll closes the gap');
       this.backfillGapOpen = true;
+      this.persistGapState();
     }
 
     const before = this.deliveredMessageCount;
@@ -2422,23 +2456,61 @@ export class NostrRelayPool {
     return Math.max(0, this.lastSeenTimestamp - GIFTWRAP_FUZZ_WINDOW_SEC);
   }
 
+  /**
+   * Lower bound for a RESUMABLE walk.
+   *
+   * A resume cursor that sits at or below the bound we were about to ask for
+   * means the bound is wrong: the gap demonstrably extends below it. Asking
+   * `{since: bound, until: cursor}` in that state is an inverted range — the
+   * relay answers with a short page, the walk reports 'exhausted', and the gap
+   * is cleared over the very wraps it was protecting. This happens on exactly
+   * the path #154 is about: a cold profile whose watermark jumps to today while
+   * the deep walk is still draining months of history below it.
+   *
+   * So when the cursor is below the bound, drop the bound (walk all the way
+   * down). Cost is a few duplicate wraps, which the dedup LRU eats for free.
+   */
+  private walkSince(since: number | undefined, resumeFrom: number | undefined): number | undefined {
+    if(resumeFrom !== undefined && since !== undefined && since >= resumeFrom) return undefined;
+    return since;
+  }
+
+  /**
+   * Deep history walk across every read relay. Runs at startup (see
+   * initialize()) and resumes from `backfillCursor` when a previous walk ran
+   * out of pages, so a months-deep tail drains across ticks instead of
+   * re-fetching the same newest page forever.
+   *
+   * Same discipline as the catch-up poll: PAGED (so truncation is visible),
+   * evidence applied BEFORE dispatch (so the newest message of a partial walk
+   * cannot drag the watermark over wraps nobody fetched), and serialized
+   * against the poll through the shared in-flight guard.
+   */
   private async backfill(): Promise<void> {
-    const readEntries = this.relayEntries.filter(e => e.config.read);
-    const since = this.catchUpSince();
+    const readEntries = this.relayEntries.filter(
+      e => e.config.read && e.instance.getState() === 'connected'
+    );
+    const resumeFrom = this.backfillCursor;
+    const since = this.walkSince(this.catchUpSince(), resumeFrom);
     this.lastCatchUpAt = Date.now();
 
-    const promises = readEntries.map(async(entry) => {
+    const pages = await Promise.all(readEntries.map(async(entry) => {
       try {
-        const messages = await entry.instance.getMessages(since);
-        for(const msg of messages) {
-          await this.handleIncomingMessage(msg);
-        }
+        return await entry.instance.getMessagesPaged(since, resumeFrom);
       } catch(err) {
         this.log.error('[NostrRelayPool] backfill failed for:', entry.config.url, err);
+        return null;
       }
-    });
+    }));
 
-    await Promise.all(promises);
+    this.applyWalkEvidence(pages);
+
+    for(const page of pages) {
+      if(!page) continue;
+      for(const msg of page.messages) {
+        await this.handleIncomingMessage(msg);
+      }
+    }
   }
 
   /**
@@ -2450,15 +2522,29 @@ export class NostrRelayPool {
    */
   private async backfillRelay(entry: RelayEntry): Promise<void> {
     if(!entry.config.read) return;
-    const since = this.catchUpSince();
+    const resumeFrom = this.backfillCursor;
+    const since = this.walkSince(this.catchUpSince(), resumeFrom);
     this.log('[NostrRelayPool] reconnect backfill for', entry.config.url, 'since', since ?? '(all)');
+    let page: {messages: DecryptedMessage[]; outcome?: string; oldestReached?: number} | null = null;
     try {
-      const messages = await entry.instance.getMessages(since);
-      for(const msg of messages) {
-        await this.handleIncomingMessage(msg);
-      }
+      page = await entry.instance.getMessagesPaged(since, resumeFrom);
     } catch(err) {
       this.log.error('[NostrRelayPool] reconnect backfill failed for:', entry.config.url, err);
+    }
+
+    // Evidence before dispatch, same as every other walk: this one is paged
+    // too, so it can hit the page cap on a wide idle gap and must not let its
+    // newest message advance the watermark over the rest.
+    //
+    // RAISE ONLY. One relay closing ITS idle gap is not proof that the pool's
+    // deep gap is closed — this walk runs concurrently with the startup walk
+    // and the poll, on one relay, over a range it did not choose. Letting it
+    // clear would drop a resume cursor another walk is still draining. The
+    // poll owns clearing.
+    this.applyWalkEvidence([page], {mayClear: false});
+
+    for(const msg of page?.messages ?? []) {
+      await this.handleIncomingMessage(msg);
     }
   }
 
@@ -2486,13 +2572,118 @@ export class NostrRelayPool {
   }
 
   /**
+   * Apply the evidence a set of paged walks produced to the gap state.
+   *
+   * GAP STATE MAY ONLY BE CLEARED BY A WALK THAT REACHED THE BOTTOM.
+   *
+   * Recomputing the flag from scratch each tick (`gapOpen = deepestUnclosed
+   * !== undefined`) treats "nobody reported truncation" as proof the range was
+   * exhausted. It isn't — it is equally what a walk that LEARNED NOTHING looks
+   * like: every relay threw, every page timed out, or no read relay was
+   * connected at all. Clearing on that throws the resume cursor away and
+   * unfreezes the watermark over wraps we never fetched; the next dispatched
+   * message then drags `lastSeenTimestamp` past them, and since every replay
+   * path (live REQ `since`, catch-up poll, reconnect backfill) keys off that
+   * watermark, the backlog below it is unreachable by all of them. Reload-only
+   * recovery. And it fires hardest on a just-woken device: relays not yet
+   * reconnected, sockets erroring, first query slow — the one moment a deep gap
+   * is actually open.
+   *
+   * So: truncation is evidence (gap open). Exhaustion is evidence (gap closed).
+   * Everything else is ignorance — leave the state exactly as it was and look
+   * again next tick. Absence of a signal is not the signal.
+   *
+   * MUST be called BEFORE any of the walk's messages are dispatched: dispatch
+   * is what advances the watermark, so raising the freeze afterwards lets the
+   * newest message of a partial walk move it on its way past.
+   */
+  private applyWalkEvidence(
+    pages: Array<{outcome?: string; oldestReached?: number} | null>,
+    {mayClear = true}: {mayClear?: boolean} = {}
+  ): void {
+    let deepestUnclosed: number | undefined;
+    for(const page of pages) {
+      if(page?.outcome === 'truncated' && page.oldestReached !== undefined) {
+        // Resume at the NEWEST of the truncated relays' cursors. Cheaper to
+        // re-fetch overlap (the claim gate eats it) than to skip a region a
+        // slower relay hasn't handed us yet.
+        deepestUnclosed = deepestUnclosed === undefined ?
+          page.oldestReached :
+          Math.max(deepestUnclosed, page.oldestReached);
+      }
+    }
+
+    if(deepestUnclosed !== undefined) {
+      this.backfillCursor = deepestUnclosed;
+      this.backfillGapOpen = true;
+      this.log.warn(
+        '[NostrRelayPool] backfill gap still open below', deepestUnclosed,
+        '- holding watermark, resuming next tick'
+      );
+    } else if(mayClear && pages.some(p => p?.outcome === 'exhausted')) {
+      // Positive evidence: a relay walked the range to the bottom. Gap closed.
+      this.backfillCursor = undefined;
+      this.backfillGapOpen = false;
+      this.deepWalkCompleted = true;
+    } else if(this.backfillGapOpen) {
+      this.log.warn(
+        '[NostrRelayPool] backfill walk learned nothing (no relay reached the bottom of the range)',
+        '- preserving open gap below', this.backfillCursor
+      );
+    }
+
+    this.persistGapState();
+  }
+
+  /**
+   * Persist the resume cursor + freeze beside the watermark, so an unfinished
+   * drain survives a reload / PWA eviction instead of coming back up as a
+   * silent "caught up" (#154).
+   */
+  private persistGapState(): void {
+    try {
+      if(!this.backfillGapOpen && this.backfillCursor === undefined) {
+        localStorage.removeItem(LS_BACKFILL_GAP_KEY);
+        return;
+      }
+      localStorage.setItem(LS_BACKFILL_GAP_KEY, JSON.stringify({
+        cursor: this.backfillCursor,
+        open: this.backfillGapOpen
+      }));
+    } catch(err) {
+      this.log.warn('[NostrRelayPool] could not persist backfill gap state', err);
+    }
+  }
+
+  /** Restore a gap persisted by persistGapState(). */
+  private restoreGapState(): void {
+    const stored = localStorage.getItem(LS_BACKFILL_GAP_KEY);
+    if(!stored) return;
+    try {
+      const {cursor, open} = JSON.parse(stored) as {cursor?: number; open?: boolean};
+      this.backfillCursor = typeof cursor === 'number' ? cursor : undefined;
+      this.backfillGapOpen = open === true;
+      if(this.backfillGapOpen) {
+        this.log.warn('[NostrRelayPool] resuming an open backfill gap below', this.backfillCursor);
+      }
+    } catch(err) {
+      // Corrupt entry: ignore it. A truncated walk re-raises the gap on the
+      // next tick — never treat an unreadable record as "caught up".
+      this.log.warn('[NostrRelayPool] could not restore backfill gap state', err);
+    }
+  }
+
+  /**
    * One catch-up poll tick. Pulls the last RECENT_BACKFILL_WINDOW_SEC of wraps
    * from every connected read relay. Guarded against overlap (a slow relay must
    * not let two polls pile up) and silent on a per-relay failure.
    */
   private async backfillRecent(): Promise<void> {
-    if(this.backfillPollInFlight) return;
     if(!this.isSubscribedFlag) return;
+    // The startup walk holds the same resume cursor this tick would advance —
+    // wait for it rather than racing it (or dropping the tick).
+    if(this.startupWalk) await this.startupWalk;
+    if(this.backfillPollInFlight) return;
     this.backfillPollInFlight = true;
     this.lastCatchUpAt = Date.now();
     try {
@@ -2521,8 +2712,14 @@ export class NostrRelayPool {
       // which collapses the window back to normal.
       const recentWindow = Math.floor(Date.now() / 1000) - RECENT_BACKFILL_WINDOW_SEC;
       const watermark = this.catchUpSince();
-      const since = watermark === undefined ?
-        recentWindow :
+      // NO WATERMARK AND NO COMPLETED WALK = we have never seen history, so the
+      // 90s window is not a floor, it is a blindfold. The startup walk normally
+      // covers this, but on a cold profile it can run before any socket is up
+      // and learn nothing; without this the poll would then happily report
+      // "caught up" on the last 90 seconds of a months-old account (#154).
+      // One walk reaching the bottom retires it.
+      const windowSince = watermark === undefined ?
+        (this.deepWalkCompleted ? recentWindow : undefined) :
         Math.min(recentWindow, watermark);
       const readEntries = this.relayEntries.filter(
         e => e.config.read && e.instance.getState() === 'connected'
@@ -2536,7 +2733,11 @@ export class NostrRelayPool {
       // (which would loop on the same newest page forever and never reach the
       // messages that are actually missing).
       const resumeFrom = this.backfillCursor;
-      let deepestUnclosed: number | undefined;
+      // An open cursor below the window means the window is not the real lower
+      // bound — see walkSince(). Without this the resumed walk asks for an
+      // inverted range and reads back as 'exhausted', clearing the gap it was
+      // resuming.
+      const since = this.walkSince(windowSince, resumeFrom);
 
       // FETCH EVERYTHING FIRST, THEN DECIDE, THEN DISPATCH.
       //
@@ -2562,53 +2763,7 @@ export class NostrRelayPool {
         }
       }
 
-      for(const page of pages) {
-        if(page?.outcome === 'truncated' && page.oldestReached !== undefined) {
-          // Resume at the NEWEST of the truncated relays' cursors. Cheaper to
-          // re-fetch overlap (the claim gate eats it) than to skip a region a
-          // slower relay hasn't handed us yet.
-          deepestUnclosed = deepestUnclosed === undefined ?
-            page.oldestReached :
-            Math.max(deepestUnclosed, page.oldestReached);
-        }
-      }
-
-      // GAP STATE MAY ONLY BE CLEARED BY A WALK THAT REACHED THE BOTTOM.
-      //
-      // Recomputing the flag from scratch each tick (`gapOpen = deepestUnclosed
-      // !== undefined`) treats "nobody reported truncation" as proof the range
-      // was exhausted. It isn't — it is equally what a tick that LEARNED NOTHING
-      // looks like: every relay threw, every page timed out, or no read relay was
-      // connected at all. Clearing on that throws the resume cursor away and
-      // unfreezes the watermark over wraps we never fetched; the next dispatched
-      // message then drags `lastSeenTimestamp` past them, and since every replay
-      // path (live REQ `since`, catch-up poll, reconnect backfill) keys off that
-      // watermark, the backlog below it is unreachable by all of them. Reload-only
-      // recovery — the exact bug this PR exists to kill, reached via the resume
-      // path. And it fires hardest on a just-woken device: relays not yet
-      // reconnected, sockets erroring, first query slow — the one moment a deep
-      // gap is actually open.
-      //
-      // So: truncation is evidence (gap open). Exhaustion is evidence (gap
-      // closed). Everything else is ignorance — leave the state exactly as it was
-      // and look again next tick. Absence of a signal is not the signal.
-      if(deepestUnclosed !== undefined) {
-        this.backfillCursor = deepestUnclosed;
-        this.backfillGapOpen = true;
-        this.log.warn(
-          '[NostrRelayPool] backfill gap still open below', deepestUnclosed,
-          '- holding watermark, resuming next tick'
-        );
-      } else if(pages.some(p => p?.outcome === 'exhausted')) {
-        // Positive evidence: a relay walked the range to the bottom. Gap closed.
-        this.backfillCursor = undefined;
-        this.backfillGapOpen = false;
-      } else if(this.backfillGapOpen) {
-        this.log.warn(
-          '[NostrRelayPool] backfill tick learned nothing (no relay reached the bottom of the range)',
-          '- preserving open gap below', this.backfillCursor
-        );
-      }
+      this.applyWalkEvidence(pages);
 
       for(const page of pages) {
         if(!page) continue;
