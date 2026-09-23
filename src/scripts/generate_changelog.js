@@ -14,13 +14,18 @@ fs.rmSync(logsPath, {force: true, recursive: true});
 fs.mkdirSync(logsPath);
 
 const processChangelog = (fileName) => {
-  const text = fs.readFileSync('./' + fileName).toString('utf-8');
+  // Git checks text files out with CRLF on Windows by default. Normalizing
+  // here keeps the trailing carriage return out of generated filenames
+  // (`en_Features\r.md`) and makes the build portable across runner OSes.
+  const text = fs.readFileSync('./' + fileName).toString('utf-8').replace(/\r\n?/g, '\n');
 
   const lang = (fileName.split('_')[1] || 'en').split('.')[0];
   const writeTo = `${logsPath}${lang}_{VERSION}.md`;
 
   const separator = '### ';
-  const splitted = text.split(separator);
+  // The text before the first level-three heading is the document preamble,
+  // not a changelog entry.
+  const splitted = text.split(separator).slice(1);
   splitted.forEach(text => {
     if(!text.trim()) return;
     text = separator + text;
