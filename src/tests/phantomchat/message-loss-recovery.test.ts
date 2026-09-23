@@ -808,6 +808,10 @@ describe('message-loss recovery', () => {
     it('skips disconnected relays rather than counting them as queried', async() => {
       const {pool} = await connectedPool(MULTI);
       mockRelayInstances[1].disconnect();
+      // The startup walk queried it while it was still connected (initialize
+      // now walks history on every boot) — this test is about catchUpInbox, so
+      // measure from the disconnect.
+      mockRelayInstances[1].pagedCalls.length = 0;
 
       const result = await pool.catchUpInbox(1);
       expect(result.queried).toBe(1);
