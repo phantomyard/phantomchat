@@ -76,7 +76,7 @@ try {
   # Start-Process -Wait proves the actual installed runtime exits cleanly.
   $runtime = Start-Process -FilePath $executable -ArgumentList @(
     '-e',
-    'require(Buffer.from([102,115])).writeFileSync(process.env.PHANTOMCHAT_RUNTIME_PROBE,process.arch)'
+    'require(Buffer.from([102,115]).toString()).writeFileSync(process.env.PHANTOMCHAT_RUNTIME_PROBE,process.arch)'
   ) -Wait -PassThru
   if($runtime.ExitCode -ne 0) {
     throw "Packaged Electron runtime exited with code $($runtime.ExitCode)"
