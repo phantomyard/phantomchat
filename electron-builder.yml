@@ -97,3 +97,4 @@ nsis:
   createDesktopShortcut: false
   createStartMenuShortcut: true
   shortcutName: PhantomChat
+  uninstallDisplayName: ${productName} ${version}

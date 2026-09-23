@@ -31,7 +31,9 @@ if($install.ExitCode -ne 0) {
 
 $uninstallKey = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' |
   Get-ItemProperty |
-  Where-Object { $_.DisplayName -eq 'PhantomChat' } |
+  # electron-builder's default uninstallDisplayName is
+  # "${productName} ${version}", not the bare productName.
+  Where-Object { $_.DisplayName -like 'PhantomChat *' } |
   Select-Object -First 1
 if(!$uninstallKey) {
   throw 'PhantomChat uninstall registration was not created'
