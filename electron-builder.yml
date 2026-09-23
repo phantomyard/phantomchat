@@ -1,7 +1,8 @@
 # PhantomChat desktop packaging (electron-builder).
 # Linux ships x64 AppImage + .deb. macOS ships separate Apple Silicon and
-# Intel DMGs. Windows lands in its own PR. Signing stays out until the Axelera
-# identities exist (see docs/ELECTRON-DESKTOP.md for the reserved secret names).
+# Intel DMGs. Windows ships separate x64 and arm64 NSIS installers. Signing
+# stays out until the Axelera identities exist (see docs/ELECTRON-DESKTOP.md
+# for the reserved secret names).
 appId: ai.phantomyard.chat
 productName: PhantomChat
 copyright: Copyright © 2026 Hodges Enterprises B.V.
@@ -80,3 +81,19 @@ mac:
 
 dmg:
   title: ${productName} ${version}
+
+win:
+  icon: electron/build/icon.png
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+
+nsis:
+  # Keep the architectures separate so every installer is exercised on its
+  # native runner and users never have to guess which payload they received.
+  artifactName: ${productName}-${version}-windows-${arch}.${ext}
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: false
+  createStartMenuShortcut: true
+  shortcutName: PhantomChat

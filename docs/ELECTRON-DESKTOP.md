@@ -17,8 +17,8 @@ unaffected and continues to deploy via GitHub Pages (`docs/RELEASE.md`).
 - `electron/build.mjs` — esbuild bundling of main/preload + strict CSP
   generation (inline boot-splash scripts are pinned by sha256 hash at build
   time; no `unsafe-inline` for scripts).
-- `electron-builder.yml` — Linux x64 AppImage/`.deb` plus separate macOS
-  Apple Silicon and Intel DMGs.
+- `electron-builder.yml` — Linux x64 AppImage/`.deb`, separate macOS Apple
+  Silicon and Intel DMGs, and separate Windows x64 and ARM64 installers.
 
 Security posture: `contextIsolation: true`, `nodeIntegration: false`,
 `sandbox: true`, permissions default-deny (only microphone, camera and
@@ -116,10 +116,37 @@ user data remains under `~/Library/Application Support/PhantomChat` unless
 removed separately.
 
 These interim DMGs are intentionally unsigned and unnotarized. On first
-launch macOS will block the unidentified developer: open **System Settings →
-Privacy & Security**, confirm **Open Anyway**, then confirm **Open**. This is
-temporary until the Axelera B.V. Developer ID and notarization credentials
-are available.
+launch, Gatekeeper can report the quarantined app as damaged. After verifying
+the published SHA-256 checksum and copying it to Applications, clear the
+quarantine attribute with
+`xattr -dr com.apple.quarantine /Applications/PhantomChat.app`, then launch
+normally. This is temporary until the Axelera B.V. Developer ID and
+notarization credentials are available.
+
+### Windows
+
+Build on Windows so Electron Builder can create the NSIS installers:
+
+```powershell
+$env:APP_VERSION = '1.0.<n>'
+pnpm run app:build:win
+pnpm run app:pack:win  # unpacked app, faster iteration
+```
+
+CI builds `PhantomChat-<version>-windows-x64.exe` on native x64 Windows and
+`PhantomChat-<version>-windows-arm64.exe` on native Windows ARM64. On a fresh
+host, each job silently installs its matching package, verifies the Start Menu
+shortcut, launches the installed Electron runtime natively, and uninstalls it
+cleanly before publication.
+
+Run the matching installer and start **PhantomChat** from the Start Menu.
+Uninstall it from **Settings → Apps → Installed apps**. User data remains under
+`%APPDATA%\PhantomChat` unless removed separately.
+
+These interim installers are intentionally unsigned. Windows SmartScreen may
+warn that the publisher is unknown; verify the published SHA-256 checksum
+before choosing **More info → Run anyway**. The warning goes away once the
+Axelera B.V. Authenticode certificate is available.
 
 ## Release channels (preview / stable)
 
@@ -152,9 +179,8 @@ run counter, never by hand.
    `phantomchat-v1.0.40`). Same metadata-only contract.
 
 Required artifacts for promotion live in `scripts/promote-release.sh`
-(`REQUIRED_ARTIFACTS`). Both macOS architectures are required now; the
-Windows PR will append its installer so promotion continues to fail closed
-until the full matrix exists.
+(`REQUIRED_ARTIFACTS`). Both macOS architectures and both Windows architectures
+are required; promotion fails closed until the full matrix exists.
 
 ## Signing (deferred — Axelera B.V.)
 
@@ -177,10 +203,3 @@ When the Apple credentials arrive, replace the explicit unsigned setting with
 Developer ID signing, enable Hardened Runtime, import the P12 from CI secrets,
 notarize using the Apple credentials, and staple both DMGs. The native matrix
 and package checks stay unchanged.
-
-## Windows (upcoming PR)
-
-The same repo structure (main + preload + build script + workflows) is
-reused; the Windows PR adds its electron-builder target, workflow job,
-install/uninstall docs and signing wiring above. Iteration happens against
-the GitHub Actions `windows-latest` runner.

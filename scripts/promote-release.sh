@@ -17,14 +17,15 @@ set -euo pipefail
 TAG="${1:?usage: promote-release.sh <tag> [owner/repo]}"
 REPO="${2:-${GITHUB_REPOSITORY:-phantomyard/phantomchat}}"
 
-# Required artifacts per release ring. PR#1 ships Linux; the Windows and
-# Windows appends its artifact here later. macOS is deliberately explicit:
-# one DMG for each supported CPU architecture must be present.
+# Required artifacts per release ring. Architectures are deliberately
+# explicit: promotion must see both macOS DMGs and both Windows installers.
 REQUIRED_ARTIFACTS=(
   "PhantomChat-*.AppImage"
   "phantomchat_*_amd64.deb"
   "PhantomChat-*-x64.dmg"
   "PhantomChat-*-arm64.dmg"
+  "PhantomChat-*-windows-x64.exe"
+  "PhantomChat-*-windows-arm64.exe"
   "SHA256SUMS.txt"
 )
 

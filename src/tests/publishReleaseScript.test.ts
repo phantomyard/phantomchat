@@ -26,6 +26,8 @@ const ASSETS = [
   `phantomchat_${VERSION}_amd64.deb`,
   `PhantomChat-${VERSION}-x64.dmg`,
   `PhantomChat-${VERSION}-arm64.dmg`,
+  `PhantomChat-${VERSION}-windows-x64.exe`,
+  `PhantomChat-${VERSION}-windows-arm64.exe`,
   'SHA256SUMS.txt'
 ];
 
@@ -238,6 +240,13 @@ describe('publish-release.sh', () => {
 
   it('fails closed when either macOS architecture is missing', () => {
     const res = runPublish({missingAsset: `PhantomChat-${VERSION}-arm64.dmg`});
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('PUBLISH FAILED');
+    expect(res.state).not.toContain(`created-${TAG}`);
+  });
+
+  it('fails closed when either Windows architecture is missing', () => {
+    const res = runPublish({missingAsset: `PhantomChat-${VERSION}-windows-arm64.exe`});
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('PUBLISH FAILED');
     expect(res.state).not.toContain(`created-${TAG}`);

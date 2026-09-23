@@ -96,9 +96,18 @@ describe('promote-release.sh', () => {
     expect(res.stderr).toContain('PhantomChat-*-arm64.dmg');
   });
 
+  it('fails closed when the Windows arm64 installer is missing', () => {
+    const res = runPromote(
+      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb PhantomChat-1.0.42-x64.dmg PhantomChat-1.0.42-arm64.dmg PhantomChat-1.0.42-windows-x64.exe'
+    );
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('required artifact missing');
+    expect(res.stderr).toContain('PhantomChat-*-windows-arm64.exe');
+  });
+
   it('promotes when every required artifact is present and checksums verify', () => {
     const res = runPromote(
-      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb PhantomChat-1.0.42-x64.dmg PhantomChat-1.0.42-arm64.dmg'
+      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb PhantomChat-1.0.42-x64.dmg PhantomChat-1.0.42-arm64.dmg PhantomChat-1.0.42-windows-x64.exe PhantomChat-1.0.42-windows-arm64.exe'
     );
     expect(res.status).toBe(0);
     expect(res.stdout).toContain('All required artifacts present');
