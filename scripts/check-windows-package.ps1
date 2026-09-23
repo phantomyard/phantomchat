@@ -49,10 +49,17 @@ if($uninstallCommand -notmatch '^"(?<path>[^"]+)"') {
 $uninstaller = $Matches.path
 $installDirectory = Split-Path $uninstaller -Parent
 $executable = Join-Path $installDirectory 'PhantomChat.exe'
+$appAsar = Join-Path $installDirectory 'resources\app.asar'
+# NSIS can return before security scanning has made every freshly extracted
+# ARM64 payload file visible. Poll for the complete payload, but retain a hard
+# timeout so partial installs still fail closed.
+for($attempt = 0; $attempt -lt 60 -and (!(Test-Path $executable -PathType Leaf) -or !(Test-Path $appAsar -PathType Leaf)); $attempt++) {
+  Start-Sleep -Seconds 1
+}
 if(!(Test-Path $executable -PathType Leaf)) {
   throw "Installed executable not found: $executable"
 }
-if(!(Test-Path (Join-Path $installDirectory 'resources\app.asar') -PathType Leaf)) {
+if(!(Test-Path $appAsar -PathType Leaf)) {
   throw 'Installed app.asar is missing'
 }
 
