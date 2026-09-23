@@ -147,14 +147,21 @@ export default class ChatTopbar {
   /**
    * Cosmetic rule: hide the top bar avatar while the left bar has a single
    * item (see src/lib/phantomchat/topbar-avatar.ts).
+   *
+   * The count comes from the ACTIVE left-bar list (`appDialogsManager.xd`) —
+   * the rows actually rendered — not from dialogsStorage: storage lags behind
+   * synthetic rows injected through live `dialogs_multiupdate` traffic, and it
+   * always counts All Chats regardless of the selected folder. Reactivity is
+   * `chatlist_length_change`, fired by the list's own length effect (live
+   * add/drop) and on folder switch.
    */
-  private async updateTopbarAvatarVisibility() {
+  private updateTopbarAvatarVisibility() {
     if(!this.container) {
       return;
     }
 
-    const dialogs = await this.managers.dialogsStorage.getFolderDialogs(FOLDER_ID_ALL);
-    this.container.classList.toggle('single-dialog', !shouldShowTopbarAvatar(dialogs.length));
+    const leftBarRows = appDialogsManager.xd?.sortedList.getVisibleRowsCount() ?? 0;
+    this.container.classList.toggle('single-dialog', !shouldShowTopbarAvatar(leftBarRows));
   }
 
   public construct() {
@@ -958,8 +965,7 @@ export default class ChatTopbar {
       // this.btnBack.classList.add(size ? 'tgico-previous' : 'tgico-left');
     });
 
-    this.listenerSetter.add(rootScope)('dialogs_multiupdate', () => this.updateTopbarAvatarVisibility());
-    this.listenerSetter.add(rootScope)('dialog_drop', () => this.updateTopbarAvatarVisibility());
+    this.listenerSetter.add(rootScope)('chatlist_length_change', () => this.updateTopbarAvatarVisibility());
 
     this.listenerSetter.add(rootScope)('chat_update', (chatId) => {
       if(this.peerId === chatId.toPeerId(true)) {

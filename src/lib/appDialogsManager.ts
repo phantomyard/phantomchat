@@ -1066,6 +1066,12 @@ export class AppDialogsManager {
     this.xd = this.xds[filterId];
     this.xd.reset();
 
+    // The active list may have changed — surface-visibility consumers (e.g.
+    // the chat top bar avatar) must re-read the row count of the active
+    // folder. Loads of the new list fire the event again through the length
+    // effect below.
+    rootScope.dispatchEvent('chatlist_length_change');
+
     this.cancelChatlistUpdatesFetching?.();
     this.cancelChatlistUpdatesFetching = undefined;
     this.fetchChatlistUpdates = undefined;
@@ -1498,6 +1504,12 @@ export class AppDialogsManager {
 
   private _onListLengthChange = () => {
     this.checkIfPlaceholderNeeded();
+
+    // A rendered row was added/removed — let surface-visibility consumers
+    // (e.g. the chat top bar avatar) re-read the live row count. This is the
+    // only signal that catches rows injected through `dialogs_multiupdate`
+    // before dialogsStorage has them.
+    rootScope.dispatchEvent('chatlist_length_change');
   };
 
   public onSomeDrawerToggle?: () => void;

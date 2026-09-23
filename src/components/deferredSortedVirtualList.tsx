@@ -332,6 +332,12 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
 
     list,
 
+    /**
+     * Rows the list actually shows: regular + pinned items (e.g. the archive
+     * row pinned at the top of All Chats). Loading skeletons don't count.
+     */
+    getLength: () => itemsLength() + pinnedItems().length,
+
     setTotalCount,
 
     sortedItems,

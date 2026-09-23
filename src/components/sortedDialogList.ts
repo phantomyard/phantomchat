@@ -257,6 +257,16 @@ export default class SortedDialogList {
     return this.virtualList.sortedItems();
   }
 
+  /**
+   * Rows the left bar actually renders for this list — regular plus pinned
+   * (e.g. the archive row). This is the count surface code should consult for
+   * "how many items does the left bar show", NOT dialogsStorage, which lags
+   * behind rows injected through live `dialogs_multiupdate` traffic.
+   */
+  public getVisibleRowsCount() {
+    return this.virtualList.getLength();
+  }
+
   public async update(key: any) {
     const index = await this.getIndexForKey(key);
     this.virtualList.updateItem(key, index);
