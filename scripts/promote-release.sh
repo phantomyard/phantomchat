@@ -18,11 +18,13 @@ TAG="${1:?usage: promote-release.sh <tag> [owner/repo]}"
 REPO="${2:-${GITHUB_REPOSITORY:-phantomyard/phantomchat}}"
 
 # Required artifacts per release ring. PR#1 ships Linux; the Windows and
-# macOS PRs append their artifacts here so promotion fails closed until the
-# full platform matrix exists on the release.
+# Windows appends its artifact here later. macOS is deliberately explicit:
+# one DMG for each supported CPU architecture must be present.
 REQUIRED_ARTIFACTS=(
   "PhantomChat-*.AppImage"
   "phantomchat_*_amd64.deb"
+  "PhantomChat-*-x64.dmg"
+  "PhantomChat-*-arm64.dmg"
   "SHA256SUMS.txt"
 )
 

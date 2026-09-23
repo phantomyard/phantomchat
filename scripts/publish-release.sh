@@ -74,12 +74,16 @@ cd "$ARTIFACTS_DIR" || fail "artifacts dir not found: ${ARTIFACTS_DIR}"
 TITLE="${RELEASE_TITLE:-PhantomChat Desktop ${VERSION} (preview)}"
 
 # Artifact list mirrors REQUIRED_ARTIFACTS in scripts/promote-release.sh —
-# the Windows and macOS PRs grow both places together.
+# the Windows PR grows both places together.
 gh release create "$TAG" \
   --repo "$REPO" \
   --prerelease \
   --target "$COMMIT" \
   --title "$TITLE" \
   "${NOTES_ARGS[@]}" \
-  "PhantomChat-${VERSION}.AppImage" "phantomchat_${VERSION}_amd64.deb" "SHA256SUMS.txt" \
+  "PhantomChat-${VERSION}.AppImage" \
+  "phantomchat_${VERSION}_amd64.deb" \
+  "PhantomChat-${VERSION}-x64.dmg" \
+  "PhantomChat-${VERSION}-arm64.dmg" \
+  "SHA256SUMS.txt" \
   || fail "gh release create failed for ${TAG}"

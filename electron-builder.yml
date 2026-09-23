@@ -1,6 +1,6 @@
 # PhantomChat desktop packaging (electron-builder).
-# PR#1 covers Linux only (issue #150): x64 AppImage + .deb. Windows and macOS
-# targets land in their own PRs; signing stays out until the Axelera
+# Linux ships x64 AppImage + .deb. macOS ships separate Apple Silicon and
+# Intel DMGs. Windows lands in its own PR. Signing stays out until the Axelera
 # identities exist (see docs/ELECTRON-DESKTOP.md for the reserved secret names).
 appId: ai.phantomyard.chat
 productName: PhantomChat
@@ -62,3 +62,21 @@ appImage:
   # the promotion workflow.
   artifactName: ${productName}-${version}.${ext}
 
+mac:
+  icon: electron/build/icon.png
+  category: public.app-category.social-networking
+  # Deliberately unsigned until Axelera B.V.'s Developer ID certificate is
+  # available. `null` also prevents a developer's local Keychain identity
+  # from making CI/local artifacts differ accidentally.
+  identity: null
+  hardenedRuntime: false
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  extendInfo:
+    NSMicrophoneUsageDescription: PhantomChat uses the microphone for voice messages and calls.
+    NSCameraUsageDescription: PhantomChat uses the camera for video calls and sharing photos.
+
+dmg:
+  title: ${productName} ${version}

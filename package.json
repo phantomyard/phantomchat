@@ -45,6 +45,8 @@
     "app:start": "pnpm run build && pnpm run app:build:electron && electron electron/dist/main.cjs",
     "app:build": "pnpm run build && pnpm run app:build:electron && electron-builder --linux --publish never",
     "app:pack": "pnpm run build && pnpm run app:build:electron && electron-builder --linux --dir --publish never",
+    "app:build:mac": "pnpm run build && pnpm run app:build:electron && electron-builder --mac --publish never",
+    "app:pack:mac": "pnpm run build && pnpm run app:build:electron && electron-builder --mac --dir --publish never",
     "typecheck:electron": "tsc -p electron/tsconfig.json"
   },
   "author": "PhantomChat <chat@phantomyard.ai>",
