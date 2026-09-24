@@ -457,6 +457,15 @@ export class NostrRelayPool {
   // RESUME_RACE_GUARD_MS voids a hard reset for the same transition.
   private suppressReconnectBackfillUntil = 0;
   private lastResumeFromIdleAt = 0;
+  // True for the duration of an ATOMIC teardown (hardResetSockets, pool
+  // .disconnect). The real NostrRelay.disconnect() synchronously fires
+  // onStateChange('disconnected'), which re-enters superviseConnections()
+  // while activeUrls still holds the relay being killed — scheduling dials
+  // that outlive the teardown and duplicate the intended post-reset set
+  // (duplicate identity decrypts, wake-time dial churn). superviseConnections()
+  // is a no-op while this is set; each teardown dials exactly what it wants
+  // once it is done.
+  private teardownInFlight = false;
   // Guard + bookkeeping for the ephemeral sockets an idle tick opens.
   private idleTickInFlight = false;
   private idleTickUrls: Set<string> = new Set();
@@ -908,6 +917,12 @@ export class NostrRelayPool {
 
   disconnect(): void {
     this.log('[NostrRelayPool] disconnecting all relays');
+
+    // Atomic teardown (see teardownInFlight): every instance.disconnect() in
+    // the loop below synchronously fires onStateChange('disconnected'), which
+    // re-enters superviseConnections() mid-loop and re-dials the relays being
+    // destroyed. The pool is dead after this — the flag stays set.
+    this.teardownInFlight = true;
 
     // Tear down the idle controller first so no pending tick/inactivity timer
     // fires a suspend/resume against a pool that's being destroyed.
@@ -2372,6 +2387,11 @@ export class NostrRelayPool {
     // idle controller reopens sockets via resumeFromIdle() when it wakes.
     if(this.idleGated) return;
 
+    // Atomic teardown in progress (see teardownInFlight): the disconnect()
+    // calls inside it synchronously fire onStateChange(.disconnected.), which
+    // re-enters here while activeUrls still holds the relays being killed.
+    if(this.teardownInFlight) return;
+
     const now = Date.now();
     const toOpen: RelayEntry[] = [];
 
@@ -2924,25 +2944,43 @@ export class NostrRelayPool {
     // RESUME_BACKFILL_SUPPRESSION_MS).
     this.suppressReconnectBackfillUntil = Date.now() + RESUME_BACKFILL_SUPPRESSION_MS;
 
-    // Cancel staggered dials still pending from a previous sweep so a deferred
-    // open cannot resurrect a socket this reset just killed.
-    for(const timer of this.dialTimers) {
-      clearTimeout(timer);
-    }
-    this.dialTimers.clear();
+    // ATOMIC TEARDOWN: the real NostrRelay.disconnect() synchronously fires
+    // onStateChange('disconnected'), which re-enters superviseConnections()
+    // while activeUrls still holds the relay this loop is killing — each
+    // iteration would schedule its own fresh initialize/dial, those timers
+    // survive the dialTimers.clear() below (it has already run by then), and
+    // they stay valid once the intended pass re-adds the URLs: duplicate
+    // identity decrypts and dial churn on every resume. Supervision is
+    // suppressed for the whole teardown; the intended dial runs exactly
+    // once, below, after it is over.
+    this.teardownInFlight = true;
+    try {
+      // Cancel staggered dials still pending from a previous sweep so a deferred
+      // open cannot resurrect a socket this reset just killed.
+      for(const timer of this.dialTimers) {
+        clearTimeout(timer);
+      }
+      this.dialTimers.clear();
 
-    // Kill every socket, healthy or zombie alike. disconnect() nulls the WS
-    // handlers first, so a late close event from a zombie cannot re-enter the
-    // reconnect machinery.
-    for(const entry of this.relayEntries) {
-      entry.instance.disconnect();
-    }
-    this.activeUrls.clear();
+      // Kill every socket, healthy or zombie alike. disconnect() nulls the WS
+      // handlers first, so a late close event from a zombie cannot re-enter the
+      // reconnect machinery.
+      for(const entry of this.relayEntries) {
+        entry.instance.disconnect();
+      }
+      this.activeUrls.clear();
 
-    // Clean slate for relay health (cooldowns, flaps, strike refunds, backoff)
-    // and re-supervise right away: every entry is now 'disconnected' with a
-    // cleared bench, so this dials the full set fresh, staggered.
-    this.resetRelayCooldowns();
+      // Clean slate for relay health (cooldowns, flaps, strike refunds, backoff).
+      // Its trailing superviseConnections() call is swallowed by the guard —
+      // deliberately: the reset dials the full set exactly once, below.
+      this.resetRelayCooldowns();
+    } finally {
+      this.teardownInFlight = false;
+    }
+
+    // Dial the full set fresh, staggered: every entry is now 'disconnected'
+    // with a cleared bench and a clean health slate.
+    void this.superviseConnections();
 
     this.notifyStateChange();
     // Honest banner: the user just picked the device up — we are reconnecting

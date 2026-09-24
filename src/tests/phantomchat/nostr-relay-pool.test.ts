@@ -1513,6 +1513,47 @@ describe('NostrRelayPool', () => {
       pool.disconnect();
     });
 
+    it('reset dials each relay exactly once — teardown disconnects cannot fan out duplicate dials', async() => {
+      const relays = [
+        {url: 'wss://r1.test', read: true, write: true},
+        {url: 'wss://r2.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage: vi.fn()});
+      await pool.initialize();
+      expect(pool.getConnectedCount()).toBe(2);
+
+      // CALLBACK-FAITHFUL MOCKS: the real NostrRelay.disconnect()
+      // synchronously fires onStateChange('disconnected') via
+      // setConnectionState(), and the pool's handler re-enters supervision
+      // while activeUrls still holds the relay being torn down. The stock
+      // mock's silent disconnect() hides that re-entry entirely — each loop
+      // iteration would schedule its own initialize/dial, surviving past the
+      // reset and duplicating the intended fresh set (review of PR #163:
+      // 3 initialize() calls per relay reproduced with 2 relays).
+      for(const relay of mockRelayInstances as any[]) {
+        vi.spyOn(relay, 'disconnect').mockImplementation(() => {
+          relay.connectionState = 'disconnected';
+          relay.connected = false;
+          relay.disconnected = true;
+          relay.onStateChange?.('disconnected');
+        });
+      }
+
+      const initSpies = mockRelayInstances.map((r: any) => vi.spyOn(r, 'initialize'));
+      const connectSpies = mockRelayInstances.map((r: any) => vi.spyOn(r, 'connect'));
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(ADV);
+
+      // Exactly ONE fresh initialize + dial per relay across the whole reset
+      // — re-entrant supervision during the teardown must not schedule any.
+      for(const spy of initSpies) expect(spy).toHaveBeenCalledTimes(1);
+      for(const spy of connectSpies) expect(spy).toHaveBeenCalledTimes(1);
+      expect(pool.getConnectedCount()).toBe(2);
+
+      pool.disconnect();
+    });
+
     it('announces the resume so the banner can say Syncing...', async() => {
       const pool = new NostrRelayPool({
         relays: [{url: 'wss://r1.test', read: true, write: true}],
