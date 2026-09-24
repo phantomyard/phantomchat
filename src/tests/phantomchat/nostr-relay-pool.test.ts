@@ -205,6 +205,7 @@ function makeMessage(id: string, timestamp?: number): DecryptedMessage {
 // (both have simulateMessage, simulateDisconnect, etc.), so it doesn't
 // matter which mock wins. No vi.resetModules() needed.
 import {NostrRelayPool, DEFAULT_RELAYS} from '@lib/phantomchat/nostr-relay-pool';
+import rootScope from '@lib/rootScope';
 
 describe('NostrRelayPool', () => {
   beforeEach(() => {
@@ -1355,6 +1356,174 @@ describe('NostrRelayPool', () => {
       document.dispatchEvent(new Event('visibilitychange'));
       await vi.advanceTimersByTimeAsync(0);
       expect(claim('wrap-parked-on-wake')).toBe(true);
+
+      pool.disconnect();
+    });
+  });
+
+  describe('Palm-Pilot hard reset on resume (zombie self-heal)', () => {
+    const ADV = 0;
+
+    it('tears down every socket and dials fresh on visible — zombie sockets cannot survive', async() => {
+      const relays = [
+        {url: 'wss://r1.test', read: true, write: true},
+        {url: 'wss://r2.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage: vi.fn()});
+      await pool.initialize();
+      expect(pool.getConnectedCount()).toBe(2);
+
+      // The phone-lock wedge: the OS killed the sockets while the page was
+      // hidden, no close event was ever delivered, so both instances still
+      // claim 'connected'. superviseConnections trusts that state — only a
+      // teardown+redial can heal it.
+      const disconnectSpies = mockRelayInstances.map((r: any) => vi.spyOn(r, 'disconnect'));
+      const connectSpies = mockRelayInstances.map((r: any) => vi.spyOn(r, 'connect'));
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(ADV);
+
+      for(const spy of disconnectSpies) expect(spy).toHaveBeenCalledTimes(1);
+      for(const spy of connectSpies) expect(spy).toHaveBeenCalled();
+      expect(pool.getConnectedCount()).toBe(2);
+
+      pool.disconnect();
+    });
+
+    it('a benched (cooling-down) relay rejoins through the reset', async() => {
+      // Enough relays to stay above the MIN_WRITE_RELAYS liveness floor when
+      // one is benched (the floor force-revives below 3, which would mask the
+      // bench — same reason the original flap test used the full 7).
+      const relays = [1, 2, 3, 4, 5].map((i) => ({url: `wss://r${i}.test`, read: true, write: true}));
+      const pool = new NostrRelayPool({relays, onMessage: vi.fn()});
+      await pool.initialize();
+
+      // Bench r1 with quick connect→drop flaps, like the existing flap test.
+      const first = mockRelayInstances[0];
+      for(let i = 0; i < 3; i++) {
+        first.connectionState = 'connected';
+        first.onStateChange?.();
+        first.connectionState = 'reconnecting';
+        first.onStateChange?.();
+      }
+      await vi.advanceTimersByTimeAsync(ADV);
+      expect(pool.getConnectedCount()).toBe(4); // r1 benched
+
+      // Resume: the reset clears benches/cooldowns and redials the full set.
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(ADV);
+      expect(pool.getConnectedCount()).toBe(5);
+
+      pool.disconnect();
+    });
+
+    it('reset redials do not burst per-relay backfills (wake black-screen guard)', async() => {
+      const relays = [
+        {url: 'wss://r1.test', read: true, write: true},
+        {url: 'wss://r2.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage: vi.fn()});
+      await pool.initialize();
+      pool.subscribeMessages();
+      await vi.advanceTimersByTimeAsync(ADV);
+
+      // Populate relayHasConnected so every 'connected' fired AFTER the reset
+      // counts as a reconnect (first connects never backfill — the reset redial
+      // must not sneak through that door either).
+      for(const relay of mockRelayInstances) {
+        relay.connectionState = 'connected';
+        relay.onStateChange?.();
+      }
+      await vi.advanceTimersByTimeAsync(ADV);
+
+      const pagedSpies = mockRelayInstances.map((r: any) => vi.spyOn(r, 'getMessagesPaged'));
+
+      // Stale catch-up: an hour of dormancy — exactly when a burst would hurt.
+      (pool as any).lastCatchUpAt = Date.now() - 3_600_000;
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(ADV);
+
+      // The reset redials complete; the real instances would fire their
+      // onStateChange('connected') here — drive it manually (the mock's
+      // connect() does not).
+      for(const relay of mockRelayInstances) {
+        relay.connectionState = 'connected';
+        relay.onStateChange?.();
+      }
+      await vi.advanceTimersByTimeAsync(ADV);
+
+      // Suppression window: no per-relay reconnect backfill from reset redials.
+      for(const spy of pagedSpies) expect(spy).not.toHaveBeenCalled();
+
+      // After the window, a genuine reconnect blip backfills again — the
+      // suppression must not become a permanent hole.
+      await vi.advanceTimersByTimeAsync(11_000);
+      const relay = mockRelayInstances[0];
+      relay.connectionState = 'reconnecting';
+      relay.onStateChange?.();
+      relay.connectionState = 'connected';
+      relay.onStateChange?.();
+      await vi.advanceTimersByTimeAsync(ADV);
+      expect(pagedSpies[0]).toHaveBeenCalled();
+
+      pool.disconnect();
+    });
+
+    it('is a no-op while idle-gated — resumeFromIdle owns that transition', async() => {
+      const relays = [
+        {url: 'wss://r1.test', read: true, write: true},
+        {url: 'wss://r2.test', read: true, write: true}
+      ];
+      const pool = new NostrRelayPool({relays, onMessage: vi.fn(), idleTransport: true});
+      await pool.initialize();
+      expect(pool.getTransportMode()).toBe('active');
+
+      // Hidden past the grace: idle mode, every socket closed.
+      (pool as any).idleController.onBackground();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(pool.getTransportMode()).toBe('idle');
+      expect(pool.getConnectedCount()).toBe(0);
+
+      const connectSpies = mockRelayInstances.map((r: any) => vi.spyOn(r, 'connect'));
+
+      // A hard reset while gated must not open anything NOR announce a resume
+      // (the idle resume owns that transition — a "Syncing" banner while the
+      // page is still backgrounded would be a lie).
+      (pool as any).hardResetSockets('test');
+      await vi.advanceTimersByTimeAsync(ADV);
+      for(const spy of connectSpies) expect(spy).not.toHaveBeenCalled();
+      expect(rootScope.dispatchEvent).not.toHaveBeenCalledWith('phantomchat_resume_sync', {active: true});
+
+      // Foreground: the idle controller resumes and dials fresh.
+      (pool as any).idleController.onForeground();
+      await vi.advanceTimersByTimeAsync(ADV);
+      expect(pool.getTransportMode()).toBe('active');
+      expect(pool.getConnectedCount()).toBe(2);
+
+      // Race guard: a hard reset for the SAME transition (both listeners fire
+      // on one visibilitychange) must not kill the sockets resumeFromIdle just
+      // opened.
+      const disconnectSpies = mockRelayInstances.map((r: any) => vi.spyOn(r, 'disconnect'));
+      (pool as any).hardResetSockets('test');
+      await vi.advanceTimersByTimeAsync(ADV);
+      for(const spy of disconnectSpies) expect(spy).not.toHaveBeenCalled();
+      expect(pool.getConnectedCount()).toBe(2);
+
+      pool.disconnect();
+    });
+
+    it('announces the resume so the banner can say Syncing...', async() => {
+      const pool = new NostrRelayPool({
+        relays: [{url: 'wss://r1.test', read: true, write: true}],
+        onMessage: vi.fn()
+      });
+      await pool.initialize();
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(ADV);
+
+      expect(rootScope.dispatchEvent).toHaveBeenCalledWith('phantomchat_resume_sync', {active: true});
 
       pool.disconnect();
     });

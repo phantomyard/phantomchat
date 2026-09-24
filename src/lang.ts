@@ -102,6 +102,7 @@ const lang = {
   'ConnectionStatus.ReconnectIn': 'Reconnect in %ds, %s',
   'ConnectionStatus.Reconnect': 'reconnect',
   'ConnectionStatus.Reconnecting': 'Reconnecting...',
+  'ConnectionStatus.Syncing': 'Syncing...',
   'ConnectionStatus.TimedOut': 'Request timed out, %s',
   'ConnectionStatus.Waiting': 'Waiting for network...',
   'Contacts.Count': {

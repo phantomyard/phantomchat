@@ -216,4 +216,42 @@ describe('ConnectionStatusComponent relay integration', () => {
     // Should be online (at least 1 connected)
     expect(inputSearch.isLoading()).toBe(false);
   });
+
+  it('shows Syncing... while a Palm-Pilot resume is in flight and relays are down', () => {
+    const relayHandler = registeredEvents.get('phantomchat_relay_state')!;
+    const syncHandler = registeredEvents.get('phantomchat_resume_sync')!;
+    expect(syncHandler).toBeDefined();
+
+    // Establish a prior connection so the baseline is Reconnecting, not Waiting.
+    relayHandler({url: 'wss://relay1.example.com', connected: true, latencyMs: 50, read: true, write: true});
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+
+    // Phone unlocked: the pool hard-resets, every relay reports down.
+    syncHandler({active: true});
+    relayHandler({url: 'wss://relay1.example.com', connected: false, latencyMs: -1, read: true, write: true});
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+
+    // Honest banner: Syncing..., not a stale Reconnecting...
+    expect(inputSearch.isLoading()).toBe(true);
+    expect((inputSearch as any).placeholder).toBe('ConnectionStatus.Syncing');
+
+    // First relay back live: syncing cleared, normal online state.
+    relayHandler({url: 'wss://relay1.example.com', connected: true, latencyMs: 30, read: true, write: true});
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+    expect(inputSearch.isLoading()).toBe(false);
+    expect((inputSearch as any).placeholder).toBe('Search');
+  });
+
+  it('still shows plain Reconnecting... when relays drop without a resume', () => {
+    const relayHandler = registeredEvents.get('phantomchat_relay_state')!;
+
+    relayHandler({url: 'wss://relay1.example.com', connected: true, latencyMs: 50, read: true, write: true});
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+
+    relayHandler({url: 'wss://relay1.example.com', connected: false, latencyMs: -1, read: true, write: true});
+    vi.advanceTimersByTime(ConnectionStatusComponent.RELAY_STATUS_DEBOUNCE_MS + ConnectionStatusComponent.CHANGE_STATE_DELAY + 100);
+
+    expect(inputSearch.isLoading()).toBe(true);
+    expect((inputSearch as any).placeholder).toBe('ConnectionStatus.Reconnecting');
+  });
 });
