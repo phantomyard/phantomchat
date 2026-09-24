@@ -31,6 +31,11 @@ export default class ConnectionStatusComponent {
   private connecting = false;
   private timedOut = false;
   private updating = false;
+  // Palm-Pilot resume: set while the pool hard-resets the sockets after a
+  // return to the foreground — the banner should say "Syncing..." (we are
+  // reconnecting AND catching up), not a stale "Reconnecting...". Cleared the
+  // moment any relay is live again.
+  private syncing = false;
   private relayStates: Map<string, boolean> = new Map();
 
   private log: ReturnType<typeof logger>;
@@ -64,6 +69,12 @@ export default class ConnectionStatusComponent {
     rootScope.addEventListener('phantomchat_relay_state', (relayState) => {
       this.relayStates.set(relayState.url, relayState.connected);
       this.setRelayConnectionStatus();
+    });
+
+    rootScope.addEventListener('phantomchat_resume_sync', (state) => {
+      this.syncing = state.active;
+      DEBUG && this.log('resume sync', this.syncing);
+      this.setState();
     });
 
     rootScope.addEventListener('state_synchronizing', () => {
@@ -122,6 +133,12 @@ export default class ConnectionStatusComponent {
 
     const anyConnected = Array.from(this.relayStates.values()).some((c) => c === true);
 
+    if(anyConnected) {
+      // A live relay means the resume (if any) has landed — back to honest
+      // connection state, and the watermark poll drains the backlog silently.
+      this.syncing = false;
+    }
+
     if(anyConnected && !this.hadConnect) {
       this.hadConnect = true;
     }
@@ -159,7 +176,11 @@ export default class ConnectionStatusComponent {
 
     let setText: () => void;
     if(this.connecting) {
-      if(this.timedOut) {
+      if(this.syncing) {
+        // Palm-Pilot resume in flight: sockets torn down and dialing fresh —
+        // tell the user the truth about what is happening.
+        setText = this.wrapSetStatusText('ConnectionStatus.Syncing');
+      } else if(this.timedOut) {
         // const a = this.getA('ConnectionStatus.ForceReconnect', () => this.managers.networkerFactory.forceReconnect());
         // setText = this.wrapSetStatusText('ConnectionStatus.TimedOut', [a]);
         setText = this.wrapSetStatusText('Updating');

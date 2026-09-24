@@ -196,6 +196,24 @@ const POOL_RECOVERY_INTERVAL_MS = 20_000;
  * covers short gaps, so a backfill that ran moments ago adds nothing.
  */
 const RECONNECT_BACKFILL_MIN_INTERVAL_MS = 30_000;
+// After a Palm-Pilot hard reset (see hardResetSockets) every relay redials, and
+// each redial would normally fire its per-relay reconnect backfill — 7 paged
+// walks landing at once on a just-woken device is exactly the main-thread burst
+// that black-screened the PWA on wake (the wake-burst removal, see the
+// visibilitychange handler). The reset does NOT need those walks: the live REQ
+// re-arms with a `since` watermark on every fresh socket, and the 15s watermark
+// poll drains any gap sequentially and resumably. So for a short window after
+// the reset, reconnect backfills are suppressed; the window covers the dial
+// stagger (~350ms × relay count) with margin, and an organic reconnect blip that
+// lands inside it loses at most one backfill — the poll covers that gap.
+const RESUME_BACKFILL_SUPPRESSION_MS = 10_000;
+// If resumeFromIdle() ran within this window, a hardResetSockets() call for the
+// SAME foreground transition is a no-op: the idle resume already opened fresh
+// sockets, and killing them again is pure churn. Defensive — the pool's own
+// visibilitychange listener is registered before the idle controller's, so the
+// gated check normally catches this first; the timestamp makes the behavior
+// order-independent.
+const RESUME_RACE_GUARD_MS = 2_000;
 // Delay between opening each relay socket. We connect to EVERY relay, but not all
 // at once: a burst of simultaneous WebSocket handshakes on a cold mobile radio
 // trips an "insufficient resources" ceiling and none survive, leaving the app
@@ -434,6 +452,20 @@ export class NostrRelayPool {
   // While gated, superviseConnections() is a no-op: nothing auto-redials, so the
   // pool can sit at zero sockets without the supervisor fighting to reopen them.
   private idleGated = false;
+  // Palm-Pilot resume bookkeeping (see hardResetSockets): reconnect backfills
+  // are suppressed until this timestamp, and an idle resume that ran within
+  // RESUME_RACE_GUARD_MS voids a hard reset for the same transition.
+  private suppressReconnectBackfillUntil = 0;
+  private lastResumeFromIdleAt = 0;
+  // True for the duration of an ATOMIC teardown (hardResetSockets, pool
+  // .disconnect). The real NostrRelay.disconnect() synchronously fires
+  // onStateChange('disconnected'), which re-enters superviseConnections()
+  // while activeUrls still holds the relay being killed — scheduling dials
+  // that outlive the teardown and duplicate the intended post-reset set
+  // (duplicate identity decrypts, wake-time dial churn). superviseConnections()
+  // is a no-op while this is set; each teardown dials exactly what it wants
+  // once it is done.
+  private teardownInFlight = false;
   // Guard + bookkeeping for the ephemeral sockets an idle tick opens.
   private idleTickInFlight = false;
   private idleTickUrls: Set<string> = new Set();
@@ -461,20 +493,22 @@ export class NostrRelayPool {
   private onVisibilityChange = (): void => {
     if(typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this.resetWrapRetryBudget();
-      this.resetRelayCooldowns();
-      // Deliberately NO catch-up backfill here. A wake used to fire a global
-      // paged backfill across every read relay the instant the tab went
-      // visible (catchUpAfterDormancy, removed): after a long background spell
-      // that meant hundreds of wraps hitting unwrap + IDB + dispatch in one
-      // burst, on top of the chat rehydration re-render — the main thread
-      // saturated and the PWA sat on a black screen until it drained (or the
-      // user force-closed). Coverage does not need the burst: every relay
-      // socket that died while backgrounded reconnects here via
-      // resetRelayCooldowns -> superviseConnections, each reconnect re-arms
-      // the live REQ with a `since` watermark (liveSubscribeSince) AND fires
-      // the throttled per-relay reconnect backfill, and the 15s catch-up poll
-      // resumes on its own. The gap is filled incrementally through the normal
-      // delivery path instead of in one paint-blocking storm.
+      // PALM-PILOT RESUME. A page can only become visible by having been hidden,
+      // and a hidden page's sockets are dead the moment the OS wants them dead —
+      // a locked phone kills every WebSocket immediately, while the JS timers
+      // that would have noticed (the idle controller's hidden-grace teardown)
+      // are suspended and never fire. The page therefore resumes in ACTIVE mode
+      // holding sockets the OS murdered silently: instances still report
+      // 'connected', superviseConnections() trusts that state and redials
+      // nothing, and the app sits behind a permanent "Reconnecting" banner until
+      // the user kills it. So we do NOT try to resurrect anything: returning to
+      // the foreground tears every socket down and dials fresh ones (see
+      // hardResetSockets). Catch-up is incremental, exactly as designed — no
+      // burst: fresh sockets re-arm the live REQ with a `since` watermark, the
+      // 15s catch-up poll resumes on its own, and reset-redial backfills are
+      // suppressed for a short window (RESUME_BACKFILL_SUPPRESSION_MS) so the
+      // reset cannot re-create the wake black screen.
+      this.hardResetSockets('visibility-resume');
     }
   };
   private onOnline = (): void => {
@@ -883,6 +917,12 @@ export class NostrRelayPool {
 
   disconnect(): void {
     this.log('[NostrRelayPool] disconnecting all relays');
+
+    // Atomic teardown (see teardownInFlight): every instance.disconnect() in
+    // the loop below synchronously fires onStateChange('disconnected'), which
+    // re-enters superviseConnections() mid-loop and re-dials the relays being
+    // destroyed. The pool is dead after this — the flag stays set.
+    this.teardownInFlight = true;
 
     // Tear down the idle controller first so no pending tick/inactivity timer
     // fires a suspend/resume against a pool that's being destroyed.
@@ -1734,8 +1774,12 @@ export class NostrRelayPool {
           // Throttled per relay: during a flap storm the same relay re-fires
           // this within seconds, and each backfill is a burst of main-thread
           // unwrap crypto. Short gaps are covered by the watermark poll.
+          // Suppressed for a short window after a Palm-Pilot hard reset — see
+          // RESUME_BACKFILL_SUPPRESSION_MS — so the reset's own staggered
+          // redials cannot re-create the wake burst.
           const lastBackfill = this.lastReconnectBackfillAt.get(config.url) ?? 0;
-          if(Date.now() - lastBackfill >= RECONNECT_BACKFILL_MIN_INTERVAL_MS) {
+          const suppressedByReset = Date.now() < this.suppressReconnectBackfillUntil;
+          if(!suppressedByReset && Date.now() - lastBackfill >= RECONNECT_BACKFILL_MIN_INTERVAL_MS) {
             this.lastReconnectBackfillAt.set(config.url, Date.now());
             this.resetWrapRetryBudget();
             this.backfillRelay({config, instance}).catch(
@@ -2343,6 +2387,11 @@ export class NostrRelayPool {
     // idle controller reopens sockets via resumeFromIdle() when it wakes.
     if(this.idleGated) return;
 
+    // Atomic teardown in progress (see teardownInFlight): the disconnect()
+    // calls inside it synchronously fire onStateChange(.disconnected.), which
+    // re-enters here while activeUrls still holds the relays being killed.
+    if(this.teardownInFlight) return;
+
     const now = Date.now();
     const toOpen: RelayEntry[] = [];
 
@@ -2858,9 +2907,92 @@ export class NostrRelayPool {
    * backbone timers, and re-dial every relay. openRelaySocket() re-subscribes
    * the live REQ because isSubscribedFlag stayed true through idle.
    */
+  /**
+   * PALM-PILOT RESUME: treat a return to the foreground as a fresh boot for the
+   * transport. Kill every socket — including ones that merely LOOK connected —
+   * and dial fresh ones; never try to resurrect a socket that lived through a
+   * hidden period.
+   *
+   * Why this exists (the "Reconnecting until app restart" wedge): on a locked
+   * phone the OS suspends JS timers, so the idle controller's 60s hidden-grace
+   * teardown never fires and the pool stays in ACTIVE mode while the OS murders
+   * every WebSocket silently. No close event is ever delivered, so instances
+   * keep reporting 'connected' — and everything that could heal them
+   * (superviseConnections, the resume cooldown-clear) trusts that state. The
+   * result is a pool that is structurally at zero live sockets forever, with a
+   * "Reconnecting" banner to match, recoverable only by killing the app. This
+   * is exactly the case where reviving is hopeless and replacing is cheap.
+   *
+   * What it does NOT do: no backfill burst. Redials triggered by the reset have
+   * their per-relay reconnect backfills suppressed for a short window — the live
+   * REQ re-arms with a `since` watermark on every fresh socket and the 15s
+   * watermark poll drains any gap sequentially, so the reset can never
+   * re-create the wake black screen. Delivery durability (write quarantines,
+   * wrap parking, dedup, watermarks) is untouched.
+   *
+   * No-op while idle-gated (the idle controller's resumeFromIdle owns that
+   * transition — it already dials fresh) and for a short window after an idle
+   * resume (the same foreground transition would otherwise kill the sockets
+   * resumeFromIdle just opened — the two listeners fire on the same event).
+   */
+  private hardResetSockets(reason: string): void {
+    if(this.idleGated) return;
+    if(Date.now() - this.lastResumeFromIdleAt < RESUME_RACE_GUARD_MS) return;
+    this.log('[NostrRelayPool] hard reset (' + reason + '): closing every socket, dialing fresh');
+
+    // Reset-redials must not each fire a reconnect backfill (burst — see
+    // RESUME_BACKFILL_SUPPRESSION_MS).
+    this.suppressReconnectBackfillUntil = Date.now() + RESUME_BACKFILL_SUPPRESSION_MS;
+
+    // ATOMIC TEARDOWN: the real NostrRelay.disconnect() synchronously fires
+    // onStateChange('disconnected'), which re-enters superviseConnections()
+    // while activeUrls still holds the relay this loop is killing — each
+    // iteration would schedule its own fresh initialize/dial, those timers
+    // survive the dialTimers.clear() below (it has already run by then), and
+    // they stay valid once the intended pass re-adds the URLs: duplicate
+    // identity decrypts and dial churn on every resume. Supervision is
+    // suppressed for the whole teardown; the intended dial runs exactly
+    // once, below, after it is over.
+    this.teardownInFlight = true;
+    try {
+      // Cancel staggered dials still pending from a previous sweep so a deferred
+      // open cannot resurrect a socket this reset just killed.
+      for(const timer of this.dialTimers) {
+        clearTimeout(timer);
+      }
+      this.dialTimers.clear();
+
+      // Kill every socket, healthy or zombie alike. disconnect() nulls the WS
+      // handlers first, so a late close event from a zombie cannot re-enter the
+      // reconnect machinery.
+      for(const entry of this.relayEntries) {
+        entry.instance.disconnect();
+      }
+      this.activeUrls.clear();
+
+      // Clean slate for relay health (cooldowns, flaps, strike refunds, backoff).
+      // Its trailing superviseConnections() call is swallowed by the guard —
+      // deliberately: the reset dials the full set exactly once, below.
+      this.resetRelayCooldowns();
+    } finally {
+      this.teardownInFlight = false;
+    }
+
+    // Dial the full set fresh, staggered: every entry is now 'disconnected'
+    // with a cleared bench and a clean health slate.
+    void this.superviseConnections();
+
+    this.notifyStateChange();
+    // Honest banner: the user just picked the device up — we are reconnecting
+    // AND about to catch up, not merely "Reconnecting...". Cleared by the UI the
+    // moment a relay is live again.
+    rootScope.dispatchEvent('phantomchat_resume_sync', {active: true});
+  }
+
   private resumeFromIdle(): void {
     if(!this.idleGated) return;
     this.idleGated = false;
+    this.lastResumeFromIdleAt = Date.now();
     this.log('[NostrRelayPool] active: reopening sockets, live streaming');
 
     if(!this.backfillPollInterval) this.startBackfillPoll();

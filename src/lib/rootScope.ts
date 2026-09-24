@@ -259,6 +259,12 @@ export type BroadcastEvents = {
   // established/maintained while ACTIVE and is torn down on IDLE (relay stays the
   // delivery floor). Dispatched by ChatAPI off the pool's onTransportMode hook.
   'phantomchat_transport_mode': {mode: 'active' | 'idle'},
+  // Palm-Pilot resume (nostr-relay-pool hardResetSockets): dispatched when a
+  // return to the foreground tears the sockets down to dial fresh. While
+  // active, the connection banner should read "Syncing..." instead of a stale
+  // "Reconnecting..." — the app is catching up, not merely retrying. Consumers
+  // clear it themselves the moment a relay is live again.
+  'phantomchat_resume_sync': {active: boolean},
   'phantomchat_relay_state': {
     url: string;
     connected: boolean;
