@@ -4,11 +4,11 @@
  *
  * Background: the Status menu and Relay settings tab shipped with several
  * hardcoded Italian strings (Impostazioni, Preferenze, Aggiungi, connessi…),
- * and there was no in-app way to see the running version or trigger an
- * update on demand — the only update affordance was a hidden floating button
- * that polled every 30 min. This adds an explicit version + "Check for
- * updates" row that polls `version` immediately on tap and reloads when a
- * newer build is found.
+ * and there was no in-app way to see the running version. The Status tab now
+ * shows a read-only Version row only. The old "Check for updates" row was
+ * removed (#165 follow-up): on desktop it duplicated the Settings → Desktop
+ * updater, and on the PWA it was redundant — the app updates on reload and
+ * already surfaces an update banner via the update-checker.
  */
 import {describe, it, expect} from 'vitest';
 import * as fs from 'fs';
@@ -44,16 +44,13 @@ describe('phantomchatStatus tab — About / version section', () => {
     expect(statusSrc).toMatch(/App\.versionFull/);
   });
 
-  it('has a "Check for updates" row that polls version on tap', () => {
-    expect(statusSrc).toMatch(/Check for updates/);
-    // Immediate poll of the version endpoint inside the click handler.
-    expect(statusSrc).toMatch(/fetch\('version',\s*\{cache:\s*'no-cache'\}\)/);
-  });
-
-  it('reloads the app when a newer version is found', () => {
-    // The row flips to "Update now" and reload is wired to the nav controller.
-    expect(statusSrc).toMatch(/Update now/);
-    expect(statusSrc).toMatch(/appNavigationController\.reload\(\)/);
+  it('has no manual update row (PWA banner + desktop Settings own updates)', () => {
+    // Guard against the row drifting back: the PWA updates on reload with a
+    // banner, desktop updates live in Settings → Desktop.
+    expect(statusSrc).not.toMatch(/Check for updates/);
+    expect(statusSrc).not.toMatch(/Update now/);
+    expect(statusSrc).not.toMatch(/fetch\('version'/);
+    expect(statusSrc).not.toMatch(/appNavigationController/);
   });
 
   it('appends the About section to the scrollable', () => {
