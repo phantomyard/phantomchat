@@ -1,7 +1,7 @@
 {
   "name": "phantomchat",
   "version": "1.0.0",
-  "description": "PhantomChat \u2014 privacy-first messaging with end-to-end encryption",
+  "description": "PhantomChat — privacy-first messaging with end-to-end encryption",
   "main": "electron/dist/main.cjs",
   "scripts": {
     "prepare": "husky",
@@ -69,6 +69,7 @@
     "@types/chrome": "0.0.183",
     "@types/dom-webcodecs": "^0.1.13",
     "@types/express": "^4.17.21",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "20.10.6",
     "@types/prismjs": "^1.26.3",
     "@types/proper-lockfile": "^4.1.4",
@@ -98,6 +99,7 @@
     "http-proxy": "^1.18.1",
     "husky": "^9.1.7",
     "js-md5": "^0.8.3",
+    "js-yaml": "^5.4.2",
     "jsdom": "^22.1.0",
     "lint-staged": "^16.4.0",
     "mime": "^3.0.0",
@@ -126,6 +128,7 @@
     "@noble/ed25519": "^3.1.0",
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^3.1.0",
+    "electron-updater": "^6.8.9",
     "emoji-regex": "^10.6.0",
     "fflate": "^0.8.2",
     "jsqr": "^1.4.0",

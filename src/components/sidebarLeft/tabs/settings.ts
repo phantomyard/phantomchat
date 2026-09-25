@@ -11,6 +11,7 @@ import lottieLoader from '@lib/rlottie/lottieLoader';
 import Row from '@components/row';
 import SettingSection from '@components/settingSection';
 import AppPhantomChatRelaySettingsTab from '@components/sidebarLeft/tabs/phantomchatRelaySettings';
+import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import showLogOutPopup from '@components/popups/logOut';
 import showResetLocalDataPopup from '@components/popups/resetLocalData';
@@ -199,6 +200,24 @@ export default class AppSettingsTab extends SliderSuperTab {
       notificationsRow.container,
       generalRow.container
     );
+
+    // Desktop only (issue #164): the release-ring picker and update status.
+    // The PWA has no installer to replace — updates there are the browser's
+    // and the service worker's job — so the row simply does not exist on web.
+    if(hasDesktopUpdateApi()) {
+      const updatesRow = new Row({
+        title: 'Updates',
+        icon: 'download',
+        clickable: async() => {
+          const {default: AppPhantomChatDesktopUpdatesTab} =
+            await import('@components/sidebarLeft/tabs/phantomchatDesktopUpdates');
+          const tab = this.slider.createTab(AppPhantomChatDesktopUpdatesTab);
+          tab.open();
+        },
+        listenerSetter: this.listenerSetter
+      });
+      buttonsDiv.append(updatesRow.container);
+    }
 
     const buttonsSection = new SettingSection();
     buttonsSection.content.append(buttonsDiv);

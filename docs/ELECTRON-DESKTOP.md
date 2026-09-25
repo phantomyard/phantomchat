@@ -180,7 +180,85 @@ run counter, never by hand.
 
 Required artifacts for promotion live in `scripts/promote-release.sh`
 (`REQUIRED_ARTIFACTS`). Both macOS architectures and both Windows architectures
-are required; promotion fails closed until the full matrix exists.
+are required, as are the two update feeds; promotion fails closed until the
+full matrix exists, and also if a feed does not declare the tag's version.
+
+## In-app updates (issue #164)
+
+The rings above are only half the story: a ring the client cannot see is just
+a label on a GitHub page. The desktop app picks a ring in
+**Settings → Updates**, checks every **24 hours**, and installs in the
+background where the platform allows it.
+
+### Choosing a ring
+
+| Ring | Resolves to | Who it is for |
+|---|---|---|
+| **Stable** (default) | `/releases/latest` — the release a human promoted | everyone |
+| **Preview** | newest release including prereleases | dogfooding |
+
+The ring lives in `update-settings.json` under the Electron `userData`
+directory, **not** in the renderer: the first check runs before a window
+exists, so `localStorage` could never be the source of truth.
+
+Switching **Preview → Stable** is a *downgrade* in version terms (an installed
+`1.0.50` preview against a `1.0.45` stable). electron-updater refuses to move
+backwards unless told to, so the stable ring sets `allowDowngrade`. Without it
+choosing Stable looks like it worked and then quietly keeps serving preview
+builds until stable's counter overtakes. See `channelUpdaterFlags()` in
+`electron/updateSettings.ts`.
+
+### What each platform can actually do
+
+| Platform | Behaviour |
+|---|---|
+| Windows (NSIS) | downloads and installs on quit — works unsigned |
+| Linux (AppImage) | downloads and replaces the AppImage |
+| Linux (.deb) | **notify only** — dpkg owns those files |
+| macOS | **notify only** — Squirrel.Mac requires a signed, notarised app |
+
+This is a platform ceiling, not a shortcut. Auto-installing over a
+dpkg-managed file would desynchronise the package database, and Squirrel.Mac
+fails outright on an app built with `mac.identity: null`. On the notify-only
+path the app queries the GitHub Releases API against the same ring and offers
+to open the release page. `electron/updateCapability.ts` makes the decision;
+an unpackaged dev run is always notify-only.
+
+macOS is deliberately absent from the published feed for the same reason — it
+would be metadata nothing can consume.
+
+### The feed
+
+`electron-builder.yml` carries a `publish:` provider. That is what makes
+electron-builder write:
+
+- `latest.yml` (Windows) and `latest-linux.yml` (Linux) next to the artifacts —
+  the feed clients read. They are produced during packaging, so `--publish
+  never` in CI still yields them; CI *asserts* their presence on every PR
+  rather than assuming it.
+- `app-update.yml` inside the packaged resources — how an installed app knows
+  where to look.
+
+**Windows feeds must be merged.** `getUpdateInfoFileName()` in app-builder-lib
+appends an architecture suffix **only on Linux**, so both Windows runners emit
+a file literally called `latest.yml`, each describing only its own
+architecture. Uploaded as-is, the second clobbers the first and every Windows
+user is offered the wrong installer on their next update.
+`scripts/merge-update-feed.mjs` combines them into one feed listing both, which
+electron-updater resolves per-architecture by matching `process.arch` against
+the file name. x64 is passed first because it is the fallback entry when no
+architecture matches.
+
+Differential ("delta") downloads are **disabled**: we publish the installers
+and the feeds but not the `.blockmap` sidecars a delta needs, so leaving it on
+would mean every update tries a 404'd delta before falling back.
+
+### Provenance
+
+These builds are unsigned, so the only thing binding a downloaded update to us
+is the `sha512` in the feed, fetched over TLS from GitHub, which
+electron-updater verifies before installing. That is strictly weaker than code
+signing, and it is the gap the Axelera certificates below close.
 
 ## Signing (deferred — Axelera B.V.)
 

@@ -25,6 +25,29 @@ extraResources:
 asar: true
 compression: maximum
 
+# Update feed (issue #164). This block does two things, and BOTH are
+# required for in-app updates:
+#   1. electron-builder emits update metadata next to the artifacts
+#      (latest.yml on Windows, latest-linux.yml on Linux). Those files are
+#      the feed electron-updater reads; without them there is nothing to
+#      check against. They are produced during packaging, so `--publish never`
+#      in CI still yields them — CI asserts their presence rather than
+#      assuming it.
+#   2. It writes app-update.yml into the packaged resources, which is how the
+#      installed app knows WHERE to look.
+#
+# No `channel:` here on purpose. The ring is a CLIENT choice
+# (allowPrerelease, see electron/updater.ts), so one set of artifacts serves
+# both rings and promotion stays a metadata-only flip.
+#
+# macOS is deliberately absent from the feed: Squirrel.Mac requires a signed
+# app and ours is not, so macOS is notify-only until the Axelera Developer ID
+# exists.
+publish:
+  provider: github
+  owner: phantomyard
+  repo: phantomchat
+
 linux:
   icon: electron/build/icon.png
   category: Network
