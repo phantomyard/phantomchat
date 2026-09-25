@@ -5,6 +5,11 @@ node_modules/
 dist/
 build/
 !src/scripts/build/
+# electron/build holds packaging INPUTS, not build output: the app icon and
+# the macOS entitlements plist electron-builder signs against. The blanket
+# build/ rule above swallowed them, which is why the entitlements file went
+# missing once already (icon.png only survived via git add -f).
+!electron/build/
 coverage/
 public/*.js
 public/*.js.map
