@@ -16,6 +16,7 @@ import {join, normalize, relative, isAbsolute, extname} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
 import {isPermissionAllowed, isPermissionCheckAllowed} from './permissions';
+import {initUpdater} from './updater';
 
 // NOTE: this module is bundled to CommonJS by electron/build.mjs, so the
 // Node globals __dirname/__filename are available at runtime and point at
@@ -223,6 +224,16 @@ app.whenReady().then(() => {
     protocol.handle('app', (request) => serveFile(new URL(request.url)));
   }
   createWindow();
+
+  // After the window exists: the updater pushes state to it, and a check is
+  // deliberately deferred (see FIRST_CHECK_DELAY_MS) so it never competes
+  // with startup. Failing to set updates up must not abort the boot — the
+  // app is still perfectly usable on its current version.
+  try {
+    initUpdater(() => mainWindow);
+  } catch(err) {
+    console.error('updater init failed:', err instanceof Error ? err.message : err);
+  }
 
   app.on('activate', () => {
     if(BrowserWindow.getAllWindows().length === 0) createWindow();

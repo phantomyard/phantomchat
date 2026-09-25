@@ -24,7 +24,14 @@ case "$cmd" in
     case "$sub" in
       view) echo '{"isPrerelease": true, "isDraft": false, "assets": []}' ;;
       download)
-        for f in $GH_FAKE_ASSETS; do echo "payload-of-$f" > "$f"; done
+        for f in $GH_FAKE_ASSETS; do
+          # The update feeds are parsed by the script (version check), so the
+          # shim has to emit something feed-shaped rather than opaque bytes.
+          case "$f" in
+            *.yml) printf 'version: %s\nfiles:\n  - url: x\n' "\${GH_FAKE_FEED_VERSION:-1.0.42}" > "$f" ;;
+            *) echo "payload-of-$f" > "$f" ;;
+          esac
+        done
         if [[ -n "\${GH_FAKE_ASSETS:-}" ]]; then
           sha256sum $GH_FAKE_ASSETS > SHA256SUMS.txt
         fi
@@ -49,7 +56,18 @@ interface RunResult {
   stderr: string;
 }
 
-function runPromote(assets: string): RunResult {
+const ALL_ASSETS = [
+  'PhantomChat-1.0.42.AppImage',
+  'phantomchat_1.0.42_amd64.deb',
+  'PhantomChat-1.0.42-x64.dmg',
+  'PhantomChat-1.0.42-arm64.dmg',
+  'PhantomChat-1.0.42-windows-x64.exe',
+  'PhantomChat-1.0.42-windows-arm64.exe',
+  'latest.yml',
+  'latest-linux.yml'
+].join(' ');
+
+function runPromote(assets: string, feedVersion = '1.0.42'): RunResult {
   const sandbox = mkdtempSync(join(tmpdir(), 'promote-release-test-'));
   try {
     const binDir = join(sandbox, 'bin');
@@ -62,6 +80,7 @@ function runPromote(assets: string): RunResult {
         ...process.env,
         PATH: `${binDir}:${process.env.PATH}`,
         GH_FAKE_ASSETS: assets,
+        GH_FAKE_FEED_VERSION: feedVersion,
         GH_FAKE_LATEST_TAG: TAG
       },
       encoding: 'utf8'
@@ -105,11 +124,34 @@ describe('promote-release.sh', () => {
     expect(res.stderr).toContain('PhantomChat-*-windows-arm64.exe');
   });
 
+  it('fails closed when the Windows update feed is missing (issue #164)', () => {
+    // Without latest.yml the stable ring is invisible to every installed
+    // client: they check, get a 404 and sit on the old build forever.
+    const res = runPromote(ALL_ASSETS.replace('latest.yml ', ''));
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('required artifact missing');
+    expect(res.stderr).toContain('latest.yml');
+  });
+
+  it('fails closed when the Linux update feed is missing (issue #164)', () => {
+    const res = runPromote(ALL_ASSETS.replace(' latest-linux.yml', ''));
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('required artifact missing');
+    expect(res.stderr).toContain('latest-linux.yml');
+  });
+
+  it('fails closed when a feed describes a DIFFERENT release than the tag', () => {
+    // A stale feed re-uploaded from an earlier run would point stable users
+    // at artifacts that are not on this release.
+    const res = runPromote(ALL_ASSETS, '1.0.41');
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('does not declare version 1.0.42');
+  });
+
   it('promotes when every required artifact is present and checksums verify', () => {
-    const res = runPromote(
-      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb PhantomChat-1.0.42-x64.dmg PhantomChat-1.0.42-arm64.dmg PhantomChat-1.0.42-windows-x64.exe PhantomChat-1.0.42-windows-arm64.exe'
-    );
+    const res = runPromote(ALL_ASSETS);
     expect(res.status).toBe(0);
+    expect(res.stdout).toContain('Update feeds declare version 1.0.42');
     expect(res.stdout).toContain('All required artifacts present');
     expect(res.stdout).toContain(`Verified: ${TAG} is the stable latest.`);
   });

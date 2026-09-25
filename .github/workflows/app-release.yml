@@ -156,6 +156,16 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
+      # The update feed (issue #164). electron-builder writes latest-linux.yml
+      # during packaging because electron-builder.yml now carries a publish
+      # provider; `--publish never` only suppresses the UPLOAD. Assert it
+      # rather than assume it: a silently missing feed would ship a release
+      # that no installed client can ever see.
+      - name: Assert the Linux update feed was generated
+        run: test -f "release/${VERSION}/latest-linux.yml" || { echo "::error::latest-linux.yml missing — electron-builder produced no update feed"; exit 1; }
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
       - name: Upload Linux artifacts for publication
         uses: actions/upload-artifact@v4
         with:
@@ -163,6 +173,7 @@ jobs:
           path: |
             release/${{ steps.ver.outputs.version }}/PhantomChat-${{ steps.ver.outputs.version }}.AppImage
             release/${{ steps.ver.outputs.version }}/phantomchat_${{ steps.ver.outputs.version }}_amd64.deb
+            release/${{ steps.ver.outputs.version }}/latest-linux.yml
           if-no-files-found: error
 
   macos:
@@ -264,11 +275,31 @@ jobs:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.linux.outputs.version }}
 
+      # Both Windows runners emit a file literally called latest.yml, each
+      # describing only its own architecture. Uploaded as-is they collide and
+      # whichever lands last would offer ITS installer to every Windows user —
+      # handing arm64 machines an x64 build, or the reverse. Rename here, then
+      # merge into one feed in the publish job.
+      - name: Stage the Windows update feed under an architecture-specific name
+        shell: pwsh
+        run: |
+          $feed = "release/$env:VERSION/latest.yml"
+          if(-not (Test-Path $feed)) {
+            Write-Output "::error::latest.yml missing — electron-builder produced no update feed"
+            exit 1
+          }
+          Move-Item $feed "release/$env:VERSION/latest-windows-$env:ARCH.yml"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+
       - name: Upload Windows artifact for publication
         uses: actions/upload-artifact@v4
         with:
           name: desktop-windows-${{ matrix.arch }}
-          path: release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-windows-${{ matrix.arch }}.exe
+          path: |
+            release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-windows-${{ matrix.arch }}.exe
+            release/${{ needs.linux.outputs.version }}/latest-windows-${{ matrix.arch }}.yml
           if-no-files-found: error
 
   publish:
@@ -287,16 +318,43 @@ jobs:
           merge-multiple: true
           path: release/${{ needs.linux.outputs.version }}
 
+      # Only needed for js-yaml in the feed merge below.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # One latest.yml listing BOTH Windows installers, so electron-updater
+      # resolves the right architecture on each machine. Fails closed on a
+      # version mismatch or a duplicate artifact (scripts/merge-update-feed.mjs).
+      # x64 is passed first deliberately: it is the fallback entry the updater
+      # uses when it cannot match an architecture.
+      - name: Merge the Windows update feeds
+        run: |
+          cd "release/${VERSION}"
+          node ../../scripts/merge-update-feed.mjs latest.yml latest-windows-x64.yml latest-windows-arm64.yml
+          # The per-arch inputs are build intermediates, not release assets.
+          rm latest-windows-x64.yml latest-windows-arm64.yml
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+
       - name: Generate and verify checksums
         run: |
           cd "release/${VERSION}"
+          # The feed files are checksummed alongside the installers: they are
+          # published assets, and promote-release.sh requires every asset on a
+          # release to be covered by SHA256SUMS.txt.
           sha256sum \
             "PhantomChat-${VERSION}.AppImage" \
             "phantomchat_${VERSION}_amd64.deb" \
             "PhantomChat-${VERSION}-x64.dmg" \
             "PhantomChat-${VERSION}-arm64.dmg" \
             "PhantomChat-${VERSION}-windows-x64.exe" \
-            "PhantomChat-${VERSION}-windows-arm64.exe" > SHA256SUMS.txt
+            "PhantomChat-${VERSION}-windows-arm64.exe" \
+            "latest.yml" \
+            "latest-linux.yml" > SHA256SUMS.txt
           sha256sum --check --strict SHA256SUMS.txt
           cat SHA256SUMS.txt
         env:
@@ -340,6 +398,10 @@ jobs:
           Windows:
           - PhantomChat-${VERSION}-windows-arm64.exe (ARM64)
           - PhantomChat-${VERSION}-windows-x64.exe (x64)
+
+          Update feed (consumed by the in-app updater, not a download):
+          - latest.yml (Windows)
+          - latest-linux.yml (Linux AppImage)
 
           Verify with: sha256sum -c SHA256SUMS.txt
           Install and channel docs: docs/ELECTRON-DESKTOP.md

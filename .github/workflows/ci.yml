@@ -84,6 +84,13 @@ jobs:
           cd release/0.0.0-ci.${{ github.run_number }}
           test -f PhantomChat-*.AppImage
           test -f phantomchat_*_amd64.deb
+          # The update feed (issue #164). Checked on every PR, not just at
+          # release time: it is generated as a side effect of the publish
+          # provider in electron-builder.yml, so a config change that drops
+          # it must fail HERE rather than produce a release nobody's installed
+          # client can see.
+          test -f latest-linux.yml
+          grep -q '^version: 0.0.0-ci' latest-linux.yml
           sha256sum PhantomChat-*.AppImage phantomchat_*_amd64.deb > SHA256SUMS.txt
           sha256sum --check --strict SHA256SUMS.txt
       - name: Install the .deb and check maintainer scripts

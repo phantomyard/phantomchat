@@ -19,6 +19,10 @@ REPO="${2:-${GITHUB_REPOSITORY:-phantomyard/phantomchat}}"
 
 # Required artifacts per release ring. Architectures are deliberately
 # explicit: promotion must see both macOS DMGs and both Windows installers.
+# The update feeds are required too (issue #164): promoting a release whose
+# latest.yml is missing would make the stable ring invisible to every
+# installed client — they would check, get a 404 and stay on the old build
+# forever. Fail closed here rather than discover it in the field.
 REQUIRED_ARTIFACTS=(
   "PhantomChat-*.AppImage"
   "phantomchat_*_amd64.deb"
@@ -26,6 +30,8 @@ REQUIRED_ARTIFACTS=(
   "PhantomChat-*-arm64.dmg"
   "PhantomChat-*-windows-x64.exe"
   "PhantomChat-*-windows-arm64.exe"
+  "latest.yml"
+  "latest-linux.yml"
   "SHA256SUMS.txt"
 )
 
@@ -56,7 +62,14 @@ gh release download "$TAG" --repo "$REPO" --dir . || fail "asset download failed
 shopt -s nullglob
 for pattern in "${REQUIRED_ARTIFACTS[@]}"; do
   matches=( $pattern )
-  [[ ${#matches[@]} -gt 0 ]] || fail "required artifact missing on ${TAG}: ${pattern}"
+  # nullglob only drops patterns that CONTAIN a wildcard. A literal entry
+  # (latest.yml, SHA256SUMS.txt) survives as itself whether or not the file
+  # exists, so an existence check is what makes those honest — otherwise a
+  # missing feed reported as "matched a non-regular file", which reads like a
+  # packaging bug rather than a missing asset.
+  if [[ ${#matches[@]} -eq 0 || ! -e "${matches[0]}" ]]; then
+    fail "required artifact missing on ${TAG}: ${pattern}"
+  fi
   for match in "${matches[@]}"; do
     [[ -f "$match" ]] || fail "required artifact pattern ${pattern} matched a non-regular file: ${match}"
   done
@@ -76,6 +89,18 @@ ACTUAL_LIST="$(find . -maxdepth 1 -type f ! -name 'SHA256SUMS.txt' -printf '%f\n
 
 expected: ${EXPECTED_LIST//$'\n'/, }
 actual:   ${ACTUAL_LIST//$'\n'/, }"
+
+# --- the feed must describe THIS release ---------------------------------------
+# A stale latest.yml (e.g. re-uploaded from an earlier run) would point stable
+# users at artifacts that are not on this release. The version line is a plain
+# YAML scalar written by electron-builder, so grep is sufficient and avoids a
+# node/yq dependency in the promotion path.
+FEED_VERSION="${TAG#phantomchat-v}"
+for feed in latest.yml latest-linux.yml; do
+  grep -qx "version: ${FEED_VERSION}" "$feed" \
+    || fail "${feed} does not declare version ${FEED_VERSION} (got: $(grep -m1 '^version:' "$feed" || echo 'no version line'))"
+done
+echo "Update feeds declare version ${FEED_VERSION}."
 
 echo "All required artifacts present and checksums verified."
 echo "Promoting ${TAG} to stable latest (metadata only — artifacts are untouched)..."
