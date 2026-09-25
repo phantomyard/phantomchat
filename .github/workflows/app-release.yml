@@ -8,7 +8,8 @@ name: app-release
 # phantomchat-v1.0.<N> with Linux (AppImage + deb), macOS (Intel +
 # Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, plus
 # SHA256SUMS.txt. The Windows installers are Authenticode signed in the
-# publish job; Linux and macOS are still unsigned.
+# publish job and the macOS DMGs are Developer ID signed, notarized and
+# stapled in the macos job; Linux is unsigned (checksums only).
 #
 # VERSION SYNC: <N> is NOT this workflow's run_number — it is the run_number
 # of the deploy.yml (PWA) run for the same commit, so the desktop app and the
@@ -208,20 +209,68 @@ jobs:
         env:
           APP_VERSION: ${{ needs.linux.outputs.version }}
 
-      - name: Package unsigned macOS DMG
+      # Fail before a 10-minute package run rather than after it, and fail
+      # loudly: a missing secret must never degrade into an unsigned release.
+      - name: Require Apple signing credentials
+        run: |
+          missing=()
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "missing Apple signing secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Package and Developer ID sign the macOS DMG
         run: pnpm exec electron-builder --mac dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.linux.outputs.version }}
-          # Defense in depth alongside mac.identity=null: never pick up a
-          # certificate that happens to be installed on a runner.
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # electron-builder imports this .p12 into a throwaway keychain and
+          # signs with the identity pinned in electron-builder.yml. Auto
+          # discovery is NOT disabled here: with CSC_LINK set, disabling it
+          # makes electron-builder skip signing altogether.
+          CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
+
+      # Signing alone does not clear Gatekeeper: since Catalina a quarantined
+      # app must also carry an Apple notarization ticket. Notarize the DMG the
+      # user actually downloads and staple the ticket to it, so first launch
+      # works offline. Stapling is only possible after the DMG exists, which
+      # is why this is a workflow step and not electron-builder's hook.
+      - name: Notarize and staple the DMG
+        run: |
+          set -euo pipefail
+          DMG="release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait --timeout 30m
+          xcrun stapler staple "$DMG"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Mount and verify packaged app
         run: scripts/check-macos-package.sh "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg" "$ARCH" "$VERSION"
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.linux.outputs.version }}
+          # Release DMGs must prove signature, notarization and stapling; PR
+          # CI builds the same DMG unsigned and leaves this unset.
+          EXPECT_SIGNED: '1'
 
       - name: Upload macOS artifact for publication
         uses: actions/upload-artifact@v4

@@ -115,13 +115,10 @@ it by quitting the app and moving `/Applications/PhantomChat.app` to Trash;
 user data remains under `~/Library/Application Support/PhantomChat` unless
 removed separately.
 
-These interim DMGs are intentionally unsigned and unnotarized. On first
-launch, Gatekeeper can report the quarantined app as damaged. After verifying
-the published SHA-256 checksum and copying it to Applications, clear the
-quarantine attribute with
-`xattr -dr com.apple.quarantine /Applications/PhantomChat.app`, then launch
-normally. This is temporary until the Axelera B.V. Developer ID and
-notarization credentials are available.
+Both DMGs are Developer ID signed, notarized by Apple and stapled, so a
+quarantined download opens normally — no `xattr` dance. The CI package check
+refuses to publish a DMG that fails `stapler validate`, `codesign --verify` or
+`spctl --assess`.
 
 ### Windows
 
@@ -214,20 +211,20 @@ builds until stable's counter overtakes. See `channelUpdaterFlags()` in
 
 | Platform | Behaviour |
 |---|---|
-| Windows (NSIS) | downloads and installs on quit — works unsigned |
+| Windows (NSIS) | downloads and installs on quit |
 | Linux (AppImage) | downloads and replaces the AppImage |
 | Linux (.deb) | **notify only** — dpkg owns those files |
-| macOS | **notify only** — Squirrel.Mac requires a signed, notarised app |
+| macOS | **notify only** — no zip target or `latest-mac.yml` yet |
 
-This is a platform ceiling, not a shortcut. Auto-installing over a
-dpkg-managed file would desynchronise the package database, and Squirrel.Mac
-fails outright on an app built with `mac.identity: null`. On the notify-only
-path the app queries the GitHub Releases API against the same ring and offers
-to open the release page. `electron/updateCapability.ts` makes the decision;
-an unpackaged dev run is always notify-only.
-
-macOS is deliberately absent from the published feed for the same reason — it
-would be metadata nothing can consume.
+Auto-installing over a dpkg-managed file would desynchronise the package
+database, so .deb stays notify-only permanently. macOS is now signed and
+notarized, which is Squirrel.Mac's hard precondition, but auto-update also
+needs a `zip` target and `latest-mac.yml` carried through
+`publish-release.sh`; until that lands macOS stays notify-only and absent from
+the published feed. On the notify-only path the app queries the GitHub
+Releases API against the same ring and offers to open the release page.
+`electron/updateCapability.ts` makes the decision; an unpackaged dev run is
+always notify-only.
 
 ### The feed
 
@@ -261,8 +258,10 @@ On Windows the installer carries an Authenticode signature, so the OS itself
 checks the publisher before anything runs. Everywhere else the only thing
 binding a downloaded update to us is the `sha512` in the feed, fetched over TLS
 from GitHub, which electron-updater verifies before installing — strictly
-weaker than code signing, and the gap an Apple Developer ID would close for
-macOS.
+weaker than code signing. macOS closes that gap at download time instead: the
+DMG is Developer ID signed and carries a stapled notarization ticket, so
+Gatekeeper checks the publisher before the app ever runs. (macOS auto-update
+is still notify-only, so the feed's `sha512` is not on the macOS path at all.)
 
 Note that Authenticode rewrites the installer, so the feed has to be
 re-stamped against the signed bytes (`scripts/restamp-update-feed.mjs`); a feed
@@ -302,20 +301,31 @@ Design notes, because each one is a trap:
 
 No private key or credential is ever committed to the repository.
 
-### macOS — deferred
+### macOS — done
 
-Unsigned for now per issue #150. `electron-builder.yml` explicitly sets the
-macOS identity to `null` and disables Hardened Runtime, while CI also disables
-identity auto-discovery; this prevents accidental signing with a runner or
-developer Keychain identity. Reserved CI secret names:
+Each DMG is signed on its native runner with the Developer ID Application
+certificate, then notarized and stapled before it is uploaded as an artifact.
 
 | Secret | Purpose |
 |---|---|
-| `AXELERA_MACOS_CERTIFICATE_P12` | Apple Developer signing certificate |
-| `AXELERA_MACOS_CERTIFICATE_PASSWORD` | P12 password |
-| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | Apple notarization |
+| `APPLE_CSC_LINK` | Developer ID Application certificate, base64 `.p12` |
+| `APPLE_CSC_KEY_PASSWORD` | `.p12` password |
+| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | notarytool credentials |
 
-When the Apple credentials arrive, replace the explicit unsigned setting with
-Developer ID signing, enable Hardened Runtime, import the P12 from CI secrets,
-notarize using the Apple credentials, and staple both DMGs. The native matrix
-and package checks stay unchanged.
+The `macos` job asserts all five are present before packaging, so a missing
+secret fails the release instead of quietly shipping an unsigned DMG. The
+identity is pinned by name in `electron-builder.yml`, so a stray Keychain
+certificate on a runner cannot be used by accident.
+
+Three separate things have to hold, and the package check verifies each one:
+
+1. **Signing** — `codesign --verify --deep --strict`, plus the expected
+   `Authority=` line and the hardened-runtime flag.
+2. **Notarization** — Apple scans the DMG (`notarytool submit --wait`). Since
+   Catalina a signed-but-unnotarized app is still blocked.
+3. **Stapling** — `stapler staple` attaches the ticket to the DMG so first
+   launch works offline; `stapler validate` proves it.
+
+The hardened runtime is required for notarization, and Electron needs the JIT,
+unsigned-executable-memory and library-validation exceptions in
+`electron/build/entitlements.mac.plist` to start under it.
