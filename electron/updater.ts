@@ -32,9 +32,18 @@ import {
   type UpdateSettings
 } from './updateSettings';
 import {resolveUpdateCapability, describeNotifyReason, type UpdateCapability} from './updateCapability';
-import {pickReleaseForChannel, isNotifiableUpdate, type ReleaseSummary, type ResolvedRelease} from './updateFeed';
+import {
+  pickReleaseForChannel,
+  isNotifiableUpdate,
+  isReleasePageUrl,
+  collectReleasesForChannel,
+  RELEASES_PER_PAGE,
+  REPO_SLUG,
+  type ReleaseSummary,
+  type ResolvedRelease
+} from './updateFeed';
 
-const RELEASES_API = 'https://api.github.com/repos/phantomyard/phantomchat/releases?per_page=30';
+const RELEASES_API = `https://api.github.com/repos/${REPO_SLUG}/releases`;
 
 /** Delay before the first check so it never competes with window startup. */
 const FIRST_CHECK_DELAY_MS = 60_000;
@@ -128,6 +137,10 @@ function getUpdater(): AppUpdater {
   autoUpdater.on('checking-for-update', () => publish({status: 'checking', error: null}));
 
   autoUpdater.on('update-available', (info) => {
+    // Marked here, not after checkForUpdates() resolves: with autoDownload on,
+    // that promise settles only once the DOWNLOAD finishes, so a slow transfer
+    // would leave 'Last checked' reporting a stale time for its duration.
+    markChecked();
     publish({
       status: 'downloading',
       availableVersion: info.version,
@@ -137,6 +150,7 @@ function getUpdater(): AppUpdater {
   });
 
   autoUpdater.on('update-not-available', () => {
+    markChecked();
     publish({status: 'up-to-date', availableVersion: null, progressPercent: null, error: null});
   });
 
@@ -165,21 +179,25 @@ function applyChannelToUpdater(updater: AppUpdater): void {
 
 // --- GitHub Releases API (capability 'notify') -------------------------------
 
+async function fetchReleasePage(page: number): Promise<ReleaseSummary[]> {
+  const response = await net.fetch(`${RELEASES_API}?per_page=${RELEASES_PER_PAGE}&page=${page}`, {
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': `PhantomChat/${app.getVersion()}`
+    }
+  });
+  if(!response.ok) throw new Error(`GitHub returned ${response.status}`);
+  const body: unknown = await response.json();
+  if(!Array.isArray(body)) throw new Error('unexpected releases payload');
+  return body as ReleaseSummary[];
+}
+
 async function checkViaReleasesApi(): Promise<void> {
   publish({status: 'checking', error: null});
 
   let releases: ReleaseSummary[];
   try {
-    const response = await net.fetch(RELEASES_API, {
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'User-Agent': `PhantomChat/${app.getVersion()}`
-      }
-    });
-    if(!response.ok) throw new Error(`GitHub returned ${response.status}`);
-    const body: unknown = await response.json();
-    if(!Array.isArray(body)) throw new Error('unexpected releases payload');
-    releases = body as ReleaseSummary[];
+    releases = await collectReleasesForChannel(settings.channel, fetchReleasePage);
   } catch(err) {
     publish({status: 'error', error: err instanceof Error ? err.message : 'update check failed'});
     return;
@@ -208,8 +226,8 @@ async function runCheck(): Promise<void> {
     if(capability === 'auto') {
       const updater = getUpdater();
       applyChannelToUpdater(updater);
+      // markChecked() is driven by the updater's own result events.
       await updater.checkForUpdates();
-      markChecked();
     } else {
       await checkViaReleasesApi();
     }
@@ -292,7 +310,9 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
       getUpdater().quitAndInstall(true, true);
       return true;
     }
-    if(state.releaseUrl) {
+    // Re-validated at the boundary, not just at parse time: this is the one
+    // place a release URL leaves the app for the OS browser.
+    if(state.releaseUrl && isReleasePageUrl(state.releaseUrl)) {
       shell.openExternal(state.releaseUrl);
       return true;
     }

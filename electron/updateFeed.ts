@@ -32,6 +32,12 @@ export interface ResolvedRelease {
   prerelease: boolean;
 }
 
+/** The one place the repo is named; updater.ts builds its API URL from this. */
+export const REPO_SLUG = 'phantomyard/phantomchat';
+/** Release pages are the ONLY thing this feed may ever hand to the OS browser. */
+const RELEASE_URL_HOST = 'github.com';
+const RELEASE_URL_PATH_PREFIX = `/${REPO_SLUG}/releases/`;
+
 const TAG_PREFIX = 'phantomchat-v';
 /** Strict: three numeric components, nothing else. Anything looser lets a
  *  stray tag in the repo masquerade as a shipped desktop build. */
@@ -42,6 +48,28 @@ export function versionFromTag(tag: unknown): string | null {
   if(typeof tag !== 'string' || !tag.startsWith(TAG_PREFIX)) return null;
   const version = tag.slice(TAG_PREFIX.length);
   return VERSION_RE.test(version) ? version : null;
+}
+
+/**
+ * Is `url` a release page of THIS repo?
+ *
+ * html_url arrives as untrusted API JSON and is the value we later pass to
+ * shell.openExternal, so it is pinned here rather than merely scheme-checked:
+ * https, host exactly github.com, path inside this repo's /releases/. A
+ * release that fails this is dropped entirely — there is nothing safe to
+ * offer the user for it.
+ */
+export function isReleasePageUrl(url: unknown): boolean {
+  if(typeof url !== 'string') return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === 'https:' &&
+    parsed.hostname === RELEASE_URL_HOST &&
+    parsed.pathname.startsWith(RELEASE_URL_PATH_PREFIX);
 }
 
 /**
@@ -78,8 +106,8 @@ export function pickReleaseForChannel(releases: readonly ReleaseSummary[], chann
     const prerelease = release.prerelease === true;
     if(channel === 'stable' && prerelease) continue;
 
-    const url = typeof release.html_url === 'string' ? release.html_url : '';
-    if(!url) continue;
+    if(!isReleasePageUrl(release.html_url)) continue;
+    const url = release.html_url as string;
 
     if(best === null || compareVersions(version, best.version) > 0) {
       best = {version, tag: release.tag_name as string, url, prerelease};
@@ -87,6 +115,49 @@ export function pickReleaseForChannel(releases: readonly ReleaseSummary[], chann
   }
 
   return best;
+}
+
+/** GitHub's maximum page size. */
+export const RELEASES_PER_PAGE = 100;
+/**
+ * Paging bound. Generous but finite so a pathological repo (or a ring that
+ * genuinely has no release at all) cannot spin here.
+ */
+export const RELEASES_MAX_PAGES = 10;
+
+/**
+ * Collect releases, page by page, until the requested ring is represented or
+ * the list is exhausted.
+ *
+ * Why paging at all: a prerelease is cut on EVERY merge to main, so a long
+ * preview streak pushes the newest stable release off the first page. With a
+ * single fixed page, pickReleaseForChannel(.., 'stable') eventually returns
+ * null and a stable install is told it is up to date while a newer stable
+ * exists — silently stranded, which is the failure this feature exists to
+ * prevent.
+ *
+ * List position is never trusted as ordering; the winner is still chosen by
+ * VERSION across everything fetched. Order only tells us when it is safe to
+ * stop asking for older pages.
+ *
+ * Takes the page fetcher as an argument so the paging rule is testable
+ * without a network or an Electron runtime.
+ */
+export async function collectReleasesForChannel(
+  channel: UpdateChannel,
+  fetchPage: (page: number) => Promise<ReleaseSummary[]>,
+  maxPages: number = RELEASES_MAX_PAGES,
+  perPage: number = RELEASES_PER_PAGE
+): Promise<ReleaseSummary[]> {
+  const collected: ReleaseSummary[] = [];
+  for(let page = 1; page <= maxPages; page++) {
+    const batch = await fetchPage(page);
+    collected.push(...batch);
+    // A short page means GitHub has nothing older to give.
+    if(batch.length < perPage) break;
+    if(pickReleaseForChannel(collected, channel) !== null) break;
+  }
+  return collected;
 }
 
 /**
