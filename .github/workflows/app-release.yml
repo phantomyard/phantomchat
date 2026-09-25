@@ -6,8 +6,9 @@ name: app-release
 # a push to main IS a merge) except docs-only merges, which the paths-ignore
 # denylist below filters out. Cuts a GitHub Release tagged
 # phantomchat-v1.0.<N> with Linux (AppImage + deb), macOS (Intel +
-# Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, all unsigned,
-# plus SHA256SUMS.txt.
+# Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, plus
+# SHA256SUMS.txt. The Windows installers are Authenticode signed in the
+# publish job; Linux and macOS are still unsigned.
 #
 # VERSION SYNC: <N> is NOT this workflow's run_number — it is the run_number
 # of the deploy.yml (PWA) run for the same commit, so the desktop app and the
@@ -260,7 +261,9 @@ jobs:
         env:
           APP_VERSION: ${{ needs.linux.outputs.version }}
 
-      - name: Package unsigned Windows installer
+      # Unsigned here on purpose: Authenticode signing happens once, in the
+      # publish job, against the installers that are actually published.
+      - name: Package Windows installer (signed later, in publish)
         shell: pwsh
         run: pnpm exec electron-builder --win nsis "--$env:ARCH" --publish never "-c.extraMetadata.version=$env:VERSION"
         env:
@@ -331,12 +334,157 @@ jobs:
       # version mismatch or a duplicate artifact (scripts/merge-update-feed.mjs).
       # x64 is passed first deliberately: it is the fallback entry the updater
       # uses when it cannot match an architecture.
+      # ---------------------------------------------------------------
+      # Windows Authenticode signing (SSL.com eSigner, cloud HSM)
+      # ---------------------------------------------------------------
+      #
+      # WHY IN THE PUBLISH JOB, ON LINUX, AND NOT ON THE WINDOWS RUNNERS: the
+      # private key is not downloadable — it lives in SSL.com's HSM, and
+      # CodeSignTool is a Java client that sends a digest and gets a signature
+      # back, so the host OS is irrelevant. Doing it here keeps the arm64
+      # runner (windows-11-arm) out of the JDK-plus-vendor-tool business
+      # entirely, and puts signing in the one job that already owns the
+      # published bytes: the feed merge and the checksums happen right below,
+      # so nothing can be stamped before the installers reach their final form.
+      #
+      # WHY AT BUILD AND NOT AT PROMOTE: app-promote.yml never rebuilds. It
+      # flips an existing release to stable so the artifacts that soaked on
+      # preview are the artifacts stable installs, and it verifies the
+      # published checksums first. Signing at promote would have to mutate
+      # published assets, regenerate latest.yml, and re-upload — putting the
+      # updater feed back in the blast radius for every promotion. Signing here
+      # also means preview builds are signed, so the ring soaks the real thing.
+      #
+      # WHAT IS SIGNED: the two published NSIS installers, and only those.
+      # electron-builder's own `sign` hook would additionally sign the app
+      # executable and the uninstaller inside each package, and cloud signing
+      # is metered per signing operation — four more operations per merge for
+      # files a user never downloads directly. The installer is what a browser
+      # hands to SmartScreen, so that is what carries the signature.
+      #
+      # WHY THE ACTION IS PINNED TO A COMMIT SHA: it receives our signing
+      # credentials. A moving tag (or @develop, which the vendor README
+      # suggests) would let upstream change what executes here after review.
+      # The sha below is v1.3.2; re-pin deliberately when upgrading.
+      #
+      # ES_CREDENTIAL_ID is not optional: the signing account also carries a
+      # document-sealing "eSeal" credential which is marked DEFAULT, so an
+      # omitted id would silently sign with the wrong one.
+      #
+      # This workflow only runs on push to main, so secrets are always
+      # available and a fork PR can never reach this job.
+      - name: Assert signing credentials are present
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          # Fail loudly rather than degrading to an unsigned release: notes
+          # that promise a signature on artifacts that do not carry one are
+          # worse than a release that did not happen.
+          missing=""
+          for v in ES_USERNAME ES_PASSWORD ES_CREDENTIAL_ID ES_TOTP_SECRET; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing eSigner secret(s):$missing"
+            exit 1
+          fi
+
+      - name: Sign the Windows x64 installer
+        uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}/release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-windows-x64.exe
+          output_path: ${{ github.workspace }}/signed
+          environment_name: PROD
+          # The malware pre-scan is a separate SSL.com service; leaving it off
+          # keeps this to one signing operation per installer.
+          malware_block: false
+
+      - name: Sign the Windows arm64 installer
+        uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}/release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-windows-arm64.exe
+          output_path: ${{ github.workspace }}/signed
+          environment_name: PROD
+          malware_block: false
+
+      # CodeSignTool writes the signed copy to output_path and leaves the input
+      # alone, so put the signed installers back where the feed, the checksums
+      # and the release upload all already expect them.
+      - name: Swap in the signed installers
+        run: |
+          set -euo pipefail
+          for arch in x64 arm64; do
+            name="PhantomChat-${VERSION}-windows-${arch}.exe"
+            # A missing output is the silent-failure mode that matters here:
+            # the vendor action decides success by grepping its own stdout, so
+            # it can report green having produced nothing at all.
+            [ -s "signed/${name}" ] || { echo "::error::signed/${name} missing or empty — signing produced no artifact"; exit 1; }
+            mv "signed/${name}" "release/${VERSION}/${name}"
+          done
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+
+      # Independent proof that a signature is embedded and that it is OUR
+      # certificate — not the signing tool's own say-so, and not the eSeal
+      # credential. Chain and timestamp validation are deliberately NOT
+      # asserted: the runner has no reason to trust SSL.com's roots and a
+      # transient TSA hiccup should not fail a release.
+      - name: Verify the embedded Authenticode signatures
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+          EXPECTED_SIGNER: Andrew Hodges
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osslsigncode
+          for arch in x64 arm64; do
+            f="release/${VERSION}/PhantomChat-${VERSION}-windows-${arch}.exe"
+            echo "--- $f"
+            # Non-zero exit here means "could not verify the chain", which we
+            # are not asserting, so judge on content rather than exit status.
+            out=$(osslsigncode verify -in "$f" 2>&1 || true)
+            echo "$out"
+            case "$out" in
+              *"No signature found"*)
+                echo "::error::$f is NOT signed"; exit 1 ;;
+            esac
+            echo "$out" | grep -qi "CN=${EXPECTED_SIGNER}" \
+              || { echo "::error::$f is signed by an unexpected certificate (expected CN=${EXPECTED_SIGNER})"; exit 1; }
+          done
+
       - name: Merge the Windows update feeds
         run: |
           cd "release/${VERSION}"
           node ../../scripts/merge-update-feed.mjs latest.yml latest-windows-x64.yml latest-windows-arm64.yml
           # The per-arch inputs are build intermediates, not release assets.
           rm latest-windows-x64.yml latest-windows-arm64.yml
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+
+      # Signing rewrote the installers, so every hash electron-builder put in
+      # latest.yml now describes bytes that no longer exist. electron-updater
+      # verifies the download against that sha512 and REFUSES to install on a
+      # mismatch — this is not a cosmetic drift, it is every Windows update
+      # failing with a checksum error. Re-stamp the merged feed against the
+      # signed files on disk (scripts/restamp-update-feed.mjs).
+      #
+      # latest-linux.yml is untouched on purpose: nothing rewrites the Linux
+      # artifacts after packaging.
+      - name: Re-stamp the Windows feed against the signed installers
+        run: node scripts/restamp-update-feed.mjs "release/${VERSION}/latest.yml"
         env:
           VERSION: ${{ needs.linux.outputs.version }}
 
@@ -388,7 +536,8 @@ jobs:
           Build run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}
           ${PR_LINK_LINE}
 
-          Artifacts (unsigned):
+          Artifacts (Windows installers Authenticode signed as "Andrew Hodges";
+          Linux and macOS unsigned):
           Linux x64:
           - PhantomChat-${VERSION}.AppImage
           - phantomchat_${VERSION}_amd64.deb

@@ -143,10 +143,12 @@ Run the matching installer and start **PhantomChat** from the Start Menu.
 Uninstall it from **Settings → Apps → Installed apps**. User data remains under
 `%APPDATA%\PhantomChat` unless removed separately.
 
-These interim installers are intentionally unsigned. Windows SmartScreen may
-warn that the publisher is unknown; verify the published SHA-256 checksum
-before choosing **More info → Run anyway**. The warning goes away once the
-Axelera B.V. Authenticode certificate is available.
+These installers are Authenticode signed as **Andrew Hodges** (SSL.com
+code-signing certificate, cloud HSM). Check it with
+`Get-AuthenticodeSignature .\PhantomChat-<version>-windows-x64.exe`.
+SmartScreen may still warn until the certificate accumulates reputation;
+verify the published SHA-256 checksum before choosing **More info → Run
+anyway**.
 
 ## Release channels (preview / stable)
 
@@ -255,27 +257,63 @@ would mean every update tries a 404'd delta before falling back.
 
 ### Provenance
 
-These builds are unsigned, so the only thing binding a downloaded update to us
-is the `sha512` in the feed, fetched over TLS from GitHub, which
-electron-updater verifies before installing. That is strictly weaker than code
-signing, and it is the gap the Axelera certificates below close.
+On Windows the installer carries an Authenticode signature, so the OS itself
+checks the publisher before anything runs. Everywhere else the only thing
+binding a downloaded update to us is the `sha512` in the feed, fetched over TLS
+from GitHub, which electron-updater verifies before installing — strictly
+weaker than code signing, and the gap an Apple Developer ID would close for
+macOS.
 
-## Signing (deferred — Axelera B.V.)
+Note that Authenticode rewrites the installer, so the feed has to be
+re-stamped against the signed bytes (`scripts/restamp-update-feed.mjs`); a feed
+carrying pre-signing hashes fails every Windows update on checksum
+verification.
+
+## Signing
+
+### Windows — done
+
+The two published NSIS installers are Authenticode signed with the SSL.com
+eSigner cloud HSM, in the `publish` job of `app-release.yml`. CI secrets:
+
+| Secret | Purpose |
+|---|---|
+| `ES_USERNAME` / `ES_PASSWORD` | SSL.com account |
+| `ES_CREDENTIAL_ID` | which credential on that account signs — the account also holds a document-sealing "eSeal" credential that is marked *default*, so this is not optional |
+| `ES_TOTP_SECRET` | seed CodeSignTool uses to mint the one-time code |
+
+Design notes, because each one is a trap:
+
+- **Signing runs on the Linux publish runner**, not on the Windows build
+  runners. The private key is not downloadable — CodeSignTool only sends a
+  digest — so the host OS is irrelevant, and this keeps `windows-11-arm` out of
+  the JDK-plus-vendor-tool business.
+- **At build, not at promote.** `app-promote.yml` never rebuilds; it flips an
+  existing release to stable so the artifacts that soaked on preview are the
+  ones stable installs. Signing at promote would mutate published assets and
+  regenerate the feed on every promotion.
+- **Installers only.** electron-builder's `sign` hook would also sign the app
+  executable and the uninstaller inside each package, and cloud signing is
+  metered per signing operation. The installer is what the browser hands to
+  SmartScreen.
+- **The feed must be re-stamped after signing** — see Provenance above.
+- The vendor action is pinned to a **commit sha**, not a moving tag: it
+  receives the signing credentials.
+
+No private key or credential is ever committed to the repository.
+
+### macOS — deferred
 
 Unsigned for now per issue #150. `electron-builder.yml` explicitly sets the
 macOS identity to `null` and disables Hardened Runtime, while CI also disables
 identity auto-discovery; this prevents accidental signing with a runner or
-developer Keychain identity. Reserved CI secret names for the signing PR:
+developer Keychain identity. Reserved CI secret names:
 
 | Secret | Purpose |
 |---|---|
-| `AXELERA_WINDOWS_SIGNING_PFX` | Axelera B.V. Authenticode certificate (base64) |
-| `AXELERA_WINDOWS_SIGNING_PASSWORD` | PFX password |
-| `AXELERA_MACOS_CERTIFICATE_P12` | Axelera B.V. Apple Developer signing certificate |
+| `AXELERA_MACOS_CERTIFICATE_P12` | Apple Developer signing certificate |
 | `AXELERA_MACOS_CERTIFICATE_PASSWORD` | P12 password |
 | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | Apple notarization |
-
-No private key or credential is ever committed to the repository.
 
 When the Apple credentials arrive, replace the explicit unsigned setting with
 Developer ID signing, enable Hardened Runtime, import the P12 from CI secrets,
