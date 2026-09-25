@@ -173,7 +173,9 @@ describe('publish-release.sh <-> promote-release.sh asset-list drift guard', () 
     for (const m of tail.matchAll(/^\s+"([^"]+)"\s*\\?\s*$/gm)) {
       const name = m[1];
       if (name.startsWith('$')) continue; // variable expansions, not assets
-      assets.push(name.replaceAll('${VERSION}', VERSION));
+      // split/join, not replaceAll: the app tsconfig targets es2015, where
+      // String.prototype.replaceAll is not in the type lib.
+      assets.push(name.split('${VERSION}').join(VERSION));
     }
     return assets;
   }
@@ -184,7 +186,7 @@ describe('publish-release.sh <-> promote-release.sh asset-list drift guard', () 
     const m = PROMOTE_SCRIPT.match(/REQUIRED_ARTIFACTS=\(\s*([\s\S]*?)\)/);
     expect(m).not.toBeNull();
     return [...m![1].matchAll(/"([^"]+)"/g)].map(
-      (entry) => new RegExp(`^${entry[1].replace(/[.+]/g, '\\$&').replaceAll('*', '.*')}$`)
+      (entry) => new RegExp(`^${entry[1].replace(/[.+]/g, '\\$&').split('*').join('.*')}$`)
     );
   }
 
