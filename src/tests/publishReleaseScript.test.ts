@@ -28,6 +28,8 @@ const ASSETS = [
   `PhantomChat-${VERSION}-arm64.dmg`,
   `PhantomChat-${VERSION}-windows-x64.exe`,
   `PhantomChat-${VERSION}-windows-arm64.exe`,
+  'latest.yml',
+  'latest-linux.yml',
   'SHA256SUMS.txt'
 ];
 
@@ -148,6 +150,70 @@ function runPublish(opts: {
     rmSync(sandbox, {recursive: true, force: true});
   }
 }
+
+/*
+ * Drift guard: publish-release.sh uploads a hardcoded asset list, while
+ * promote-release.sh gates on REQUIRED_ARTIFACTS. They are two sides of the
+ * same contract — what promotion REQUIRES must be what publication UPLOADS.
+ * #164 grew REQUIRED_ARTIFACTS (latest.yml / latest-linux.yml) without
+ * growing the upload list, and release 1.0.271 shipped with no update feed:
+ * every client's updater 404'd on both channels. This block parses BOTH
+ * scripts and asserts mutual coverage so the lists cannot drift apart again.
+ */
+describe('publish-release.sh <-> promote-release.sh asset-list drift guard', () => {
+  const PUBLISH_SCRIPT = readFileSync(join(process.cwd(), 'scripts', 'publish-release.sh'), 'utf8');
+  const PROMOTE_SCRIPT = readFileSync(join(process.cwd(), 'scripts', 'promote-release.sh'), 'utf8');
+
+  // Asset args of the `gh release create` call: one "..." per line after it.
+  function publishAssets(): string[] {
+    const createIdx = PUBLISH_SCRIPT.indexOf('gh release create');
+    expect(createIdx).toBeGreaterThan(-1);
+    const tail = PUBLISH_SCRIPT.slice(createIdx);
+    const assets: string[] = [];
+    for (const m of tail.matchAll(/^\s+"([^"]+)"\s*\\?\s*$/gm)) {
+      const name = m[1];
+      if (name.startsWith('$')) continue; // variable expansions, not assets
+      assets.push(name.replaceAll('${VERSION}', VERSION));
+    }
+    return assets;
+  }
+
+  // Entries of REQUIRED_ARTIFACTS=( ... ) in promote-release.sh, as regexes
+  // (they are glob patterns; publish assets are concrete filenames).
+  function promotePatterns(): RegExp[] {
+    const m = PROMOTE_SCRIPT.match(/REQUIRED_ARTIFACTS=\(\s*([\s\S]*?)\)/);
+    expect(m).not.toBeNull();
+    return [...m![1].matchAll(/"([^"]+)"/g)].map(
+      (entry) => new RegExp(`^${entry[1].replace(/[.+]/g, '\\$&').replaceAll('*', '.*')}$`)
+    );
+  }
+
+  it('every REQUIRED_ARTIFACTS pattern is covered by an uploaded asset', () => {
+    const assets = publishAssets();
+    for (const pattern of promotePatterns()) {
+      expect(
+        assets.some((a) => pattern.test(a)),
+        `REQUIRED_ARTIFACTS pattern ${pattern} has no matching asset in publish-release.sh — promotion would require a file publication never uploads`
+      ).toBe(true);
+    }
+  });
+
+  it('every uploaded asset is covered by a REQUIRED_ARTIFACTS pattern', () => {
+    const patterns = promotePatterns();
+    for (const asset of publishAssets()) {
+      expect(
+        patterns.some((p) => p.test(asset)),
+        `publish-release.sh uploads ${asset} but promote-release.sh does not require it — the two lists must stay in sync`
+      ).toBe(true);
+    }
+  });
+
+  it('uploads the update feeds (regression: 1.0.271 shipped without them)', () => {
+    const assets = publishAssets();
+    expect(assets).toContain('latest.yml');
+    expect(assets).toContain('latest-linux.yml');
+  });
+});
 
 describe('publish-release.sh', () => {
   it('publishes a preview release with the tag pinned to the built commit', () => {
