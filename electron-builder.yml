@@ -40,9 +40,10 @@ compression: maximum
 # (allowPrerelease, see electron/updater.ts), so one set of artifacts serves
 # both rings and promotion stays a metadata-only flip.
 #
-# macOS is deliberately absent from the feed: Squirrel.Mac requires a signed
-# app and ours is not, so macOS is notify-only until the Axelera Developer ID
-# exists.
+# macOS is still deliberately absent from the feed. The app is now signed and
+# notarized, so Squirrel.Mac's precondition is met, but auto-update also needs
+# a zip target and latest-mac.yml wired through publish-release.sh; until that
+# lands macOS stays notify-only.
 publish:
   provider: github
   owner: phantomyard
@@ -89,11 +90,30 @@ appImage:
 mac:
   icon: electron/build/icon.png
   category: public.app-category.social-networking
-  # Deliberately unsigned until Axelera B.V.'s Developer ID certificate is
-  # available. `null` also prevents a developer's local Keychain identity
-  # from making CI/local artifacts differ accidentally.
-  identity: null
-  hardenedRuntime: false
+  # Signed with the Developer ID Application certificate the release workflow
+  # imports from CSC_LINK/CSC_KEY_PASSWORD. Naming the identity pins WHICH
+  # certificate is used, so a stray one in a runner's or a developer's
+  # keychain can never be picked up silently.
+  #
+  # The "Developer ID Application:" prefix is deliberately absent:
+  # electron-builder derives the certificate type itself and throws
+  # InvalidConfigurationError if the prefix is included (findIdentity ->
+  # checkPrefix in app-builder-lib).
+  #
+  # Builds without the certificate are not broken by this: PR CI runs on
+  # pull_request, and electron-builder skips macOS signing on pull requests
+  # outright, warning rather than failing.
+  identity: Andrew Hodges (644GWVQQ4P)
+  # Gatekeeper refuses to notarize anything without the hardened runtime, so
+  # this and the entitlements below are load-bearing, not hygiene. Electron
+  # needs the JIT/unsigned-memory exceptions listed in the plist.
+  hardenedRuntime: true
+  entitlements: electron/build/entitlements.mac.plist
+  entitlementsInherit: electron/build/entitlements.mac.plist
+  # Notarization is a separate workflow step against the DMG (notarytool +
+  # stapler), not electron-builder's built-in hook: the ticket has to be
+  # stapled to the artifact users actually download.
+  notarize: false
   target:
     - target: dmg
       arch: [x64, arm64]

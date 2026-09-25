@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Electron's JavaScript engine JITs, which the hardened runtime forbids
+	     by default. Without these first three the signed app launches and then
+	     crashes immediately on any V8 compilation. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<!-- Electron loads helper frameworks that are signed with our certificate
+	     rather than Apple's, which library validation would otherwise reject. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<!-- Voice notes: recording needs the microphone, and the camera entitlement
+	     is required for the media picker to enumerate devices at all. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>

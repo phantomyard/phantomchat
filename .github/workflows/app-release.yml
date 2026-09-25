@@ -6,8 +6,10 @@ name: app-release
 # a push to main IS a merge) except docs-only merges, which the paths-ignore
 # denylist below filters out. Cuts a GitHub Release tagged
 # phantomchat-v1.0.<N> with Linux (AppImage + deb), macOS (Intel +
-# Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, all unsigned,
-# plus SHA256SUMS.txt.
+# Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, plus
+# SHA256SUMS.txt. The Windows installers are Authenticode signed in the
+# publish job and the macOS DMGs are Developer ID signed, notarized and
+# stapled in the macos job; Linux is unsigned (checksums only).
 #
 # VERSION SYNC: <N> is NOT this workflow's run_number — it is the run_number
 # of the deploy.yml (PWA) run for the same commit, so the desktop app and the
@@ -72,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pushed commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # github.sha on a push to main is the merge commit itself.
           ref: ${{ github.sha }}
@@ -100,8 +102,8 @@ jobs:
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
           echo "Resolved PR number='$NUMBER' title='$TITLE'"
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -167,7 +169,7 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Upload Linux artifacts for publication
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-linux
           path: |
@@ -189,11 +191,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout pushed commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -207,23 +209,71 @@ jobs:
         env:
           APP_VERSION: ${{ needs.linux.outputs.version }}
 
-      - name: Package unsigned macOS DMG
+      # Fail before a 10-minute package run rather than after it, and fail
+      # loudly: a missing secret must never degrade into an unsigned release.
+      - name: Require Apple signing credentials
+        run: |
+          missing=()
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "missing Apple signing secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Package and Developer ID sign the macOS DMG
         run: pnpm exec electron-builder --mac dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.linux.outputs.version }}
-          # Defense in depth alongside mac.identity=null: never pick up a
-          # certificate that happens to be installed on a runner.
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # electron-builder imports this .p12 into a throwaway keychain and
+          # signs with the identity pinned in electron-builder.yml. Auto
+          # discovery is NOT disabled here: with CSC_LINK set, disabling it
+          # makes electron-builder skip signing altogether.
+          CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
+
+      # Signing alone does not clear Gatekeeper: since Catalina a quarantined
+      # app must also carry an Apple notarization ticket. Notarize the DMG the
+      # user actually downloads and staple the ticket to it, so first launch
+      # works offline. Stapling is only possible after the DMG exists, which
+      # is why this is a workflow step and not electron-builder's hook.
+      - name: Notarize and staple the DMG
+        run: |
+          set -euo pipefail
+          DMG="release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait --timeout 30m
+          xcrun stapler staple "$DMG"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Mount and verify packaged app
         run: scripts/check-macos-package.sh "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg" "$ARCH" "$VERSION"
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.linux.outputs.version }}
+          # Release DMGs must prove signature, notarization and stapling; PR
+          # CI builds the same DMG unsigned and leaves this unset.
+          EXPECT_SIGNED: '1'
 
       - name: Upload macOS artifact for publication
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-macos-${{ matrix.arch }}
           path: release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.dmg
@@ -242,11 +292,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout pushed commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -260,7 +310,9 @@ jobs:
         env:
           APP_VERSION: ${{ needs.linux.outputs.version }}
 
-      - name: Package unsigned Windows installer
+      # Unsigned here on purpose: Authenticode signing happens once, in the
+      # publish job, against the installers that are actually published.
+      - name: Package Windows installer (signed later, in publish)
         shell: pwsh
         run: pnpm exec electron-builder --win nsis "--$env:ARCH" --publish never "-c.extraMetadata.version=$env:VERSION"
         env:
@@ -294,7 +346,7 @@ jobs:
           VERSION: ${{ needs.linux.outputs.version }}
 
       - name: Upload Windows artifact for publication
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-windows-${{ matrix.arch }}
           path: |
@@ -307,20 +359,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pushed commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
 
       - name: Download all native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: desktop-*
           merge-multiple: true
           path: release/${{ needs.linux.outputs.version }}
 
       # Only needed for js-yaml in the feed merge below.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -331,12 +383,253 @@ jobs:
       # version mismatch or a duplicate artifact (scripts/merge-update-feed.mjs).
       # x64 is passed first deliberately: it is the fallback entry the updater
       # uses when it cannot match an architecture.
+      # ---------------------------------------------------------------
+      # Windows Authenticode signing (SSL.com eSigner, cloud HSM)
+      # ---------------------------------------------------------------
+      #
+      # WHY IN THE PUBLISH JOB, ON LINUX, AND NOT ON THE WINDOWS RUNNERS: the
+      # private key is not downloadable — it lives in SSL.com's HSM, and
+      # CodeSignTool is a Java client that sends a digest and gets a signature
+      # back, so the host OS is irrelevant. Doing it here keeps the arm64
+      # runner (windows-11-arm) out of the JDK-plus-vendor-tool business
+      # entirely, and puts signing in the one job that already owns the
+      # published bytes: the feed merge and the checksums happen right below,
+      # so nothing can be stamped before the installers reach their final form.
+      #
+      # WHY AT BUILD AND NOT AT PROMOTE: app-promote.yml never rebuilds. It
+      # flips an existing release to stable so the artifacts that soaked on
+      # preview are the artifacts stable installs, and it verifies the
+      # published checksums first. Signing at promote would have to mutate
+      # published assets, regenerate latest.yml, and re-upload — putting the
+      # updater feed back in the blast radius for every promotion. Signing here
+      # also means preview builds are signed, so the ring soaks the real thing.
+      #
+      # WHAT IS SIGNED: the two published NSIS installers, and only those.
+      # electron-builder's own `sign` hook would additionally sign the app
+      # executable and the uninstaller inside each package, and cloud signing
+      # is metered per signing operation — four more operations per merge for
+      # files a user never downloads directly. The installer is what a browser
+      # hands to SmartScreen, so that is what carries the signature.
+      #
+      # WHY THE ACTION IS PINNED TO A COMMIT SHA: it receives our signing
+      # credentials. A moving tag (or @develop, which the vendor README
+      # suggests) would let upstream change what executes here after review.
+      # The sha below is v1.3.2; re-pin deliberately when upgrading.
+      #
+      # WHY THAT PIN IS NOT ENOUGH ON ITS OWN: the sha freezes the action's
+      # code, not the code it RUNS. Its setup() downloads
+      # CodeSignTool-v1.3.0.zip from a GitHub *release asset* URL and executes
+      # the Java inside it with no digest check, and release assets are
+      # mutable - deletable and re-uploadable at the same URL. So the bytes
+      # that actually receive ES_PASSWORD and the TOTP seed were never pinned
+      # by the sha. The steps below fetch the archive, check it against a
+      # reviewed SHA-256, and hand the action a pre-verified copy: setup()
+      # treats an existing CODESIGNTOOL_PATH as installed and skips its own
+      # download. Same reasoning for the JDK it runs on. This mirrors
+      # phantombot's release.yml deliberately - the hardening has to live
+      # wherever the credentials do, so the two workflows must stay in step.
+      #
+      # ES_CREDENTIAL_ID is not optional: the signing account also carries a
+      # document-sealing "eSeal" credential which is marked DEFAULT, so an
+      # omitted id would silently sign with the wrong one.
+      #
+      # This workflow only runs on push to main, so secrets are always
+      # available and a fork PR can never reach this job.
+      - name: Assert signing credentials are present
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          # Fail loudly rather than degrading to an unsigned release: notes
+          # that promise a signature on artifacts that do not carry one are
+          # worse than a release that did not happen.
+          missing=""
+          for v in ES_USERNAME ES_PASSWORD ES_CREDENTIAL_ID ES_TOTP_SECRET; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing eSigner secret(s):$missing"
+            exit 1
+          fi
+
+      # Pinned bytes for the signer itself. The digest is corroborated rather
+      # than merely observed: code_sign_tool-1.3.0.jar inside the archive is
+      # itself EV code signed by "SSL Corp" under SSL.com's EV Code Signing
+      # Intermediate CA RSA R3. Bump URL and digest together, and re-check that
+      # jar signer, when upgrading CodeSignTool.
+      - name: Fetch and verify CodeSignTool
+        env:
+          CST_URL: https://github.com/SSLcom/CodeSignTool/releases/download/v1.3.0/CodeSignTool-v1.3.0.zip
+          CST_SHA256: 359782cee5c709b172610e2abd8cb49445bfadd26f44073ca18600c585b91b8d
+        run: |
+          set -euo pipefail
+          # Under RUNNER_TEMP, i.e. OUTSIDE the checkout: a 34 MB Java tree in
+          # the workspace is one careless glob away from being packaged or
+          # uploaded as a release asset.
+          root="$RUNNER_TEMP/codesigntool"
+          mkdir -p "$root"
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-connrefused --retry-delay 2 \
+            -o "$root/CodeSignTool.zip" "$CST_URL"
+          # Mismatch fails the release. No fallback branch on purpose: an
+          # unexpected signer binary is exactly when not to keep going.
+          ( cd "$root" && printf '%s  %s\n' "$CST_SHA256" CodeSignTool.zip | sha256sum -c - )
+          # The archive is flat - CodeSignTool.sh, conf/ and jar/ at its root,
+          # no wrapping folder - so extract into the versioned directory
+          # ourselves. CODESIGNTOOL_PATH must point at the directory DIRECTLY
+          # containing those, and it must stay writable: the action rewrites
+          # CodeSignTool.sh and conf/code_sign_tool.properties in place before
+          # running them.
+          dest="$root/CodeSignTool-v1.3.0"
+          rm -rf "$dest"
+          unzip -q "$root/CodeSignTool.zip" -d "$dest"
+          test -f "$dest/CodeSignTool.sh"
+          test -f "$dest/conf/code_sign_tool.properties"
+          test -f "$dest/jar/code_sign_tool-1.3.0.jar"
+          echo "CODESIGNTOOL_PATH=$dest" >> "$GITHUB_ENV"
+
+      # CodeSignTool is a Java program. Rather than let anything download a JDK
+      # onto the credential path, use the one baked into the runner image.
+      #
+      # Two things have to be true for zero JDK downloads to happen:
+      #
+      #   1. The esigner action installs its own JDK unless it sees
+      #      JAVA_VERSION >= 11 in the environment (src/main.ts). The runner
+      #      image sets JAVA_HOME but NOT JAVA_VERSION, so we must export it.
+      #   2. With the default signing_method (v1) the action rewrites
+      #      CodeSignTool.sh and runs it, and that script invokes a bare
+      #      `java` - resolved from PATH, NOT from JAVA_HOME. So PATH is what
+      #      actually decides which binary receives the four eSigner secrets;
+      #      setting JAVA_HOME alone would not pin it.
+      #
+      # JAVA_HOME_17_X64 is provided by the ubuntu-* runner images and is part
+      # of the already-trusted image, so there are no unchecksummed bytes on
+      # the credential path. Assert it rather than assuming: if a future runner
+      # image drops it, fail here loudly instead of silently falling back to
+      # whatever `java` happens to be first on PATH.
+      - name: Use the runner's preinstalled JDK 17 for CodeSignTool
+        run: |
+          set -euo pipefail
+          if [ -z "${JAVA_HOME_17_X64:-}" ] || [ ! -x "${JAVA_HOME_17_X64}/bin/java" ]; then
+            echo "::error::JAVA_HOME_17_X64 is not a usable JDK on this runner image." >&2
+            echo "Refusing to sign: the JDK that handles the signing credentials must" >&2
+            echo "come from the runner image, not a run-time download." >&2
+            exit 1
+          fi
+          # Confirm it really is 17 before putting it on the credential path.
+          ver="$("${JAVA_HOME_17_X64}/bin/java" -version 2>&1 | head -1)"
+          echo "Runner JDK: ${ver}"
+          case "${ver}" in
+            *'"17'*) ;;
+            *) echo "::error::Expected a Java 17 build, got: ${ver}" >&2; exit 1 ;;
+          esac
+          # PATH entry is what CodeSignTool.sh resolves `java` through; JAVA_HOME
+          # and JAVA_VERSION together stop the action fetching its own JDK.
+          echo "${JAVA_HOME_17_X64}/bin" >> "$GITHUB_PATH"
+          echo "JAVA_HOME=${JAVA_HOME_17_X64}" >> "$GITHUB_ENV"
+          echo "JAVA_VERSION=17" >> "$GITHUB_ENV"
+
+      - name: Sign the Windows x64 installer
+        uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b # v1.3.2
+        env:
+          # Tells the action a JDK is already present so it does not fetch one.
+          JAVA_VERSION: '17'
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}/release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-windows-x64.exe
+          output_path: ${{ github.workspace }}/signed
+          environment_name: PROD
+          # The malware pre-scan is a separate SSL.com service; leaving it off
+          # keeps this to one signing operation per installer.
+          malware_block: false
+
+      - name: Sign the Windows arm64 installer
+        uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b # v1.3.2
+        env:
+          # Tells the action a JDK is already present so it does not fetch one.
+          JAVA_VERSION: '17'
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}/release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-windows-arm64.exe
+          output_path: ${{ github.workspace }}/signed
+          environment_name: PROD
+          malware_block: false
+
+      # CodeSignTool writes the signed copy to output_path and leaves the input
+      # alone, so put the signed installers back where the feed, the checksums
+      # and the release upload all already expect them.
+      - name: Swap in the signed installers
+        run: |
+          set -euo pipefail
+          for arch in x64 arm64; do
+            name="PhantomChat-${VERSION}-windows-${arch}.exe"
+            # A missing output is the silent-failure mode that matters here:
+            # the vendor action decides success by grepping its own stdout, so
+            # it can report green having produced nothing at all.
+            [ -s "signed/${name}" ] || { echo "::error::signed/${name} missing or empty — signing produced no artifact"; exit 1; }
+            mv "signed/${name}" "release/${VERSION}/${name}"
+          done
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+
+      # Independent proof that a signature is embedded and that it is OUR
+      # certificate — not the signing tool's own say-so, and not the eSeal
+      # credential. Chain and timestamp validation are deliberately NOT
+      # asserted: the runner has no reason to trust SSL.com's roots and a
+      # transient TSA hiccup should not fail a release.
+      - name: Verify the embedded Authenticode signatures
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+          EXPECTED_SIGNER: Andrew Hodges
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osslsigncode
+          for arch in x64 arm64; do
+            f="release/${VERSION}/PhantomChat-${VERSION}-windows-${arch}.exe"
+            echo "--- $f"
+            # Non-zero exit here means "could not verify the chain", which we
+            # are not asserting, so judge on content rather than exit status.
+            out=$(osslsigncode verify -in "$f" 2>&1 || true)
+            echo "$out"
+            case "$out" in
+              *"No signature found"*)
+                echo "::error::$f is NOT signed"; exit 1 ;;
+            esac
+            echo "$out" | grep -qi "CN=${EXPECTED_SIGNER}" \
+              || { echo "::error::$f is signed by an unexpected certificate (expected CN=${EXPECTED_SIGNER})"; exit 1; }
+          done
+
       - name: Merge the Windows update feeds
         run: |
           cd "release/${VERSION}"
           node ../../scripts/merge-update-feed.mjs latest.yml latest-windows-x64.yml latest-windows-arm64.yml
           # The per-arch inputs are build intermediates, not release assets.
           rm latest-windows-x64.yml latest-windows-arm64.yml
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+
+      # Signing rewrote the installers, so every hash electron-builder put in
+      # latest.yml now describes bytes that no longer exist. electron-updater
+      # verifies the download against that sha512 and REFUSES to install on a
+      # mismatch — this is not a cosmetic drift, it is every Windows update
+      # failing with a checksum error. Re-stamp the merged feed against the
+      # signed files on disk (scripts/restamp-update-feed.mjs).
+      #
+      # latest-linux.yml is untouched on purpose: nothing rewrites the Linux
+      # artifacts after packaging.
+      - name: Re-stamp the Windows feed against the signed installers
+        run: node scripts/restamp-update-feed.mjs "release/${VERSION}/latest.yml"
         env:
           VERSION: ${{ needs.linux.outputs.version }}
 
@@ -388,14 +681,14 @@ jobs:
           Build run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}
           ${PR_LINK_LINE}
 
-          Artifacts (unsigned):
+          Artifacts (Linux unsigned, checksums only):
           Linux x64:
           - PhantomChat-${VERSION}.AppImage
           - phantomchat_${VERSION}_amd64.deb
-          macOS:
+          macOS (Developer ID signed, notarized and stapled):
           - PhantomChat-${VERSION}-arm64.dmg (Apple Silicon)
           - PhantomChat-${VERSION}-x64.dmg (Intel)
-          Windows:
+          Windows (Authenticode signed as "Andrew Hodges"):
           - PhantomChat-${VERSION}-windows-arm64.exe (ARM64)
           - PhantomChat-${VERSION}-windows-x64.exe (x64)
 
