@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pushed commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # github.sha on a push to main is the merge commit itself.
           ref: ${{ github.sha }}
@@ -102,8 +102,8 @@ jobs:
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
           echo "Resolved PR number='$NUMBER' title='$TITLE'"
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -169,7 +169,7 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Upload Linux artifacts for publication
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-linux
           path: |
@@ -191,11 +191,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout pushed commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -273,7 +273,7 @@ jobs:
           EXPECT_SIGNED: '1'
 
       - name: Upload macOS artifact for publication
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-macos-${{ matrix.arch }}
           path: release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.dmg
@@ -292,11 +292,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout pushed commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -346,7 +346,7 @@ jobs:
           VERSION: ${{ needs.linux.outputs.version }}
 
       - name: Upload Windows artifact for publication
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-windows-${{ matrix.arch }}
           path: |
@@ -359,20 +359,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pushed commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
 
       - name: Download all native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: desktop-*
           merge-multiple: true
           path: release/${{ needs.linux.outputs.version }}
 
       # Only needed for js-yaml in the feed merge below.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -532,7 +532,7 @@ jobs:
           echo "JAVA_VERSION=17" >> "$GITHUB_ENV"
 
       - name: Sign the Windows x64 installer
-        uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b
+        uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b # v1.3.2
         env:
           # Tells the action a JDK is already present so it does not fetch one.
           JAVA_VERSION: '17'
@@ -550,7 +550,7 @@ jobs:
           malware_block: false
 
       - name: Sign the Windows arm64 installer
-        uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b
+        uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b # v1.3.2
         env:
           # Tells the action a JDK is already present so it does not fetch one.
           JAVA_VERSION: '17'
@@ -681,15 +681,14 @@ jobs:
           Build run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}
           ${PR_LINK_LINE}
 
-          Artifacts (Windows installers Authenticode signed as "Andrew Hodges";
-          Linux and macOS unsigned):
+          Artifacts (Linux unsigned, checksums only):
           Linux x64:
           - PhantomChat-${VERSION}.AppImage
           - phantomchat_${VERSION}_amd64.deb
-          macOS:
+          macOS (Developer ID signed, notarized and stapled):
           - PhantomChat-${VERSION}-arm64.dmg (Apple Silicon)
           - PhantomChat-${VERSION}-x64.dmg (Intel)
-          Windows:
+          Windows (Authenticode signed as "Andrew Hodges"):
           - PhantomChat-${VERSION}-windows-arm64.exe (ARM64)
           - PhantomChat-${VERSION}-windows-x64.exe (x64)
 
