@@ -367,6 +367,19 @@ jobs:
       # suggests) would let upstream change what executes here after review.
       # The sha below is v1.3.2; re-pin deliberately when upgrading.
       #
+      # WHY THAT PIN IS NOT ENOUGH ON ITS OWN: the sha freezes the action's
+      # code, not the code it RUNS. Its setup() downloads
+      # CodeSignTool-v1.3.0.zip from a GitHub *release asset* URL and executes
+      # the Java inside it with no digest check, and release assets are
+      # mutable - deletable and re-uploadable at the same URL. So the bytes
+      # that actually receive ES_PASSWORD and the TOTP seed were never pinned
+      # by the sha. The steps below fetch the archive, check it against a
+      # reviewed SHA-256, and hand the action a pre-verified copy: setup()
+      # treats an existing CODESIGNTOOL_PATH as installed and skips its own
+      # download. Same reasoning for the JDK it runs on. This mirrors
+      # phantombot's release.yml deliberately - the hardening has to live
+      # wherever the credentials do, so the two workflows must stay in step.
+      #
       # ES_CREDENTIAL_ID is not optional: the signing account also carries a
       # document-sealing "eSeal" credential which is marked DEFAULT, so an
       # omitted id would silently sign with the wrong one.
@@ -392,8 +405,57 @@ jobs:
             exit 1
           fi
 
+      # Pinned bytes for the signer itself. The digest is corroborated rather
+      # than merely observed: code_sign_tool-1.3.0.jar inside the archive is
+      # itself EV code signed by "SSL Corp" under SSL.com's EV Code Signing
+      # Intermediate CA RSA R3. Bump URL and digest together, and re-check that
+      # jar signer, when upgrading CodeSignTool.
+      - name: Fetch and verify CodeSignTool
+        env:
+          CST_URL: https://github.com/SSLcom/CodeSignTool/releases/download/v1.3.0/CodeSignTool-v1.3.0.zip
+          CST_SHA256: 359782cee5c709b172610e2abd8cb49445bfadd26f44073ca18600c585b91b8d
+        run: |
+          set -euo pipefail
+          # Under RUNNER_TEMP, i.e. OUTSIDE the checkout: a 34 MB Java tree in
+          # the workspace is one careless glob away from being packaged or
+          # uploaded as a release asset.
+          root="$RUNNER_TEMP/codesigntool"
+          mkdir -p "$root"
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-connrefused --retry-delay 2 \
+            -o "$root/CodeSignTool.zip" "$CST_URL"
+          # Mismatch fails the release. No fallback branch on purpose: an
+          # unexpected signer binary is exactly when not to keep going.
+          ( cd "$root" && printf '%s  %s\n' "$CST_SHA256" CodeSignTool.zip | sha256sum -c - )
+          # The archive is flat - CodeSignTool.sh, conf/ and jar/ at its root,
+          # no wrapping folder - so extract into the versioned directory
+          # ourselves. CODESIGNTOOL_PATH must point at the directory DIRECTLY
+          # containing those, and it must stay writable: the action rewrites
+          # CodeSignTool.sh and conf/code_sign_tool.properties in place before
+          # running them.
+          dest="$root/CodeSignTool-v1.3.0"
+          rm -rf "$dest"
+          unzip -q "$root/CodeSignTool.zip" -d "$dest"
+          test -f "$dest/CodeSignTool.sh"
+          test -f "$dest/conf/code_sign_tool.properties"
+          test -f "$dest/jar/code_sign_tool-1.3.0.jar"
+          echo "CODESIGNTOOL_PATH=$dest" >> "$GITHUB_ENV"
+
+      # CodeSignTool is a Java program. The action only skips installing a JDK
+      # when it sees JAVA_VERSION >= 11; the runner image sets JAVA_HOME but
+      # not JAVA_VERSION, so without this it downloads an unverified Corretto
+      # build on every release. Pin the JDK and export JAVA_VERSION instead.
+      - name: Set up the JDK CodeSignTool runs on
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Sign the Windows x64 installer
         uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b
+        env:
+          # Tells the action a JDK is already present so it does not fetch one.
+          JAVA_VERSION: '17'
         with:
           command: sign
           username: ${{ secrets.ES_USERNAME }}
@@ -409,6 +471,9 @@ jobs:
 
       - name: Sign the Windows arm64 installer
         uses: SSLcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b
+        env:
+          # Tells the action a JDK is already present so it does not fetch one.
+          JAVA_VERSION: '17'
         with:
           command: sign
           username: ${{ secrets.ES_USERNAME }}
