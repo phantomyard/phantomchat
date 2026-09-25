@@ -74,7 +74,11 @@ cd "$ARTIFACTS_DIR" || fail "artifacts dir not found: ${ARTIFACTS_DIR}"
 TITLE="${RELEASE_TITLE:-PhantomChat Desktop ${VERSION} (preview)}"
 
 # Artifact list mirrors REQUIRED_ARTIFACTS in scripts/promote-release.sh —
-# the Windows PR grows both places together.
+# ANY change there must grow this list too. The two sides are pinned together
+# by the drift-guard test in src/tests/publishReleaseScript.test.ts: #164
+# added latest*.yml to REQUIRED_ARTIFACTS but not here, and 1.0.271 shipped
+# with release notes advertising a feed the release did not carry — every
+# installed client's updater 404'd on both channels.
 gh release create "$TAG" \
   --repo "$REPO" \
   --prerelease \
@@ -87,5 +91,7 @@ gh release create "$TAG" \
   "PhantomChat-${VERSION}-arm64.dmg" \
   "PhantomChat-${VERSION}-windows-x64.exe" \
   "PhantomChat-${VERSION}-windows-arm64.exe" \
+  "latest.yml" \
+  "latest-linux.yml" \
   "SHA256SUMS.txt" \
   || fail "gh release create failed for ${TAG}"
