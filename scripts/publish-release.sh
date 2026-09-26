@@ -79,6 +79,10 @@ TITLE="${RELEASE_TITLE:-PhantomChat Desktop ${VERSION} (preview)}"
 # added latest*.yml to REQUIRED_ARTIFACTS but not here, and 1.0.271 shipped
 # with release notes advertising a feed the release did not carry — every
 # installed client's updater 404'd on both channels.
+#
+# The macOS zips (issue #169) are release assets even though nobody downloads
+# one by hand: they are the payload Squirrel.Mac installs, and latest-mac.yml
+# points at them. Dropping them would leave every Mac updater fetching a 404.
 gh release create "$TAG" \
   --repo "$REPO" \
   --prerelease \
@@ -89,9 +93,12 @@ gh release create "$TAG" \
   "phantomchat_${VERSION}_amd64.deb" \
   "PhantomChat-${VERSION}-x64.dmg" \
   "PhantomChat-${VERSION}-arm64.dmg" \
+  "PhantomChat-${VERSION}-x64.zip" \
+  "PhantomChat-${VERSION}-arm64.zip" \
   "PhantomChat-${VERSION}-windows-x64.exe" \
   "PhantomChat-${VERSION}-windows-arm64.exe" \
   "latest.yml" \
+  "latest-mac.yml" \
   "latest-linux.yml" \
   "SHA256SUMS.txt" \
   || fail "gh release create failed for ${TAG}"

@@ -178,8 +178,8 @@ run counter, never by hand.
    `phantomchat-v1.0.40`). Same metadata-only contract.
 
 Required artifacts for promotion live in `scripts/promote-release.sh`
-(`REQUIRED_ARTIFACTS`). Both macOS architectures and both Windows architectures
-are required, as are the two update feeds; promotion fails closed until the
+(`REQUIRED_ARTIFACTS`). Both macOS architectures (DMG *and* update zip) and
+both Windows architectures are required, as are all three update feeds; promotion fails closed until the
 full matrix exists, and also if a feed does not declare the tag's version.
 
 ## In-app updates (issue #164)
@@ -214,14 +214,18 @@ builds until stable's counter overtakes. See `channelUpdaterFlags()` in
 | Windows (NSIS) | downloads and installs on quit |
 | Linux (AppImage) | downloads and replaces the AppImage |
 | Linux (.deb) | **notify only** — dpkg owns those files |
-| macOS | **notify only** — no zip target or `latest-mac.yml` yet |
+| macOS | downloads and installs on quit (Squirrel.Mac) |
+| macOS, run from the DMG | **notify only** — read-only volume |
 
 Auto-installing over a dpkg-managed file would desynchronise the package
-database, so .deb stays notify-only permanently. macOS is now signed and
-notarized, which is Squirrel.Mac's hard precondition, but auto-update also
-needs a `zip` target and `latest-mac.yml` carried through
-`publish-release.sh`; until that lands macOS stays notify-only and absent from
-the published feed. On the notify-only path the app queries the GitHub
+database, so .deb stays notify-only permanently. macOS went auto in #169: the
+app is Developer ID signed and notarized (Squirrel.Mac's hard precondition),
+the release carries a `zip` for each architecture, and `latest-mac.yml` is
+merged and published alongside the other feeds. The one macOS install that
+stays notify-only is an app still running out of its mounted DMG — that volume
+is read-only, so the bundle cannot be replaced in place (and the update would
+be ejected with the image); the UI tells the user to drag the app to
+Applications. On the notify-only path the app queries the GitHub
 Releases API against the same ring and offers to open the release page.
 `electron/updateCapability.ts` makes the decision; an unpackaged dev run is
 always notify-only.
@@ -231,18 +235,31 @@ always notify-only.
 `electron-builder.yml` carries a `publish:` provider. That is what makes
 electron-builder write:
 
-- `latest.yml` (Windows) and `latest-linux.yml` (Linux) next to the artifacts —
-  the feed clients read. They are produced during packaging, so `--publish
+- `latest.yml` (Windows), `latest-mac.yml` (macOS) and `latest-linux.yml`
+  (Linux) next to the artifacts — the feed clients read. They are produced during packaging, so `--publish
   never` in CI still yields them; CI *asserts* their presence on every PR
   rather than assuming it.
 - `app-update.yml` inside the packaged resources — how an installed app knows
   where to look.
 
-**Windows feeds must be merged.** `getUpdateInfoFileName()` in app-builder-lib
+**macOS ships a zip as well as a DMG.** The DMG is what a human downloads;
+the zip is what Squirrel.Mac installs. `MacUpdater` picks the payload with
+`findFile(files, 'zip', ...)` and throws `ERR_UPDATER_ZIP_FILE_NOT_FOUND` when
+the feed lists only a DMG, so a DMG-only release is a release nobody can
+update from. Both come out of one `electron-builder --mac zip dmg` run, from
+the same signed `.app`. After notarization the DMG is stapled, the `.app` is
+stapled, and the zip is **rebuilt** from the stapled app with `ditto -c -k
+--sequesterRsrc --keepParent` — notarization is per-cdhash so one submission
+covers both containers, but a ticket is stapled to a container, and the
+original zip was written before the ticket existed. Both rewrites change the
+bytes, so `latest-mac.yml` is re-stamped on the runner before it is uploaded.
+
+**Windows *and macOS* feeds must be merged.** `getUpdateInfoFileName()` in app-builder-lib
 appends an architecture suffix **only on Linux**, so both Windows runners emit
 a file literally called `latest.yml`, each describing only its own
-architecture. Uploaded as-is, the second clobbers the first and every Windows
-user is offered the wrong installer on their next update.
+architecture. macOS has the identical problem: both runners write
+`latest-mac.yml`. Uploaded as-is, the second clobbers the first and every user
+is offered the wrong architecture's build on their next update.
 `scripts/merge-update-feed.mjs` combines them into one feed listing both, which
 electron-updater resolves per-architecture by matching `process.arch` against
 the file name. x64 is passed first because it is the fallback entry when no
@@ -260,8 +277,9 @@ binding a downloaded update to us is the `sha512` in the feed, fetched over TLS
 from GitHub, which electron-updater verifies before installing — strictly
 weaker than code signing. macOS closes that gap at download time instead: the
 DMG is Developer ID signed and carries a stapled notarization ticket, so
-Gatekeeper checks the publisher before the app ever runs. (macOS auto-update
-is still notify-only, so the feed's `sha512` is not on the macOS path at all.)
+Gatekeeper checks the publisher before the app ever runs — and the app inside
+the update zip carries its own stapled ticket, so an auto-updated install
+validates offline too.
 
 Note that Authenticode rewrites the installer, so the feed has to be
 re-stamped against the signed bytes (`scripts/restamp-update-feed.mjs`); a feed
@@ -305,6 +323,8 @@ No private key or credential is ever committed to the repository.
 
 Each DMG is signed on its native runner with the Developer ID Application
 certificate, then notarized and stapled before it is uploaded as an artifact.
+The update zip built from the same `.app` gets the same treatment and is
+verified separately by `scripts/check-macos-update-zip.sh`.
 
 | Secret | Purpose |
 |---|---|

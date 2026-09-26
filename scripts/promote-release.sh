@@ -28,9 +28,12 @@ REQUIRED_ARTIFACTS=(
   "phantomchat_*_amd64.deb"
   "PhantomChat-*-x64.dmg"
   "PhantomChat-*-arm64.dmg"
+  "PhantomChat-*-x64.zip"
+  "PhantomChat-*-arm64.zip"
   "PhantomChat-*-windows-x64.exe"
   "PhantomChat-*-windows-arm64.exe"
   "latest.yml"
+  "latest-mac.yml"
   "latest-linux.yml"
   "SHA256SUMS.txt"
 )
@@ -96,7 +99,7 @@ actual:   ${ACTUAL_LIST//$'\n'/, }"
 # YAML scalar written by electron-builder, so grep is sufficient and avoids a
 # node/yq dependency in the promotion path.
 FEED_VERSION="${TAG#phantomchat-v}"
-for feed in latest.yml latest-linux.yml; do
+for feed in latest.yml latest-mac.yml latest-linux.yml; do
   grep -qx "version: ${FEED_VERSION}" "$feed" \
     || fail "${feed} does not declare version ${FEED_VERSION} (got: $(grep -m1 '^version:' "$feed" || echo 'no version line'))"
 done

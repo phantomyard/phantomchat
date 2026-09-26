@@ -229,8 +229,12 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - name: Package and Developer ID sign the macOS DMG
-        run: pnpm exec electron-builder --mac dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
+      - name: Package and Developer ID sign the macOS DMG and update zip
+        # Two targets from ONE signed .app: the DMG a human downloads, and the
+        # zip Squirrel.Mac installs (issue #169). Building them in a single
+        # invocation is what guarantees the zip and the DMG carry identical,
+        # identically-signed bytes.
+        run: pnpm exec electron-builder --mac zip dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.linux.outputs.version }}
@@ -241,21 +245,74 @@ jobs:
           CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
 
+      # The macOS update feed (issue #169). electron-builder writes
+      # latest-mac.yml next to the artifacts; assert it rather than assume it,
+      # exactly as the Linux job does — a silently missing feed is how 1.0.271
+      # shipped with a 404'ing updater.
+      - name: Assert the macOS update feed was generated
+        run: test -f "release/${VERSION}/latest-mac.yml" || { echo "::error::latest-mac.yml missing — electron-builder produced no update feed"; exit 1; }
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+
       # Signing alone does not clear Gatekeeper: since Catalina a quarantined
       # app must also carry an Apple notarization ticket. Notarize the DMG the
       # user actually downloads and staple the ticket to it, so first launch
       # works offline. Stapling is only possible after the DMG exists, which
       # is why this is a workflow step and not electron-builder's hook.
-      - name: Notarize and staple the DMG
+      #
+      # The .app is stapled too, and the zip is then REBUILT from the stapled
+      # app. Notarization is per-cdhash, so one submission covers the app
+      # inside the DMG and the identical app inside the zip — but a ticket is
+      # stapled to a container, and electron-builder zipped the app before the
+      # ticket existed. Without the re-zip, an auto-updated install would be
+      # signed and notarized yet carry no local ticket, so Gatekeeper would
+      # have to reach Apple online to validate it. `ditto -c -k
+      # --sequesterRsrc --keepParent` is what matters about the layout:
+      # PhantomChat.app at the archive root, resource forks and symlinks
+      # preserved, which is what Squirrel.Mac unpacks. (electron-builder 26
+      # itself shells out to 7za/zip; the archiver is not the contract, the
+      # layout is.)
+      - name: Notarize, staple, and re-zip the stapled app
         run: |
           set -euo pipefail
           DMG="release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg"
+          ZIP="release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.zip"
+          # electron-builder puts the x64 app under mac/ and the arm64 app
+          # under mac-arm64/; glob rather than hardcode either layout, and
+          # fail closed if that ever yields anything but one app.
+          shopt -s nullglob
+          APPS=( release/${VERSION}/mac*/PhantomChat.app )
+          shopt -u nullglob
+          [[ ${#APPS[@]} -eq 1 ]] || { echo "::error::expected exactly one packaged .app, found ${#APPS[@]}: ${APPS[*]-none}"; exit 1; }
+          APP="${APPS[0]}"
+          [[ -f "$ZIP" ]] || { echo "::error::${ZIP} missing — electron-builder produced no update zip"; exit 1; }
+
           xcrun notarytool submit "$DMG" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait --timeout 30m
           xcrun stapler staple "$DMG"
+
+          # The ticket the DMG submission produced covers every cdhash inside
+          # it, so stapling the .app itself normally just works. If Apple ever
+          # scopes a ticket to the submitted container only, fall back to
+          # notarizing the app on its own — notarytool takes a zip — rather
+          # than shipping an update payload with no ticket.
+          if ! xcrun stapler staple "$APP"; then
+            echo "stapling the .app from the DMG ticket failed; notarizing the zip directly"
+            xcrun notarytool submit "$ZIP" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait --timeout 30m
+            xcrun stapler staple "$APP"
+          fi
+          xcrun stapler validate "$APP"
+
+          rm -f "$ZIP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+          [[ -s "$ZIP" ]] || { echo "::error::re-zipping the stapled app produced no artifact"; exit 1; }
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.linux.outputs.version }}
@@ -272,11 +329,45 @@ jobs:
           # CI builds the same DMG unsigned and leaves this unset.
           EXPECT_SIGNED: '1'
 
+      # The zip is the artifact Squirrel.Mac actually installs, so it gets the
+      # same proof the DMG gets: the app inside must be Developer ID signed
+      # and carry a stapled notarization ticket. An unverified zip would fail
+      # on the user's machine at install time, long after CI went green.
+      - name: Verify the update zip
+        run: scripts/check-macos-update-zip.sh "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.zip" "$VERSION"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+          EXPECT_SIGNED: '1'
+
+      # Stapling rewrote the DMG and the zip was rebuilt from the stapled app,
+      # so every hash electron-builder wrote into latest-mac.yml describes
+      # bytes that no longer exist. electron-updater verifies the download
+      # against that sha512 and refuses to install on a mismatch — restamp
+      # against what is on disk (same reason as the Windows feed).
+      - name: Re-stamp the macOS feed against the stapled artifacts
+        run: node scripts/restamp-update-feed.mjs "release/${VERSION}/latest-mac.yml"
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+
+      # Both macOS runners emit a file literally called latest-mac.yml, each
+      # describing only its own architecture. Uploading both under one name
+      # means the second clobbers the first and every Mac is offered one
+      # architecture's build. Rename here, merge in the publish job.
+      - name: Stage the macOS update feed under an architecture-specific name
+        run: mv "release/${VERSION}/latest-mac.yml" "release/${VERSION}/latest-mac-${ARCH}.yml"
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.linux.outputs.version }}
+
       - name: Upload macOS artifact for publication
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-macos-${{ matrix.arch }}
-          path: release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.dmg
+          path: |
+            release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.dmg
+            release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.zip
+            release/${{ needs.linux.outputs.version }}/latest-mac-${{ matrix.arch }}.yml
           if-no-files-found: error
 
   windows:
@@ -633,6 +724,24 @@ jobs:
         env:
           VERSION: ${{ needs.linux.outputs.version }}
 
+      # One latest-mac.yml listing BOTH macOS builds (issue #169), same
+      # reasoning as the Windows merge above: electron-updater matches
+      # process.arch against the file name, so a single feed serves Intel and
+      # Apple Silicon. x64 is passed first deliberately — it is the entry the
+      # updater falls back to when it cannot match an architecture, and an
+      # Intel build at least runs under Rosetta, where the reverse cannot run
+      # at all. No re-stamp here: the macOS runners already stapled, re-zipped
+      # and re-stamped their own feed before uploading it, and nothing in this
+      # job touches the macOS bytes.
+      - name: Merge the macOS update feeds
+        run: |
+          cd "release/${VERSION}"
+          node ../../scripts/merge-update-feed.mjs latest-mac.yml latest-mac-x64.yml latest-mac-arm64.yml
+          # The per-arch inputs are build intermediates, not release assets.
+          rm latest-mac-x64.yml latest-mac-arm64.yml
+        env:
+          VERSION: ${{ needs.linux.outputs.version }}
+
       - name: Generate and verify checksums
         run: |
           cd "release/${VERSION}"
@@ -644,9 +753,12 @@ jobs:
             "phantomchat_${VERSION}_amd64.deb" \
             "PhantomChat-${VERSION}-x64.dmg" \
             "PhantomChat-${VERSION}-arm64.dmg" \
+            "PhantomChat-${VERSION}-x64.zip" \
+            "PhantomChat-${VERSION}-arm64.zip" \
             "PhantomChat-${VERSION}-windows-x64.exe" \
             "PhantomChat-${VERSION}-windows-arm64.exe" \
             "latest.yml" \
+            "latest-mac.yml" \
             "latest-linux.yml" > SHA256SUMS.txt
           sha256sum --check --strict SHA256SUMS.txt
           cat SHA256SUMS.txt
@@ -688,12 +800,15 @@ jobs:
           macOS (Developer ID signed, notarized and stapled):
           - PhantomChat-${VERSION}-arm64.dmg (Apple Silicon)
           - PhantomChat-${VERSION}-x64.dmg (Intel)
+          The matching .zip files are the in-app updater's payload, not a
+          download: install from the DMG.
           Windows (Authenticode signed as "Andrew Hodges"):
           - PhantomChat-${VERSION}-windows-arm64.exe (ARM64)
           - PhantomChat-${VERSION}-windows-x64.exe (x64)
 
           Update feed (consumed by the in-app updater, not a download):
           - latest.yml (Windows)
+          - latest-mac.yml (macOS, with PhantomChat-${VERSION}-*.zip)
           - latest-linux.yml (Linux AppImage)
 
           Verify with: sha256sum -c SHA256SUMS.txt

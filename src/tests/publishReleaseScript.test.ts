@@ -26,9 +26,12 @@ const ASSETS = [
   `phantomchat_${VERSION}_amd64.deb`,
   `PhantomChat-${VERSION}-x64.dmg`,
   `PhantomChat-${VERSION}-arm64.dmg`,
+  `PhantomChat-${VERSION}-x64.zip`,
+  `PhantomChat-${VERSION}-arm64.zip`,
   `PhantomChat-${VERSION}-windows-x64.exe`,
   `PhantomChat-${VERSION}-windows-arm64.exe`,
   'latest.yml',
+  'latest-mac.yml',
   'latest-linux.yml',
   'SHA256SUMS.txt'
 ];
@@ -213,7 +216,28 @@ describe('publish-release.sh <-> promote-release.sh asset-list drift guard', () 
   it('uploads the update feeds (regression: 1.0.271 shipped without them)', () => {
     const assets = publishAssets();
     expect(assets).toContain('latest.yml');
+    expect(assets).toContain('latest-mac.yml');
     expect(assets).toContain('latest-linux.yml');
+  });
+
+  /*
+   * Regression for #169. 1.0.274 built and published both macOS DMGs but no
+   * latest-mac.yml and no zips, so every Mac install was silently frozen on
+   * whatever version it had. A feed on its own would not have fixed it
+   * either: MacUpdater picks the payload with findFile(files, 'zip', ...) and
+   * throws ERR_UPDATER_ZIP_FILE_NOT_FOUND when the release carries only a
+   * DMG. Both halves are asserted here because shipping one without the other
+   * publishes an updater that fails on the user's machine, not in CI.
+   */
+  it('uploads the macOS feed AND the zips it points at', () => {
+    const assets = publishAssets();
+    expect(assets).toContain('latest-mac.yml');
+    for(const arch of ['x64', 'arm64']) {
+      expect(
+        assets,
+        `latest-mac.yml lists PhantomChat-<version>-${arch}.zip; publishing the feed without the zip 404s every macOS update`
+      ).toContain(`PhantomChat-${VERSION}-${arch}.zip`);
+    }
   });
 });
 
