@@ -145,6 +145,7 @@ jobs:
       - name: Verify the update zip
         run: scripts/check-macos-update-zip.sh "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.zip" "$VERSION"
         env:
+          ARCH: ${{ matrix.arch }}
           VERSION: 0.0.0-ci.${{ github.run_number }}
 
   build-windows:
