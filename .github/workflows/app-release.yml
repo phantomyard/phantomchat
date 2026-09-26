@@ -267,8 +267,11 @@ jobs:
       # ticket existed. Without the re-zip, an auto-updated install would be
       # signed and notarized yet carry no local ticket, so Gatekeeper would
       # have to reach Apple online to validate it. `ditto -c -k
-      # --sequesterRsrc --keepParent` is the exact command electron-builder
-      # uses, so the rebuilt zip has the same layout the updater expects.
+      # --sequesterRsrc --keepParent` is what matters about the layout:
+      # PhantomChat.app at the archive root, resource forks and symlinks
+      # preserved, which is what Squirrel.Mac unpacks. (electron-builder 26
+      # itself shells out to 7za/zip; the archiver is not the contract, the
+      # layout is.)
       - name: Notarize, staple, and re-zip the stapled app
         run: |
           set -euo pipefail

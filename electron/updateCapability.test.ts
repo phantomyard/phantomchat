@@ -42,6 +42,18 @@ describe('resolveUpdateCapability', () => {
     })).toBe('notify');
   });
 
+  it('stays notify-only on macOS under Gatekeeper App Translocation', () => {
+    // The COMMON shape of "launched from the DMG": a quarantined app run from
+    // outside /Applications is copied to a randomized read-only mount and
+    // executed from there, so there is no /Volumes prefix to match on. A
+    // guard that only knows /Volumes would hand Squirrel.Mac exactly the
+    // read-only install it exists to refuse.
+    expect(resolveUpdateCapability({
+      ...packaged('darwin'),
+      appPath: '/private/var/folders/qz/8m1k3d1x0_s7/T/AppTranslocation/3F2A1C8E-0B44-4E77-9A31-1D2C3B4A5E6F/d/PhantomChat.app/Contents/MacOS/PhantomChat'
+    })).toBe('notify');
+  });
+
   it('never auto-updates an unpackaged dev run, on any platform', () => {
     for(const platform of ['win32', 'linux', 'darwin'] as NodeJS.Platform[]) {
       expect(resolveUpdateCapability({platform, env: {APPIMAGE: '/x'}, isPackaged: false})).toBe('notify');
@@ -58,6 +70,10 @@ describe('describeNotifyReason', () => {
     expect(describeNotifyReason({
       ...packaged('darwin'),
       appPath: '/Volumes/PhantomChat 1.0.274/PhantomChat.app/Contents/MacOS/PhantomChat'
+    })).toMatch(/applications folder/i);
+    expect(describeNotifyReason({
+      ...packaged('darwin'),
+      appPath: '/private/var/folders/qz/8m1k3d1x0_s7/T/AppTranslocation/3F2A1C8E/d/PhantomChat.app/Contents/MacOS/PhantomChat'
     })).toMatch(/applications folder/i);
     expect(describeNotifyReason(packaged('linux', {}))).toMatch(/package manager/i);
     expect(describeNotifyReason({platform: 'linux', env: {}, isPackaged: false})).toMatch(/development/i);
