@@ -28,7 +28,8 @@ compression: maximum
 # Update feed (issue #164). This block does two things, and BOTH are
 # required for in-app updates:
 #   1. electron-builder emits update metadata next to the artifacts
-#      (latest.yml on Windows, latest-linux.yml on Linux). Those files are
+#      (latest.yml on Windows, latest-mac.yml on macOS, latest-linux.yml on
+#      Linux). Those files are
 #      the feed electron-updater reads; without them there is nothing to
 #      check against. They are produced during packaging, so `--publish never`
 #      in CI still yields them — CI asserts their presence rather than
@@ -40,10 +41,10 @@ compression: maximum
 # (allowPrerelease, see electron/updater.ts), so one set of artifacts serves
 # both rings and promotion stays a metadata-only flip.
 #
-# macOS is still deliberately absent from the feed. The app is now signed and
-# notarized, so Squirrel.Mac's precondition is met, but auto-update also needs
-# a zip target and latest-mac.yml wired through publish-release.sh; until that
-# lands macOS stays notify-only.
+# macOS is in the feed now (issue #169). Squirrel.Mac's precondition — a
+# Developer ID signed, notarized app — was met by #168, and the remaining two
+# pieces land here: the zip target below, and latest-mac.yml wired through
+# publish-release.sh / promote-release.sh.
 publish:
   provider: github
   owner: phantomyard
@@ -114,7 +115,17 @@ mac:
   # stapler), not electron-builder's built-in hook: the ticket has to be
   # stapled to the artifact users actually download.
   notarize: false
+  # BOTH targets are load-bearing and neither is optional:
+  #   dmg — what a human downloads and drags to /Applications.
+  #   zip — what Squirrel.Mac installs. MacUpdater picks the update payload
+  #         with findFile(files, 'zip', ...) and throws
+  #         ERR_UPDATER_ZIP_FILE_NOT_FOUND when the feed carries only a DMG,
+  #         so a dmg-only release is a feed that cannot update anyone.
+  # zip is listed first so it is files[0] in latest-mac.yml, which is what the
+  # legacy top-level path/sha512 fields describe.
   target:
+    - target: zip
+      arch: [x64, arm64]
     - target: dmg
       arch: [x64, arm64]
   artifactName: ${productName}-${version}-${arch}.${ext}

@@ -5,7 +5,8 @@
  * (see updateCapability.ts):
  *
  *   'auto'   — electron-updater against the GitHub feed electron-builder
- *              publishes (latest.yml / latest-linux.yml). Downloads in the
+ *              publishes (latest.yml / latest-mac.yml / latest-linux.yml).
+ *              Downloads in the
  *              background and installs on quit.
  *   'notify' — a plain Releases API query against the same ring; the user is
  *              told, and clicking through opens the release page.
@@ -13,10 +14,10 @@
  * The ring preference lives in the main process (updateSettings.ts) because
  * the first check runs before any renderer exists.
  *
- * PROVENANCE: these builds are unsigned. The only thing binding a downloaded
- * update to us is the sha512 in the feed, fetched over TLS from GitHub, and
- * electron-updater verifies it before installing. That is strictly weaker
- * than code signing and is the gap the Axelera Developer ID closes.
+ * PROVENANCE: Windows installers are Authenticode signed and the macOS app is
+ * Developer ID signed, notarized and stapled (#168). Linux is unsigned, so
+ * there the only thing binding a downloaded update to us is the sha512 in the
+ * feed, fetched over TLS from GitHub and verified before install.
  */
 import {app, ipcMain, shell, net, type BrowserWindow} from 'electron';
 import type {AppUpdater} from 'electron-updater';
@@ -84,7 +85,9 @@ let checkInFlight = false;
 let state: UpdateState;
 
 function capabilityInput() {
-  return {platform: process.platform, env: process.env, isPackaged: app.isPackaged};
+  // 'exe' is the real executable path, so on macOS it is inside the .app —
+  // which is what tells us whether we are running from a mounted DMG.
+  return {platform: process.platform, env: process.env, isPackaged: app.isPackaged, appPath: app.getPath('exe')};
 }
 
 function publish(patch: Partial<UpdateState>): void {

@@ -19,6 +19,7 @@ type BuilderConfig = {
     entitlementsInherit?: string;
     hardenedRuntime?: boolean;
     identity?: string;
+    target?: {target?: string; arch?: string[]}[];
   };
 };
 
@@ -63,6 +64,22 @@ describe('electron-builder.yml — referenced files exist', () => {
 
   test('hardenedRuntime stays enabled — notarization is refused without it', () => {
     expect(config.mac?.hardenedRuntime).toBe(true);
+  });
+
+  test('mac ships a zip target for both architectures — Squirrel.Mac installs the zip, not the DMG', () => {
+    // MacUpdater resolves the update payload with findFile(files, 'zip', ...)
+    // and throws ERR_UPDATER_ZIP_FILE_NOT_FOUND when latest-mac.yml lists only
+    // a DMG. Dropping the zip target would leave the release looking complete
+    // while every macOS auto-update fails on the user's machine (#169).
+    const targets = config.mac?.target ?? [];
+    const zip = targets.find(t => t.target === 'zip');
+    expect(zip, 'electron-builder.yml mac.target has no zip entry').toBeTruthy();
+    expect(zip?.arch?.slice().sort()).toEqual(['arm64', 'x64']);
+    const dmg = targets.find(t => t.target === 'dmg');
+    expect(dmg?.arch?.slice().sort()).toEqual(['arm64', 'x64']);
+    // zip first: it becomes files[0] in latest-mac.yml, which is what the
+    // legacy top-level path/sha512 fields describe.
+    expect(targets[0]?.target).toBe('zip');
   });
 
   test('mac.identity omits the "Developer ID Application:" prefix', () => {

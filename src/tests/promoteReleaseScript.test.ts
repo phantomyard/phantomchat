@@ -61,9 +61,12 @@ const ALL_ASSETS = [
   'phantomchat_1.0.42_amd64.deb',
   'PhantomChat-1.0.42-x64.dmg',
   'PhantomChat-1.0.42-arm64.dmg',
+  'PhantomChat-1.0.42-x64.zip',
+  'PhantomChat-1.0.42-arm64.zip',
   'PhantomChat-1.0.42-windows-x64.exe',
   'PhantomChat-1.0.42-windows-arm64.exe',
   'latest.yml',
+  'latest-mac.yml',
   'latest-linux.yml'
 ].join(' ');
 
@@ -117,7 +120,7 @@ describe('promote-release.sh', () => {
 
   it('fails closed when the Windows arm64 installer is missing', () => {
     const res = runPromote(
-      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb PhantomChat-1.0.42-x64.dmg PhantomChat-1.0.42-arm64.dmg PhantomChat-1.0.42-windows-x64.exe'
+      ALL_ASSETS.replace(' PhantomChat-1.0.42-windows-arm64.exe', '')
     );
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('required artifact missing');
@@ -138,6 +141,24 @@ describe('promote-release.sh', () => {
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('required artifact missing');
     expect(res.stderr).toContain('latest-linux.yml');
+  });
+
+  it('fails closed when the macOS update feed is missing (issue #169)', () => {
+    // 1.0.274 shipped exactly this way: both DMGs present, no latest-mac.yml,
+    // so every Mac install silently stopped seeing updates.
+    const res = runPromote(ALL_ASSETS.replace(' latest-mac.yml', ''));
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('required artifact missing');
+    expect(res.stderr).toContain('latest-mac.yml');
+  });
+
+  it('fails closed when a macOS update zip is missing (issue #169)', () => {
+    // The zip, not the DMG, is what Squirrel.Mac installs — a release with
+    // the feed but without the zip 404s mid-update.
+    const res = runPromote(ALL_ASSETS.replace(' PhantomChat-1.0.42-arm64.zip', ''));
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('required artifact missing');
+    expect(res.stderr).toContain('arm64.zip');
   });
 
   it('fails closed when a feed describes a DIFFERENT release than the tag', () => {

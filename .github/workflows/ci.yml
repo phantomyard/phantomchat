@@ -123,16 +123,28 @@ jobs:
       - run: pnpm run typecheck:electron
       - run: pnpm run build
       - run: node electron/build.mjs
-      - name: Package unsigned DMG
-        run: pnpm exec electron-builder --mac dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
+      # Same two targets the release builds (issue #169), so a packaging
+      # change that breaks the update zip or the feed fails on the PR rather
+      # than on a user's Mac. Signing is not exercised here — electron-builder
+      # skips it on pull requests anyway.
+      - name: Package unsigned DMG and update zip
+        run: pnpm exec electron-builder --mac zip dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: 0.0.0-ci.${{ github.run_number }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Assert the macOS update feed was generated
+        run: test -f "release/${VERSION}/latest-mac.yml" || { echo "::error::latest-mac.yml missing — electron-builder produced no update feed"; exit 1; }
+        env:
+          VERSION: 0.0.0-ci.${{ github.run_number }}
       - name: Mount and verify packaged app
         run: scripts/check-macos-package.sh "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg" "$ARCH" "$VERSION"
         env:
           ARCH: ${{ matrix.arch }}
+          VERSION: 0.0.0-ci.${{ github.run_number }}
+      - name: Verify the update zip
+        run: scripts/check-macos-update-zip.sh "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.zip" "$VERSION"
+        env:
           VERSION: 0.0.0-ci.${{ github.run_number }}
 
   build-windows:
