@@ -177,7 +177,7 @@ solid-js/store  → src/vendor/solid/store
 Full reference: [`docs/RELEASE.md`](docs/RELEASE.md). Day-to-day rules:
 
 - **CI** (`.github/workflows/ci.yml`) runs on every PR to `main`: `typecheck` + `test`, both required status checks.
-- **Deploy** (`.github/workflows/deploy.yml`) runs on every push to `main` (after a PR merges): build → publish `dist/` to GitHub Pages → tag `v1.0.<build_number>`. Served at `chat.phantomyard.ai`.
+- **Deploy** (`.github/workflows/deploy.yml`) runs on every push to `main` (after a PR merges): build → publish `dist/` to GitHub Pages. Served at `chat.phantomyard.ai`. It creates **no git tag** and has no `contents: write`: a bare `v1.0.<run_number>` tag has no release behind it but still tops the `releases.atom` feed, which breaks the desktop Preview update channel (404 on `latest-mac.yml`). Only `app-release.yml` may tag, and only as `phantomchat-v*` — enforced by `src/tests/releaseTagNamespace.test.ts` and `scripts/publish-release.sh`. See `docs/RELEASE.md` → "No bare tags".
 - Versioning is **`1.0.<build_number>`** — CI sets `APP_VERSION=1.0.${github.run_number}`. There is no release-please, no CHANGELOG-gated release, no manual `pnpm version`. Don't hand-edit `package.json` version to ship.
 - No self-update / signed-manifest / IPFS / mirror system — updates ship via a normal Pages redeploy; the service worker picks up the new bundle and the sidebar "Update" button (driven by the `/version` poll) prompts a reload.
 
