@@ -16,18 +16,31 @@ type Calls = {
   pinned: Array<{pubkey: string; updatedAt: number}>;
   removed: string[];
   tombstoned: Array<{conversationId: string; deletedAt: number}>;
+  deletedRows: Array<{pubkey: string; deletedAt: number}>;
+  undeleted: string[];
 };
 
 function makeDeps(
   mappings: VirtualPeerMapping[],
   tombstones: Array<{conversationId: string; deletedAt: number}>,
-  own: string | null = OWN
+  own: string | null = OWN,
+  deletedRows: Array<{pubkey: string; deletedAt: number}> = []
 ): {deps: ContactsAdapterDeps; calls: Calls} {
-  const calls: Calls = {added: [], renamed: [], pinned: [], removed: [], tombstoned: []};
+  const calls: Calls = {added: [], renamed: [], pinned: [], removed: [], tombstoned: [], deletedRows: [], undeleted: []};
+  const durable = new Map(deletedRows.map((r) => [r.pubkey, r.deletedAt]));
   const deps: ContactsAdapterDeps = {
     getOwnPubkey: () => own,
     listMappings: async() => mappings,
     listTombstones: async() => tombstones,
+    listDeletedPeers: async() => [...durable].map(([pubkey, deletedAt]) => ({pubkey, deletedAt})),
+    recordDeletedPeer: async(pubkey, deletedAt) => {
+      durable.set(pubkey, Math.max(durable.get(pubkey) ?? 0, deletedAt));
+      calls.deletedRows.push({pubkey, deletedAt});
+    },
+    clearDeletedPeer: async(pubkey) => {
+      durable.delete(pubkey);
+      calls.undeleted.push(pubkey);
+    },
     conversationId: convId,
     addContact: async(pubkey, displayName) => { calls.added.push({pubkey, displayName}); },
     setDisplayName: async(pubkey, displayName) => { calls.renamed.push({pubkey, displayName}); },
@@ -83,6 +96,42 @@ describe('contacts adapter read()', () => {
     const {deps} = makeDeps([], [{conversationId: convId(OWN, A), deletedAt: 4242}], null);
     const map = await createContactsAdapter(deps).read();
     expect(Object.keys(map)).toHaveLength(0);
+  });
+
+  it('exports a DURABLE deletion row with no own pubkey and no watermark (#173)', async() => {
+    // The old read() silently published no deletion at all when the own pubkey
+    // wasn't wired — a fresh device then re-added the deleted peer everywhere.
+    const {deps} = makeDeps([], [], null, [{pubkey: A, deletedAt: 4242}]);
+    const map = await createContactsAdapter(deps).read();
+    expect(map[A].deleted).toBe(true);
+    expect(map[A].updatedAt).toBe(4242);
+  });
+
+  it('unions durable rows with derived watermarks — latest stamp per peer wins', async() => {
+    const {deps} = makeDeps(
+      [],
+      [{conversationId: convId(OWN, A), deletedAt: 9000}],
+      OWN,
+      [{pubkey: A, deletedAt: 4000}]
+    );
+    const map = await createContactsAdapter(deps).read();
+    expect(map[A].updatedAt).toBe(9000); // watermark is newer
+  });
+
+  it('a delete NEWER than a live mapping wins read() (resurrected mapping cannot mute it)', async() => {
+    // A stale relay blob once re-created the mapping (fresh addedAt); with the
+    // delete older than that mapping, read() used to export the contact as
+    // live — muting the delete forever. A durable delete must beat an OLDER
+    // live stamp, and a live stamp newer than the delete means a deliberate
+    // re-add won and the delete is history.
+    const {deps} = makeDeps([mapping(A, 5_000_000, 'Alice')], [], OWN, [{pubkey: A, deletedAt: 9000}]);
+    const map = await createContactsAdapter(deps).read();
+    expect(map[A].deleted).toBe(true);
+    expect(map[A].updatedAt).toBe(9000);
+
+    const {deps: readdDeps} = makeDeps([mapping(A, 12_000_000, 'Alice')], [], OWN, [{pubkey: A, deletedAt: 9000}]);
+    const map2 = await createContactsAdapter(readdDeps).read();
+    expect(map2[A].deleted).toBeFalsy(); // deliberate re-add after the delete
   });
 
   it('live and tombstone timestamps are comparable on the same axis (the unit bug guard)', async() => {
@@ -144,13 +193,38 @@ describe('contacts adapter apply()', () => {
     await createContactsAdapter(deps).apply(merged, before);
     expect(calls.removed).toEqual([A]);
     expect(calls.tombstoned).toEqual([{conversationId: convId(OWN, A), deletedAt: 6000}]);
+    expect(calls.deletedRows).toEqual([{pubkey: A, deletedAt: 6000}]);
   });
 
-  it('does not re-delete a contact that was already gone', async() => {
+  it('records a delete learned from another device durably, even with nothing live locally (#173)', async() => {
+    // A device with neither a live entry nor a watermark must still be able
+    // to re-publish the delete later — otherwise it contributes only an
+    // ABSENCE, and a stale live blob elsewhere revives the contact.
     const {deps, calls} = adapter();
     const merged: SyncMap<ContactSyncData> = {[A]: {id: A, updatedAt: 6000, deleted: true}};
     await createContactsAdapter(deps).apply(merged, empty);
     expect(calls.removed).toHaveLength(0);
     expect(calls.tombstoned).toHaveLength(0);
+    expect(calls.deletedRows).toEqual([{pubkey: A, deletedAt: 6000}]);
+  });
+
+  it('a live re-add that won the LWW compare clears the durable row', async() => {
+    const {deps, calls} = adapter();
+    const before: SyncMap<ContactSyncData> = {[A]: {id: A, updatedAt: 5000, deleted: true}};
+    const merged: SyncMap<ContactSyncData> = {
+      [A]: {id: A, updatedAt: 6000, data: {pubkey: A, displayName: 'Alice', addedAt: 6_000_000}}
+    };
+    await createContactsAdapter(deps).apply(merged, before);
+    expect(calls.undeleted).toEqual([A]);
+    expect(calls.added).toEqual([{pubkey: A, displayName: 'Alice'}]);
+  });
+
+  it('does not clear the durable row for an unchanged live contact', async() => {
+    const {deps, calls} = adapter();
+    const same: SyncMap<ContactSyncData> = {
+      [A]: {id: A, updatedAt: 5000, data: {pubkey: A, displayName: 'Alice', addedAt: 5_000_000}}
+    };
+    await createContactsAdapter(deps).apply(same, same);
+    expect(calls.undeleted).toHaveLength(0);
   });
 });
