@@ -59,11 +59,13 @@ export function normalizeUpdateSettings(raw: unknown): UpdateSettings {
 /**
  * The two electron-updater flags a ring maps to.
  *
- * allowDowngrade is the non-obvious half. Leaving preview for stable is a
- * DOWNGRADE in version terms — an installed 1.0.50 preview against a 1.0.45
- * stable — and electron-updater refuses to move backwards by default. Without
- * it, choosing "Stable" looks like it worked and then silently keeps serving
- * preview builds until stable's counter overtakes, which can be weeks.
+ * allowDowngrade is false for BOTH rings. Leaving preview for stable while
+ * running a newer preview build must never walk the app backwards: a
+ * downgrade re-opens IndexedDB/renderer migrations against an older binary
+ * and trips the multi-tab version guards. Instead the install sits on the
+ * higher version it already has ("version stick") and the stable feed only
+ * wins once it overtakes it. A genuine rollback is a reinstall, not an
+ * in-app toggle.
  */
 export interface ChannelUpdaterFlags {
   allowPrerelease: boolean;
@@ -73,7 +75,7 @@ export interface ChannelUpdaterFlags {
 export function channelUpdaterFlags(channel: UpdateChannel): ChannelUpdaterFlags {
   return {
     allowPrerelease: channel === 'preview',
-    allowDowngrade: channel === 'stable'
+    allowDowngrade: false
   };
 }
 

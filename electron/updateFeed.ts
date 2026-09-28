@@ -166,7 +166,7 @@ export async function collectReleasesForChannel(
  * Strictly-newer only. Equal is a no-op, and OLDER is too: on the notify path
  * we cannot install anything, so nagging a preview user to "update" to a
  * lower stable version they cannot actually apply is pure noise. (The auto
- * path handles that case properly via allowDowngrade — see updater.ts.)
+ * path never downgrades either — allowDowngrade is false for both rings.)
  */
 export function isNotifiableUpdate(current: string, candidate: ResolvedRelease | null): boolean {
   if(candidate === null) return false;

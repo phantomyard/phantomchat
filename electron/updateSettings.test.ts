@@ -152,14 +152,12 @@ describe('channelUpdaterFlags', () => {
     expect(channelUpdaterFlags('stable').allowPrerelease).toBe(false);
   });
 
-  it('stable allows a downgrade, so leaving preview actually lands on stable bytes', () => {
-    // Delete allowDowngrade and this is the test that fails: a user on
-    // preview 1.0.50 choosing Stable (1.0.45) would otherwise be told they
-    // are up to date and keep receiving preview builds.
-    expect(channelUpdaterFlags('stable').allowDowngrade).toBe(true);
-  });
-
-  it('preview does NOT allow a downgrade — nothing should walk a preview user backwards', () => {
+  it('never allows a downgrade, on either ring — the higher version sticks', () => {
+    // A user on preview 1.0.50 who picks Stable (1.0.45) must stay on 1.0.50:
+    // walking the app backwards re-opens migrations and trips the multi-tab
+    // version guards. Stable only wins once its counter overtakes the
+    // installed version. Delete allowDowngrade and this is the test that fails.
+    expect(channelUpdaterFlags('stable').allowDowngrade).toBe(false);
     expect(channelUpdaterFlags('preview').allowDowngrade).toBe(false);
   });
 });
