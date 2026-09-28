@@ -16,12 +16,18 @@
  * tombstone (~1.7e9) and a delete could never beat an add. So both are
  * normalised to seconds here, and restored back to millis on apply.
  *
- * TOMBSTONES ARE DERIVED, NOT LOGGED.
- * We do not keep a parallel "deleted contacts" list. A contact delete already
- * (a) removes the mapping and (b) writes a per-conversation deletion watermark
- * (message-store tombstone, for delete-boomerang suppression). So a deleted
- * contact is exactly: a conversation tombstone whose peer has no live mapping.
- * That is reconstructed in `read()`.
+ * TOMBSTONES ARE LOGGED, AND ALSO DERIVED (#173).
+ * A contact delete writes a DURABLE `{pubkey, deletedAt}` row
+ * (virtual-peers-db `deleted` store) on top of removing the mapping and writing
+ * the per-conversation deletion watermark. The durable row is the source of
+ * truth; the watermark is still read so deletes made by older builds keep being
+ * honoured.
+ *
+ * Deriving alone was the resurrection bug: `apply()` materializes via
+ * addP2PContact, which cleared the watermark — after which the device exported
+ * neither a live entry nor a tombstone, and in a union merge ABSENCE SAYS
+ * NOTHING, so one stale relay blob re-added the contact everywhere, forever. A
+ * delete has to be a positive fact that can always be re-published.
  */
 import type {LocalAdapter} from './crdt-sync';
 import type {SyncMap, SyncEntry} from './sync-crdt';
@@ -41,6 +47,14 @@ export type ContactsAdapterDeps = {
   getOwnPubkey: () => string | null | undefined;
   listMappings: () => Promise<VirtualPeerMapping[]>;
   listTombstones: () => Promise<Array<{conversationId: string; deletedAt: number}>>;
+  /** Durable deletion log (unix SECONDS). Independent of the own pubkey. */
+  listDeletedPeers: () => Promise<Array<{pubkey: string; deletedAt: number}>>;
+  /** Persist a delete learned from another device, so THIS device can
+   * re-publish it later even if its watermark is lost. */
+  recordDeletedPeer: (pubkey: string, deletedAtSeconds: number) => Promise<void>;
+  /** Drop the durable delete — only when a remote LIVE entry legitimately wins
+   * the LWW compare (another device deliberately re-added the contact). */
+  clearDeletedPeer: (pubkey: string) => Promise<void>;
   conversationId: (a: string, b: string) => string;
   /** Full materialize path (addP2PContact) — Worker inject + mirrors + dialog. */
   addContact: (pubkey: string, displayName?: string) => Promise<void>;
@@ -86,18 +100,34 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
       };
     }
 
+    // Deletions: the durable log first (no own-pubkey needed, survives a wiped
+    // watermark), then the legacy derived watermarks. Latest stamp per peer wins.
+    const deletes = new Map<string, number>();
+    for(const d of await deps.listDeletedPeers()) {
+      if(!HEX64.test(d.pubkey) || !(d.deletedAt > 0)) continue;
+      deletes.set(d.pubkey, Math.max(deletes.get(d.pubkey) ?? 0, d.deletedAt));
+    }
+
     const own = deps.getOwnPubkey();
     if(own) {
       const tombstones = await deps.listTombstones();
       for(const t of tombstones) {
         const peer = peerFromConversationId(t.conversationId, own);
         if(!peer) continue;
-        // A tombstone only becomes a CRDT delete when the contact is actually
-        // gone. If a live mapping exists (e.g. cleared history but kept the
-        // contact, or a re-add after delete) the live entry governs.
+        // A watermark is only evidence of a CONTACT delete when the mapping is
+        // gone — with a live mapping it may just be "cleared history".
         if(live.has(peer)) continue;
-        map[peer] = {id: peer, updatedAt: t.deletedAt, deleted: true};
+        deletes.set(peer, Math.max(deletes.get(peer) ?? 0, t.deletedAt));
       }
+    }
+
+    for(const [peer, deletedAt] of deletes) {
+      const liveEntry = map[peer];
+      // A live mapping only outranks the delete when it is NEWER than it — a
+      // deliberate re-add. A mapping resurrected by some automatic path (stale
+      // sync blob, history backfill) is older, and must not mute the delete.
+      if(liveEntry && liveEntry.updatedAt >= deletedAt) continue;
+      map[peer] = {id: peer, updatedAt: deletedAt, deleted: true};
     }
 
     return map;
@@ -111,6 +141,11 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
 
       try {
         if(entry.deleted) {
+          // Persist the delete durably even when this device had nothing live:
+          // a delete learned from another device must be re-publishable from
+          // here too, otherwise this device contributes only an ABSENCE and a
+          // stale blob elsewhere can revive the contact again (#173).
+          await deps.recordDeletedPeer(id, entry.updatedAt);
           if(wasLive) {
             await deps.removeContact(id);
             const own = deps.getOwnPubkey();
@@ -121,6 +156,11 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
 
         // entry is live
         if(!wasLive) {
+          // The merge already compared this live entry against our delete (it is
+          // in `before`), so reaching here means a deliberate re-add won on
+          // timestamp. Drop the durable row so the guards let it through —
+          // nothing else is allowed to clear it.
+          if(prev?.deleted) await deps.clearDeletedPeer(id);
           // New or resurrected contact — full materialize, then pin timestamp.
           await deps.addContact(id, entry.data?.displayName);
           await deps.setUpdatedAt(id, entry.updatedAt * 1000);

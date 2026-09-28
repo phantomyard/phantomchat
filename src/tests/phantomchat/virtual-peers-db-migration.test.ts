@@ -94,4 +94,48 @@ describe('virtual-peers-db v1→v2 migration', () => {
 
     expect(second).toBeGreaterThan(first);
   });
+
+  // v3 (#173): the durable deletion log is created on every upgrade path
+  // (fresh DB included), independently of the mappings store.
+  test('v1→v3 upgrade creates the deleted store and it round-trips', async() => {
+    await seedV1([{pubkey: 'a'.repeat(64), peerId: 111, displayName: 'Alice', addedAt: 1000}]);
+
+    const {recordDeletedPeer, getDeletedPeer, listDeletedPeers, clearDeletedPeer} =
+      await import('@lib/phantomchat/virtual-peers-db');
+
+    // Nothing recorded yet.
+    expect(await getDeletedPeer('a'.repeat(64))).toBe(0);
+    expect(await listDeletedPeers()).toEqual([]);
+
+    // Record, read back, monotonic re-record is a no-op, clear.
+    await recordDeletedPeer('a'.repeat(64), 4242);
+    expect(await getDeletedPeer('a'.repeat(64))).toBe(4242);
+    await recordDeletedPeer('a'.repeat(64), 1000); // older stamp — must NOT win
+    expect(await getDeletedPeer('a'.repeat(64))).toBe(4242);
+    await recordDeletedPeer('a'.repeat(64), 5000);  // newer stamp — moves forward
+    expect(await getDeletedPeer('a'.repeat(64))).toBe(5000);
+    expect(await listDeletedPeers()).toEqual([{pubkey: 'a'.repeat(64), deletedAt: 5000}]);
+    await clearDeletedPeer('a'.repeat(64));
+    expect(await getDeletedPeer('a'.repeat(64))).toBe(0);
+
+    // The mappings store survived the same upgrade untouched.
+    const {getMapping} = await import('@lib/phantomchat/virtual-peers-db');
+    expect((await getMapping('a'.repeat(64)))!.displayName).toBe('Alice');
+  });
+
+  test('storeMapping suppresses re-creation for a durably deleted peer — even allowTombstoned (#173)', async() => {
+    const {recordDeletedPeer, storeMapping, getMapping, clearDeletedPeer} =
+      await import('@lib/phantomchat/virtual-peers-db');
+    const pk = 'f'.repeat(64);
+
+    await recordDeletedPeer(pk, 4242);
+    expect(await storeMapping(pk, 1, 'Ghost')).toBe(false);
+    expect(await storeMapping(pk, 1, 'Ghost', undefined, {allowTombstoned: true})).toBe(false);
+    expect(await getMapping(pk)).toBeUndefined();
+
+    // Deliberate re-add (addP2PContact clears the row first) writes again.
+    await clearDeletedPeer(pk);
+    expect(await storeMapping(pk, 1, 'Ghost')).toBe(true);
+    expect((await getMapping(pk))!.displayName).toBe('Ghost');
+  });
 });

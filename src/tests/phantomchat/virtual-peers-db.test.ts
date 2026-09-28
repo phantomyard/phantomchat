@@ -496,7 +496,7 @@ describe('VirtualPeersDB', () => {
 
   describe('Schema migration', () => {
     test('schema version is set correctly', () => {
-      expect(SCHEMA_VERSION).toBe(2);
+      expect(SCHEMA_VERSION).toBe(3);
     });
 
     test('creates virtual-peers object store on first open', async() => {
@@ -583,8 +583,8 @@ describe('VirtualPeersDB Constants', () => {
     expect(VIRTUAL_PEERS_STORE).toBe('mappings');
   });
 
-  test('SCHEMA_VERSION is 2', () => {
-    expect(SCHEMA_VERSION).toBe(2);
+  test('SCHEMA_VERSION is 3', () => {
+    expect(SCHEMA_VERSION).toBe(3);
   });
 });
 

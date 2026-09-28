@@ -57,6 +57,7 @@ const mockStore = vi.hoisted(() => ({
 
 const mockGetPubkey = vi.hoisted(() => vi.fn());
 const mockRemoveMapping = vi.hoisted(() => vi.fn());
+const mockRecordDeletedPeer = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 // rootScope is reached via dynamic `await import('@lib/rootScope')` inside
 // handlers that dispatch UI events (e.g. deleteContacts → conversation_deleted).
@@ -76,6 +77,7 @@ vi.mock('@lib/phantomchat/virtual-peers-db', () => ({
   storeMapping: vi.fn(),
   getAllMappings: vi.fn().mockResolvedValue([]),
   removeMapping: mockRemoveMapping,
+  recordDeletedPeer: mockRecordDeletedPeer,
   updateMappingProfile: vi.fn()
 }));
 
@@ -131,6 +133,7 @@ beforeAll(async() => {
     storeMapping: vi.fn(),
     getAllMappings: vi.fn().mockResolvedValue([]),
     removeMapping: mockRemoveMapping,
+    recordDeletedPeer: mockRecordDeletedPeer,
     updateMappingProfile: vi.fn()
   }));
   vi.doMock('@lib/rootScope', () => ({

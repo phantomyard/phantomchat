@@ -18,8 +18,23 @@ const DB_NAME = 'phantomchat-virtual-peers';
 // MUTATION time, and conflating the two silently loses cross-device renames.
 // The v1→v2 upgrade backfills updatedAt = addedAt (an unmutated item's last
 // change IS its creation), so no record is left without a merge timestamp.
-const DB_VERSION = 2;
+// v3 (#173): adds the `deleted` store — a DURABLE log of contact deletions.
+// Contact deletes used to be *derived* ("a conversation tombstone whose peer has
+// no live mapping"), and contacts-sync itself wiped that watermark on every
+// resurrect, so a delete could be lost entirely and a stale live entry then won
+// the union merge forever. A positive `{pubkey, deletedAt}` row cannot be lost
+// by deleting the chat, clearing history, or a wiped message-store watermark,
+// and it needs no own-pubkey to read back.
+const DB_VERSION = 3;
 const STORE_NAME = 'mappings';
+const DELETED_STORE = 'deleted';
+
+/** A durable contact-deletion record. `deletedAt` is unix SECONDS (the CRDT
+ * clock and the message-store watermark unit — NOT millis like mappings). */
+export interface DeletedPeerRecord {
+  pubkey: string;
+  deletedAt: number;
+}
 
 export interface VirtualPeerMapping {
   /** Nostr hex pubkey */
@@ -67,6 +82,11 @@ export function initVirtualPeersDB(): Promise<IDBDatabase> {
     request.onupgradeneeded = (event) => {
       const req = event.target as IDBOpenDBRequest;
       const db = req.result;
+      // v3: the durable deletion log. Created on every upgrade path (fresh DB
+      // included) — it is independent of the mappings store.
+      if(!db.objectStoreNames.contains(DELETED_STORE)) {
+        db.createObjectStore(DELETED_STORE, {keyPath: 'pubkey'});
+      }
       if(!db.objectStoreNames.contains(STORE_NAME)) {
         const store = db.createObjectStore(STORE_NAME, {keyPath: 'pubkey'});
         // Unique index on peerId for reverse lookup
@@ -138,9 +158,29 @@ export async function storeMapping(
   // apply, history backfill, receive-path persistence, kind 0 upgrades) must
   // NOT re-create the mapping — otherwise the contact reappears in Contacts
   // and the group-members picker on every sync cycle. Deliberate re-adds go
-  // through addP2PContact, which clears the tombstone first; the strictly-
-  // newer-message revive path passes {allowTombstoned: true} explicitly.
+  // through addP2PContact, which clears BOTH the durable row and the tombstone
+  // first; the strictly-newer-message revive path passes
+  // {allowTombstoned: true} explicitly (which bypasses only guard (b) below).
+  if(!preExisting) {
+    // (a) The DURABLE deletion log (#173). Checked FIRST because it needs no
+    // own-pubkey and survives a wiped message-store watermark — the two ways
+    // the watermark-only guard below silently let a deleted contact back in.
+    // Deliberately INDEPENDENT of allowTombstoned: that flag is the strictly-
+    // newer-message CONVERSATION revive, but a contact delete is a separate,
+    // deliberate act — a deleted peer's new message may revive the chat (it
+    // lands as a message request), never the contact. A deliberate re-add
+    // clears this row first via addP2PContact.
+    try {
+      const deletedAt = await getDeletedPeer(pubkey);
+      if(deletedAt > 0) {
+        console.warn('[virtual-peers] suppressing mapping re-creation for deleted peer', pubkey.slice(0, 8));
+        return false;
+      }
+    } catch(e) { /* guard is best-effort — never block a legit write on it */ }
+  }
   if(!preExisting && !opts?.allowTombstoned) {
+    // (b) The conversation deletion watermark — still consulted, so a delete
+    // performed by an older build (no durable row) keeps being honoured.
     try {
       const own = (window as any).__phantomchatOwnPubkey || '';
       if(own) {
@@ -346,6 +386,78 @@ export async function removeMapping(pubkey: string): Promise<void> {
 }
 
 /**
+ * Record a DURABLE contact deletion (#173).
+ *
+ * Monotonic, like the message-store watermark: a write below the stored value
+ * is a no-op, so a re-delete only moves the stamp forward and a replayed older
+ * delete can never weaken a newer one. `deletedAt` is unix SECONDS.
+ *
+ * Call this wherever a contact delete also removes the mapping — NOT on a
+ * plain "clear history" / "delete chat" that keeps the contact, or the contact
+ * would be deleted cross-device on the next reconcile.
+ */
+export async function recordDeletedPeer(pubkey: string, deletedAt: number): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DELETED_STORE, 'readwrite');
+    const store = tx.objectStore(DELETED_STORE);
+    const getReq = store.get(pubkey);
+    getReq.onerror = () => reject(getReq.error);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as DeletedPeerRecord | undefined;
+      if(existing && existing.deletedAt >= deletedAt) {
+        resolve();
+        return;
+      }
+      const putReq = store.put({pubkey, deletedAt});
+      putReq.onerror = () => reject(putReq.error);
+      putReq.onsuccess = () => resolve();
+    };
+  });
+}
+
+/** Read one durable deletion stamp (unix seconds), or 0 if never deleted. */
+export async function getDeletedPeer(pubkey: string): Promise<number> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DELETED_STORE, 'readonly');
+    const req = tx.objectStore(DELETED_STORE).get(pubkey);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve((req.result as DeletedPeerRecord | undefined)?.deletedAt ?? 0);
+  });
+}
+
+/** Every durable deletion record. Read by contacts-sync to publish deletes as
+ * positive facts rather than inferring them from watermarks. */
+export async function listDeletedPeers(): Promise<DeletedPeerRecord[]> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DELETED_STORE, 'readonly');
+    const req = tx.objectStore(DELETED_STORE).getAll();
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve((req.result as DeletedPeerRecord[]) ?? []);
+  });
+}
+
+/**
+ * Drop a durable deletion record — the contact is wanted again.
+ *
+ * Only two callers are legitimate: a DELIBERATE user re-add (addP2PContact),
+ * and contacts-sync when a remote LIVE entry is strictly newer than this
+ * device's delete stamp (i.e. another device deliberately re-added). Anything
+ * automatic must leave the record alone, or the resurrection loop reopens.
+ */
+export async function clearDeletedPeer(pubkey: string): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DELETED_STORE, 'readwrite');
+    const req = tx.objectStore(DELETED_STORE).delete(pubkey);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve();
+  });
+}
+
+/**
  * Get all stored mappings.
  */
 export async function getAllMappings(): Promise<VirtualPeerMapping[]> {
@@ -384,7 +496,7 @@ export async function getPubkey(peerId: number): Promise<string | null> {
 // Named constants expected by tests
 export const VIRTUAL_PEERS_DB_NAME = DB_NAME;  // = 'phantomchat-virtual-peers'
 export const VIRTUAL_PEERS_STORE = STORE_NAME;  // = 'mappings'
-export const SCHEMA_VERSION = DB_VERSION;        // = 2
+export const SCHEMA_VERSION = DB_VERSION;        // = 3
 
 // VirtualPeerRecord interface (extends VirtualPeerMapping with timestamp fields)
 export interface VirtualPeerRecord extends VirtualPeerMapping {

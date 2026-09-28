@@ -1659,8 +1659,13 @@ export class ChatAPI {
     // suppresses MESSAGE replays; the Contacts tab rebuilds people from
     // getAllMappings(), so a still-mapped peer reappears on reload regardless
     // of the tombstone (delete-boomerang). removeMapping stops that.
+    // Level 1d (#173): record the deletion as a POSITIVE, durable fact. The
+    // watermark above can be wiped (a contacts-sync resurrect used to clear it,
+    // and it is unreadable without an own pubkey), and a delete that exists
+    // only as an absence loses every union merge against a stale live entry.
     try {
-      const {removeMapping} = await import('./virtual-peers-db');
+      const {removeMapping, recordDeletedPeer} = await import('./virtual-peers-db');
+      await recordDeletedPeer(peerPubkey, Math.floor(Date.now() / 1000));
       await removeMapping(peerPubkey);
     } catch(err) {
       this.log.warn('[ChatAPI] removeMapping failed (non-fatal):', err);

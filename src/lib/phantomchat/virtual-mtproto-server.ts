@@ -15,7 +15,7 @@ import {loadCachedPeerProfile, refreshPeerProfileFromRelays} from './peer-profil
 import type {NostrBotCommand} from './nostr-profile';
 import {buildPhantomChatMedia, healStoredFileRow} from './phantomchat-media-shape';
 import type {HealedFileRow, PhantomChatFileMetadata} from './phantomchat-media-shape';
-import {getPubkey, getMapping, removeMapping} from './virtual-peers-db';
+import {getPubkey, getMapping, removeMapping, recordDeletedPeer} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
 import {isGroupPeer} from './group-types';
 import {getReadReceiptsEnabled} from './read-receipts-setting';
@@ -1440,7 +1440,10 @@ export class PhantomChatMTProtoServer {
         // MESSAGE replays; the Contacts tab re-enumerates people straight from
         // getAllMappings(), so without this the deleted contact reappears on
         // every reload (delete-boomerang). removeMapping closes that door.
+        // #173: also log the delete as a positive durable fact, so it survives
+        // a wiped watermark and can always be re-published to the CRDT.
         try {
+          await recordDeletedPeer(pubkey, now);
           await removeMapping(pubkey);
         } catch(err) {
           console.warn(LOG_PREFIX, 'deleteContacts: removeMapping failed', err);

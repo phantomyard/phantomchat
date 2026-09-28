@@ -33,7 +33,7 @@ import {CrdtSync} from '@lib/phantomchat/crdt-sync';
 import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION} from '@lib/phantomchat/contacts-sync-adapter';
 import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION} from '@lib/phantomchat/groups-sync-adapter';
 import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
-import {getAllMappings, setMappingDisplayName, setMappingUpdatedAt, removeMapping} from '@lib/phantomchat/virtual-peers-db';
+import {getAllMappings, setMappingDisplayName, setMappingUpdatedAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
 import {getMessageStore} from '@lib/phantomchat/message-store';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
@@ -461,6 +461,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             getOwnPubkey: () => (window as any).__phantomchatOwnPubkey || ownPubkey,
             listMappings: () => getAllMappings(),
             listTombstones: () => store.getAllTombstones(),
+            // Durable contact-deletion log (#173) — the positive fact a
+            // delete is published from, independent of watermarks/own pubkey.
+            listDeletedPeers: () => listDeletedPeers(),
+            recordDeletedPeer: (pubkey, deletedAtSeconds) => recordDeletedPeer(pubkey, deletedAtSeconds),
+            clearDeletedPeer: (pubkey) => clearDeletedPeer(pubkey),
             conversationId: (a, b) => store.getConversationId(a, b),
             addContact: async(pubkey, displayName) => {
               await addP2PContact({pubkey, nickname: displayName, openChat: false, source: 'contacts-sync'});

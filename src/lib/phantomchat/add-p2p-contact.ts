@@ -89,7 +89,15 @@ export async function addP2PContact(opts: AddP2PContactOptions): Promise<AddP2PC
   // tombstone would make storeMapping refuse to re-create the mapping (the
   // resurrection guard). The user's explicit add (or a contacts-sync LWW
   // re-add of a newer remote entry) means the contact is wanted again — clear
-  // the watermark so the guard lets it through.
+  // BOTH the durable deletion row (#173) and the watermark so the guards let
+  // it through. Every addP2PContact caller is a deliberate add or a sync
+  // re-add that already won the LWW compare against the local delete — no
+  // automatic path reaches here, so this clear cannot reopen the
+  // resurrection loop.
+  try {
+    const {clearDeletedPeer} = await import('./virtual-peers-db');
+    await clearDeletedPeer(hexPubkey);
+  } catch{ /* best-effort */ }
   try {
     const ownPk = (window as any).__phantomchatOwnPubkey;
     if(ownPk) {
