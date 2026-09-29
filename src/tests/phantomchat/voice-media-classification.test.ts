@@ -11,6 +11,7 @@
 import {describe, it, expect, vi} from 'vitest';
 import {buildPhantomChatMedia} from '@lib/phantomchat/phantomchat-media-shape';
 import {extractFileMetadata} from '@lib/phantomchat/chat-api-receive';
+import getAudioDocumentType from '@appManagers/utils/docs/getAudioDocumentType';
 
 function baseFm(extra: any = {}) {
   return {
@@ -73,6 +74,57 @@ describe('buildPhantomChatMedia voice classification', () => {
     const media = buildPhantomChatMedia(7, baseFm({mediaType: 'voice', duration: 4}));
     const audio = media.document.attributes.find((a: any) => a._ === 'documentAttributeAudio');
     expect(audio.waveform).toBeUndefined();
+  });
+});
+
+/**
+ * History-reload reclassification: appDocsManager.saveDoc re-derives
+ * `doc.type` for every stored documentAttributeAudio when history is served
+ * from the local store after a refresh. It used to require an exact
+ * `audio/ogg` mime alongside the voice flag, so messages that rendered as
+ * voice bubbles live came back as plain audio (no bars, no waveform) after a
+ * reload: phantom voice notes served as MP3 (`audio/mpeg`) and own voice
+ * notes labeled `audio/ogg; codecs=opus`. The flag alone now decides.
+ *
+ * (saveDoc itself can't run under jsdom — its import graph pulls indexedDB —
+ * so these tests pin the real classifier on the exact attribute shape the
+ * media builder persists, which is the only input saveDoc uses.)
+ */
+describe('history reload (saveDoc): voice classification trusts the voice flag, not the mime', () => {
+  it('keeps an mp3 phantom voice note as voice after reload', () => {
+    // The exact #176 regression: TTS-served MP3 voice, envelope rendered
+    // fine live, collapsed to a plain-audio file bubble after refresh.
+    const media = buildPhantomChatMedia(20, baseFm({mediaType: 'voice', mimeType: 'audio/mpeg', duration: 3}));
+    const audio = media.document.attributes.find((a: any) => a._ === 'documentAttributeAudio');
+    expect(getAudioDocumentType(audio)).toBe('voice');
+  });
+
+  it("keeps own 'audio/ogg; codecs=opus' voice notes as voice after reload", () => {
+    // What the sender stamps for recorded voice (voice-upload-queue) — the
+    // `; codecs=opus` suffix failed the strict equality too, so the user's
+    // own notes lost their bars after a refresh.
+    const media = buildPhantomChatMedia(21, baseFm({mimeType: 'audio/ogg; codecs=opus', duration: 4}));
+    const audio = media.document.attributes.find((a: any) => a._ === 'documentAttributeAudio');
+    expect(getAudioDocumentType(audio)).toBe('voice');
+  });
+
+  it('keeps a genuine Telegram audio/ogg voice note as voice (unchanged)', () => {
+    expect(getAudioDocumentType({pFlags: {voice: true}})).toBe('voice');
+  });
+
+  it('classifies music attachments as plain audio regardless of mime', () => {
+    // documentAttributeAudio without the voice flag is a music file — it
+    // must keep rendering via the plain-audio wrapper, not a voice bubble.
+    expect(getAudioDocumentType({pFlags: {}})).toBe('audio');
+    expect(getAudioDocumentType({pFlags: {voice: false}})).toBe('audio');
+  });
+
+  it('defense-in-depth: an explicit voice flag wins over any mime', () => {
+    // buildPhantomChatMedia already trusts mediaType over the mime on the
+    // live path; the reload path must not second-guess it either.
+    const media = buildPhantomChatMedia(22, baseFm({mediaType: 'voice', mimeType: 'image/png', duration: 2}));
+    const audio = media.document.attributes.find((a: any) => a._ === 'documentAttributeAudio');
+    expect(getAudioDocumentType(audio)).toBe('voice');
   });
 });
 

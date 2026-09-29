@@ -24,6 +24,7 @@ import getDocumentInputFileLocation from '@appManagers/utils/docs/getDocumentInp
 import getDocumentURL from '@appManagers/utils/docs/getDocumentURL';
 import makeError from '@helpers/makeError';
 import {EXTENSION_MIME_TYPE_MAP} from '@environment/mimeTypeMap';
+import getAudioDocumentType from '@appManagers/utils/docs/getAudioDocumentType';
 import {THUMB_TYPE_FULL} from '@appManagers/constants';
 import tsNow from '@helpers/tsNow';
 import appManagersManager from '@appManagers/appManagersManager';
@@ -159,7 +160,7 @@ export class AppDocsManager extends AppManager {
           }
 
           doc.duration = attribute.duration;
-          doc.type = attribute.pFlags.voice && doc.mime_type === EXTENSION_MIME_TYPE_MAP.ogg ? 'voice' : 'audio';
+          doc.type = getAudioDocumentType(attribute);
           break;
         }
 
