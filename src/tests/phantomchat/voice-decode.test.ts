@@ -20,6 +20,10 @@ import {
   enrichPhantomChatVoiceDoc,
   waveformBytesFromDoc,
   resetVoiceMetaStateForTests,
+  flushVoiceMetaCache,
+  clearPersistedVoiceMeta,
+  VOICE_META_CACHE_KEY,
+  VOICE_META_FLUSH_DEBOUNCE_MS,
   WAVEFORM_VALUE_COUNT
 } from '@lib/phantomchat/phantomchat-voice-decode';
 
@@ -356,6 +360,9 @@ describe('enrichPhantomChatVoiceDoc', () => {
     expect(await enrichPhantomChatVoiceDoc(doc, {download, decode})).toBe(true);
     expect(download).toHaveBeenCalledTimes(1);
 
+    // The decode patched memory synchronously; the disk tier is debounced —
+    // land the flush before simulating the reload.
+    flushVoiceMetaCache();
     resetVoiceMetaStateForTests(true); // simulate a page reload: session state gone, localStorage kept
     const reloadedDoc = makeDoc({id: doc.id}) as any;
     expect(reloadedDoc).not.toBe(doc);
@@ -367,6 +374,69 @@ describe('enrichPhantomChatVoiceDoc', () => {
     expect(reloadedDoc.duration).toBe(9);
     expect(waveformBytesFromDoc(reloadedDoc)).toBeInstanceOf(Uint8Array);
     expect(waveformBytesFromDoc(reloadedDoc)!.length).toBe(fakeMeta.waveform.length);
+  });
+
+  it('decodes never touch localStorage synchronously — disk writes ride a debounced flush', async() => {
+    // Kai's review blocker on #178: the hot path must stay pure memory. A
+    // decode mutates the in-memory map and ARMS a flush; no localStorage
+    // write may happen until the flush explicitly runs — and a whole burst
+    // of decodes coalesces into ONE disk write.
+    // (jsdom's localStorage getter returns a fresh wrapper per access, so an
+    // instance spy sees nothing — stub the global, cleanup-suite style.)
+    const store: Record<string, string> = {};
+    const setItem = vi.fn((k: string, v: string) => { store[k] = v; });
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem,
+      removeItem: (k: string) => { delete store[k]; }
+    });
+    try {
+      const download = async() => new Blob([new Uint8Array(16)]);
+      const decode = async(): Promise<any> => fakeMeta;
+      const docA = makeDoc();
+      const docB = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(docA, {download, decode})).toBe(true);
+      expect(await enrichPhantomChatVoiceDoc(docB, {download, decode})).toBe(true);
+      expect(setItem).not.toHaveBeenCalled(); // hot path never writes synchronously
+      flushVoiceMetaCache(); // the burst lands as one write
+      expect(setItem).toHaveBeenCalledTimes(1);
+      const stored = JSON.parse(store[VOICE_META_CACHE_KEY]);
+      expect(stored[docA.id]).toBeDefined();
+      expect(stored[docB.id]).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('clearPersistedVoiceMeta drops memory + disk + any pending flush', async() => {
+    // The cleanup contract (logout / Reset Local Data): after clearing, a
+    // fresh doc with the same id must download again — no stale entry served
+    // from memory, nothing on disk, and the armed flush cannot resurrect it.
+    const store: Record<string, string> = {};
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => { store[k] = v; },
+      removeItem: (k: string) => { delete store[k]; }
+    });
+    try {
+      const doc = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(doc, {
+        download: async() => new Blob([new Uint8Array(16)]),
+        decode: async(): Promise<any> => fakeMeta
+      })).toBe(true);
+      clearPersistedVoiceMeta();
+      expect(store[VOICE_META_CACHE_KEY]).toBeUndefined();
+      // pending flush was cancelled, not resurrected:
+      await new Promise((r) => setTimeout(r, VOICE_META_FLUSH_DEBOUNCE_MS + 10));
+      expect(store[VOICE_META_CACHE_KEY]).toBeUndefined();
+      // memory + attempt state gone: the same id re-decodes from scratch
+      const reDoc = makeDoc({id: doc.id}) as any;
+      const download = vi.fn(async() => new Blob([new Uint8Array(16)]));
+      expect(await enrichPhantomChatVoiceDoc(reDoc, {download, decode: async(): Promise<any> => fakeMeta})).toBe(true);
+      expect(download).toHaveBeenCalledTimes(1); // cache gone → real decode again
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('a corrupted cache entry falls back to a real decode, never throws', async() => {

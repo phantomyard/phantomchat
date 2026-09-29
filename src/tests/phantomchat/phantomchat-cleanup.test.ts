@@ -74,6 +74,7 @@ describe('phantomchat-cleanup — error paths', () => {
       phantomchat_identity: 'seed-keep',
       'phantomchat-relay-config': 'relays',
       'phantomchat-last-seen-timestamp': '0',
+      'phantomchatVoiceMeta.v1': '{"doc":{"duration":9,"waveform":"AA==","t":1}}',
       'unrelated-key': 'should-stay'
     };
 
@@ -235,6 +236,11 @@ describe('phantomchat-cleanup — error paths', () => {
     expect(removeItemMock).not.toHaveBeenCalledWith('phantomchat_identity');
     // Other phantomchat keys are removed
     expect(removeItemMock).toHaveBeenCalledWith('phantomchat-relay-config');
+    // The voice-meta decode cache key is registered in centralized cleanup —
+    // logout must not leave decoded voice metadata from the previous data
+    // set on disk (Kai's review blocker on #178).
+    expect(removeItemMock).toHaveBeenCalledWith('phantomchatVoiceMeta.v1');
+    expect(lsStore['phantomchatVoiceMeta.v1']).toBeUndefined();
   });
 
   it('clearAllPhantomChatData: wipes everything including seed', async() => {

@@ -22,12 +22,29 @@ import base64ToBytes from '@helpers/string/base64ToBytes';
  * Decoded-voice metadata cache (localStorage), so a refresh never re-downloads
  * + re-decodes the same voice notes. Keyed by the stable doc id
  * (`phantomchat_<mid>`); entries carry {duration, packed waveform, timestamp}.
+ *
+ * Storage discipline (AGENTS.md hard rule 5 — no synchronous localStorage on
+ * a render/per-message path): the map is loaded ONCE at module init (app
+ * bootstrap) and every hot-path lookup after that is pure memory. Disk writes
+ * go through a trailing-debounced flush (one serialization per burst of
+ * decodes) plus a last-chance flush on pagehide — never per decode.
  */
-const VOICE_META_CACHE_KEY = 'phantomchatVoiceMeta.v1';
+export const VOICE_META_CACHE_KEY = 'phantomchatVoiceMeta.v1';
 const VOICE_META_CACHE_MAX_ENTRIES = 2000;
+export const VOICE_META_FLUSH_DEBOUNCE_MS = 500;
 type VoiceMetaCacheEntry = {duration: number; waveform: string; t: number};
 let voiceMetaCache: Map<string, VoiceMetaCacheEntry> | undefined;
 let voiceMetaCacheDisabled = false;
+let voiceMetaFlushTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Boot-time load — module init runs at app startup, never inside a render.
+loadVoiceMetaCache();
+
+// Last-chance flush when the tab goes away, so a debounced write can never
+// be lost to a close/refresh that lands between mutation and flush.
+if(typeof addEventListener === 'function') {
+  addEventListener('pagehide', () => flushVoiceMetaCache());
+}
 
 function loadVoiceMetaCache(): Map<string, VoiceMetaCacheEntry> | undefined {
   if(voiceMetaCache) return voiceMetaCache;
@@ -41,13 +58,26 @@ function loadVoiceMetaCache(): Map<string, VoiceMetaCacheEntry> | undefined {
   return voiceMetaCache;
 }
 
-function persistVoiceMetaCache(cache: Map<string, VoiceMetaCacheEntry>) {
+/**
+ * Serialize the in-memory cache to localStorage. Only ever runs OFF the
+ * render/decode path — from the debounced flush timer, the pagehide
+ * last-chance flush, or explicit test/cleanup calls — and coalesces any
+ * number of pending mutations into a single write.
+ */
+export function flushVoiceMetaCache() {
+  if(voiceMetaFlushTimer !== undefined) {
+    clearTimeout(voiceMetaFlushTimer);
+    voiceMetaFlushTimer = undefined;
+  }
   if(typeof localStorage === 'undefined' || voiceMetaCacheDisabled) return;
+  const cache = voiceMetaCache;
+  if(!cache) return;
   try {
     localStorage.setItem(VOICE_META_CACHE_KEY, JSON.stringify(Object.fromEntries(cache)));
   } catch{
     // Quota (or serialization) failure: drop the oldest half and retry once;
-    // if it still fails, stop persisting rather than throwing per decode.
+    // if it still fails, abandon the disk tier — the in-memory cache keeps
+    // serving lookups, we just stop persisting rather than throwing per decode.
     const entries = [...cache.entries()].sort((a, b) => a[1].t - b[1].t);
     for(let i = 0; i < entries.length / 2; i++) cache.delete(entries[i][0]);
     try {
@@ -56,6 +86,16 @@ function persistVoiceMetaCache(cache: Map<string, VoiceMetaCacheEntry>) {
       voiceMetaCacheDisabled = true;
     }
   }
+}
+
+/** Arm the trailing flush: the first mutation of a burst pays for the timer,
+ * every later one rides it — one disk write per burst, not one per decode. */
+function scheduleVoiceMetaFlush() {
+  if(voiceMetaFlushTimer !== undefined || voiceMetaCacheDisabled) return;
+  voiceMetaFlushTimer = setTimeout(() => {
+    voiceMetaFlushTimer = undefined;
+    flushVoiceMetaCache();
+  }, VOICE_META_FLUSH_DEBOUNCE_MS);
 }
 
 function getCachedVoiceMeta(docId: string): DecodedVoiceMeta | undefined {
@@ -73,13 +113,14 @@ function getCachedVoiceMeta(docId: string): DecodedVoiceMeta | undefined {
 
 function setCachedVoiceMeta(docId: string, meta: DecodedVoiceMeta) {
   const cache = loadVoiceMetaCache();
-  if(!cache || voiceMetaCacheDisabled) return;
+  if(!cache) return;
   cache.set(docId, {duration: meta.duration, waveform: bytesToBase64(meta.waveform), t: Date.now()});
   if(cache.size > VOICE_META_CACHE_MAX_ENTRIES) {
     const oldest = [...cache.entries()].sort((a, b) => a[1].t - b[1].t)[0];
     if(oldest) cache.delete(oldest[0]);
   }
-  persistVoiceMetaCache(cache);
+  // Memory first (hot path stays pure), disk behind the debounced flush.
+  scheduleVoiceMetaFlush();
 }
 
 /**
@@ -88,6 +129,10 @@ function setCachedVoiceMeta(docId: string, meta: DecodedVoiceMeta) {
  * localStorage entries, which is exactly what survives a page reload.
  */
 export function resetVoiceMetaStateForTests(keepPersistedStorage = false) {
+  if(voiceMetaFlushTimer !== undefined) {
+    clearTimeout(voiceMetaFlushTimer);
+    voiceMetaFlushTimer = undefined;
+  }
   voiceMetaCache = undefined;
   voiceMetaCacheDisabled = false;
   enrichmentInFlight.clear();
@@ -96,6 +141,29 @@ export function resetVoiceMetaStateForTests(keepPersistedStorage = false) {
     if(typeof localStorage !== 'undefined' && !keepPersistedStorage) {
       localStorage.removeItem(VOICE_META_CACHE_KEY);
     }
+  } catch{ /* ignore */ }
+}
+
+/**
+ * Drop the voice-meta cache entirely — disk, memory, and any pending flush.
+ * Called by centralized cleanup (logout / Reset Local Data): a later identity
+ * must never consume a stale entry whose timestamp-derived document id
+ * collides, so the in-memory map dies with the data set — and a pending
+ * debounced flush must not resurrect the disk key after cleanup removed it.
+ */
+export function clearPersistedVoiceMeta() {
+  if(voiceMetaFlushTimer !== undefined) {
+    clearTimeout(voiceMetaFlushTimer);
+    voiceMetaFlushTimer = undefined;
+  }
+  voiceMetaCache = undefined;
+  voiceMetaCacheDisabled = false;
+  // Attempt bookkeeping belongs to the wiped data set too — a later identity
+  // starts with a clean slate, not the previous session's spent attempts.
+  enrichmentInFlight.clear();
+  enrichmentDone.clear();
+  try {
+    if(typeof localStorage !== 'undefined') localStorage.removeItem(VOICE_META_CACHE_KEY);
   } catch{ /* ignore */ }
 }
 
