@@ -360,9 +360,11 @@ describe('enrichPhantomChatVoiceDoc', () => {
     expect(await enrichPhantomChatVoiceDoc(doc, {download, decode})).toBe(true);
     expect(download).toHaveBeenCalledTimes(1);
 
-    // The decode patched memory synchronously; the disk tier is debounced —
-    // land the flush before simulating the reload.
+    // The decode patched memory synchronously; the disk tier is idle-scheduled —
+    // land the flush (the controller write resolves in microtasks) before
+    // simulating the reload.
     flushVoiceMetaCache();
+    await new Promise((r) => setTimeout(r, 0));
     resetVoiceMetaStateForTests(true); // simulate a page reload: session state gone, localStorage kept
     const reloadedDoc = makeDoc({id: doc.id}) as any;
     expect(reloadedDoc).not.toBe(doc);
@@ -376,7 +378,7 @@ describe('enrichPhantomChatVoiceDoc', () => {
     expect(waveformBytesFromDoc(reloadedDoc)!.length).toBe(fakeMeta.waveform.length);
   });
 
-  it('decodes never touch localStorage synchronously — disk writes ride a debounced flush', async() => {
+  it('decodes never touch localStorage synchronously — disk writes ride an idle-scheduled flush', async() => {
     // Kai's review blocker on #178: the hot path must stay pure memory. A
     // decode mutates the in-memory map and ARMS a flush; no localStorage
     // write may happen until the flush explicitly runs — and a whole burst
@@ -398,11 +400,95 @@ describe('enrichPhantomChatVoiceDoc', () => {
       expect(await enrichPhantomChatVoiceDoc(docA, {download, decode})).toBe(true);
       expect(await enrichPhantomChatVoiceDoc(docB, {download, decode})).toBe(true);
       expect(setItem).not.toHaveBeenCalled(); // hot path never writes synchronously
-      flushVoiceMetaCache(); // the burst lands as one write
+      flushVoiceMetaCache(); // the burst lands as one controller write
+      await new Promise((r) => setTimeout(r, 0)); // controller write resolves in microtasks
       expect(setItem).toHaveBeenCalledTimes(1);
       const stored = JSON.parse(store[VOICE_META_CACHE_KEY]);
       expect(stored[docA.id]).toBeDefined();
       expect(stored[docB.id]).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('arms requestIdleCallback with a bounded timeout when available, not a timer', async() => {
+    // Kai's blocker round 2: the flush must be IDLE-scheduled, routed through
+    // LocalStorageController, with the debounce window as the idle-timeout bound.
+    const idleCallbacks: Array<() => void> = [];
+    let idleOptions: {timeout?: number} | undefined;
+    const requestIdleCallback = vi.fn((cb: () => void, opts?: {timeout: number}) => {
+      idleCallbacks.push(cb);
+      idleOptions = opts;
+      return idleCallbacks.length;
+    });
+    const cancelIdleCallback = vi.fn();
+    vi.stubGlobal('requestIdleCallback', requestIdleCallback);
+    vi.stubGlobal('cancelIdleCallback', cancelIdleCallback);
+    const store: Record<string, string> = {};
+    const setItem = vi.fn((k: string, v: string) => { store[k] = v; });
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem,
+      removeItem: (k: string) => { delete store[k]; }
+    });
+    try {
+      const doc = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(doc, {
+        download: async() => new Blob([new Uint8Array(16)]),
+        decode: async(): Promise<any> => fakeMeta
+      })).toBe(true);
+      expect(requestIdleCallback).toHaveBeenCalledTimes(1);
+      expect(idleOptions?.timeout).toBe(VOICE_META_FLUSH_DEBOUNCE_MS); // bounded wait
+      expect(setItem).not.toHaveBeenCalled(); // arming writes nothing
+      idleCallbacks[0](); // the main thread went idle
+      await new Promise((r) => setTimeout(r, 0));
+      expect(setItem).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(store[VOICE_META_CACHE_KEY])[doc.id]).toBeDefined();
+      // A second burst re-arms the idle callback after the previous one fired.
+      const doc2 = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(doc2, {
+        download: async() => new Blob([new Uint8Array(16)]),
+        decode: async(): Promise<any> => fakeMeta
+      })).toBe(true);
+      expect(requestIdleCallback).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('quota failure evicts the oldest half and retries once at idle — never re-serializes inline', async() => {
+    // The old code retried the write inline in the same tick — two full
+    // serializations back to back on the main thread. Now a quota failure
+    // evicts half, re-arms ONE idle flush, and a second consecutive failure
+    // abandons the disk tier (memory keeps serving lookups).
+    const quotaError = () => Object.assign(new Error('quota'), {name: 'QuotaExceededError'});
+    const setItem = vi.fn((_k: string, _v: string): never => { throw quotaError(); });
+    vi.stubGlobal('requestIdleCallback', undefined); // force the deferred-timer fallback
+    vi.stubGlobal('cancelIdleCallback', undefined);
+    vi.stubGlobal('localStorage', {
+      getItem: (): string | null => null,
+      setItem,
+      removeItem: () => {}
+    });
+    try {
+      const download = async() => new Blob([new Uint8Array(16)]);
+      const decode = async(): Promise<any> => fakeMeta;
+      const docA = makeDoc();
+      const docB = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(docA, {download, decode})).toBe(true);
+      expect(await enrichPhantomChatVoiceDoc(docB, {download, decode})).toBe(true);
+      flushVoiceMetaCache(); // attempt 1
+      await new Promise((r) => setTimeout(r, 0));
+      expect(setItem).toHaveBeenCalledTimes(1);
+      // The retry rides the re-armed schedule (jsdom has no requestIdleCallback → timer)
+      await new Promise((r) => setTimeout(r, VOICE_META_FLUSH_DEBOUNCE_MS + 20));
+      expect(setItem).toHaveBeenCalledTimes(2); // exactly one retry, deferred
+      const retriedPayload = JSON.parse(setItem.mock.calls[1][1] as string);
+      expect(Object.keys(retriedPayload)).toEqual([docB.id]); // oldest half evicted
+      // Second consecutive quota failure → disk tier abandoned for good.
+      flushVoiceMetaCache();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(setItem).toHaveBeenCalledTimes(2);
     } finally {
       vi.unstubAllGlobals();
     }

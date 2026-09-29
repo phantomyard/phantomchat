@@ -16,6 +16,8 @@
  */
 
 import type {MyDocument} from '@appManagers/appDocsManager';
+import LocalStorageController from '@lib/localStorage';
+import {swallowHandler} from './log-swallow';
 import base64ToBytes from '@helpers/string/base64ToBytes';
 
 /**
@@ -26,16 +28,37 @@ import base64ToBytes from '@helpers/string/base64ToBytes';
  * Storage discipline (AGENTS.md hard rule 5 — no synchronous localStorage on
  * a render/per-message path): the map is loaded ONCE at module init (app
  * bootstrap) and every hot-path lookup after that is pure memory. Disk writes
- * go through a trailing-debounced flush (one serialization per burst of
- * decodes) plus a last-chance flush on pagehide — never per decode.
+ * are scheduled during idle time (requestIdleCallback, bounded by the debounce
+ * window; plain deferred timer where idle callbacks don't exist) and land as
+ * ONE coalesced write per burst through the repository storage controller —
+ * plus a last-chance flush on pagehide. Never per decode, never on the render
+ * path.
  */
 export const VOICE_META_CACHE_KEY = 'phantomchatVoiceMeta.v1';
 const VOICE_META_CACHE_MAX_ENTRIES = 2000;
 export const VOICE_META_FLUSH_DEBOUNCE_MS = 500;
 type VoiceMetaCacheEntry = {duration: number; waveform: string; t: number};
+type VoiceMetaStorageValues = {
+  [VOICE_META_CACHE_KEY]?: Record<string, VoiceMetaCacheEntry>;
+};
+
+// Repository storage controller — AGENTS.md rule 5: no raw localStorage for
+// persistence. Keeps its own in-memory copy, so the idle flush is one set()
+// per burst, and cleanup deletes through the same controller.
+const voiceMetaStorage = new LocalStorageController<VoiceMetaStorageValues>();
+
 let voiceMetaCache: Map<string, VoiceMetaCacheEntry> | undefined;
 let voiceMetaCacheDisabled = false;
 let voiceMetaFlushTimer: ReturnType<typeof setTimeout> | undefined;
+let voiceMetaFlushIdleHandle: number | undefined;
+let voiceMetaFlushFailures = 0;
+
+// requestIdleCallback is missing from some lib.dom targets — declare the
+// minimal shape we need instead of casting to `any` at each call site.
+type IdleWindow = Window & {
+  requestIdleCallback?: (callback: () => void, options?: {timeout: number}) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
 
 // Boot-time load — module init runs at app startup, never inside a render.
 loadVoiceMetaCache();
@@ -59,43 +82,74 @@ function loadVoiceMetaCache(): Map<string, VoiceMetaCacheEntry> | undefined {
 }
 
 /**
- * Serialize the in-memory cache to localStorage. Only ever runs OFF the
- * render/decode path — from the debounced flush timer, the pagehide
+ * Persist the in-memory cache through the storage controller. Only ever runs
+ * OFF the render/decode path — from the idle-scheduled flush, the pagehide
  * last-chance flush, or explicit test/cleanup calls — and coalesces any
  * number of pending mutations into a single write.
  */
 export function flushVoiceMetaCache() {
+  cancelScheduledVoiceMetaFlush();
+  if(voiceMetaCacheDisabled || typeof localStorage === 'undefined') return;
+  const cache = voiceMetaCache;
+  if(!cache) return;
+  voiceMetaStorage.set({[VOICE_META_CACHE_KEY]: Object.fromEntries(cache)}).catch((err: unknown) => {
+    if((err as {name?: string})?.name !== 'QuotaExceededError') {
+      // Storage offline / corrupt: abandon the disk tier — the in-memory
+      // cache keeps serving lookups, we just stop persisting.
+      voiceMetaCacheDisabled = true;
+      return;
+    }
+
+    // Quota: drop the oldest half and re-arm ONE idle flush — the smaller
+    // payload is serialized later, at idle time, never re-serialized inline.
+    // Repeated quota failure abandons the disk tier permanently.
+    const entries = [...cache.entries()].sort((a, b) => a[1].t - b[1].t);
+    for(let i = 0; i < entries.length / 2; i++) cache.delete(entries[i][0]);
+    voiceMetaFlushFailures++;
+    if(voiceMetaFlushFailures >= 2 || !cache.size) {
+      voiceMetaCacheDisabled = true;
+    } else {
+      // The failed write flipped the controller's useStorage off — re-enable
+      // it so the retried (smaller) flush can persist.
+      voiceMetaStorage.toggleStorage(true, false);
+      scheduleVoiceMetaFlush();
+    }
+  });
+}
+
+/** Arm the idle flush: the first mutation of a burst pays for the schedule,
+ * every later one rides it — one disk write per burst, not one per decode.
+ * The serialization + write run in an idle callback so a busy main thread
+ * never pays for them; `timeout` bounds the wait so a continuously-busy UI
+ * still flushes within the debounce window. Environments without idle
+ * callbacks (older browsers, tests) fall back to a plain deferred timer. */
+function scheduleVoiceMetaFlush() {
+  if(voiceMetaFlushIdleHandle !== undefined || voiceMetaFlushTimer !== undefined || voiceMetaCacheDisabled) return;
+  const idleWindow = typeof window === 'undefined' ? undefined : (window as IdleWindow);
+  if(idleWindow?.requestIdleCallback) {
+    voiceMetaFlushIdleHandle = idleWindow.requestIdleCallback(() => {
+      voiceMetaFlushIdleHandle = undefined;
+      flushVoiceMetaCache();
+    }, {timeout: VOICE_META_FLUSH_DEBOUNCE_MS});
+  } else {
+    voiceMetaFlushTimer = setTimeout(() => {
+      voiceMetaFlushTimer = undefined;
+      flushVoiceMetaCache();
+    }, VOICE_META_FLUSH_DEBOUNCE_MS);
+  }
+}
+
+/** Disarm any armed flush (idle handle or fallback timer). */
+function cancelScheduledVoiceMetaFlush() {
   if(voiceMetaFlushTimer !== undefined) {
     clearTimeout(voiceMetaFlushTimer);
     voiceMetaFlushTimer = undefined;
   }
-  if(typeof localStorage === 'undefined' || voiceMetaCacheDisabled) return;
-  const cache = voiceMetaCache;
-  if(!cache) return;
-  try {
-    localStorage.setItem(VOICE_META_CACHE_KEY, JSON.stringify(Object.fromEntries(cache)));
-  } catch{
-    // Quota (or serialization) failure: drop the oldest half and retry once;
-    // if it still fails, abandon the disk tier — the in-memory cache keeps
-    // serving lookups, we just stop persisting rather than throwing per decode.
-    const entries = [...cache.entries()].sort((a, b) => a[1].t - b[1].t);
-    for(let i = 0; i < entries.length / 2; i++) cache.delete(entries[i][0]);
-    try {
-      localStorage.setItem(VOICE_META_CACHE_KEY, JSON.stringify(Object.fromEntries(cache)));
-    } catch{
-      voiceMetaCacheDisabled = true;
-    }
+  if(voiceMetaFlushIdleHandle !== undefined) {
+    const idleWindow = typeof window === 'undefined' ? undefined : (window as IdleWindow);
+    idleWindow?.cancelIdleCallback?.(voiceMetaFlushIdleHandle);
+    voiceMetaFlushIdleHandle = undefined;
   }
-}
-
-/** Arm the trailing flush: the first mutation of a burst pays for the timer,
- * every later one rides it — one disk write per burst, not one per decode. */
-function scheduleVoiceMetaFlush() {
-  if(voiceMetaFlushTimer !== undefined || voiceMetaCacheDisabled) return;
-  voiceMetaFlushTimer = setTimeout(() => {
-    voiceMetaFlushTimer = undefined;
-    flushVoiceMetaCache();
-  }, VOICE_META_FLUSH_DEBOUNCE_MS);
 }
 
 function getCachedVoiceMeta(docId: string): DecodedVoiceMeta | undefined {
@@ -129,10 +183,8 @@ function setCachedVoiceMeta(docId: string, meta: DecodedVoiceMeta) {
  * localStorage entries, which is exactly what survives a page reload.
  */
 export function resetVoiceMetaStateForTests(keepPersistedStorage = false) {
-  if(voiceMetaFlushTimer !== undefined) {
-    clearTimeout(voiceMetaFlushTimer);
-    voiceMetaFlushTimer = undefined;
-  }
+  cancelScheduledVoiceMetaFlush();
+  voiceMetaFlushFailures = 0;
   voiceMetaCache = undefined;
   voiceMetaCacheDisabled = false;
   enrichmentInFlight.clear();
@@ -152,10 +204,8 @@ export function resetVoiceMetaStateForTests(keepPersistedStorage = false) {
  * debounced flush must not resurrect the disk key after cleanup removed it.
  */
 export function clearPersistedVoiceMeta() {
-  if(voiceMetaFlushTimer !== undefined) {
-    clearTimeout(voiceMetaFlushTimer);
-    voiceMetaFlushTimer = undefined;
-  }
+  cancelScheduledVoiceMetaFlush();
+  voiceMetaFlushFailures = 0;
   voiceMetaCache = undefined;
   voiceMetaCacheDisabled = false;
   // Attempt bookkeeping belongs to the wiped data set too — a later identity
@@ -165,6 +215,9 @@ export function clearPersistedVoiceMeta() {
   try {
     if(typeof localStorage !== 'undefined') localStorage.removeItem(VOICE_META_CACHE_KEY);
   } catch{ /* ignore */ }
+  // The controller keeps its own in-memory copy — drop it too, so a same-session
+  // re-login can never read a stale entry the raw removeItem above can't touch.
+  voiceMetaStorage.delete(VOICE_META_CACHE_KEY).catch(swallowHandler('VoiceMetaCleanup'));
 }
 
 /** Base64 for the fm sidecar, same encoding the sender ships (media-shape). */
