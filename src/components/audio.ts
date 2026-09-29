@@ -46,6 +46,7 @@ import {hideToast, toastNew} from '@components/toast';
 import anchorCallback from '@helpers/dom/anchorCallback';
 import PopupPremium from '@components/popups/premium';
 import {Middleware} from '@helpers/middleware';
+import {enrichPhantomChatVoiceDoc, waveformBytesFromDoc} from '@lib/phantomchat/phantomchat-voice-decode';
 
 
 const UNMOUNT_PRELOADER = true;
@@ -180,25 +181,66 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
   let waveform = (doc.attributes.find((attribute) => attribute._ === 'documentAttributeAudio') as DocumentAttribute.documentAttributeAudio)?.waveform || new Uint8Array([]);
   waveform = decodeWaveform(waveform.slice(0, 63));
 
-  const {svg, container: svgContainer, availW} = createWaveformBars(waveform, doc.duration);
-
+  // Telegram-style local decode. When the sender's envelope carried no usable
+  // waveform/duration (e.g. an OpenAI-compatible TTS provider serving MP3 —
+  // the sender-side parsers are Ogg-Opus-only), derive both from the actual
+  // audio bytes instead of rendering an empty, barless bubble. See
+  // phantomchat-voice-decode.ts.
   let fakeSvgContainer: HTMLElement;
-  if(svgContainer) {
-    fakeSvgContainer = svgContainer.cloneNode(true) as HTMLElement;
-    fakeSvgContainer.classList.add('audio-waveform-fake');
-    svgContainer.classList.add('audio-waveform-background');
-  }
+  let progress: any;
+  let progressLine: MediaProgressLine;
+  let availW = 0;
+  let attachScrub: () => void;
 
   const waveformContainer = document.createElement('div');
   waveformContainer.classList.add('audio-waveform-container');
 
-  if(svgContainer) {
-    waveformContainer.append(svgContainer, fakeSvgContainer);
-  }
+  const renderWaveform = (waveformBytes: Uint8Array, duration: number) => {
+    if(progressLine) {
+      progressLine.removeListeners();
+      progressLine.container.remove();
+      progressLine = undefined;
+    }
+    progress = undefined;
+    fakeSvgContainer = undefined;
+    availW = 0;
+
+    const built = createWaveformBars(waveformBytes, duration);
+    availW = built.availW;
+    const svgContainer = built.container;
+    if(svgContainer) {
+      fakeSvgContainer = svgContainer.cloneNode(true) as HTMLElement;
+      fakeSvgContainer.classList.add('audio-waveform-fake');
+      svgContainer.classList.add('audio-waveform-background');
+      waveformContainer.append(svgContainer, fakeSvgContainer);
+      progress = built.svg as any as HTMLElement;
+    } else if(!progressLine) {
+      progressLine = new MediaProgressLine();
+
+      waveformContainer.append(progressLine.container);
+    }
+  };
+
+  renderWaveform(waveform, doc.duration || 0);
 
   const timeDiv = document.createElement('div');
   timeDiv.classList.add('audio-time');
   audioEl.append(waveformContainer, timeDiv);
+
+  // Enrich when EITHER the waveform or a usable duration is missing — the
+  // decode helper fixes either field, and a voice doc with bars but no
+  // duration would otherwise build an SVG with a NaN width and never heal.
+  const usableDuration = (doc.duration ?? 0) > 0;
+  if((!waveform.length || !usableDuration) && (doc as any).phantomchatFileMetadata) {
+    enrichPhantomChatVoiceDoc(doc).then((patched) => {
+      if(!patched || !audioEl.isConnected) return;
+      const enriched = waveformBytesFromDoc(doc);
+      const bytes = enriched?.length ? decodeWaveform(enriched.slice(0, 63)) : waveform;
+      renderWaveform(bytes, doc.duration || 0);
+      if(audioEl.audio) attachScrub?.();
+      timeDiv.textContent = toHHMMSS(doc.duration | 0);
+    }).catch(noop);
+  }
 
   if(audioEl.customAudioToTextButton) {
     audioEl.classList.add('can-transcribe');
@@ -260,13 +302,6 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
     audioEl.append(speechRecognitionDiv);
   }
 
-  let progress = svg as any as HTMLElement, progressLine: MediaProgressLine;
-  if(!progress) {
-    progressLine = new MediaProgressLine();
-
-    waveformContainer.append(progressLine.container);
-  }
-
   const onLoad = () => {
     let audio = audioEl.audio;
 
@@ -294,20 +329,23 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
     audioEl.addAudioListener('ended', throttledTimeUpdate);
     audioEl.addAudioListener('play', setAnimation);
 
-    progress && audioEl.readyPromise.then(() => {
+    let scrubAttached = false;
+    attachScrub = () => {
+      if(scrubAttached || !progress) return;
+      scrubAttached = true;
       let mousedown = false, mousemove = false;
-      progress.addEventListener('mouseleave', (e) => {
+      progress.addEventListener('mouseleave', (e: MouseEvent) => {
         if(mousedown) {
           audioEl.togglePlay(undefined, true);
           mousedown = false;
         }
         mousemove = false;
       });
-      progress.addEventListener('mousemove', (e) => {
+      progress.addEventListener('mousemove', (e: MouseEvent) => {
         mousemove = true;
         if(mousedown) scrub(e);
       });
-      progress.addEventListener('mousedown', (e) => {
+      progress.addEventListener('mousedown', (e: MouseEvent) => {
         e.preventDefault();
         if(e.button !== 0) return;
         if(!audio.paused) {
@@ -317,7 +355,7 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
         scrub(e);
         mousedown = true;
       });
-      progress.addEventListener('mouseup', (e) => {
+      progress.addEventListener('mouseup', (e: MouseEvent) => {
         if(mousemove && mousedown) {
           audioEl.togglePlay(undefined, true);
           mousedown = false;
@@ -344,13 +382,19 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
         }
         setCurrentTime(audio, scrubTime);
       }
+    };
+
+    audioEl.readyPromise.then(() => {
+      attachScrub();
     }, noop);
 
-    !progress && progressLine.setMedia({
-      media: audio,
-      streamable: doc.supportsStreaming,
-      duration: doc.duration
-    });
+    if(!progress && progressLine) {
+      progressLine.setMedia({
+        media: audio,
+        streamable: doc.supportsStreaming,
+        duration: doc.duration
+      });
+    }
 
     return () => {
       progress?.remove();
