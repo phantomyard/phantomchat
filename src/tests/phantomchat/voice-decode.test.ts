@@ -109,6 +109,27 @@ describe('voiceMetaFromAudioBuffer', () => {
     expect(max).toBeGreaterThan(0);
   });
 
+  it('does not alias a tone whose period matches the bucket stride', () => {
+    // Regression (review blocker): the old fixed 64-frame stride sampled one
+    // point per stride, so a tone whose period aligns with the stride could
+    // land entirely on zero crossings and render as a silent waveform.
+    const sampleRate = 8000;
+    const length = 8000;
+    const period = 64; // tone period matches the stride
+    const data = new Float32Array(length);
+    for(let i = 0; i < length; i++) {
+      data[i] = Math.sin(i / period * 2 * Math.PI) * 0.8;
+    }
+    const meta = voiceMetaFromAudioBuffer({
+      duration: 1,
+      sampleRate,
+      numberOfChannels: 1,
+      getChannelData: () => data
+    })!;
+    const max = Math.max(...Array.from(meta.waveform));
+    expect(max).toBeGreaterThan(20);
+  });
+
   it('mixes stereo channels before bucketing', () => {
     const left = new Float32Array(8000).fill(0.9);
     const right = new Float32Array(8000).fill(0.1);
@@ -197,6 +218,45 @@ describe('enrichPhantomChatVoiceDoc', () => {
     });
     expect(patched).toBe(false);
     expect(doc.duration).toBeUndefined();
+  });
+
+  it('enriches a doc that has a waveform but no usable duration', async() => {
+    // Review blocker: enrichment previously fired only when the waveform was
+    // missing, so a voice doc with packed bars but no duration kept
+    // doc.duration undefined (NaN-width SVG) and never self-healed.
+    const doc = makeDoc({
+      attributes: [{_: 'documentAttributeAudio', pFlags: {voice: true}, duration: undefined, waveform: new Uint8Array([7])}]
+    });
+    const patched = await enrichPhantomChatVoiceDoc(doc, {
+      download: async() => new Blob([new Uint8Array(16)]),
+      decode: vi.fn(async(): Promise<any> => fakeMeta)
+    });
+    expect(patched).toBe(true);
+    expect(doc.attributes[0].duration).toBe(9);
+    expect(doc.duration).toBe(9);
+  });
+
+  it('enforces the decode cap on the downloaded blob, not the sender-declared size', async() => {
+    const decode = vi.fn(async(): Promise<any> => fakeMeta);
+    const doc = makeDoc();
+    // sender lies: declares 42 bytes, ships a 9 MB blob
+    doc.phantomchatFileMetadata.size = 42;
+    const patched = await enrichPhantomChatVoiceDoc(doc, {
+      download: async() => new Blob([new Uint8Array(9 * 1024 * 1024)]),
+      decode
+    });
+    expect(patched).toBe(false);
+    expect(decode).not.toHaveBeenCalled();
+  });
+
+  it('a spent attempt (decode ends without a patch) is not retried', async() => {
+    const download = vi.fn(async() => new Blob([new Uint8Array(8)]));
+    const decode = vi.fn(async(): Promise<any> => undefined);
+    const doc = makeDoc();
+    await enrichPhantomChatVoiceDoc(doc, {download, decode});
+    expect(await enrichPhantomChatVoiceDoc(doc, {download, decode})).toBe(false);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(decode).toHaveBeenCalledTimes(1);
   });
 
   it('skips oversized media', async() => {

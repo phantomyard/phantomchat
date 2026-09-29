@@ -100,19 +100,22 @@ export function voiceMetaFromAudioBuffer(
   const sampleCount = buffer.duration * buffer.sampleRate;
   if(!Number.isFinite(sampleCount) || sampleCount <= 0) return undefined;
 
-  // Mono mixdown: average available channels per sample position.
+  // Mono mixdown: max-abs across all channels per bucket — every sample is
+  // inspected, so a signal whose period matches the bucket stride (e.g. a
+  // 375 Hz tone at 24 kHz under a fixed 64-frame stride, which samples every
+  // zero crossing) cannot alias away into a silent waveform.
   const channelCount = Math.max(1, bufferChannelCount(buffer));
   const left = buffer.getChannelData(0);
-  const step = Math.max(1, Math.floor(left.length / Math.max(1, Math.floor(sampleCount / 64))));
-  const bucketPeaks: number[] = [];
-  for(let i = 0; i < left.length; i += step) {
-    let peak = 0;
-    for(let c = 0; c < channelCount; c++) {
-      const data = c === 0 ? left : buffer.getChannelData(c);
+  const bucketCount = Math.max(1, Math.floor(sampleCount / 64));
+  const bucketPeaks: number[] = new Array(bucketCount).fill(0);
+  for(let c = 0; c < channelCount; c++) {
+    const data = c === 0 ? left : buffer.getChannelData(c);
+    const length = Math.min(data.length, left.length);
+    for(let i = 0; i < length; i++) {
+      const b = Math.min(bucketCount - 1, (i * bucketCount / length) | 0);
       const v = Math.abs(data[i] || 0);
-      if(v > peak) peak = v;
+      if(v > bucketPeaks[b]) bucketPeaks[b] = v;
     }
-    bucketPeaks.push(peak);
   }
   if(!bucketPeaks.length) return undefined;
 
@@ -156,6 +159,9 @@ export async function decodeVoiceMetaFromBlob(blob: Blob): Promise<DecodedVoiceM
  *
  * Returns true when the document was patched, false when there was nothing
  * to do or the decode failed (bubble keeps its current look — never worse).
+ * An attempt is spent at most once per session: an attempt that ends without
+ * a patch (oversized/undecodable blob) is also marked done, so a later render
+ * never re-downloads + re-decodes the same bytes.
  */
 const enrichmentInFlight = new Map<string, Promise<boolean>>();
 const enrichmentDone = new Set<string>();
@@ -188,6 +194,10 @@ export function enrichPhantomChatVoiceDoc(
         await deps.download(doc) :
         await (await import('@lib/appDownloadManager')).default.downloadMedia({media: doc}, 'blob');
       if(!(blob instanceof Blob)) return false;
+      // Trust the bytes we actually hold, not the sender-declared fm.size:
+      // legacy receive paths normalize a missing size to 0 and the size
+      // field is sender-controlled — enforce the cap on the real blob.
+      if(blob.size > MAX_DECODE_BYTES) return false;
       const meta = deps.decode ? await deps.decode(blob) : await decodeVoiceMetaFromBlob(blob);
       if(!meta) return false;
 
@@ -212,6 +222,10 @@ export function enrichPhantomChatVoiceDoc(
       return false;
     } finally {
       enrichmentInFlight.delete(key);
+      // The attempt is spent regardless of outcome: an attempt that ends
+      // without a patch (oversized/undecodable blob) must not be retried on
+      // later renders — that would re-download + re-decode every time.
+      enrichmentDone.add(key);
     }
   })();
   enrichmentInFlight.set(key, promise);

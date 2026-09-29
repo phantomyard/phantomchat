@@ -221,18 +221,22 @@ async function wrapVoiceMessage(audioEl: AudioElement) {
     }
   };
 
-  renderWaveform(waveform, doc.duration);
+  renderWaveform(waveform, doc.duration || 0);
 
   const timeDiv = document.createElement('div');
   timeDiv.classList.add('audio-time');
   audioEl.append(waveformContainer, timeDiv);
 
-  if(!waveform.length && (doc as any).phantomchatFileMetadata) {
+  // Enrich when EITHER the waveform or a usable duration is missing — the
+  // decode helper fixes either field, and a voice doc with bars but no
+  // duration would otherwise build an SVG with a NaN width and never heal.
+  const usableDuration = (doc.duration ?? 0) > 0;
+  if((!waveform.length || !usableDuration) && (doc as any).phantomchatFileMetadata) {
     enrichPhantomChatVoiceDoc(doc).then((patched) => {
       if(!patched || !audioEl.isConnected) return;
       const enriched = waveformBytesFromDoc(doc);
-      if(!enriched?.length) return;
-      renderWaveform(decodeWaveform(enriched.slice(0, 63)), doc.duration);
+      const bytes = enriched?.length ? decodeWaveform(enriched.slice(0, 63)) : waveform;
+      renderWaveform(bytes, doc.duration || 0);
       if(audioEl.audio) attachScrub?.();
       timeDiv.textContent = toHHMMSS(doc.duration | 0);
     }).catch(noop);
