@@ -16,8 +16,10 @@ import {
   pack5BitWaveform,
   peaksToWaveformValues,
   voiceMetaFromAudioBuffer,
+  voiceMetaFromAudioBufferAsync,
   enrichPhantomChatVoiceDoc,
   waveformBytesFromDoc,
+  resetVoiceMetaStateForTests,
   WAVEFORM_VALUE_COUNT
 } from '@lib/phantomchat/phantomchat-voice-decode';
 
@@ -148,7 +150,63 @@ describe('voiceMetaFromAudioBuffer', () => {
   });
 });
 
+describe('voiceMetaFromAudioBufferAsync (chunked, UI-safe scan)', () => {
+  it('produces identical output to the synchronous scan across yield boundaries', async() => {
+    // Longer than one YIELD_SAMPLES chunk (524288) so the async scan really
+    // yields mid-analysis and must still accumulate peaks across chunks.
+    const sampleRate = 48000;
+    const length = sampleRate * 14; // 14s → ~1.3 chunks
+    const data = new Float32Array(length);
+    for(let i = 0; i < length; i++) {
+      data[i] = Math.sin(i / sampleRate * 2 * Math.PI * 220) * (0.3 + 0.6 * (i % 3) / 3);
+    }
+    const buffer = {
+      duration: 14,
+      sampleRate,
+      numberOfChannels: 1,
+      getChannelData: () => data
+    };
+    const sync = voiceMetaFromAudioBuffer(buffer)!;
+    const async = await voiceMetaFromAudioBufferAsync(buffer)!;
+    expect(async).toBeDefined();
+    expect(async.duration).toBe(sync.duration);
+    expect(Array.from(async.waveform)).toEqual(Array.from(sync.waveform));
+  });
+
+  it('keeps the peak of a loud burst in the second chunk (no chunk-boundary loss)', async() => {
+    const sampleRate = 48000;
+    const length = 2 * (1 << 20); // > 2 chunks
+    const data = new Float32Array(length);
+    const burstAt = Math.floor(length * 0.75);
+    for(let i = burstAt; i < burstAt + 1000; i++) data[i] = 1;
+    const meta = await voiceMetaFromAudioBufferAsync({
+      duration: length / sampleRate,
+      sampleRate,
+      numberOfChannels: 1,
+      getChannelData: () => data
+    });
+    // decode the packed 5-bit waveform before reading amplitude values
+    const packed = meta!.waveform;
+    let decodedMax = 0;
+    for(let i = 0; i < 100; i++) {
+      const byteIndex = i * 5 / 8 | 0;
+      const bitShift = i * 5 % 8;
+      const value = (packed[byteIndex] | (packed[byteIndex + 1] ?? 0) << 8) >> bitShift & 0b11111;
+      if(value > decodedMax) decodedMax = value;
+    }
+    expect(decodedMax).toBe(31);
+  });
+
+  it('returns undefined for empty/invalid buffers', async() => {
+    expect(await voiceMetaFromAudioBufferAsync({duration: 0, sampleRate: 8000, getChannelData: () => new Float32Array(0)})).toBeUndefined();
+  });
+});
+
 describe('enrichPhantomChatVoiceDoc', () => {
+  beforeEach(() => {
+    resetVoiceMetaStateForTests();
+  });
+
   let docSeq = 0;
   const makeDoc = (extra: any = {}) => ({
     id: `phantomchat_${++docSeq}`,
@@ -286,5 +344,62 @@ describe('enrichPhantomChatVoiceDoc', () => {
     const {decodeVoiceMetaFromBlob} = await import('@lib/phantomchat/phantomchat-voice-decode');
     const result = await decodeVoiceMetaFromBlob(new Blob([new Uint8Array(8)]));
     expect(result).toBeUndefined();
+  });
+
+  it('a cached decode patches a fresh doc object with no download at all', async() => {
+    // The refresh path: history rebuild gives NEW doc objects with the same
+    // stable id. The persisted decode must patch them without downloading or
+    // decoding a single byte — this is what stops the refresh thundering herd.
+    const download = vi.fn(async() => new Blob([new Uint8Array(16)]));
+    const decode = vi.fn(async(): Promise<any> => fakeMeta);
+    const doc = makeDoc();
+    expect(await enrichPhantomChatVoiceDoc(doc, {download, decode})).toBe(true);
+    expect(download).toHaveBeenCalledTimes(1);
+
+    resetVoiceMetaStateForTests(true); // simulate a page reload: session state gone, localStorage kept
+    const reloadedDoc = makeDoc({id: doc.id}) as any;
+    expect(reloadedDoc).not.toBe(doc);
+    const download2 = vi.fn(async() => new Blob([new Uint8Array(16)]));
+    const decode2 = vi.fn();
+    expect(await enrichPhantomChatVoiceDoc(reloadedDoc, {download: download2, decode: decode2})).toBe(true);
+    expect(download2).not.toHaveBeenCalled();
+    expect(decode2).not.toHaveBeenCalled();
+    expect(reloadedDoc.duration).toBe(9);
+    expect(waveformBytesFromDoc(reloadedDoc)).toBeInstanceOf(Uint8Array);
+    expect(waveformBytesFromDoc(reloadedDoc)!.length).toBe(fakeMeta.waveform.length);
+  });
+
+  it('a corrupted cache entry falls back to a real decode, never throws', async() => {
+    const doc = makeDoc();
+    localStorage.setItem('phantomchatVoiceMeta.v1', JSON.stringify({[doc.id]: {duration: 3, waveform: '!!!not-base64!!!', t: 1}}));
+    const decode = vi.fn(async(): Promise<any> => fakeMeta);
+    const patched = await enrichPhantomChatVoiceDoc(doc, {
+      download: async() => new Blob([new Uint8Array(16)]),
+      decode
+    });
+    expect(patched).toBe(true);
+    expect(decode).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes decodes: a second doc does not download while the first is in flight', async() => {
+    // The refresh lockup: N bubbles enriched in one tick used to fire N
+    // parallel download+decode jobs. The queue must run them one at a time.
+    let resolveA: (m: any) => void;
+    const decodeA = vi.fn((): Promise<any> => new Promise((r) => { resolveA = r; }));
+    const downloadB = vi.fn(async() => new Blob([new Uint8Array(16)]));
+    const docA = makeDoc();
+    const docB = makeDoc();
+
+    const pA = enrichPhantomChatVoiceDoc(docA, {download: async() => new Blob([new Uint8Array(8)]), decode: decodeA});
+    const pB = enrichPhantomChatVoiceDoc(docB, {download: downloadB, decode: async(): Promise<any> => fakeMeta});
+    // let queued work start and the event loop settle
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(downloadB).not.toHaveBeenCalled(); // B waits behind A
+
+    resolveA!(fakeMeta);
+    expect(await pA).toBe(true);
+    expect(await pB).toBe(true);
+    expect(downloadB).toHaveBeenCalledTimes(1);
   });
 });

@@ -18,6 +18,87 @@
 import type {MyDocument} from '@appManagers/appDocsManager';
 import base64ToBytes from '@helpers/string/base64ToBytes';
 
+/**
+ * Decoded-voice metadata cache (localStorage), so a refresh never re-downloads
+ * + re-decodes the same voice notes. Keyed by the stable doc id
+ * (`phantomchat_<mid>`); entries carry {duration, packed waveform, timestamp}.
+ */
+const VOICE_META_CACHE_KEY = 'phantomchatVoiceMeta.v1';
+const VOICE_META_CACHE_MAX_ENTRIES = 2000;
+type VoiceMetaCacheEntry = {duration: number; waveform: string; t: number};
+let voiceMetaCache: Map<string, VoiceMetaCacheEntry> | undefined;
+let voiceMetaCacheDisabled = false;
+
+function loadVoiceMetaCache(): Map<string, VoiceMetaCacheEntry> | undefined {
+  if(voiceMetaCache) return voiceMetaCache;
+  if(voiceMetaCacheDisabled || typeof localStorage === 'undefined') return undefined;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(VOICE_META_CACHE_KEY) || '{}');
+    voiceMetaCache = new Map(Object.entries(parsed));
+  } catch{
+    voiceMetaCache = new Map();
+  }
+  return voiceMetaCache;
+}
+
+function persistVoiceMetaCache(cache: Map<string, VoiceMetaCacheEntry>) {
+  if(typeof localStorage === 'undefined' || voiceMetaCacheDisabled) return;
+  try {
+    localStorage.setItem(VOICE_META_CACHE_KEY, JSON.stringify(Object.fromEntries(cache)));
+  } catch{
+    // Quota (or serialization) failure: drop the oldest half and retry once;
+    // if it still fails, stop persisting rather than throwing per decode.
+    const entries = [...cache.entries()].sort((a, b) => a[1].t - b[1].t);
+    for(let i = 0; i < entries.length / 2; i++) cache.delete(entries[i][0]);
+    try {
+      localStorage.setItem(VOICE_META_CACHE_KEY, JSON.stringify(Object.fromEntries(cache)));
+    } catch{
+      voiceMetaCacheDisabled = true;
+    }
+  }
+}
+
+function getCachedVoiceMeta(docId: string): DecodedVoiceMeta | undefined {
+  const cache = loadVoiceMetaCache();
+  const entry = cache?.get(docId);
+  if(!entry) return undefined;
+  try {
+    const bytes = base64ToBytes(entry.waveform);
+    if(!bytes?.length) return undefined;
+    return {duration: entry.duration, waveform: bytes};
+  } catch{
+    return undefined;
+  }
+}
+
+function setCachedVoiceMeta(docId: string, meta: DecodedVoiceMeta) {
+  const cache = loadVoiceMetaCache();
+  if(!cache || voiceMetaCacheDisabled) return;
+  cache.set(docId, {duration: meta.duration, waveform: bytesToBase64(meta.waveform), t: Date.now()});
+  if(cache.size > VOICE_META_CACHE_MAX_ENTRIES) {
+    const oldest = [...cache.entries()].sort((a, b) => a[1].t - b[1].t)[0];
+    if(oldest) cache.delete(oldest[0]);
+  }
+  persistVoiceMetaCache(cache);
+}
+
+/**
+ * Test isolation: forget all module state — the in-memory decode cache,
+ * session attempt sets, everything. Pass true to keep the persisted
+ * localStorage entries, which is exactly what survives a page reload.
+ */
+export function resetVoiceMetaStateForTests(keepPersistedStorage = false) {
+  voiceMetaCache = undefined;
+  voiceMetaCacheDisabled = false;
+  enrichmentInFlight.clear();
+  enrichmentDone.clear();
+  try {
+    if(typeof localStorage !== 'undefined' && !keepPersistedStorage) {
+      localStorage.removeItem(VOICE_META_CACHE_KEY);
+    }
+  } catch{ /* ignore */ }
+}
+
 /** Base64 for the fm sidecar, same encoding the sender ships (media-shape). */
 function bytesToBase64(bytes: Uint8Array): string {
   let bin = '';
@@ -97,30 +178,119 @@ export function voiceMetaFromAudioBuffer(
   },
   count = WAVEFORM_VALUE_COUNT
 ): DecodedVoiceMeta | undefined {
-  const sampleCount = buffer.duration * buffer.sampleRate;
-  if(!Number.isFinite(sampleCount) || sampleCount <= 0) return undefined;
+  return voiceMetaFromChannels(
+    channelsOf(buffer),
+    buffer.duration,
+    buffer.sampleRate,
+    count
+  ) as DecodedVoiceMeta | undefined;
+}
+
+/**
+ * Same computation as voiceMetaFromAudioBuffer, but chunked: the per-sample
+ * peak scan yields to the event loop every YIELD_SAMPLES samples so long
+ * voice notes can't freeze the UI (the scan is plain JS on the main thread).
+ */
+export async function voiceMetaFromAudioBufferAsync(
+  buffer: {
+    duration: number;
+    sampleRate: number;
+    numberOfChannels?: number;
+    getChannelData(channel: number): Float32Array;
+  },
+  count = WAVEFORM_VALUE_COUNT
+): Promise<DecodedVoiceMeta | undefined> {
+  return voiceMetaFromChannels(channelsOf(buffer), buffer.duration, buffer.sampleRate, count, true);
+}
+
+function channelsOf(buffer: {
+  numberOfChannels?: number;
+  getChannelData(channel: number): Float32Array;
+}): Float32Array[] {
+  const channelCount = Math.max(1, bufferChannelCount(buffer));
+  const channels: Float32Array[] = [];
+  for(let c = 0; c < channelCount; c++) channels.push(buffer.getChannelData(c));
+  return channels;
+}
+
+const YIELD_SAMPLES = 1 << 19; // ~500k samples ≈ 10s of audio per chunk
+
+function voiceMetaFromChannels(
+  channels: Float32Array[],
+  duration: number,
+  sampleRate: number,
+  count = WAVEFORM_VALUE_COUNT,
+  yieldPeriodically = false
+): DecodedVoiceMeta | Promise<DecodedVoiceMeta | undefined> {
+  const sampleCount = duration * sampleRate;
+  if(!Number.isFinite(sampleCount) || sampleCount <= 0 || !channels.length) return undefined;
 
   // Mono mixdown: max-abs across all channels per bucket — every sample is
   // inspected, so a signal whose period matches the bucket stride (e.g. a
   // 375 Hz tone at 24 kHz under a fixed 64-frame stride, which samples every
   // zero crossing) cannot alias away into a silent waveform.
-  const channelCount = Math.max(1, bufferChannelCount(buffer));
-  const left = buffer.getChannelData(0);
+  const left = channels[0];
   const bucketCount = Math.max(1, Math.floor(sampleCount / 64));
   const bucketPeaks: number[] = new Array(bucketCount).fill(0);
-  for(let c = 0; c < channelCount; c++) {
-    const data = c === 0 ? left : buffer.getChannelData(c);
+  return (yieldPeriodically ? computePeaksAsync : computePeaksSync)(
+    channels, left, bucketCount, bucketPeaks, count, duration
+  );
+}
+
+function computePeaksSync(
+  channels: Float32Array[],
+  left: Float32Array,
+  bucketCount: number,
+  bucketPeaks: number[],
+  count: number,
+  duration: number
+): DecodedVoiceMeta | undefined {
+  for(const data of channels) {
+    scanChannelPeaks(data, left, bucketCount, bucketPeaks, 0, Math.min(data.length, left.length));
+  }
+  return finalizeVoiceMeta(bucketPeaks, count, duration);
+}
+
+async function computePeaksAsync(
+  channels: Float32Array[],
+  left: Float32Array,
+  bucketCount: number,
+  bucketPeaks: number[],
+  count: number,
+  duration: number
+): Promise<DecodedVoiceMeta | undefined> {
+  for(const data of channels) {
     const length = Math.min(data.length, left.length);
-    for(let i = 0; i < length; i++) {
-      const b = Math.min(bucketCount - 1, (i * bucketCount / length) | 0);
-      const v = Math.abs(data[i] || 0);
-      if(v > bucketPeaks[b]) bucketPeaks[b] = v;
+    for(let start = 0; start < length; start += YIELD_SAMPLES) {
+      scanChannelPeaks(data, left, bucketCount, bucketPeaks, start, Math.min(start + YIELD_SAMPLES, length));
+      // Hand the main thread back between chunks — a multi-minute note must
+      // never freeze clicks and scrolling while it is being analyzed.
+      await new Promise((resolve) => setTimeout(resolve, 0));
     }
   }
-  if(!bucketPeaks.length) return undefined;
+  return finalizeVoiceMeta(bucketPeaks, count, duration);
+}
 
+function scanChannelPeaks(
+  data: Float32Array,
+  left: Float32Array,
+  bucketCount: number,
+  bucketPeaks: number[],
+  from: number,
+  to: number
+) {
+  const stride = bucketCount / Math.max(1, Math.min(data.length, left.length));
+  for(let i = from; i < to; i++) {
+    const b = Math.min(bucketCount - 1, i * stride | 0);
+    const v = Math.abs(data[i] || 0);
+    if(v > bucketPeaks[b]) bucketPeaks[b] = v;
+  }
+}
+
+function finalizeVoiceMeta(bucketPeaks: number[], count: number, duration: number): DecodedVoiceMeta | undefined {
+  if(!bucketPeaks.length) return undefined;
   return {
-    duration: Math.max(1, Math.round(buffer.duration)),
+    duration: Math.max(1, Math.round(duration)),
     waveform: pack5BitWaveform(peaksToWaveformValues(bucketPeaks, count))
   };
 }
@@ -131,22 +301,39 @@ function bufferChannelCount(buffer: {numberOfChannels?: number}): number {
     1;
 }
 
-/** Decode arbitrary audio bytes (mp3/ogg/wav/…) via the Web Audio API. */
-export async function decodeVoiceMetaFromBlob(blob: Blob): Promise<DecodedVoiceMeta | undefined> {
+/**
+ * One shared AudioContext for every decode — constructing one per document
+ * both leaks limited hardware contexts (browsers cap them, and past the cap
+ * construction THROWS, silently killing every later decode in the session)
+ * and burns main-thread setup time on refresh when many bubbles decode at once.
+ */
+let sharedAudioContext: AudioContext | undefined;
+function getSharedAudioContext(): AudioContext | undefined {
   const ctxCtor = (window as any).AudioContext || (window as any).webkitAudioContext;
   if(!ctxCtor) return undefined;
-  const ctx = new ctxCtor();
+  if(!sharedAudioContext) {
+    try {
+      sharedAudioContext = new ctxCtor();
+    } catch{
+      return undefined;
+    }
+  }
+  return sharedAudioContext;
+}
+
+/** Decode arbitrary audio bytes (mp3/ogg/wav/…) via the Web Audio API. */
+export async function decodeVoiceMetaFromBlob(blob: Blob): Promise<DecodedVoiceMeta | undefined> {
+  const ctx = getSharedAudioContext();
+  if(!ctx) return undefined;
   try {
     const audioData = await blob.arrayBuffer();
     const buffer: AudioBuffer = await new Promise((resolve, reject) => {
       // callback form for widest compatibility
       ctx.decodeAudioData(audioData, resolve, reject);
     });
-    return voiceMetaFromAudioBuffer(buffer);
+    return await voiceMetaFromAudioBufferAsync(buffer);
   } catch{
     return undefined;
-  } finally {
-    ctx.close?.().catch?.(() => {});
   }
 }
 
@@ -188,7 +375,20 @@ export function enrichPhantomChatVoiceDoc(
   if(existing) return existing;
   if(enrichmentDone.has(key)) return Promise.resolve(false);
 
-  const promise = (async() => {
+  // Persisted decode → no download at all. This is what keeps a PWA refresh
+  // from re-downloading + re-decoding every voice note in history at once
+  // (the refresh thundering herd that froze the UI).
+  const cached = getCachedVoiceMeta(key);
+  if(cached) {
+    patchDocWithDecodedMeta(doc, audioAttribute, cached);
+    enrichmentDone.add(key);
+    return Promise.resolve(true);
+  }
+
+  // Decode work is serialized globally: a history (re)load renders many
+  // voice bubbles at once, and N parallel downloads + decodes in the same
+  // tick is exactly the lockup. One at a time, patched as each completes.
+  const promise = runQueued(async() => {
     try {
       const blob = deps.download ?
         await deps.download(doc) :
@@ -201,22 +401,8 @@ export function enrichPhantomChatVoiceDoc(
       const meta = deps.decode ? await deps.decode(blob) : await decodeVoiceMetaFromBlob(blob);
       if(!meta) return false;
 
-      // Patch in place — the doc object is shared (appDocsManager cache), so
-      // every surface reading it now sees real metadata, Telegram-style.
-      const attribute: any = audioAttribute ?? {
-        _: 'documentAttributeAudio',
-        pFlags: {voice: true},
-        duration: meta.duration
-      };
-      attribute.waveform = meta.waveform;
-      if(!(attribute.duration > 0)) attribute.duration = meta.duration;
-      if(!audioAttribute) doc.attributes.push(attribute);
-      if(!((doc as any).duration > 0)) (doc as any).duration = meta.duration;
-      // Also mirror onto the sidecar so a re-render rebuilt from fm (media
-      // shape) carries the decoded metadata within this session.
-      if(!(fm.duration > 0)) fm.duration = meta.duration;
-      if(!fm.waveform) fm.waveform = bytesToBase64(meta.waveform);
-      enrichmentDone.add(key);
+      patchDocWithDecodedMeta(doc, audioAttribute, meta);
+      setCachedVoiceMeta(key, meta);
       return true;
     } catch{
       return false;
@@ -227,9 +413,42 @@ export function enrichPhantomChatVoiceDoc(
       // later renders — that would re-download + re-decode every time.
       enrichmentDone.add(key);
     }
-  })();
+  });
   enrichmentInFlight.set(key, promise);
   return promise;
+}
+
+/** Serializes decode work so concurrent renders can't stampede the CPU. */
+let decodeQueue: Promise<unknown> = Promise.resolve();
+function runQueued<T>(work: () => Promise<T>): Promise<T> {
+  const result = decodeQueue.then(work, work);
+  decodeQueue = result.then((): undefined => undefined, (): undefined => undefined);
+  return result;
+}
+
+/** Patch a shared doc in place with decoded metadata (used by both the
+ * cached and freshly-decoded paths so they can never drift). */
+function patchDocWithDecodedMeta(
+  doc: MyDocument,
+  audioAttribute: any,
+  meta: DecodedVoiceMeta
+) {
+  // Patch in place — the doc object is shared (appDocsManager cache), so
+  // every surface reading it now sees real metadata, Telegram-style.
+  const attribute: any = audioAttribute ?? {
+    _: 'documentAttributeAudio',
+    pFlags: {voice: true},
+    duration: meta.duration
+  };
+  attribute.waveform = meta.waveform;
+  if(!(attribute.duration > 0)) attribute.duration = meta.duration;
+  if(!audioAttribute) doc.attributes.push(attribute);
+  if(!((doc as any).duration > 0)) (doc as any).duration = meta.duration;
+  // Also mirror onto the sidecar so a re-render rebuilt from fm (media
+  // shape) carries the decoded metadata within this session.
+  const fm: any = (doc as any).phantomchatFileMetadata;
+  if(!(fm.duration > 0)) fm.duration = meta.duration;
+  if(!fm.waveform) fm.waveform = bytesToBase64(meta.waveform);
 }
 
 /**
