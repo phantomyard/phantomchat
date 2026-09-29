@@ -16,8 +16,14 @@ import {
   pack5BitWaveform,
   peaksToWaveformValues,
   voiceMetaFromAudioBuffer,
+  voiceMetaFromAudioBufferAsync,
   enrichPhantomChatVoiceDoc,
   waveformBytesFromDoc,
+  resetVoiceMetaStateForTests,
+  flushVoiceMetaCache,
+  clearPersistedVoiceMeta,
+  VOICE_META_CACHE_KEY,
+  VOICE_META_FLUSH_DEBOUNCE_MS,
   WAVEFORM_VALUE_COUNT
 } from '@lib/phantomchat/phantomchat-voice-decode';
 
@@ -148,7 +154,63 @@ describe('voiceMetaFromAudioBuffer', () => {
   });
 });
 
+describe('voiceMetaFromAudioBufferAsync (chunked, UI-safe scan)', () => {
+  it('produces identical output to the synchronous scan across yield boundaries', async() => {
+    // Longer than one YIELD_SAMPLES chunk (524288) so the async scan really
+    // yields mid-analysis and must still accumulate peaks across chunks.
+    const sampleRate = 48000;
+    const length = sampleRate * 14; // 14s → ~1.3 chunks
+    const data = new Float32Array(length);
+    for(let i = 0; i < length; i++) {
+      data[i] = Math.sin(i / sampleRate * 2 * Math.PI * 220) * (0.3 + 0.6 * (i % 3) / 3);
+    }
+    const buffer = {
+      duration: 14,
+      sampleRate,
+      numberOfChannels: 1,
+      getChannelData: () => data
+    };
+    const sync = voiceMetaFromAudioBuffer(buffer)!;
+    const async = await voiceMetaFromAudioBufferAsync(buffer)!;
+    expect(async).toBeDefined();
+    expect(async.duration).toBe(sync.duration);
+    expect(Array.from(async.waveform)).toEqual(Array.from(sync.waveform));
+  });
+
+  it('keeps the peak of a loud burst in the second chunk (no chunk-boundary loss)', async() => {
+    const sampleRate = 48000;
+    const length = 2 * (1 << 20); // > 2 chunks
+    const data = new Float32Array(length);
+    const burstAt = Math.floor(length * 0.75);
+    for(let i = burstAt; i < burstAt + 1000; i++) data[i] = 1;
+    const meta = await voiceMetaFromAudioBufferAsync({
+      duration: length / sampleRate,
+      sampleRate,
+      numberOfChannels: 1,
+      getChannelData: () => data
+    });
+    // decode the packed 5-bit waveform before reading amplitude values
+    const packed = meta!.waveform;
+    let decodedMax = 0;
+    for(let i = 0; i < 100; i++) {
+      const byteIndex = i * 5 / 8 | 0;
+      const bitShift = i * 5 % 8;
+      const value = (packed[byteIndex] | (packed[byteIndex + 1] ?? 0) << 8) >> bitShift & 0b11111;
+      if(value > decodedMax) decodedMax = value;
+    }
+    expect(decodedMax).toBe(31);
+  });
+
+  it('returns undefined for empty/invalid buffers', async() => {
+    expect(await voiceMetaFromAudioBufferAsync({duration: 0, sampleRate: 8000, getChannelData: () => new Float32Array(0)})).toBeUndefined();
+  });
+});
+
 describe('enrichPhantomChatVoiceDoc', () => {
+  beforeEach(() => {
+    resetVoiceMetaStateForTests();
+  });
+
   let docSeq = 0;
   const makeDoc = (extra: any = {}) => ({
     id: `phantomchat_${++docSeq}`,
@@ -286,5 +348,214 @@ describe('enrichPhantomChatVoiceDoc', () => {
     const {decodeVoiceMetaFromBlob} = await import('@lib/phantomchat/phantomchat-voice-decode');
     const result = await decodeVoiceMetaFromBlob(new Blob([new Uint8Array(8)]));
     expect(result).toBeUndefined();
+  });
+
+  it('a cached decode patches a fresh doc object with no download at all', async() => {
+    // The refresh path: history rebuild gives NEW doc objects with the same
+    // stable id. The persisted decode must patch them without downloading or
+    // decoding a single byte — this is what stops the refresh thundering herd.
+    const download = vi.fn(async() => new Blob([new Uint8Array(16)]));
+    const decode = vi.fn(async(): Promise<any> => fakeMeta);
+    const doc = makeDoc();
+    expect(await enrichPhantomChatVoiceDoc(doc, {download, decode})).toBe(true);
+    expect(download).toHaveBeenCalledTimes(1);
+
+    // The decode patched memory synchronously; the disk tier is idle-scheduled —
+    // land the flush (the controller write resolves in microtasks) before
+    // simulating the reload.
+    flushVoiceMetaCache();
+    await new Promise((r) => setTimeout(r, 0));
+    resetVoiceMetaStateForTests(true); // simulate a page reload: session state gone, localStorage kept
+    const reloadedDoc = makeDoc({id: doc.id}) as any;
+    expect(reloadedDoc).not.toBe(doc);
+    const download2 = vi.fn(async() => new Blob([new Uint8Array(16)]));
+    const decode2 = vi.fn();
+    expect(await enrichPhantomChatVoiceDoc(reloadedDoc, {download: download2, decode: decode2})).toBe(true);
+    expect(download2).not.toHaveBeenCalled();
+    expect(decode2).not.toHaveBeenCalled();
+    expect(reloadedDoc.duration).toBe(9);
+    expect(waveformBytesFromDoc(reloadedDoc)).toBeInstanceOf(Uint8Array);
+    expect(waveformBytesFromDoc(reloadedDoc)!.length).toBe(fakeMeta.waveform.length);
+  });
+
+  it('decodes never touch localStorage synchronously — disk writes ride an idle-scheduled flush', async() => {
+    // Kai's review blocker on #178: the hot path must stay pure memory. A
+    // decode mutates the in-memory map and ARMS a flush; no localStorage
+    // write may happen until the flush explicitly runs — and a whole burst
+    // of decodes coalesces into ONE disk write.
+    // (jsdom's localStorage getter returns a fresh wrapper per access, so an
+    // instance spy sees nothing — stub the global, cleanup-suite style.)
+    const store: Record<string, string> = {};
+    const setItem = vi.fn((k: string, v: string) => { store[k] = v; });
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem,
+      removeItem: (k: string) => { delete store[k]; }
+    });
+    try {
+      const download = async() => new Blob([new Uint8Array(16)]);
+      const decode = async(): Promise<any> => fakeMeta;
+      const docA = makeDoc();
+      const docB = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(docA, {download, decode})).toBe(true);
+      expect(await enrichPhantomChatVoiceDoc(docB, {download, decode})).toBe(true);
+      expect(setItem).not.toHaveBeenCalled(); // hot path never writes synchronously
+      flushVoiceMetaCache(); // the burst lands as one controller write
+      await new Promise((r) => setTimeout(r, 0)); // controller write resolves in microtasks
+      expect(setItem).toHaveBeenCalledTimes(1);
+      const stored = JSON.parse(store[VOICE_META_CACHE_KEY]);
+      expect(stored[docA.id]).toBeDefined();
+      expect(stored[docB.id]).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('arms requestIdleCallback with a bounded timeout when available, not a timer', async() => {
+    // Kai's blocker round 2: the flush must be IDLE-scheduled, routed through
+    // LocalStorageController, with the debounce window as the idle-timeout bound.
+    const idleCallbacks: Array<() => void> = [];
+    let idleOptions: {timeout?: number} | undefined;
+    const requestIdleCallback = vi.fn((cb: () => void, opts?: {timeout: number}) => {
+      idleCallbacks.push(cb);
+      idleOptions = opts;
+      return idleCallbacks.length;
+    });
+    const cancelIdleCallback = vi.fn();
+    vi.stubGlobal('requestIdleCallback', requestIdleCallback);
+    vi.stubGlobal('cancelIdleCallback', cancelIdleCallback);
+    const store: Record<string, string> = {};
+    const setItem = vi.fn((k: string, v: string) => { store[k] = v; });
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem,
+      removeItem: (k: string) => { delete store[k]; }
+    });
+    try {
+      const doc = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(doc, {
+        download: async() => new Blob([new Uint8Array(16)]),
+        decode: async(): Promise<any> => fakeMeta
+      })).toBe(true);
+      expect(requestIdleCallback).toHaveBeenCalledTimes(1);
+      expect(idleOptions?.timeout).toBe(VOICE_META_FLUSH_DEBOUNCE_MS); // bounded wait
+      expect(setItem).not.toHaveBeenCalled(); // arming writes nothing
+      idleCallbacks[0](); // the main thread went idle
+      await new Promise((r) => setTimeout(r, 0));
+      expect(setItem).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(store[VOICE_META_CACHE_KEY])[doc.id]).toBeDefined();
+      // A second burst re-arms the idle callback after the previous one fired.
+      const doc2 = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(doc2, {
+        download: async() => new Blob([new Uint8Array(16)]),
+        decode: async(): Promise<any> => fakeMeta
+      })).toBe(true);
+      expect(requestIdleCallback).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('quota failure evicts the oldest half and retries once at idle — never re-serializes inline', async() => {
+    // The old code retried the write inline in the same tick — two full
+    // serializations back to back on the main thread. Now a quota failure
+    // evicts half, re-arms ONE idle flush, and a second consecutive failure
+    // abandons the disk tier (memory keeps serving lookups).
+    const quotaError = () => Object.assign(new Error('quota'), {name: 'QuotaExceededError'});
+    const setItem = vi.fn((_k: string, _v: string): never => { throw quotaError(); });
+    vi.stubGlobal('requestIdleCallback', undefined); // force the deferred-timer fallback
+    vi.stubGlobal('cancelIdleCallback', undefined);
+    vi.stubGlobal('localStorage', {
+      getItem: (): string | null => null,
+      setItem,
+      removeItem: () => {}
+    });
+    try {
+      const download = async() => new Blob([new Uint8Array(16)]);
+      const decode = async(): Promise<any> => fakeMeta;
+      const docA = makeDoc();
+      const docB = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(docA, {download, decode})).toBe(true);
+      expect(await enrichPhantomChatVoiceDoc(docB, {download, decode})).toBe(true);
+      flushVoiceMetaCache(); // attempt 1
+      await new Promise((r) => setTimeout(r, 0));
+      expect(setItem).toHaveBeenCalledTimes(1);
+      // The retry rides the re-armed schedule (jsdom has no requestIdleCallback → timer)
+      await new Promise((r) => setTimeout(r, VOICE_META_FLUSH_DEBOUNCE_MS + 20));
+      expect(setItem).toHaveBeenCalledTimes(2); // exactly one retry, deferred
+      const retriedPayload = JSON.parse(setItem.mock.calls[1][1] as string);
+      expect(Object.keys(retriedPayload)).toEqual([docB.id]); // oldest half evicted
+      // Second consecutive quota failure → disk tier abandoned for good.
+      flushVoiceMetaCache();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(setItem).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('clearPersistedVoiceMeta drops memory + disk + any pending flush', async() => {
+    // The cleanup contract (logout / Reset Local Data): after clearing, a
+    // fresh doc with the same id must download again — no stale entry served
+    // from memory, nothing on disk, and the armed flush cannot resurrect it.
+    const store: Record<string, string> = {};
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => { store[k] = v; },
+      removeItem: (k: string) => { delete store[k]; }
+    });
+    try {
+      const doc = makeDoc();
+      expect(await enrichPhantomChatVoiceDoc(doc, {
+        download: async() => new Blob([new Uint8Array(16)]),
+        decode: async(): Promise<any> => fakeMeta
+      })).toBe(true);
+      clearPersistedVoiceMeta();
+      expect(store[VOICE_META_CACHE_KEY]).toBeUndefined();
+      // pending flush was cancelled, not resurrected:
+      await new Promise((r) => setTimeout(r, VOICE_META_FLUSH_DEBOUNCE_MS + 10));
+      expect(store[VOICE_META_CACHE_KEY]).toBeUndefined();
+      // memory + attempt state gone: the same id re-decodes from scratch
+      const reDoc = makeDoc({id: doc.id}) as any;
+      const download = vi.fn(async() => new Blob([new Uint8Array(16)]));
+      expect(await enrichPhantomChatVoiceDoc(reDoc, {download, decode: async(): Promise<any> => fakeMeta})).toBe(true);
+      expect(download).toHaveBeenCalledTimes(1); // cache gone → real decode again
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('a corrupted cache entry falls back to a real decode, never throws', async() => {
+    const doc = makeDoc();
+    localStorage.setItem('phantomchatVoiceMeta.v1', JSON.stringify({[doc.id]: {duration: 3, waveform: '!!!not-base64!!!', t: 1}}));
+    const decode = vi.fn(async(): Promise<any> => fakeMeta);
+    const patched = await enrichPhantomChatVoiceDoc(doc, {
+      download: async() => new Blob([new Uint8Array(16)]),
+      decode
+    });
+    expect(patched).toBe(true);
+    expect(decode).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes decodes: a second doc does not download while the first is in flight', async() => {
+    // The refresh lockup: N bubbles enriched in one tick used to fire N
+    // parallel download+decode jobs. The queue must run them one at a time.
+    let resolveA: (m: any) => void;
+    const decodeA = vi.fn((): Promise<any> => new Promise((r) => { resolveA = r; }));
+    const downloadB = vi.fn(async() => new Blob([new Uint8Array(16)]));
+    const docA = makeDoc();
+    const docB = makeDoc();
+
+    const pA = enrichPhantomChatVoiceDoc(docA, {download: async() => new Blob([new Uint8Array(8)]), decode: decodeA});
+    const pB = enrichPhantomChatVoiceDoc(docB, {download: downloadB, decode: async(): Promise<any> => fakeMeta});
+    // let queued work start and the event loop settle
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(downloadB).not.toHaveBeenCalled(); // B waits behind A
+
+    resolveA!(fakeMeta);
+    expect(await pA).toBe(true);
+    expect(await pB).toBe(true);
+    expect(downloadB).toHaveBeenCalledTimes(1);
   });
 });

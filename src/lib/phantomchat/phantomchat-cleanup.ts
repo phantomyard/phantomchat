@@ -14,6 +14,7 @@ import {clearConversationKeyCache} from './nostr-crypto';
 import {unsubscribePush} from '@lib/phantomchat/phantomchat-push-client';
 import {destroy as destroyPushStorage} from '@lib/phantomchat/phantomchat-push-storage';
 import {loadIdentity} from '@lib/phantomchat/identity';
+import {clearPersistedVoiceMeta, VOICE_META_CACHE_KEY} from './phantomchat-voice-decode';
 
 // All PhantomChat IndexedDB database names
 const PHANTOMCHAT_DB_NAMES = [
@@ -45,7 +46,8 @@ const PHANTOMCHAT_LS_KEYS = [
   'phantomchat.update.lastIntegrityDetails',
   'phantomchat.update.pendingFinalization',
   'phantomchat.update.pendingManifest',
-  'phantomchat.update.flowState'
+  'phantomchat.update.flowState',
+  VOICE_META_CACHE_KEY
 ];
 
 // The seed lives here — kept by `clearAllExceptSeed()`
@@ -188,7 +190,12 @@ async function clearPhantomChatData(opts: {keepSeed: boolean}): Promise<string[]
   );
   const failed = results.filter((r) => !r.ok).map((r) => r.name);
 
-  // 4. Clear localStorage keys
+  // 4. Clear localStorage keys — and the voice-meta decode cache in full
+  //    (memory + disk + any pending debounced flush), so a later identity
+  //    can never consume a stale entry via a colliding document id.
+  try {
+    clearPersistedVoiceMeta();
+  } catch(e) { logSwallow('Cleanup.clearPersistedVoiceMeta', e); }
   for(const key of lsKeys) {
     try {
       localStorage.removeItem(key);
