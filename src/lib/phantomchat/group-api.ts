@@ -1028,7 +1028,7 @@ export class GroupAPI {
         // survives and a relay-backlog redelivery retries the kick, exactly
         // like the group_delete case above.
         try {
-          applied = (await this.handleRemoveMember(payload)) !== false;
+          applied = (await this.handleRemoveMember(payload, senderPubkey)) !== false;
         } catch(err) {
           this.log.warn('[GroupAPI] group_remove_member handling failed; retry expected via backlog:', err);
         }
@@ -1189,7 +1189,7 @@ export class GroupAPI {
     return true;
   }
 
-  private async handleRemoveMember(payload: GroupControlPayload): Promise<boolean> {
+  private async handleRemoveMember(payload: GroupControlPayload, senderPubkey: string): Promise<boolean> {
     if(payload.targetPubkey === this.ownPubkey) {
       // We were removed — FULL durable teardown, same as leaveGroup /
       // deleteGroup / handleGroupDelete (issue #181, mirroring
@@ -1203,18 +1203,44 @@ export class GroupAPI {
       // conversation so replayed group_create/group rumors stay gated. A
       // re-invite still works: a fresh group_create (ts > deletedAt) passes
       // the tombstone gate, outranks the durable row on strict LWW, and
-      // apply() drops the row on the deliberate re-create. The teardown runs
-      // even without a local record (zombie-mirror cleanup); only a record
-      // that actually existed counts as applied. The durable row is recorded
-      // either way — the kick itself is delete evidence this device must be
-      // able to re-publish (see apply()'s absence rule).
+      // apply() drops the row on the deliberate re-create.
+      //
+      // SENDER AUTHENTICATION (Lena's review of #183): promoting this path
+      // to a durable cross-device delete fact means an unauthenticated
+      // sender could forge a kick and durably delete the group on every own
+      // device — the exact hole #182/#184 close for group_delete, reopened
+      // through the kick path. So: when a record exists, only its admin may
+      // kick (a non-admin control is rejected with NO durable write); when
+      // no record exists we cannot verify anyone, so we fail closed like
+      // #184 — zombie-mirror cleanup only, no durable row and no tombstone
+      // from an unverified sender. The legit kick always arrives while the
+      // record is still live (you were a member), so the verified path is
+      // the common case.
       const group = await this.store.get(payload.groupId);
+      if(group && group.adminPubkey !== senderPubkey) {
+        this.log.warn('[GroupAPI] ignoring group_remove_member(self) from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+        return false;
+      }
+      if(!group) {
+        // No record: nothing verifiable, nothing to tear down durably.
+        // Mirror cleanup only — the durable row and tombstone stay reserved
+        // for an authenticated admin kick against a live record.
+        const peerId = await groupIdToPeerId(payload.groupId);
+        await cleanupGroupChatInjection(peerId);
+        this.log('[GroupAPI] group_remove_member(self) for unknown group; mirror cleanup only:', payload.groupId.slice(0, 8));
+        return false;
+      }
       await this.teardownGroupLocally(payload.groupId);
       this.log('[GroupAPI] removed from group:', payload.groupId);
-      return !!group;
+      return true;
     }
     const group = await this.store.get(payload.groupId);
-    if(!group || !group.members.includes(payload.targetPubkey)) {
+    // Only the admin may remove another member — a non-admin sender must
+    // use group_leave for themselves (see handleMemberLeave). Without this
+    // check any sender could delete an arbitrary member from my local view
+    // (pre-existing on main, closed here since this handler is being
+    // authenticated anyway).
+    if(!group || group.adminPubkey !== senderPubkey || !group.members.includes(payload.targetPubkey)) {
       return false;
     }
     const remaining = group.members.filter(m => m !== payload.targetPubkey);
