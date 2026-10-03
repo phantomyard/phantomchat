@@ -191,6 +191,79 @@ describe('CrdtSync.reconcile', () => {
       expect(Object.keys(relay2.decoded().items).sort()).toEqual(['a', 'b']);
     });
 
+    it('#185: an EQUAL-CONTENT v1 snapshot is still republished at v2 — the quarantine must activate', async() => {
+      // The common upgrade case: local already matches the relay item-for-item.
+      // Without carrying the fetched version through, reconcile returned
+      // in-sync and the relay stayed v1 — writable by stale clients forever.
+      const relay2 = new FakeRelay();
+      relay2.seed({a: liveEntry('a', {id: 'a', name: 'A'}, 100)}, 1);
+      const {adapter, state} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+
+      const sync = new CrdtSync<Item>({
+        dTag: D_TAG,
+        version: 2,
+        acceptedVersions: [1, 2],
+        chatAPI: relay2 as any,
+        adapter,
+        encrypt: (s) => s,
+        decrypt: (s) => s,
+        nowSeconds: () => 1000
+      });
+      expect(await sync.reconcile()).toBe('merged-applied-and-published');
+      // Nothing to apply locally (maps identical) — but the relay MUST be v2.
+      expect(state.applied.length).toBe(0);
+      expect(relay2.publishes).toBe(1);
+      expect(relay2.decoded().version).toBe(2);
+      expect(Object.keys(relay2.decoded().items)).toEqual(['a']);
+    });
+
+    it('#185: publish() also republishes an equal-content v1 snapshot at v2', async() => {
+      const relay2 = new FakeRelay();
+      relay2.seed({a: liveEntry('a', {id: 'a', name: 'A'}, 100)}, 1);
+      const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+
+      const sync = new CrdtSync<Item>({
+        dTag: D_TAG,
+        version: 2,
+        acceptedVersions: [1, 2],
+        chatAPI: relay2 as any,
+        adapter,
+        encrypt: (s) => s,
+        decrypt: (s) => s,
+        nowSeconds: () => 1000
+      });
+      // Previously returned true ("relay already current") leaving the
+      // relay at v1 — the exact hole the quarantine relied on closing.
+      expect(await sync.publish()).toBe(true);
+      expect(relay2.publishes).toBe(1);
+      expect(relay2.decoded().version).toBe(2);
+    });
+
+    it('#185: a v2 write that never lands is NOT confirmed while the relay serves an equal-map v1', async() => {
+      // Regression pin on the verify gate: with identical maps, `differs`
+      // alone would call a still-v1 relay "confirmed" after a failed write.
+      const relay2 = new FakeRelay();
+      relay2.seed({a: liveEntry('a', {id: 'a', name: 'A'}, 100)}, 1);
+      // Relay that accepts publishes but keeps serving the stale v1 event
+      // (e.g. read-replica lag / write dropped).
+      const staleEvent = relay2.event!;
+      relay2.queryLatestEvent = vi.fn(async() => staleEvent);
+
+      const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+      const sync = new CrdtSync<Item>({
+        dTag: D_TAG,
+        version: 2,
+        acceptedVersions: [1, 2],
+        chatAPI: relay2 as any,
+        adapter,
+        encrypt: (s) => s,
+        decrypt: (s) => s,
+        nowSeconds: () => 1000
+      });
+      expect(await sync.publish()).toBe(false);
+      expect(relay2.publishes).toBeGreaterThan(0);
+    });
+
     it('#180: a v2 instance still rejects a snapshot from the FUTURE (v3)', async() => {
       const relay2 = new FakeRelay();
       relay2.seed({}, 3);

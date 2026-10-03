@@ -111,6 +111,11 @@ export type PublishRetryOptions = {
  * remote snapshot with stale local data.
  *
  *  - `ok`          — a snapshot was fetched, decrypted and version-matched.
+ *                    Carries the fetched `version` so callers can detect a
+ *                    readable-but-older snapshot (e.g. v1 while we publish
+ *                    v2) and force a republish even when the item maps are
+ *                    identical — otherwise the stale-client quarantine
+ *                    never activates (#185 review blocker).
  *  - `absent`      — the relay answered and there is genuinely no snapshot.
  *                    Only this state permits seeding the relay from local.
  *  - `unavailable` — the relay query failed, OR a snapshot exists but is
@@ -119,7 +124,7 @@ export type PublishRetryOptions = {
  *                    newer than what we hold. Abort and let the retry try again.
  */
 type RemoteFetch<T> =
-  | {status: 'ok', map: SyncMap<T>}
+  | {status: 'ok', map: SyncMap<T>, version: number}
   | {status: 'absent'}
   | {status: 'unavailable'};
 
@@ -187,8 +192,13 @@ export class CrdtSync<T> {
 
     const localChanged = differs(merged, local);
     const remoteChanged = differs(merged, remoteMap);
+    // Equal-map older snapshot: the relay holds identical items at v1. Without
+    // this flag reconcile returns in-sync and never republishes, leaving the
+    // relay writable by stale v1 clients — the quarantine would never
+    // activate (#185 review blocker: migration only works if v1 is rewritten).
+    const versionChanged = remote.version !== this.deps.version;
 
-    if(!localChanged && !remoteChanged) return 'in-sync';
+    if(!localChanged && !remoteChanged && !versionChanged) return 'in-sync';
 
     if(localChanged) {
       this.applying = true;
@@ -202,7 +212,7 @@ export class CrdtSync<T> {
       }
     }
 
-    if(remoteChanged) {
+    if(remoteChanged || versionChanged) {
       await this.publishMap(merged);
       return 'merged-applied-and-published';
     }
@@ -300,6 +310,9 @@ export class CrdtSync<T> {
     }
 
     const remoteMap = remote.status === 'ok' ? remote.map : null;
+    // Same rule as reconcile(): an equal-map older snapshot still must be
+    // rewritten at the current version, or the v2 quarantine never lands.
+    const versionChanged = remote.status === 'ok' && remote.version !== this.deps.version;
     const merged = remoteMap ? mergeMaps(local, remoteMap) : local;
 
     // Converge locally too: the remote may hold entries this device has not
@@ -321,7 +334,7 @@ export class CrdtSync<T> {
       }
     }
 
-    if(remoteMap && !differs(merged, remoteMap)) return true; // relay already current
+    if(remoteMap && !versionChanged && !differs(merged, remoteMap)) return true; // relay already current (same version)
     try {
       await this.publishMap(merged);
     } catch(err) {
@@ -339,7 +352,10 @@ export class CrdtSync<T> {
     // fire-once publisher would again believe a tombstone reached the relay
     // when it never did (#155, review blocker: enqueue != stored).
     const verify = await this.fetchRemote();
-    if(verify.status !== 'ok' || differs(merged, verify.map)) {
+    // The version gate matters as much as the map gate: after a failed v2
+    // write the relay still serves the old v1 snapshot, and with equal maps
+    // `differs` alone would call that "confirmed" (#185).
+    if(verify.status !== 'ok' || verify.version !== this.deps.version || differs(merged, verify.map)) {
       console.warn(this.tag, 'publish not observable on relay yet (unconfirmed)');
       return false;
     }
@@ -398,6 +414,6 @@ export class CrdtSync<T> {
       return {status: 'unavailable'};
     }
 
-    return {status: 'ok', map: sanitizeMap<T>(snap.items)};
+    return {status: 'ok', map: sanitizeMap<T>(snap.items), version: snap.version};
   }
 }
