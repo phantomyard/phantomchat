@@ -251,6 +251,38 @@ describe('groups adapter read(): legacy watermark migration (round 7)', () => {
     expect(map[G1].deleted).toBeFalsy();
   });
 
+  it('EXACT-cutoff watermark (deletedAt == cutoff) is NEVER promoted — strict boundary (Kai round 11)', async() => {
+    // Tombstone stamps are seconds-floored, so a watermark carrying the
+    // upgrade's own second is order-ambiguous: it may predate the upgrade
+    // (legacy delete) or follow it (a clear-history watermark from code that
+    // also writes durable rows). Ambiguity must resolve AGAINST promotion —
+    // the old `<=` promoted a post-upgrade same-second clear-history
+    // watermark into an authoritative durable group delete.
+    const {deps, calls} = makeDeps(
+      [],
+      [{conversationId: `group:${G1}`, deletedAt: 8080}],
+      [],
+      8080 // cutoff == watermark stamp
+    );
+    const map = await createGroupsAdapter(deps).read();
+    expect(calls.recordedDeletes).toHaveLength(0);
+    // The derived delete still publishes this pass — only the durable
+    // PROMOTION is gated on the strict boundary.
+    expect(map[G1].deleted).toBe(true);
+    expect(map[G1].updatedAt).toBe(8080);
+  });
+
+  it('watermark one second before the cutoff still promotes (legacy window open up to the boundary)', async() => {
+    const {deps, calls} = makeDeps(
+      [],
+      [{conversationId: `group:${G1}`, deletedAt: 8079}],
+      [],
+      8080
+    );
+    await createGroupsAdapter(deps).read();
+    expect(calls.recordedDeletes).toContainEqual({groupId: G1, deletedAt: 8079});
+  });
+
   it('PRE-cutoff watermark still promotes (migration window stays open until it succeeds)', async() => {
     const {deps, calls} = makeDeps(
       [],

@@ -245,8 +245,11 @@ export class GroupStore {
    * does, and no separate meta store is needed.
    *
    * This bounds the legacy watermark migration in the groups sync adapter
-   * (Kai's round-9 review of PR #179): only watermarks stamped at or before
-   * this moment can be legacy deletions — anything written after the durable
+   * (Kai's round-9 review of PR #179): only watermarks stamped strictly
+   * BEFORE the second this stamp falls in can be legacy deletions — the
+   * boundary is strict because seconds-floored tombstone stamps cannot
+   * order writes within the upgrade's own second (Kai's round-11 review),
+   * so equality resolves AGAINST promotion. Anything written after the durable
    * log exists is authored by code that also writes durable rows, and a bare
    * late watermark is a clear-HISTORY watermark (messages.deleteHistory),
    * never a group delete. Without this bound, an every-read promotion rule
