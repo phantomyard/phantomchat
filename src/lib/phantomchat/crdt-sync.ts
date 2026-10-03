@@ -45,6 +45,15 @@ export type CrdtSyncDeps<T> = {
    * (stale) clients see an unknown version on read — `unavailable` — and
    * therefore never apply it and never publish over it. The poison source is
    * quarantined until it updates.
+   *
+   * ROLLBACK NOTE: the quarantine also binds a deliberate rollback. A build
+   * rolled back to a pre-#180 binary reads the v2 relay snapshot as an
+   * unknown version and stops syncing contacts/groups entirely until it is
+   * rolled forward again — it neither applies nor publishes. Local state is
+   * not lost (IndexedDB is untouched); only cross-device sync pauses. Do not
+   * "fix" this by widening `acceptedVersions` to accept and republish v1:
+   * republishing a v1 snapshot strips every stamp and re-opens the
+   * resurrection hole #180 closed.
    */
   acceptedVersions?: number[];
   kind?: number;

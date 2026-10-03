@@ -25,7 +25,8 @@ async function freshDb() {
   return {
     storeMapping: mod.storeMapping,
     setDeliberateAddAt: mod.setDeliberateAddAt,
-    getMapping: mod.getMapping
+    getMapping: mod.getMapping,
+    recordDeletedPeer: mod.recordDeletedPeer
   };
 }
 
@@ -65,5 +66,40 @@ describe('virtual-peers-db deliberateAddAt (#180)', () => {
     await setDeliberateAddAt(PK, 4_000_000); // stale remote stamp
     const m = await getMapping(PK);
     expect(m!.deliberateAddAt).toBe(5_000_000);
+  });
+
+  // ── #186: the deliberate stamp rides the mapping write itself ──
+
+  it('#186: storeMapping({deliberateAddAt}) bypasses the durable-delete guard and mints the stamp atomically', async() => {
+    const {storeMapping, recordDeletedPeer, getMapping} = await freshDb();
+    await recordDeletedPeer(PK, 1_000); // durable row present — automatic paths are suppressed
+    await storeMapping(PK, 1, 'Alice'); // no option: suppressed by guard (a)
+    expect(await getMapping(PK)).toBeUndefined();
+    // The deliberate re-add presents the proof itself: the write succeeds and
+    // the stamp lands in the SAME write — no post-hoc stamp to lose.
+    const ok = await storeMapping(PK, 1, 'Alice', undefined, {deliberateAddAt: 2_000_000});
+    expect(ok).toBe(true);
+    const m = await getMapping(PK);
+    expect(m).toBeTruthy();
+    expect(m!.deliberateAddAt).toBe(2_000_000);
+  });
+
+  it('#186: a supplied deliberateAddAt max-forwards over an existing proof', async() => {
+    const {storeMapping, getMapping} = await freshDb();
+    await storeMapping(PK, 1, 'Alice', undefined, {deliberateAddAt: 5_000_000});
+    // A later re-add with a lower clock (skewed device) never lowers the proof.
+    await storeMapping(PK, 1, 'Alice', undefined, {deliberateAddAt: 3_000_000});
+    const m = await getMapping(PK);
+    expect(m!.deliberateAddAt).toBe(5_000_000);
+  });
+
+  it('#186: the deliberateAddAt option does not leak into automatic paths', async() => {
+    // The message/receive path calls storeMapping without the option — it
+    // must stay stamp-free and guard-bound even after a deliberate add exists.
+    const {storeMapping, getMapping} = await freshDb();
+    await storeMapping(PK, 1, 'Alice', undefined, {deliberateAddAt: 2_000_000});
+    await storeMapping(PK, 1); // idempotent message-path re-persist
+    const m = await getMapping(PK);
+    expect(m!.deliberateAddAt).toBe(2_000_000); // preserved, not minted
   });
 });

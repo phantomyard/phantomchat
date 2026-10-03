@@ -147,7 +147,7 @@ export async function storeMapping(
   peerId: number,
   displayName?: string,
   nostrProfile?: NostrProfile,
-  opts?: {allowTombstoned?: boolean}
+  opts?: {allowTombstoned?: boolean; deliberateAddAt?: number}
 ): Promise<boolean> {
   const db = await getDB();
 
@@ -171,10 +171,16 @@ export async function storeMapping(
   // apply, history backfill, receive-path persistence, kind 0 upgrades) must
   // NOT re-create the mapping — otherwise the contact reappears in Contacts
   // and the group-members picker on every sync cycle. Deliberate re-adds go
-  // through addP2PContact, which clears BOTH the durable row and the tombstone
-  // first; the strictly-newer-message revive path passes
+  // through addP2PContact, which stamps the user-intent proof
+  // (`deliberateAddAt`, #180) ATOMICALLY with the mapping write and clears
+  // BOTH the durable row and the tombstone right after (issue #186: the
+  // stamp must exist before the guards are lifted, or a failed stamp write
+  // leaves a live unstamped mapping whose local delete fact is already
+  // gone); the strictly-newer-message revive path passes
   // {allowTombstoned: true} explicitly (which bypasses only guard (b) below).
-  if(!preExisting) {
+  // A `deliberateAddAt` option bypasses BOTH guards: it IS the user's
+  // explicit re-add proof, supplied by the add gesture itself.
+  if(!preExisting && opts?.deliberateAddAt === undefined) {
     // (a) The DURABLE deletion log (#173). Checked FIRST because it needs no
     // own-pubkey and survives a wiped message-store watermark — the two ways
     // the watermark-only guard below silently let a deleted contact back in.
@@ -182,7 +188,7 @@ export async function storeMapping(
     // newer-message CONVERSATION revive, but a contact delete is a separate,
     // deliberate act — a deleted peer's new message may revive the chat (it
     // lands as a message request), never the contact. A deliberate re-add
-    // clears this row first via addP2PContact.
+    // presents the user-intent stamp itself (see comment above, #186).
     try {
       const deletedAt = await getDeletedPeer(pubkey);
       if(deletedAt > 0) {
@@ -191,7 +197,7 @@ export async function storeMapping(
       }
     } catch(e) { /* guard is best-effort — never block a legit write on it */ }
   }
-  if(!preExisting && !opts?.allowTombstoned) {
+  if(!preExisting && !opts?.allowTombstoned && opts?.deliberateAddAt === undefined) {
     // (b) The conversation deletion watermark — still consulted, so a delete
     // performed by an older build (no durable row) keeps being honoured.
     try {
@@ -227,6 +233,14 @@ export async function storeMapping(
       const identityChanged = !existing ||
           displayName !== undefined ||
           nostrProfile !== undefined;
+      // Minted only by addP2PContact with `deliberate: true` (via the
+      // deliberateAddAt option — same write as the mapping, #186) and
+      // setDeliberateAddAt. Preserved across upserts; a supplied stamp
+      // max-forwards (#180) so a re-add never lowers an existing proof.
+      let nextStamp = existing?.deliberateAddAt;
+      if(opts?.deliberateAddAt !== undefined) {
+        nextStamp = Math.max(nextStamp ?? 0, opts.deliberateAddAt);
+      }
       const record: VirtualPeerMapping = {
         pubkey,
         peerId,
@@ -235,9 +249,11 @@ export async function storeMapping(
         nostrProfile: nostrProfile ?? existing?.nostrProfile,
         addedAt: existing?.addedAt ?? now,
         updatedAt: identityChanged ? now : (existing?.updatedAt ?? existing?.addedAt ?? now),
-        // Never minted here — only addP2PContact (deliberate) and
-        // setDeliberateAddAt write it. Preserved across upserts.
-        deliberateAddAt: existing?.deliberateAddAt
+        // Minted only by addP2PContact with `deliberate: true` (via the
+        // deliberateAddAt option — same write as the mapping, #186) and
+        // setDeliberateAddAt. Preserved across upserts; a supplied stamp
+        // max-forwards (#180) so a re-add never lowers an existing proof.
+        deliberateAddAt: nextStamp
       };
       const putReq = store.put(record);
       putReq.onerror = () => reject(putReq.error);
