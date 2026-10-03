@@ -819,6 +819,14 @@ export class GroupAPI {
       const now = Math.floor(Date.now() / 1000);
       await store.deleteMessages(convId);
       await store.setTombstone(convId, now);
+      // Durable positive delete fact (PR #179 round 5): the conversation
+      // watermark alone is NOT a delete signal for sync — messages.deleteHistory
+      // writes the same watermark when merely clearing a group's history. Only
+      // real teardown paths reach this method, so this is where the durable
+      // row belongs.
+      try { await this.store.recordDeletedGroup(groupId, now); } catch(durableErr) {
+        this.log.warn('[GroupAPI] recordDeletedGroup failed (non-fatal):', durableErr);
+      }
       this.log('[GroupAPI] tombstoned + purged group conversation:', convId, 'at', now);
     } catch(err) {
       this.log.warn('[GroupAPI] tombstoneGroupConversation failed (non-fatal):', err);

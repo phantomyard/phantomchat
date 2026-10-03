@@ -9,16 +9,24 @@ type Calls = {
   upserted: GroupRecord[];
   removed: string[];
   tombstoned: Array<{conversationId: string; deletedAt: number}>;
+  recordedDeletes: Array<{groupId: string; deletedAt: number}>;
+  clearedDeletes: string[];
 };
+
+type DeletedGroup = {groupId: string; deletedAt: number};
 
 function makeDeps(
   groups: GroupRecord[],
-  tombstones: Array<{conversationId: string; deletedAt: number}>
+  tombstones: Array<{conversationId: string; deletedAt: number}>,
+  deletedGroups: DeletedGroup[] = []
 ): {deps: GroupsAdapterDeps; calls: Calls} {
-  const calls: Calls = {upserted: [], removed: [], tombstoned: []};
+  const calls: Calls = {upserted: [], removed: [], tombstoned: [], recordedDeletes: [], clearedDeletes: []};
   const deps: GroupsAdapterDeps = {
     listGroups: async() => groups,
     listTombstones: async() => tombstones,
+    listDeletedGroups: async() => deletedGroups,
+    recordDeletedGroup: async(groupId, deletedAt) => { calls.recordedDeletes.push({groupId, deletedAt}); },
+    clearDeletedGroup: async(groupId) => { calls.clearedDeletes.push(groupId); },
     upsertGroup: async(record) => { calls.upserted.push(record); },
     removeGroup: async(groupId) => { calls.removed.push(groupId); },
     setTombstone: async(conversationId, deletedAt) => { calls.tombstoned.push({conversationId, deletedAt}); }
@@ -56,27 +64,40 @@ describe('groups adapter read()', () => {
   });
 
   it('does not tombstone a group whose live record is NEWER than the delete (deliberate re-create)', async() => {
-    const {deps} = makeDeps([group(G1, 9_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const {deps} = makeDeps([group(G1, 9_000_000)], [], [{groupId: G1, deletedAt: 8080}]);
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBeFalsy();
   });
 
-  it('resurrection loop: an OLDER live record does not mute the tombstone — the delete wins', async() => {
+  it('clear-history regression: a group:<id> WATERMARK under a live record is NOT a delete', async() => {
+    // Robert's round-5 review of #179: messages.deleteHistory for a group peer
+    // writes a `group:<id>` tombstone (history watermark) while the group
+    // record stays live. Only a DURABLE delete row may tear a live group
+    // down — the watermark just means the history was cleared.
+    const {deps, calls} = makeDeps([group(G1, 7_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBeFalsy();
+    expect(map[G1].updatedAt).toBe(7000);
+    expect(calls.removed).toEqual([]);
+  });
+
+  it('resurrection loop: an OLDER live record does not mute a DURABLE delete — the delete wins', async() => {
     // The #155-class bug: any live record used to shadow the tombstone, so a
     // stale record (replayed control, orphan recovery) erased the delete and
-    // re-published the group forever. The delete must outrank it instead.
-    const {deps} = makeDeps([group(G1, 7_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    // re-published the group forever. A durable delete row must outrank it.
+    const {deps, calls} = makeDeps([group(G1, 7_000_000)], [], [{groupId: G1, deletedAt: 8080}]);
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBe(true);
     expect(map[G1].updatedAt).toBe(8080);
+    expect(calls.removed).toEqual([G1]); // resurrection torn down in read()
   });
 
-  it('ties go to the TOMBSTONE (> semantics, consistent with mergeEntry and the receive gates)', async() => {
+  it('ties go to the DELETE (> semantics, consistent with mergeEntry and the receive gates)', async() => {
     // Timestamps are seconds-floored, so a live record updated earlier in the
     // same second as the delete ties. Equality cannot mean a deliberate
     // re-create — the delete must win, exactly as mergeEntry resolves an
     // exact tie (tombstone wins, both argument orders).
-    const {deps} = makeDeps([group(G1, 8_080_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const {deps} = makeDeps([group(G1, 8_080_000)], [], [{groupId: G1, deletedAt: 8080}]);
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBe(true);
     expect(map[G1].updatedAt).toBe(8080);
@@ -87,9 +108,9 @@ describe('groups adapter read()', () => {
     // way, or a device whose relay is absent (adapter gate decides) diverges
     // from one that merged against the remote (mergeEntry decides).
     const {mergeEntry} = await import('@lib/phantomchat/sync-crdt');
-    const {deps} = makeDeps([group(G1, 8_080_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const {deps} = makeDeps([group(G1, 8_080_000)], [], [{groupId: G1, deletedAt: 8080}]);
     const map = await createGroupsAdapter(deps).read();
-    expect(map[G1].deleted).toBe(true); // adapter: tombstone wins the tie
+    expect(map[G1].deleted).toBe(true); // adapter: delete wins the tie
     const replayedLive = {id: G1, updatedAt: 8080, data: group(G1, 8_080_000)};
     expect(mergeEntry(map[G1], replayedLive).deleted).toBe(true); // merge: agrees
     expect(mergeEntry(replayedLive, map[G1]).deleted).toBe(true);
@@ -136,6 +157,7 @@ describe('groups adapter apply()', () => {
     await createGroupsAdapter(deps).apply(merged, before);
     expect(calls.removed).toEqual([G1]);
     expect(calls.tombstoned).toEqual([{conversationId: `group:${G1}`, deletedAt: 9000}]);
+    expect(calls.recordedDeletes).toEqual([{groupId: G1, deletedAt: 9000}]);
   });
 
   it('persists a remote tombstone even with NOTHING live locally (empty-local device)', async() => {
@@ -149,6 +171,8 @@ describe('groups adapter apply()', () => {
     await createGroupsAdapter(deps).apply(merged, empty);
     expect(calls.removed).toEqual([]); // nothing to tear down
     expect(calls.tombstoned).toEqual([{conversationId: `group:${G1}`, deletedAt: 9000}]);
+    // ...and the delete is recorded durably so THIS device can re-publish it.
+    expect(calls.recordedDeletes).toEqual([{groupId: G1, deletedAt: 9000}]);
   });
 
   it('tears down a resurrected group even when read() had already overridden it (wasLive false)', async() => {
@@ -162,24 +186,53 @@ describe('groups adapter apply()', () => {
     await createGroupsAdapter(deps).apply(merged, before);
     expect(calls.removed).toEqual([G1]);
     expect(calls.tombstoned).toEqual([{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    expect(calls.recordedDeletes).toEqual([{groupId: G1, deletedAt: 8080}]);
   });
 
-  it('resurrection self-heal in read(): a live record that LOSES to a tombstone is removed from the store', async() => {
+  it('resurrection self-heal in read(): a live record that LOSES to a DURABLE delete is removed from the store', async() => {
     // The already-resurrected device never reaches apply(): read() overrides
-    // the stale record with the tombstone, merged == local, so the engine
+    // the stale record with the delete, merged == local, so the engine
     // skips apply entirely. read() itself must tear the resurrection down or
     // the group stays in the local store and chat list indefinitely.
-    const {deps, calls} = makeDeps([group(G1, 7_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const {deps, calls} = makeDeps([group(G1, 7_000_000)], [], [{groupId: G1, deletedAt: 8080}]);
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBe(true);
     expect(calls.removed).toEqual([G1]);
   });
 
-  it('read() teardown of a re-created group never fires (live record NEWER than the tombstone)', async() => {
+  it('read() teardown of a re-created group never fires (live record NEWER than the durable delete)', async() => {
     // The deliberate re-create path must not be torn down or mutated.
-    const {deps, calls} = makeDeps([group(G1, 9_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const {deps, calls} = makeDeps([group(G1, 9_000_000)], [], [{groupId: G1, deletedAt: 8080}]);
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBeFalsy();
     expect(calls.removed).toEqual([]);
+  });
+
+  it('a bare WATERMARK newer than the live record leaves the group live (clear-history, not delete)', async() => {
+    // Robert's round-5 regression for #179: deleteHistory writes a group:<id>
+    // tombstone as a history watermark while the group stays live. That
+    // watermark is newer than updatedAt (which only moves on
+    // updateMembers/updateInfo) — the old read() tore the LIVE group down
+    // and every other device followed. Only a durable delete may win.
+    const {deps, calls} = makeDeps(
+      [group(G1, 7_000_000)],
+      [{conversationId: `group:${G1}`, deletedAt: 8080}]
+    );
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBeFalsy();
+    expect(map[G1].updatedAt).toBe(7000);
+    expect(calls.removed).toEqual([]);
+  });
+
+  it('apply(): a live entry winning over prev.deleted clears the durable delete (deliberate re-create)', async() => {
+    // Mirrors clearDeletedPeer in the contacts adapter: when a remote LIVE
+    // entry legitimately beats this device's delete, the durable row must
+    // go, or read() tears the re-created group back down on the next pass.
+    const {deps, calls} = makeDeps([], []);
+    const before: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 8080, deleted: true}};
+    const merged: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 9000, data: group(G1, 9_000_000)}};
+    await createGroupsAdapter(deps).apply(merged, before);
+    expect(calls.clearedDeletes).toEqual([G1]);
+    expect(calls.upserted).toHaveLength(1);
   });
 });

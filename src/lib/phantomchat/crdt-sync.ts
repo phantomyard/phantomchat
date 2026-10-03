@@ -132,6 +132,10 @@ export class CrdtSync<T> {
    * Both sides always converge on the same union.
    */
   async reconcile(): Promise<ReconcileOutcome> {
+    // NOTE: adapter.read() is a WRITER — the adapters' resurrection self-heal
+    // tears store records down inside read() (see groups/contacts-sync-adapter).
+    // It runs on every reconcile() AND every publishOnce(); call sites should
+    // not assume a read is side-effect free.
     let local: SyncMap<T>;
     try {
       local = await this.deps.adapter.read();
@@ -257,6 +261,8 @@ export class CrdtSync<T> {
   }
 
   private async publishOnce(): Promise<boolean> {
+    // NOTE: adapter.read() may mutate the store (resurrection teardown) —
+    // see the note on reconcile() above.
     let local: SyncMap<T>;
     try {
       local = await this.deps.adapter.read();

@@ -12,19 +12,28 @@
  * normalised to seconds in `read()` and restored to millis on `apply()`, so a
  * live group and a group delete are comparable on the same axis.
  *
- * Tombstones are DERIVED, not logged: a group delete removes the store record
- * and writes a `group:<id>` conversation tombstone. So a deleted group is a
- * `group:<id>` tombstone whose group has no live record — and `read()` also
- * tears down any live record that LOSES the LWW compare (a resurrection), so
- * the derived rule self-heals instead of merely reporting the delete.
+ * Deletions are published from a DURABLE deleted-groups log (recorded by
+ * GroupAPI's real delete paths), NOT inferred from `group:<id>` conversation
+ * tombstones — those are also written by messages.deleteHistory as a mere
+ * history watermark while the group stays live, so they may only contribute
+ * for groups with no live record (PR #179, review round 5). A resurrected
+ * live record that LOSES the LWW compare against a durable delete is torn
+ * down by `read()` itself, so the derived rule self-heals instead of merely
+ * reporting the delete.
  */
 import type {LocalAdapter} from './crdt-sync';
 import type {SyncMap} from './sync-crdt';
 import type {GroupRecord} from './group-types';
+import type {DeletedGroupRecord} from './group-store';
 
 export type GroupsAdapterDeps = {
   listGroups: () => Promise<GroupRecord[]>;
   listTombstones: () => Promise<Array<{conversationId: string; deletedAt: number}>>;
+  /** Durable deleted-groups log (PR #179 round 5) — the positive delete fact,
+   * independent of conversation watermarks. See recordDeletedGroup. */
+  listDeletedGroups: () => Promise<Array<DeletedGroupRecord>>;
+  recordDeletedGroup: (groupId: string, deletedAtSeconds: number) => Promise<void>;
+  clearDeletedGroup: (groupId: string) => Promise<void>;
   /** Save + materialize a group (store.save + service row + inject dialog). */
   upsertGroup: (record: GroupRecord) => Promise<void>;
   /** Local teardown: delete record + cleanup mirror. */
@@ -50,31 +59,48 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
       };
     }
 
+    // Deletions: the durable log first (positive delete evidence), then the
+    // legacy derived watermarks. Latest stamp per group wins. The two sources
+    // are NOT equivalent: a `group:<id>` conversation tombstone is also
+    // written by messages.deleteHistory / channels.deleteHistory as a HISTORY
+    // watermark while the group stays live — so a watermark under a LIVE
+    // record must never delete the group (Robert's round-5 review of #179).
+    // Watermarks therefore only contribute for groups with no live record,
+    // and only DURABLE rows may tear a resurrected group down.
+    const deletes = new Map<string, number>();
+    for(const d of await deps.listDeletedGroups()) {
+      if(!(d.deletedAt > 0)) continue;
+      deletes.set(d.groupId, Math.max(deletes.get(d.groupId) ?? 0, d.deletedAt));
+    }
+
     const tombstones = await deps.listTombstones();
     for(const t of tombstones) {
       if(!t.conversationId.startsWith(GROUP_PREFIX)) continue;
       const groupId = t.conversationId.slice(GROUP_PREFIX.length);
       if(!groupId) continue;
-      // Timestamp compare, mirroring contacts-sync-adapter: a live record only
-      // outranks the delete when it is NEWER than it (a deliberate re-create).
-      // Unconditionally muting a tombstone because any live record exists is
-      // the resurrection loop: an older record (stale sync blob, replayed
-      // control message, orphan-recovery scan) must LOSE to the delete, not
-      // erase it.
+      // A watermark is only evidence of a GROUP delete when the record is
+      // gone — with a live record it may just be "cleared history".
+      if(map[groupId]) continue;
+      deletes.set(groupId, Math.max(deletes.get(groupId) ?? 0, t.deletedAt));
+    }
+
+    for(const [groupId, deletedAt] of deletes) {
       const liveEntry = map[groupId];
-      // Strict: on an exact tie the TOMBSTONE wins, matching mergeEntry's
-      // invariant and the receive gates that reject timestampSec <= deletedAt.
-      // Timestamps are seconds-floored, so a live record updated earlier in
-      // the same second as the delete ties — equality cannot mean a deliberate
-      // re-create, and letting the live record win here would resurrect it
-      // whenever the relay is absent.
-      if(liveEntry && liveEntry.updatedAt > t.deletedAt) continue;
-      // A live record that LOST the compare is a resurrection: remove it from
-      // the store, not just from the published map. With the strict compare a
-      // converged device reports `deleted: true` here, so `apply()` never runs
-      // (the engine skips it when merged == local) and wasLive in apply() is
-      // false — leaving the teardown to apply() would strand the resurrected
-      // group in the local store and chat list forever.
+      // A live record only outranks the delete when it is NEWER than it — a
+      // deliberate re-create. Strict compare: on an exact tie the DELETE wins,
+      // matching mergeEntry's invariant and the receive gates that reject
+      // timestampSec <= deletedAt. Timestamps are seconds-floored, so a live
+      // record updated earlier in the same second as the delete ties, and
+      // equality cannot mean a deliberate re-create.
+      if(liveEntry && liveEntry.updatedAt > deletedAt) continue;
+      // A live record that LOST to a DURABLE delete row is a resurrection:
+      // remove it from the store, not just from the published map. With the
+      // strict compare a converged device reports `deleted: true` here, so
+      // `apply()` never runs (the engine skips it when merged == local) and
+      // wasLive in apply() is false — leaving the teardown to apply() would
+      // strand the resurrected group in the local store and chat list forever.
+      // Watermark-sourced deletes never reach this branch with a live record
+      // (skipped above) — the cleared-history rule is preserved.
       if(liveEntry) {
         try {
           await deps.removeGroup(groupId);
@@ -82,7 +108,7 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
           console.warn(tag, 'read: teardown of resurrected group failed', groupId, err);
         }
       }
-      map[groupId] = {id: groupId, updatedAt: t.deletedAt, deleted: true};
+      map[groupId] = {id: groupId, updatedAt: deletedAt, deleted: true};
     }
 
     return map;
@@ -108,6 +134,11 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
 
       try {
         if(entry.deleted) {
+          // Persist the delete durably even when this device had nothing live:
+          // a delete learned from another device must be re-publishable from
+          // here too, otherwise this device contributes only an ABSENCE and a
+          // stale blob elsewhere can revive the group again.
+          await deps.recordDeletedGroup(id, entry.updatedAt);
           // Tear down whenever the store still holds the record — even when
           // wasLive is false (read() had already overridden a stale live
           // record with the tombstone, so the map lost the evidence).
@@ -127,6 +158,11 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
         // entry live — restore or update when the remote mutation is newer.
         if(!wasLive || entry.updatedAt > prev.updatedAt) {
           if(!entry.data) continue;
+          // A remote LIVE entry legitimately winning over a durable delete is
+          // a deliberate re-create — drop the durable delete row (mirrors
+          // clearDeletedPeer in the contacts adapter), or read() would tear
+          // the restored group down on the next pass.
+          if(prev?.deleted) await deps.clearDeletedGroup(id);
           // Pin updatedAt to the merged value (millis) so save() persists a
           // record whose read()-derived seconds match the remote → converged.
           const record: GroupRecord = {...entry.data, updatedAt: entry.updatedAt * 1000};
