@@ -121,11 +121,18 @@ function bigEndianUint64(bytes: Uint8Array): bigint {
  * the result (negative for peerChat type) and uses GROUP_PEER_BASE range.
  *
  * result = -(GROUP_PEER_BASE + (hashBigInt % GROUP_PEER_RANGE))
+ *
+ * #188: bound ids (<64-hex adminPubkey><32-hex random>) must derive their
+ * peerId from the WHOLE id — hashing only the first 8 bytes hashes the
+ * admin prefix, so every group created by one admin would collapse onto
+ * the same peerId (the group store has a unique index on peerId — the
+ * second group cannot even be saved). Legacy 32-hex ids keep the original
+ * first-8-bytes derivation so existing groups never change peerId.
  */
 export async function groupIdToPeerId(groupId: string): Promise<number> {
   const groupBytes = hexToBytes(groupId);
-  const first8 = groupBytes.slice(0, 8);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', first8);
+  const deriveBytes = groupBytes.length > 16 ? groupBytes : groupBytes.slice(0, 8);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', deriveBytes);
   const hashBytes = new Uint8Array(hashBuffer);
   const hashBigInt = bigEndianUint64(hashBytes);
 

@@ -180,7 +180,7 @@ export async function storeMapping(
   // {allowTombstoned: true} explicitly (which bypasses only guard (b) below).
   // A `deliberateAddAt` option bypasses BOTH guards: it IS the user's
   // explicit re-add proof, supplied by the add gesture itself.
-  if(!preExisting && !opts?.deliberateAddAt) {
+  if(!preExisting && opts?.deliberateAddAt === undefined) {
     // (a) The DURABLE deletion log (#173). Checked FIRST because it needs no
     // own-pubkey and survives a wiped message-store watermark — the two ways
     // the watermark-only guard below silently let a deleted contact back in.
@@ -197,7 +197,7 @@ export async function storeMapping(
       }
     } catch(e) { /* guard is best-effort — never block a legit write on it */ }
   }
-  if(!preExisting && !opts?.allowTombstoned && !opts?.deliberateAddAt) {
+  if(!preExisting && !opts?.allowTombstoned && opts?.deliberateAddAt === undefined) {
     // (b) The conversation deletion watermark — still consulted, so a delete
     // performed by an older build (no durable row) keeps being honoured.
     try {
