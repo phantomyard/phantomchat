@@ -481,6 +481,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             listTombstones: () => store.getAllTombstones(),
             listDeletedGroups: () => getGroupStore().listDeletedGroups(),
             recordDeletedGroup: (groupId, deletedAtSeconds) => getGroupStore().recordDeletedGroup(groupId, deletedAtSeconds),
+            getLegacyDeleteCutoff: () => getGroupStore().getLegacyDeleteCutoff(),
             clearDeletedGroup: (groupId) => getGroupStore().clearDeletedGroup(groupId),
             upsertGroup: async(record: GroupRecord) => {
               const peerId = await groupIdToPeerId(record.groupId);

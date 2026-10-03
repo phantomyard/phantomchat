@@ -33,6 +33,11 @@ export type GroupsAdapterDeps = {
    * independent of conversation watermarks. See recordDeletedGroup. */
   listDeletedGroups: () => Promise<Array<DeletedGroupRecord>>;
   recordDeletedGroup: (groupId: string, deletedAtSeconds: number) => Promise<void>;
+  /** Unix-SECOND stamp of the durable-log install moment (GroupStore meta,
+   * written at DB v2 creation/upgrade). Bounds the legacy watermark migration:
+   * only watermarks at or before this stamp may be promoted into the durable
+   * log — post-cutoff watermarks are clear-history artifacts, never deletes. */
+  getLegacyDeleteCutoff: () => Promise<number>;
   clearDeletedGroup: (groupId: string) => Promise<void>;
   /** Save + materialize a group (store.save + service row + inject dialog). */
   upsertGroup: (record: GroupRecord) => Promise<void>;
@@ -76,6 +81,20 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
     }
 
     const tombstones = await deps.listTombstones();
+    // Legacy migration is EPOCH-BOUNDED, not an every-read inference rule
+    // (Kai's round-9 review of #179). messages.deleteHistory keeps writing
+    // `group:<id>` watermarks post-release for clear-history while the group
+    // stays live — if the durable log transiently lacks a record (startup /
+    // recovery window), an unbounded promotion would mint an authoritative
+    // cross-device delete from a history watermark. So promotion applies ONLY
+    // to watermarks stamped at or before the durable-log install moment
+    // (recorded atomically at DB v2 creation/upgrade): those may be legacy
+    // deletions from before positive delete facts existed; anything later was
+    // authored by code that writes durable rows itself. Failed promotions
+    // stay retryable on later reads while eligible — the bound is the epoch,
+    // not a one-shot flag, so a transient IndexedDB failure cannot permanently
+    // lose a legacy delete.
+    const cutoffSec = await deps.getLegacyDeleteCutoff();
     for(const t of tombstones) {
       if(!t.conversationId.startsWith(GROUP_PREFIX)) continue;
       const groupId = t.conversationId.slice(GROUP_PREFIX.length);
@@ -84,17 +103,17 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
       // gone — with a live record it may just be "cleared history".
       if(map[groupId]) continue;
       deletes.set(groupId, Math.max(deletes.get(groupId) ?? 0, t.deletedAt));
-      // MIGRATE legacy pre-durable-log deletes (Kai's round-7 review of #179):
-      // an install that deleted groups before the durable log existed only has
-      // this watermark. Promote it into the durable log NOW, while no live
-      // record can shadow it — otherwise the first read that DOES see a live
-      // record (a stale group_create replay from a relay blob) skips the
-      // watermark as a possible history watermark, and the deleted group
-      // resurrects with nothing to tear it down. Only promote when the
-      // watermark carries a fact the durable log doesn't already have;
-      // recordDeletedGroup is monotonic, so this converges and is a no-op on
-      // every later read.
-      if((durable.get(groupId) ?? 0) < t.deletedAt) {
+      // MIGRATE legacy pre-durable-log deletes (Kai's round-7 review of
+      // #179): an install that deleted groups before the durable log existed
+      // only has this watermark. Promote it into the durable log NOW, while
+      // no live record can shadow it — otherwise the first read that DOES see
+      // a live record (a stale group_create replay from a relay blob) skips
+      // the watermark as a possible history watermark, and the deleted group
+      // resurrects with nothing to tear it down. Epoch-bounded: only
+      // watermarks at or before the durable-log install stamp are eligible
+      // (see above); recordDeletedGroup is monotonic, so promotion converges
+      // to a no-op.
+      if(t.deletedAt <= cutoffSec && (durable.get(groupId) ?? 0) < t.deletedAt) {
         try {
           await deps.recordDeletedGroup(groupId, t.deletedAt);
           durable.set(groupId, t.deletedAt);

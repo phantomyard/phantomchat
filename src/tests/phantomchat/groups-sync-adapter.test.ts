@@ -15,10 +15,15 @@ type Calls = {
 
 type DeletedGroup = {groupId: string; deletedAt: number};
 
+/** Default migration cutoff for fixtures: far in the future, so every fixture
+ * watermark counts as legacy (pre-durable-log) unless a test opts out. */
+const CUTOFF = 4_000_000_000;
+
 function makeDeps(
   groups: GroupRecord[],
   tombstones: Array<{conversationId: string; deletedAt: number}>,
-  deletedGroups: DeletedGroup[] = []
+  deletedGroups: DeletedGroup[] = [],
+  cutoffSec: number = CUTOFF
 ): {deps: GroupsAdapterDeps; calls: Calls} {
   const calls: Calls = {upserted: [], removed: [], tombstoned: [], recordedDeletes: [], clearedDeletes: []};
   const deps: GroupsAdapterDeps = {
@@ -26,6 +31,7 @@ function makeDeps(
     listTombstones: async() => tombstones,
     listDeletedGroups: async() => deletedGroups,
     recordDeletedGroup: async(groupId, deletedAt) => { calls.recordedDeletes.push({groupId, deletedAt}); },
+    getLegacyDeleteCutoff: async() => cutoffSec,
     clearDeletedGroup: async(groupId) => { calls.clearedDeletes.push(groupId); },
     upsertGroup: async(record) => { calls.upserted.push(record); },
     removeGroup: async(groupId) => { calls.removed.push(groupId); },
@@ -169,6 +175,7 @@ describe('groups adapter read(): legacy watermark migration (round 7)', () => {
         calls.recordedDeletes.push({groupId, deletedAt});
         durableLog.push({groupId, deletedAt});
       },
+      getLegacyDeleteCutoff: async() => CUTOFF,
       clearDeletedGroup: async(groupId) => { calls.clearedDeletes.push(groupId); },
       upsertGroup: async(record) => { calls.upserted.push(record); },
       removeGroup: async(groupId) => { calls.removed.push(groupId); },
@@ -196,6 +203,7 @@ describe('groups adapter read(): legacy watermark migration (round 7)', () => {
       listTombstones: async() => [{conversationId: `group:${G1}`, deletedAt: 8080}],
       listDeletedGroups: async() => [],
       recordDeletedGroup: async() => { throw new Error('idb closed'); },
+      getLegacyDeleteCutoff: async() => CUTOFF,
       clearDeletedGroup: async() => {},
       upsertGroup: async() => {},
       removeGroup: async() => {},
@@ -204,6 +212,54 @@ describe('groups adapter read(): legacy watermark migration (round 7)', () => {
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBe(true);
     expect(map[G1].updatedAt).toBe(8080);
+  });
+
+  it('POST-cutoff watermark is NEVER promoted (Kai round 9: bounded migration, not an every-read rule)', async() => {
+    // messages.deleteHistory keeps writing `group:<id>` watermarks after the
+    // durable log exists — as clear-HISTORY marks while the group stays live.
+    // If the durable log transiently lacks the record, an unbounded promotion
+    // would mint an authoritative cross-device delete from that watermark.
+    // A watermark stamped AFTER the durable-log install moment must never be
+    // promoted — even with no live record and no durable row.
+    const {deps, calls} = makeDeps(
+      [],
+      [{conversationId: `group:${G1}`, deletedAt: 8080}],
+      [],
+      8000 // cutoff before the watermark
+    );
+    const map = await createGroupsAdapter(deps).read();
+    expect(calls.recordedDeletes).toHaveLength(0);
+    // The derived delete still publishes this pass (watermark contributes
+    // while no live record shadows it) — only the durable PROMOTION is gated.
+    expect(map[G1].deleted).toBe(true);
+    expect(map[G1].updatedAt).toBe(8080);
+  });
+
+  it('POST-cutoff watermark under a later stale live record cannot resurrect a phantom delete', async() => {
+    // The failure mode Kai flagged: clear-history watermark + transient
+    // durable-log gap + stale live record. Post-cutoff, the promotion must
+    // not fire, so a later live record is never torn down by an invented
+    // durable delete.
+    const {deps, calls} = makeDeps(
+      [group(G1, 7_000_000)],
+      [{conversationId: `group:${G1}`, deletedAt: 8080}],
+      [],
+      8000
+    );
+    const map = await createGroupsAdapter(deps).read();
+    expect(calls.recordedDeletes).toHaveLength(0);
+    expect(map[G1].deleted).toBeFalsy();
+  });
+
+  it('PRE-cutoff watermark still promotes (migration window stays open until it succeeds)', async() => {
+    const {deps, calls} = makeDeps(
+      [],
+      [{conversationId: `group:${G1}`, deletedAt: 8080}],
+      [],
+      9000
+    );
+    await createGroupsAdapter(deps).read();
+    expect(calls.recordedDeletes).toContainEqual({groupId: G1, deletedAt: 8080});
   });
 });
 

@@ -264,6 +264,24 @@ describe('Group Management', () => {
       }
     });
 
+    it('a DURABLE-write rejection aborts the destructive teardown (Kai round-9 blocker)', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      // The durable fact is a strict precondition: without it the device
+      // would hold neither a live record nor the delete fact — the exact
+      // state a stale record elsewhere resurrects the group from.
+      store().get.mockResolvedValueOnce(makeGroup());
+      store().recordDeletedGroup.mockRejectedValueOnce(new Error('idb upgrade failed'));
+
+      await expect(api.leaveGroup(GROUP_ID)).rejects.toThrow('idb upgrade failed');
+
+      // Nothing destructive ran: the live record and the message store are
+      // untouched, so the group remains fully intact for a retry.
+      expect(store().delete).not.toHaveBeenCalled();
+      const convId = `group:${GROUP_ID}`;
+      expect(await ms.getTombstone(convId)).toBe(0);
+    });
+
     it('orphan teardown (no store record) still records the durable delete before the message-store chain', async() => {
       const {getMessageStore} = await import('@lib/phantomchat/message-store');
       const ms = getMessageStore();
@@ -278,6 +296,26 @@ describe('Group Management', () => {
       await api.leaveGroupByPeerId(-2000000000000001);
 
       expect(store().recordDeletedGroup).toHaveBeenCalledWith(GROUP_ID, expect.any(Number));
+    });
+
+    it('orphan path: a durable-write rejection aborts the purge (nothing destructive runs)', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      // Seed a leftover group conversation so the orphan scan finds it.
+      await ms.saveMessage({
+        eventId: 'evt-orphan-durable-reject', conversationId: `group:${GROUP_ID}`,
+        senderPubkey: MEMBER_A, content: 'hi', type: 'text',
+        timestamp: Math.floor(Date.now() / 1000), deliveryState: 'delivered',
+        isOutgoing: false
+      });
+      store().recordDeletedGroup.mockRejectedValueOnce(new Error('idb upgrade failed'));
+
+      await api.leaveGroupByPeerId(-2000000000000001); // non-fatal by contract
+
+      // The purge never ran: the leftover messages survive, so no state is
+      // created where the conversation is purged but no delete fact exists.
+      const remaining = await ms.getMessages(`group:${GROUP_ID}`, 50);
+      expect(remaining.length).toBe(1);
     });
   });
 

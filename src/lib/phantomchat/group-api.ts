@@ -753,13 +753,14 @@ export class GroupAPI {
   private async teardownGroupLocally(groupId: string): Promise<void> {
     const peerId = await groupIdToPeerId(groupId);
     // Durable positive delete fact (PR #179 round 5): recorded BEFORE the
-    // destructive teardown and in its own try, so neither a failure below nor
-    // a rejection inside the message-store chain in tombstoneGroupConversation
-    // can leave this device holding neither a live record nor the delete fact
-    // — the state a stale record elsewhere resurrects the group from (Kai's
-    // round-7 review of #179). Monotonic: a re-delete only moves it forward.
+    // destructive teardown and as a STRICT precondition — if the durable write
+    // fails, we abort and the live record stays (Kai's round-9 review of
+    // #179). Tearing down without the durable fact would leave this device
+    // holding neither a live record nor the delete fact — exactly the state a
+    // stale record elsewhere resurrects the group from. Monotonic: a re-delete
+    // only moves it forward.
     const deletedAt = Math.floor(Date.now() / 1000);
-    await this.recordDurableGroupDelete(groupId, deletedAt);
+    await this.store.recordDeletedGroup(groupId, deletedAt);
     await this.store.delete(groupId);
     await this.tombstoneGroupConversation(groupId, deletedAt);
     await cleanupGroupChatInjection(peerId);
@@ -811,33 +812,25 @@ export class GroupAPI {
     await cleanupGroupChatInjection(peerId);
   }
 
-  /** Best-effort durable delete record — never throws. */
-  private async recordDurableGroupDelete(groupId: string, deletedAt: number): Promise<void> {
-    try {
-      await this.store.recordDeletedGroup(groupId, deletedAt);
-    } catch(err) {
-      this.log.warn('[GroupAPI] recordDeletedGroup failed (non-fatal):', err);
-    }
-  }
-
   /**
    * Purge a group's local messages and write a deletion tombstone.
    *
    * Group conversations are keyed 'group:<groupId>' in the message store — the
    * same tombstone scheme deleteContacts uses for 1:1 deletions. Writing the
    * watermark here is what stops getGroupHistory's orphan-recovery scan from
-   * resurrecting a deliberately-deleted group. Best-effort: failures are logged
-   * but never block the leave flow. The durable positive delete fact is NOT
-   * recorded here (the teardown caller already did, orphan callers do above)
-   * — a message-store rejection must never suppress it.
+   * resurrecting a deliberately-deleted group. Failures are logged but never
+   * mask the durable positive delete fact: the teardown (or orphan) caller
+   * recorded it BEFORE this runs.
    */
   private async tombstoneGroupConversation(groupId: string, deletedAtSec?: number): Promise<void> {
     // Orphan callers (tombstoneOrphanGroupByPeerId) have no teardown to record
     // the durable delete first — record it here, BEFORE the message-store
-    // chain, so a rejection below cannot suppress the positive delete fact
-    // (Kai's round-7 review of #179).
+    // chain, as a STRICT precondition: if the durable write fails, abort the
+    // purge (nothing destructive happens; the orphan scan just retries next
+    // time) rather than purging messages while holding neither a live record
+    // nor the delete fact (Kai's round-9 review of #179).
     if(deletedAtSec === undefined) {
-      await this.recordDurableGroupDelete(groupId, Math.floor(Date.now() / 1000));
+      await this.store.recordDeletedGroup(groupId, Math.floor(Date.now() / 1000));
     }
     try {
       const store = getMessageStore();
@@ -1023,7 +1016,15 @@ export class GroupAPI {
         applied = (await this.handleMemberLeave(payload, senderPubkey)) !== false;
         break;
       case 'group_delete':
-        await this.handleGroupDelete(payload, senderPubkey);
+        // A failed durable-write precondition aborts the teardown (Kai's
+        // round-9 review of #179). Catch here so the dispatch survives, and
+        // leave the source-event watermark unadvanced (applied stays falsy)
+        // so backlog redelivery retries the delete.
+        try {
+          await this.handleGroupDelete(payload, senderPubkey);
+        } catch(err) {
+          this.log.warn('[GroupAPI] group_delete handling failed; retry expected via backlog:', err);
+        }
         break;
       case 'group_info_update':
         applied = (await this.handleInfoUpdate(payload, senderPubkey)) !== false;

@@ -135,6 +135,44 @@ describe('GroupStore', () => {
     expect(updated!.avatar).toBe('avatar-url');
     expect(updated!.updatedAt).toBeGreaterThan(1000);
   });
+
+  it('getLegacyDeleteCutoff returns the install stamp recorded at DB creation (stable across calls)', async() => {
+    const first = await store.getLegacyDeleteCutoff();
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+    const second = await store.getLegacyDeleteCutoff();
+    expect(second).toBe(first);
+  });
+
+  it('getLegacyDeleteCutoff self-heals a v2 DB missing the meta row', async() => {
+    // Simulate a v2 DB created before the meta store existed (dev builds
+    // only — v2 is unreleased): open raw at version 2 with the data stores
+    // but no groupStoreMeta, then let the API heal the missing row.
+    await store.destroy();
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open('phantomchat-groups', 2);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if(!db.objectStoreNames.contains('groups')) {
+          const s = db.createObjectStore('groups', {keyPath: 'groupId'});
+          s.createIndex('peerId', 'peerId', {unique: true});
+        }
+        if(!db.objectStoreNames.contains('deletedGroups')) {
+          db.createObjectStore('deletedGroups', {keyPath: 'groupId'});
+        }
+      };
+      req.onsuccess = () => { req.result.close(); resolve(); };
+      req.onerror = () => reject(req.error);
+    });
+    store = new GroupStore();
+
+    const healed = await store.getLegacyDeleteCutoff();
+    expect(healed).toBeGreaterThan(0);
+    expect(healed).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+    // Healed value persists — the next call must not move the cutoff forward.
+    const again = await store.getLegacyDeleteCutoff();
+    expect(again).toBe(healed);
+  });
 });
 
 describe('GROUP_PEER_BASE', () => {

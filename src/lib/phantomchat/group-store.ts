@@ -16,6 +16,12 @@ const DELETED_STORE_NAME = 'deletedGroups';
 
 export type DeletedGroupRecord = {groupId: string; deletedAt: number};
 
+/** Reserved deletedGroups key carrying the unix-SECOND stamp of the
+ * durable-log install moment (DB v2 creation/upgrade). Cannot collide with a
+ * real groupId — those are validated 64-hex pubkeys. See
+ * getLegacyDeleteCutoff. */
+const LEGACY_DELETE_CUTOFF_KEY = '__legacyDeleteCutoff__';
+
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
 /**
@@ -51,6 +57,12 @@ function initGroupDB(): Promise<IDBDatabase> {
       // stays live.
       if(!db.objectStoreNames.contains(DELETED_STORE_NAME)) {
         db.createObjectStore(DELETED_STORE_NAME, {keyPath: 'groupId'});
+        // Same versionchange transaction: seed the legacy-migration cutoff
+        // (see getLegacyDeleteCutoff) so the epoch is atomic with the schema
+        // change — for both fresh installs (0→2) and v1→2 upgrades.
+        (event.target as IDBOpenDBRequest).transaction!
+        .objectStore(DELETED_STORE_NAME)
+        .put({groupId: LEGACY_DELETE_CUTOFF_KEY, deletedAt: Math.floor(Date.now() / 1000)});
       }
     };
   });
@@ -193,14 +205,19 @@ export class GroupStore {
   }
 
   /** Every durable deletion record — the groups adapter's positive delete
-   * facts, mirroring listDeletedPeers for contacts. */
+   * facts, mirroring listDeletedPeers for contacts. The reserved cutoff row
+   * is metadata, not a delete fact — strip it here so no consumer ever sees
+   * it as one. */
   async listDeletedGroups(): Promise<DeletedGroupRecord[]> {
     const db = await getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(DELETED_STORE_NAME, 'readonly');
       const req = tx.objectStore(DELETED_STORE_NAME).getAll();
       req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve((req.result as DeletedGroupRecord[]) ?? []);
+      req.onsuccess = () => resolve(
+        ((req.result as DeletedGroupRecord[]) ?? [])
+        .filter((d) => d.groupId !== LEGACY_DELETE_CUTOFF_KEY)
+      );
     });
   }
 
@@ -219,6 +236,39 @@ export class GroupStore {
       req.onerror = () => reject(req.error);
       req.onsuccess = () => resolve();
     });
+  }
+
+  /**
+   * Unix-SECOND stamp of the durable-log install moment (DB v2
+   * creation/upgrade), recorded atomically in onupgradeneeded alongside the
+   * deletedGroups store itself — so the row always exists wherever the log
+   * does, and no separate meta store is needed.
+   *
+   * This bounds the legacy watermark migration in the groups sync adapter
+   * (Kai's round-9 review of PR #179): only watermarks stamped at or before
+   * this moment can be legacy deletions — anything written after the durable
+   * log exists is authored by code that also writes durable rows, and a bare
+   * late watermark is a clear-HISTORY watermark (messages.deleteHistory),
+   * never a group delete. Without this bound, an every-read promotion rule
+   * could promote such a watermark into an authoritative cross-device delete
+   * whenever the durable log transiently lacks the record.
+   *
+   * Self-heals the row if it is missing (v2 DBs created by dev builds
+   * predating the seeding): the cutoff becomes "now" — i.e. this call is
+   * treated as the upgrade moment.
+   */
+  async getLegacyDeleteCutoff(): Promise<number> {
+    const db = await getDB();
+    const existing = await new Promise<DeletedGroupRecord | undefined>((resolve, reject) => {
+      const tx = db.transaction(DELETED_STORE_NAME, 'readonly');
+      const req = tx.objectStore(DELETED_STORE_NAME).get(LEGACY_DELETE_CUTOFF_KEY);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve(req.result as DeletedGroupRecord | undefined);
+    });
+    if(existing && existing.deletedAt > 0) return existing.deletedAt;
+    const now = Math.floor(Date.now() / 1000);
+    await this.recordDeletedGroup(LEGACY_DELETE_CUTOFF_KEY, now);
+    return now;
   }
 
   /**
