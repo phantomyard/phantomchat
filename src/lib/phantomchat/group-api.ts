@@ -103,6 +103,20 @@ export interface GroupSendOptions {
  *  bug #4). 64-char lowercase hex is the canonical NIP-01 form. */
 const SECP_PUBKEY_HEX_RE = /^[0-9a-f]{64}$/;
 
+/** Unknown-group deletes cannot be trusted yet, but may have raced ahead of
+ *  their create during relay backlog processing. Keep them only in memory,
+ *  bounded and short-lived, until a create supplies the admin key needed to
+ *  authenticate the sender. */
+const PENDING_GROUP_DELETE_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_PENDING_GROUP_DELETES = 512;
+
+interface PendingGroupDelete {
+  groupId: string;
+  senderPubkey: string;
+  createdAt: number;
+  receivedAt: number;
+}
+
 // ─── GroupAPI ─────────────────────────────────────────────────────
 
 export class GroupAPI {
@@ -113,6 +127,7 @@ export class GroupAPI {
   private dispatch: GroupDispatchFn;
   private groupDelivery: GroupDeliveryTracker;
   private sentMessageIds: Set<string> = new Set();
+  private pendingGroupDeletes: Map<string, PendingGroupDelete> = new Map();
   private log: Logger;
 
   /** Optional test hook for incoming group messages. Production render is
@@ -1016,7 +1031,7 @@ export class GroupAPI {
     let applied = false;
     switch(payload.type) {
       case 'group_create':
-        await this.handleGroupCreate(payload, senderPubkey);
+        await this.handleGroupCreate(payload, senderPubkey, ts);
         break;
       case 'group_add_member':
         applied = (await this.handleAddMember(payload)) !== false;
@@ -1045,7 +1060,7 @@ export class GroupAPI {
         // held back locally. Whether a retry happens depends entirely on
         // the relay redelivering the event to chat-api-receive.
         try {
-          await this.handleGroupDelete(payload, senderPubkey);
+          await this.handleGroupDelete(payload, senderPubkey, ts);
         } catch(err) {
           this.log.warn('[GroupAPI] group_delete handling failed; retry expected via backlog:', err);
         }
@@ -1120,7 +1135,55 @@ export class GroupAPI {
 
   // ─── Control message handlers ─────────────────────────────────
 
-  private async handleGroupCreate(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
+  private prunePendingGroupDeletes(now = Date.now()): void {
+    for(const [key, pending] of this.pendingGroupDeletes) {
+      if(now - pending.receivedAt > PENDING_GROUP_DELETE_TTL_MS) {
+        this.pendingGroupDeletes.delete(key);
+      }
+    }
+  }
+
+  private rememberPendingGroupDelete(groupId: string, senderPubkey: string, createdAt: number): void {
+    this.prunePendingGroupDeletes();
+    const key = `${groupId}:${senderPubkey}`;
+    const existing = this.pendingGroupDeletes.get(key);
+    if(existing && existing.createdAt >= createdAt) return;
+
+    // Refresh insertion order so the cap evicts the oldest received fact.
+    this.pendingGroupDeletes.delete(key);
+    this.pendingGroupDeletes.set(key, {groupId, senderPubkey, createdAt, receivedAt: Date.now()});
+    while(this.pendingGroupDeletes.size > MAX_PENDING_GROUP_DELETES) {
+      const oldest = this.pendingGroupDeletes.keys().next().value;
+      if(oldest === undefined) break;
+      this.pendingGroupDeletes.delete(oldest);
+    }
+  }
+
+  private clearPendingGroupDeletes(groupId: string, senderPubkey?: string): void {
+    for(const [key, pending] of this.pendingGroupDeletes) {
+      if(pending.groupId === groupId && (!senderPubkey || pending.senderPubkey === senderPubkey)) {
+        this.pendingGroupDeletes.delete(key);
+      }
+    }
+  }
+
+  /** Consume every quarantined delete for this group and return the newest
+   *  one authenticated by the create's admin key and ordered after the create. */
+  private consumeVerifiedPendingDelete(groupId: string, adminPubkey: string, createdAt: number): PendingGroupDelete | null {
+    this.prunePendingGroupDeletes();
+    let verified: PendingGroupDelete | null = null;
+    for(const [key, pending] of this.pendingGroupDeletes) {
+      if(pending.groupId !== groupId) continue;
+      this.pendingGroupDeletes.delete(key);
+      if(pending.senderPubkey === adminPubkey && pending.createdAt >= createdAt &&
+        (!verified || pending.createdAt > verified.createdAt)) {
+        verified = pending;
+      }
+    }
+    return verified;
+  }
+
+  private async handleGroupCreate(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<void> {
     const peerId = await groupIdToPeerId(payload.groupId);
 
     // NON-DESTRUCTIVE REPLAY GUARD: we already hold a live record for this
@@ -1145,7 +1208,27 @@ export class GroupAPI {
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
+
+    // A delete can arrive before its create because control handlers run
+    // concurrently during backlog replay. The quarantined fact becomes trusted
+    // only now, when the create supplies the matching admin key. Never let an
+    // unmatched sender manufacture durable deletion state.
+    if(this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt)) {
+      await this.teardownGroupLocally(payload.groupId);
+      this.log('[GroupAPI] verified reordered group_delete before create:', payload.groupId.slice(0, 8));
+      return;
+    }
+
     await this.store.save(record);
+
+    // Close the interleaving where group_delete starts after the check above
+    // but before save completes. handleGroupDelete stages its fact before its
+    // first await, so this second check observes that race deterministically.
+    if(this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt)) {
+      await this.teardownGroupLocally(payload.groupId);
+      this.log('[GroupAPI] verified concurrent group_delete during create:', payload.groupId.slice(0, 8));
+      return;
+    }
 
     // Seed a local-only service row so receivers also get a valid top_message
     // in their group dialog before any real message lands.
@@ -1253,20 +1336,25 @@ export class GroupAPI {
    * Only the group's admin may delete; a delete from anyone else is ignored to
    * stop a non-admin from nuking a group on other members' devices. The proven
    * `senderPubkey` (rumor.pubkey) is checked against our record's adminPubkey.
-   * If we have no record, there is no trusted admin key to validate against,
-   * so fail closed. In particular, do not write a durable deleted-group row:
-   * the sync adapter treats that row as authoritative on every own device.
+   * If we have no record, there is no trusted admin key to validate against.
+   * Quarantine the delete in bounded, expiring memory so a reordered create
+   * can authenticate it later, but do not mutate or persist any group state.
    */
-  private async handleGroupDelete(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
+  private async handleGroupDelete(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<void> {
+    // Stage before the first await so a concurrent group_create cannot pass
+    // both of its pending-delete checks while this handler is suspended.
+    this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
     const group = await this.store.get(payload.groupId);
     if(!group) {
-      this.log.warn('[GroupAPI] ignoring unverifiable group_delete for unknown group', payload.groupId.slice(0, 8));
+      this.log.warn('[GroupAPI] quarantined unverifiable group_delete for unknown group', payload.groupId.slice(0, 8));
       return;
     }
     if(group.adminPubkey !== senderPubkey) {
+      this.clearPendingGroupDeletes(payload.groupId, senderPubkey);
       this.log.warn('[GroupAPI] ignoring group_delete from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
       return;
     }
+    this.clearPendingGroupDeletes(payload.groupId);
     await this.teardownGroupLocally(payload.groupId);
     this.log('[GroupAPI] group deleted by admin:', payload.groupId.slice(0, 8));
   }

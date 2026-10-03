@@ -648,6 +648,111 @@ describe('Group Management', () => {
       expect(await getMessageStore().getTombstone(`group:${GROUP_ID}`)).toBe(0);
     });
 
+    it('applies a genuine admin delete that arrived before its older group_create', async() => {
+      store().get.mockResolvedValue(null);
+      const now = Math.floor(Date.now() / 1000);
+      const deletePayload: GroupControlPayload = {type: 'group_delete', groupId: GROUP_ID};
+      const createPayload: GroupControlPayload = {
+        type: 'group_create', groupId: GROUP_ID, groupName: 'Deleted Group',
+        adminPubkey: MEMBER_A, memberPubkeys: [MEMBER_A, OWN_PUBKEY]
+      };
+
+      await api.handleControlMessage({
+        id: 'ctrl-del-reordered', kind: 14, content: JSON.stringify(deletePayload),
+        pubkey: MEMBER_A, created_at: now - 10,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+      await api.handleControlMessage({
+        id: 'ctrl-create-older', kind: 14, content: JSON.stringify(createPayload),
+        pubkey: MEMBER_A, created_at: now - 100,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+
+      expect(store().save).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(GROUP_ID, expect.any(Number));
+      expect(store().delete).toHaveBeenCalledWith(GROUP_ID);
+    });
+
+    it('applies an admin delete that starts while group_create is saving', async() => {
+      store().get.mockResolvedValue(null);
+      let finishSave!: () => void;
+      store().save.mockImplementationOnce(() => new Promise<void>((resolve) => { finishSave = resolve; }));
+      const now = Math.floor(Date.now() / 1000);
+      const createPayload: GroupControlPayload = {
+        type: 'group_create', groupId: GROUP_ID, groupName: 'Racing Group',
+        adminPubkey: MEMBER_A, memberPubkeys: [MEMBER_A, OWN_PUBKEY]
+      };
+
+      const createPromise = api.handleControlMessage({
+        id: 'ctrl-create-racing', kind: 14, content: JSON.stringify(createPayload),
+        pubkey: MEMBER_A, created_at: now - 100,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+      await vi.waitFor(() => expect(store().save).toHaveBeenCalledTimes(1));
+
+      await api.handleControlMessage({
+        id: 'ctrl-del-concurrent', kind: 14,
+        content: JSON.stringify({type: 'group_delete', groupId: GROUP_ID} as GroupControlPayload),
+        pubkey: MEMBER_A, created_at: now - 10,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+      finishSave();
+      await createPromise;
+
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(GROUP_ID, expect.any(Number));
+      expect(store().delete).toHaveBeenCalledWith(GROUP_ID);
+    });
+
+    it('does not let an unknown non-admin delete suppress a later group_create', async() => {
+      store().get.mockResolvedValue(null);
+      const now = Math.floor(Date.now() / 1000);
+      const deletePayload: GroupControlPayload = {type: 'group_delete', groupId: GROUP_ID};
+      const createPayload: GroupControlPayload = {
+        type: 'group_create', groupId: GROUP_ID, groupName: 'Real Group',
+        adminPubkey: MEMBER_A, memberPubkeys: [MEMBER_A, OWN_PUBKEY]
+      };
+
+      await api.handleControlMessage({
+        id: 'ctrl-del-spoof', kind: 14, content: JSON.stringify(deletePayload),
+        pubkey: MEMBER_B, created_at: now - 10,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_B);
+      await api.handleControlMessage({
+        id: 'ctrl-create-real', kind: 14, content: JSON.stringify(createPayload),
+        pubkey: MEMBER_A, created_at: now - 100,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+
+      expect(store().save).toHaveBeenCalledTimes(1);
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect(store().delete).not.toHaveBeenCalled();
+    });
+
+    it('does not let a stale pre-create delete suppress a newer group_create', async() => {
+      store().get.mockResolvedValue(null);
+      const now = Math.floor(Date.now() / 1000);
+      const deletePayload: GroupControlPayload = {type: 'group_delete', groupId: GROUP_ID};
+      const createPayload: GroupControlPayload = {
+        type: 'group_create', groupId: GROUP_ID, groupName: 'Re-created Group',
+        adminPubkey: MEMBER_A, memberPubkeys: [MEMBER_A, OWN_PUBKEY]
+      };
+
+      await api.handleControlMessage({
+        id: 'ctrl-del-stale', kind: 14, content: JSON.stringify(deletePayload),
+        pubkey: MEMBER_A, created_at: now - 100,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+      await api.handleControlMessage({
+        id: 'ctrl-create-newer', kind: 14, content: JSON.stringify(createPayload),
+        pubkey: MEMBER_A, created_at: now - 10,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+
+      expect(store().save).toHaveBeenCalledTimes(1);
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect(store().delete).not.toHaveBeenCalled();
+    });
+
     it('group_remove_member with targetPubkey=self removes group locally (admin sender)', async() => {
       store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
       const payload: GroupControlPayload = {
