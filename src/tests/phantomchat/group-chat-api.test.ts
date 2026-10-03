@@ -342,6 +342,97 @@ describe('GroupAPI', () => {
     teardownSpy.mockRestore();
   });
 
+  // ─── Kai's round-3 review blocker: the id binding must authenticate
+  // CREATE, never freeze DELETE authority. transferAdmin() and
+  // handleMemberLeave() legitimately move adminPubkey off the id-bound
+  // creator; a bound-key check on the delete path made every bound group
+  // undeletable after any admin change (new admin fails the bound key,
+  // original creator passes it only to fail the stored-admin check).
+
+  it('after group_admin_transfer the NEW admin can delete (bound id, live record)', async() => {
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    const NEW_ADMIN = MEMBER_B;
+    const live = {
+      groupId: boundId, name: 'G', adminPubkey: BOUND_ADMIN,
+      members: [BOUND_ADMIN, NEW_ADMIN], peerId: -2e15,
+      createdAt: Date.now(), updatedAt: Date.now()
+    } as GroupRecord;
+    // The transfer handler mutates the record and saves it — the store
+    // mock then serves the updated record to the delete handler.
+    mockGroupStore.get.mockResolvedValueOnce(live);
+    const transfer = controlRumor({type: 'group_admin_transfer', groupId: boundId, adminPubkey: NEW_ADMIN}, BOUND_ADMIN);
+    await api.handleControlMessage(transfer, BOUND_ADMIN);
+    expect(mockGroupStore.save).toHaveBeenCalledTimes(1);
+    expect((mockGroupStore.save.mock.calls[0][0] as GroupRecord).adminPubkey).toBe(NEW_ADMIN);
+
+    const del = controlRumor({type: 'group_delete', groupId: boundId}, NEW_ADMIN);
+    // handleAdminTransfer mutated `live` in place (adminPubkey = NEW_ADMIN)
+    // — serve that updated record to the delete handler.
+    mockGroupStore.get.mockResolvedValueOnce(live);
+    await api.handleControlMessage(del, NEW_ADMIN);
+    expect(teardownSpy).toHaveBeenCalledTimes(1);
+    teardownSpy.mockRestore();
+  });
+
+  it('after admin transfer the ORIGINAL id-bound creator can no longer delete', async() => {
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    // Record reflects the completed transfer: current admin = MEMBER_B.
+    mockGroupStore.get.mockResolvedValueOnce({
+      groupId: boundId, name: 'G', adminPubkey: MEMBER_B,
+      members: [BOUND_ADMIN, MEMBER_B], peerId: -2e15,
+      createdAt: Date.now(), updatedAt: Date.now()
+    } as GroupRecord);
+    const del = controlRumor({type: 'group_delete', groupId: boundId}, BOUND_ADMIN);
+    await api.handleControlMessage(del, BOUND_ADMIN);
+    expect(teardownSpy).not.toHaveBeenCalled();
+    teardownSpy.mockRestore();
+  });
+
+  it('after admin-leave auto-promotion the promoted member can delete (bound id)', async() => {
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    // Members sorted lex-asc: the admin leaves, MEMBER_B is auto-promoted
+    // (handleMemberLeave), then the promoted admin deletes the group.
+    const live = {
+      groupId: boundId, name: 'G', adminPubkey: BOUND_ADMIN,
+      members: [BOUND_ADMIN, MEMBER_B, OWN_PUBKEY], peerId: -2e15,
+      createdAt: Date.now(), updatedAt: Date.now()
+    } as GroupRecord;
+    mockGroupStore.get.mockResolvedValueOnce(live);
+    const leave = controlRumor({type: 'group_leave', groupId: boundId}, BOUND_ADMIN);
+    await api.handleControlMessage(leave, BOUND_ADMIN);
+    expect(mockGroupStore.save).toHaveBeenCalledTimes(1);
+    const promoted = mockGroupStore.save.mock.calls[0][0] as GroupRecord;
+    expect(promoted.adminPubkey).toBe(MEMBER_B);
+
+    const del = controlRumor({type: 'group_delete', groupId: boundId}, MEMBER_B);
+    // handleMemberLeave saved a NEW record object — serve its shape.
+    mockGroupStore.get.mockResolvedValueOnce({
+      groupId: boundId, name: 'G', adminPubkey: MEMBER_B,
+      members: [MEMBER_B, OWN_PUBKEY], peerId: -2e15,
+      createdAt: Date.now(), updatedAt: Date.now()
+    } as GroupRecord);
+    await api.handleControlMessage(del, MEMBER_B);
+    expect(teardownSpy).toHaveBeenCalledTimes(1);
+    teardownSpy.mockRestore();
+  });
+
+  it('no-record bound id: a delete from anyone but the id-bound key is rejected even from quarantine', async() => {
+    // The no-record path keeps the fail-closed binding: only the key baked
+    // into the id can ever authenticate later (a create replay mints
+    // admin = that same key), so a different sender is rejected before the
+    // quarantine can ever promote it.
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    mockGroupStore.get.mockResolvedValue(null); // no record, ever
+    const del = controlRumor({type: 'group_delete', groupId: boundId}, ATTACKER);
+    await api.handleControlMessage(del, ATTACKER);
+    // A later create replay must find nothing pending to promote.
+    const create = controlRumor({type: 'group_create', groupId: boundId, adminPubkey: ATTACKER}, ATTACKER);
+    await api.handleControlMessage(create, ATTACKER);
+    expect(teardownSpy).not.toHaveBeenCalled();
+    expect(mockGroupStore.save).not.toHaveBeenCalled();
+    teardownSpy.mockRestore();
+  });
+
   it('legacy 32-hex ids keep pre-#188 behavior (payload admin accepted)', async() => {
     const legacyId = 'abc123def456abc123def456abc123de';
     const rumor = controlRumor({type: 'group_create', groupId: legacyId, adminPubkey: ATTACKER}, ATTACKER);

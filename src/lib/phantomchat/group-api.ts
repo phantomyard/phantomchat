@@ -62,12 +62,17 @@ function watermarkFieldFor(type: string): GroupEventField | null {
 //     record, no mirrors, nothing for a follow-up delete to authenticate
 //     against), and the record's adminPubkey is the id-bound value, never
 //     the payload claim;
-//   - group_delete for a bound id from a sender ≠ the id-bound admin is
-//     rejected BEFORE any teardown — even the no-record path (which would
-//     otherwise write a durable deleted-groups row) is untouched.
+//   - group_delete from a sender with no verifiable authority is rejected
+//     BEFORE any teardown: with a live record the CURRENT stored admin is
+//     the authority (the id binding authenticates CREATE, never DELETE —
+//     transferAdmin()/handleMemberLeave() legitimately move adminPubkey
+//     away from the id-bound creator, and a bound-key check there would
+//     freeze every bound group's deletion after an admin transfer);
+//     with no record, only the id-bound key itself can ever authenticate,
+//     so any other sender is rejected before even the quarantine stage.
 // The attacker's pair then dies on message one: their forged create is
-// rejected, and their delete is rejected against the id without creating
-// any state.
+// rejected, and their delete is rejected (no record anywhere, and the
+// id fails their key on no-record devices) without creating any state.
 //
 // Legacy ids (32-hex randomUUID, pre-#188 groups) carry no binding and keep
 // the pre-existing behavior: creates trust `payload.adminPubkey || sender`,
@@ -1391,35 +1396,51 @@ export class GroupAPI {
 
   /**
    * Apply an incoming `group_delete` (admin deleted the group for everyone).
-   * Only the group's admin may delete; a delete from anyone else is ignored to
-   * stop a non-admin from nuking a group on other members' devices. The proven
-   * `senderPubkey` (rumor.pubkey) is checked against our record's adminPubkey.
-   * If we have no record, there is no trusted admin key to validate against.
-   * Quarantine the delete in bounded, expiring memory so a reordered create
-   * can authenticate it later, but do not mutate or persist any group state.
+   * Only the group's CURRENT admin may delete; a delete from anyone else is
+   * ignored to stop a non-admin from nuking a group on other members'
+   * devices. The proven `senderPubkey` (rumor.pubkey) is checked against our
+   * record's adminPubkey — for bound ids the current admin may legitimately
+   * differ from the id-bound creator (admin transfer), so the binding never
+   * gates a delete against a live record. If we have no record, there is no
+   * trusted admin key to validate against — except for bound ids, where a
+   * sender ≠ the id-bound key is rejected outright (it could never
+   * authenticate later). The id-bound admin's delete is quarantined in
+   * bounded, expiring memory so a reordered create can authenticate it
+   * later, but we do not mutate or persist any group state.
    */
   private async handleGroupDelete(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<void> {
-    // ID-BOUND ADMIN CHECK (#188): for bound ids the delete is verified
-    // against the id itself, FIRST — before the quarantine stage, the record
-    // lookup, and any teardown — so a non-admin delete for a bound id is
-    // rejected outright and never quarantined, and the no-record path can
-    // never be reached by a non-admin sender. This closes the two-message
-    // forgery (create admin=self, then delete): the forged create was
-    // already rejected, and the delete dies here against the id even on
-    // devices that never held the group.
-    const boundAdmin = boundGroupAdmin(payload.groupId);
-    if(boundAdmin && boundAdmin !== senderPubkey) {
-      this.log.warn('[GroupAPI] ignoring group_delete: sender is not the id-bound admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
-      return;
-    }
     // Stage before the first await so a concurrent group_create cannot pass
     // both of its pending-delete checks while this handler is suspended.
     this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
     const group = await this.store.get(payload.groupId);
     if(!group) {
+      // ID-BOUND FAIL-CLOSED, no-record path only (#188): with no record
+      // there is exactly one key a delete could ever authenticate against
+      // for a bound id — the one baked into the id itself. The only create
+      // that can later verify a quarantined delete mints admin = that same
+      // key, so any other sender can never promote and would only pollute
+      // the bounded quarantine. Reject and unstage; the id-bound admin's
+      // delete still falls through to the quarantine below, where a
+      // reordered create can authenticate it.
+      const boundAdmin = boundGroupAdmin(payload.groupId);
+      if(boundAdmin && boundAdmin !== senderPubkey) {
+        this.clearPendingGroupDeletes(payload.groupId, senderPubkey);
+        this.log.warn('[GroupAPI] ignoring group_delete: sender is not the id-bound admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+        return;
+      }
       this.log.warn('[GroupAPI] quarantined unverifiable group_delete for unknown group', payload.groupId.slice(0, 8));
       return;
     }
+    // Live record: the CURRENT admin is the delete authority — NOT the
+    // id-bound creator. transferAdmin() and handleMemberLeave() both
+    // legitimately move adminPubkey off the bound key, and a bound-key
+    // check here would make every bound group undeletable after an admin
+    // transfer (new admin fails the bound key; original creator passes it
+    // only to fail this stored-admin check). The stored key still has
+    // verifiable lineage: bound creates mint admin = the id-bound key, and
+    // handleAdminTransfer only applies transfers from the sitting admin —
+    // so a stored admin for a bound id always descends from the binding
+    // through authenticated steps.
     if(group.adminPubkey !== senderPubkey) {
       this.clearPendingGroupDeletes(payload.groupId, senderPubkey);
       this.log.warn('[GroupAPI] ignoring group_delete from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
