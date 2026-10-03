@@ -631,6 +631,23 @@ describe('Group Management', () => {
       expect(store().delete).not.toHaveBeenCalled();
     });
 
+    it('group_delete for an unknown group cannot create a durable delete', async() => {
+      store().get.mockResolvedValue(null);
+      const payload: GroupControlPayload = {type: 'group_delete', groupId: GROUP_ID};
+      const rumor = {
+        id: 'ctrl-del-unknown', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_B, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_B);
+
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect(store().delete).not.toHaveBeenCalled();
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      expect(await getMessageStore().getTombstone(`group:${GROUP_ID}`)).toBe(0);
+    });
+
     it('group_remove_member with targetPubkey=self removes group locally (admin sender)', async() => {
       store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
       const payload: GroupControlPayload = {

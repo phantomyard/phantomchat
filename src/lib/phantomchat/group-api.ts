@@ -1253,12 +1253,17 @@ export class GroupAPI {
    * Only the group's admin may delete; a delete from anyone else is ignored to
    * stop a non-admin from nuking a group on other members' devices. The proven
    * `senderPubkey` (rumor.pubkey) is checked against our record's adminPubkey.
-   * If we have no record (already gone), we still tear down by groupId so a
-   * racing backlog create can't leave a zombie.
+   * If we have no record, there is no trusted admin key to validate against,
+   * so fail closed. In particular, do not write a durable deleted-group row:
+   * the sync adapter treats that row as authoritative on every own device.
    */
   private async handleGroupDelete(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
     const group = await this.store.get(payload.groupId);
-    if(group && group.adminPubkey !== senderPubkey) {
+    if(!group) {
+      this.log.warn('[GroupAPI] ignoring unverifiable group_delete for unknown group', payload.groupId.slice(0, 8));
+      return;
+    }
+    if(group.adminPubkey !== senderPubkey) {
       this.log.warn('[GroupAPI] ignoring group_delete from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
       return;
     }
