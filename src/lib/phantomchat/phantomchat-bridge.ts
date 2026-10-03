@@ -568,7 +568,7 @@ export class PhantomChatBridge {
     pubkey: string,
     peerId: number,
     displayName?: string,
-    opts?: {allowTombstoned?: boolean}
+    opts?: {allowTombstoned?: boolean; deliberateAddAt?: number}
   ): Promise<void> {
     const wrote = await storeMapping(pubkey, peerId, displayName, undefined, opts);
     // Cache only what actually persisted: storeMapping returns false when

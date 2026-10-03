@@ -141,3 +141,20 @@ Latency is verified live via CDP against the prod PWA (recipe + reader at
 (the bubble was *waiting on the saturated worker*, not computing); chat-switch
 first bubble ~400 ms with a 222 ms main-thread long-task. Re-measure after any
 hot-path change and put the numbers in the PR.
+
+## Session note — 2026-10-03 (PR: one-PR sweep #186/#187/#188)
+
+- `addP2PContact(deliberate)` writes the stamp ATOMICALLY with the mapping
+  (`storeMapping({deliberateAddAt})`) and clears the guards AFTER. Never
+  reorder back to clear-then-store: a failed stamp write must abort the add
+  with the delete fact intact (#186).
+- `storeMapping` opts gained `deliberateAddAt` — it bypasses BOTH tombstone
+  guards and max-forwards over an existing proof. Automatic paths must never
+  pass it.
+- NEW group ids bind the admin: `<64-hex adminPubkey><32-hex random>` (96
+  hex). `boundGroupAdmin()` is the receiver-side source of truth for
+  group_create/group_delete on bound ids; legacy 32-hex ids keep pre-#188
+  behavior (documented limitation, see the issue). NEVER trust
+  `payload.adminPubkey` when a binding exists (#188).
+- `sync-crdt.ts` must stay TEXT: no literal NUL bytes in string literals —
+  use the `\u0000` escape (runtime-identical, keeps GitHub diffs readable).

@@ -274,6 +274,82 @@ describe('GroupAPI', () => {
 
     expect(handlerCalls).toBe(0); // Deduped
   });
+// ─── #188: group ids bound to the admin (two-message forgery closed) ────
+//
+// A group_create carries adminPubkey in its own payload — self-asserted.
+// On a device with no local record, an attacker who knows a group id could
+// forge create(admin=self) + delete(self) and manufacture a DURABLE
+// cross-device delete for a group this device never held. New ids bind the
+// admin: `<64-hex adminPubkey><32-hex random>`; receivers verify against the
+// id, not the payload.
+
+  const BOUND_ADMIN = MEMBER_A; // the admin baked into the id
+  const ATTACKER = MEMBER_B;
+  const boundId = BOUND_ADMIN + '0123456789abcdef0123456789abcdef';
+
+  const controlRumor = (payload: Record<string, unknown>, sender: string) => ({
+    id: 'c-' + Math.random().toString(36).slice(2),
+    kind: 14,
+    content: JSON.stringify(payload),
+    pubkey: sender,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [['control', 'true'], ['group', String(payload.groupId)]]
+  });
+
+  it('createGroup mints an id that binds the creator as admin', async() => {
+    const groupId = await api.createGroup('G', [MEMBER_A]);
+    expect(groupId).toMatch(new RegExp('^' + OWN_PUBKEY + '[0-9a-f]{32}$'));
+  });
+
+  it('a forged create (sender ≠ id-bound admin) is rejected — nothing stored', async() => {
+    const rumor = controlRumor({type: 'group_create', groupId: boundId, adminPubkey: ATTACKER}, ATTACKER);
+    await api.handleControlMessage(rumor, ATTACKER);
+    expect(mockGroupStore.save).not.toHaveBeenCalled();
+  });
+
+  it('the two-message forgery (create + delete) writes no durable delete', async() => {
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    // Message 1: forged create naming the attacker admin.
+    const create = controlRumor({type: 'group_create', groupId: boundId, adminPubkey: ATTACKER}, ATTACKER);
+    await api.handleControlMessage(create, ATTACKER);
+    // Message 2: the attacker's own delete.
+    const del = controlRumor({type: 'group_delete', groupId: boundId}, ATTACKER);
+    await api.handleControlMessage(del, ATTACKER);
+    expect(mockGroupStore.save).not.toHaveBeenCalled();
+    expect(teardownSpy).not.toHaveBeenCalled();
+    teardownSpy.mockRestore();
+  });
+
+  it('a legit create from the id-bound admin stores the id-bound admin, not the payload claim', async() => {
+    const rumor = controlRumor({type: 'group_create', groupId: boundId, adminPubkey: ATTACKER}, BOUND_ADMIN);
+    await api.handleControlMessage(rumor, BOUND_ADMIN);
+    expect(mockGroupStore.save).toHaveBeenCalledTimes(1);
+    const saved = mockGroupStore.save.mock.calls[0][0] as GroupRecord;
+    // The id is the authority — a lying payload cannot register a foreign admin.
+    expect(saved.adminPubkey).toBe(BOUND_ADMIN);
+  });
+
+  it('a legit delete from the id-bound admin still tears down', async() => {
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    mockGroupStore.get.mockResolvedValueOnce({
+      groupId: boundId, name: 'G', adminPubkey: BOUND_ADMIN,
+      members: [BOUND_ADMIN, OWN_PUBKEY], peerId: -2e15,
+      createdAt: Date.now(), updatedAt: Date.now()
+    } as GroupRecord);
+    const del = controlRumor({type: 'group_delete', groupId: boundId}, BOUND_ADMIN);
+    await api.handleControlMessage(del, BOUND_ADMIN);
+    expect(teardownSpy).toHaveBeenCalledTimes(1);
+    teardownSpy.mockRestore();
+  });
+
+  it('legacy 32-hex ids keep pre-#188 behavior (payload admin accepted)', async() => {
+    const legacyId = 'abc123def456abc123def456abc123de';
+    const rumor = controlRumor({type: 'group_create', groupId: legacyId, adminPubkey: ATTACKER}, ATTACKER);
+    await api.handleControlMessage(rumor, ATTACKER);
+    expect(mockGroupStore.save).toHaveBeenCalledTimes(1);
+    const saved = mockGroupStore.save.mock.calls[0][0] as GroupRecord;
+    expect(saved.adminPubkey).toBe(ATTACKER);
+  });
 });
 
 describe('GroupDeliveryTracker', () => {

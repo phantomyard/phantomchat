@@ -49,6 +49,45 @@ function watermarkFieldFor(type: string): GroupEventField | null {
   }
 }
 
+// ─── Group-id ↔ admin binding (#188) ──────────────────────
+//
+// A group_create carries `adminPubkey` in its own payload — self-asserted,
+// no source of truth. On a device with no local record, any sender who knows
+// a group id can forge create(admin=self) + delete(self) and manufacture a
+// DURABLE cross-device delete for a group this device never held (Robert,
+// issue #188). Fix: NEW groups bind the admin INTO the id —
+// `<64-hex adminPubkey><32-hex random>` (96 hex chars). Receivers verify a
+// bound create/delete against the id itself instead of the payload:
+//   - group_create from a sender ≠ the id-bound admin is rejected (no
+//     record, no mirrors, nothing for a follow-up delete to authenticate
+//     against), and the record's adminPubkey is the id-bound value, never
+//     the payload claim;
+//   - group_delete for a bound id from a sender ≠ the id-bound admin is
+//     rejected BEFORE any teardown — even the no-record path (which would
+//     otherwise write a durable deleted-groups row) is untouched.
+// The attacker's pair then dies on message one: their forged create is
+// rejected, and their delete is rejected against the id without creating
+// any state.
+//
+// Legacy ids (32-hex randomUUID, pre-#188 groups) carry no binding and keep
+// the pre-existing behavior: creates trust `payload.adminPubkey || sender`,
+// deletes require an admin match against a local record. That limitation is
+// documented on the issue — it cannot be retrofitted onto already-minted
+// groups without a migration protocol.
+
+const BOUND_ID_RE = /^([0-9a-f]{64})([0-9a-f]{32})$/;
+
+/** The admin pubkey bound into `groupId`, or null for legacy (unbound) ids. */
+function boundGroupAdmin(groupId: string): string | null {
+  const m = BOUND_ID_RE.exec(groupId);
+  return m ? m[1] : null;
+}
+
+/** Mint a new group id bound to its creator (the admin). */
+function mintBoundGroupId(adminPubkey: string): string {
+  return adminPubkey + crypto.randomUUID().split('-').join('');
+}
+
 function readEventWatermark(groupId: string, field: GroupEventField): number {
   try {
     const wm = parseInt(localStorage.getItem(WATERMARK_PREFIX + groupId + ':' + field) || '0', 10) || 0;
@@ -174,7 +213,7 @@ export class GroupAPI {
       }
     }
 
-    const groupId = crypto.randomUUID().split('-').join('');
+    const groupId = mintBoundGroupId(this.ownPubkey);
     const peerId = await groupIdToPeerId(groupId);
 
     const record: GroupRecord = {
@@ -1203,11 +1242,25 @@ export class GroupAPI {
       return;
     }
 
+    // ID-BOUND ADMIN CHECK (#188): for bound ids the create has a source of
+    // truth that is NOT its own payload — the id itself. A create from any
+    // sender other than the bound admin is a forgery; reject it without
+    // storing anything, so a follow-up group_delete has no record to
+    // authenticate against and no device-side state was minted by the pair's
+    // first message.
+    const boundAdmin = boundGroupAdmin(payload.groupId);
+    if(boundAdmin && boundAdmin !== senderPubkey) {
+      this.log.warn('[GroupAPI] rejecting group_create: sender is not the id-bound admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+      return;
+    }
+
     const record: GroupRecord = {
       groupId: payload.groupId,
       name: payload.groupName || 'Group',
       description: payload.groupDescription,
-      adminPubkey: payload.adminPubkey || senderPubkey,
+      // Bound id: the id IS the authority — never the payload's claim.
+      // Legacy id: pre-#188 behavior (payload claim, sender as fallback).
+      adminPubkey: boundAdmin ?? (payload.adminPubkey || senderPubkey),
       members: payload.memberPubkeys || [],
       peerId,
       createdAt: Date.now(),
@@ -1346,6 +1399,19 @@ export class GroupAPI {
    * can authenticate it later, but do not mutate or persist any group state.
    */
   private async handleGroupDelete(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<void> {
+    // ID-BOUND ADMIN CHECK (#188): for bound ids the delete is verified
+    // against the id itself, FIRST — before the quarantine stage, the record
+    // lookup, and any teardown — so a non-admin delete for a bound id is
+    // rejected outright and never quarantined, and the no-record path can
+    // never be reached by a non-admin sender. This closes the two-message
+    // forgery (create admin=self, then delete): the forged create was
+    // already rejected, and the delete dies here against the id even on
+    // devices that never held the group.
+    const boundAdmin = boundGroupAdmin(payload.groupId);
+    if(boundAdmin && boundAdmin !== senderPubkey) {
+      this.log.warn('[GroupAPI] ignoring group_delete: sender is not the id-bound admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+      return;
+    }
     // Stage before the first await so a concurrent group_create cannot pass
     // both of its pending-delete checks while this handler is suspended.
     this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
