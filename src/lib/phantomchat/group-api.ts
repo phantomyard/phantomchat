@@ -1446,6 +1446,16 @@ export class GroupAPI {
       // stage above — never staged, so there is nothing to unstage here;
       // the id-bound admin's delete still falls through to the quarantine
       // below, where a reordered create can authenticate it.
+      // ACCEPTED DIVERGENCE (Robert, #190): quarantine reordering covers
+      // only the id-bound creator's delete. A LATER admin's delete (post
+      // transfer or leave-promotion) arriving on a no-record device before
+      // the create cannot be authenticated against the id, is rejected
+      // here, and NOTHING re-sends it — after the create + transfer replay
+      // this device keeps a live record for a group the fleet deleted.
+      // Fail-closed is the cost: staging it would let an unauthenticated
+      // sender promote a durable delete, and no resend protocol exists
+      // (same accepted outcome on main for legacy ids, where the
+      // quarantined sender never matches the create's admin).
       if(boundAdmin && boundAdmin !== senderPubkey) {
         this.log.warn('[GroupAPI] ignoring group_delete: sender is not the id-bound admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
         return;

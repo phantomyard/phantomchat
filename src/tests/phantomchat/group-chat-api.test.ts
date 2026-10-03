@@ -416,20 +416,63 @@ describe('GroupAPI', () => {
     teardownSpy.mockRestore();
   });
 
-  it('no-record bound id: a delete from anyone but the id-bound key is rejected even from quarantine', async() => {
-    // The no-record path keeps the fail-closed binding: only the key baked
-    // into the id can ever authenticate later (a create replay mints
-    // admin = that same key), so a different sender is rejected before the
-    // quarantine can ever promote it.
+  it('no-record bound id: a forged delete stages nothing — direct quarantine pin', async() => {
+    // DIRECT PIN (Kai, #190): the earlier version passed via the create-side
+    // rejection only (the forged create replay never verified the quarantined
+    // delete), so it would NOT fail if the delete-side no-record bound check
+    // in handleGroupDelete were dropped. The check is quarantine hygiene
+    // (defense-in-depth, not the authentication gate) — but a dropped check
+    // must fail here, so the quarantine map is asserted on directly.
     const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
     mockGroupStore.get.mockResolvedValue(null); // no record, ever
     const del = controlRumor({type: 'group_delete', groupId: boundId}, ATTACKER);
     await api.handleControlMessage(del, ATTACKER);
-    // A later create replay must find nothing pending to promote.
-    const create = controlRumor({type: 'group_create', groupId: boundId, adminPubkey: ATTACKER}, ATTACKER);
-    await api.handleControlMessage(create, ATTACKER);
+    const stagedForGroup = [...(api as any)['pendingGroupDeletes'].values()]
+      .filter(p => p.groupId === boundId);
+    expect(stagedForGroup).toHaveLength(0);
+    // Robert's stronger shape (#190): the BOUND admin's own create replay is
+    // legitimate — it saves a live record while the quarantine still holds
+    // nothing to promote for this group.
+    const create = controlRumor({type: 'group_create', groupId: boundId}, BOUND_ADMIN);
+    await api.handleControlMessage(create, BOUND_ADMIN);
+    expect(mockGroupStore.save).toHaveBeenCalledTimes(1);
+    const saved = mockGroupStore.save.mock.calls[0][0] as GroupRecord;
+    expect(saved.adminPubkey).toBe(BOUND_ADMIN);
+    const stagedAfterCreate = [...(api as any)['pendingGroupDeletes'].values()]
+      .filter(p => p.groupId === boundId);
+    expect(stagedAfterCreate).toHaveLength(0);
     expect(teardownSpy).not.toHaveBeenCalled();
-    expect(mockGroupStore.save).not.toHaveBeenCalled();
+    teardownSpy.mockRestore();
+  });
+
+  it('reordered backlog after transfer: the new admin\'s delete on a no-record device is dropped, not re-applied (#190 divergence pin)', async() => {
+    // Backlog replay in the worst order (Robert, #190): the new admin's
+    // delete, then the create, then the transfer. The new admin's delete
+    // cannot be authenticated against the id (sender ≠ bound key, no
+    // record) and is rejected + unstaged — nothing re-sends it, so after
+    // the create + transfer replay this device keeps a LIVE record for a
+    // group the fleet has since deleted. Fail-closed is the accepted cost
+    // (see the ACCEPTED DIVERGENCE note in handleGroupDelete); pinning it
+    // here so nobody "fixes" the drop by loosening the fail-closed check.
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    const NEW_ADMIN = MEMBER_B;
+    mockGroupStore.get.mockResolvedValue(null); // no record before the create
+    const newAdminDel = controlRumor({type: 'group_delete', groupId: boundId}, NEW_ADMIN);
+    await api.handleControlMessage(newAdminDel, NEW_ADMIN);
+    const create = controlRumor({type: 'group_create', groupId: boundId}, BOUND_ADMIN);
+    await api.handleControlMessage(create, BOUND_ADMIN);
+    // Serve the just-saved record to the transfer handler (it mutates + saves).
+    mockGroupStore.get.mockResolvedValueOnce(mockGroupStore.save.mock.calls[0][0] as GroupRecord);
+    const transfer = controlRumor({type: 'group_admin_transfer', groupId: boundId, adminPubkey: NEW_ADMIN}, BOUND_ADMIN);
+    await api.handleControlMessage(transfer, BOUND_ADMIN);
+    // The delete was never re-applied and never will be: no teardown, and
+    // the record stays live with the transferred admin.
+    expect(teardownSpy).not.toHaveBeenCalled();
+    expect(mockGroupStore.save).toHaveBeenCalledTimes(2);
+    expect((mockGroupStore.save.mock.calls[1][0] as GroupRecord).adminPubkey).toBe(NEW_ADMIN);
+    const stagedForGroup = [...(api as any)['pendingGroupDeletes'].values()]
+      .filter(p => p.groupId === boundId);
+    expect(stagedForGroup).toHaveLength(0);
     teardownSpy.mockRestore();
   });
 
