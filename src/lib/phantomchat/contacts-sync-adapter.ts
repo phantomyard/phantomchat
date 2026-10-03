@@ -124,9 +124,14 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
     for(const [peer, deletedAt] of deletes) {
       const liveEntry = map[peer];
       // A live mapping only outranks the delete when it is NEWER than it — a
-      // deliberate re-add. A mapping resurrected by some automatic path (stale
-      // sync blob, history backfill) is older, and must not mute the delete.
-      if(liveEntry && liveEntry.updatedAt >= deletedAt) continue;
+      // deliberate re-add. Strict compare: on an exact tie the TOMBSTONE
+      // wins, matching mergeEntry's invariant and the receive gates that
+      // reject timestampSec <= deletedAt. Timestamps are seconds-floored, so
+      // a mapping updated earlier in the same second as the delete ties, and
+      // equality cannot mean a deliberate re-add. A mapping resurrected by
+      // some automatic path (stale sync blob, history backfill) is older, and
+      // must not mute the delete.
+      if(liveEntry && liveEntry.updatedAt > deletedAt) continue;
       map[peer] = {id: peer, updatedAt: deletedAt, deleted: true};
     }
 

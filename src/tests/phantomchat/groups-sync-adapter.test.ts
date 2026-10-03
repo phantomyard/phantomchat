@@ -71,10 +71,28 @@ describe('groups adapter read()', () => {
     expect(map[G1].updatedAt).toBe(8080);
   });
 
-  it('ties go to the live record (>= semantics, consistent with contacts adapter)', async() => {
+  it('ties go to the TOMBSTONE (> semantics, consistent with mergeEntry and the receive gates)', async() => {
+    // Timestamps are seconds-floored, so a live record updated earlier in the
+    // same second as the delete ties. Equality cannot mean a deliberate
+    // re-create — the delete must win, exactly as mergeEntry resolves an
+    // exact tie (tombstone wins, both argument orders).
     const {deps} = makeDeps([group(G1, 8_080_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
     const map = await createGroupsAdapter(deps).read();
-    expect(map[G1].deleted).toBeFalsy();
+    expect(map[G1].deleted).toBe(true);
+    expect(map[G1].updatedAt).toBe(8080);
+  });
+
+  it('adapter read() and mergeEntry agree on a same-second tie (layers cannot disagree)', async() => {
+    // The adapter gate and the CRDT merge must resolve the same tie the same
+    // way, or a device whose relay is absent (adapter gate decides) diverges
+    // from one that merged against the remote (mergeEntry decides).
+    const {mergeEntry} = await import('@lib/phantomchat/sync-crdt');
+    const {deps} = makeDeps([group(G1, 8_080_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBe(true); // adapter: tombstone wins the tie
+    const replayedLive = {id: G1, updatedAt: 8080, data: group(G1, 8_080_000)};
+    expect(mergeEntry(map[G1], replayedLive).deleted).toBe(true); // merge: agrees
+    expect(mergeEntry(replayedLive, map[G1]).deleted).toBe(true);
   });
 });
 
@@ -114,6 +132,19 @@ describe('groups adapter apply()', () => {
     const merged: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 9000, deleted: true}};
     await createGroupsAdapter(deps).apply(merged, before);
     expect(calls.removed).toEqual([G1]);
+    expect(calls.tombstoned).toEqual([{conversationId: `group:${G1}`, deletedAt: 9000}]);
+  });
+
+  it('persists a remote tombstone even with NOTHING live locally (empty-local device)', async() => {
+    // A device that never held the group previously skipped the tombstone
+    // write — a replayed group_create then passed the absent-tombstone gate
+    // in handleGroupCreate and resurrected the group stamped Date.now(),
+    // outranking the durable relay delete forever. The tombstone write is
+    // unconditional; only the teardown is conditional on wasLive.
+    const {deps, calls} = makeDeps([], []);
+    const merged: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 9000, deleted: true}};
+    await createGroupsAdapter(deps).apply(merged, empty);
+    expect(calls.removed).toEqual([]); // nothing to tear down
     expect(calls.tombstoned).toEqual([{conversationId: `group:${G1}`, deletedAt: 9000}]);
   });
 });

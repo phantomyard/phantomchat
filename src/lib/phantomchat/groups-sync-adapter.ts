@@ -60,7 +60,13 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
       // control message, orphan-recovery scan) must LOSE to the delete, not
       // erase it.
       const liveEntry = map[groupId];
-      if(liveEntry && liveEntry.updatedAt >= t.deletedAt) continue;
+      // Strict: on an exact tie the TOMBSTONE wins, matching mergeEntry's
+      // invariant and the receive gates that reject timestampSec <= deletedAt.
+      // Timestamps are seconds-floored, so a live record updated earlier in
+      // the same second as the delete ties — equality cannot mean a deliberate
+      // re-create, and letting the live record win here would resurrect it
+      // whenever the relay is absent.
+      if(liveEntry && liveEntry.updatedAt > t.deletedAt) continue;
       map[groupId] = {id: groupId, updatedAt: t.deletedAt, deleted: true};
     }
 
@@ -77,8 +83,13 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
         if(entry.deleted) {
           if(wasLive) {
             await deps.removeGroup(id);
-            await deps.setTombstone(`${GROUP_PREFIX}${id}`, entry.updatedAt);
           }
+          // Persist the tombstone even with no local record: a device that
+          // never held the group must still remember the delete, or a
+          // replayed group_create passes the absent-tombstone gate in
+          // handleGroupCreate and resurrects the group stamped with a fresh
+          // Date.now() that outranks the durable delete forever.
+          await deps.setTombstone(`${GROUP_PREFIX}${id}`, entry.updatedAt);
           continue;
         }
 
