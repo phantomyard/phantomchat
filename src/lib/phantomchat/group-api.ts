@@ -185,7 +185,12 @@ export class GroupAPI {
       members: [...memberPubkeys, this.ownPubkey],
       peerId,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      // The user's own create gesture (#180): only this stamp lets the group
+      // clear a durable delete in the groups CRDT merge. The receive path
+      // (handleGroupCreate) deliberately does NOT stamp — a relay-replayed
+      // group_create must never count as intent.
+      deliberateAddAt: Date.now()
     };
 
     // Build the broadcast wraps FIRST. nostr-tools' pointFromBytes throws

@@ -67,6 +67,12 @@ export type ContactsAdapterDeps = {
   setDisplayName: (pubkey: string, displayName: string) => Promise<void>;
   /** Pin updatedAt (millis) so a restore doesn't out-timestamp the remote. */
   setUpdatedAt: (pubkey: string, updatedAtMillis: number) => Promise<void>;
+  /**
+   * Persist a deliberate-add stamp (unix SECONDS on the wire; the adapter
+   * converts to millis — the mapping store's unit) learned from a remote
+   * entry (#180). Monotonic at the store layer: only moves forward.
+   */
+  setDeliberateAddAt: (pubkey: string, deliberateAddAtSeconds: number) => Promise<void>;
   removeContact: (pubkey: string) => Promise<void>;
   setTombstone: (conversationId: string, deletedAtSeconds: number) => Promise<void>;
   logPrefix?: string;
@@ -102,7 +108,11 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
           pubkey: m.pubkey,
           displayName: m.displayName,
           addedAt: m.addedAt
-        }
+        },
+        // The user-intent proof (#180). Absent for mappings that pre-date the
+        // stamp or were created by automatic paths — which is exactly the
+        // conservative answer: unproven intent must not clear a durable delete.
+        ...(m.deliberateAddAt ? {deliberateAddAt: Math.floor(m.deliberateAddAt / 1000)} : {})
       };
     }
 
@@ -133,16 +143,29 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
 
     for(const [peer, deletedAt] of deletes) {
       const liveEntry = map[peer];
-      // A live mapping only outranks the delete when it is NEWER than it — a
-      // deliberate re-add. Strict compare: on an exact tie the TOMBSTONE
-      // wins, matching mergeEntry's invariant and the receive gates that
-      // reject timestampSec <= deletedAt. Timestamps are seconds-floored, so
-      // a mapping updated earlier in the same second as the delete ties, and
-      // equality cannot mean a deliberate re-add. A mapping resurrected by
-      // some automatic path (stale sync blob, history backfill) is older, and
-      // must not mute the delete.
-      if(liveEntry && liveEntry.updatedAt > deletedAt) continue;
-      // A mapping that LOST to a DURABLE delete row is a resurrection: drop it
+      // A live mapping clears the durable delete ONLY when its deliberate-add
+      // stamp is strictly NEWER than the delete (#180) — the user re-added the
+      // contact after deleting it. A plain newer `updatedAt` no longer counts:
+      // automatic paths (profile refresh, message-path persistence, stale
+      // pre-#180 clients) mint current timestamps without intent, and letting
+      // those win re-armed the resurrection loop. A live peer's delete stamp is
+      // always durable-sourced here (watermarks are skipped under a live
+      // mapping above — cleared-history rule), so the row being cleared IS the
+      // durable row the re-add outranks. Strict compare: seconds-floored stamps
+      // make equality ambiguous, and ambiguity resolves against resurrection.
+      if(
+        liveEntry &&
+        typeof liveEntry.deliberateAddAt === 'number' &&
+        liveEntry.deliberateAddAt > deletedAt
+      ) {
+        try {
+          await deps.clearDeletedPeer(peer);
+        } catch(err) {
+          console.warn(tag, 'read: clearing durable delete for deliberate re-add failed', peer, err);
+        }
+        continue;
+      }
+      // A mapping without a deliberate-add proof is a resurrection: drop it
       // from the mapping store, not just from the published map. The engine
       // skips apply() when merged == local, and wasLive is false there anyway,
       // so apply() could never clean this up (the gap Robert flagged on the
@@ -202,11 +225,13 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
         // entry is live
         if(!wasLive) {
           // The merge already compared this live entry against our delete (it is
-          // in `before`), so reaching here means a deliberate re-add won on
-          // timestamp. Drop the durable row so the guards let it through —
-          // nothing else is allowed to clear it.
+          // in `before`), so reaching here means a DELIBERATE re-add won — only
+          // a deliberateAddAt stamp can clear a delete now (#180). Drop the
+          // durable row so the guards let it through — nothing else is allowed
+          // to clear it.
           if(prev?.deleted) await deps.clearDeletedPeer(id);
           // New or resurrected contact — full materialize, then pin timestamp.
+          // (The stamp, when present, is persisted by the shared block below.)
           await deps.addContact(id, entry.data?.displayName);
           await deps.setUpdatedAt(id, entry.updatedAt * 1000);
         } else if(entry.updatedAt > prev.updatedAt) {
@@ -215,6 +240,17 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
           const name = entry.data?.displayName;
           if(name && name !== prev.data?.displayName) await deps.setDisplayName(id, name);
           await deps.setUpdatedAt(id, entry.updatedAt * 1000);
+        }
+        // Persist a stamp that advanced without an updatedAt advance (a
+        // live/live merge forwards the max stamp onto the winner): the local
+        // store must carry the proof, or this device's next read() exports an
+        // unstamped entry and loses a later tombstone compare it should win.
+        if(typeof entry.deliberateAddAt === 'number') {
+          const localMs = storeState?.get(id)?.deliberateAddAt;
+          const stampSec = Math.floor((localMs ?? 0) / 1000);
+          if(entry.deliberateAddAt > stampSec) {
+            await deps.setDeliberateAddAt(id, entry.deliberateAddAt);
+          }
         }
         // else: unchanged — skip (materializing a contact is expensive).
       } catch(err) {
@@ -227,5 +263,9 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
 }
 
 export const CONTACTS_SYNC_D_TAG = 'phantomchat.chat/contacts';
-export const CONTACTS_SYNC_VERSION = 1;
+/** v2 (#180): entries may carry `deliberateAddAt`; a fresh `updatedAt` alone
+ * no longer clears a durable delete. v1 snapshots are still read (see
+ * CrdtSyncDeps.acceptedVersions) and republished at v2. */
+export const CONTACTS_SYNC_VERSION = 2;
+export const CONTACTS_SYNC_ACCEPTED_VERSIONS = [1, CONTACTS_SYNC_VERSION];
 export {peerFromConversationId as _peerFromConversationId};

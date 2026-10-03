@@ -54,6 +54,19 @@ export interface VirtualPeerMapping {
    * each received message. Backfilled from `addedAt` on the v1→v2 upgrade.
    */
   updatedAt: number;
+  /**
+   * Unix-millis timestamp of the last USER-INITIATED add of this contact
+   * (#180) — the proof that may clear a durable delete cross-device. Stamped
+   * ONLY by addP2PContact with `deliberate: true` (the UI add gestures) and
+   * by contacts-sync apply() persisting a remote entry's own stamp.
+   *
+   * Deliberately NOT backfilled on upgrade: absence must mean "never proven
+   * deliberate", and any invented value (Date.now(), addedAt) would let an
+   * automatic or resurrected mapping clear a real delete. A legacy mapping
+   * that never gets re-added simply keeps relying on the absence of a durable
+   * delete row — which is the normal state for any wanted contact.
+   */
+  deliberateAddAt?: number;
 }
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
@@ -221,7 +234,10 @@ export async function storeMapping(
         displayName: displayName ?? existing?.displayName,
         nostrProfile: nostrProfile ?? existing?.nostrProfile,
         addedAt: existing?.addedAt ?? now,
-        updatedAt: identityChanged ? now : (existing?.updatedAt ?? existing?.addedAt ?? now)
+        updatedAt: identityChanged ? now : (existing?.updatedAt ?? existing?.addedAt ?? now),
+        // Never minted here — only addP2PContact (deliberate) and
+        // setDeliberateAddAt write it. Preserved across upserts.
+        deliberateAddAt: existing?.deliberateAddAt
       };
       const putReq = store.put(record);
       putReq.onerror = () => reject(putReq.error);
@@ -350,6 +366,37 @@ export async function setMappingUpdatedAt(pubkey: string, updatedAt: number): Pr
         return;
       }
       existing.updatedAt = updatedAt;
+      const putReq = store.put(existing);
+      putReq.onerror = () => reject(putReq.error);
+      putReq.onsuccess = () => resolve();
+    };
+  });
+}
+
+/**
+ * Pin a mapping's `deliberateAddAt` to at least the given value (unix
+ * MILLIS). Monotonic — only moves forward, so a stale remote entry can never
+ * lower the local proof. No-op when the mapping does not exist (stamps belong
+ * to live mappings; addP2PContact creates the mapping first). #180.
+ */
+export async function setDeliberateAddAt(pubkey: string, deliberateAddAt: number): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const getReq = store.get(pubkey);
+    getReq.onerror = () => reject(getReq.error);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as VirtualPeerMapping | undefined;
+      if(!existing) {
+        resolve();
+        return;
+      }
+      if((existing.deliberateAddAt ?? 0) >= deliberateAddAt) {
+        resolve(); // monotonic — never lower the proof
+        return;
+      }
+      existing.deliberateAddAt = deliberateAddAt;
       const putReq = store.put(existing);
       putReq.onerror = () => reject(putReq.error);
       putReq.onsuccess = () => resolve();

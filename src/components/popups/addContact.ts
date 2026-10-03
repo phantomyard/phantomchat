@@ -145,7 +145,8 @@ async function addNpubContact(
     pubkey: npub,
     nickname,
     openChat: true,
-    source: 'add-contact-popup'
+    source: 'add-contact-popup',
+    deliberate: true
   });
   onContactAdded?.(result.peerIdTweb);
 }

@@ -55,6 +55,17 @@ describe('addP2PContact — canonical helper', () => {
   it('opens the chat via appImManager.setInnerPeer when openChat is true', () => {
     expect(helperSrc).toContain('setInnerPeer');
   });
+
+  it('#180: stamps deliberateAddAt only under the explicit deliberate flag', () => {
+    // The stamp is the cross-device proof that may clear a durable delete —
+    // it must be gated on opts.deliberate, never minted unconditionally.
+    expect(helperSrc).toMatch(/if\(opts\.deliberate\)\s*\{/);
+    expect(helperSrc).toMatch(/setDeliberateAddAt\(hexPubkey, Date\.now\(\)\)/);
+  });
+
+  it('#180: a deliberate gesture always schedules a contacts publish (stamp is sync content)', () => {
+    expect(helperSrc).toMatch(/\(isNew \|\| opts\.deliberate\)/);
+  });
 });
 
 describe('Call sites route through addP2PContact', () => {
@@ -77,7 +88,23 @@ describe('Call sites route through addP2PContact', () => {
       // absence proves the consolidation stuck.
       expect(src).not.toMatch(/topMessage:\s*0\s*,/);
     });
+
+    it(`#180 ${c.label} passes the deliberate flag (user gesture stamps the proof)`, () => {
+      const src = read(c.file);
+      expect(src).toMatch(/deliberate:\s*true/);
+    });
   }
+
+  it('#180: the sync restore path does NOT pass the deliberate flag', () => {
+    // onboarding-integration wires addContact to addP2PContact for contacts-sync
+    // restores — a remote deliberate re-add carries its own stamp, which
+    // apply() persists; the restore call itself must stay unstamped or every
+    // merged contact would be minted as "user-intended" here.
+    const src = read('pages/phantomchat-onboarding-integration.ts');
+    const syncCall = src.match(/addP2PContact\(\{[^}]*contacts-sync[^}]*\}\)/);
+    expect(syncCall).toBeTruthy();
+    expect(syncCall![0]).not.toMatch(/deliberate:\s*true/);
+  });
 });
 
 describe('QR scanner user feedback', () => {

@@ -123,7 +123,8 @@ export default function KeyExchange(props: KeyExchangeProps) {
           await addP2PContact({
             pubkey: scannedNpub,
             openChat: true,
-            source: 'key-exchange-scan'
+            source: 'key-exchange-scan',
+            deliberate: true
           });
         } catch(err) {
           console.error('[KeyExchange] failed to open scanned peer', err);

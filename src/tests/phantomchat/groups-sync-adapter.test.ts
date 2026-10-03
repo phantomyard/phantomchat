@@ -40,10 +40,16 @@ function makeDeps(
   return {deps, calls};
 }
 
-function group(groupId: string, updatedAtMillis: number, name = 'Group'): GroupRecord {
+function group(
+  groupId: string,
+  updatedAtMillis: number,
+  name = 'Group',
+  deliberateAddAtMillis?: number
+): GroupRecord {
   return {
     groupId, name, adminPubkey: 'a'.repeat(64), members: ['a'.repeat(64)],
-    peerId: -1, createdAt: updatedAtMillis, updatedAt: updatedAtMillis
+    peerId: -1, createdAt: updatedAtMillis, updatedAt: updatedAtMillis,
+    ...(deliberateAddAtMillis !== undefined ? {deliberateAddAt: deliberateAddAtMillis} : {})
   };
 }
 
@@ -69,10 +75,37 @@ describe('groups adapter read()', () => {
     expect(Object.keys(map)).toHaveLength(0);
   });
 
-  it('does not tombstone a group whose live record is NEWER than the delete (deliberate re-create)', async() => {
-    const {deps} = makeDeps([group(G1, 9_000_000)], [], [{groupId: G1, deletedAt: 8080}]);
+  it('#180: a live record NEWER than the delete but WITHOUT a stamp loses (auto-minted stamps no longer resurrect)', async() => {
+    // A stale client's replayed group_create / orphan recovery re-creates the
+    // record with a FRESH Date.now() stamp. Under the old rule that outranked
+    // the durable delete; now only a deliberate-add proof clears a delete.
+    const {deps, calls} = makeDeps([group(G1, 9_000_000)], [], [{groupId: G1, deletedAt: 8080}]);
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBe(true);
+    expect(calls.removed).toEqual([G1]); // resurrection torn down
+  });
+
+  it('#180: a live record with a deliberate stamp NEWER than the delete wins and clears the durable row', async() => {
+    const {deps, calls} = makeDeps(
+      [group(G1, 9_000_000, 'Team', 8_500_000)],
+      [],
+      [{groupId: G1, deletedAt: 8080}]
+    );
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBeFalsy();
+    expect(map[G1].deliberateAddAt).toBe(8500); // 8_500_000ms -> 8500s
+    expect(calls.clearedDeletes).toEqual([G1]); // store converges with the merge
+    expect(calls.removed).toHaveLength(0);
+  });
+
+  it('#180: a deliberate stamp OLDER than the delete loses (re-create proof predates the delete)', async() => {
+    const {deps} = makeDeps(
+      [group(G1, 9_000_000, 'Team', 7_000_000)],
+      [],
+      [{groupId: G1, deletedAt: 8080}]
+    );
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBe(true);
   });
 
   it('clear-history regression: a group:<id> WATERMARK under a live record is NOT a delete', async() => {
@@ -378,9 +411,15 @@ describe('groups adapter apply()', () => {
     expect(calls.removed).toEqual([G1]);
   });
 
-  it('read() teardown of a re-created group never fires (live record NEWER than the durable delete)', async() => {
-    // The deliberate re-create path must not be torn down or mutated.
-    const {deps, calls} = makeDeps([group(G1, 9_000_000)], [], [{groupId: G1, deletedAt: 8080}]);
+  it('read() teardown of a re-created group never fires when the deliberate stamp outranks the durable delete', async() => {
+    // The deliberate re-create path must not be torn down or mutated. Under
+    // #180 "re-created" means STAMPED — a plain newer updatedAt no longer
+    // spares the record (see the #180 tests above).
+    const {deps, calls} = makeDeps(
+      [group(G1, 9_000_000, 'Team', 8_500_000)],
+      [],
+      [{groupId: G1, deletedAt: 8080}]
+    );
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBeFalsy();
     expect(calls.removed).toEqual([]);
@@ -412,5 +451,34 @@ describe('groups adapter apply()', () => {
     await createGroupsAdapter(deps).apply(merged, before);
     expect(calls.clearedDeletes).toEqual([G1]);
     expect(calls.upserted).toHaveLength(1);
+  });
+
+  it('#180: a remote deliberate re-create persists its stamp into the local record', async() => {
+    // The merged entry's entry-level stamp is the one that survived the merge
+    // (max-forwarded); the saved record must carry it, or this device's next
+    // read() exports an unstamped entry and loses a later tombstone compare.
+    const {deps, calls} = makeDeps([], []);
+    const before: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 8080, deleted: true}};
+    const merged: SyncMap<GroupRecord> = {
+      [G1]: {id: G1, updatedAt: 9000, deliberateAddAt: 8600, data: group(G1, 9_000_000)}
+    };
+    await createGroupsAdapter(deps).apply(merged, before);
+    expect(calls.upserted).toHaveLength(1);
+    expect(calls.upserted[0].deliberateAddAt).toBe(8_600_000); // seconds -> millis
+    expect(calls.clearedDeletes).toEqual([G1]);
+  });
+
+  it('#180: a stamp-only advance upserts without a name/updatedAt change', async() => {
+    // A live/live merge forwarded the max stamp onto the winner without
+    // moving updatedAt — the local record must still learn the proof.
+    const {deps, calls} = makeDeps([group(G1, 7_000_000, 'Team')], []);
+    const before: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 7000, data: group(G1, 7_000_000, 'Team')}};
+    const merged: SyncMap<GroupRecord> = {
+      [G1]: {id: G1, updatedAt: 7000, deliberateAddAt: 8000, data: group(G1, 7_000_000, 'Team')}
+    };
+    await createGroupsAdapter(deps).apply(merged, before);
+    expect(calls.upserted).toHaveLength(1);
+    expect(calls.upserted[0].deliberateAddAt).toBe(8_000_000);
+    expect(calls.upserted[0].name).toBe('Team');
   });
 });

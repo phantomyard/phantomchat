@@ -31,6 +31,15 @@ export interface AddP2PContactOptions {
   connectTimeoutMs?: number;
   /** Logging tag, e.g. 'contacts-tab' | 'qr-scanner' — aids debugging. */
   source?: string;
+  /**
+   * True when this call IS the user's own add gesture (Contacts tab, Add
+   * Contact popup, sidebar, QR scanner). Stamps the mapping's
+   * `deliberateAddAt` (#180): the cross-device proof that this re-add was
+   * deliberate and may clear a durable delete. Sync restores MUST NOT pass it
+   * — a remote deliberate re-add arrives with its own stamp, which
+   * contacts-sync apply() persists unchanged.
+   */
+  deliberate?: boolean;
 }
 
 export interface AddP2PContactResult {
@@ -107,6 +116,18 @@ export async function addP2PContact(opts: AddP2PContactOptions): Promise<AddP2PC
   } catch{ /* best-effort */ }
 
   await bridge.storePeerMapping(hexPubkey, peerId, userNickname || existingDisplayName);
+
+  // #180: stamp the user-intent proof so this add (and only this add) can
+  // clear a durable delete in the CRDT merge — a fresh updatedAt alone no
+  // longer resurrects anything.
+  if(opts.deliberate) {
+    try {
+      const {setDeliberateAddAt} = await import('./virtual-peers-db');
+      await setDeliberateAddAt(hexPubkey, Date.now());
+    } catch(err) {
+      console.warn('[' + src + '] setDeliberateAddAt failed:', err);
+    }
+  }
 
   // Inject User into Worker BEFORE we touch the main-thread mirrors — the
   // bridge needs a Worker-side user so `users.getFullUser` etc. don't race.
@@ -221,8 +242,10 @@ export async function addP2PContact(opts: AddP2PContactOptions): Promise<AddP2PC
 
   // Publish the new contact cross-device (debounced). Skip when THIS add is
   // itself a sync restore — reconcile already republishes if the merged view
-  // grew, and re-triggering would just churn.
-  if(isNew && src !== 'contacts-sync') {
+  // grew, and re-triggering would just churn. A deliberate gesture always
+  // republishes: the stamp itself is sync content now, even for a contact that
+  // already existed locally (#180).
+  if((isNew || opts.deliberate) && src !== 'contacts-sync') {
     schedulePublish('contacts');
   }
 
