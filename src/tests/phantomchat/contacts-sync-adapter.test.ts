@@ -195,7 +195,10 @@ describe('contacts adapter apply()', () => {
   });
 
   it('deletes a contact that was live and writes the local tombstone', async() => {
-    const {deps, calls} = adapter();
+    // The store fixture holds the mapping — before (read() output) is derived
+    // from the same store in the real engine, so wasLive and the store
+    // snapshot agree.
+    const {deps, calls} = adapter([mapping(A, 5_000_000, 'Alice')]);
     const before: SyncMap<ContactSyncData> = {
       [A]: {id: A, updatedAt: 5000, data: {pubkey: A, displayName: 'Alice', addedAt: 5_000_000}}
     };
@@ -236,5 +239,43 @@ describe('contacts adapter apply()', () => {
     };
     await createContactsAdapter(deps).apply(same, same);
     expect(calls.undeleted).toHaveLength(0);
+  });
+
+  it('tears down a resurrected mapping even when read() had already overridden it (wasLive false)', async() => {
+    // Same gap Robert flagged on the groups adapter: with the strict compare,
+    // read() reports a stale live mapping as `deleted: true`, so wasLive in
+    // apply() is false and the old wasLive-gated teardown never fired — the
+    // resurrected contact stayed in the mapping store forever. Teardown now
+    // follows store reality.
+    const {deps, calls} = adapter([mapping(A, 5_000_000, 'Alice')]);
+    const before: SyncMap<ContactSyncData> = {[A]: {id: A, updatedAt: 9000, deleted: true}};
+    const merged: SyncMap<ContactSyncData> = {[A]: {id: A, updatedAt: 9000, deleted: true}};
+    await createContactsAdapter(deps).apply(merged, before);
+    expect(calls.removed).toEqual([A]);
+    expect(calls.deletedRows).toEqual([{pubkey: A, deletedAt: 9000}]);
+  });
+
+  it('resurrection self-heal in read(): a mapping that LOSES to a durable delete row is removed', async() => {
+    // The already-resurrected device never reaches apply(): read() overrides
+    // the stale mapping with the delete, merged == local, so the engine skips
+    // apply entirely. read() itself must tear the resurrection down.
+    const {deps, calls} = makeDeps([mapping(A, 5_000_000, 'Alice')], [], OWN, [{pubkey: A, deletedAt: 9000}]);
+    const map = await createContactsAdapter(deps).read();
+    expect(map[A].deleted).toBe(true);
+    expect(calls.removed).toEqual([A]);
+    // The durable row survives: it stays the re-publishable positive fact.
+    expect(calls.undeleted).toHaveLength(0);
+  });
+
+  it('read() teardown never fires for cleared history: watermark under a LIVE mapping', async() => {
+    // #173 rule: a watermark with a live mapping may be "cleared history",
+    // not a contact delete — no teardown, no tombstone in the exported map.
+    const {deps, calls} = makeDeps(
+      [mapping(A, 9_000_000, 'Alice')],
+      [{conversationId: convId(OWN, A), deletedAt: 4242}]
+    );
+    const map = await createContactsAdapter(deps).read();
+    expect(map[A].deleted).toBeFalsy();
+    expect(calls.removed).toEqual([]);
   });
 });

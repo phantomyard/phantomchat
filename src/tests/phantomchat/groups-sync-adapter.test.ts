@@ -127,7 +127,10 @@ describe('groups adapter apply()', () => {
   });
 
   it('tears down a group deleted remotely', async() => {
-    const {deps, calls} = makeDeps([], []);
+    // The store fixture holds the group — before (read() output) is derived
+    // from the same store in the real engine, so wasLive and the store
+    // snapshot agree.
+    const {deps, calls} = makeDeps([group(G1, 7_000_000)], []);
     const before: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 7000, data: group(G1, 7_000_000)}};
     const merged: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 9000, deleted: true}};
     await createGroupsAdapter(deps).apply(merged, before);
@@ -140,11 +143,43 @@ describe('groups adapter apply()', () => {
     // write — a replayed group_create then passed the absent-tombstone gate
     // in handleGroupCreate and resurrected the group stamped Date.now(),
     // outranking the durable relay delete forever. The tombstone write is
-    // unconditional; only the teardown is conditional on wasLive.
+    // unconditional; only the teardown is conditional on a real store record.
     const {deps, calls} = makeDeps([], []);
     const merged: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 9000, deleted: true}};
     await createGroupsAdapter(deps).apply(merged, empty);
     expect(calls.removed).toEqual([]); // nothing to tear down
     expect(calls.tombstoned).toEqual([{conversationId: `group:${G1}`, deletedAt: 9000}]);
+  });
+
+  it('tears down a resurrected group even when read() had already overridden it (wasLive false)', async() => {
+    // Robert's review of #179: with the strict compare, read() reports a stale
+    // live record as `deleted: true`, so wasLive in apply() is false and the
+    // old wasLive-gated teardown never fired — the resurrected group stayed in
+    // the store and chat list forever. Teardown now follows store reality.
+    const {deps, calls} = makeDeps([group(G1, 7_000_000)], []);
+    const before: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 8080, deleted: true}};
+    const merged: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 8080, deleted: true}};
+    await createGroupsAdapter(deps).apply(merged, before);
+    expect(calls.removed).toEqual([G1]);
+    expect(calls.tombstoned).toEqual([{conversationId: `group:${G1}`, deletedAt: 8080}]);
+  });
+
+  it('resurrection self-heal in read(): a live record that LOSES to a tombstone is removed from the store', async() => {
+    // The already-resurrected device never reaches apply(): read() overrides
+    // the stale record with the tombstone, merged == local, so the engine
+    // skips apply entirely. read() itself must tear the resurrection down or
+    // the group stays in the local store and chat list indefinitely.
+    const {deps, calls} = makeDeps([group(G1, 7_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBe(true);
+    expect(calls.removed).toEqual([G1]);
+  });
+
+  it('read() teardown of a re-created group never fires (live record NEWER than the tombstone)', async() => {
+    // The deliberate re-create path must not be torn down or mutated.
+    const {deps, calls} = makeDeps([group(G1, 9_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBeFalsy();
+    expect(calls.removed).toEqual([]);
   });
 });

@@ -14,7 +14,9 @@
  *
  * Tombstones are DERIVED, not logged: a group delete removes the store record
  * and writes a `group:<id>` conversation tombstone. So a deleted group is a
- * `group:<id>` tombstone whose group has no live record.
+ * `group:<id>` tombstone whose group has no live record — and `read()` also
+ * tears down any live record that LOSES the LWW compare (a resurrection), so
+ * the derived rule self-heals instead of merely reporting the delete.
  */
 import type {LocalAdapter} from './crdt-sync';
 import type {SyncMap} from './sync-crdt';
@@ -67,6 +69,19 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
       // re-create, and letting the live record win here would resurrect it
       // whenever the relay is absent.
       if(liveEntry && liveEntry.updatedAt > t.deletedAt) continue;
+      // A live record that LOST the compare is a resurrection: remove it from
+      // the store, not just from the published map. With the strict compare a
+      // converged device reports `deleted: true` here, so `apply()` never runs
+      // (the engine skips it when merged == local) and wasLive in apply() is
+      // false — leaving the teardown to apply() would strand the resurrected
+      // group in the local store and chat list forever.
+      if(liveEntry) {
+        try {
+          await deps.removeGroup(groupId);
+        } catch(err) {
+          console.warn(tag, 'read: teardown of resurrected group failed', groupId, err);
+        }
+      }
       map[groupId] = {id: groupId, updatedAt: t.deletedAt, deleted: true};
     }
 
@@ -74,6 +89,18 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
   };
 
   const apply = async(merged: SyncMap<GroupRecord>, before: SyncMap<GroupRecord>): Promise<void> => {
+    // Store reality at entry: `before` can mark an id `deleted` (read() overrode
+    // a stale live record with a tombstone) while the record still sits in the
+    // store, so wasLive alone can't tell "already torn down" from "resurrected".
+    // Robert's review of #179: decide teardown from the store, not the map.
+    let storeState: Map<string, GroupRecord> | null = null;
+    try {
+      const groups = await deps.listGroups();
+      storeState = new Map(groups.map((g) => [g.groupId, g]));
+    } catch(err) {
+      console.warn(tag, 'apply: store snapshot failed; falling back to map-derived teardown', err);
+    }
+
     for(const id of Object.keys(merged)) {
       const entry = merged[id];
       const prev = before[id];
@@ -81,7 +108,11 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
 
       try {
         if(entry.deleted) {
-          if(wasLive) {
+          // Tear down whenever the store still holds the record — even when
+          // wasLive is false (read() had already overridden a stale live
+          // record with the tombstone, so the map lost the evidence).
+          const stillStored = storeState ? storeState.has(id) : wasLive;
+          if(stillStored) {
             await deps.removeGroup(id);
           }
           // Persist the tombstone even with no local record: a device that
