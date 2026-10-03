@@ -56,11 +56,42 @@ describe('addP2PContact — canonical helper', () => {
     expect(helperSrc).toContain('setInnerPeer');
   });
 
-  it('#180: stamps deliberateAddAt only under the explicit deliberate flag', () => {
+  it('#180/#186: the deliberate stamp rides the mapping write itself', () => {
     // The stamp is the cross-device proof that may clear a durable delete —
-    // it must be gated on opts.deliberate, never minted unconditionally.
-    expect(helperSrc).toMatch(/if\(opts\.deliberate\)\s*\{/);
-    expect(helperSrc).toMatch(/setDeliberateAddAt\(hexPubkey, Date\.now\(\)\)/);
+    // it must be gated on opts.deliberate, never minted unconditionally. And
+    // it must be written ATOMICALLY with the mapping (#186): a stamp written
+    // only after the guards were cleared can be lost to an IndexedDB failure,
+    // leaving a live unstamped mapping whose delete fact is already gone.
+    expect(helperSrc).toMatch(/opts\.deliberate \? Date\.now\(\) : undefined/);
+    expect(helperSrc).toMatch(/deliberateAddAt: stampNow/);
+    // No post-hoc stamp write left to lose.
+    expect(helperSrc).not.toMatch(/setDeliberateAddAt/);
+  });
+
+  it('#186: DELIBERATE path — stamped mapping written BEFORE the guards are cleared', () => {
+    // Order is load-bearing: the FIRST bridge.storePeerMapping (the
+    // deliberate, stamped branch) must appear before the first clearDeletedPeer
+    // block, so a failed stamp write aborts the add with the local delete fact
+    // still intact.
+    const storeIdx = helperSrc.indexOf('bridge.storePeerMapping');
+    const clearIdx = helperSrc.indexOf('clearDeletedPeer');
+    expect(storeIdx).toBeGreaterThan(-1);
+    expect(clearIdx).toBeGreaterThan(storeIdx);
+  });
+
+  it('#189: NON-DELIBERATE path — guards cleared BEFORE the store (tombstone guard must not suppress the sync re-add)', () => {
+    // The contacts-sync caller passes no stamp; storing before the tombstone
+    // is cleared runs into guard (b) and silently drops the re-add. The sync
+    // branch's storePeerMapping must therefore run AFTER its clearDeletedPeer
+    // (the else-branch clear), i.e. inside/after the `stampNow === undefined`
+    // store block which follows both clears.
+    const syncBranchIdx = helperSrc.indexOf('if(stampNow === undefined)');
+    expect(syncBranchIdx).toBeGreaterThan(-1);
+    const syncStoreIdx = helperSrc.indexOf('bridge.storePeerMapping', syncBranchIdx);
+    expect(syncStoreIdx).toBeGreaterThan(syncBranchIdx);
+    const secondClearIdx = helperSrc.indexOf('clearDeletedPeer', helperSrc.indexOf('clearDeletedPeer') + 1);
+    expect(secondClearIdx).toBeGreaterThan(-1);
+    expect(syncStoreIdx).toBeGreaterThan(secondClearIdx);
   });
 
   it('#180: a deliberate gesture always schedules a contacts publish (stamp is sync content)', () => {

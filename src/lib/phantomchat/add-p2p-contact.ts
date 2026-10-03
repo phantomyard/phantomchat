@@ -94,19 +94,73 @@ export async function addP2PContact(opts: AddP2PContactOptions): Promise<AddP2PC
     existingDisplayName ||
     'npub...' + hexPubkey.slice(0, 12);
 
-  // Deliberate add: if this peer's conversation was previously deleted, the
-  // tombstone would make storeMapping refuse to re-create the mapping (the
-  // resurrection guard). The user's explicit add (or a contacts-sync LWW
-  // re-add of a newer remote entry) means the contact is wanted again — clear
-  // BOTH the durable deletion row (#173) and the watermark so the guards let
-  // it through. Every addP2PContact caller is a deliberate add or a sync
-  // re-add that already won the LWW compare against the local delete — no
-  // automatic path reaches here, so this clear cannot reopen the
-  // resurrection loop.
-  try {
-    const {clearDeletedPeer} = await import('./virtual-peers-db');
-    await clearDeletedPeer(hexPubkey);
-  } catch{ /* best-effort */ }
+  // Re-add guards: if this peer's conversation was previously deleted, the
+  // tombstone/durable-row guards would make storeMapping refuse to re-create
+  // the mapping (the resurrection guard). The user's explicit add (or a
+  // contacts-sync LWW re-add of a newer remote entry) means the contact is
+  // wanted again, so the guards must not block these callers.
+  //
+  // ORDERING — two paths, two orders (#186, Robert's review):
+  //
+  // DELIBERATE: the stamp is written ATOMICALLY with the mapping
+  // (storeMapping's `deliberateAddAt` option) and the guards are cleared only
+  // AFTER the stamped mapping is committed. The previous order (clear guards
+  // → store → stamp-best-effort) meant a failed stamp write left a live
+  // UNSTAMPED mapping with the local delete fact already gone — the next
+  // reconcile against the relay tombstone tore the contact back down,
+  // silently reverting the user's re-add. Now a stamp failure is a
+  // storeMapping failure: addP2PContact throws, nothing was cleared, and the
+  // durable delete fact survives. Guard-clear failures AFTER a stamped
+  // mapping exists are tolerable: a live mapping whose deliberateAddAt
+  // outranks the durable delete clears the row itself in the contacts-sync
+  // merge (#180), so the worst case is one extra sync pass, not a revert.
+  //
+  // NON-DELIBERATE (contacts-sync re-add): there is no stamp write to lose,
+  // so #186's ordering does not apply — this path keeps the clear-then-store
+  // order it always had: clear BOTH the durable row and the tombstone FIRST,
+  // then store. Storing first would run into the tombstone guard (b) with
+  // the tombstone still in place — the sync re-add would be suppressed and
+  // a deliberate re-add on another device would not materialise here in one
+  // pass.
+  //
+  // In BOTH paths a `false` from storeMapping is an error, not a skip: the
+  // mapping does not exist, so everything after it (Worker user, mirrors,
+  // seeded conversation) would build state over a missing mapping. Throw and
+  // let the caller retry.
+  //
+  // Every addP2PContact caller is a deliberate add or a sync re-add that
+  // already won the LWW compare against the local delete — no automatic path
+  // reaches here, so clearing the guards cannot reopen the resurrection loop.
+  const stampNow = opts.deliberate ? Date.now() : undefined;
+  const storeDisplayName = userNickname || existingDisplayName;
+  if(stampNow !== undefined) {
+    try {
+      const wrote = await bridge.storePeerMapping(hexPubkey, peerId, storeDisplayName,
+        {deliberateAddAt: stampNow});
+      if(!wrote) {
+        throw new Error('storeMapping suppressed the deliberate re-add');
+      }
+    } catch(err) {
+      // Deliberate re-adds must not proceed with guards lifted but no proof on
+      // record — surface to the caller so the UI can retry (issue #186).
+      console.warn('[' + src + '] storePeerMapping failed; re-add aborted before guards cleared:', err);
+      throw err;
+    }
+    try {
+      const {clearDeletedPeer} = await import('./virtual-peers-db');
+      await clearDeletedPeer(hexPubkey);
+    } catch(err) {
+      // Tolerable post-stamp: the sync merge clears the stale row (see above).
+      console.warn('[' + src + '] clearDeletedPeer failed (sync merge will clear it):', err);
+    }
+  } else {
+    try {
+      const {clearDeletedPeer} = await import('./virtual-peers-db');
+      await clearDeletedPeer(hexPubkey);
+    } catch(err) {
+      console.warn('[' + src + '] clearDeletedPeer failed (sync re-add may need a retry):', err);
+    }
+  }
   try {
     const ownPk = (window as any).__phantomchatOwnPubkey;
     if(ownPk) {
@@ -114,20 +168,25 @@ export async function addP2PContact(opts: AddP2PContactOptions): Promise<AddP2PC
       await ms.getMessageStore().clearTombstone(ms.getMessageStore().getConversationId(ownPk, hexPubkey));
     }
   } catch{ /* best-effort */ }
-
-  await bridge.storePeerMapping(hexPubkey, peerId, userNickname || existingDisplayName);
-
-  // #180: stamp the user-intent proof so this add (and only this add) can
-  // clear a durable delete in the CRDT merge — a fresh updatedAt alone no
-  // longer resurrects anything.
-  if(opts.deliberate) {
+  if(stampNow === undefined) {
+    // Non-deliberate path: guards were cleared above — now the store must
+    // succeed, else this re-add is silently dropped (see false-is-error).
+    let wrote = false;
     try {
-      const {setDeliberateAddAt} = await import('./virtual-peers-db');
-      await setDeliberateAddAt(hexPubkey, Date.now());
+      wrote = await bridge.storePeerMapping(hexPubkey, peerId, storeDisplayName);
     } catch(err) {
-      console.warn('[' + src + '] setDeliberateAddAt failed:', err);
+      console.warn('[' + src + '] storePeerMapping failed on sync re-add:', err);
+      throw err;
+    }
+    if(!wrote) {
+      console.warn('[' + src + '] storeMapping suppressed the sync re-add (guards unexpectedly active)');
+      throw new Error('storeMapping suppressed the sync re-add');
     }
   }
+
+  // #180/#186: the user-intent proof is minted inside storeMapping (same
+  // write as the mapping) — see the ordering comment above. No separate
+  // post-hoc stamp write to lose.
 
   // Inject User into Worker BEFORE we touch the main-thread mirrors — the
   // bridge needs a Worker-side user so `users.getFullUser` etc. don't race.

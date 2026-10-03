@@ -568,8 +568,8 @@ export class PhantomChatBridge {
     pubkey: string,
     peerId: number,
     displayName?: string,
-    opts?: {allowTombstoned?: boolean}
-  ): Promise<void> {
+    opts?: {allowTombstoned?: boolean; deliberateAddAt?: number}
+  ): Promise<boolean> {
     const wrote = await storeMapping(pubkey, peerId, displayName, undefined, opts);
     // Cache only what actually persisted: storeMapping returns false when
     // the tombstone guard suppressed a re-creation, and populating the
@@ -580,6 +580,7 @@ export class PhantomChatBridge {
       // Ensure cache is also populated so future lookups hit memory
       this.pubkeyCache.set(pubkey, peerId);
     }
+    return wrote;
   }
 
   /**
