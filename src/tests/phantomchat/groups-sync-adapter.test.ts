@@ -117,6 +117,96 @@ describe('groups adapter read()', () => {
   });
 });
 
+describe('groups adapter read(): legacy watermark migration (round 7)', () => {
+  // Kai's round-7 review of #179: an install that deleted groups before the
+  // durable log existed only holds the conversation watermark. read() must
+  // PROMOTE it into the durable log while no live record can shadow it, or
+  // the first read that sees a stale live record skips the watermark as a
+  // possible history watermark and the deleted group resurrects.
+
+  it('promotes a legacy pre-durable-log tombstone into the durable log on first read', async() => {
+    const {deps, calls} = makeDeps([], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBe(true);
+    expect(map[G1].updatedAt).toBe(8080);
+    expect(calls.recordedDeletes).toContainEqual({groupId: G1, deletedAt: 8080});
+  });
+
+  it('does not re-promote when the durable log already covers the watermark (idempotent)', async() => {
+    const {deps, calls} = makeDeps(
+      [],
+      [{conversationId: `group:${G1}`, deletedAt: 8080}],
+      [{groupId: G1, deletedAt: 8080}]
+    );
+    await createGroupsAdapter(deps).read();
+    expect(calls.recordedDeletes).toHaveLength(0);
+  });
+
+  it('promotes a watermark NEWER than the durable row (max semantics)', async() => {
+    const {deps, calls} = makeDeps(
+      [],
+      [{conversationId: `group:${G1}`, deletedAt: 9090}],
+      [{groupId: G1, deletedAt: 7000}]
+    );
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBe(true);
+    expect(map[G1].updatedAt).toBe(9090);
+    expect(calls.recordedDeletes).toContainEqual({groupId: G1, deletedAt: 9090});
+  });
+
+  it('round-trip: the promoted legacy delete survives a later stale live record', async() => {
+    // End-to-end across two reads: first read promotes the legacy watermark
+    // into the durable log; a stale record replays; the next read must tear
+    // the resurrection down instead of muting the only delete evidence.
+    const durableLog: DeletedGroup[] = [];
+    const liveGroups: GroupRecord[] = [];
+    const calls: Calls = {upserted: [], removed: [], tombstoned: [], recordedDeletes: [], clearedDeletes: []};
+    const deps: GroupsAdapterDeps = {
+      listGroups: async() => liveGroups,
+      listTombstones: async() => [{conversationId: `group:${G1}`, deletedAt: 8080}],
+      listDeletedGroups: async() => durableLog,
+      recordDeletedGroup: async(groupId, deletedAt) => {
+        calls.recordedDeletes.push({groupId, deletedAt});
+        durableLog.push({groupId, deletedAt});
+      },
+      clearDeletedGroup: async(groupId) => { calls.clearedDeletes.push(groupId); },
+      upsertGroup: async(record) => { calls.upserted.push(record); },
+      removeGroup: async(groupId) => { calls.removed.push(groupId); },
+      setTombstone: async(conversationId, deletedAt) => { calls.tombstoned.push({conversationId, deletedAt}); }
+    };
+
+    // Read 1: legacy tombstone only — group was deleted pre-durable-log.
+    const first = await createGroupsAdapter(deps).read();
+    expect(first[G1].deleted).toBe(true);
+    expect(durableLog).toContainEqual({groupId: G1, deletedAt: 8080});
+
+    // A stale record replays (relay blob / orphan recovery).
+    liveGroups.push(group(G1, 7_000_000));
+
+    // Read 2: the promoted durable delete wins and tears the resurrection down.
+    const second = await createGroupsAdapter(deps).read();
+    expect(second[G1].deleted).toBe(true);
+    expect(second[G1].updatedAt).toBe(8080);
+    expect(calls.removed).toEqual([G1]);
+  });
+
+  it('promotion failure is non-fatal: the derived delete still publishes this pass', async() => {
+    const deps: GroupsAdapterDeps = {
+      listGroups: async() => [],
+      listTombstones: async() => [{conversationId: `group:${G1}`, deletedAt: 8080}],
+      listDeletedGroups: async() => [],
+      recordDeletedGroup: async() => { throw new Error('idb closed'); },
+      clearDeletedGroup: async() => {},
+      upsertGroup: async() => {},
+      removeGroup: async() => {},
+      setTombstone: async() => {}
+    };
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBe(true);
+    expect(map[G1].updatedAt).toBe(8080);
+  });
+});
+
 describe('groups adapter apply()', () => {
   const empty: SyncMap<GroupRecord> = {};
 

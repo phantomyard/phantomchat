@@ -752,8 +752,16 @@ export class GroupAPI {
    */
   private async teardownGroupLocally(groupId: string): Promise<void> {
     const peerId = await groupIdToPeerId(groupId);
+    // Durable positive delete fact (PR #179 round 5): recorded BEFORE the
+    // destructive teardown and in its own try, so neither a failure below nor
+    // a rejection inside the message-store chain in tombstoneGroupConversation
+    // can leave this device holding neither a live record nor the delete fact
+    // — the state a stale record elsewhere resurrects the group from (Kai's
+    // round-7 review of #179). Monotonic: a re-delete only moves it forward.
+    const deletedAt = Math.floor(Date.now() / 1000);
+    await this.recordDurableGroupDelete(groupId, deletedAt);
     await this.store.delete(groupId);
-    await this.tombstoneGroupConversation(groupId);
+    await this.tombstoneGroupConversation(groupId, deletedAt);
     await cleanupGroupChatInjection(peerId);
 
     // Drop the chat-list dialog row (FIND-3786a35f obs (D)). tweb's
@@ -803,6 +811,15 @@ export class GroupAPI {
     await cleanupGroupChatInjection(peerId);
   }
 
+  /** Best-effort durable delete record — never throws. */
+  private async recordDurableGroupDelete(groupId: string, deletedAt: number): Promise<void> {
+    try {
+      await this.store.recordDeletedGroup(groupId, deletedAt);
+    } catch(err) {
+      this.log.warn('[GroupAPI] recordDeletedGroup failed (non-fatal):', err);
+    }
+  }
+
   /**
    * Purge a group's local messages and write a deletion tombstone.
    *
@@ -810,23 +827,24 @@ export class GroupAPI {
    * same tombstone scheme deleteContacts uses for 1:1 deletions. Writing the
    * watermark here is what stops getGroupHistory's orphan-recovery scan from
    * resurrecting a deliberately-deleted group. Best-effort: failures are logged
-   * but never block the leave flow.
+   * but never block the leave flow. The durable positive delete fact is NOT
+   * recorded here (the teardown caller already did, orphan callers do above)
+   * — a message-store rejection must never suppress it.
    */
-  private async tombstoneGroupConversation(groupId: string): Promise<void> {
+  private async tombstoneGroupConversation(groupId: string, deletedAtSec?: number): Promise<void> {
+    // Orphan callers (tombstoneOrphanGroupByPeerId) have no teardown to record
+    // the durable delete first — record it here, BEFORE the message-store
+    // chain, so a rejection below cannot suppress the positive delete fact
+    // (Kai's round-7 review of #179).
+    if(deletedAtSec === undefined) {
+      await this.recordDurableGroupDelete(groupId, Math.floor(Date.now() / 1000));
+    }
     try {
       const store = getMessageStore();
       const convId = `group:${groupId}`;
-      const now = Math.floor(Date.now() / 1000);
+      const now = deletedAtSec ?? Math.floor(Date.now() / 1000);
       await store.deleteMessages(convId);
       await store.setTombstone(convId, now);
-      // Durable positive delete fact (PR #179 round 5): the conversation
-      // watermark alone is NOT a delete signal for sync — messages.deleteHistory
-      // writes the same watermark when merely clearing a group's history. Only
-      // real teardown paths reach this method, so this is where the durable
-      // row belongs.
-      try { await this.store.recordDeletedGroup(groupId, now); } catch(durableErr) {
-        this.log.warn('[GroupAPI] recordDeletedGroup failed (non-fatal):', durableErr);
-      }
       this.log('[GroupAPI] tombstoned + purged group conversation:', convId, 'at', now);
     } catch(err) {
       this.log.warn('[GroupAPI] tombstoneGroupConversation failed (non-fatal):', err);

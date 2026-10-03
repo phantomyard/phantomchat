@@ -68,8 +68,10 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
     // Watermarks therefore only contribute for groups with no live record,
     // and only DURABLE rows may tear a resurrected group down.
     const deletes = new Map<string, number>();
+    const durable = new Map<string, number>();
     for(const d of await deps.listDeletedGroups()) {
       if(!(d.deletedAt > 0)) continue;
+      durable.set(d.groupId, d.deletedAt);
       deletes.set(d.groupId, Math.max(deletes.get(d.groupId) ?? 0, d.deletedAt));
     }
 
@@ -82,6 +84,26 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
       // gone — with a live record it may just be "cleared history".
       if(map[groupId]) continue;
       deletes.set(groupId, Math.max(deletes.get(groupId) ?? 0, t.deletedAt));
+      // MIGRATE legacy pre-durable-log deletes (Kai's round-7 review of #179):
+      // an install that deleted groups before the durable log existed only has
+      // this watermark. Promote it into the durable log NOW, while no live
+      // record can shadow it — otherwise the first read that DOES see a live
+      // record (a stale group_create replay from a relay blob) skips the
+      // watermark as a possible history watermark, and the deleted group
+      // resurrects with nothing to tear it down. Only promote when the
+      // watermark carries a fact the durable log doesn't already have;
+      // recordDeletedGroup is monotonic, so this converges and is a no-op on
+      // every later read.
+      if((durable.get(groupId) ?? 0) < t.deletedAt) {
+        try {
+          await deps.recordDeletedGroup(groupId, t.deletedAt);
+          durable.set(groupId, t.deletedAt);
+        } catch(err) {
+          // Non-fatal: the derived delete still publishes this pass; the
+          // promotion is retried on the next read.
+          console.warn(tag, 'read: legacy watermark promotion to durable log failed', groupId, err);
+        }
+      }
     }
 
     for(const [groupId, deletedAt] of deletes) {
