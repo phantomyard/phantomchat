@@ -676,6 +676,12 @@ export class GroupAPI {
   /**
    * Leave the group.
    * Broadcasts group_leave to remaining members, deletes local group.
+   *
+   * Ordering note (PR #179 round 12): the control broadcast is published
+   * BEFORE teardownGroupLocally, which can now reject on a durable-write
+   * failure. In that case the other members have already processed the
+   * leave while THIS device keeps its live record. A retry of the leave
+   * re-broadcasts and converges, so the order is deliberate.
    */
   async leaveGroup(groupId: string): Promise<void> {
     const group = await this.store.get(groupId);
@@ -705,6 +711,11 @@ export class GroupAPI {
    * multi-device), then tears the group down locally. P2P has no server to
    * force-wipe a group off other devices, so this is cooperative: each member's
    * client honors `group_delete` from the verified admin (see handleGroupDelete).
+   *
+   * Ordering note (PR #179 round 12): like leaveGroup, the broadcast is
+   * published BEFORE teardownGroupLocally, which can reject on a
+   * durable-write failure — other members delete while this device keeps a
+   * live record until a retry re-broadcasts and converges.
    */
   async deleteGroup(groupId: string): Promise<void> {
     const group = await this.store.get(groupId);
@@ -1017,9 +1028,12 @@ export class GroupAPI {
         break;
       case 'group_delete':
         // A failed durable-write precondition aborts the teardown (Kai's
-        // round-9 review of #179). Catch here so the dispatch survives, and
-        // leave the source-event watermark unadvanced (applied stays falsy)
-        // so backlog redelivery retries the delete.
+        // round-9 review of #179). Catch here so the dispatch survives.
+        // NOTE (Robert's round-12 review of #179): group_delete has NO
+        // source-event watermark (watermarkFieldFor returns null for it),
+        // so `applied` is never consulted for this type — nothing is being
+        // held back locally. Whether a retry happens depends entirely on
+        // the relay redelivering the event to chat-api-receive.
         try {
           await this.handleGroupDelete(payload, senderPubkey);
         } catch(err) {
