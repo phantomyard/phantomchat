@@ -18,6 +18,7 @@ type Calls = {
   tombstoned: Array<{conversationId: string; deletedAt: number}>;
   deletedRows: Array<{pubkey: string; deletedAt: number}>;
   undeleted: string[];
+  stamped: Array<{pubkey: string; deliberateAddAt: number}>;
 };
 
 function makeDeps(
@@ -26,7 +27,7 @@ function makeDeps(
   own: string | null = OWN,
   deletedRows: Array<{pubkey: string; deletedAt: number}> = []
 ): {deps: ContactsAdapterDeps; calls: Calls} {
-  const calls: Calls = {added: [], renamed: [], pinned: [], removed: [], tombstoned: [], deletedRows: [], undeleted: []};
+  const calls: Calls = {added: [], renamed: [], pinned: [], removed: [], tombstoned: [], deletedRows: [], undeleted: [], stamped: []};
   const durable = new Map(deletedRows.map((r) => [r.pubkey, r.deletedAt]));
   const deps: ContactsAdapterDeps = {
     getOwnPubkey: () => own,
@@ -45,14 +46,27 @@ function makeDeps(
     addContact: async(pubkey, displayName) => { calls.added.push({pubkey, displayName}); },
     setDisplayName: async(pubkey, displayName) => { calls.renamed.push({pubkey, displayName}); },
     setUpdatedAt: async(pubkey, updatedAt) => { calls.pinned.push({pubkey, updatedAt}); },
+    setDeliberateAddAt: async(pubkey, deliberateAddAt) => { calls.stamped.push({pubkey, deliberateAddAt}); },
     removeContact: async(pubkey) => { calls.removed.push(pubkey); },
     setTombstone: async(conversationId, deletedAt) => { calls.tombstoned.push({conversationId, deletedAt}); }
   };
   return {deps, calls};
 }
 
-function mapping(pubkey: string, updatedAtMillis: number, displayName?: string): VirtualPeerMapping {
-  return {pubkey, peerId: 1, displayName, addedAt: updatedAtMillis, updatedAt: updatedAtMillis};
+function mapping(
+  pubkey: string,
+  updatedAtMillis: number,
+  displayName?: string,
+  deliberateAddAtMillis?: number
+): VirtualPeerMapping {
+  return {
+    pubkey,
+    peerId: 1,
+    displayName,
+    addedAt: updatedAtMillis,
+    updatedAt: updatedAtMillis,
+    ...(deliberateAddAtMillis !== undefined ? {deliberateAddAt: deliberateAddAtMillis} : {})
+  };
 }
 
 describe('peerFromConversationId', () => {
@@ -118,30 +132,62 @@ describe('contacts adapter read()', () => {
     expect(map[A].updatedAt).toBe(9000); // watermark is newer
   });
 
-  it('a delete NEWER than a live mapping wins read() (resurrected mapping cannot mute it)', async() => {
-    // A stale relay blob once re-created the mapping (fresh addedAt); with the
-    // delete older than that mapping, read() used to export the contact as
-    // live — muting the delete forever. A durable delete must beat an OLDER
-    // live stamp, and a live stamp newer than the delete means a deliberate
-    // re-add won and the delete is history.
-    const {deps} = makeDeps([mapping(A, 5_000_000, 'Alice')], [], OWN, [{pubkey: A, deletedAt: 9000}]);
+  it('#180: a mapping newer than the delete but WITHOUT a deliberate stamp loses (auto-minted stamps no longer resurrect)', async() => {
+    // The stale-client resurrection loop: a pre-#180 client (or any automatic
+    // path) re-creates the mapping with a FRESH updatedAt. Under the old rule
+    // that outranked the delete and muted it forever; now the lack of a
+    // deliberate-add proof means the mapping is torn down and the delete
+    // re-asserted.
+    const {deps, calls} = makeDeps([mapping(A, 12_000_000, 'Alice')], [], OWN, [{pubkey: A, deletedAt: 9000}]);
     const map = await createContactsAdapter(deps).read();
     expect(map[A].deleted).toBe(true);
     expect(map[A].updatedAt).toBe(9000);
+    expect(calls.removed).toEqual([A]); // resurrected mapping torn down
+  });
 
-    const {deps: readdDeps} = makeDeps([mapping(A, 12_000_000, 'Alice')], [], OWN, [{pubkey: A, deletedAt: 9000}]);
-    const map2 = await createContactsAdapter(readdDeps).read();
-    expect(map2[A].deleted).toBeFalsy(); // deliberate re-add after the delete
+  it('#180: a mapping with a deliberate stamp NEWER than the delete wins and clears the durable row', async() => {
+    const {deps, calls} = makeDeps(
+      [mapping(A, 12_000_000, 'Alice', 10_000_000)],
+      [],
+      OWN,
+      [{pubkey: A, deletedAt: 9000}]
+    );
+    const map = await createContactsAdapter(deps).read();
+    expect(map[A].deleted).toBeFalsy();
+    expect(map[A].deliberateAddAt).toBe(10_000); // 10_000_000ms -> 10_000s
+    expect(calls.undeleted).toEqual([A]); // durable row cleared: store converges
+    expect(calls.removed).toHaveLength(0);
+  });
+
+  it('#180: a deliberate stamp OLDER than the delete loses (re-add proof predates the delete)', async() => {
+    const {deps} = makeDeps(
+      [mapping(A, 12_000_000, 'Alice', 5_000_000)],
+      [],
+      OWN,
+      [{pubkey: A, deletedAt: 9000}]
+    );
+    const map = await createContactsAdapter(deps).read();
+    expect(map[A].deleted).toBe(true);
   });
 
   it('an exact tie goes to the TOMBSTONE (> semantics, consistent with mergeEntry)', async() => {
     // Seconds-floored stamps make an earlier-in-the-same-second live mapping
     // tie the delete; equality cannot mean a deliberate re-add, so the
-    // tombstone must win — same invariant as mergeEntry.
+    // tombstone must win — same invariant as mergeEntry. Holds even WITH a
+    // stamp: the re-add proof must be strictly newer than the delete (#180).
     const {deps} = makeDeps([mapping(A, 9_000_000, 'Alice')], [], OWN, [{pubkey: A, deletedAt: 9000}]);
     const map = await createContactsAdapter(deps).read();
     expect(map[A].deleted).toBe(true);
     expect(map[A].updatedAt).toBe(9000);
+
+    const {deps: tieDeps} = makeDeps(
+      [mapping(A, 9_000_000, 'Alice', 9_000_000)],
+      [],
+      OWN,
+      [{pubkey: A, deletedAt: 9000}]
+    );
+    const map2 = await createContactsAdapter(tieDeps).read();
+    expect(map2[A].deleted).toBe(true); // stamp == delete second: not strictly newer
   });
 
   it('live and tombstone timestamps are comparable on the same axis (the unit bug guard)', async() => {
@@ -230,6 +276,36 @@ describe('contacts adapter apply()', () => {
     await createContactsAdapter(deps).apply(merged, before);
     expect(calls.undeleted).toEqual([A]);
     expect(calls.added).toEqual([{pubkey: A, displayName: 'Alice'}]);
+  });
+
+  it('#180: a deliberate re-add from another device persists its stamp locally', async() => {
+    // The remote entry won over our durable delete BECAUSE of its stamp; the
+    // local store must carry that proof, or this device's next read() exports
+    // an unstamped entry and loses a later tombstone compare it should win.
+    const {deps, calls} = adapter();
+    const before: SyncMap<ContactSyncData> = {[A]: {id: A, updatedAt: 5000, deleted: true}};
+    const merged: SyncMap<ContactSyncData> = {
+      [A]: {id: A, updatedAt: 6000, deliberateAddAt: 5500, data: {pubkey: A, displayName: 'Alice', addedAt: 6_000_000}}
+    };
+    await createContactsAdapter(deps).apply(merged, before);
+    expect(calls.undeleted).toEqual([A]);
+    expect(calls.added).toEqual([{pubkey: A, displayName: 'Alice'}]);
+    expect(calls.stamped).toEqual([{pubkey: A, deliberateAddAt: 5500}]);
+  });
+
+  it('#180: a stamp that advanced without an updatedAt advance is persisted (no re-materialize)', async() => {
+    // A live/live merge forwards the max stamp onto the winner; the store
+    // snapshot must learn it without re-adding the contact.
+    const {deps, calls} = adapter([mapping(A, 5_000_000, 'Alice')]);
+    const before: SyncMap<ContactSyncData> = {
+      [A]: {id: A, updatedAt: 5000, data: {pubkey: A, displayName: 'Alice', addedAt: 5_000_000}}
+    };
+    const merged: SyncMap<ContactSyncData> = {
+      [A]: {id: A, updatedAt: 5000, deliberateAddAt: 6000, data: {pubkey: A, displayName: 'Alice', addedAt: 5_000_000}}
+    };
+    await createContactsAdapter(deps).apply(merged, before);
+    expect(calls.added).toHaveLength(0); // unchanged contact — no expensive materialize
+    expect(calls.stamped).toEqual([{pubkey: A, deliberateAddAt: 6000}]);
   });
 
   it('does not clear the durable row for an unchanged live contact', async() => {

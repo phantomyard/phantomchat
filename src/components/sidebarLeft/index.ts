@@ -1128,7 +1128,8 @@ export class AppSidebarLeft extends SidebarSlider {
       const result = await addP2PContact({
         pubkey: npub,
         openChat: true,
-        source: 'sidebar-search'
+        source: 'sidebar-search',
+        deliberate: true
       });
 
       toast('Contact added: ' + result.displayName);

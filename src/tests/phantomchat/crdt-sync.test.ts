@@ -164,6 +164,74 @@ describe('CrdtSync.reconcile', () => {
       expect(Object.keys(state.map)).toEqual(['a']);
     });
 
+    it('#180: a v2 instance reading a v1 snapshot merges it and REPUBLISHES at v2 (acceptedVersions)', async() => {
+      // Without acceptance, the first upgraded device would treat the
+      // existing relay snapshot as unreadable and never republish — wedging
+      // sync until every device upgraded simultaneously.
+      const relay2 = new FakeRelay();
+      relay2.seed({a: liveEntry('a', {id: 'a', name: 'A'}, 100)}, 1);
+      const {adapter, state} = makeAdapter({b: liveEntry('b', {id: 'b', name: 'B'}, 200)});
+
+      const sync = new CrdtSync<Item>({
+        dTag: D_TAG,
+        version: 2,
+        acceptedVersions: [1, 2],
+        chatAPI: relay2 as any,
+        adapter,
+        encrypt: (s) => s,
+        decrypt: (s) => s,
+        nowSeconds: () => 1000
+      });
+      expect(await sync.reconcile()).toBe('merged-applied-and-published');
+      expect(Object.keys(state.map).sort()).toEqual(['a', 'b']);
+      // The relay snapshot is now v2 — v1-only stale clients can no longer
+      // read it (unknown version) and can never publish over it: the poison
+      // source is quarantined until it updates.
+      expect(relay2.decoded().version).toBe(2);
+      expect(Object.keys(relay2.decoded().items).sort()).toEqual(['a', 'b']);
+    });
+
+    it('#180: a v2 instance still rejects a snapshot from the FUTURE (v3)', async() => {
+      const relay2 = new FakeRelay();
+      relay2.seed({}, 3);
+      const {adapter, state} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});
+
+      const sync = new CrdtSync<Item>({
+        dTag: D_TAG,
+        version: 2,
+        acceptedVersions: [1, 2],
+        chatAPI: relay2 as any,
+        adapter,
+        encrypt: (s) => s,
+        decrypt: (s) => s,
+        nowSeconds: () => 1000
+      });
+      expect(await sync.reconcile()).toBe('failed');
+      expect(relay2.publishes).toBe(0);
+    });
+
+    it('#180: a stale client (v1 instance) can no longer publish once the relay holds v2', async() => {
+      // The quarantine, from the stale client's side: v2 is an unknown version
+      // → `unavailable` → publish is skipped, so its auto-minted live entries
+      // can never clobber the fixed snapshot again.
+      const relay2 = new FakeRelay();
+      relay2.seed({a: tombstone<Item>('a', 100)}, 2);
+      const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'Ghost'}, 999)});
+
+      const stale = new CrdtSync<Item>({
+        dTag: D_TAG,
+        version: 1,
+        chatAPI: relay2 as any,
+        adapter,
+        encrypt: (s) => s,
+        decrypt: (s) => s,
+        nowSeconds: () => 1000
+      });
+      expect(await stale.publish()).toBe(false);
+      expect(relay2.publishes).toBe(0);
+      expect(relay2.decoded().items.a.deleted).toBe(true); // delete intact
+    });
+
     it('aborts without publishing when the remote content is undecryptable garbage', async() => {
       relay.event = {kind: 30078, created_at: 1, content: '{{{not json'};
       const {adapter, state} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, 100)});

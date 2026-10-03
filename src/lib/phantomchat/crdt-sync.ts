@@ -27,8 +27,26 @@ export type CrdtSyncEvent = {
 export type CrdtSyncDeps<T> = {
   /** Nostr d-tag identifying this domain, e.g. 'phantomchat.chat/contacts'. */
   dTag: string;
-  /** Snapshot schema version. A mismatched remote is ignored, never applied. */
+  /** Snapshot schema version this instance PUBLISHES (always the newest). */
   version: number;
+  /**
+   * Remote snapshot versions this instance will READ (merged under current
+   * semantics and republished at `version`). Defaults to `[version]`.
+   *
+   * #180: the payload gained `deliberateAddAt` and the merge rule changed
+   * (a fresh `updatedAt` alone no longer clears a tombstone), so both domains
+   * publish v2 while still reading v1 — otherwise the first upgraded device
+   * would treat the existing relay snapshot as unreadable and NEVER republish,
+   * wedging sync until every device happens to publish simultaneously. A v1
+   * entry simply carries no stamp, which the v2 merge rule interprets
+   * conservatively (cannot clear a durable delete) — exactly the defense.
+   *
+   * Side effect, deliberate: once a v2 snapshot lands on the relay, v1-only
+   * (stale) clients see an unknown version on read — `unavailable` — and
+   * therefore never apply it and never publish over it. The poison source is
+   * quarantined until it updates.
+   */
+  acceptedVersions?: number[];
   kind?: number;
 
   chatAPI: {
@@ -374,7 +392,8 @@ export class CrdtSync<T> {
 
     if(!parsed || typeof parsed !== 'object') return {status: 'unavailable'};
     const snap = parsed as Snapshot<T>;
-    if(snap.version !== this.deps.version) {
+    const accepted = this.deps.acceptedVersions ?? [this.deps.version];
+    if(!accepted.includes(snap.version)) {
       console.warn(this.tag, 'unknown snapshot version', snap.version);
       return {status: 'unavailable'};
     }

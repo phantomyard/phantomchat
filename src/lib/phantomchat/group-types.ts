@@ -71,6 +71,14 @@ export interface GroupRecord {
   peerId: number;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Unix-millis timestamp of the USER-INITIATED create (#180) — the proof
+   * that may clear a durable delete in the groups CRDT merge. Stamped ONLY
+   * by GroupAPI.createGroup (the user's create gesture); receivers' local
+   * handleGroupCreate records stay unstamped, and groups-sync apply()
+   * persists the origin's entry-level stamp instead. Never backfilled.
+   */
+  deliberateAddAt?: number;
 }
 
 // ─── Group Delivery Info ────────────────────────────────────────────

@@ -359,7 +359,8 @@ export default class AppContactsTab extends SliderSuperTab {
         pubkey: npub,
         nickname,
         openChat: true,
-        source: 'contacts-tab'
+        source: 'contacts-tab',
+        deliberate: true
       });
 
       toast('Contact added: ' + result.displayName);
