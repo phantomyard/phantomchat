@@ -433,6 +433,55 @@ describe('GroupAPI', () => {
     teardownSpy.mockRestore();
   });
 
+  it('#182 close-out: a concurrent forged-delete flood cannot evict the pending admin delete the quarantine holds', async() => {
+    // For a bound id, a delete from a sender ≠ the id-bound key is
+    // permanently unpromotable (the only create that can verify a
+    // quarantined delete mints admin = the bound key), so it must never be
+    // staged. Staging it gave an attacker the eviction lever: 512+
+    // concurrent forged deletes transiently occupied the bounded map and
+    // its oldest-received eviction dropped the admin's own pending delete,
+    // which a reordered create could then no longer promote — the group
+    // resurrected on this device instead of being torn down.
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    mockGroupStore.get.mockResolvedValue(null); // no record, ever
+    const ts = Math.floor(Date.now() / 1000);
+
+    // 1) The id-bound admin's delete arrives during backlog replay, before
+    //    this device holds any record → quarantined, awaiting its create.
+    const legitDel = controlRumor({type: 'group_delete', groupId: boundId}, BOUND_ADMIN);
+    legitDel.created_at = ts;
+    await api.handleControlMessage(legitDel, BOUND_ADMIN);
+
+    // 2) 520 concurrent forged deletes from distinct senders — none can
+    //    ever authenticate. Gate the store lookup so the whole flood is
+    //    in flight at once: the production concurrency shape, since
+    //    control handlers interleave during backlog replay.
+    let release!: (v: null) => void;
+    const gate = new Promise<null>((r) => release = r);
+    mockGroupStore.get.mockImplementation(() => gate);
+    const flood = Array.from({length: 520},(_, i) => {
+      const sender = (i + 1).toString(16).padStart(64, '0');
+      return api.handleControlMessage(controlRumor({type: 'group_delete', groupId: boundId}, sender), sender);
+    });
+    // Let every flood handler run to its (gated) store lookup.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // 3) Release. Pre-fix, the 520 transiently staged entries had already
+    //    evicted the oldest-received legit fact; the fix never stages them.
+    release(null);
+    await Promise.all(flood);
+
+    // 4) The admin's create finally arrives (relay reorder) and must still
+    //    find its pending delete → teardown, not resurrection.
+    mockGroupStore.get.mockResolvedValue(null);
+    const create = controlRumor({type: 'group_create', groupId: boundId}, BOUND_ADMIN);
+    create.created_at = ts;
+    await api.handleControlMessage(create, BOUND_ADMIN);
+    expect(teardownSpy).toHaveBeenCalledTimes(1);
+    expect(mockGroupStore.save).not.toHaveBeenCalled();
+    teardownSpy.mockRestore();
+  });
+
   it('legacy 32-hex ids keep pre-#188 behavior (payload admin accepted)', async() => {
     const legacyId = 'abc123def456abc123def456abc123de';
     const rumor = controlRumor({type: 'group_create', groupId: legacyId, adminPubkey: ATTACKER}, ATTACKER);
