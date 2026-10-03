@@ -9,7 +9,7 @@
  *
  * TIMESTAMP UNIT — the load-bearing detail.
  * CRDT entry `updatedAt` is in **seconds**, because that is the engine's clock
- * (nowSeconds / the 90-day tombstone TTL). But the two local sources speak
+ * (nowSeconds). But the two local sources speak
  * different units: a contact mapping's `updatedAt` is **millis** (Date.now()),
  * while a conversation tombstone's `deletedAt` is **seconds**. If we fed those
  * raw into the same CRDT, every live entry (~1.7e12) would tower over every

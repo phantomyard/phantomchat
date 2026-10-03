@@ -55,8 +55,24 @@ describe('groups adapter read()', () => {
     expect(Object.keys(map)).toHaveLength(0);
   });
 
-  it('does not tombstone a group that still has a live record', async() => {
+  it('does not tombstone a group whose live record is NEWER than the delete (deliberate re-create)', async() => {
     const {deps} = makeDeps([group(G1, 9_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBeFalsy();
+  });
+
+  it('resurrection loop: an OLDER live record does not mute the tombstone — the delete wins', async() => {
+    // The #155-class bug: any live record used to shadow the tombstone, so a
+    // stale record (replayed control, orphan recovery) erased the delete and
+    // re-published the group forever. The delete must outrank it instead.
+    const {deps} = makeDeps([group(G1, 7_000_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
+    const map = await createGroupsAdapter(deps).read();
+    expect(map[G1].deleted).toBe(true);
+    expect(map[G1].updatedAt).toBe(8080);
+  });
+
+  it('ties go to the live record (>= semantics, consistent with contacts adapter)', async() => {
+    const {deps} = makeDeps([group(G1, 8_080_000)], [{conversationId: `group:${G1}`, deletedAt: 8080}]);
     const map = await createGroupsAdapter(deps).read();
     expect(map[G1].deleted).toBeFalsy();
   });

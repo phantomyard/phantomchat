@@ -40,9 +40,7 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
     const map: SyncMap<GroupRecord> = {};
 
     const groups = await deps.listGroups();
-    const live = new Set<string>();
     for(const g of groups) {
-      live.add(g.groupId);
       map[g.groupId] = {
         id: g.groupId,
         updatedAt: Math.floor((g.updatedAt ?? g.createdAt ?? 0) / 1000),
@@ -54,7 +52,15 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
     for(const t of tombstones) {
       if(!t.conversationId.startsWith(GROUP_PREFIX)) continue;
       const groupId = t.conversationId.slice(GROUP_PREFIX.length);
-      if(!groupId || live.has(groupId)) continue;
+      if(!groupId) continue;
+      // Timestamp compare, mirroring contacts-sync-adapter: a live record only
+      // outranks the delete when it is NEWER than it (a deliberate re-create).
+      // Unconditionally muting a tombstone because any live record exists is
+      // the resurrection loop: an older record (stale sync blob, replayed
+      // control message, orphan-recovery scan) must LOSE to the delete, not
+      // erase it.
+      const liveEntry = map[groupId];
+      if(liveEntry && liveEntry.updatedAt >= t.deletedAt) continue;
       map[groupId] = {id: groupId, updatedAt: t.deletedAt, deleted: true};
     }
 

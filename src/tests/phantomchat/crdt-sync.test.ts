@@ -130,13 +130,14 @@ describe('CrdtSync.reconcile', () => {
     expect(Object.keys(state.map).sort()).toEqual(['a', 'b']);
   });
 
-  it('garbage-collects expired tombstones out of the published map', async() => {
-    const now = 100 * 24 * 60 * 60; // 100 days
+  it('keeps ancient tombstones in the published map — no GC (a dropped tombstone is a resurrection on a timer)', async() => {
+    const now = 100 * 24 * 60 * 60; // 100 days past the tombstone's stamp
     relay.seed({old: tombstone<Item>('old', 1)});
     const {adapter} = makeAdapter({a: liveEntry('a', {id: 'a', name: 'A'}, now - 5)});
 
     await makeSync(relay, adapter, now).reconcile();
-    expect(Object.keys(relay.decoded().items)).toEqual(['a']);
+    expect(Object.keys(relay.decoded().items).sort()).toEqual(['a', 'old']);
+    expect(relay.decoded().items['old'].deleted).toBe(true);
   });
 
   describe('a missing remote is never mistaken for an authoritative empty one', () => {

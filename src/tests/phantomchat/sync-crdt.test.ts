@@ -2,14 +2,12 @@ import {describe, it, expect} from 'vitest';
 import {
   mergeEntry,
   mergeMaps,
-  gcTombstones,
   liveItems,
   tombstone,
   liveEntry,
   differs,
   isValidEntry,
   sanitizeMap,
-  TOMBSTONE_TTL_SECONDS,
   type SyncMap
 } from '@lib/phantomchat/sync-crdt';
 
@@ -152,22 +150,13 @@ describe('mergeMaps — the case folders-sync gets wrong', () => {
   });
 });
 
-describe('gcTombstones', () => {
-  const now = 1_000_000;
-
-  it('drops tombstones past the TTL', () => {
-    const map: SyncMap<Contact> = {x: tombstone<Contact>('x', now - TOMBSTONE_TTL_SECONDS - 1)};
-    expect(Object.keys(gcTombstones(map, now))).toHaveLength(0);
-  });
-
-  it('keeps tombstones inside the TTL', () => {
-    const map: SyncMap<Contact> = {x: tombstone<Contact>('x', now - 10)};
-    expect(Object.keys(gcTombstones(map, now))).toHaveLength(1);
-  });
-
-  it('never drops a live item, however old', () => {
-    const map: SyncMap<Contact> = {x: liveEntry('x', c('x', 'X'), 0)};
-    expect(Object.keys(gcTombstones(map, now))).toHaveLength(1);
+describe('tombstone retention (no GC)', () => {
+  it('keeps an ancient tombstone in a merged map — a dropped tombstone is a resurrection on a timer', () => {
+    const local: SyncMap<Contact> = {x: tombstone<Contact>('x', 10)}; // ancient delete
+    const remote: SyncMap<Contact> = {}; // remote device never saw the delete
+    const merged = mergeMaps(local, remote);
+    expect(merged['x'].deleted).toBe(true);
+    expect(merged['x'].updatedAt).toBe(10);
   });
 });
 
