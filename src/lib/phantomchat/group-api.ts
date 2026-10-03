@@ -1409,9 +1409,26 @@ export class GroupAPI {
    * later, but we do not mutate or persist any group state.
    */
   private async handleGroupDelete(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<void> {
-    // Stage before the first await so a concurrent group_create cannot pass
-    // both of its pending-delete checks while this handler is suspended.
-    this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
+    // QUARANTINE FLOOD HYGIENE (#182 close-out): for a bound id, a delete
+    // from any sender other than the id-bound key can NEVER be promoted —
+    // the only create that can later verify a quarantined delete mints
+    // admin = that same key — and a live record never consults the
+    // quarantine at all (its authority is the CURRENT stored admin).
+    // Staging such a delete anyway handed an attacker the eviction lever
+    // on the bounded quarantine: 512 concurrent forged deletes transiently
+    // occupied the map, and its oldest-received eviction dropped a
+    // legitimate pending admin delete that a reordered create could
+    // otherwise have promoted (resurrecting the group on this device).
+    // Skip the stage for the permanently-unpromotable sender; every
+    // authority check below is unchanged. Promotable senders — the
+    // id-bound key itself, and every sender on a legacy id — keep the
+    // stage-before-first-await invariant so a concurrent group_create
+    // cannot pass both of its pending-delete checks while this handler
+    // is suspended.
+    const boundAdmin = boundGroupAdmin(payload.groupId);
+    if(!(boundAdmin && boundAdmin !== senderPubkey)) {
+      this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
+    }
     const group = await this.store.get(payload.groupId);
     if(!group) {
       // ID-BOUND FAIL-CLOSED, no-record path only (#188): with no record
@@ -1422,7 +1439,6 @@ export class GroupAPI {
       // the bounded quarantine. Reject and unstage; the id-bound admin's
       // delete still falls through to the quarantine below, where a
       // reordered create can authenticate it.
-      const boundAdmin = boundGroupAdmin(payload.groupId);
       if(boundAdmin && boundAdmin !== senderPubkey) {
         this.clearPendingGroupDeletes(payload.groupId, senderPubkey);
         this.log.warn('[GroupAPI] ignoring group_delete: sender is not the id-bound admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
