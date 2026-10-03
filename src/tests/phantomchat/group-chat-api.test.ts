@@ -274,14 +274,14 @@ describe('GroupAPI', () => {
 
     expect(handlerCalls).toBe(0); // Deduped
   });
-// ─── #188: group ids bound to the admin (two-message forgery closed) ────
-//
-// A group_create carries adminPubkey in its own payload — self-asserted.
-// On a device with no local record, an attacker who knows a group id could
-// forge create(admin=self) + delete(self) and manufacture a DURABLE
-// cross-device delete for a group this device never held. New ids bind the
-// admin: `<64-hex adminPubkey><32-hex random>`; receivers verify against the
-// id, not the payload.
+  // ─── #188: group ids bound to the admin (two-message forgery closed) ────
+  //
+  // A group_create carries adminPubkey in its own payload — self-asserted.
+  // On a device with no local record, an attacker who knows a group id could
+  // forge create(admin=self) + delete(self) and manufacture a DURABLE
+  // cross-device delete for a group this device never held. New ids bind the
+  // admin: `<64-hex adminPubkey><32-hex random>`; receivers verify against the
+  // id, not the payload.
 
   const BOUND_ADMIN = MEMBER_A; // the admin baked into the id
   const ATTACKER = MEMBER_B;
