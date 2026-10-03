@@ -12,7 +12,8 @@ import type {GroupRecord, GroupControlPayload} from '@lib/phantomchat/group-type
 // Hoisted mock state shared across resetModules boundaries
 const mockMgmtGroupStore = vi.hoisted(() => ({
   save: vi.fn(), get: vi.fn(), getByPeerId: vi.fn(), getAll: vi.fn(),
-  delete: vi.fn(), updateMembers: vi.fn(), updateInfo: vi.fn(), destroy: vi.fn()
+  delete: vi.fn(), updateMembers: vi.fn(), updateInfo: vi.fn(), destroy: vi.fn(),
+  recordDeletedGroup: vi.fn(), listDeletedGroups: vi.fn(), clearDeletedGroup: vi.fn()
 }));
 
 const mockMgmtBroadcast = vi.hoisted(() => vi.fn().mockReturnValue([{id: 'c', kind: 1059}]));
@@ -141,6 +142,7 @@ describe('Group Management', () => {
     s.get.mockResolvedValue(null);
     s.delete.mockResolvedValue(undefined);
     s.updateMembers.mockResolvedValue(undefined);
+    s.recordDeletedGroup.mockResolvedValue(undefined);
 
     broadcast().mockReturnValue([{id: 'ctrl-1', kind: 1059} as any]);
 
@@ -228,6 +230,92 @@ describe('Group Management', () => {
       expect(deletedAt).toBeGreaterThan(0);
       const remaining = await ms.getMessages(convId, 50);
       expect(remaining.length).toBe(0);
+    });
+  });
+
+  describe('durable delete on teardown (PR #179 round 7)', () => {
+    it('records the durable delete BEFORE the destructive teardown', async() => {
+      store().get.mockResolvedValueOnce(makeGroup());
+      await api.leaveGroup(GROUP_ID);
+
+      expect(store().recordDeletedGroup).toHaveBeenCalledTimes(1);
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(GROUP_ID, expect.any(Number));
+      // The positive delete fact must precede the record deletion — the
+      // destructive step that leaves neither a live record nor a delete.
+      const durableOrder = store().recordDeletedGroup.mock.invocationCallOrder[0];
+      const deleteOrder = store().delete.mock.invocationCallOrder[0];
+      expect(durableOrder).toBeLessThan(deleteOrder);
+    });
+
+    it('a message-store rejection cannot suppress the durable delete (Kai round-7 blocker)', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      const originalDeleteMessages = ms.deleteMessages.bind(ms);
+      try {
+        ms.deleteMessages = vi.fn().mockRejectedValue(new Error('idb quota exceeded')) as any;
+
+        store().get.mockResolvedValueOnce(makeGroup());
+        await api.leaveGroup(GROUP_ID); // must not throw despite the rejection
+
+        expect(store().recordDeletedGroup).toHaveBeenCalledTimes(1);
+        expect(store().delete).toHaveBeenCalledWith(GROUP_ID);
+      } finally {
+        ms.deleteMessages = originalDeleteMessages;
+      }
+    });
+
+    it('a DURABLE-write rejection aborts the destructive teardown (Kai round-9 blocker)', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      // The durable fact is a strict precondition: without it the device
+      // would hold neither a live record nor the delete fact — the exact
+      // state a stale record elsewhere resurrects the group from.
+      store().get.mockResolvedValueOnce(makeGroup());
+      store().recordDeletedGroup.mockRejectedValueOnce(new Error('idb upgrade failed'));
+
+      await expect(api.leaveGroup(GROUP_ID)).rejects.toThrow('idb upgrade failed');
+
+      // Nothing destructive ran: the live record and the message store are
+      // untouched, so the group remains fully intact for a retry.
+      expect(store().delete).not.toHaveBeenCalled();
+      const convId = `group:${GROUP_ID}`;
+      expect(await ms.getTombstone(convId)).toBe(0);
+    });
+
+    it('orphan teardown (no store record) still records the durable delete before the message-store chain', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      // Seed a leftover group conversation so the orphan scan finds it.
+      await ms.saveMessage({
+        eventId: 'evt-orphan-durable', conversationId: `group:${GROUP_ID}`,
+        senderPubkey: MEMBER_A, content: 'hi', type: 'text',
+        timestamp: Math.floor(Date.now() / 1000), deliveryState: 'delivered',
+        isOutgoing: false
+      });
+
+      await api.leaveGroupByPeerId(-2000000000000001);
+
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(GROUP_ID, expect.any(Number));
+    });
+
+    it('orphan path: a durable-write rejection aborts the purge (nothing destructive runs)', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      // Seed a leftover group conversation so the orphan scan finds it.
+      await ms.saveMessage({
+        eventId: 'evt-orphan-durable-reject', conversationId: `group:${GROUP_ID}`,
+        senderPubkey: MEMBER_A, content: 'hi', type: 'text',
+        timestamp: Math.floor(Date.now() / 1000), deliveryState: 'delivered',
+        isOutgoing: false
+      });
+      store().recordDeletedGroup.mockRejectedValueOnce(new Error('idb upgrade failed'));
+
+      await api.leaveGroupByPeerId(-2000000000000001); // non-fatal by contract
+
+      // The purge never ran: the leftover messages survive, so no state is
+      // created where the conversation is purged but no delete fact exists.
+      const remaining = await ms.getMessages(`group:${GROUP_ID}`, 50);
+      expect(remaining.length).toBe(1);
     });
   });
 

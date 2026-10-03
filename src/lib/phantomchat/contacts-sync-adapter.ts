@@ -9,7 +9,7 @@
  *
  * TIMESTAMP UNIT — the load-bearing detail.
  * CRDT entry `updatedAt` is in **seconds**, because that is the engine's clock
- * (nowSeconds / the 90-day tombstone TTL). But the two local sources speak
+ * (nowSeconds). But the two local sources speak
  * different units: a contact mapping's `updatedAt` is **millis** (Date.now()),
  * while a conversation tombstone's `deletedAt` is **seconds**. If we fed those
  * raw into the same CRDT, every live entry (~1.7e12) would tower over every
@@ -28,6 +28,12 @@
  * neither a live entry nor a tombstone, and in a union merge ABSENCE SAYS
  * NOTHING, so one stale relay blob re-added the contact everywhere, forever. A
  * delete has to be a positive fact that can always be re-published.
+ *
+ * read() also TEARS DOWN a live mapping that loses the LWW compare against a
+ * durable delete row (a resurrection): the engine skips apply() when the merge
+ * is a no-op, so without this the resurrected contact would sit in the mapping
+ * store forever. Watermark-sourced deletes never tear down (a watermark under a
+ * live mapping may be "cleared history", not a contact delete).
  */
 import type {LocalAdapter} from './crdt-sync';
 import type {SyncMap, SyncEntry} from './sync-crdt';
@@ -102,6 +108,10 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
 
     // Deletions: the durable log first (no own-pubkey needed, survives a wiped
     // watermark), then the legacy derived watermarks. Latest stamp per peer wins.
+    // The two sources are NOT equivalent: a durable row is positive delete
+    // evidence (#173), while a watermark under a LIVE mapping may just be
+    // "cleared history" — so watermarks only contribute for peers with no live
+    // mapping, and only durable rows may tear a resurrected mapping down.
     const deletes = new Map<string, number>();
     for(const d of await deps.listDeletedPeers()) {
       if(!HEX64.test(d.pubkey) || !(d.deletedAt > 0)) continue;
@@ -124,9 +134,28 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
     for(const [peer, deletedAt] of deletes) {
       const liveEntry = map[peer];
       // A live mapping only outranks the delete when it is NEWER than it — a
-      // deliberate re-add. A mapping resurrected by some automatic path (stale
-      // sync blob, history backfill) is older, and must not mute the delete.
-      if(liveEntry && liveEntry.updatedAt >= deletedAt) continue;
+      // deliberate re-add. Strict compare: on an exact tie the TOMBSTONE
+      // wins, matching mergeEntry's invariant and the receive gates that
+      // reject timestampSec <= deletedAt. Timestamps are seconds-floored, so
+      // a mapping updated earlier in the same second as the delete ties, and
+      // equality cannot mean a deliberate re-add. A mapping resurrected by
+      // some automatic path (stale sync blob, history backfill) is older, and
+      // must not mute the delete.
+      if(liveEntry && liveEntry.updatedAt > deletedAt) continue;
+      // A mapping that LOST to a DURABLE delete row is a resurrection: drop it
+      // from the mapping store, not just from the published map. The engine
+      // skips apply() when merged == local, and wasLive is false there anyway,
+      // so apply() could never clean this up (the gap Robert flagged on the
+      // groups adapter; the durable delete row itself stays, untouched).
+      // Watermark-sourced deletes never reach this branch with a live mapping
+      // (skipped above) — the cleared-history rule is preserved.
+      if(liveEntry) {
+        try {
+          await deps.removeContact(peer);
+        } catch(err) {
+          console.warn(tag, 'read: teardown of resurrected contact failed', peer, err);
+        }
+      }
       map[peer] = {id: peer, updatedAt: deletedAt, deleted: true};
     }
 
@@ -134,6 +163,18 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
   };
 
   const apply = async(merged: SyncMap<ContactSyncData>, before: SyncMap<ContactSyncData>): Promise<void> => {
+    // Store reality at entry: `before` can mark an id `deleted` (read() overrode
+    // a resurrected mapping) while the mapping still sits in the store, so
+    // wasLive alone can't tell "already torn down" from "resurrected".
+    let storeState: Map<string, VirtualPeerMapping> | null = null;
+    try {
+      const mappings = await deps.listMappings();
+      storeState = new Map(mappings.map((m) => [m.pubkey, m]));
+    } catch(err) {
+      console.warn(tag, 'apply: store snapshot failed; falling back to map-derived teardown', err);
+      storeState = null;
+    }
+
     for(const id of Object.keys(merged)) {
       const entry = merged[id];
       const prev = before[id];
@@ -146,7 +187,11 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
           // here too, otherwise this device contributes only an ABSENCE and a
           // stale blob elsewhere can revive the contact again (#173).
           await deps.recordDeletedPeer(id, entry.updatedAt);
-          if(wasLive) {
+          // Tear down whenever the mapping store still holds the record — even
+          // when wasLive is false (read() had already overridden a resurrected
+          // mapping with the delete, so the map lost the evidence).
+          const stillStored = storeState ? storeState.has(id) : wasLive;
+          if(stillStored) {
             await deps.removeContact(id);
             const own = deps.getOwnPubkey();
             if(own) await deps.setTombstone(deps.conversationId(own, id), entry.updatedAt);

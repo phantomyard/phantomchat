@@ -479,6 +479,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           const groupsAdapter = createGroupsAdapter({
             listGroups: () => getGroupStore().getAll(),
             listTombstones: () => store.getAllTombstones(),
+            listDeletedGroups: () => getGroupStore().listDeletedGroups(),
+            recordDeletedGroup: (groupId, deletedAtSeconds) => getGroupStore().recordDeletedGroup(groupId, deletedAtSeconds),
+            getLegacyDeleteCutoff: () => getGroupStore().getLegacyDeleteCutoff(),
+            clearDeletedGroup: (groupId) => getGroupStore().clearDeletedGroup(groupId),
             upsertGroup: async(record: GroupRecord) => {
               const peerId = await groupIdToPeerId(record.groupId);
               const rec: GroupRecord = {...record, peerId};
@@ -486,9 +490,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               await getGroupStore().save(rec);
               const createdAtSec = Math.floor((rec.createdAt || Date.now()) / 1000);
               if(!existing) {
-                // Fresh restore: clear any stale deletion watermark so the
-                // create service row isn't suppressed, then seed + inject.
+                // Fresh restore: clear any stale deletion watermark AND the
+                // durable deleted-groups row, or read() would tear the
+                // deliberately re-created group back down on the next pass.
                 try { await store.clearTombstone(`group:${rec.groupId}`); } catch{ /* none */ }
+                try { await getGroupStore().clearDeletedGroup(rec.groupId); } catch{ /* none */ }
                 const service = await writeGroupCreateServiceMessage({
                   groupId: rec.groupId,
                   peerId,

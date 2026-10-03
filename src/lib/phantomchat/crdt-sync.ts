@@ -12,7 +12,6 @@
  */
 import {
   mergeMaps,
-  gcTombstones,
   sanitizeMap,
   differs,
   type SyncMap
@@ -133,6 +132,10 @@ export class CrdtSync<T> {
    * Both sides always converge on the same union.
    */
   async reconcile(): Promise<ReconcileOutcome> {
+    // NOTE: adapter.read() is a WRITER — the adapters' resurrection self-heal
+    // tears store records down inside read() (see groups/contacts-sync-adapter).
+    // It runs on every reconcile() AND every publishOnce(); call sites should
+    // not assume a read is side-effect free.
     let local: SyncMap<T>;
     try {
       local = await this.deps.adapter.read();
@@ -159,10 +162,10 @@ export class CrdtSync<T> {
     }
 
     const remoteMap = remote.map;
-    const merged = gcTombstones(
-      mergeMaps(local, remoteMap),
-      this.deps.nowSeconds()
-    );
+    // No garbage collection: tombstones persist forever. An expired tombstone
+    // is a resurrection on a timer — exactly the bug class this engine exists
+    // to prevent.
+    const merged = mergeMaps(local, remoteMap);
 
     const localChanged = differs(merged, local);
     const remoteChanged = differs(merged, remoteMap);
@@ -258,6 +261,8 @@ export class CrdtSync<T> {
   }
 
   private async publishOnce(): Promise<boolean> {
+    // NOTE: adapter.read() may mutate the store (resurrection teardown) —
+    // see the note on reconcile() above.
     let local: SyncMap<T>;
     try {
       local = await this.deps.adapter.read();
@@ -277,9 +282,7 @@ export class CrdtSync<T> {
     }
 
     const remoteMap = remote.status === 'ok' ? remote.map : null;
-    const merged = remoteMap ?
-      gcTombstones(mergeMaps(local, remoteMap), this.deps.nowSeconds()) :
-      local;
+    const merged = remoteMap ? mergeMaps(local, remoteMap) : local;
 
     // Converge locally too: the remote may hold entries this device has not
     // seen (an add from another device, or a tombstone for a contact that

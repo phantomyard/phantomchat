@@ -14,6 +14,7 @@ import type {GroupRecord} from '@lib/phantomchat/group-types';
 
 vi.mock('@lib/phantomchat/group-store', () => {
   const groups = new Map<string, GroupRecord>();
+  const deletedGroups = new Map<string, number>();
   const store = {
     save: vi.fn(async(g: GroupRecord) => { groups.set(g.groupId, g); }),
     get: vi.fn(async(id: string) => groups.get(id) || null),
@@ -23,6 +24,14 @@ vi.mock('@lib/phantomchat/group-store', () => {
     }),
     getAll: vi.fn(async() => [...groups.values()]),
     delete: vi.fn(async(id: string) => { groups.delete(id); }),
+    // Durable deleted-groups log (PR #179): teardown records the delete fact
+    // before the destructive store.delete.
+    recordDeletedGroup: vi.fn(async(groupId: string, deletedAt: number) => {
+      deletedGroups.set(groupId, deletedAt);
+    }),
+    listDeletedGroups: vi.fn(async() =>
+      [...deletedGroups.entries()].map(([groupId, deletedAt]) => ({groupId, deletedAt}))
+    ),
     updateMembers: vi.fn(async(id: string, members: string[]) => {
       const g = groups.get(id);
       if(g) groups.set(id, {...g, members});
