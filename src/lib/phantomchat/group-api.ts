@@ -758,7 +758,8 @@ export class GroupAPI {
   }
 
   /**
-   * Local group teardown shared by leaveGroup / deleteGroup / handleGroupDelete:
+   * Local group teardown shared by leaveGroup / deleteGroup / handleGroupDelete /
+   * handleRemoveMember (the kicked path, issue #181):
    * delete the store record, write the deletion tombstone (so neither the
    * orphan-recovery scan nor a replayed control message can resurrect it —
    * FIND-group-resurrection), purge the injected main-thread mirror (symmetric
@@ -1026,7 +1027,16 @@ export class GroupAPI {
         applied = (await this.handleAddMember(payload)) !== false;
         break;
       case 'group_remove_member':
-        applied = (await this.handleRemoveMember(payload)) !== false;
+        // The self-removal (kicked) branch runs the same durable-write
+        // precondition as teardownGroupLocally (issue #181) and can reject
+        // on a recordDeletedGroup failure — catch here so the dispatch
+        // survives and a relay-backlog redelivery retries the kick, exactly
+        // like the group_delete case above.
+        try {
+          applied = (await this.handleRemoveMember(payload, senderPubkey)) !== false;
+        } catch(err) {
+          this.log.warn('[GroupAPI] group_remove_member handling failed; retry expected via backlog:', err);
+        }
         break;
       case 'group_leave':
         applied = (await this.handleMemberLeave(payload, senderPubkey)) !== false;
@@ -1184,22 +1194,58 @@ export class GroupAPI {
     return true;
   }
 
-  private async handleRemoveMember(payload: GroupControlPayload): Promise<boolean> {
+  private async handleRemoveMember(payload: GroupControlPayload, senderPubkey: string): Promise<boolean> {
     if(payload.targetPubkey === this.ownPubkey) {
-      // We were removed — delete group locally + clean up the injected Chat
-      // from main-thread mirrors so INV-group-no-orphan-mirror-peer holds
-      // and the chat list doesn't flash the removed group on refresh. The
-      // teardown runs even without a local record (zombie-mirror cleanup);
-      // only a record that actually existed counts as applied.
+      // We were removed — FULL durable teardown, same as leaveGroup /
+      // deleteGroup / handleGroupDelete (issue #181, mirroring
+      // teardownGroupLocally post-#179): the kick must be a POSITIVE delete
+      // fact, not an absence. Previously this path only did store.delete +
+      // mirror cleanup — no durable deletedGroups row, no conversation
+      // tombstone — so a kicked device contributed only an ABSENCE to the
+      // union merge and another own device's live record re-materialised the
+      // group via apply(). teardownGroupLocally records the durable row
+      // BEFORE the store delete (strict precondition), then tombstones the
+      // conversation so replayed group_create/group rumors stay gated. A
+      // re-invite still works: a fresh group_create (ts > deletedAt) passes
+      // the tombstone gate, outranks the durable row on strict LWW, and
+      // apply() drops the row on the deliberate re-create.
+      //
+      // SENDER AUTHENTICATION (Lena's review of #183): promoting this path
+      // to a durable cross-device delete fact means an unauthenticated
+      // sender could forge a kick and durably delete the group on every own
+      // device — the exact hole #182/#184 close for group_delete, reopened
+      // through the kick path. So: when a record exists, only its admin may
+      // kick (a non-admin control is rejected with NO durable write); when
+      // no record exists we cannot verify anyone, so we fail closed like
+      // #184 — zombie-mirror cleanup only, no durable row and no tombstone
+      // from an unverified sender. The legit kick always arrives while the
+      // record is still live (you were a member), so the verified path is
+      // the common case.
       const group = await this.store.get(payload.groupId);
-      const peerId = await groupIdToPeerId(payload.groupId);
-      await this.store.delete(payload.groupId);
-      await cleanupGroupChatInjection(peerId);
+      if(group && group.adminPubkey !== senderPubkey) {
+        this.log.warn('[GroupAPI] ignoring group_remove_member(self) from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
+        return false;
+      }
+      if(!group) {
+        // No record: nothing verifiable, nothing to tear down durably.
+        // Mirror cleanup only — the durable row and tombstone stay reserved
+        // for an authenticated admin kick against a live record.
+        const peerId = await groupIdToPeerId(payload.groupId);
+        await cleanupGroupChatInjection(peerId);
+        this.log('[GroupAPI] group_remove_member(self) for unknown group; mirror cleanup only:', payload.groupId.slice(0, 8));
+        return false;
+      }
+      await this.teardownGroupLocally(payload.groupId);
       this.log('[GroupAPI] removed from group:', payload.groupId);
-      return !!group;
+      return true;
     }
     const group = await this.store.get(payload.groupId);
-    if(!group || !group.members.includes(payload.targetPubkey)) {
+    // Only the admin may remove another member — a non-admin sender must
+    // use group_leave for themselves (see handleMemberLeave). Without this
+    // check any sender could delete an arbitrary member from my local view
+    // (pre-existing on main, closed here since this handler is being
+    // authenticated anyway).
+    if(!group || group.adminPubkey !== senderPubkey || !group.members.includes(payload.targetPubkey)) {
       return false;
     }
     const remaining = group.members.filter(m => m !== payload.targetPubkey);

@@ -631,7 +631,8 @@ describe('Group Management', () => {
       expect(store().delete).not.toHaveBeenCalled();
     });
 
-    it('group_remove_member with targetPubkey=self removes group locally', async() => {
+    it('group_remove_member with targetPubkey=self removes group locally (admin sender)', async() => {
+      store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
       const payload: GroupControlPayload = {
         type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: OWN_PUBKEY
       };
@@ -643,6 +644,184 @@ describe('Group Management', () => {
 
       await api.handleControlMessage(rumor, MEMBER_A);
       expect(store().delete).toHaveBeenCalledWith(GROUP_ID);
+    });
+
+    // ─── Kicked member durable delete (issue #181) ────────────────
+    // handleRemoveMember(self) must be a POSITIVE delete fact, not an
+    // absence: durable deletedGroups row + conversation tombstone, same
+    // teardown as leaveGroup / deleteGroup. Without it, a second own
+    // device's live record re-materialises the group via the sync apply().
+    it('admin removing another member updates the local member list; a non-admin sender cannot', async() => {
+      // Admin path: MEMBER_A (admin) removes MEMBER_B.
+      store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
+      await api.handleControlMessage({
+        id: 'ctrl-remove-other', kind: 14,
+        content: JSON.stringify({
+          type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: MEMBER_B
+        }),
+        pubkey: MEMBER_A, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+      expect(store().updateMembers).toHaveBeenCalledWith(GROUP_ID, [MEMBER_A, OWN_PUBKEY]);
+
+      // Non-admin path: MEMBER_B forges a removal of MEMBER_A — ignored.
+      store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
+      await api.handleControlMessage({
+        id: 'ctrl-remove-other-forge', kind: 14,
+        content: JSON.stringify({
+          type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: MEMBER_A
+        }),
+        pubkey: MEMBER_B, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_B);
+      expect(store().updateMembers).toHaveBeenCalledTimes(1);
+    });
+
+    it('kick records the durable delete BEFORE store.delete and tombstones the conversation', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      const convId = `group:${GROUP_ID}`;
+      // Seed a leftover group message — the exact orphan the tombstone purge
+      // must remove so the kicked group cannot rebuild from history.
+      await ms.saveMessage({
+        eventId: 'evt-kick-1', conversationId: convId,
+        senderPubkey: MEMBER_A, content: 'hi', type: 'text',
+        timestamp: Math.floor(Date.now() / 1000), deliveryState: 'delivered',
+        isOutgoing: false
+      });
+
+      store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
+      const payload: GroupControlPayload = {
+        type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: OWN_PUBKEY
+      };
+      const rumor = {
+        id: 'ctrl-kick', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_A, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      // Positive delete fact recorded, and strictly BEFORE the store delete.
+      expect(store().recordDeletedGroup).toHaveBeenCalledTimes(1);
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(GROUP_ID, expect.any(Number));
+      const durableOrder = store().recordDeletedGroup.mock.invocationCallOrder[0];
+      const deleteOrder = store().delete.mock.invocationCallOrder[0];
+      expect(durableOrder).toBeLessThan(deleteOrder);
+      // Conversation tombstoned + purged — replayed creates/rumors stay gated.
+      const deletedAt = await ms.getTombstone(convId);
+      expect(deletedAt).toBeGreaterThan(0);
+      expect((await ms.getMessages(convId, 50)).length).toBe(0);
+    });
+
+    it('a durable-write rejection aborts the kick teardown and the dispatch survives', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
+      store().recordDeletedGroup.mockRejectedValueOnce(new Error('idb upgrade failed'));
+
+      const payload: GroupControlPayload = {
+        type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: OWN_PUBKEY
+      };
+      const rumor = {
+        id: 'ctrl-kick-durable-fail', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_A, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      // The dispatch catch keeps the control path alive (relay backlog
+      // redelivery retries the kick); nothing destructive ran.
+      await expect(api.handleControlMessage(rumor, MEMBER_A)).resolves.not.toThrow();
+      expect(store().delete).not.toHaveBeenCalled();
+      expect(await ms.getTombstone(`group:${GROUP_ID}`)).toBe(0);
+    });
+
+    it('kick from a non-admin is ignored — no durable write, no tombstone, no delete', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      // Record exists, admin is MEMBER_A; the forger is MEMBER_B, who knows
+      // the groupId. Pre-review this forged kick would have durably deleted
+      // the group on every own device.
+      store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
+      const payload: GroupControlPayload = {
+        type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: OWN_PUBKEY
+      };
+      const rumor = {
+        id: 'ctrl-kick-forge', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_B, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await expect(api.handleControlMessage(rumor, MEMBER_B)).resolves.not.toThrow();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect(store().delete).not.toHaveBeenCalled();
+      expect(await ms.getTombstone(`group:${GROUP_ID}`)).toBe(0);
+    });
+
+    it('kick with no local record fails closed — mirror cleanup only, no durable fact', async() => {
+      // No record → nothing to verify the sender against, so nothing durable
+      // may be written from an unverified control (Lena's review of #183,
+      // fail-closed like #184). Only zombie-mirror cleanup runs.
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      store().get.mockResolvedValue(undefined);
+      const payload: GroupControlPayload = {
+        type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: OWN_PUBKEY
+      };
+      const rumor = {
+        id: 'ctrl-kick-orphan', kind: 14, content: JSON.stringify(payload),
+        pubkey: MEMBER_A, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      };
+
+      await expect(api.handleControlMessage(rumor, MEMBER_A)).resolves.not.toThrow();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect(store().delete).not.toHaveBeenCalled();
+      expect(await ms.getTombstone(`group:${GROUP_ID}`)).toBe(0);
+    });
+
+    it('a re-invite after the kick still revives the group, a replayed create stays dropped', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+
+      // Kick: writes the tombstone at deletedAt.
+      store().get.mockResolvedValueOnce(makeGroup({adminPubkey: MEMBER_A}));
+      const kickPayload: GroupControlPayload = {
+        type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: OWN_PUBKEY
+      };
+      await api.handleControlMessage({
+        id: 'ctrl-kick-reinvite', kind: 14, content: JSON.stringify(kickPayload),
+        pubkey: MEMBER_A, created_at: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+      const deletedAt = await ms.getTombstone(`group:${GROUP_ID}`);
+      expect(deletedAt).toBeGreaterThan(0);
+
+      // Replayed create at/below the watermark: dropped at the tombstone gate.
+      const replayPayload: GroupControlPayload = {
+        type: 'group_create', groupId: GROUP_ID, groupName: 'Zombie',
+        memberPubkeys: [MEMBER_A, OWN_PUBKEY], adminPubkey: MEMBER_A
+      };
+      await api.handleControlMessage({
+        id: 'ctrl-kick-replay', kind: 14, content: JSON.stringify(replayPayload),
+        pubkey: MEMBER_A, created_at: deletedAt,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+      expect(store().save).not.toHaveBeenCalled();
+
+      // Fresh re-invite strictly newer than the watermark: revives.
+      const reinvitePayload: GroupControlPayload = {
+        type: 'group_create', groupId: GROUP_ID, groupName: 'Re-invited',
+        memberPubkeys: [MEMBER_A, OWN_PUBKEY], adminPubkey: MEMBER_A
+      };
+      await api.handleControlMessage({
+        id: 'ctrl-kick-reinvite2', kind: 14, content: JSON.stringify(reinvitePayload),
+        pubkey: MEMBER_A, created_at: deletedAt + 10,
+        tags: [['control', 'true'], ['group', GROUP_ID]]
+      }, MEMBER_A);
+      expect(store().save).toHaveBeenCalledTimes(1);
+      const saved = store().save.mock.calls[0][0] as GroupRecord;
+      expect(saved.groupId).toBe(GROUP_ID);
     });
 
     // ─── Admin-orphan protection (Phase 2b.4 fix) ────────────────
