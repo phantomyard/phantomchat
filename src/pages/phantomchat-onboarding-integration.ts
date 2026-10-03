@@ -30,10 +30,10 @@ import {setLastModifiedAt} from '@lib/phantomchat/folders-sync-state';
 import {FOLDER_SYNC_TRIGGER_EVENTS} from '@lib/phantomchat/folders-sync-types';
 import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/nostr-crypto';
 import {CrdtSync} from '@lib/phantomchat/crdt-sync';
-import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION} from '@lib/phantomchat/contacts-sync-adapter';
-import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION} from '@lib/phantomchat/groups-sync-adapter';
+import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTACTS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/contacts-sync-adapter';
+import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
 import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
-import {getAllMappings, setMappingDisplayName, setMappingUpdatedAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
+import {getAllMappings, setMappingDisplayName, setMappingUpdatedAt, setDeliberateAddAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
 import {getMessageStore} from '@lib/phantomchat/message-store';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
@@ -472,6 +472,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             },
             setDisplayName: (pubkey, displayName) => setMappingDisplayName(pubkey, displayName),
             setUpdatedAt: (pubkey, ms) => setMappingUpdatedAt(pubkey, ms),
+            // #180: persist a remote entry's deliberate-add stamp (seconds on
+            // the wire → millis in the mapping store). Monotonic at the store layer.
+            setDeliberateAddAt: (pubkey, sec) => setDeliberateAddAt(pubkey, sec * 1000),
             removeContact: (pubkey) => removeMapping(pubkey),
             setTombstone: (convId, sec) => store.setTombstone(convId, sec)
           });
@@ -519,10 +522,12 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
 
           const contactsSync = new CrdtSync({
             dTag: CONTACTS_SYNC_D_TAG, version: CONTACTS_SYNC_VERSION,
+            acceptedVersions: CONTACTS_SYNC_ACCEPTED_VERSIONS,
             chatAPI: crdtChatAPI, adapter: contactsAdapter, ...crdtCrypto
           });
           const groupsSync = new CrdtSync({
             dTag: GROUPS_SYNC_D_TAG, version: GROUPS_SYNC_VERSION,
+            acceptedVersions: GROUPS_SYNC_ACCEPTED_VERSIONS,
             chatAPI: crdtChatAPI, adapter: groupsAdapter, ...crdtCrypto
           });
 

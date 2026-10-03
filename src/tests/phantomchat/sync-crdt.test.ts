@@ -29,11 +29,56 @@ describe('mergeEntry', () => {
     expect(mergeEntry(live, dead).deleted).toBe(true);
   });
 
-  it('a newer live entry resurrects over an older tombstone (re-add)', () => {
+  it('#180: a newer live entry WITHOUT a deliberate stamp no longer resurrects — that was the resurrection loop', () => {
+    // The core fix of #180: automatic paths (profile refresh, message-path
+    // persistence, stale pre-#180 clients) mint current updatedAt stamps
+    // without any user intent. Under the old rule those cleared durable
+    // deletes and the relay flipped live/deleted forever.
     const dead = tombstone<Contact>('x', 100);
-    const live = liveEntry('x', c('x', 'alice'), 200);
+    const live = liveEntry('x', c('x', 'alice'), 200); // fresh stamp, NO proof
+    expect(mergeEntry(dead, live).deleted).toBe(true);
+    expect(mergeEntry(live, dead).deleted).toBe(true); // order-independent
+  });
+
+  it('#180: a live entry with a deliberate stamp newer than the delete resurrects (deliberate re-add)', () => {
+    const dead = tombstone<Contact>('x', 100);
+    const live = liveEntry('x', c('x', 'alice'), 200, 150);
     expect(mergeEntry(dead, live).deleted).toBeUndefined();
     expect(mergeEntry(dead, live).data!.name).toBe('alice');
+    expect(mergeEntry(live, dead).deleted).toBeUndefined();
+  });
+
+  it('#180: a deliberate stamp EQUAL to the delete does not resurrect — ambiguity resolves against resurrection', () => {
+    // Seconds-floored stamps: a re-add inside the same second as the delete
+    // ties, and equality cannot mean "after the delete".
+    const dead = tombstone<Contact>('x', 100);
+    const live = liveEntry('x', c('x', 'alice'), 150, 100);
+    expect(mergeEntry(dead, live).deleted).toBe(true);
+    expect(mergeEntry(live, dead).deleted).toBe(true);
+  });
+
+  it('#180: a deliberate stamp OLDER than the delete loses (deleted first, re-add proof predates it)', () => {
+    const dead = tombstone<Contact>('x', 300);
+    const live = liveEntry('x', c('x', 'alice'), 400, 200);
+    expect(mergeEntry(dead, live).deleted).toBe(true);
+    expect(mergeEntry(live, dead).deleted).toBe(true);
+  });
+
+  it('#180: live/live merges forward the greater deliberate stamp onto the winner (order-independent)', () => {
+    // Without max-forwarding, T⊕A⊕B reaches different answers in different
+    // fold orders (associativity break = permanent flapping).
+    const a = liveEntry('x', c('x', 'a'), 100, 150);
+    const b = liveEntry('x', c('x', 'b'), 200); // no stamp, newer updatedAt
+    expect(mergeEntry(a, b).data!.name).toBe('b');
+    expect(mergeEntry(a, b).deliberateAddAt).toBe(150);
+    expect(mergeEntry(b, a)).toEqual(mergeEntry(a, b));
+  });
+
+  it('#180: identical payloads on a tie are decided by the greater stamp, deterministically', () => {
+    const a = liveEntry('x', c('x', 'same'), 100, 150);
+    const b = liveEntry('x', c('x', 'same'), 100, 200);
+    expect(mergeEntry(a, b)).toEqual(mergeEntry(b, a));
+    expect(mergeEntry(a, b).deliberateAddAt).toBe(200);
   });
 
   it('on an exact timestamp tie the tombstone wins, in both argument orders', () => {
@@ -134,6 +179,38 @@ describe('mergeMaps — the case folders-sync gets wrong', () => {
     expect(remote).toEqual(remoteCopy);
   });
 
+  it('#180: converges across a three-device fold with stamps — every fold order agrees', () => {
+    // T = durable delete at 100. A = deliberate re-add (stamp 150, upd 300).
+    // B = stale client's auto-bumped live entry (upd 999, NO stamp).
+    const T: SyncMap<Contact> = {x: tombstone<Contact>('x', 100)};
+    const A: SyncMap<Contact> = {x: liveEntry('x', c('x', 'readded'), 300, 150)};
+    const B: SyncMap<Contact> = {x: liveEntry('x', c('x', 'stale'), 999)};
+
+    const viaTAB = mergeMaps(mergeMaps(T, A), B);
+    const viaTBA = mergeMaps(mergeMaps(T, B), A);
+    const viaABT = mergeMaps(mergeMaps(A, B), T);
+
+    // The deliberate re-add wins in every fold order — the delete is cleared,
+    // and the winning entry carries the stamp.
+    expect(viaTAB.x.deleted).toBeFalsy();
+    expect(viaTBA.x.deleted).toBeFalsy();
+    expect(viaABT.x.deleted).toBeFalsy();
+    expect(viaTAB.x.deliberateAddAt).toBe(150);
+    expect(viaTBA.x.deliberateAddAt).toBe(150);
+    expect(viaABT.x.deliberateAddAt).toBe(150);
+  });
+
+  it('#180: a stale client fresh-stamped live entry cannot clear a delete even when it is the ONLY live entry', () => {
+    // The exact resurrection loop #180 exists to stop: phone P (stale build)
+    // auto-bumps updatedAt on profile refresh, publishes live@999; every
+    // fixed device holds the durable delete and re-asserts the tombstone.
+    const fixed: SyncMap<Contact> = {x: tombstone<Contact>('x', 100)};
+    const stale: SyncMap<Contact> = {x: liveEntry('x', c('x', 'ghost'), 999)};
+    const merged = mergeMaps(fixed, stale);
+    expect(merged.x.deleted).toBe(true);
+    expect(liveItems(merged)).toHaveLength(0);
+  });
+
   it('converges across a three-device round trip', () => {
     const a: SyncMap<Contact> = {x: liveEntry('x', c('x', 'X'), 100)};
     const b: SyncMap<Contact> = {y: liveEntry('y', c('y', 'Y'), 110)};
@@ -207,6 +284,14 @@ describe('differs', () => {
     expect(differs(a, b)).toBe(false);
   });
 
+  it('#180: true when only the deliberate stamp differs — a stamp-only advance must republish', () => {
+    // Without this, a device would never learn a remote's deliberate re-add
+    // proof and would tear the re-added item back down on its next read().
+    const a: SyncMap<Contact> = {x: liveEntry('x', c('x', 'X'), 100)};
+    const b: SyncMap<Contact> = {x: liveEntry('x', c('x', 'X'), 100, 150)};
+    expect(differs(a, b)).toBe(true);
+  });
+
   it('a same-second tie loser on the relay IS republished (no silent divergence)', () => {
     // Regression for the review finding. Relay holds B's edit; this device holds
     // A's. They tie on updatedAt, so the merge picks a content-deterministic
@@ -253,6 +338,15 @@ describe('isValidEntry / sanitizeMap — remote content is untrusted', () => {
   it('accepts a well-formed live entry and tombstone', () => {
     expect(isValidEntry({id: 'x', updatedAt: 1, data: {}})).toBe(true);
     expect(isValidEntry({id: 'x', updatedAt: 1, deleted: true})).toBe(true);
+  });
+
+  it('#180: accepts a finite deliberateAddAt, rejects non-numeric or non-finite', () => {
+    expect(isValidEntry({id: 'x', updatedAt: 1, data: {}, deliberateAddAt: 150})).toBe(true);
+    expect(isValidEntry({id: 'x', updatedAt: 1, data: {}, deliberateAddAt: '150'})).toBe(false);
+    expect(isValidEntry({id: 'x', updatedAt: 1, data: {}, deliberateAddAt: NaN})).toBe(false);
+    // A tombstone carrying a stamp is meaningless but harmless — stamps only
+    // matter on live entries; validation stays shape-only, merge ignores it.
+    expect(isValidEntry({id: 'x', updatedAt: 1, deleted: true, deliberateAddAt: 150})).toBe(true);
   });
 
   it('drops only the bad entries, keeping the rest', () => {

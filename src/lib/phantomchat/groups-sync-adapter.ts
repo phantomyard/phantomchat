@@ -60,7 +60,11 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
       map[g.groupId] = {
         id: g.groupId,
         updatedAt: Math.floor((g.updatedAt ?? g.createdAt ?? 0) / 1000),
-        data: g
+        data: g,
+        // The user-intent proof (#180): stamped only by GroupAPI.createGroup
+        // (the user's own create gesture) and persisted from remote entries
+        // by apply(). Absent = unproven, which is the conservative answer.
+        ...(g.deliberateAddAt ? {deliberateAddAt: Math.floor(g.deliberateAddAt / 1000)} : {})
       };
     }
 
@@ -136,16 +140,31 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
 
     for(const [groupId, deletedAt] of deletes) {
       const liveEntry = map[groupId];
-      // A live record only outranks the delete when it is NEWER than it — a
-      // deliberate re-create. Strict compare: on an exact tie the DELETE wins,
-      // matching mergeEntry's invariant and the receive gates that reject
-      // timestampSec <= deletedAt. Timestamps are seconds-floored, so a live
-      // record updated earlier in the same second as the delete ties, and
-      // equality cannot mean a deliberate re-create.
-      if(liveEntry && liveEntry.updatedAt > deletedAt) continue;
-      // A live record that LOST to a DURABLE delete row is a resurrection:
+      // A live record clears the durable delete ONLY when its deliberate-add
+      // stamp is strictly NEWER than the delete (#180) — the user re-created
+      // the group after deleting it. A plain newer `updatedAt` no longer
+      // counts: automatic paths (handleGroupCreate replays, stale pre-#180
+      // clients) mint current timestamps without intent. A live group's delete
+      // stamp is always durable-sourced here (watermarks are skipped under a
+      // live record above — cleared-history rule), so the row being cleared IS
+      // the durable row the re-create outranks. Strict compare: seconds-floored
+      // stamps make equality ambiguous, and ambiguity resolves against
+      // resurrection.
+      if(
+        liveEntry &&
+        typeof liveEntry.deliberateAddAt === 'number' &&
+        liveEntry.deliberateAddAt > deletedAt
+      ) {
+        try {
+          await deps.clearDeletedGroup(groupId);
+        } catch(err) {
+          console.warn(tag, 'read: clearing durable delete for deliberate re-create failed', groupId, err);
+        }
+        continue;
+      }
+      // A live record without a deliberate-add proof is a resurrection:
       // remove it from the store, not just from the published map. With the
-      // strict compare a converged device reports `deleted: true` here, so
+      // stamp rule a converged device reports `deleted: true` here, so
       // `apply()` never runs (the engine skips it when merged == local) and
       // wasLive in apply() is false — leaving the teardown to apply() would
       // strand the resurrected group in the local store and chat list forever.
@@ -206,7 +225,12 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
         }
 
         // entry live — restore or update when the remote mutation is newer.
-        if(!wasLive || entry.updatedAt > prev.updatedAt) {
+        // A stamp-only advance (live/live merge forwarded the max stamp onto
+        // the winner) also fires, so the local record carries the proof (#180).
+        const stampAdvanced =
+          typeof entry.deliberateAddAt === 'number' &&
+          entry.deliberateAddAt > (prev?.deliberateAddAt ?? 0);
+        if(!wasLive || entry.updatedAt > prev.updatedAt || stampAdvanced) {
           if(!entry.data) continue;
           // A remote LIVE entry legitimately winning over a durable delete is
           // a deliberate re-create — drop the durable delete row (mirrors
@@ -215,7 +239,16 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
           if(prev?.deleted) await deps.clearDeletedGroup(id);
           // Pin updatedAt to the merged value (millis) so save() persists a
           // record whose read()-derived seconds match the remote → converged.
-          const record: GroupRecord = {...entry.data, updatedAt: entry.updatedAt * 1000};
+          // The record's deliberateAddAt comes from the entry-level stamp —
+          // it is the value that survived the merge (max-forwarded), and the
+          // data copy may lag it by a merge hop.
+          const record: GroupRecord = {
+            ...entry.data,
+            updatedAt: entry.updatedAt * 1000
+          };
+          if(typeof entry.deliberateAddAt === 'number') {
+            record.deliberateAddAt = entry.deliberateAddAt * 1000;
+          }
           await deps.upsertGroup(record);
         }
       } catch(err) {
@@ -228,4 +261,8 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
 }
 
 export const GROUPS_SYNC_D_TAG = 'phantomchat.chat/groups';
-export const GROUPS_SYNC_VERSION = 1;
+/** v2 (#180): entries may carry `deliberateAddAt`; a fresh `updatedAt` alone
+ * no longer clears a durable delete. v1 snapshots are still read (see
+ * CrdtSyncDeps.acceptedVersions) and republished at v2. */
+export const GROUPS_SYNC_VERSION = 2;
+export const GROUPS_SYNC_ACCEPTED_VERSIONS = [1, GROUPS_SYNC_VERSION];

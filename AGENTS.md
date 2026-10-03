@@ -109,6 +109,20 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    periodically, not only at boot — long-running devices must see siblings'
    deletes.
 
+12. **A fresh `updatedAt` NEVER resurrects a durable delete — only a
+   `deliberateAddAt` stamp can (#180).** Automatic paths (profile refresh,
+   message-path persistence, stale pre-#180 clients whose service worker
+   never updated) mint CURRENT timestamps without user intent, so the CRDT
+   merge (`mergeEntry`) lets a live entry clear a tombstone only when it
+   carries `deliberateAddAt > tombstone.updatedAt`. The stamp is minted
+   ONLY at user-gesture add paths (addP2PContact `deliberate: true`,
+   GroupAPI.createGroup) — never in storeMapping, handleGroupCreate, or sync
+   restores — and live/live merges max-forward it (order-independent across
+   three-device folds). Contacts/groups snapshots publish v2 and still READ
+   v1 (`acceptedVersions`); once v2 lands on a relay, v1 clients freeze out
+   (unknown version = never apply, never overwrite) — that quarantine is
+   deliberate: the stale client IS the resurrection poison source.
+
 ## Review checklist (reject a diff that does any of these on a hot path)
 
 - An `await` of a worker/IDB/network call placed *before* a paint or input echo.

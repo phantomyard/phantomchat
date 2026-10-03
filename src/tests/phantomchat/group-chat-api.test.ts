@@ -173,6 +173,16 @@ describe('GroupAPI', () => {
     expect(saved.members).toContain(MEMBER_B);
   });
 
+  it('#180: createGroup stamps the deliberate-add proof on the created record', async() => {
+    // Only the creator's own gesture may mint this stamp — it is what lets
+    // the group clear a durable delete in the groups CRDT merge. The receive
+    // path (handleGroupCreate) deliberately does not stamp.
+    await api.createGroup('Test Group', [MEMBER_A, MEMBER_B]);
+    const saved = mockGroupStore.save.mock.calls[0][0] as GroupRecord;
+    expect(typeof saved.deliberateAddAt).toBe('number');
+    expect(saved.deliberateAddAt! > 0).toBe(true);
+  });
+
   it('Test 2: createGroup broadcasts group_create control message', async() => {
     await api.createGroup('Test Group', [MEMBER_A, MEMBER_B]);
     expect(mockBroadcastGroupControl).toHaveBeenCalledTimes(1);
