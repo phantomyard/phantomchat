@@ -1016,4 +1016,330 @@ describe('Group Management', () => {
       }
     });
   });
+
+  // ─── Legacy rebind migration (#188 remainder) ─────────────────────
+  //
+  // #189 bound the admin into every NEW group id. Pre-existing groups keep
+  // legacy 32-hex ids, so their create/delete trust path is still the
+  // self-asserted one. The rebind migration moves a legacy group to a bound
+  // id: a `group_create` for the bound successor carrying `supersedesGroupId`.
+  // Design on issue #188 (issuecomment-5978742331).
+  describe('legacy rebind migration (#188 remainder)', () => {
+    const LEGACY_ID = GROUP_ID;
+    const BOUND_SUFFIX = 'e'.repeat(32);
+    const boundIdOf = (admin: string, suffix: string = BOUND_SUFFIX): string => admin + suffix;
+
+    function makeLegacyRecord(overrides: Partial<GroupRecord> = {}): GroupRecord {
+      return makeGroup({groupId: LEGACY_ID, adminPubkey: MEMBER_A, ...overrides});
+    }
+
+    function makeBoundRecord(boundId: string, overrides: Partial<GroupRecord> = {}): GroupRecord {
+      return makeGroup({
+        groupId: boundId,
+        adminPubkey: MEMBER_A,
+        supersededGroupIds: [LEGACY_ID],
+        reboundAt: 1700000000,
+        ...overrides
+      } as Partial<GroupRecord>);
+    }
+
+    /** store().get mock that answers per-groupId. */
+    function getAnswers(map: Record<string, GroupRecord | null>): void {
+      store().get.mockImplementation(async(gid: string) => map[gid] ?? null);
+    }
+
+    function makeSupersedeRumor(boundId: string, sender: string, createdSec: number, overrides: Partial<GroupControlPayload> = {}) {
+      const payload: GroupControlPayload = {
+        type: 'group_create',
+        groupId: boundId,
+        groupName: 'Migrated Group',
+        adminPubkey: sender,
+        memberPubkeys: [MEMBER_A, MEMBER_B, OWN_PUBKEY],
+        supersedesGroupId: LEGACY_ID,
+        ...overrides
+      };
+      return {
+        rumor: {
+          id: `ctrl-supersede-${boundId.slice(-6)}`, kind: 14,
+          content: JSON.stringify(payload),
+          pubkey: sender, created_at: createdSec,
+          tags: [['control', 'true'], ['group', boundId]]
+        },
+        payload
+      };
+    }
+
+    async function seedLegacyMessage(): Promise<void> {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      await getMessageStore().saveMessage({
+        eventId: 'legacy-msg-1', conversationId: `group:${LEGACY_ID}`,
+        senderPubkey: MEMBER_A, content: 'pre-migration history', type: 'text',
+        timestamp: 1700000000, deliveryState: 'delivered', mid: 1001,
+        twebPeerId: -2000000000000001, isOutgoing: false
+      });
+    }
+
+    beforeEach(() => {
+      store().getAll.mockResolvedValue([]);
+    });
+
+    it('rebindLegacyGroup mints a bound id, migrates state and durably kills the legacy id', async() => {
+      getAnswers({[LEGACY_ID]: makeLegacyRecord({adminPubkey: OWN_PUBKEY, members: [MEMBER_A, MEMBER_B, OWN_PUBKEY]})});
+      localStorage.setItem('phantomchat:group-wm:' + LEGACY_ID + ':members', '1700000500');
+      await seedLegacyMessage();
+
+      await api.rebindLegacyGroup(LEGACY_ID);
+
+      // Broadcast carries the supersede claim + full membership.
+      expect(broadcast()).toHaveBeenCalledTimes(1);
+      const payload = broadcast().mock.calls[0][2] as GroupControlPayload;
+      expect(payload.type).toBe('group_create');
+      expect(payload.supersedesGroupId).toBe(LEGACY_ID);
+      expect(payload.memberPubkeys).toContain(MEMBER_B);
+      // New id is bound to the rebind initiator (admin).
+      expect(payload.groupId).toMatch(new RegExp('^' + OWN_PUBKEY + '[0-9a-f]{32}$'));
+
+      // New record: same membership, supersedes link recorded.
+      const savedCalls = store().save.mock.calls.map((c: any[]) => c[0] as GroupRecord);
+      const newRecord = savedCalls.find((r) => r.groupId === payload.groupId);
+      expect(newRecord).toBeDefined();
+      expect(newRecord!.adminPubkey).toBe(OWN_PUBKEY);
+      expect(newRecord!.supersededGroupIds).toEqual([LEGACY_ID]);
+      expect(newRecord!.reboundAt).toEqual(expect.any(Number));
+
+      // History re-keyed BEFORE the legacy teardown purged it.
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const migrated = await getMessageStore().getMessages('group:' + payload.groupId);
+      expect(migrated.some((m) => m.eventId === 'legacy-msg-1')).toBe(true);
+      // Legacy conversation is purged + tombstoned by the teardown.
+      expect(await getMessageStore().getTombstone('group:' + LEGACY_ID)).toBeGreaterThan(0);
+
+      // Watermarks follow the group.
+      expect(localStorage.getItem('phantomchat:group-wm:' + payload.groupId + ':members')).toBe('1700000500');
+
+      // Durable delete for the legacy id, ordered before its store delete.
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(LEGACY_ID, expect.any(Number));
+      expect(store().delete).toHaveBeenCalledWith(LEGACY_ID);
+      const durableOrder = store().recordDeletedGroup.mock.invocationCallOrder[0];
+      const deleteOrder = store().delete.mock.invocationCallOrder.find(
+        (o: number) => o > durableOrder
+      );
+      expect(durableOrder).toBeLessThan(deleteOrder);
+    });
+
+    it('rebindLegacyGroup is admin-only and legacy-only', async() => {
+      // Not admin of the legacy group → refuses.
+      getAnswers({[LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A})});
+      await expect(api.rebindLegacyGroup(LEGACY_ID)).rejects.toThrow(/admin/i);
+      expect(broadcast()).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+
+      // Already-bound group → nothing to do.
+      const boundId = boundIdOf(MEMBER_A);
+      getAnswers({[boundId]: makeBoundRecord(boundId, {adminPubkey: OWN_PUBKEY})});
+      await expect(api.rebindLegacyGroup(boundId)).rejects.toThrow(/bound/i);
+
+      // No record at all → refuses.
+      getAnswers({});
+      await expect(api.rebindLegacyGroup(LEGACY_ID)).rejects.toThrow();
+    });
+
+    it('supersede create from the legacy admin migrates a live legacy record', async() => {
+      const boundId = boundIdOf(MEMBER_A);
+      getAnswers({
+        [LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A}),
+        [boundId]: null
+      });
+      await seedLegacyMessage();
+      const {rumor} = makeSupersedeRumor(boundId, MEMBER_A, Math.floor(Date.now() / 1000) - 10);
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      const saved = store().save.mock.calls.map((c: any[]) => c[0] as GroupRecord)
+        .find((r) => r.groupId === boundId);
+      expect(saved).toBeDefined();
+      expect(saved!.supersededGroupIds).toEqual([LEGACY_ID]);
+      expect(saved!.reboundAt).toBe(Math.floor(Date.now() / 1000) - 10);
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(LEGACY_ID, expect.any(Number));
+      expect(store().delete).toHaveBeenCalledWith(LEGACY_ID);
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const migrated = await getMessageStore().getMessages('group:' + boundId);
+      expect(migrated.some((m) => m.eventId === 'legacy-msg-1')).toBe(true);
+    });
+
+    it('supersede create from a NON-admin cannot hijack a legacy group (anti-hijack)', async() => {
+      const attackerBoundId = boundIdOf(MEMBER_B, 'f'.repeat(32));
+      getAnswers({
+        [LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A}),
+        [attackerBoundId]: null
+      });
+      const {rumor, payload} = makeSupersedeRumor(attackerBoundId, MEMBER_B, Math.floor(Date.now() / 1000) - 10);
+
+      await api.handleControlMessage(rumor, MEMBER_B);
+
+      // Nothing stored for the attacker's id, nothing torn down.
+      expect(store().save.mock.calls.map((c: any[]) => c[0].groupId)).not.toContain(attackerBoundId);
+      expect(store().delete).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      // The broadcast payload naming the attacker's own bound id was still
+      // a create — but the legacy group must be untouched.
+      expect(payload.supersedesGroupId).toBe(LEGACY_ID);
+    });
+
+    it('supersede create with a LEGACY successor id is rejected', async() => {
+      // Successor must be bound — a legacy id superseding a legacy id keeps
+      // the unbound trust path and is rejected outright.
+      const otherLegacyId = '0123456789abcdef0123456789abcdef00';
+      getAnswers({[LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A})});
+      const {rumor} = makeSupersedeRumor(otherLegacyId, MEMBER_A, Math.floor(Date.now() / 1000) - 10);
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      expect(store().save).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+    });
+
+    it('supersede create with no local legacy record lands as a plain bound create', async() => {
+      const boundId = boundIdOf(MEMBER_A);
+      getAnswers({[boundId]: null});
+      const {rumor} = makeSupersedeRumor(boundId, MEMBER_A, Math.floor(Date.now() / 1000) - 10);
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      // Bound-id create from the id-bound admin (post-#189 path) — stored,
+      // carrying the supersedes link so late legacy traffic remaps.
+      expect(store().save).toHaveBeenCalledTimes(1);
+      const saved = store().save.mock.calls[0][0] as GroupRecord;
+      expect(saved.groupId).toBe(boundId);
+      expect(saved.supersededGroupIds).toEqual([LEGACY_ID]);
+      // No legacy record existed — nothing to tear down.
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+    });
+
+    it('competing rebinds converge deterministically on the greater (reboundAt, groupId)', async() => {
+      const winner = boundIdOf(MEMBER_A, 'f'.repeat(32));
+      const loser = boundIdOf(MEMBER_A, '1'.repeat(32));
+      const now = Math.floor(Date.now() / 1000);
+
+      // We already hold a rebound successor (ts = now-100); a NEWER competing
+      // rebind (ts = now-10) wins and we migrate to it.
+      getAnswers({[loser]: makeBoundRecord(loser, {reboundAt: now - 100})});
+      store().getAll.mockResolvedValue([makeBoundRecord(loser, {reboundAt: now - 100})]);
+      const {rumor: newerRumor} = makeSupersedeRumor(winner, MEMBER_A, now - 10);
+      await api.handleControlMessage(newerRumor, MEMBER_A);
+      expect(store().save.mock.calls.map((c: any[]) => c[0].groupId)).toContain(winner);
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(loser, expect.any(Number));
+
+      // Reset and reverse: the incoming rebind is OLDER — ignored.
+      vi.clearAllMocks();
+      const boundLoser = makeBoundRecord(loser, {reboundAt: now - 10});
+      getAnswers({[loser]: boundLoser});
+      store().getAll.mockResolvedValue([boundLoser]);
+      const {rumor: olderRumor} = makeSupersedeRumor(winner, MEMBER_A, now - 100);
+      await api.handleControlMessage(olderRumor, MEMBER_A);
+      expect(store().save).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+    });
+
+    it('echo of an already-applied supersede create stays idempotent and still reconciles a resurrected legacy record', async() => {
+      const boundId = boundIdOf(MEMBER_A);
+      // The successor record already exists (own device synced it / relay
+      // echo), AND a stale live legacy record coexists (e.g. #180 deliberate
+      // stamp let it win a merge against the legacy durable row).
+      const bound = makeBoundRecord(boundId);
+      getAnswers({
+        [boundId]: bound,
+        [LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A})
+      });
+      const {rumor} = makeSupersedeRumor(boundId, MEMBER_A, Math.floor(Date.now() / 1000) - 10);
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      // No duplicate save of the successor…
+      expect(store().save).not.toHaveBeenCalled();
+      // …but the resurrected legacy record is torn down (successor presence
+      // is itself the delete fact for the legacy id).
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(LEGACY_ID, expect.any(Number));
+      expect(store().delete).toHaveBeenCalledWith(LEGACY_ID);
+    });
+
+    it('late group messages addressed to the legacy id are remapped into the rebound conversation', async() => {
+      const boundId = boundIdOf(MEMBER_A);
+      const bound = makeBoundRecord(boundId);
+      getAnswers({[boundId]: bound});
+      store().getAll.mockResolvedValue([bound]);
+
+      let seenGroupId: string | null = null;
+      api.onGroupMessage = (gid: string) => { seenGroupId = gid; };
+
+      api.handleIncomingGroupMessage(LEGACY_ID, {
+        id: 'late-legacy-msg', kind: 14,
+        content: JSON.stringify({id: 'late-legacy-msg'}),
+        pubkey: MEMBER_A, created_at: Math.floor(Date.now() / 1000),
+        tags: []
+      }, MEMBER_A);
+
+      await vi.waitFor(() => expect(seenGroupId).toBe(boundId));
+      api.onGroupMessage = null;
+    });
+
+    it('reconcileSupersededGroups tears down a live legacy record whose successor already exists', async() => {
+      const boundId = boundIdOf(MEMBER_A);
+      const bound = makeBoundRecord(boundId);
+      getAnswers({
+        [boundId]: bound,
+        [LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A})
+      });
+      store().getAll.mockResolvedValue([bound, makeLegacyRecord()]);
+
+      await api.reconcileSupersededGroups();
+
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(LEGACY_ID, expect.any(Number));
+      expect(store().delete).toHaveBeenCalledWith(LEGACY_ID);
+      expect(store().delete).not.toHaveBeenCalledWith(boundId);
+    });
+
+    it('reconcileSupersededGroups ignores a forged successor whose admin does not match the legacy record', async() => {
+      const forgedBound = boundIdOf(MEMBER_B, 'f'.repeat(32));
+      const forged = makeBoundRecord(forgedBound, {adminPubkey: MEMBER_B});
+      getAnswers({
+        [forgedBound]: forged,
+        [LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A})
+      });
+      store().getAll.mockResolvedValue([forged, makeLegacyRecord()]);
+
+      await api.reconcileSupersededGroups();
+
+      // The attacker's bound group claims our legacy id, but its admin is not
+      // the legacy admin — the claim fails and the legacy record survives.
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect(store().delete).not.toHaveBeenCalled();
+    });
+
+    it('rebindAllLegacyGroups rebinds only legacy groups this device admins', async() => {
+      const foreignLegacy = '1111111122223333aabbccddeeff00112233'.slice(0, 32);
+      const alreadyBound = boundIdOf(OWN_PUBKEY, 'a'.repeat(32));
+      const mine = makeGroup({
+        groupId: LEGACY_ID, adminPubkey: OWN_PUBKEY,
+        members: [MEMBER_A, OWN_PUBKEY]
+      });
+      const foreign = makeGroup({groupId: foreignLegacy, adminPubkey: MEMBER_A});
+      const bound = makeGroup({groupId: alreadyBound, adminPubkey: OWN_PUBKEY});
+      getAnswers({
+        [LEGACY_ID]: mine,
+        [foreignLegacy]: foreign,
+        [alreadyBound]: bound
+      });
+      store().getAll.mockResolvedValue([mine, foreign, bound]);
+
+      const count = await api.rebindAllLegacyGroups();
+
+      expect(count).toBe(1);
+      expect(broadcast()).toHaveBeenCalledTimes(1);
+      const payload = broadcast().mock.calls[0][2] as GroupControlPayload;
+      expect(payload.supersedesGroupId).toBe(LEGACY_ID);
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(LEGACY_ID, expect.any(Number));
+      expect(store().recordDeletedGroup).not.toHaveBeenCalledWith(foreignLegacy);
+    });
+  });
 });

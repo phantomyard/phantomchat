@@ -47,6 +47,12 @@ export interface GroupControlPayload {
   memberPubkeys?: string[];
   targetPubkey?: string;
   adminPubkey?: string;
+  // Rebind migration (#188 remainder): a bound-id group_create that
+  // SUPERSEDES a legacy (pre-#188, 32-hex) group id. Receivers that hold a
+  // live record for the legacy id verify the sender against THAT record's
+  // admin before migrating — the bound id authenticates the create, the
+  // receiver's own record authenticates the supersede claim.
+  supersedesGroupId?: string;
   // Edit-message fields (type === 'group_edit_message'):
   // `targetEventId` is the rumor id of the original message (= store row eventId).
   // `newText` is the post-edit content. `editedAt` is unix seconds.
@@ -79,6 +85,17 @@ export interface GroupRecord {
    * persists the origin's entry-level stamp instead. Never backfilled.
    */
   deliberateAddAt?: number;
+  /**
+   * Legacy-id rebind (#188): ids of the pre-#188 groups this record
+   * migrated from. Late relay traffic addressed to a superseded id remaps
+   * to this record (messages), and a live record for a superseded id is
+   * torn down once this successor exists.
+   */
+  supersededGroupIds?: string[];
+  /** Unix-seconds stamp of the rebind that minted this record — the
+   * deterministic winner tuple (reboundAt, groupId) settles competing
+   * rebinds from two of the admin's devices without a coordinator. */
+  reboundAt?: number;
 }
 
 // ─── Group Delivery Info ────────────────────────────────────────────
