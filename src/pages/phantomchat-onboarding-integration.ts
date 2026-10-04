@@ -37,6 +37,7 @@ import {getAllMappings, setMappingDisplayName, setMappingUpdatedAt, setDeliberat
 import {getMessageStore} from '@lib/phantomchat/message-store';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
+import {createConversationResidueWipe} from '@lib/phantomchat/contacts-residue-wipe';
 import {addP2PContact} from '@lib/phantomchat/add-p2p-contact';
 import {writeGroupCreateServiceMessage} from '@lib/phantomchat/group-service-messages';
 import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection} from '@lib/phantomchat/phantomchat-groups-sync';
@@ -476,7 +477,22 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             // the wire → millis in the mapping store). Monotonic at the store layer.
             setDeliberateAddAt: (pubkey, sec) => setDeliberateAddAt(pubkey, sec * 1000),
             removeContact: (pubkey) => removeMapping(pubkey),
-            setTombstone: (convId, sec) => store.setTombstone(convId, sec)
+            setTombstone: (convId, sec) => store.setTombstone(convId, sec),
+            // (#198) read() self-heal: a delete learned from sync used to
+            // tear down the mapping but leave the message-store rows (incl.
+            // the contact-init seed) that DERIVE the contact + dialog, so
+            // the deleted chat stayed on screen forever. Idempotent; the
+            // dialog-drop dispatch fires even when the store is empty
+            // (Kai review 2026-10-04 — implementation + tests live in
+            // contacts-residue-wipe.ts).
+            wipeConversationResidue: createConversationResidueWipe({
+              ownPubkey,
+              getConversationId: (a, b) => store.getConversationId(a, b),
+              getMessages: (convId, limit) => store.getMessages(convId, limit),
+              deleteMessages: (convId) => store.deleteMessages(convId),
+              loadRootScope: async() => (await import('@lib/rootScope')).default,
+              log: console.log
+            })
           });
 
           const groupsAdapter = createGroupsAdapter({
@@ -563,6 +579,12 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             try {
               const {getGroupAPI} = await import('@lib/phantomchat/group-api');
               await getGroupAPI().reconcileSupersededGroups();
+              // (#198) Post-convergence chat-list heal: records are now the
+              // definitive merged CRDT state, so any remaining group-range
+              // dialog without a live record is an orphan left by an older
+              // teardown — drop its persisted row. Runs after the reconcile so
+              // it never fires on a store that hasn't synced yet (fresh device).
+              await getGroupAPI().dropOrphanGroupDialogs();
             } catch(e) {
               console.warn('[groups-sync] post-reconcile convergence failed', e);
             }

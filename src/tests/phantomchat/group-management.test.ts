@@ -1635,6 +1635,67 @@ describe('Group Management', () => {
       expect(store().recordDeletedGroup).not.toHaveBeenCalled();
     });
 
+    it('reconcileSupersededGroups flags an UNLINKED twin but NEVER converges it (#199 review: no positive lineage exists)', async() => {
+      // The observed-live state on the Phantomyard group: two records, same
+      // id-derived admin, same name, identical member set — one a linked
+      // rebind successor (supersededGroupIds + reboundAt), the other with NO
+      // provenance (minted by a replayed create path). resolveCompetingSuccessors
+      // matches on a shared legacy id, so it can never see this pair.
+      //
+      // Kai review (#199): destructive convergence needs POSITIVE shared
+      // lineage, and an unlinked twin has none — admin/name/members equality
+      // is exactly reproduced by a legitimate second group (review regression),
+      // deliberateAddAt only proves absence-of-deliberate-create on THIS
+      // device (a relay-received create is unstamped until its CRDT entry
+      // applies), and shared eventIds are structurally impossible (the store
+      // upserts by a UNIQUE eventId index — one event id lives in exactly one
+      // conversation). The sweep therefore flags and leaves the record alone;
+      // the admin deletes the duplicate manually if it is one.
+      const winner = boundIdOf(MEMBER_A, '5'.repeat(32));
+      const twin = boundIdOf(MEMBER_A, '0'.repeat(32));
+      const winnerRec = makeBoundRecord(winner, {reboundAt: 1700000100});
+      const twinRec = makeGroup({groupId: twin, adminPubkey: MEMBER_A});
+      getAnswers({[winner]: winnerRec, [twin]: twinRec, [LEGACY_ID]: null});
+      store().getAll.mockResolvedValue([winnerRec, twinRec]);
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      await ms.clearTombstone(`group:${winner}`);
+      await ms.clearTombstone(`group:${twin}`);
+      // The twin collected a message post-divergence — convergence would have
+      // rekeyed it into the winner; it must stay exactly where it is.
+      await ms.saveMessage({
+        eventId: 'twin-msg-1', conversationId: `group:${twin}`,
+        senderPubkey: MEMBER_A, content: 'sent from the twin', type: 'text',
+        timestamp: 1700000300, deliveryState: 'delivered', mid: 3101,
+        twebPeerId: -2000000000000002, isOutgoing: false
+      });
+
+      await api.reconcileSupersededGroups();
+
+      // Detection-only: NO teardown, NO durable delete, NO rekey.
+      expect(store().delete).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect((await ms.getMessages(`group:${twin}`, 100)).length).toBe(1);
+      expect((await ms.getMessages(`group:${winner}`, 100)).length).toBe(0);
+    });
+
+    it('the unlinked-twin sweep never touches a distinct group (different members) (#198 safety)', async() => {
+      const winner = boundIdOf(MEMBER_A, '5'.repeat(32));
+      const distinct = boundIdOf(MEMBER_A, '0'.repeat(32));
+      const winnerRec = makeBoundRecord(winner, {reboundAt: 1700000100});
+      const distinctRec = makeGroup({
+        groupId: distinct, adminPubkey: MEMBER_A,
+        members: [MEMBER_A, MEMBER_B, OWN_PUBKEY, 'd'.repeat(64)]
+      });
+      getAnswers({[winner]: winnerRec, [distinct]: distinctRec, [LEGACY_ID]: null});
+      store().getAll.mockResolvedValue([winnerRec, distinctRec]);
+
+      await api.reconcileSupersededGroups();
+
+      expect(store().delete).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+    });
+
     it('a supersede create arriving AFTER its record synced still converges competing successors', async() => {
       // Member device: both successor records already synced in (both live),
       // and the relay now replays the supersede create for the newer one.

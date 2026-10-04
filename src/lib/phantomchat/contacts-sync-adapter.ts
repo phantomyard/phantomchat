@@ -75,6 +75,15 @@ export type ContactsAdapterDeps = {
   setDeliberateAddAt: (pubkey: string, deliberateAddAtSeconds: number) => Promise<void>;
   removeContact: (pubkey: string) => Promise<void>;
   setTombstone: (conversationId: string, deletedAtSeconds: number) => Promise<void>;
+  /** (#198) Wipe conversation residue for a durably-deleted peer — messages
+   * AND the dialog. The contact list and dialogs are DERIVED from
+   * message-store rows (getAllConversationIds, incl. the synthetic
+   * `contact-init-<pubkey>` seed row), so a delete learned from sync that
+   * only tears down the mapping leaves a residue row that keeps re-deriving
+   * the chat forever. Must be idempotent (read() runs it on every reconcile
+   * pass) and no-op when the conversation already has nothing to clean.
+   * Optional so existing tests/wiring keep working. */
+  wipeConversationResidue?: (peerPubkey: string) => Promise<void>;
   logPrefix?: string;
 };
 
@@ -123,9 +132,14 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
     // "cleared history" — so watermarks only contribute for peers with no live
     // mapping, and only durable rows may tear a resurrected mapping down.
     const deletes = new Map<string, number>();
+    // (#198) Durable-log peers only — the residue wipe below must never fire
+    // on a watermark-sourced delete (that may be cleared history, not a
+    // contact delete).
+    const durableDeletes = new Set<string>();
     for(const d of await deps.listDeletedPeers()) {
       if(!HEX64.test(d.pubkey) || !(d.deletedAt > 0)) continue;
       deletes.set(d.pubkey, Math.max(deletes.get(d.pubkey) ?? 0, d.deletedAt));
+      durableDeletes.add(d.pubkey);
     }
 
     const own = deps.getOwnPubkey();
@@ -180,6 +194,21 @@ export function createContactsAdapter(deps: ContactsAdapterDeps): LocalAdapter<C
         }
       }
       map[peer] = {id: peer, updatedAt: deletedAt, deleted: true};
+
+      // (#198) Residue wipe. apply() only fires when the merge is a no-op
+      // skip, so a converged blob never re-ticks the deleted entry and the
+      // mapping teardown never runs again — yet the message-store rows that
+      // DERIVE the contact/dialog stay behind (incl. contact-init seeds).
+      // read() runs on every reconcile pass, making this the natural place
+      // to self-heal residue for every durably-deleted peer, no migration
+      // needed. Watermark-only deletes must NOT wipe (cleared-history rule).
+      if(durableDeletes.has(peer) && deps.wipeConversationResidue) {
+        try {
+          await deps.wipeConversationResidue(peer);
+        } catch(err) {
+          console.warn(tag, 'read: conversation residue wipe failed', peer, err);
+        }
+      }
     }
 
     return map;

@@ -19,6 +19,7 @@ type Calls = {
   deletedRows: Array<{pubkey: string; deletedAt: number}>;
   undeleted: string[];
   stamped: Array<{pubkey: string; deliberateAddAt: number}>;
+  wiped: string[];
 };
 
 function makeDeps(
@@ -27,7 +28,7 @@ function makeDeps(
   own: string | null = OWN,
   deletedRows: Array<{pubkey: string; deletedAt: number}> = []
 ): {deps: ContactsAdapterDeps; calls: Calls} {
-  const calls: Calls = {added: [], renamed: [], pinned: [], removed: [], tombstoned: [], deletedRows: [], undeleted: [], stamped: []};
+  const calls: Calls = {added: [], renamed: [], pinned: [], removed: [], tombstoned: [], deletedRows: [], undeleted: [], stamped: [], wiped: []};
   const durable = new Map(deletedRows.map((r) => [r.pubkey, r.deletedAt]));
   const deps: ContactsAdapterDeps = {
     getOwnPubkey: () => own,
@@ -48,7 +49,8 @@ function makeDeps(
     setUpdatedAt: async(pubkey, updatedAt) => { calls.pinned.push({pubkey, updatedAt}); },
     setDeliberateAddAt: async(pubkey, deliberateAddAt) => { calls.stamped.push({pubkey, deliberateAddAt}); },
     removeContact: async(pubkey) => { calls.removed.push(pubkey); },
-    setTombstone: async(conversationId, deletedAt) => { calls.tombstoned.push({conversationId, deletedAt}); }
+    setTombstone: async(conversationId, deletedAt) => { calls.tombstoned.push({conversationId, deletedAt}); },
+    wipeConversationResidue: async(pubkey) => { calls.wiped.push(pubkey); }
   };
   return {deps, calls};
 }
@@ -197,6 +199,39 @@ describe('contacts adapter read()', () => {
     const live = (await createContactsAdapter(deps).read())[A];
     const del = {updatedAt: 6000, deleted: true};
     expect(del.updatedAt).toBeGreaterThan(live.updatedAt); // delete correctly wins
+  });
+
+  describe('#198 conversation residue wipe', () => {
+    it('wipes residue for a peer whose delete is backed by the DURABLE log', async() => {
+      // Durable row present, mapping gone (the converged post-delete state):
+      // read() re-derives the delete every pass — the wipe must fire so the
+      // message-store rows that DERIVE the contact/dialog get cleaned.
+      const {deps, calls} = makeDeps([], [], OWN, [{pubkey: A, deletedAt: 4242}]);
+      await createContactsAdapter(deps).read();
+      expect(calls.wiped).toEqual([A]);
+    });
+
+    it('does NOT wipe on a watermark-only delete (may be cleared history)', async() => {
+      // Tombstone present, no mapping, NO durable row — the watermark may
+      // only mean cleared history; the residue wipe is durable-log-only.
+      const {deps, calls} = makeDeps([], [{conversationId: convId(OWN, A), deletedAt: 4242}]);
+      await createContactsAdapter(deps).read();
+      expect(calls.wiped).toEqual([]);
+    });
+
+    it('does not wipe when a deliberate re-add outranks the delete', async() => {
+      // deliberateAddAt 9_000_000ms = 9000s > delete 4242s — the contact is
+      // live again; the durable row is cleared and nothing is wiped.
+      const {deps, calls} = makeDeps(
+        [mapping(A, 6_000_000, 'Alice', 9_000_000)],
+        [],
+        OWN,
+        [{pubkey: A, deletedAt: 4242}]
+      );
+      await createContactsAdapter(deps).read();
+      expect(calls.undeleted).toEqual([A]); // durable row cleared
+      expect(calls.wiped).toEqual([]);      // contact is live again — no wipe
+    });
   });
 });
 

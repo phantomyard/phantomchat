@@ -21,6 +21,7 @@ import {logger} from '@lib/logger';
 import rootScope from '@lib/rootScope';
 import sessionStorage from '@lib/sessionStorage';
 import apiManagerProxy from '@lib/apiManagerProxy';
+import {isDesktopApp} from '@lib/phantomchat/desktop-api';
 
 export type AppInstance = {
   id: number,
@@ -168,10 +169,22 @@ export class SingleInstance extends EventListenerBase<{
     ]);
 
     if(build > App.build) {
-      this.masterInstance = false;
-      rootScope.managers.all.networkerFactory.stopAll();
-      this.deactivateInstance('version');
-      apiManagerProxy.toggleStorages(false, false);
+      // Desktop (#198): the profile is SHARED between installs — a newer
+      // AppImage writes k_build, then the installed (older) deb runs again.
+      // On the web a higher stored build means another tab has a newer bundle
+      // and this tab must yield; in a desktop app there IS no other tab — the
+      // running binary is the authority on its own version. Yielding here
+      // bricks the app behind the "app updated — click anywhere to reload"
+      // takeover that reloads into the same compare forever. Overwrite the
+      // stored value and boot normally.
+      if(isDesktopApp()) {
+        sessionStorage.set({k_build: App.build});
+      } else {
+        this.masterInstance = false;
+        rootScope.managers.all.networkerFactory.stopAll();
+        this.deactivateInstance('version');
+        apiManagerProxy.toggleStorages(false, false);
+      }
       return;
     } else if(IS_MULTIPLE_TABS_SUPPORTED) {
       sessionStorage.set({xt_instance: newInstance});

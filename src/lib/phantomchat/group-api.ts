@@ -12,7 +12,7 @@
 import {Logger, logger} from '@lib/logger';
 import rootScope from '@lib/rootScope';
 import {getGroupStore} from './group-store';
-import {groupIdToPeerId} from './group-types';
+import {groupIdToPeerId, isGroupPeer} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
@@ -845,27 +845,19 @@ export class GroupAPI {
     await this.tombstoneGroupConversation(groupId, deletedAt);
     await cleanupGroupChatInjection(peerId);
 
-    // Drop the chat-list dialog row (FIND-3786a35f obs (D)). tweb's
-    // autonomousDialogList gates on `d._ === 'dialog'`, so a bare {peerId}
-    // fails the guard and the row stays in the DOM — dispatch a minimal
-    // Dialog-shaped envelope so it deletes by getDialogKey(dialog) = peerId.
+    // Drop the chat-list dialog row — INCLUDING its persisted tweb cache row
+    // (issue #198 dogfood finding). The old dispatch of a synthetic 'dialog_drop'
+    // envelope only flushed the message storages (the event listener in
+    // appMessagesManager calls flushStoragesByPeerId and nothing else), so the
+    // dialogs row in tweb-account-N survived and re-rendered the dead group on
+    // every boot. dropDialogOnDeletion removes the row from memory, folders and
+    // the persistent dialogs storage, and dispatches a REAL 'dialog_drop' event
+    // with the actual Dialog object — same path the native delete-chat UI uses.
     const groupPeerIdAsDialogPeerId = peerId.toPeerId(true);
     try {
-      rootScope.dispatchEvent('dialog_drop' as any, {
-        _: 'dialog',
-        peerId: groupPeerIdAsDialogPeerId,
-        peer: {_: 'peerChat', chat_id: Math.abs(peerId)},
-        top_message: 0,
-        read_inbox_max_id: 0,
-        read_outbox_max_id: 0,
-        unread_count: 0,
-        unread_mentions_count: 0,
-        unread_reactions_count: 0,
-        notify_settings: {_: 'peerNotifySettings', pFlags: {}},
-        pFlags: {}
-      } as any);
+      rootScope.managers.dialogsStorage.dropDialogOnDeletion(groupPeerIdAsDialogPeerId);
     } catch(err) {
-      this.log.warn('[GroupAPI] teardownGroupLocally: dialog_drop dispatch non-critical:', err);
+      this.log.warn('[GroupAPI] teardownGroupLocally: dialog row drop non-critical:', err);
     }
   }
 
@@ -1847,6 +1839,67 @@ export class GroupAPI {
    * with a spoofed field and a claimed supersededGroupIds enters the CRDT
    *  union, and must never be able to drive the sweep (Lena review
    * 2026-10-04). Only bound successors may drive it at all. */
+  /** (#198) Converge UNLINKED twins: a live record that carries no rebind
+   *  provenance (no supersededGroupIds, no reboundAt) but is otherwise an
+   *  exact twin of a live linked rebind successor — same id-derived admin,
+   *  same name, identical member set. resolveCompetingSuccessors can never
+   *  see these pairs because it matches on a shared legacy id in
+   *  supersededGroupIds, and the unlinked twin (minted by a replayed create
+   *  path) claims none — observed live: two "Phantomyard" records, one with
+   *  provenance, one without, coexisting forever.
+   *
+   *  (#199 review, Kai blocker) This sweep is DETECTION-ONLY — it never
+   *  converges. Destructive convergence needs POSITIVE shared lineage, and
+   *  for an unlinked twin none exists: record fields (admin/name/members)
+   *  are mutable presentation data a legitimate second group by the same
+   *  admin reproduces exactly (proven by review regression), deliberateAddAt
+   *  only proves absence-of-deliberate-create on THIS device (a relay-received
+   *  create is locally unstamped until its CRDT entry applies), and shared
+   *  eventIds are structurally impossible — the message store upserts by a
+   *  UNIQUE eventId index, so one event id lives in exactly ONE conversation
+   *  and two conversations can never intersect. With no positive proof, a
+   *  teardown would be a guess that can destroy a legitimate group — so the
+   *  candidate is flagged in the log for manual deletion (native group delete
+   * is durable and syncs) and left strictly alone. Fail-safe direction: a
+   *  duplicate may survive; a distinct group is never destroyed. */
+  private async convergeUnlinkedTwinSuccessors(): Promise<void> {
+    let all: GroupRecord[];
+    try {
+      all = await this.store.getAll();
+    } catch{
+      return;
+    }
+    const linked = all.filter((r) =>
+      (r.supersededGroupIds ?? []).length > 0 &&
+      r.reboundAt &&
+      boundGroupAdmin(r.groupId)
+    );
+    if(linked.length === 0) return;
+    for(const winner of linked) {
+      const admin = boundGroupAdmin(winner.groupId);
+      const winnerMembers = [...winner.members].sort().join(',');
+      for(const twin of all) {
+        if(twin.groupId === winner.groupId) continue;
+        // no provenance of its own — a deliberate rebind or a linked
+        // successor is NEVER a twin candidate.
+        if((twin.supersededGroupIds ?? []).length > 0 || twin.reboundAt) continue;
+        if(boundGroupAdmin(twin.groupId) !== admin) continue;
+        if(twin.name !== winner.name) continue;
+        if([...twin.members].sort().join(',') !== winnerMembers) continue;
+        // vanished since the sweep started (a rival pass already retired it)
+        if(!(await this.store.get(twin.groupId))) continue;
+        // (#199 review) DETECTED but never converged — see doc block. The
+        // admin can delete the duplicate with the native (durable, synced)
+        // group delete; nothing here may guess it away.
+        this.log.warn(
+          '[GroupAPI] unlinked twin candidate of linked successor', winner.groupId.slice(-8),
+          '— same admin/name/members but NO positive lineage; NOT converging.',
+          'Delete the unwanted duplicate manually if it is not a distinct group:', twin.groupId.slice(-8)
+        );
+      }
+    }
+  }
+
   async reconcileSupersededGroups(): Promise<void> {
     let all: GroupRecord[];
     try {
@@ -1874,6 +1927,62 @@ export class GroupAPI {
           await this.teardownGroupLocally(supersededId);
         }
       }
+    }
+    // (#198) Then the unlinked twins — they share no legacy id with any
+    // successor, so the legacy-id sweep above can never reach them.
+    await this.convergeUnlinkedTwinSuccessors();
+  }
+
+  /**
+   * (#198 dogfood finding) Sweep the chat list for dialogs in the group peer
+   * range whose backing group record no longer exists and drop them.
+   *
+   * Every teardown before this fix dispatched only the bare 'dialog_drop'
+   * event, which flushes message storages but leaves the persisted dialogs row
+   * in tweb-account-N untouched — so groups deleted via rebind migrations,
+   * legacy retirements or twin convergence kept rendering on every boot. This
+   * sweep self-heals those rows: it runs AFTER a definitive groups sync
+   * reconcile (records are loaded by then), so a dialog whose record is
+   * missing is by definition orphaned.
+   *
+   * Safety: if the group store can't be read (e.g. a schema VersionError on an
+   * older build), we abort WITHOUT dropping anything — a blind store must
+   * never be interpreted as "no live groups".
+   */
+  async dropOrphanGroupDialogs(): Promise<void> {
+    let livePeerIds: Set<number>;
+    try {
+      livePeerIds = new Set((await this.store.getAll()).map((r) => r.peerId));
+    } catch{
+      this.log.warn('[GroupAPI] dropOrphanGroupDialogs: group store unreadable, skipping');
+      return;
+    }
+
+    let dialogs: any[];
+    try {
+      const result = await rootScope.managers.dialogsStorage.getDialogs({limit: 1000, forceLocal: true});
+      dialogs = (result?.dialogs || []) as any[];
+    } catch{
+      // dialogs storage not ready yet — nothing to sweep this boot; the next
+      // post-sync reconcile retries idempotently.
+      return;
+    }
+
+    let dropped = 0;
+    for(const dialog of dialogs) {
+      const peerId = dialog?.peerId;
+      if(typeof peerId !== 'number' || !isGroupPeer(peerId)) continue;
+      if(livePeerIds.has(peerId)) continue;
+      try {
+        rootScope.managers.dialogsStorage.dropDialogOnDeletion(peerId);
+        dropped++;
+        this.log('[GroupAPI] dropped orphan group dialog:', peerId);
+      } catch(err) {
+        this.log.warn('[GroupAPI] dropOrphanGroupDialogs: drop failed for', peerId, err);
+      }
+    }
+    if(dropped > 0) {
+      this.log('[GroupAPI] dropOrphanGroupDialogs: swept', dropped, 'orphan dialog(s)');
     }
   }
 
