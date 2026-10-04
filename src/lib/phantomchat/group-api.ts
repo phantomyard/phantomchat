@@ -153,6 +153,7 @@ const SECP_PUBKEY_HEX_RE = /^[0-9a-f]{64}$/;
  *  authenticate the sender. */
 const PENDING_GROUP_DELETE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PENDING_GROUP_DELETES = 512;
+const MAX_PENDING_GROUP_DELETES_PER_SENDER = 32;
 
 interface PendingGroupDelete {
   groupId: string;
@@ -1198,14 +1199,32 @@ export class GroupAPI {
     const existing = this.pendingGroupDeletes.get(key);
     if(existing && existing.createdAt >= createdAt) return;
 
-    // Refresh insertion order so the cap evicts the oldest received fact.
+    // Refresh insertion order for a newer fact about the same group.
     this.pendingGroupDeletes.delete(key);
-    this.pendingGroupDeletes.set(key, {groupId, senderPubkey, createdAt, receivedAt: Date.now()});
-    while(this.pendingGroupDeletes.size > MAX_PENDING_GROUP_DELETES) {
-      const oldest = this.pendingGroupDeletes.keys().next().value;
-      if(oldest === undefined) break;
-      this.pendingGroupDeletes.delete(oldest);
+
+    if(!existing) {
+      let senderCount = 0;
+      let oldestForSender: string | undefined;
+      for(const [pendingKey, pending] of this.pendingGroupDeletes) {
+        if(pending.senderPubkey !== senderPubkey) continue;
+        senderCount++;
+        oldestForSender ??= pendingKey;
+      }
+
+      // A single authenticated key may mint unlimited self-bound ids. Keep
+      // its eviction pressure inside its own slice of the quarantine so it
+      // cannot crowd out another admin's reordered delete (#193).
+      if(senderCount >= MAX_PENDING_GROUP_DELETES_PER_SENDER && oldestForSender !== undefined) {
+        this.pendingGroupDeletes.delete(oldestForSender);
+      } else if(this.pendingGroupDeletes.size >= MAX_PENDING_GROUP_DELETES) {
+        // Distinct keys are cheap too, so retain the global memory bound. At
+        // capacity, reject a new sender/group rather than evicting an older
+        // fact belonging to somebody else.
+        return;
+      }
     }
+
+    this.pendingGroupDeletes.set(key, {groupId, senderPubkey, createdAt, receivedAt: Date.now()});
   }
 
   private clearPendingGroupDeletes(groupId: string, senderPubkey?: string): void {
@@ -1425,12 +1444,9 @@ export class GroupAPI {
     // stage-before-first-await invariant so a concurrent group_create
     // cannot pass both of its pending-delete checks while this handler
     // is suspended.
-    // Scope (#193): this closes the same-group / foreign-sender lever
-    // only. A single key flooding ids bound to its OWN key still stages
-    // entries it can never see promoted, and the map's global
-    // oldest-received eviction lets those entries crowd out other
-    // senders' legitimate pending deletes — the general per-sender cap
-    // is tracked in #193.
+    // The per-sender cap in rememberPendingGroupDelete closes the remaining
+    // self-bound-id lever (#193): a key flooding ids bound to itself can now
+    // evict only its own oldest pending fact.
     const boundAdmin = boundGroupAdmin(payload.groupId);
     if(!(boundAdmin && boundAdmin !== senderPubkey)) {
       this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
