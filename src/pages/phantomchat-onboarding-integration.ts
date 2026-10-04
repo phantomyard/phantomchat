@@ -549,16 +549,17 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             ]);
             console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g);
             // Post-apply convergence (duplicate-groups regression 2026-10-04,
-            // round 2): the merge union is live records from EVERY device, and
-            // devices still on a pre-#196 build keep re-publishing converged
-            // losers as live. Their blob beats our teardown tombstone through
-            // apply()'s fresh-restore path (which clears the tombstone + the
-            // durable delete row by design — a deliberate re-create must
-            // work), so the loser comes back on every reconcile. Re-running the
-            // GroupAPI convergence AFTER the union lands tears it down again
-            // and republishes our corrected map, which is what eventually
-            // retires the loser on the old builds too. Boot-only convergence
-            // (#196) left a window of hours; this closes it to seconds.
+            // round 2): boot-only convergence (#196) misses a rival successor
+            // that first ARRIVES via sync after the boot sweep — the init
+            // sweep is fire-and-forget at GroupAPI construction, while the
+            // first reconcileOnce waits on `whenSubscribed`, and the 30-min
+            // interval can pull a rival in later. That duplicate then sits
+            // until the next restart. Re-running the GroupAPI convergence
+            // after each groups reconcile closes that window to seconds.
+            // (The CRDT merge itself needs no help: a stale sibling blob
+            // cannot beat our teardown tombstone — #180 rule 2 requires
+            // deliberateAddAt > tombstone.updatedAt, and a loser's stamp is
+            // its mint time, so the tombstone always wins.)
             try {
               const {getGroupAPI} = await import('@lib/phantomchat/group-api');
               await getGroupAPI().reconcileSupersededGroups();

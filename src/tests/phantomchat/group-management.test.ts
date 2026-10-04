@@ -1578,13 +1578,14 @@ describe('Group Management', () => {
       expect(store().recordDeletedGroup).not.toHaveBeenCalledWith(winnerId);
     });
 
-    it('a converged loser resurrected by a stale sibling blob is torn down again on the next reconcile', async() => {
-      // Duplicate-groups regression, round 2 (2026-10-04): devices still on a
-      // pre-convergence build keep publishing the loser record as live. Its
-      // blob wins through apply()'s fresh-restore path (tombstone + durable
-      // delete row cleared by design), so the loser comes back. Post-apply
-      // convergence (reconcileOnce → reconcileSupersededGroups) must retire
-      // it again — boot-only convergence left a window of hours.
+    it('a converged loser observed live again is torn down again on the next reconcile', async() => {
+      // Duplicate-groups regression, round 2 (2026-10-04): boot-only
+      // convergence (#196) misses a rival that first ARRIVES via sync after
+      // the boot sweep. Whenever a converged loser is observed live again —
+      // whichever path put it there — post-apply convergence must retire it
+      // idempotently. The CRDT merge itself CANNOT resurrect it: #180 rule 2
+      // keeps the teardown tombstone over a mint-time deliberateAddAt (see
+      // the adapter-level stale-sibling test in groups-sync-adapter.test.ts).
       const winner = boundIdOf(MEMBER_A, '4'.repeat(32));
       const loser = boundIdOf(MEMBER_A, '3'.repeat(32));
       const winnerRec = makeBoundRecord(winner, {reboundAt: 1700000100});
@@ -1599,9 +1600,10 @@ describe('Group Management', () => {
       await api.reconcileSupersededGroups(); // boot convergence
       expect(store().delete).toHaveBeenCalledWith(loser);
 
-      // Stale sibling blob resurrects the loser: apply()'s fresh-restore path
-      // cleared the durable delete row and the tombstone, then upserted the
-      // live record — exactly what a pre-fix device publishes.
+      // Observed-live-again state: durable row empty + both records live in
+      // the store — what a device sees after any resurrection source. This
+      // pins IDEMPOTENT re-teardown; it does not (and cannot) produce the
+      // resurrection through the merge, which keeps the tombstone.
       store().listDeletedGroups.mockResolvedValue([]);
       store().recordDeletedGroup.mockClear();
       store().delete.mockClear();

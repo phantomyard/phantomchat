@@ -1,5 +1,6 @@
 import {describe, it, expect} from 'vitest';
 import {createGroupsAdapter, type GroupsAdapterDeps} from '@lib/phantomchat/groups-sync-adapter';
+import {mergeMaps, differs} from '@lib/phantomchat/sync-crdt';
 import type {GroupRecord} from '@lib/phantomchat/group-types';
 import type {SyncMap} from '@lib/phantomchat/sync-crdt';
 
@@ -451,6 +452,42 @@ describe('groups adapter apply()', () => {
     await createGroupsAdapter(deps).apply(merged, before);
     expect(calls.clearedDeletes).toEqual([G1]);
     expect(calls.upserted).toHaveLength(1);
+  });
+
+  it('stale sibling blob does NOT resurrect a converged loser through the merge (Robert, #197 review)', async() => {
+    // Pins the #180 rule-2 outcome end-to-end through the adapter: a device
+    // still on a pre-convergence build republishes the converged loser as a
+    // live entry stamped at its MINT time (deliberateAddAt). Against our
+    // teardown tombstone (updatedAt = teardown, later) the tombstone wins —
+    // merged stays deleted, differs(merged, local) is false, the engine never
+    // calls apply(), and even a forced apply() clears no durable row. The
+    // only stamp that beats the tombstone is a genuine post-teardown
+    // deliberate re-create (#180). The real resurrection window this repo
+    // closes elsewhere is a rival ARRIVING via sync after the boot sweep.
+    const WINNER = 'a'.repeat(64) + 'e'.repeat(32);
+    const LOSER = 'a'.repeat(64) + '3'.repeat(32);
+    const winnerRec = group(WINNER, 1_700_000_100_000, 'Phantomyard', 1_700_000_100_000);
+    const loserRec = group(LOSER, 1_700_000_000_000, 'Phantomyard', 1_700_000_000_000);
+    const {deps, calls} = makeDeps([winnerRec], [], [{groupId: LOSER, deletedAt: 2000}]);
+    const adapter = createGroupsAdapter(deps);
+    const local = await adapter.read();
+    const remote: SyncMap<GroupRecord> = {
+      [WINNER]: {id: WINNER, updatedAt: 1_700_000_100, deliberateAddAt: 1_700_000_100, data: winnerRec},
+      [LOSER]: {id: LOSER, updatedAt: 1_700_000_000, deliberateAddAt: 1000, data: loserRec}
+    };
+
+    const merged = mergeMaps(local, remote);
+    expect(merged[LOSER].deleted).toBe(true);
+    expect(merged[LOSER].updatedAt).toBe(2000);
+    expect(differs(merged, local)).toBe(false); // engine skips apply()
+    expect(differs(merged, remote)).toBe(true); // stale blob loses; we republish
+
+    // Even a FORCED apply() must not clear the durable row or upsert the
+    // loser: the fresh-restore clear path only fires for entries now LIVE.
+    await adapter.apply(merged, local);
+    expect(calls.clearedDeletes).toEqual([]);
+    expect(calls.upserted.map((r) => r.groupId)).toEqual([]);
+    expect(calls.removed).toEqual([]);
   });
 
   it('#180: a remote deliberate re-create persists its stamp into the local record', async() => {
