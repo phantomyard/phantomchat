@@ -37,6 +37,7 @@ import {getAllMappings, setMappingDisplayName, setMappingUpdatedAt, setDeliberat
 import {getMessageStore} from '@lib/phantomchat/message-store';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
+import {createConversationResidueWipe} from '@lib/phantomchat/contacts-residue-wipe';
 import {addP2PContact} from '@lib/phantomchat/add-p2p-contact';
 import {writeGroupCreateServiceMessage} from '@lib/phantomchat/group-service-messages';
 import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection} from '@lib/phantomchat/phantomchat-groups-sync';
@@ -480,17 +481,18 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             // (#198) read() self-heal: a delete learned from sync used to
             // tear down the mapping but leave the message-store rows (incl.
             // the contact-init seed) that DERIVE the contact + dialog, so
-            // the deleted chat stayed on screen forever. Idempotent: no-ops
-            // when the conversation has no rows.
-            wipeConversationResidue: async(pubkey) => {
-              const convId = store.getConversationId(ownPubkey, pubkey);
-              const residue = await store.getMessages(convId, 1);
-              if(!residue?.length) return;
-              await store.deleteMessages(convId);
-              const rs: any = (await import('@lib/rootScope')).default;
-              rs.dispatchEvent('phantomchat_conversation_deleted', {peerPubkey: pubkey, conversationId: convId});
-              console.log('[contacts-sync] wiped conversation residue for durably-deleted peer', pubkey.slice(0, 8));
-            }
+            // the deleted chat stayed on screen forever. Idempotent; the
+            // dialog-drop dispatch fires even when the store is empty
+            // (Kai review 2026-10-04 — implementation + tests live in
+            // contacts-residue-wipe.ts).
+            wipeConversationResidue: createConversationResidueWipe({
+              ownPubkey,
+              getConversationId: (a, b) => store.getConversationId(a, b),
+              getMessages: (convId, limit) => store.getMessages(convId, limit),
+              deleteMessages: (convId) => store.deleteMessages(convId),
+              loadRootScope: async() => (await import('@lib/rootScope')).default,
+              log: console.log
+            })
           });
 
           const groupsAdapter = createGroupsAdapter({

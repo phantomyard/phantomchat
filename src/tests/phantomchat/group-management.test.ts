@@ -1635,14 +1635,22 @@ describe('Group Management', () => {
       expect(store().recordDeletedGroup).not.toHaveBeenCalled();
     });
 
-    it('reconcileSupersededGroups converges an UNLINKED twin of a linked successor (#198 duplicate-groups live incident)', async() => {
+    it('reconcileSupersededGroups flags an UNLINKED twin but NEVER converges it (#199 review: no positive lineage exists)', async() => {
       // The observed-live state on the Phantomyard group: two records, same
       // id-derived admin, same name, identical member set — one a linked
       // rebind successor (supersededGroupIds + reboundAt), the other with NO
       // provenance (minted by a replayed create path). resolveCompetingSuccessors
-      // matches on a shared legacy id, so it can never see this pair; the
-      // unlinked-twin sweep must retire the no-provenance twin and keep the
-      // linked successor.
+      // matches on a shared legacy id, so it can never see this pair.
+      //
+      // Kai review (#199): destructive convergence needs POSITIVE shared
+      // lineage, and an unlinked twin has none — admin/name/members equality
+      // is exactly reproduced by a legitimate second group (review regression),
+      // deliberateAddAt only proves absence-of-deliberate-create on THIS
+      // device (a relay-received create is unstamped until its CRDT entry
+      // applies), and shared eventIds are structurally impossible (the store
+      // upserts by a UNIQUE eventId index — one event id lives in exactly one
+      // conversation). The sweep therefore flags and leaves the record alone;
+      // the admin deletes the duplicate manually if it is one.
       const winner = boundIdOf(MEMBER_A, '5'.repeat(32));
       const twin = boundIdOf(MEMBER_A, '0'.repeat(32));
       const winnerRec = makeBoundRecord(winner, {reboundAt: 1700000100});
@@ -1653,7 +1661,8 @@ describe('Group Management', () => {
       const ms = getMessageStore();
       await ms.clearTombstone(`group:${winner}`);
       await ms.clearTombstone(`group:${twin}`);
-      // The twin collected a message post-divergence — it must move.
+      // The twin collected a message post-divergence — convergence would have
+      // rekeyed it into the winner; it must stay exactly where it is.
       await ms.saveMessage({
         eventId: 'twin-msg-1', conversationId: `group:${twin}`,
         senderPubkey: MEMBER_A, content: 'sent from the twin', type: 'text',
@@ -1663,14 +1672,11 @@ describe('Group Management', () => {
 
       await api.reconcileSupersededGroups();
 
-      expect(store().delete).toHaveBeenCalledWith(twin);
-      expect(store().delete).not.toHaveBeenCalledWith(winner);
-      // Durable delete blocks CRDT resurrection of the twin's record.
-      expect(store().recordDeletedGroup).toHaveBeenCalledWith(twin, expect.any(Number));
-      // History moved to the winner by upsert — nothing orphaned.
-      const rows = await ms.getMessages(`group:${winner}`, 100);
-      expect(rows.some((m: any) => m.eventId === 'twin-msg-1')).toBe(true);
-      expect((await ms.getMessages(`group:${twin}`, 100)).length).toBe(0);
+      // Detection-only: NO teardown, NO durable delete, NO rekey.
+      expect(store().delete).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect((await ms.getMessages(`group:${twin}`, 100)).length).toBe(1);
+      expect((await ms.getMessages(`group:${winner}`, 100)).length).toBe(0);
     });
 
     it('the unlinked-twin sweep never touches a distinct group (different members) (#198 safety)', async() => {

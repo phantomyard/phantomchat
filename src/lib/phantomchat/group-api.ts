@@ -1848,13 +1848,20 @@ export class GroupAPI {
    *  path) claims none — observed live: two "Phantomyard" records, one with
    *  provenance, one without, coexisting forever.
    *
-   *  Winner = the LINKED successor (it carries the lineage the legacy id's
-   *  traffic remaps onto; if several linked rivals exist they were already
-   *  resolved by resolveCompetingSuccessors before this runs). The loser is
-   *  torn down through the same history-preserving sequence as the create
-   *  path: rekey its messages into the winner, merge watermarks, teardown.
-   *  Guarded tight so distinct groups can never collide: exact name AND
-   *  identical member set AND no-provenance loser AND same admin. */
+   *  (#199 review, Kai blocker) This sweep is DETECTION-ONLY — it never
+   *  converges. Destructive convergence needs POSITIVE shared lineage, and
+   *  for an unlinked twin none exists: record fields (admin/name/members)
+   *  are mutable presentation data a legitimate second group by the same
+   *  admin reproduces exactly (proven by review regression), deliberateAddAt
+   *  only proves absence-of-deliberate-create on THIS device (a relay-received
+   *  create is locally unstamped until its CRDT entry applies), and shared
+   *  eventIds are structurally impossible — the message store upserts by a
+   *  UNIQUE eventId index, so one event id lives in exactly ONE conversation
+   *  and two conversations can never intersect. With no positive proof, a
+   *  teardown would be a guess that can destroy a legitimate group — so the
+   *  candidate is flagged in the log for manual deletion (native group delete
+   * is durable and syncs) and left strictly alone. Fail-safe direction: a
+   *  duplicate may survive; a distinct group is never destroyed. */
   private async convergeUnlinkedTwinSuccessors(): Promise<void> {
     let all: GroupRecord[];
     try {
@@ -1868,7 +1875,6 @@ export class GroupAPI {
       boundGroupAdmin(r.groupId)
     );
     if(linked.length === 0) return;
-    let converged = false;
     for(const winner of linked) {
       const admin = boundGroupAdmin(winner.groupId);
       const winnerMembers = [...winner.members].sort().join(',');
@@ -1882,14 +1888,16 @@ export class GroupAPI {
         if([...twin.members].sort().join(',') !== winnerMembers) continue;
         // vanished since the sweep started (a rival pass already retired it)
         if(!(await this.store.get(twin.groupId))) continue;
-        await this.rekeyGroupMessages(twin.groupId, winner.groupId, winner.peerId);
-        this.mergeEventWatermarks(twin.groupId, winner.groupId);
-        await this.teardownGroupLocally(twin.groupId);
-        this.log('[GroupAPI] converged unlinked twin group:', twin.groupId.slice(-8), '→', winner.groupId.slice(-8));
-        converged = true;
+        // (#199 review) DETECTED but never converged — see doc block. The
+        // admin can delete the duplicate with the native (durable, synced)
+        // group delete; nothing here may guess it away.
+        this.log.warn(
+          '[GroupAPI] unlinked twin candidate of linked successor', winner.groupId.slice(-8),
+          '— same admin/name/members but NO positive lineage; NOT converging.',
+          'Delete the unwanted duplicate manually if it is not a distinct group:', twin.groupId.slice(-8)
+        );
       }
     }
-    if(converged) schedulePublish('groups');
   }
 
   async reconcileSupersededGroups(): Promise<void> {
