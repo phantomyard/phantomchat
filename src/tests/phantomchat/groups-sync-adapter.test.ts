@@ -481,4 +481,66 @@ describe('groups adapter apply()', () => {
     expect(calls.upserted[0].deliberateAddAt).toBe(8_000_000);
     expect(calls.upserted[0].name).toBe('Team');
   });
+
+  // ─── Rebind resurrection guard (duplicate-groups regression, 2026-10-04) ──
+  //
+  // The legacy rebind mints a FRESH bound id for a migrated group. A
+  // departed member's durable delete row is keyed on the LEGACY id, so a
+  // synced successor record sails past it and resurrects the group they
+  // left — the create-path guard needs a record-path twin in apply().
+  const LEGACY_32HEX = 'abc123def456abc123def456abc123de';
+  const ADMIN = 'a'.repeat(64);
+  const SUCCESSOR = ADMIN + 'f'.repeat(32);
+
+  function boundSuccessor(updatedAtMillis: number): GroupRecord {
+    return {
+      ...group(SUCCESSOR, updatedAtMillis, 'Phantomyard'),
+      supersededGroupIds: [LEGACY_32HEX],
+      reboundAt: Math.floor(updatedAtMillis / 1000)
+    };
+  }
+
+  it('apply() skips a synced successor record whose superseded legacy id is durably deleted here (departed member)', async() => {
+    // This device LEFT the legacy group: durable delete fact, no live
+    // record for the legacy id, no live successor. The successor record
+    // syncing in must not resurrect the group under its fresh bound id.
+    const {deps, calls} = makeDeps([], [], [{groupId: LEGACY_32HEX, deletedAt: 8000}]);
+    const merged: SyncMap<GroupRecord> = {
+      [SUCCESSOR]: {id: SUCCESSOR, updatedAt: 9000, data: boundSuccessor(9_000_000)}
+    };
+    await createGroupsAdapter(deps).apply(merged, empty);
+    expect(calls.upserted).toHaveLength(0);
+    expect(calls.clearedDeletes).toEqual([]); // the legacy delete row survives
+  });
+
+  it('apply() still upserts the successor record on a device that already holds a live successor (mid/post-migration)', async() => {
+    // Control: a current member (or the admin's own device) post-migration
+    // holds a live successor of the same legacy id — the durable row for the
+    // RETIRED legacy id is the normal end-state there, and updates to the
+    // successor record must keep flowing.
+    const live = boundSuccessor(7_000_000);
+    const {deps, calls} = makeDeps([live], [], [{groupId: LEGACY_32HEX, deletedAt: 8000}]);
+    const before: SyncMap<GroupRecord> = {[SUCCESSOR]: {id: SUCCESSOR, updatedAt: 7000, data: live}};
+    const merged: SyncMap<GroupRecord> = {
+      [SUCCESSOR]: {id: SUCCESSOR, updatedAt: 9000, data: boundSuccessor(9_000_000)}
+    };
+    await createGroupsAdapter(deps).apply(merged, before);
+    expect(calls.upserted).toHaveLength(1);
+  });
+
+  it('apply() still upserts the successor record when the legacy group is still LIVE here (mid-migration arrival order)', async() => {
+    // Control: the successor record can sync in BEFORE the supersede create
+    // retires the live legacy record — that device is a current member and
+    // must not lose the migration.
+    const legacyLive: GroupRecord = {
+      ...group(LEGACY_32HEX, 6_000_000, 'Phantomyard'),
+      adminPubkey: ADMIN
+    };
+    const {deps, calls} = makeDeps([legacyLive], [], [{groupId: LEGACY_32HEX, deletedAt: 8000}]);
+    const merged: SyncMap<GroupRecord> = {
+      [SUCCESSOR]: {id: SUCCESSOR, updatedAt: 9000, data: boundSuccessor(9_000_000)}
+    };
+    await createGroupsAdapter(deps).apply(merged, empty);
+    expect(calls.upserted).toHaveLength(1);
+  });
 });
