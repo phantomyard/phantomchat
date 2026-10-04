@@ -1234,8 +1234,9 @@ export class GroupAPI {
     } else if(this.pendingGroupDeletes.size >= MAX_PENDING_GROUP_DELETES) {
       // Always admit a new sender at global capacity. Charge the entry to the
       // largest existing slice, evicting its oldest fact; ties prefer the
-      // slice with the oldest fact. This raises the residual Sybil attack from
-      // 16 keys to the unavoidable 512 one-entry identities.
+      // slice with the oldest fact. Residual Sybil limit: this is fair-share,
+      // not perfect isolation — as distinct identities accumulate, every
+      // sender's protected share approaches 512 / sender-count entries.
       let heaviest: {count: number; oldestKey: string; oldestReceivedAt: number} | undefined;
       for(const slice of senderSlices.values()) {
         if(!heaviest || slice.count > heaviest.count ||
@@ -1468,9 +1469,10 @@ export class GroupAPI {
     // is suspended.
     // The per-sender cap in rememberPendingGroupDelete closes the single-key
     // self-bound-id lever (#193): a flooding key evicts its own oldest fact.
-    // Residual limit: 512 distinct keys with one entry each are
-    // indistinguishable from 512 legitimate admins, so a Sybil flood at that
-    // scale can still displace the globally oldest pending fact.
+    // Residual limit: distinct Sybil identities are indistinguishable from
+    // legitimate admins. Global eviction therefore provides each sender a
+    // fair share, but enough identities can still shrink another sender's
+    // share and displace its oldest pending facts.
     const boundAdmin = boundGroupAdmin(payload.groupId);
     if(!(boundAdmin && boundAdmin !== senderPubkey)) {
       this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);

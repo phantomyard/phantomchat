@@ -588,6 +588,16 @@ describe('GroupAPI', () => {
     expect(pending.has(protectedKey)).toBe(false);
     expect(pending.has(`${boundId}:${newcomer}`)).toBe(true);
 
+    // A sender already at its own cap still rotates its own oldest fact even
+    // while the global map is full; branch ordering must not charge a
+    // different heaviest sender instead.
+    const rotatingSender = '10'.padStart(64, '0');
+    remember('rotated', rotatingSender);
+    expect(pending.size).toBe(512);
+    expect(pending.has(`16:0:${rotatingSender}`)).toBe(false);
+    expect(pending.has(`rotated:${rotatingSender}`)).toBe(true);
+    expect(pending.has(`${boundId}:${newcomer}`)).toBe(true);
+
     const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
     const create = controlRumor({type: 'group_create', groupId: boundId}, newcomer);
     await api.handleControlMessage(create, newcomer);
