@@ -525,6 +525,108 @@ describe('GroupAPI', () => {
     teardownSpy.mockRestore();
   });
 
+  it('#193: a self-bound-id flood can evict only that sender\'s pending deletes', async() => {
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    mockGroupStore.get.mockResolvedValue(null);
+    const ts = Math.floor(Date.now() / 1000);
+
+    // A legitimate admin delete races ahead of its create and waits in the
+    // quarantine for that create to authenticate it.
+    const legitDel = controlRumor({type: 'group_delete', groupId: boundId}, BOUND_ADMIN);
+    legitDel.created_at = ts;
+    await api.handleControlMessage(legitDel, BOUND_ADMIN);
+
+    // One attacker can mint unlimited ids bound to its own key, so every one
+    // of these deletes is promotable in principle and passes the stage gate.
+    // Before #193, the global oldest-first cap let this sequential flood
+    // evict the unrelated legitimate fact above.
+    for(let i = 0; i < 520; i++) {
+      const attackerGroupId = ATTACKER + i.toString(16).padStart(32, '0');
+      const del = controlRumor({type: 'group_delete', groupId: attackerGroupId}, ATTACKER);
+      del.created_at = ts;
+      await api.handleControlMessage(del, ATTACKER);
+    }
+
+    const pending = [...(api as any)['pendingGroupDeletes'].values()];
+    expect(pending.some(p => p.groupId === boundId && p.senderPubkey === BOUND_ADMIN)).toBe(true);
+    expect(pending.filter(p => p.senderPubkey === ATTACKER)).toHaveLength(32);
+
+    // The reordered create still consumes the legitimate delete and tears the
+    // group down instead of resurrecting it.
+    const create = controlRumor({type: 'group_create', groupId: boundId}, BOUND_ADMIN);
+    create.created_at = ts;
+    await api.handleControlMessage(create, BOUND_ADMIN);
+    expect(teardownSpy).toHaveBeenCalledTimes(1);
+    expect(mockGroupStore.save).not.toHaveBeenCalled();
+    teardownSpy.mockRestore();
+  });
+
+  it('#193: a pre-filled global quarantine admits a legitimate newcomer by charging the heaviest sender', async() => {
+    const remember = (groupId: string, sender: string) =>
+      (api as any)['rememberPendingGroupDelete'](groupId, sender, 1);
+
+    // Sixteen full sender slices fill the 512-entry global budget.
+    for(let senderIndex = 1; senderIndex <= 16; senderIndex++) {
+      const sender = senderIndex.toString(16).padStart(64, '0');
+      for(let groupIndex = 0; groupIndex < 32; groupIndex++) {
+        remember(`${senderIndex}:${groupIndex}`, sender);
+      }
+    }
+
+    const pending = (api as any)['pendingGroupDeletes'] as Map<string, unknown>;
+    const protectedKey = `1:0:${'1'.padStart(64, '0')}`;
+    expect(pending.size).toBe(512);
+    expect(pending.has(protectedKey)).toBe(true);
+
+    // A legitimate seventeenth sender is still admitted. One of the tied
+    // heaviest slices pays with its oldest fact instead of locking out every
+    // future reordered delete on the device.
+    const newcomer = BOUND_ADMIN;
+    const legitDel = controlRumor({type: 'group_delete', groupId: boundId}, newcomer);
+    await api.handleControlMessage(legitDel, newcomer);
+    expect(pending.size).toBe(512);
+    expect(pending.has(protectedKey)).toBe(false);
+    expect(pending.has(`${boundId}:${newcomer}`)).toBe(true);
+
+    // A sender already at its own cap still rotates its own oldest fact even
+    // while the global map is full; branch ordering must not charge a
+    // different heaviest sender instead.
+    const rotatingSender = '10'.padStart(64, '0');
+    remember('rotated', rotatingSender);
+    expect(pending.size).toBe(512);
+    expect(pending.has(`16:0:${rotatingSender}`)).toBe(false);
+    expect(pending.has(`rotated:${rotatingSender}`)).toBe(true);
+    expect(pending.has(`${boundId}:${newcomer}`)).toBe(true);
+
+    const teardownSpy = vi.spyOn(api as any, 'teardownGroupLocally').mockResolvedValue(undefined);
+    const create = controlRumor({type: 'group_create', groupId: boundId}, newcomer);
+    await api.handleControlMessage(create, newcomer);
+    expect(teardownSpy).toHaveBeenCalledTimes(1);
+    expect(mockGroupStore.save).not.toHaveBeenCalled();
+    teardownSpy.mockRestore();
+  });
+
+  it('#193: replaying a pending delete cannot extend its 24-hour quarantine TTL', () => {
+    const remember = (createdAt: number) =>
+      (api as any)['rememberPendingGroupDelete'](boundId, BOUND_ADMIN, createdAt);
+    const pending = (api as any)['pendingGroupDeletes'] as Map<string, {createdAt: number; receivedAt: number}>;
+    const key = `${boundId}:${BOUND_ADMIN}`;
+    const start = 1_000_000;
+    const day = 24 * 60 * 60 * 1000;
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(start);
+
+    remember(1);
+    nowSpy.mockReturnValue(start + day - 1);
+    remember(2);
+    expect(pending.get(key)?.createdAt).toBe(2);
+    expect(pending.get(key)?.receivedAt).toBe(start);
+
+    nowSpy.mockReturnValue(start + day + 1);
+    (api as any)['prunePendingGroupDeletes']();
+    expect(pending.has(key)).toBe(false);
+    nowSpy.mockRestore();
+  });
+
   it('legacy 32-hex ids keep pre-#188 behavior (payload admin accepted)', async() => {
     const legacyId = 'abc123def456abc123def456abc123de';
     const rumor = controlRumor({type: 'group_create', groupId: legacyId, adminPubkey: ATTACKER}, ATTACKER);
