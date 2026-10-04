@@ -16,7 +16,7 @@ import {groupIdToPeerId} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
-import {writeGroupCreateServiceMessage} from './group-service-messages';
+import {writeGroupCreateServiceMessage, writeGroupRebindNoticeMessage} from './group-service-messages';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
 import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {getMessageStore} from './message-store';
@@ -81,6 +81,9 @@ function watermarkFieldFor(type: string): GroupEventField | null {
 // groups without a migration protocol.
 
 const BOUND_ID_RE = /^([0-9a-f]{64})([0-9a-f]{32})$/;
+
+/** Legacy (pre-#189) group id: 32 hex chars, no bound admin. */
+const LEGACY_ID_RE = /^[0-9a-f]{32}$/;
 
 /** The admin pubkey bound into `groupId`, or null for legacy (unbound) ids. */
 function boundGroupAdmin(groupId: string): string | null {
@@ -976,7 +979,20 @@ export class GroupAPI {
     // them as legitimate `is-in` bubbles. Async lookup but the gate fires
     // BEFORE the production render dispatch, so the bubble is dropped on
     // the failure path.
-    void this.store.get(groupId).then((group) => {
+    void this.store.get(groupId).then(async(group) => {
+      if(!group) {
+        // REBIND REMAP (#188 remainder): no record under the wire id, but
+        // pre-migration messages (relay backlog) are still addressed to the
+        // legacy id. A live successor carrying this id in supersededGroupIds
+        // claims that traffic — remap so history lands in the rebound
+        // conversation. The membership gate below still applies against the
+        // successor's member list.
+        const successor = await this.findSuccessorBySupersededId(groupId);
+        if(successor) {
+          group = successor;
+          groupId = successor.groupId;
+        }
+      }
       if(!group) return; // store racing; drop silently
       if(!group.members.includes(senderPubkey)) {
         this.log.warn('[GroupAPI] reject: sender is not a member of', groupId.slice(0, 8), '; sender =', senderPubkey.slice(0, 8));
@@ -1277,6 +1293,15 @@ export class GroupAPI {
   private async handleGroupCreate(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<void> {
     const peerId = await groupIdToPeerId(payload.groupId);
 
+    // REBIND MIGRATION (#188 remainder): a supersede create migrates a
+    // legacy group to a bound id. Separate trust path — the bound id
+    // authenticates the create, the receiver's own live legacy record
+    // authenticates the supersede CLAIM (see handleSupersedeCreate).
+    if(payload.supersedesGroupId) {
+      await this.handleSupersedeCreate(payload, senderPubkey, createdAt, peerId);
+      return;
+    }
+
     // NON-DESTRUCTIVE REPLAY GUARD: we already hold a live record for this
     // group. A create event replayed from the relay backlog must not clobber
     // it — the record's own mutations (renames, member changes) are newer
@@ -1366,6 +1391,370 @@ export class GroupAPI {
     }
 
     this.log('[GroupAPI] group_create received:', payload.groupId);
+  }
+
+  // ─── Legacy rebind migration (#188 remainder) ─────────────────────
+  //
+  // Pre-#189 groups carry legacy 32-hex ids whose create/delete trust path
+  // is still the self-asserted one (the two-message forgery #188 describes).
+  // The rebind migrates such a group to a bound id via a `group_create`
+  // carrying `supersedesGroupId`. Trust model, per the design on the issue:
+  //   - the BOUND ID authenticates the create itself (post-#189 rule);
+  //   - a receiver holding a LIVE legacy record authenticates the supersede
+  //     claim against that record's admin — an attacker's own bound group
+  // can never claim someone else's legacy group (anti-hijack);
+  //   - a receiver with NO legacy record stores the create as a plain bound
+  // create (carrying the supersedes link for late-traffic remap) and writes
+  // NO durable row for the legacy id — #184's rule stands: a durable delete
+  // for a group this device never held is exactly the forgery artifact;
+  //   - competing rebinds from two of the admin's devices converge on
+  //     max(reboundAt, groupId) with no coordinator.
+
+  private async handleSupersedeCreate(
+    payload: GroupControlPayload,
+    senderPubkey: string,
+    createdAt: number,
+    peerId: number
+  ): Promise<void> {
+    // The successor MUST be a bound id — a supersede onto a legacy id would
+    // keep the unbound trust path this migration exists to retire.
+    const boundAdmin = boundGroupAdmin(payload.groupId);
+    if(!boundAdmin) {
+      this.log.warn('[GroupAPI] rejecting supersede create: successor id is not bound:', payload.groupId.slice(0, 8));
+      return;
+    }
+    if(boundAdmin !== senderPubkey) {
+      this.log.warn('[GroupAPI] rejecting supersede create: sender is not the id-bound admin', senderPubkey.slice(0, 8));
+      return;
+    }
+
+    // The supersede TARGET must be a legacy 32-hex id (Lena review
+    // 2026-10-04). Bound ids are already self-authenticating, so allowing
+    // them as supersede targets buys nothing and adds an unneeded code
+    // path to audit — reject anything that isn't exactly legacy format.
+    if(!LEGACY_ID_RE.test(payload.supersedesGroupId)) {
+      this.log.warn('[GroupAPI] rejecting supersede create: supersedesGroupId is not a legacy id:', payload.supersedesGroupId.slice(0, 8));
+      return;
+    }
+
+    // Already applied (self-wrap echo, relay replay, or the record arrived
+    // first via own-device sync): never re-save. But the successor's PRESENCE
+    // is itself the admin's delete fact for the legacy id — reconcile a live
+    // legacy record the CRDT merge may have resurrected (#180 deliberate-
+    // stamp corner), gated on the ID-DERIVED admin matching so a forged
+    // successor can never tear down a legacy group it has no claim to.
+    // (The record's adminPubkey FIELD is attacker-mouldable data once a
+    // forged record enters the CRDT union — the bound id is not.)
+    const existingNew = await this.store.get(payload.groupId);
+    if(existingNew) {
+      const legacy = await this.store.get(payload.supersedesGroupId);
+      if(legacy && legacy.adminPubkey === boundAdmin) {
+        await this.teardownGroupLocally(payload.supersedesGroupId);
+        this.log('[GroupAPI] supersede echo: reconciled live legacy record:', payload.supersedesGroupId.slice(0, 8));
+      }
+      return;
+    }
+
+    // ANTI-HIJACK: with a live legacy record, only ITS admin may migrate the
+    // group — the receiver's own record is the source of truth for who that
+    // is, exactly like the legacy delete path. Nothing is stored on reject.
+    const legacyRecord = await this.store.get(payload.supersedesGroupId);
+    if(legacyRecord && legacyRecord.adminPubkey !== senderPubkey) {
+      this.log.warn(
+        '[GroupAPI] rejecting supersede create: sender is not the admin of the legacy group',
+        senderPubkey.slice(0, 8), 'for', payload.supersedesGroupId.slice(0, 8)
+      );
+      return;
+    }
+
+    // Competing rebind (two of the admin's devices raced the migration):
+    // deterministic winner max(reboundAt, groupId). Losers are ignored; the
+    // winner migrates and the losing successor is torn down alongside.
+    const competitor = await this.findSuccessorBySupersededId(payload.supersedesGroupId, payload.groupId);
+    let loserId: string | null = null;
+    if(competitor) {
+      const competitorAt = competitor.reboundAt ?? 0;
+      const incomingWins = createdAt > competitorAt ||
+        (createdAt === competitorAt && payload.groupId > competitor.groupId);
+      if(!incomingWins) {
+        this.log('[GroupAPI] ignoring supersede create: lost to existing rebind', payload.groupId.slice(0, 8));
+        return;
+      }
+      loserId = competitor.groupId;
+    }
+
+    const nowMs = Date.now();
+    const record: GroupRecord = {
+      groupId: payload.groupId,
+      name: payload.groupName || 'Group',
+      description: payload.groupDescription,
+      // Bound id: the id IS the authority, never the payload claim.
+      adminPubkey: boundAdmin,
+      members: payload.memberPubkeys || [],
+      peerId,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+      supersededGroupIds: [payload.supersedesGroupId],
+      reboundAt: createdAt
+    };
+
+    await this.commitLegacyMigration(record, {deliberate: false, teardownLegacy: !!legacyRecord});
+    if(loserId) {
+      await this.teardownGroupLocally(loserId);
+    }
+    this.log('[GroupAPI] legacy group rebound:', payload.supersedesGroupId.slice(0, 8), '→', payload.groupId.slice(-8));
+  }
+
+  /** Shared local migration for the rebind initiator and supersede
+   *  receivers: re-key history, carry watermarks, save the successor record,
+   *  seed the dialog, then retire the legacy id. */
+  private async commitLegacyMigration(
+    record: GroupRecord,
+    opts: {deliberate: boolean; teardownLegacy: boolean}
+  ): Promise<void> {
+    const legacyId = record.supersededGroupIds![0];
+    // History FIRST — teardownGroupLocally purges the legacy conversation,
+    // and the re-key moves rows by upsert (eventId is the store's unique key,
+    // so a moved row is the SAME row, not a copy).
+    await this.rekeyGroupMessages(legacyId, record.groupId, record.peerId);
+    this.copyEventWatermarks(legacyId, record.groupId);
+    await this.store.save(record);
+
+    // Seed the service row + mirror so the rebound dialog is valid before any
+    // real message lands — same best-effort contract as the create paths.
+    const createdAtSec = Math.floor(record.createdAt / 1000);
+    let serviceMid: number | null = null;
+    try {
+      const service = await writeGroupCreateServiceMessage({
+        groupId: record.groupId,
+        peerId: record.peerId,
+        timestamp: createdAtSec,
+        adminPubkey: record.adminPubkey,
+        title: record.name,
+        isOutgoing: opts.deliberate
+      });
+      serviceMid = service.mid;
+    } catch(err) {
+      this.log.warn('[GroupAPI] failed to seed chatCreate service row (rebind):', err);
+    }
+    if(serviceMid !== null) {
+      try {
+        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec);
+      } catch(err) {
+        this.log.warn('[GroupAPI] injectGroupCreateDialog (rebind) failed:', err);
+      }
+    }
+
+    // Visible notice in the new dialog (Lena review of #188): auto-rebind
+    // must not be silent — members otherwise see a new group id appear out
+    // of nowhere. Deterministic eventId → idempotent upsert, safe on echo.
+    try {
+      await writeGroupRebindNoticeMessage({
+        groupId: record.groupId,
+        peerId: record.peerId,
+        timestamp: createdAtSec,
+        adminPubkey: record.adminPubkey
+      });
+    } catch(err) {
+      this.log.warn('[GroupAPI] failed to write rebind notice (non-fatal):', err);
+    }
+
+    // Retire the legacy id ONLY when this device actually held it — the
+    // durable row is the admin's genuine delete fact. A device that never
+    // held the group writes nothing durable for it (#184 rule: a durable
+    // row for a never-held group is the forgery artifact we must not mint).
+    if(opts.teardownLegacy) {
+      await this.teardownGroupLocally(legacyId);
+    }
+    schedulePublish('groups');
+  }
+
+  /** Move a legacy group's message rows into the successor conversation.
+   *  Rows move by upsert (same eventId): message identity, edits and
+   *  reactions keep working unchanged after the migration. */
+  private async rekeyGroupMessages(oldGroupId: string, newGroupId: string, newPeerId: number, pageSize = 1000): Promise<void> {
+    try {
+      const store = getMessageStore();
+      // Paginate until exhausted: getMessages returns the NEWEST-first slice
+      // of `pageSize`, so a single bounded call silently drops a long legacy
+      // history's OLDEST rows at the rebind boundary (Lena review, PR #195).
+      // Rows move by upsert keyed on eventId, so an overlapping cursor page
+      // re-saving an already-moved row is idempotent.
+      const seen = new Set<string>();
+      let before: number | undefined;
+      let moved = 0;
+      for(;;) {
+        const rows = await store.getMessages(`group:${oldGroupId}`, pageSize, before);
+        if(rows.length === 0) break;
+        let newRows = 0;
+        for(const row of rows) {
+          if(seen.has(row.eventId)) continue;
+          seen.add(row.eventId);
+          newRows++;
+          await store.saveMessage({...row, conversationId: `group:${newGroupId}`, twebPeerId: newPeerId});
+          moved++;
+        }
+        if(rows.length < pageSize) break;
+        // `before` is a strict `<` timestamp cursor: timestamp ties can
+        // straddle a page boundary, so a full page that yielded nothing new
+        // nudges the cursor to keep making progress.
+        before = rows[rows.length - 1].timestamp;
+        if(newRows === 0) before--;
+      }
+      if(moved > 0) {
+        this.log('[GroupAPI] re-keyed', moved, 'messages for rebind', oldGroupId.slice(0, 8), '→', newGroupId.slice(-8));
+      }
+    } catch(err) {
+      this.log.warn('[GroupAPI] message re-key for rebind failed (non-fatal):', err);
+    }
+  }
+
+  /** Carry the legacy group's anti-replay watermarks over to the successor
+   *  id — a control replay against the new id must not pass a zero watermark. */
+  private copyEventWatermarks(fromGroupId: string, toGroupId: string): void {
+    for(const field of ['members', 'info', 'admin'] as const) {
+      try {
+        const value = localStorage.getItem(WATERMARK_PREFIX + fromGroupId + ':' + field);
+        if(value !== null) {
+          localStorage.setItem(WATERMARK_PREFIX + toGroupId + ':' + field, value);
+        }
+      } catch{ /* best-effort — private mode etc. */ }
+    }
+  }
+
+  /** Live record that was rebound FROM `legacyId`, or null. */
+  private async findSuccessorBySupersededId(legacyId: string, excludeGroupId?: string): Promise<GroupRecord | null> {
+    try {
+      const all = await this.store.getAll();
+      return all.find((r) => r.groupId !== excludeGroupId && (r.supersededGroupIds ?? []).includes(legacyId)) ?? null;
+    } catch{
+      return null;
+    }
+  }
+
+  /** Migrate a legacy group THIS DEVICE ADMINS onto a fresh bound id and
+   *  broadcast the supersede create. Admin-only, legacy-only. Publish happens
+   *  BEFORE any local mutation (nothing to roll back on failure — receivers
+   *  simply never hear about it and the legacy id stays). */
+  async rebindLegacyGroup(oldGroupId: string): Promise<string> {
+    const group = await this.store.get(oldGroupId);
+    if(!group) {
+      throw new Error(`rebindLegacyGroup: group not found: ${oldGroupId.slice(0, 8)}`);
+    }
+    if(boundGroupAdmin(oldGroupId)) {
+      throw new Error(`rebindLegacyGroup: group id is already bound: ${oldGroupId.slice(0, 8)}`);
+    }
+    if(!LEGACY_ID_RE.test(oldGroupId)) {
+      throw new Error(`rebindLegacyGroup: not a legacy group id: ${oldGroupId.slice(0, 8)}`);
+    }
+    if(group.adminPubkey !== this.ownPubkey) {
+      throw new Error('rebindLegacyGroup: only the admin can rebind a group');
+    }
+
+    const newGroupId = mintBoundGroupId(this.ownPubkey);
+    const peerId = await groupIdToPeerId(newGroupId);
+    const nowMs = Date.now();
+    const payload: GroupControlPayload = {
+      type: 'group_create',
+      groupId: newGroupId,
+      groupName: group.name,
+      groupDescription: group.description,
+      memberPubkeys: group.members,
+      adminPubkey: this.ownPubkey,
+      supersedesGroupId: oldGroupId
+    };
+
+    const others = group.members.filter((m) => m !== this.ownPubkey);
+    let controlWraps;
+    try {
+      controlWraps = broadcastGroupControl(this.ownSk, others, payload);
+    } catch(err) {
+      this.log.warn('[GroupAPI] rebindLegacyGroup: broadcastGroupControl threw before local mutation:', err);
+      throw err;
+    }
+    await this.publishFn(controlWraps);
+
+    const record: GroupRecord = {
+      groupId: newGroupId,
+      name: group.name,
+      description: group.description,
+      adminPubkey: this.ownPubkey,
+      members: group.members,
+      peerId,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+      // The user's own migration gesture (#180): only the initiator stamps.
+      deliberateAddAt: nowMs,
+      supersededGroupIds: [oldGroupId],
+      reboundAt: Math.floor(nowMs / 1000)
+    };
+    await this.commitLegacyMigration(record, {deliberate: true, teardownLegacy: true});
+    this.log('[GroupAPI] rebound legacy group:', oldGroupId.slice(0, 8), '→', newGroupId.slice(-8));
+    return newGroupId;
+  }
+
+  /** Rebind every legacy group this device admins. Skips groups another of
+   *  this user's devices already rebound (successor admin is us); a successor
+   *  whose admin is NOT us is a forged claim and never stops the rebind. */
+  async rebindAllLegacyGroups(): Promise<number> {
+    let all: GroupRecord[];
+    try {
+      all = await this.store.getAll();
+    } catch(err) {
+      this.log.warn('[GroupAPI] rebindAllLegacyGroups: store read failed:', err);
+      return 0;
+    }
+    let count = 0;
+    // Reconcile ONCE up front, not once per already-rebound successor — the
+    // sweep is a full-store walk per call (Lena review nit, PR #195).
+    await this.reconcileSupersededGroups();
+    for(const group of all) {
+      if(boundGroupAdmin(group.groupId)) continue;
+      if(group.adminPubkey !== this.ownPubkey) continue;
+      const successor = await this.findSuccessorBySupersededId(group.groupId);
+      // Authority from the successor's BOUND ID, not its record's adminPubkey
+      // field (attacker-mouldable once a forged record enters the CRDT union).
+      if(successor && boundGroupAdmin(successor.groupId) === this.ownPubkey) {
+        // Another own device already migrated it — the up-front reconcile
+        // already handled local retirement for it.
+        continue;
+      }
+      try {
+        await this.rebindLegacyGroup(group.groupId);
+        count++;
+      } catch(err) {
+        this.log.warn('[GroupAPI] auto-rebind failed for legacy group', group.groupId.slice(0, 8), err);
+      }
+    }
+    return count;
+  }
+
+  /** Retire live records whose successor already exists — the resurrection
+   *  corner where a #180 deliberate stamp let a legacy record win a merge
+   * against its own durable delete row. Gated on the successor's ID-DERIVED
+   * admin (bound id) matching the live legacy record's admin: the record's
+   * own adminPubkey field is attacker-mouldable data once a forged record
+   * with a spoofed field and a claimed supersededGroupIds enters the CRDT
+   * union, and must never be able to drive the sweep (Lena review
+   * 2026-10-04). Only bound successors may drive it at all. */
+  async reconcileSupersededGroups(): Promise<void> {
+    let all: GroupRecord[];
+    try {
+      all = await this.store.getAll();
+    } catch{
+      return;
+    }
+    for(const record of all) {
+      const recordAdmin = boundGroupAdmin(record.groupId);
+      if(!recordAdmin) continue;
+      for(const supersededId of record.supersededGroupIds ?? []) {
+        const live = await this.store.get(supersededId);
+        if(live && live.adminPubkey === recordAdmin) {
+          this.log('[GroupAPI] reconcile: retiring superseded live record:', supersededId.slice(0, 8));
+          await this.teardownGroupLocally(supersededId);
+        }
+      }
+    }
   }
 
   private async handleAddMember(payload: GroupControlPayload): Promise<boolean> {
@@ -1715,5 +2104,16 @@ export function initGroupAPI(
   try {
     if(typeof window !== 'undefined') (window as any).__phantomchatGroupAPI = _instance;
   } catch{}
+  // #188 remainder: retire legacy ids as soon as the API exists — rebind
+  // every legacy group this device admins (once per group; a bound record is
+  // never rebound) and reconcile any resurrection corner. Fire-and-forget:
+  // a failed broadcast rolls back (nothing was written) and the next startup
+  // retries. Decision point flagged on #188 — see the rebind design comment.
+  void _instance.reconcileSupersededGroups().catch((err) => {
+    console.warn('[GroupAPI] init reconcileSupersededGroups failed:', err);
+  });
+  void _instance.rebindAllLegacyGroups().catch((err) => {
+    console.warn('[GroupAPI] init rebindAllLegacyGroups failed:', err);
+  });
   return _instance;
 }
