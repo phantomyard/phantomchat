@@ -12,7 +12,7 @@
 import {Logger, logger} from '@lib/logger';
 import rootScope from '@lib/rootScope';
 import {getGroupStore} from './group-store';
-import {groupIdToPeerId} from './group-types';
+import {groupIdToPeerId, isGroupPeer} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
@@ -845,27 +845,19 @@ export class GroupAPI {
     await this.tombstoneGroupConversation(groupId, deletedAt);
     await cleanupGroupChatInjection(peerId);
 
-    // Drop the chat-list dialog row (FIND-3786a35f obs (D)). tweb's
-    // autonomousDialogList gates on `d._ === 'dialog'`, so a bare {peerId}
-    // fails the guard and the row stays in the DOM — dispatch a minimal
-    // Dialog-shaped envelope so it deletes by getDialogKey(dialog) = peerId.
+    // Drop the chat-list dialog row — INCLUDING its persisted tweb cache row
+    // (issue #198 dogfood finding). The old dispatch of a synthetic 'dialog_drop'
+    // envelope only flushed the message storages (the event listener in
+    // appMessagesManager calls flushStoragesByPeerId and nothing else), so the
+    // dialogs row in tweb-account-N survived and re-rendered the dead group on
+    // every boot. dropDialogOnDeletion removes the row from memory, folders and
+    // the persistent dialogs storage, and dispatches a REAL 'dialog_drop' event
+    // with the actual Dialog object — same path the native delete-chat UI uses.
     const groupPeerIdAsDialogPeerId = peerId.toPeerId(true);
     try {
-      rootScope.dispatchEvent('dialog_drop' as any, {
-        _: 'dialog',
-        peerId: groupPeerIdAsDialogPeerId,
-        peer: {_: 'peerChat', chat_id: Math.abs(peerId)},
-        top_message: 0,
-        read_inbox_max_id: 0,
-        read_outbox_max_id: 0,
-        unread_count: 0,
-        unread_mentions_count: 0,
-        unread_reactions_count: 0,
-        notify_settings: {_: 'peerNotifySettings', pFlags: {}},
-        pFlags: {}
-      } as any);
+      rootScope.managers.dialogsStorage.dropDialogOnDeletion(groupPeerIdAsDialogPeerId);
     } catch(err) {
-      this.log.warn('[GroupAPI] teardownGroupLocally: dialog_drop dispatch non-critical:', err);
+      this.log.warn('[GroupAPI] teardownGroupLocally: dialog row drop non-critical:', err);
     }
   }
 
@@ -1931,6 +1923,59 @@ export class GroupAPI {
     // (#198) Then the unlinked twins — they share no legacy id with any
     // successor, so the legacy-id sweep above can never reach them.
     await this.convergeUnlinkedTwinSuccessors();
+  }
+
+  /**
+   * (#198 dogfood finding) Sweep the chat list for dialogs in the group peer
+   * range whose backing group record no longer exists and drop them.
+   *
+   * Every teardown before this fix dispatched only the bare 'dialog_drop'
+   * event, which flushes message storages but leaves the persisted dialogs row
+   * in tweb-account-N untouched — so groups deleted via rebind migrations,
+   * legacy retirements or twin convergence kept rendering on every boot. This
+   * sweep self-heals those rows: it runs AFTER a definitive groups sync
+   * reconcile (records are loaded by then), so a dialog whose record is
+   * missing is by definition orphaned.
+   *
+   * Safety: if the group store can't be read (e.g. a schema VersionError on an
+   * older build), we abort WITHOUT dropping anything — a blind store must
+   * never be interpreted as "no live groups".
+   */
+  async dropOrphanGroupDialogs(): Promise<void> {
+    let livePeerIds: Set<number>;
+    try {
+      livePeerIds = new Set((await this.store.getAll()).map((r) => r.peerId));
+    } catch{
+      this.log.warn('[GroupAPI] dropOrphanGroupDialogs: group store unreadable, skipping');
+      return;
+    }
+
+    let dialogs: any[];
+    try {
+      const result = await rootScope.managers.dialogsStorage.getDialogs({limit: 1000, forceLocal: true});
+      dialogs = (result?.dialogs || []) as any[];
+    } catch{
+      // dialogs storage not ready yet — nothing to sweep this boot; the next
+      // post-sync reconcile retries idempotently.
+      return;
+    }
+
+    let dropped = 0;
+    for(const dialog of dialogs) {
+      const peerId = dialog?.peerId;
+      if(typeof peerId !== 'number' || !isGroupPeer(peerId)) continue;
+      if(livePeerIds.has(peerId)) continue;
+      try {
+        rootScope.managers.dialogsStorage.dropDialogOnDeletion(peerId);
+        dropped++;
+        this.log('[GroupAPI] dropped orphan group dialog:', peerId);
+      } catch(err) {
+        this.log.warn('[GroupAPI] dropOrphanGroupDialogs: drop failed for', peerId, err);
+      }
+    }
+    if(dropped > 0) {
+      this.log('[GroupAPI] dropOrphanGroupDialogs: swept', dropped, 'orphan dialog(s)');
+    }
   }
 
   private async handleAddMember(payload: GroupControlPayload): Promise<boolean> {

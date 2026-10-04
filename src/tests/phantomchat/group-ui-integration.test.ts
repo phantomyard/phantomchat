@@ -65,6 +65,8 @@ const dispatchEventMock = vi.fn();
 const dropP2PDialogMock = vi.fn().mockReturnValue([{peerId: -2000000000000001}]);
 const registerP2PDialogMock = vi.fn();
 const saveApiChatMock = vi.fn();
+const dropDialogOnDeletionMock = vi.fn();
+const getDialogsMock = vi.fn().mockResolvedValue({dialogs: [], count: 0, isEnd: true, isTopEnd: true});
 
 vi.mock('@lib/rootScope', () => ({
   default: {
@@ -73,7 +75,9 @@ vi.mock('@lib/rootScope', () => ({
     managers: {
       dialogsStorage: {
         dropP2PDialog: (...args: any[]) => dropP2PDialogMock(...args),
-        registerP2PDialog: (...args: any[]) => registerP2PDialogMock(...args)
+        registerP2PDialog: (...args: any[]) => registerP2PDialogMock(...args),
+        dropDialogOnDeletion: (...args: any[]) => dropDialogOnDeletionMock(...args),
+        getDialogs: (...args: any[]) => getDialogsMock(...args)
       },
       appChatsManager: {
         saveApiChat: (...args: any[]) => saveApiChatMock(...args)
@@ -193,6 +197,59 @@ describe('Group UI Integration', () => {
       expect(dropP2PDialogMock).toHaveBeenCalled();
       // Control message broadcast to remaining members
       expect(publishFn).toHaveBeenCalled();
+    });
+  });
+
+  describe('#198: persisted dialog-row cleanup (orphan group dialogs)', () => {
+    it('leaveGroup drops the persisted dialog row via dropDialogOnDeletion', async() => {
+      const store = getGroupStore() as any;
+      const group = makeGroup();
+      await store.save(group);
+
+      await api.leaveGroup(group.groupId);
+
+      // The old code dispatched only the bare 'dialog_drop' event — the
+      // persisted row survived. The teardown must now drop the row itself.
+      expect(dropDialogOnDeletionMock).toHaveBeenCalledWith(group.peerId.toPeerId(true));
+    });
+
+    it('dropOrphanGroupDialogs drops group-range dialogs without a live record, keeps the rest', async() => {
+      const store = getGroupStore() as any;
+      await store.save(makeGroup({groupId: 'live-group', peerId: -2000000000000001}));
+
+      getDialogsMock.mockResolvedValueOnce({
+        dialogs: [
+          {peerId: -2000000000000001}, // live group — keep
+          {peerId: -2000000000000002}, // group range, no record — drop
+          {peerId: -1000000000000001}, // below GROUP_PEER_BASE — keep
+          {peerId: 482710482710},      // p2p user — keep
+          {peerId: undefined}          // malformed — keep (skip)
+        ],
+        count: 5, isEnd: true, isTopEnd: true
+      });
+
+      await api.dropOrphanGroupDialogs();
+
+      expect(dropDialogOnDeletionMock).toHaveBeenCalledTimes(1);
+      expect(dropDialogOnDeletionMock).toHaveBeenCalledWith(-2000000000000002);
+    });
+
+    it('dropOrphanGroupDialogs aborts without dropping when the group store is unreadable', async() => {
+      const store = getGroupStore() as any;
+      const originalGetAll = store.getAll;
+      store.getAll = vi.fn().mockRejectedValue(new Error('VersionError'));
+      getDialogsMock.mockResolvedValueOnce({dialogs: [{peerId: -2000000000000002}], count: 1, isEnd: true, isTopEnd: true});
+
+      await api.dropOrphanGroupDialogs();
+
+      expect(dropDialogOnDeletionMock).not.toHaveBeenCalled();
+      store.getAll = originalGetAll;
+    });
+
+    it('dropOrphanGroupDialogs tolerates dialogs storage failing to enumerate', async() => {
+      getDialogsMock.mockReset().mockRejectedValueOnce(new Error('not ready'));
+      await expect(api.dropOrphanGroupDialogs()).resolves.toBeUndefined();
+      expect(dropDialogOnDeletionMock).not.toHaveBeenCalled();
     });
   });
 

@@ -577,6 +577,12 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             try {
               const {getGroupAPI} = await import('@lib/phantomchat/group-api');
               await getGroupAPI().reconcileSupersededGroups();
+              // (#198) Post-convergence chat-list heal: records are now the
+              // definitive merged CRDT state, so any remaining group-range
+              // dialog without a live record is an orphan left by an older
+              // teardown — drop its persisted row. Runs after the reconcile so
+              // it never fires on a store that hasn't synced yet (fresh device).
+              await getGroupAPI().dropOrphanGroupDialogs();
             } catch(e) {
               console.warn('[groups-sync] post-reconcile convergence failed', e);
             }
