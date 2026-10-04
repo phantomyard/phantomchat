@@ -1530,15 +1530,37 @@ export class GroupAPI {
   /** Move a legacy group's message rows into the successor conversation.
    *  Rows move by upsert (same eventId): message identity, edits and
    *  reactions keep working unchanged after the migration. */
-  private async rekeyGroupMessages(oldGroupId: string, newGroupId: string, newPeerId: number): Promise<void> {
+  private async rekeyGroupMessages(oldGroupId: string, newGroupId: string, newPeerId: number, pageSize = 1000): Promise<void> {
     try {
       const store = getMessageStore();
-      const rows = await store.getMessages(`group:${oldGroupId}`, 10000);
-      for(const row of rows) {
-        await store.saveMessage({...row, conversationId: `group:${newGroupId}`, twebPeerId: newPeerId});
+      // Paginate until exhausted: getMessages returns the NEWEST-first slice
+      // of `pageSize`, so a single bounded call silently drops a long legacy
+      // history's OLDEST rows at the rebind boundary (Lena review, PR #195).
+      // Rows move by upsert keyed on eventId, so an overlapping cursor page
+      // re-saving an already-moved row is idempotent.
+      const seen = new Set<string>();
+      let before: number | undefined;
+      let moved = 0;
+      for(;;) {
+        const rows = await store.getMessages(`group:${oldGroupId}`, pageSize, before);
+        if(rows.length === 0) break;
+        let newRows = 0;
+        for(const row of rows) {
+          if(seen.has(row.eventId)) continue;
+          seen.add(row.eventId);
+          newRows++;
+          await store.saveMessage({...row, conversationId: `group:${newGroupId}`, twebPeerId: newPeerId});
+          moved++;
+        }
+        if(rows.length < pageSize) break;
+        // `before` is a strict `<` timestamp cursor: timestamp ties can
+        // straddle a page boundary, so a full page that yielded nothing new
+        // nudges the cursor to keep making progress.
+        before = rows[rows.length - 1].timestamp;
+        if(newRows === 0) before--;
       }
-      if(rows.length > 0) {
-        this.log('[GroupAPI] re-keyed', rows.length, 'messages for rebind', oldGroupId.slice(0, 8), '→', newGroupId.slice(-8));
+      if(moved > 0) {
+        this.log('[GroupAPI] re-keyed', moved, 'messages for rebind', oldGroupId.slice(0, 8), '→', newGroupId.slice(-8));
       }
     } catch(err) {
       this.log.warn('[GroupAPI] message re-key for rebind failed (non-fatal):', err);
@@ -1641,6 +1663,9 @@ export class GroupAPI {
       return 0;
     }
     let count = 0;
+    // Reconcile ONCE up front, not once per already-rebound successor — the
+    // sweep is a full-store walk per call (Lena review nit, PR #195).
+    await this.reconcileSupersededGroups();
     for(const group of all) {
       if(boundGroupAdmin(group.groupId)) continue;
       if(group.adminPubkey !== this.ownPubkey) continue;
@@ -1648,8 +1673,8 @@ export class GroupAPI {
       // Authority from the successor's BOUND ID, not its record's adminPubkey
       // field (attacker-mouldable once a forged record enters the CRDT union).
       if(successor && boundGroupAdmin(successor.groupId) === this.ownPubkey) {
-        // Another own device already migrated it — just reconcile locally.
-        await this.reconcileSupersededGroups();
+        // Another own device already migrated it — the up-front reconcile
+        // already handled local retirement for it.
         continue;
       }
       try {

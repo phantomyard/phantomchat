@@ -1428,5 +1428,59 @@ describe('Group Management', () => {
       expect(store().recordDeletedGroup).toHaveBeenCalledWith(LEGACY_ID, expect.any(Number));
       expect(store().recordDeletedGroup).not.toHaveBeenCalledWith(foreignLegacy);
     });
+
+    it('rebindAllLegacyGroups reconciles once, not once per already-rebound successor', async() => {
+      const legacyA = '1111111122223333aabbccddeeff00112233'.slice(0, 32);
+      const legacyB = '2222222233334444aabbccddeeff00112233'.slice(0, 32);
+      const boundA = boundIdOf(OWN_PUBKEY, 'a'.repeat(32));
+      const boundB = boundIdOf(OWN_PUBKEY, 'b'.repeat(32));
+      const mineA = makeGroup({groupId: legacyA, adminPubkey: OWN_PUBKEY, members: [MEMBER_A, OWN_PUBKEY]});
+      const mineB = makeGroup({groupId: legacyB, adminPubkey: OWN_PUBKEY, members: [MEMBER_A, OWN_PUBKEY]});
+      const succA = makeGroup({groupId: boundA, adminPubkey: OWN_PUBKEY, supersededGroupIds: [legacyA]});
+      const succB = makeGroup({groupId: boundB, adminPubkey: OWN_PUBKEY, supersededGroupIds: [legacyB]});
+      getAnswers({
+        [legacyA]: mineA, [legacyB]: mineB,
+        [boundA]: succA, [boundB]: succB
+      });
+      store().getAll.mockResolvedValue([mineA, mineB, succA, succB]);
+      const reconcileSpy = vi.spyOn(api, 'reconcileSupersededGroups').mockResolvedValue(undefined);
+
+      const count = await api.rebindAllLegacyGroups();
+
+      // Both legacy groups were already rebound by other own devices.
+      expect(count).toBe(0);
+      expect(broadcast()).not.toHaveBeenCalled();
+      // One sweep for the whole run, not one per already-rebound group.
+      expect(reconcileSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('rekeyGroupMessages paginates until exhausted — no history lost past one page', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      const successorId = boundIdOf(OWN_PUBKEY, 'c'.repeat(32));
+      // 25 rows against a page size of 10 → three pages, exercising the
+      // `before` cursor loop; the old single-bounded call would have kept
+      // only the newest `limit` rows and silently dropped the rest.
+      const total = 25;
+      for(let i = 0; i < total; i++) {
+        await ms.saveMessage({
+          eventId: 'legacy-msg-' + i, conversationId: `group:${LEGACY_ID}`,
+          senderPubkey: MEMBER_A, content: 'history ' + i, type: 'text',
+          timestamp: 1700000000 + i, deliveryState: 'delivered', mid: 2000 + i,
+          twebPeerId: -2000000000000001, isOutgoing: false
+        });
+      }
+
+      await (api as any).rekeyGroupMessages(LEGACY_ID, successorId, -2000000000000002, 10);
+
+      const migrated = await ms.getMessages(`group:${successorId}`, 100);
+      expect(migrated.length).toBe(total);
+      const eventIds = new Set(migrated.map((m: any) => m.eventId));
+      for(let i = 0; i < total; i++) {
+        expect(eventIds.has('legacy-msg-' + i)).toBe(true);
+      }
+      // Oldest row survived the migration.
+      expect(eventIds.has('legacy-msg-0')).toBe(true);
+    });
   });
 });
