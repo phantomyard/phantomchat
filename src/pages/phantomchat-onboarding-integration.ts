@@ -476,7 +476,21 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             // the wire → millis in the mapping store). Monotonic at the store layer.
             setDeliberateAddAt: (pubkey, sec) => setDeliberateAddAt(pubkey, sec * 1000),
             removeContact: (pubkey) => removeMapping(pubkey),
-            setTombstone: (convId, sec) => store.setTombstone(convId, sec)
+            setTombstone: (convId, sec) => store.setTombstone(convId, sec),
+            // (#198) read() self-heal: a delete learned from sync used to
+            // tear down the mapping but leave the message-store rows (incl.
+            // the contact-init seed) that DERIVE the contact + dialog, so
+            // the deleted chat stayed on screen forever. Idempotent: no-ops
+            // when the conversation has no rows.
+            wipeConversationResidue: async(pubkey) => {
+              const convId = store.getConversationId(ownPubkey, pubkey);
+              const residue = await store.getMessages(convId, 1);
+              if(!residue?.length) return;
+              await store.deleteMessages(convId);
+              const rs: any = (await import('@lib/rootScope')).default;
+              rs.dispatchEvent('phantomchat_conversation_deleted', {peerPubkey: pubkey, conversationId: convId});
+              console.log('[contacts-sync] wiped conversation residue for durably-deleted peer', pubkey.slice(0, 8));
+            }
           });
 
           const groupsAdapter = createGroupsAdapter({

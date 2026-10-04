@@ -1847,6 +1847,59 @@ export class GroupAPI {
    * with a spoofed field and a claimed supersededGroupIds enters the CRDT
    *  union, and must never be able to drive the sweep (Lena review
    * 2026-10-04). Only bound successors may drive it at all. */
+  /** (#198) Converge UNLINKED twins: a live record that carries no rebind
+   *  provenance (no supersededGroupIds, no reboundAt) but is otherwise an
+   *  exact twin of a live linked rebind successor — same id-derived admin,
+   *  same name, identical member set. resolveCompetingSuccessors can never
+   *  see these pairs because it matches on a shared legacy id in
+   *  supersededGroupIds, and the unlinked twin (minted by a replayed create
+   *  path) claims none — observed live: two "Phantomyard" records, one with
+   *  provenance, one without, coexisting forever.
+   *
+   *  Winner = the LINKED successor (it carries the lineage the legacy id's
+   *  traffic remaps onto; if several linked rivals exist they were already
+   *  resolved by resolveCompetingSuccessors before this runs). The loser is
+   *  torn down through the same history-preserving sequence as the create
+   *  path: rekey its messages into the winner, merge watermarks, teardown.
+   *  Guarded tight so distinct groups can never collide: exact name AND
+   *  identical member set AND no-provenance loser AND same admin. */
+  private async convergeUnlinkedTwinSuccessors(): Promise<void> {
+    let all: GroupRecord[];
+    try {
+      all = await this.store.getAll();
+    } catch{
+      return;
+    }
+    const linked = all.filter((r) =>
+      (r.supersededGroupIds ?? []).length > 0 &&
+      r.reboundAt &&
+      boundGroupAdmin(r.groupId)
+    );
+    if(linked.length === 0) return;
+    let converged = false;
+    for(const winner of linked) {
+      const admin = boundGroupAdmin(winner.groupId);
+      const winnerMembers = [...winner.members].sort().join(',');
+      for(const twin of all) {
+        if(twin.groupId === winner.groupId) continue;
+        // no provenance of its own — a deliberate rebind or a linked
+        // successor is NEVER a twin candidate.
+        if((twin.supersededGroupIds ?? []).length > 0 || twin.reboundAt) continue;
+        if(boundGroupAdmin(twin.groupId) !== admin) continue;
+        if(twin.name !== winner.name) continue;
+        if([...twin.members].sort().join(',') !== winnerMembers) continue;
+        // vanished since the sweep started (a rival pass already retired it)
+        if(!(await this.store.get(twin.groupId))) continue;
+        await this.rekeyGroupMessages(twin.groupId, winner.groupId, winner.peerId);
+        this.mergeEventWatermarks(twin.groupId, winner.groupId);
+        await this.teardownGroupLocally(twin.groupId);
+        this.log('[GroupAPI] converged unlinked twin group:', twin.groupId.slice(-8), '→', winner.groupId.slice(-8));
+        converged = true;
+      }
+    }
+    if(converged) schedulePublish('groups');
+  }
+
   async reconcileSupersededGroups(): Promise<void> {
     let all: GroupRecord[];
     try {
@@ -1875,6 +1928,9 @@ export class GroupAPI {
         }
       }
     }
+    // (#198) Then the unlinked twins — they share no legacy id with any
+    // successor, so the legacy-id sweep above can never reach them.
+    await this.convergeUnlinkedTwinSuccessors();
   }
 
   private async handleAddMember(payload: GroupControlPayload): Promise<boolean> {
