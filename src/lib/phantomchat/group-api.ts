@@ -153,6 +153,7 @@ const SECP_PUBKEY_HEX_RE = /^[0-9a-f]{64}$/;
  *  authenticate the sender. */
 const PENDING_GROUP_DELETE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PENDING_GROUP_DELETES = 512;
+const MAX_PENDING_GROUP_DELETES_PER_SENDER = 32;
 
 interface PendingGroupDelete {
   groupId: string;
@@ -1198,14 +1199,55 @@ export class GroupAPI {
     const existing = this.pendingGroupDeletes.get(key);
     if(existing && existing.createdAt >= createdAt) return;
 
-    // Refresh insertion order so the cap evicts the oldest received fact.
-    this.pendingGroupDeletes.delete(key);
-    this.pendingGroupDeletes.set(key, {groupId, senderPubkey, createdAt, receivedAt: Date.now()});
-    while(this.pendingGroupDeletes.size > MAX_PENDING_GROUP_DELETES) {
-      const oldest = this.pendingGroupDeletes.keys().next().value;
-      if(oldest === undefined) break;
-      this.pendingGroupDeletes.delete(oldest);
+    if(existing) {
+      // A replay with a newer source timestamp may update the delete fact,
+      // but it must not renew its local TTL indefinitely.
+      this.pendingGroupDeletes.set(key, {...existing, createdAt});
+      return;
     }
+
+    // This scan is intentionally O(n) over a map capped at 512 entries. It
+    // enforces both limits without maintaining a second mutable index.
+    const senderSlices = new Map<string, {count: number; oldestKey: string; oldestReceivedAt: number}>();
+    for(const [pendingKey, pending] of this.pendingGroupDeletes) {
+      const slice = senderSlices.get(pending.senderPubkey);
+      if(!slice) {
+        senderSlices.set(pending.senderPubkey, {
+          count: 1,
+          oldestKey: pendingKey,
+          oldestReceivedAt: pending.receivedAt
+        });
+      } else {
+        slice.count++;
+        if(pending.receivedAt < slice.oldestReceivedAt) {
+          slice.oldestKey = pendingKey;
+          slice.oldestReceivedAt = pending.receivedAt;
+        }
+      }
+    }
+
+    const ownSlice = senderSlices.get(senderPubkey);
+    if(ownSlice && ownSlice.count >= MAX_PENDING_GROUP_DELETES_PER_SENDER) {
+      // A single authenticated key may mint unlimited self-bound ids. Keep
+      // its eviction pressure inside its own slice of the quarantine (#193).
+      this.pendingGroupDeletes.delete(ownSlice.oldestKey);
+    } else if(this.pendingGroupDeletes.size >= MAX_PENDING_GROUP_DELETES) {
+      // Always admit a new sender at global capacity. Charge the entry to the
+      // largest existing slice, evicting its oldest fact; ties prefer the
+      // slice with the oldest fact. Residual Sybil limit: this is fair-share,
+      // not perfect isolation — as distinct identities accumulate, every
+      // sender's protected share approaches 512 / sender-count entries.
+      let heaviest: {count: number; oldestKey: string; oldestReceivedAt: number} | undefined;
+      for(const slice of senderSlices.values()) {
+        if(!heaviest || slice.count > heaviest.count ||
+          (slice.count === heaviest.count && slice.oldestReceivedAt < heaviest.oldestReceivedAt)) {
+          heaviest = slice;
+        }
+      }
+      if(heaviest) this.pendingGroupDeletes.delete(heaviest.oldestKey);
+    }
+
+    this.pendingGroupDeletes.set(key, {groupId, senderPubkey, createdAt, receivedAt: Date.now()});
   }
 
   private clearPendingGroupDeletes(groupId: string, senderPubkey?: string): void {
@@ -1425,12 +1467,12 @@ export class GroupAPI {
     // stage-before-first-await invariant so a concurrent group_create
     // cannot pass both of its pending-delete checks while this handler
     // is suspended.
-    // Scope (#193): this closes the same-group / foreign-sender lever
-    // only. A single key flooding ids bound to its OWN key still stages
-    // entries it can never see promoted, and the map's global
-    // oldest-received eviction lets those entries crowd out other
-    // senders' legitimate pending deletes — the general per-sender cap
-    // is tracked in #193.
+    // The per-sender cap in rememberPendingGroupDelete closes the single-key
+    // self-bound-id lever (#193): a flooding key evicts its own oldest fact.
+    // Residual limit: distinct Sybil identities are indistinguishable from
+    // legitimate admins. Global eviction therefore provides each sender a
+    // fair share, but enough identities can still shrink another sender's
+    // share and displace its oldest pending facts.
     const boundAdmin = boundGroupAdmin(payload.groupId);
     if(!(boundAdmin && boundAdmin !== senderPubkey)) {
       this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
