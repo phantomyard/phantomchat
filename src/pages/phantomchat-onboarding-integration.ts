@@ -548,6 +548,23 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               groupsSync.reconcile().catch((e) => { console.warn('[groups-sync] reconcile failed', e); return 'failed'; })
             ]);
             console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g);
+            // Post-apply convergence (duplicate-groups regression 2026-10-04,
+            // round 2): the merge union is live records from EVERY device, and
+            // devices still on a pre-#196 build keep re-publishing converged
+            // losers as live. Their blob beats our teardown tombstone through
+            // apply()'s fresh-restore path (which clears the tombstone + the
+            // durable delete row by design — a deliberate re-create must
+            // work), so the loser comes back on every reconcile. Re-running the
+            // GroupAPI convergence AFTER the union lands tears it down again
+            // and republishes our corrected map, which is what eventually
+            // retires the loser on the old builds too. Boot-only convergence
+            // (#196) left a window of hours; this closes it to seconds.
+            try {
+              const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+              await getGroupAPI().reconcileSupersededGroups();
+            } catch(e) {
+              console.warn('[groups-sync] post-reconcile convergence failed', e);
+            }
             return {c, g};
           };
           // 'failed' = relay hiccup; 'no-remote-nothing-local' = we queried but
