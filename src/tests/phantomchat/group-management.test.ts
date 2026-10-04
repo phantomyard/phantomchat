@@ -111,7 +111,7 @@ const OWN_SK = new Uint8Array(32).fill(1);
 const MEMBER_A = 'a'.repeat(64);
 const MEMBER_B = 'b'.repeat(64);
 const NEW_MEMBER = 'c'.repeat(64);
-const GROUP_ID = 'abc123def456abc123def456abc123de00';
+const GROUP_ID = 'abc123def456abc123def456abc123de'; // 32-hex: the real legacy id format (stripped randomUUID)
 
 function makeGroup(overrides: Partial<GroupRecord> = {}): GroupRecord {
   return {
@@ -1283,6 +1283,86 @@ describe('Group Management', () => {
       api.onGroupMessage = null;
     });
 
+    it('remap is routing, not auth: a NON-member sending to the legacy id post-rebind is dropped (Lena review 2026-10-04)', async() => {
+      // The successor's member list is the authority AFTER remap — the remap
+      // itself must never smuggle a non-member into the rebound conversation.
+      const boundId = boundIdOf(MEMBER_A);
+      const bound = makeBoundRecord(boundId, {members: [MEMBER_A, OWN_PUBKEY]});
+      getAnswers({[boundId]: bound});
+      store().getAll.mockResolvedValue([bound]);
+
+      let seenGroupId: string | null = null;
+      let sawAnyDelivery = false;
+      api.onGroupMessage = (gid: string) => { sawAnyDelivery = true; seenGroupId = gid; };
+
+      // MEMBER_B is NOT in the successor's members — the legacy id must not
+      // become a side door around the membership gate.
+      api.handleIncomingGroupMessage(LEGACY_ID, {
+        id: 'late-legacy-nonmember', kind: 14,
+        content: JSON.stringify({id: 'late-legacy-nonmember'}),
+        pubkey: MEMBER_B, created_at: Math.floor(Date.now() / 1000),
+        tags: []
+      }, MEMBER_B);
+
+      await new Promise((r) => setTimeout(r, 25));
+      expect(sawAnyDelivery).toBe(false);
+      expect(seenGroupId).toBeNull();
+      api.onGroupMessage = null;
+    });
+
+    it('a forged successor record with a SPOOFED adminPubkey field cannot drive the reconcile sweep (Lena review 2026-10-04)', async() => {
+      // The sweep's authority gate must be the successor's ID-DERIVED admin,
+      // not the record's adminPubkey field — that field is attacker-mouldable
+      // data once a forged record enters the CRDT union. Here the forged
+      // record is bound to MEMBER_B's id but carries a spoofed adminPubkey
+      // matching the legacy record: the old field-comparison gate would tear
+      // the legacy group down; the id-derived gate must refuse.
+      const forgedBound = boundIdOf(MEMBER_B, 'f'.repeat(32));
+      const forged = makeBoundRecord(forgedBound, {adminPubkey: MEMBER_A});
+      getAnswers({
+        [forgedBound]: forged,
+        [LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A})
+      });
+      store().getAll.mockResolvedValue([forged, makeLegacyRecord()]);
+
+      await api.reconcileSupersededGroups();
+
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+      expect(store().delete).not.toHaveBeenCalled();
+    });
+
+    it('supersede create with a BOUND supersedesGroupId target is rejected (Lena review 2026-10-04)', async() => {
+      // Bound ids are already self-authenticating — allowing them as
+      // supersede targets buys nothing and adds an unneeded code path to
+      // audit. Only legacy 32-hex ids may be superseded.
+      const otherBound = boundIdOf(MEMBER_B, 'f'.repeat(32));
+      getAnswers({[LEGACY_ID]: makeLegacyRecord({adminPubkey: MEMBER_A})});
+      const {rumor} = makeSupersedeRumor(boundIdOf(MEMBER_A), MEMBER_A, Math.floor(Date.now() / 1000) - 10, {supersedesGroupId: otherBound});
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      expect(store().save).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+    });
+
+    it('rebind writes the visible upgrade notice into the new conversation (auto-rebind is not silent)', async() => {
+      const {GROUP_REBIND_NOTICE} = await import('@lib/phantomchat/group-service-messages');
+      getAnswers({[LEGACY_ID]: makeLegacyRecord({adminPubkey: OWN_PUBKEY, members: [MEMBER_A, MEMBER_B, OWN_PUBKEY]})});
+      await seedLegacyMessage();
+
+      const newGroupId = await api.rebindLegacyGroup(LEGACY_ID);
+
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const rows = await getMessageStore().getMessages('group:' + newGroupId);
+      const notice = rows.find((m: any) => m.content === GROUP_REBIND_NOTICE);
+      expect(notice).toBeDefined();
+      expect(notice.senderPubkey).toBe(OWN_PUBKEY);
+      // Deterministic eventId — an echo/replay of the same rebind upserts,
+      // never duplicates.
+      const before = await getMessageStore().getMessages('group:' + newGroupId);
+      expect(before.filter((m: any) => m.content === GROUP_REBIND_NOTICE)).toHaveLength(1);
+    });
+
     it('reconcileSupersededGroups tears down a live legacy record whose successor already exists', async() => {
       const boundId = boundIdOf(MEMBER_A);
       const bound = makeBoundRecord(boundId);
@@ -1294,8 +1374,15 @@ describe('Group Management', () => {
 
       await api.reconcileSupersededGroups();
 
+      // Same invariant as deleteGroup: the durable row is written BEFORE the
+      // store delete, so the teardown survives a crash between the two.
       expect(store().recordDeletedGroup).toHaveBeenCalledWith(LEGACY_ID, expect.any(Number));
       expect(store().delete).toHaveBeenCalledWith(LEGACY_ID);
+      const durableOrder = store().recordDeletedGroup.mock.invocationCallOrder[0];
+      const deleteOrder = store().delete.mock.invocationCallOrder.find(
+        (o: number) => o > durableOrder
+      );
+      expect(durableOrder).toBeLessThan(deleteOrder);
       expect(store().delete).not.toHaveBeenCalledWith(boundId);
     });
 

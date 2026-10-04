@@ -16,7 +16,7 @@ import {groupIdToPeerId} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
-import {writeGroupCreateServiceMessage} from './group-service-messages';
+import {writeGroupCreateServiceMessage, writeGroupRebindNoticeMessage} from './group-service-messages';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
 import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {getMessageStore} from './message-store';
@@ -81,6 +81,9 @@ function watermarkFieldFor(type: string): GroupEventField | null {
 // groups without a migration protocol.
 
 const BOUND_ID_RE = /^([0-9a-f]{64})([0-9a-f]{32})$/;
+
+/** Legacy (pre-#189) group id: 32 hex chars, no bound admin. */
+const LEGACY_ID_RE = /^[0-9a-f]{32}$/;
 
 /** The admin pubkey bound into `groupId`, or null for legacy (unbound) ids. */
 function boundGroupAdmin(groupId: string): string | null {
@@ -1383,16 +1386,27 @@ export class GroupAPI {
       return;
     }
 
+    // The supersede TARGET must be a legacy 32-hex id (Lena review
+    // 2026-10-04). Bound ids are already self-authenticating, so allowing
+    // them as supersede targets buys nothing and adds an unneeded code
+    // path to audit — reject anything that isn't exactly legacy format.
+    if(!LEGACY_ID_RE.test(payload.supersedesGroupId)) {
+      this.log.warn('[GroupAPI] rejecting supersede create: supersedesGroupId is not a legacy id:', payload.supersedesGroupId.slice(0, 8));
+      return;
+    }
+
     // Already applied (self-wrap echo, relay replay, or the record arrived
     // first via own-device sync): never re-save. But the successor's PRESENCE
     // is itself the admin's delete fact for the legacy id — reconcile a live
     // legacy record the CRDT merge may have resurrected (#180 deliberate-
-    // stamp corner), gated on the admins matching so a forged successor can
-    // never tear down a legacy group it has no claim to.
+    // stamp corner), gated on the ID-DERIVED admin matching so a forged
+    // successor can never tear down a legacy group it has no claim to.
+    // (The record's adminPubkey FIELD is attacker-mouldable data once a
+    // forged record enters the CRDT union — the bound id is not.)
     const existingNew = await this.store.get(payload.groupId);
     if(existingNew) {
       const legacy = await this.store.get(payload.supersedesGroupId);
-      if(legacy && legacy.adminPubkey === existingNew.adminPubkey) {
+      if(legacy && legacy.adminPubkey === boundAdmin) {
         await this.teardownGroupLocally(payload.supersedesGroupId);
         this.log('[GroupAPI] supersede echo: reconciled live legacy record:', payload.supersedesGroupId.slice(0, 8));
       }
@@ -1489,6 +1503,20 @@ export class GroupAPI {
       }
     }
 
+    // Visible notice in the new dialog (Lena review of #188): auto-rebind
+    // must not be silent — members otherwise see a new group id appear out
+    // of nowhere. Deterministic eventId → idempotent upsert, safe on echo.
+    try {
+      await writeGroupRebindNoticeMessage({
+        groupId: record.groupId,
+        peerId: record.peerId,
+        timestamp: createdAtSec,
+        adminPubkey: record.adminPubkey
+      });
+    } catch(err) {
+      this.log.warn('[GroupAPI] failed to write rebind notice (non-fatal):', err);
+    }
+
     // Retire the legacy id ONLY when this device actually held it — the
     // durable row is the admin's genuine delete fact. A device that never
     // held the group writes nothing durable for it (#184 rule: a durable
@@ -1552,6 +1580,9 @@ export class GroupAPI {
     if(boundGroupAdmin(oldGroupId)) {
       throw new Error(`rebindLegacyGroup: group id is already bound: ${oldGroupId.slice(0, 8)}`);
     }
+    if(!LEGACY_ID_RE.test(oldGroupId)) {
+      throw new Error(`rebindLegacyGroup: not a legacy group id: ${oldGroupId.slice(0, 8)}`);
+    }
     if(group.adminPubkey !== this.ownPubkey) {
       throw new Error('rebindLegacyGroup: only the admin can rebind a group');
     }
@@ -1614,7 +1645,9 @@ export class GroupAPI {
       if(boundGroupAdmin(group.groupId)) continue;
       if(group.adminPubkey !== this.ownPubkey) continue;
       const successor = await this.findSuccessorBySupersededId(group.groupId);
-      if(successor && successor.adminPubkey === this.ownPubkey) {
+      // Authority from the successor's BOUND ID, not its record's adminPubkey
+      // field (attacker-mouldable once a forged record enters the CRDT union).
+      if(successor && boundGroupAdmin(successor.groupId) === this.ownPubkey) {
         // Another own device already migrated it — just reconcile locally.
         await this.reconcileSupersededGroups();
         continue;
@@ -1631,8 +1664,12 @@ export class GroupAPI {
 
   /** Retire live records whose successor already exists — the resurrection
    *  corner where a #180 deliberate stamp let a legacy record win a merge
-   * against its own durable delete row. Admin-gated: a successor may only
-   * retire a legacy record whose admin matches its own. */
+   * against its own durable delete row. Gated on the successor's ID-DERIVED
+   * admin (bound id) matching the live legacy record's admin: the record's
+   * own adminPubkey field is attacker-mouldable data once a forged record
+   * with a spoofed field and a claimed supersededGroupIds enters the CRDT
+   * union, and must never be able to drive the sweep (Lena review
+   * 2026-10-04). Only bound successors may drive it at all. */
   async reconcileSupersededGroups(): Promise<void> {
     let all: GroupRecord[];
     try {
@@ -1641,9 +1678,11 @@ export class GroupAPI {
       return;
     }
     for(const record of all) {
+      const recordAdmin = boundGroupAdmin(record.groupId);
+      if(!recordAdmin) continue;
       for(const supersededId of record.supersededGroupIds ?? []) {
         const live = await this.store.get(supersededId);
-        if(live && live.adminPubkey === record.adminPubkey) {
+        if(live && live.adminPubkey === recordAdmin) {
           this.log('[GroupAPI] reconcile: retiring superseded live record:', supersededId.slice(0, 8));
           await this.teardownGroupLocally(supersededId);
         }

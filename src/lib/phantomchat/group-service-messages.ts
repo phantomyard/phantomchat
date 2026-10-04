@@ -23,6 +23,50 @@ function chatCreateEventId(groupId: string): string {
   return `group-create-${groupId}`;
 }
 
+// Deterministic eventId for the rebind notice row (#188 rebind migration).
+function chatRebindEventId(groupId: string): string {
+  return `group-rebind-${groupId}`;
+}
+
+export const GROUP_REBIND_NOTICE = 'Group upgraded — earlier history was moved here.';
+
+export interface GroupRebindNoticeInput {
+  groupId: string;
+  peerId: number;
+  /** Seconds since epoch. */
+  timestamp: number;
+  /** Sender (group admin) hex pubkey, used to key the notice row. */
+  adminPubkey: string;
+}
+
+/**
+ * Write the visible "group upgraded, history moved here" notice into the
+ * rebound conversation (Lena review of #188, 2026-10-04): auto-rebind must
+ * not be silent — members are otherwise confronted with a new group id
+ * appearing out of nowhere. Idempotent like the create service row.
+ */
+export async function writeGroupRebindNoticeMessage(
+  input: GroupRebindNoticeInput
+): Promise<void> {
+  const eventId = chatRebindEventId(input.groupId);
+  const mid = await PhantomChatBridge.getInstance().mapEventIdToMid(eventId, input.timestamp);
+
+  const row: StoredMessage = {
+    eventId,
+    conversationId: `group:${input.groupId}`,
+    senderPubkey: input.adminPubkey,
+    content: GROUP_REBIND_NOTICE,
+    type: 'text',
+    timestamp: input.timestamp,
+    deliveryState: 'delivered',
+    mid,
+    twebPeerId: input.peerId,
+    isOutgoing: false
+  };
+
+  await getMessageStore().saveMessage(row);
+}
+
 export interface GroupCreateServiceInput {
   groupId: string;
   peerId: number;
