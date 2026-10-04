@@ -196,6 +196,16 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
       console.warn(tag, 'apply: store snapshot failed; falling back to map-derived teardown', err);
     }
 
+    // Durable delete ids, hoisted once for the rebind resurrection guard.
+    // null = the log is unreadable → the guard is skipped entirely.
+    let deletedIds: Set<string> | null;
+    try {
+      deletedIds = new Set((await deps.listDeletedGroups()).map((d) => d.groupId));
+    } catch(err) {
+      console.warn(tag, 'apply: deletedGroups read failed; skipping rebind guard', err);
+      deletedIds = null;
+    }
+
     for(const id of Object.keys(merged)) {
       const entry = merged[id];
       const prev = before[id];
@@ -232,6 +242,37 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
           entry.deliberateAddAt > (prev?.deliberateAddAt ?? 0);
         if(!wasLive || entry.updatedAt > prev.updatedAt || stampAdvanced) {
           if(!entry.data) continue;
+          // REBIND RESURRECTION GUARD (duplicate-groups regression 2026-10-04):
+          // a rebind successor record carries a FRESH bound id — the durable
+          // delete a departed member holds is keyed on the LEGACY id and
+          // can't block it. On a device with neither a live legacy record nor
+          // a live successor of that legacy id, the durable delete is this
+          // device's authority that the group is GONE: skip the upsert or
+          // the group they left comes back under the new id. A device holding
+          // a live legacy record (successor synced before the supersede
+          // create retired it) or a live successor (the normal post-migration
+          // end-state — the durable row for the RETIRED legacy id is expected
+          // there) upserts as before. Unreadable delete log → no skip (fail
+          // open on sync continuity, not closed).
+          const supersededIds = entry.data.supersededGroupIds ?? [];
+          if(supersededIds.length > 0 && deletedIds !== null) {
+            let resurrectsDepartedGroup = false;
+            for(const sid of supersededIds) {
+              if(!deletedIds.has(sid)) continue;
+              const liveLegacy = storeState ? storeState.has(sid) : true;
+              const liveSuccessor = storeState ?
+                [...storeState.values()].some((g) => (g.supersededGroupIds ?? []).includes(sid)) :
+                true;
+              if(!liveLegacy && !liveSuccessor) {
+                resurrectsDepartedGroup = true;
+                break;
+              }
+            }
+            if(resurrectsDepartedGroup) {
+              console.warn(tag, 'apply: skipping successor record for durably-deleted legacy group (departed member):', id);
+              continue;
+            }
+          }
           // A remote LIVE entry legitimately winning over a durable delete is
           // a deliberate re-create — drop the durable delete row (mirrors
           // clearDeletedPeer in the contacts adapter), or read() would tear

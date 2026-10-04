@@ -143,6 +143,7 @@ describe('Group Management', () => {
     s.delete.mockResolvedValue(undefined);
     s.updateMembers.mockResolvedValue(undefined);
     s.recordDeletedGroup.mockResolvedValue(undefined);
+    s.listDeletedGroups.mockResolvedValue([]);
 
     broadcast().mockReturnValue([{id: 'ctrl-1', kind: 1059} as any]);
 
@@ -1481,6 +1482,142 @@ describe('Group Management', () => {
       }
       // Oldest row survived the migration.
       expect(eventIds.has('legacy-msg-0')).toBe(true);
+    });
+
+    // ─── Duplicate-groups regression (2026-10-04) ─────────────────────
+    //
+    // The rebind's competing-successor convergence ONLY ran inside
+    // handleSupersedeCreate's competitor branch — reachable only when the
+    // supersede CREATE message is the first artifact to arrive for a
+    // successor. Two orderings bypass it entirely:
+    //   1. the admin's OWN devices race the auto-rebind at startup; each
+    //      mints its own successor and the rival's supersede create is
+    //      NEVER sent to them (members are filtered by pubkey, and all own
+    //      devices share one pubkey) — the rival successor arrives ONLY as
+    //      a synced record, and the sync path stores it with no competitor
+    //      resolution;
+    //   2. on member devices, the successor RECORD can sync in before the
+    //      create message; the create then hits the existingNew early
+    //      return, which never resolves competitors.
+    // Both leave TWO live groups for one conversation — the duplicate-group
+    // report on the Phantomyard group. Records-based convergence is the fix.
+
+    it('reconcileSupersededGroups converges record-synced competing successors (duplicate-groups regression)', async() => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      // Unique suffixes: an earlier test in this file tombstones the
+      // conversations behind '1'*32/'f'*32 bound ids, and the persistent
+      // fake-indexeddb carries that over — the row save would be dropped.
+      const winner = boundIdOf(MEMBER_A, '4'.repeat(32));
+      const loser = boundIdOf(MEMBER_A, '3'.repeat(32));
+      const winnerRec = makeBoundRecord(winner, {reboundAt: 1700000100});
+      const loserRec = makeBoundRecord(loser, {reboundAt: 1700000000});
+      // Both successors LIVE via record sync — the state the admin's racing
+      // devices (and any member whose records beat the creates) end up in.
+      getAnswers({[winner]: winnerRec, [loser]: loserRec, [LEGACY_ID]: null});
+      store().getAll.mockResolvedValue([winnerRec, loserRec]);
+      await ms.clearTombstone(`group:${winner}`);
+      await ms.clearTombstone(`group:${loser}`);
+      // The loser collected messages after the divergence (sent to the
+      // loser id while both were live) — these must move to the winner.
+      await ms.saveMessage({
+        eventId: 'loser-msg-1', conversationId: `group:${loser}`,
+        senderPubkey: MEMBER_A, content: 'sent while duplicated', type: 'text',
+        timestamp: 1700000200, deliveryState: 'delivered', mid: 3001,
+        twebPeerId: -2000000000000001, isOutgoing: false
+      });
+      // The loser holds a NEWER members watermark — the winner must inherit
+      // the max. And an OLDER info watermark — the winner must KEEP its own
+      // (the merge is max-merge, not blind overwrite).
+      localStorage.setItem('phantomchat:group-wm:' + loser + ':members', '1700000900');
+      localStorage.setItem('phantomchat:group-wm:' + winner + ':members', '1700000500');
+      localStorage.setItem('phantomchat:group-wm:' + loser + ':info', '1700000400');
+      localStorage.setItem('phantomchat:group-wm:' + winner + ':info', '1700000600');
+
+      await api.reconcileSupersededGroups();
+
+      // Exactly one group survives: the deterministic winner.
+      expect(store().delete).toHaveBeenCalledTimes(1);
+      expect(store().delete).toHaveBeenCalledWith(loser);
+      expect(store().delete).not.toHaveBeenCalledWith(winner);
+      // Durable delete for the loser blocks CRDT resurrection of its record.
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(loser, expect.any(Number));
+      // History moved to the winner by upsert — nothing orphaned on the loser.
+      const rows = await ms.getMessages(`group:${winner}`, 100);
+      expect(rows.some((m: any) => m.eventId === 'loser-msg-1')).toBe(true);
+      expect((await ms.getMessages(`group:${loser}`, 100)).length).toBe(0);
+      // Watermarks max-merged onto the winner.
+      expect(localStorage.getItem('phantomchat:group-wm:' + winner + ':members')).toBe('1700000900');
+      expect(localStorage.getItem('phantomchat:group-wm:' + winner + ':info')).toBe('1700000600');
+    });
+
+    it('competing successors bound to DIFFERENT admins never resolve against each other (forged rival untouched)', async() => {
+      // Successor-vs-successor resolution is same-admin only: the documented
+      // race is one user's own devices. A rival bound to another admin is
+      // the forged-claim case the create path already gates — reconcile
+      // must not tear the real successor down over it (nor mint deletes).
+      const real = boundIdOf(MEMBER_A, 'f'.repeat(32));
+      const rival = boundIdOf(MEMBER_B, 'e'.repeat(32));
+      const realRec = makeBoundRecord(real, {reboundAt: 1700000000});
+      const rivalRec = makeBoundRecord(rival, {adminPubkey: MEMBER_B, reboundAt: 1700000100});
+      getAnswers({[real]: realRec, [rival]: rivalRec, [LEGACY_ID]: null});
+      store().getAll.mockResolvedValue([realRec, rivalRec]);
+
+      await api.reconcileSupersededGroups();
+
+      expect(store().delete).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+    });
+
+    it('a supersede create arriving AFTER its record synced still converges competing successors', async() => {
+      // Member device: both successor records already synced in (both live),
+      // and the relay now replays the supersede create for the newer one.
+      // The existingNew early return must resolve the duplicate, not skip it.
+      const winner = boundIdOf(MEMBER_A, '6'.repeat(32));
+      const loser = boundIdOf(MEMBER_A, '7'.repeat(32));
+      const winnerRec = makeBoundRecord(winner, {reboundAt: 1700000100});
+      const loserRec = makeBoundRecord(loser, {reboundAt: 1700000000});
+      getAnswers({[winner]: winnerRec, [loser]: loserRec, [LEGACY_ID]: null});
+      store().getAll.mockResolvedValue([winnerRec, loserRec]);
+      const {rumor} = makeSupersedeRumor(winner, MEMBER_A, 1700000100);
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      expect(store().delete).toHaveBeenCalledWith(loser);
+      expect(store().delete).not.toHaveBeenCalledWith(winner);
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(loser, expect.any(Number));
+    });
+
+    it('a supersede create cannot resurrect a group this device durably deleted (departed member)', async() => {
+      // This member LEFT (or was kicked from) the legacy group: durable
+      // delete fact, no live record. The rebind mints a FRESH bound id that
+      // the legacy delete row can't cover — without a guard the successor
+      // record resurrects the group they departed (#184/#185 authority).
+      const boundId = boundIdOf(MEMBER_A, 'f'.repeat(32));
+      store().listDeletedGroups.mockResolvedValue([{groupId: LEGACY_ID, deletedAt: 1700000000}]);
+      getAnswers({[LEGACY_ID]: null, [boundId]: null});
+      store().getAll.mockResolvedValue([]);
+      const {rumor} = makeSupersedeRumor(boundId, MEMBER_A, 1700000100);
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      expect(store().save).not.toHaveBeenCalled();
+      expect(store().recordDeletedGroup).not.toHaveBeenCalled();
+    });
+
+    it('a supersede create still lands for a brand-new device of a current member (no delete fact, no records)', async() => {
+      // Control for the guard: a fresh device of a current member holds
+      // neither the legacy record nor a delete fact — the supersede create
+      // is their first artifact and must be stored as a plain bound create.
+      const boundId = boundIdOf(MEMBER_A, 'f'.repeat(32));
+      store().listDeletedGroups.mockResolvedValue([]);
+      getAnswers({[LEGACY_ID]: null, [boundId]: null});
+      store().getAll.mockResolvedValue([]);
+      const {rumor} = makeSupersedeRumor(boundId, MEMBER_A, 1700000100);
+
+      await api.handleControlMessage(rumor, MEMBER_A);
+
+      expect(store().save).toHaveBeenCalledWith(expect.objectContaining({groupId: boundId}));
     });
   });
 });

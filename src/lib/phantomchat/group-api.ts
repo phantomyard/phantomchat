@@ -1452,6 +1452,12 @@ export class GroupAPI {
         await this.teardownGroupLocally(payload.supersedesGroupId);
         this.log('[GroupAPI] supersede echo: reconciled live legacy record:', payload.supersedesGroupId.slice(0, 8));
       }
+      // Competing successors can first appear as SYNCED RECORDS (own-device
+      // sync beats the relay; the admin's own devices never receive each
+      // other's supersede create at all). An already-stored successor must
+      // not short-circuit convergence — resolve the duplicate NOW.
+      // (duplicate-groups regression 2026-10-04)
+      await this.resolveCompetingSuccessors(payload.supersedesGroupId);
       return;
     }
 
@@ -1465,6 +1471,31 @@ export class GroupAPI {
         senderPubkey.slice(0, 8), 'for', payload.supersedesGroupId.slice(0, 8)
       );
       return;
+    }
+
+    // DEPARTED-MEMBER GUARD (duplicate-groups regression 2026-10-04): the
+    // successor is a FRESH id — the durable delete this device holds for the
+    // legacy id can't cover it, so without this check the rebind resurrects
+    // a group this device deliberately deleted (left / was kicked from) —
+    // the exact #184/#185 authority violation. A device holding a live
+    // successor is mid/post-migration (the durable row for the retired
+    // legacy id is its NORMAL end-state) and passes; a live legacy record
+    // already passed above; a brand-new device of a current member holds
+    // no delete fact and passes too.
+    if(!legacyRecord) {
+      let deletedRows: Array<{groupId: string}> = [];
+      try {
+        deletedRows = (await this.store.listDeletedGroups()) ?? [];
+      } catch{ /* read failure — fall through to the plain-create path */ }
+      const durablyDeleted = deletedRows.some((d) => d.groupId === payload.supersedesGroupId);
+      const successor = await this.findSuccessorBySupersededId(payload.supersedesGroupId);
+      if(durablyDeleted && !successor) {
+        this.log.warn(
+          '[GroupAPI] rejecting supersede create: legacy group is durably deleted here (departed member):',
+          payload.supersedesGroupId.slice(0, 8)
+        );
+        return;
+      }
     }
 
     // Competing rebind (two of the admin's devices raced the migration):
@@ -1737,6 +1768,85 @@ export class GroupAPI {
    * with a spoofed field and a claimed supersededGroupIds enters the CRDT
    * union, and must never be able to drive the sweep (Lena review
    * 2026-10-04). Only bound successors may drive it at all. */
+  /** Watermark max-merge for successor convergence: the winner inherits the
+   *  HIGHER control watermark of the two, so a replayed control event the
+   *  loser already saw can never slip past the winner's gate. */
+  private mergeEventWatermarks(fromGroupId: string, toGroupId: string): void {
+    for(const field of ['members', 'info', 'admin'] as const) {
+      try {
+        const from = localStorage.getItem(WATERMARK_PREFIX + fromGroupId + ':' + field);
+        if(from === null) continue;
+        const to = localStorage.getItem(WATERMARK_PREFIX + toGroupId + ':' + field);
+        if(to === null || (parseInt(from, 10) || 0) > (parseInt(to, 10) || 0)) {
+          localStorage.setItem(WATERMARK_PREFIX + toGroupId + ':' + field, from);
+        }
+      } catch{ /* best-effort — private mode etc. */ }
+    }
+  }
+
+  /** Converge competing rebind successors of the same legacy id from RECORDS
+   *  alone (duplicate-groups regression 2026-10-04). The create-message
+   *  competitor branch is unreachable when a successor first arrives as a
+   *  synced record — and for the admin's own racing devices it is NEVER
+   *  reachable: rebindLegacyGroup filters members by pubkey, all own devices
+   *  share one, so the rival's supersede create is never sent here and the
+   *  rival successor arrives ONLY via sync. Two live successors of one group
+   *  then coexist forever: the duplicate-group state.
+   *
+   *  Deterministic winner max(reboundAt, groupId), the same rule as the
+   *  message path. Same-admin only — the documented race is one user's own
+   *  devices; a rival bound to a DIFFERENT admin is the forged-claim case
+   *  the create path already gates, and resolution must never tear the real
+   *  successor down over it. */
+  private async resolveCompetingSuccessors(legacyId: string): Promise<void> {
+    let all: GroupRecord[];
+    try {
+      all = await this.store.getAll();
+    } catch{
+      return;
+    }
+    const byAdmin = new Map<string, GroupRecord[]>();
+    for(const record of all) {
+      const admin = boundGroupAdmin(record.groupId);
+      if(!admin) continue;
+      if(!(record.supersededGroupIds ?? []).includes(legacyId)) continue;
+      const list = byAdmin.get(admin) ?? [];
+      list.push(record);
+      byAdmin.set(admin, list);
+    }
+    for(const successors of byAdmin.values()) {
+      if(successors.length < 2) continue;
+      let winner = successors[0];
+      for(const candidate of successors) {
+        const w = winner.reboundAt ?? 0;
+        const c = candidate.reboundAt ?? 0;
+        if(c > w || (c === w && candidate.groupId > winner.groupId)) {
+          winner = candidate;
+        }
+      }
+      for(const loser of successors) {
+        if(loser.groupId === winner.groupId) continue;
+        // History FIRST — teardownGroupLocally purges the loser's
+        // conversation; rows move by upsert so shared eventIds (the
+        // pre-divergence history both inherited from the legacy id) merge,
+        // and the loser's post-divergence rows land in the winner intact.
+        await this.rekeyGroupMessages(loser.groupId, winner.groupId, winner.peerId);
+        this.mergeEventWatermarks(loser.groupId, winner.groupId);
+        await this.teardownGroupLocally(loser.groupId);
+        this.log('[GroupAPI] converged competing rebind successors:', loser.groupId.slice(-8), '→', winner.groupId.slice(-8));
+      }
+      schedulePublish('groups');
+    }
+  }
+
+  /** Retire live records whose successor already exists — the resurrection
+   *  corner where a #180 deliberate stamp let a legacy record win a merge
+   * against its own durable delete row. Gated on the successor's ID-DERIVED
+   * admin (bound id) matching the live legacy record's admin: the record's
+   *  own adminPubkey field is attacker-mouldable data once a forged record
+   * with a spoofed field and a claimed supersededGroupIds enters the CRDT
+   *  union, and must never be able to drive the sweep (Lena review
+   * 2026-10-04). Only bound successors may drive it at all. */
   async reconcileSupersededGroups(): Promise<void> {
     let all: GroupRecord[];
     try {
@@ -1744,10 +1854,20 @@ export class GroupAPI {
     } catch{
       return;
     }
+    // One resolution pass per unique legacy id — several successors of the
+    // same id all converge in a single sweep.
+    const resolved = new Set<string>();
     for(const record of all) {
       const recordAdmin = boundGroupAdmin(record.groupId);
       if(!recordAdmin) continue;
       for(const supersededId of record.supersededGroupIds ?? []) {
+        // Competing successors first (duplicate-groups regression 2026-10-04):
+        // record-synced rivals must converge before the legacy retirement —
+        // the winner is the group the legacy id's traffic remaps onto.
+        if(!resolved.has(supersededId)) {
+          resolved.add(supersededId);
+          await this.resolveCompetingSuccessors(supersededId);
+        }
         const live = await this.store.get(supersededId);
         if(live && live.adminPubkey === recordAdmin) {
           this.log('[GroupAPI] reconcile: retiring superseded live record:', supersededId.slice(0, 8));
