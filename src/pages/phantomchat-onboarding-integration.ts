@@ -548,6 +548,24 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               groupsSync.reconcile().catch((e) => { console.warn('[groups-sync] reconcile failed', e); return 'failed'; })
             ]);
             console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g);
+            // Post-apply convergence (duplicate-groups regression 2026-10-04,
+            // round 2): boot-only convergence (#196) misses a rival successor
+            // that first ARRIVES via sync after the boot sweep — the init
+            // sweep is fire-and-forget at GroupAPI construction, while the
+            // first reconcileOnce waits on `whenSubscribed`, and the 30-min
+            // interval can pull a rival in later. That duplicate then sits
+            // until the next restart. Re-running the GroupAPI convergence
+            // after each groups reconcile closes that window to seconds.
+            // (The CRDT merge itself needs no help: a stale sibling blob
+            // cannot beat our teardown tombstone — #180 rule 2 requires
+            // deliberateAddAt > tombstone.updatedAt, and a loser's stamp is
+            // its mint time, so the tombstone always wins.)
+            try {
+              const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+              await getGroupAPI().reconcileSupersededGroups();
+            } catch(e) {
+              console.warn('[groups-sync] post-reconcile convergence failed', e);
+            }
             return {c, g};
           };
           // 'failed' = relay hiccup; 'no-remote-nothing-local' = we queried but

@@ -1551,6 +1551,72 @@ describe('Group Management', () => {
       expect(localStorage.getItem('phantomchat:group-wm:' + winner + ':info')).toBe('1700000600');
     });
 
+    it('reconcileSupersededGroups converges FOUR record-synced competing successors into one (4-way duplicate-groups regression)', async() => {
+      // The live incident: several of the admin's own devices each minted a
+      // different successor for the same legacy id. All arrive as synced
+      // records (own devices share one pubkey, so no supersede create is ever
+      // delivered between them) — the resolution loop is N-generic and must
+      // collapse all four into the single deterministic winner.
+      const ids = ['8'.repeat(32), '9'.repeat(32), 'a'.repeat(32), 'b'.repeat(32)]
+        .map((suffix) => boundIdOf(MEMBER_A, suffix));
+      const records = ids.map((id, i) => makeBoundRecord(id, {reboundAt: 1700000000 + i}));
+      const winnerId = ids[3]; // max reboundAt
+      getAnswers(Object.fromEntries(records.map((r) => [r.groupId, r])));
+      getAnswers({[LEGACY_ID]: null});
+      store().getAll.mockResolvedValue(records);
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      for(const id of ids) await ms.clearTombstone(`group:${id}`);
+
+      await api.reconcileSupersededGroups();
+
+      for(const id of ids.slice(0, 3)) {
+        expect(store().delete).toHaveBeenCalledWith(id);
+        expect(store().recordDeletedGroup).toHaveBeenCalledWith(id, expect.any(Number));
+      }
+      expect(store().delete).not.toHaveBeenCalledWith(winnerId);
+      expect(store().recordDeletedGroup).not.toHaveBeenCalledWith(winnerId);
+    });
+
+    it('a converged loser observed live again is torn down again on the next reconcile', async() => {
+      // Duplicate-groups regression, round 2 (2026-10-04): boot-only
+      // convergence (#196) misses a rival that first ARRIVES via sync after
+      // the boot sweep. Whenever a converged loser is observed live again —
+      // whichever path put it there — post-apply convergence must retire it
+      // idempotently. The CRDT merge itself CANNOT resurrect it: #180 rule 2
+      // keeps the teardown tombstone over a mint-time deliberateAddAt (see
+      // the adapter-level stale-sibling test in groups-sync-adapter.test.ts).
+      const winner = boundIdOf(MEMBER_A, '4'.repeat(32));
+      const loser = boundIdOf(MEMBER_A, '3'.repeat(32));
+      const winnerRec = makeBoundRecord(winner, {reboundAt: 1700000100});
+      const loserRec = makeBoundRecord(loser, {reboundAt: 1700000000});
+      getAnswers({[winner]: winnerRec, [loser]: loserRec, [LEGACY_ID]: null});
+      store().getAll.mockResolvedValue([winnerRec, loserRec]);
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      const ms = getMessageStore();
+      await ms.clearTombstone(`group:${winner}`);
+      await ms.clearTombstone(`group:${loser}`);
+
+      await api.reconcileSupersededGroups(); // boot convergence
+      expect(store().delete).toHaveBeenCalledWith(loser);
+
+      // Observed-live-again state: durable row empty + both records live in
+      // the store — what a device sees after any resurrection source. This
+      // pins IDEMPOTENT re-teardown; it does not (and cannot) produce the
+      // resurrection through the merge, which keeps the tombstone.
+      store().listDeletedGroups.mockResolvedValue([]);
+      store().recordDeletedGroup.mockClear();
+      store().delete.mockClear();
+      store().getAll.mockResolvedValue([winnerRec, loserRec]);
+      getAnswers({[loser]: loserRec});
+
+      await api.reconcileSupersededGroups(); // post-sync-apply convergence
+
+      expect(store().delete).toHaveBeenCalledWith(loser);
+      expect(store().delete).not.toHaveBeenCalledWith(winner);
+      expect(store().recordDeletedGroup).toHaveBeenCalledWith(loser, expect.any(Number));
+    });
+
     it('competing successors bound to DIFFERENT admins never resolve against each other (forged rival untouched)', async() => {
       // Successor-vs-successor resolution is same-admin only: the documented
       // race is one user's own devices. A rival bound to another admin is
