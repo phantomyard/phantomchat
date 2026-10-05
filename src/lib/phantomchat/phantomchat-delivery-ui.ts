@@ -8,6 +8,7 @@
 
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '@lib/rootScope';
+import {storedRowMedia} from '@lib/phantomchat/phantomchat-media-shape';
 
 export interface DeliveryUIManager {
   /** Start listening for delivery updates */
@@ -86,14 +87,19 @@ async function refreshDialogPreview(numericPeerId: number): Promise<void> {
   }
   const mid = latest.mid;
   const isOut = latest.isOutgoing ?? (latest.senderPubkey === ownPk);
+  // Media from the stored row — this message lands straight in the page
+  // mirror AND tweb's render cache; a media-less copy clobbers a media-bearing
+  // bubble on every receipt (2026-10-05 restart regression).
+  const rowMedia = storedRowMedia(latest, mid);
   const msg = mapper.createTwebMessage({
     mid,
     peerId: numericPeerId,
     fromPeerId: isOut ? undefined : numericPeerId,
     date: latest.timestamp,
-    text: latest.content,
+    text: rowMedia.text,
     isOutgoing: isOut,
-    deliveryState: latest.deliveryState
+    deliveryState: latest.deliveryState,
+    ...(rowMedia.media ? {media: rowMedia.media} : {})
   });
 
   const proxy = MOUNT_CLASS_TO.apiManagerProxy;

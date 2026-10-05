@@ -251,6 +251,58 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result.messages).toContain(dialog.topMessage);
     });
 
+    // 2026-10-05 restart regression: the boot-time dialog preview used to
+    // rebuild the top message WITHOUT media, and tweb's render cache served
+    // that media-less copy forever — media bubbles rendered as empty shells
+    // after every restart. The top message must now carry media built from
+    // the stored row's fileMetadata (same contract as getHistory).
+    it('attaches media built from the stored row to the top message (restart regression)', async () => {
+      mockStore.getMessages.mockResolvedValue([{
+        ...mockMessage,
+        type: 'file',
+        content: 'voice caption',
+        fileMetadata: {
+          url: 'https://nostr.download/67f8.bin',
+          sha256: '67f8f9ad',
+          mimeType: 'audio/ogg; codecs=opus',
+          size: 25403,
+          keyHex: 'be5a71d6',
+          ivHex: 'de1d5379',
+          mediaType: 'voice',
+          duration: 4
+        }
+      }]);
+
+      const result = await server.handleMethod('messages.getDialogs', {});
+      const dialog = result.dialogs[0];
+
+      expect(dialog.topMessage.media).toBeDefined();
+      expect(dialog.topMessage.media._).toBe('messageMediaDocument');
+      expect(dialog.topMessage.message).toBe('voice caption');
+      expect(result.messages[0].media).toBeDefined();
+    });
+
+    it('heals a raw-envelope top row and writes the healed row back', async () => {
+      const envelope = JSON.stringify({
+        url: 'https://nostr.download/67f8.bin', sha256: '67f8f9ad',
+        mimeType: 'audio/ogg; codecs=opus', size: 25403,
+        key: 'be5a71d6', iv: 'de1d5379', mediaType: 'voice',
+        duration: 4, caption: 'the caption'
+      });
+      mockStore.getMessages.mockResolvedValue([{
+        ...mockMessage,
+        type: 'file',
+        content: envelope
+      }]);
+
+      const result = await server.handleMethod('messages.getDialogs', {});
+
+      expect(result.dialogs[0].topMessage.media).toBeDefined();
+      expect(result.dialogs[0].topMessage.message).toBe('the caption');
+      // Self-repair: the healed row is persisted so the next boot skips the heal.
+      expect(mockStore.saveMessage).toHaveBeenCalled();
+    });
+
     it('routes messages.getPinnedDialogs to same handler', async () => {
       const result = await server.handleMethod('messages.getPinnedDialogs', {});
 

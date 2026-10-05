@@ -4430,6 +4430,28 @@ export class AppMessagesManager extends AppManager {
     storage = this.getMessagesStorage(storage);
 
     const {mid} = message;
+
+    // * PhantomChat never-clobber guard (2026-10-05 restart regression):
+    // tweb never re-fetches a cached history window, so a media-LESS copy of
+    // an already-cached media-bearing mid must never overwrite the stored one
+    // — once it does, the bubble renders as an empty `is-message-empty` shell
+    // forever, even though the phantomchat store still has the fileMetadata.
+    // Media is append-only in this app (no edit can remove it), so carrying
+    // the cached media over is always correct. Only guards plain `message`s —
+    // service messages have their own id space and are left alone.
+    {
+      const existing = storage?.get?.(mid) as MyMessage | undefined;
+      const incomingMedia = (message as any).media;
+      const incomingHasNoMedia = !incomingMedia || incomingMedia._ === 'messageMediaEmpty';
+      if(existing &&
+        (message as any)._ === 'message' &&
+        (existing as any)._ === 'message' &&
+        (existing as any).media &&
+        (existing as any).media._ !== 'messageMediaEmpty' &&
+        incomingHasNoMedia) {
+        (message as any).media = (existing as any).media;
+      }
+    }
     // * global storage mirror
     if(
       storage?.type === 'history' &&

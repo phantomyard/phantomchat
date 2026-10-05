@@ -13,7 +13,7 @@ import {getMessageStore} from './message-store';
 import type {StoredMessage} from './message-store';
 import {loadCachedPeerProfile, refreshPeerProfileFromRelays} from './peer-profile-cache';
 import type {NostrBotCommand} from './nostr-profile';
-import {buildPhantomChatMedia, healStoredFileRow} from './phantomchat-media-shape';
+import {buildPhantomChatMedia, healStoredFileRow, storedRowMedia} from './phantomchat-media-shape';
 import type {HealedFileRow, PhantomChatFileMetadata} from './phantomchat-media-shape';
 import {getPubkey, getMapping, removeMapping, recordDeletedPeer} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
@@ -789,13 +789,23 @@ export class PhantomChatMTProtoServer {
 
           const isOutgoing = latest.isOutgoing ?? (latest.senderPubkey === this.ownPubkey);
 
+          // Media from the stored row (same contract as getHistory) — without
+          // this the boot-time dialog refresh writes a media-less top message
+          // into tweb's render cache and media bubbles flip to empty shells
+          // after every restart (2026-10-05 regression).
+          const rowMedia = storedRowMedia(latest, mid);
+          if(rowMedia.healed) {
+            await this.persistHealedRow(store, latest, rowMedia.healed, rowMedia.healed.fileMetadata);
+          }
+
           const msg = this.mapper.createTwebMessage({
             mid,
             peerId,
             fromPeerId: isOutgoing ? undefined : peerId,
             date: latest.timestamp,
-            text: latest.content,
+            text: rowMedia.text,
             isOutgoing,
+            ...(rowMedia.media ? {media: rowMedia.media} : {}),
             ...(latest.replyToMid !== undefined ? {replyToMid: latest.replyToMid} : {})
           });
 
@@ -889,13 +899,18 @@ export class PhantomChatMTProtoServer {
               topMsg = serviceMsg;
             } else {
               const fromPeerId = isOutgoing ? undefined : fromUserId;
+              const rowMedia = storedRowMedia(latest, mid);
+              if(rowMedia.healed) {
+                await this.persistHealedRow(store, latest, rowMedia.healed, rowMedia.healed.fileMetadata);
+              }
               const msg = this.mapper.createTwebMessage({
                 mid,
                 peerId,
                 fromPeerId,
                 date: latest.timestamp,
-                text: latest.content,
+                text: rowMedia.text,
                 isOutgoing,
+                ...(rowMedia.media ? {media: rowMedia.media} : {}),
                 ...(latest.replyToMid !== undefined ? {replyToMid: latest.replyToMid} : {})
               });
               messages.push(msg);
@@ -1310,13 +1325,18 @@ export class PhantomChatMTProtoServer {
             const isOutgoing = stored.isOutgoing ?? (stored.senderPubkey === this.ownPubkey);
             const fromPeerId = isOutgoing ? undefined : peerId;
 
+            // Search results feed tweb's saveMessages — a media-less copy here
+            // would land in the render cache and clobber a media-bearing bubble.
+            const rowMedia = storedRowMedia(stored, mid);
+
             const msg = this.mapper.createTwebMessage({
               mid,
               peerId,
               fromPeerId,
               date: stored.timestamp,
-              text: stored.content,
+              text: rowMedia.text,
               isOutgoing,
+              ...(rowMedia.media ? {media: rowMedia.media} : {}),
               ...(stored.replyToMid !== undefined ? {replyToMid: stored.replyToMid} : {})
             });
             messages.push(msg);
