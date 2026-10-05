@@ -20,6 +20,8 @@
  * feed, fetched over TLS from GitHub and verified before install.
  */
 import {app, ipcMain, shell, net, type BrowserWindow} from 'electron';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import type {AppUpdater} from 'electron-updater';
 import {
   readUpdateSettings,
@@ -32,7 +34,15 @@ import {
   type UpdateChannel,
   type UpdateSettings
 } from './updateSettings';
-import {resolveUpdateCapability, describeNotifyReason, type UpdateCapability} from './updateCapability';
+import {
+  resolveUpdateCapability,
+  describeNotifyReason,
+  findExecutableOnPath,
+  PRIVILEGE_AGENTS,
+  type CapabilityInput,
+  type PackageType,
+  type UpdateCapability
+} from './updateCapability';
 import {
   pickReleaseForChannel,
   isNotifiableUpdate,
@@ -84,10 +94,49 @@ let checkInFlight = false;
 
 let state: UpdateState;
 
-function capabilityInput() {
+// --- Linux install detection (deb/rpm auto-update) --------------------------
+
+/**
+ * Contents of resources/package-type on a packaged Linux install — the file
+ * electron-builder writes ('deb' / 'rpm' / 'pacman') and electron-updater
+ * reads to pick DebUpdater/RpmUpdater. Absent on AppImages, unpacked dirs,
+ * dev runs and pre-6.6-era packages, which is exactly what distinguishes
+ * them here.
+ */
+function readPackageType(): PackageType | null {
+  try {
+    const raw = readFileSync(join(process.resourcesPath, 'package-type'), 'utf8').trim();
+    return raw === 'deb' || raw === 'rpm' || raw === 'pacman' ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when an installed update can actually get root: we are root, or one
+ * of electron-updater's graphical sudo agents is EXECUTABLE on PATH — see
+ * findExecutableOnPath for why mere existence does not count, and for the
+ * residual polkit-agent risk the gate deliberately accepts. Plain `sudo`
+ * needs a terminal, which a desktop app cannot offer, so it does not count. */
+function detectPrivilegeAgent(): boolean {
+  if(process.platform !== 'linux') return false;
+  if(typeof process.getuid === 'function' && process.getuid() === 0) return true;
+  return PRIVILEGE_AGENTS.some((agent) => findExecutableOnPath(agent, process.env.PATH) !== null);
+}
+
+function capabilityInput(): CapabilityInput {
   // 'exe' is the real executable path, so on macOS it is inside the .app —
   // which is what tells us whether we are running from a mounted DMG.
-  return {platform: process.platform, env: process.env, isPackaged: app.isPackaged, appPath: app.getPath('exe')};
+  const input: CapabilityInput = {
+    platform: process.platform,
+    env: process.env,
+    isPackaged: app.isPackaged,
+    appPath: app.getPath('exe')
+  };
+  if(process.platform === 'linux') {
+    input.packageType = readPackageType();
+    input.privilegeAgentPresent = detectPrivilegeAgent();
+  }
+  return input;
 }
 
 function publish(patch: Partial<UpdateState>): void {
@@ -261,8 +310,10 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
   getWindow = resolveWindow;
   settingsFile = updateSettingsPath(app.getPath('userData'));
   settings = readUpdateSettings(settingsFile);
-  capability = resolveUpdateCapability(capabilityInput());
-  capabilityReason = capability === 'notify' ? describeNotifyReason(capabilityInput()) : null;
+  // Probed once: capabilityInput() reads a file and scans PATH on Linux.
+  const input = capabilityInput();
+  capability = resolveUpdateCapability(input);
+  capabilityReason = capability === 'notify' ? describeNotifyReason(input) : null;
 
   state = {
     channel: settings.channel,

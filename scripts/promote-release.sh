@@ -26,6 +26,7 @@ REPO="${2:-${GITHUB_REPOSITORY:-phantomyard/phantomchat}}"
 REQUIRED_ARTIFACTS=(
   "PhantomChat-*.AppImage"
   "phantomchat_*_amd64.deb"
+  "phantomchat_*_x86_64.rpm"
   "PhantomChat-*-x64.dmg"
   "PhantomChat-*-arm64.dmg"
   "PhantomChat-*-x64.zip"

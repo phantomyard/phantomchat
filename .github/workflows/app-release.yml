@@ -5,7 +5,7 @@ name: app-release
 # Fires on pushes to main (i.e. PR merges — branch protection requires PRs, so
 # a push to main IS a merge) except docs-only merges, which the paths-ignore
 # denylist below filters out. Cuts a GitHub Release tagged
-# phantomchat-v1.0.<N> with Linux (AppImage + deb), macOS (Intel +
+# phantomchat-v1.0.<N> with Linux (AppImage + deb + rpm), macOS (Intel +
 # Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, plus
 # SHA256SUMS.txt. The Windows installers are Authenticode signed in the
 # publish job and the macOS DMGs are Developer ID signed, notarized and
@@ -153,7 +153,10 @@ jobs:
         env:
           APP_VERSION: ${{ steps.ver.outputs.version }}
 
-      - name: Package Linux artifacts (AppImage + deb, x64)
+      - name: Install rpmbuild for the rpm target
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
+
+      - name: Package Linux artifacts (AppImage + deb + rpm, x64)
         run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version="$VERSION"
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -164,7 +167,10 @@ jobs:
       # rather than assume it: a silently missing feed would ship a release
       # that no installed client can ever see.
       - name: Assert the Linux update feed was generated
-        run: test -f "release/${VERSION}/latest-linux.yml" || { echo "::error::latest-linux.yml missing — electron-builder produced no update feed"; exit 1; }
+        run: |
+          test -f "release/${VERSION}/latest-linux.yml" || { echo "::error::latest-linux.yml missing — electron-builder produced no update feed"; exit 1; }
+          grep -q 'phantomchat_.*_amd64.deb' "release/${VERSION}/latest-linux.yml" || { echo "::error::deb missing from latest-linux.yml — DebUpdater installs would fail"; exit 1; }
+          grep -q 'phantomchat_.*_x86_64.rpm' "release/${VERSION}/latest-linux.yml" || { echo "::error::rpm missing from latest-linux.yml — RpmUpdater installs would fail"; exit 1; }
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
@@ -175,6 +181,7 @@ jobs:
           path: |
             release/${{ steps.ver.outputs.version }}/PhantomChat-${{ steps.ver.outputs.version }}.AppImage
             release/${{ steps.ver.outputs.version }}/phantomchat_${{ steps.ver.outputs.version }}_amd64.deb
+            release/${{ steps.ver.outputs.version }}/phantomchat_${{ steps.ver.outputs.version }}_x86_64.rpm
             release/${{ steps.ver.outputs.version }}/latest-linux.yml
           if-no-files-found: error
 
@@ -751,6 +758,7 @@ jobs:
           sha256sum \
             "PhantomChat-${VERSION}.AppImage" \
             "phantomchat_${VERSION}_amd64.deb" \
+            "phantomchat_${VERSION}_x86_64.rpm" \
             "PhantomChat-${VERSION}-x64.dmg" \
             "PhantomChat-${VERSION}-arm64.dmg" \
             "PhantomChat-${VERSION}-x64.zip" \
@@ -796,7 +804,8 @@ jobs:
           Artifacts (Linux unsigned, checksums only):
           Linux x64:
           - PhantomChat-${VERSION}.AppImage
-          - phantomchat_${VERSION}_amd64.deb
+          - phantomchat_${VERSION}_amd64.deb (deb, in-app update + manual install)
+          - phantomchat_${VERSION}_x86_64.rpm (rpm, in-app update + manual install)
           macOS (Developer ID signed, notarized and stapled):
           - PhantomChat-${VERSION}-arm64.dmg (Apple Silicon)
           - PhantomChat-${VERSION}-x64.dmg (Intel)
@@ -809,7 +818,7 @@ jobs:
           Update feed (consumed by the in-app updater, not a download):
           - latest.yml (Windows)
           - latest-mac.yml (macOS, with PhantomChat-${VERSION}-*.zip)
-          - latest-linux.yml (Linux AppImage)
+          - latest-linux.yml (Linux AppImage + deb + rpm)
 
           Verify with: sha256sum -c SHA256SUMS.txt
           Install and channel docs: docs/ELECTRON-DESKTOP.md

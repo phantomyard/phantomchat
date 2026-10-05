@@ -5,8 +5,12 @@
  *
  *  - Windows NSIS  — works unsigned; the installer relaunches in place.
  *  - Linux AppImage — works; electron-updater swaps the AppImage file.
- *  - Linux .deb    — apt/dpkg owns that file. An in-place overwrite would
- *                    desynchronise the package database, so we only notify.
+ *  - Linux .deb/.rpm — works since electron-updater 6.8 (DebUpdater /
+ *    RpmUpdater): the new package is downloaded and installed THROUGH the
+ *    package manager (dpkg / dnf / zypper), via pkexec for the root step.
+ *    Requires a privilege-escalation agent on the desktop; without one we
+ *    fall back to notify rather than promising an install that cannot
+ *    prompt.
  *  - macOS         — works, but only since the app became Developer ID
  *                    signed and notarized (#168) and the release started
  *                    carrying a zip + latest-mac.yml (#169). Squirrel.Mac
@@ -17,14 +21,22 @@
  *                    place.
  *
  * Getting this wrong is worse than not shipping updates: an auto-update that
- * half-succeeds on a .deb leaves a machine whose package manager disagrees
- * with what is on disk.
+ * half-succeeds leaves a machine whose package manager disagrees with what
+ * is on disk. The deb/rpm paths avoid that by construction — the install is
+ * a real `dpkg -i` / `dnf install` — but they only work when the updater can
+ * actually get root, hence the privilege-agent gate below.
  */
+import {accessSync, statSync, constants as fsConstants} from 'node:fs';
+import {join} from 'node:path';
+
 export type UpdateCapability =
   /** electron-updater can download and install this build. */
   | 'auto'
   /** We can detect a new version but the user must install it themselves. */
   | 'notify';
+
+/** Package types electron-builder writes to resources/package-type. */
+export type PackageType = 'deb' | 'rpm' | 'pacman';
 
 export interface CapabilityInput {
   platform: NodeJS.Platform;
@@ -37,6 +49,21 @@ export interface CapabilityInput {
    * uses it, to spot an app launched straight out of its mounted DMG.
    */
   appPath?: string;
+  /**
+   * Contents of resources/package-type on Linux packaged installs —
+   * 'deb', 'rpm' or 'pacman'. electron-builder writes it when the publish
+   * block exists, and electron-updater 6.6+ reads it to pick the platform
+   * updater. Null when absent (AppImage, unpacked dir, dev run, or a
+   * pre-6.6-era build).
+   */
+  packageType?: PackageType | null;
+  /**
+   * True when an installed update can actually get root on this desktop:
+   * running as root, or one of electron-updater's graphical sudo agents
+   * (pkexec/gksudo/kdesudo/beesu) is on PATH. Plain `sudo` does NOT count —
+   * it needs a terminal, which a desktop app has no way to offer.
+   */
+  privilegeAgentPresent?: boolean;
 }
 
 /**
@@ -61,7 +88,50 @@ export function isRunningFromReadOnlyImage(appPath: string | undefined): boolean
   return appPath.startsWith('/Volumes/') || appPath.includes('/AppTranslocation/');
 }
 
-export function resolveUpdateCapability({platform, env, isPackaged, appPath}: CapabilityInput): UpdateCapability {
+function isPackageInstall(input: CapabilityInput): boolean {
+  return input.packageType === 'deb' || input.packageType === 'rpm';
+}
+
+/**
+ * The graphical privilege agents electron-updater's LinuxUpdater
+ * `determineSudoCommand` accepts, minus its bare-`sudo` terminal fallback
+ * (a desktop app has no terminal to offer, so plain sudo can never prompt).
+ */
+export const PRIVILEGE_AGENTS = ['gksudo', 'kdesudo', 'pkexec', 'beesu'] as const;
+
+/**
+ * Resolve an agent the way electron-updater's `command -v` check would: a
+ * REGULAR, executable file on PATH. `existsSync` is not enough — a
+ * non-executable file (or a directory) named `pkexec` satisfies existsSync
+ * while `command -v` rejects it and falls through to bare sudo, advertising
+ * an install that would die at the root step (#202 review).
+ *
+ * Residual risk, accepted deliberately: an executable pkexec does not
+ * guarantee a polkit authentication agent is registered in the session, and
+ * electron-updater invokes it with --disable-internal-agent, so that case
+ * fails with an error rather than prompting. No cheap reliable probe exists
+ * for "this session can supply graphical authorization", so the gate stops
+ * at executability. The failure mode stays a surfaced install error after a
+ * completed download — dpkg never ran, the package database is untouched.
+ */
+export function findExecutableOnPath(name: string, pathEnv: string | undefined): string | null {
+  const dirs = (pathEnv || '').split(':').filter(Boolean);
+  for(const dir of dirs) {
+    const candidate = join(dir, name);
+    try {
+      if(!statSync(candidate).isFile()) continue;
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+
+export function resolveUpdateCapability(input: CapabilityInput): UpdateCapability {
+  const {platform, env, isPackaged, appPath} = input;
   // An unpackaged run has no installer to replace and electron-updater
   // throws on it outright. Treat dev as notify-only so the UI still renders.
   if(!isPackaged) return 'notify';
@@ -74,12 +144,22 @@ export function resolveUpdateCapability({platform, env, isPackaged, appPath}: Ca
   if(platform === 'darwin') return isRunningFromReadOnlyImage(appPath) ? 'notify' : 'auto';
 
   // The AppImage runtime exports APPIMAGE (absolute path of the image).
-  // Its absence on linux means .deb, a distro package, or an unpacked dir —
-  // none of which we may overwrite.
   if(platform === 'linux' && typeof env.APPIMAGE === 'string' && env.APPIMAGE.length > 0) {
     return 'auto';
   }
 
+  // Package-managed installs (.deb/.rpm). electron-updater installs through
+  // the package manager — no in-place file overwrite, so the package
+  // database stays consistent — but the root step needs a graphical
+  // privilege agent to prompt. Without one, an 'auto' install would die
+  // mid-flight with a cryptic sudo error, so notify and point at the
+  // release page instead.
+  if(platform === 'linux' && isPackageInstall(input)) {
+    return input.privilegeAgentPresent ? 'auto' : 'notify';
+  }
+
+  // Anything else on Linux: an unpacked dir, a pacman install, or a build
+  // without package-type metadata — none of which we may overwrite.
   return 'notify';
 }
 
@@ -88,10 +168,14 @@ export function resolveUpdateCapability({platform, env, isPackaged, appPath}: Ca
  * tab so the user is told WHY rather than left wondering why the toggle is
  * missing.
  */
-export function describeNotifyReason({platform, env, isPackaged, appPath}: CapabilityInput): string {
+export function describeNotifyReason(input: CapabilityInput): string {
+  const {platform, env, isPackaged, appPath} = input;
   if(!isPackaged) return 'Development build — updates are not installed automatically.';
   if(platform === 'darwin' && isRunningFromReadOnlyImage(appPath)) {
     return 'PhantomChat is running from its disk image. Drag it to your Applications folder to get automatic updates.';
+  }
+  if(platform === 'linux' && isPackageInstall(input) && !input.privilegeAgentPresent) {
+    return 'Installing updates needs your package-manager password, but no desktop authorization tool (pkexec) was found on this system. You will be told when a new version is available.';
   }
   if(platform === 'linux' && !env.APPIMAGE) return 'This copy is managed by your package manager, so PhantomChat will not replace it. You will be told when a new version is available.';
   return 'This install cannot update itself automatically. You will be told when a new version is available.';

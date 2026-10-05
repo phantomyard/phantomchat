@@ -41,13 +41,14 @@ pnpm run typecheck:electron
 ### Linux
 
 ```bash
-pnpm run app:build        # PWA build + electron bundle + AppImage/.deb into release/<version>/
+pnpm run app:build        # PWA build + electron bundle + AppImage/.deb/.rpm into release/<version>/
 pnpm run app:pack         # same but unpacked dir only (faster iteration)
 ```
 
-Targets per issue #150: x64 **AppImage** and **.deb**. RPM, Snap and
-Flatpak are deliberately out of scope for the first release. Artifacts are
-unsigned (acceptable on Linux) and always ship with `SHA256SUMS.txt`.
+Targets: x64 **AppImage**, **.deb** and **.rpm** (Snap and Flatpak stay out
+of scope). The rpm build needs `rpmbuild` on the machine: `sudo apt install
+rpm` (Ubuntu/Debian). Artifacts are unsigned (acceptable on Linux) and
+always ship with `SHA256SUMS.txt`.
 
 **Local builds need `APP_VERSION`.** Without it the bundle bakes build 0.
 A profile that has already run a release stores its build number, sees a
@@ -81,6 +82,19 @@ this via `scripts/check-deb-install.sh`.
 If an already-installed 1.0.1 aborts on launch, either upgrade to a fixed
 release or run once:
 `sudo chmod 4755 /opt/PhantomChat/chrome-sandbox && sudo ln -sf /opt/PhantomChat/phantomchat /usr/bin/phantomchat`.
+
+### .rpm install
+
+```bash
+sudo dnf install ./phantomchat_<version>_x86_64.rpm
+phantomchat
+```
+
+Same `/opt/PhantomChat/` layout as the deb; fpm's rpm packaging carries the
+same stock PATH symlink and desktop entry. In-app updates install through
+`zypper`/`dnf`/`yum` (RpmUpdater picks whichever is present). CI checks the
+rpm structurally (`rpm -qlp`, package-type + feed assertions) rather than
+installing it — the runners are Ubuntu, so there is no dnf to drive.
 
 ### AppImage menu integration
 
@@ -213,12 +227,27 @@ builds until stable's counter overtakes. See `channelUpdaterFlags()` in
 |---|---|
 | Windows (NSIS) | downloads and installs on quit |
 | Linux (AppImage) | downloads and replaces the AppImage |
-| Linux (.deb) | **notify only** — dpkg owns those files |
+| Linux (.deb) | downloads, installs via `dpkg`/`apt` with a password prompt |
+| Linux (.deb), no executable pkexec on PATH | **notify only** — cannot prompt for root |
+| Linux (.rpm) | downloads, installs via `zypper`/`dnf`/`yum` with a password prompt |
 | macOS | downloads and installs on quit (Squirrel.Mac) |
 | macOS, run from the DMG | **notify only** — read-only volume |
 
-Auto-installing over a dpkg-managed file would desynchronise the package
-database, so .deb stays notify-only permanently. macOS went auto in #169: the
+Package installs go auto through electron-updater 6.8's DebUpdater/RpmUpdater:
+they never overwrite dpkg/rpm-owned files, they install the downloaded
+package with the real package manager (one pkexec password prompt, then
+relaunch). The switch is `resources/package-type`, which electron-builder
+writes into the packaged app — `electron/updateCapability.ts` reads it and
+also requires a graphical privilege agent (pkexec and friends) EXECUTABLE on
+PATH — a non-executable file with the right name does not count, because
+electron-updater's `command -v` check would reject it and fall through to
+bare sudo. One residual risk is accepted deliberately: an executable pkexec
+still does not prove a polkit authentication agent is registered in the
+session (electron-updater passes `--disable-internal-agent`), so a desktop
+without one fails at the install prompt with a surfaced error — never a
+half-applied update, since dpkg/dnf never ran. The one hard edge: an install made BEFORE the deb/rpm target
+shipped needs one manual update hop — auto-update only engages once a build
+carrying this resolver is installed. macOS went auto in #169: the
 app is Developer ID signed and notarized (Squirrel.Mac's hard precondition),
 the release carries a `zip` for each architecture, and `latest-mac.yml` is
 merged and published alongside the other feeds. The one macOS install that

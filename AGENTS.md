@@ -136,6 +136,19 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    `buildClearedDialogFromStore`. New builder? Use `storedRowMedia` — never
    hand-roll `createTwebMessage` over a stored row without it.
 
+14. **Linux package installs self-update THROUGH the package manager, never
+   around it.** The deb/rpm targets must keep electron-builder's
+   `package-type` + `app-update.yml` in `resources/` (electron-updater 6.6+
+   reads package-type to pick DebUpdater/RpmUpdater), the capability resolver
+   (`electron/updateCapability.ts`) may only mark a package install 'auto'
+   when a graphical privilege agent (pkexec/gksudo/kdesudo/beesu, or root) is
+   EXECUTABLE on PATH — a non-executable file with the right name does not
+   count, and plain `sudo` cannot prompt from a desktop app — and
+   `latest-linux.yml` must carry the .deb AND the .rpm (CI asserts both, plus
+   the package-type file inside both packages). A feed without the package
+   payload, or a package without package-type, breaks every package-managed
+   install's update path silently.
+
 ## Review checklist (reject a diff that does any of these on a hot path)
 
 - An `await` of a worker/IDB/network call placed *before* a paint or input echo.

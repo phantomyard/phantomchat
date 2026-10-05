@@ -59,6 +59,7 @@ interface RunResult {
 const ALL_ASSETS = [
   'PhantomChat-1.0.42.AppImage',
   'phantomchat_1.0.42_amd64.deb',
+  'phantomchat_1.0.42_x86_64.rpm',
   'PhantomChat-1.0.42-x64.dmg',
   'PhantomChat-1.0.42-arm64.dmg',
   'PhantomChat-1.0.42-x64.zip',
@@ -111,11 +112,20 @@ describe('promote-release.sh', () => {
 
   it('fails closed when the Apple Silicon DMG is missing', () => {
     const res = runPromote(
-      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb PhantomChat-1.0.42-x64.dmg'
+      'PhantomChat-1.0.42.AppImage phantomchat_1.0.42_amd64.deb phantomchat_1.0.42_x86_64.rpm PhantomChat-1.0.42-x64.dmg'
     );
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('required artifact missing');
     expect(res.stderr).toContain('PhantomChat-*-arm64.dmg');
+  });
+
+  it('fails closed when the rpm is missing (deb/rpm auto-update)', () => {
+    // RpmUpdater installs pick their payload out of latest-linux.yml — a
+    // release without the rpm breaks every package-managed rpm install.
+    const res = runPromote(ALL_ASSETS.replace('phantomchat_1.0.42_x86_64.rpm ', ''));
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('required artifact missing');
+    expect(res.stderr).toContain('phantomchat_*_x86_64.rpm');
   });
 
   it('fails closed when the Windows arm64 installer is missing', () => {
