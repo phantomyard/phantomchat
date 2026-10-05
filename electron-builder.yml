@@ -1,6 +1,6 @@
 # PhantomChat desktop packaging (electron-builder).
-# Linux ships x64 AppImage + .deb. macOS ships separate Apple Silicon and
-# Intel DMGs. Windows ships separate x64 and arm64 NSIS installers. Signing
+# Linux ships x64 AppImage + .deb + .rpm. macOS ships separate Apple Silicon
+# and Intel DMGs. Windows ships separate x64 and arm64 NSIS installers. Signing
 # stays out until the Axelera identities exist (see docs/ELECTRON-DESKTOP.md
 # for the reserved secret names).
 appId: ai.phantomyard.chat
@@ -60,6 +60,8 @@ linux:
       arch: [x64]
     - target: deb
       arch: [x64]
+    - target: rpm
+      arch: [x64]
   syncDesktopName: true
   maintainer: PhantomChat <chat@phantomyard.ai>
   vendor: Hodges Enterprises B.V.
@@ -72,6 +74,13 @@ linux:
   # description/category above. AppImage users get the same integration via
   # `phantomchat --install`.
 
+# electron-builder writes a `package-type` file ("deb" / "rpm") into the
+# packaged resources whenever the publish block exists. electron-updater
+# >= 6.6 reads it to pick DebUpdater / RpmUpdater instead of AppImageUpdater,
+# which is what makes in-app updates work on package-managed installs: the
+# new package is downloaded and installed through dpkg / dnf / zypper (with a
+# pkexec password prompt) rather than by overwriting files the package
+# manager owns.
 deb:
   packageCategory: net
   artifactName: phantomchat_${version}_${arch}.${ext}
@@ -82,6 +91,12 @@ deb:
   # script REPLACES all of that, and the previous one left the package with
   # no command on PATH and an app that aborted with a FATAL sandbox error.
   # scripts/check-deb-install.sh (CI) installs the .deb and asserts it.
+
+rpm:
+  artifactName: phantomchat_${version}_${arch}.${ext}
+  # fpm needs rpmbuild on the build machine (CI installs the `rpm` package;
+  # locally: sudo apt install rpm). Same stock-maintainer-script rule as deb:
+  # no custom scripts, fpm's own handle the PATH symlink and desktop files.
 
 appImage:
   # Artifacts must keep a predictable, versioned name for the checksums and

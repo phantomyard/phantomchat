@@ -33,6 +33,15 @@ if sudo apparmor_status --enabled >/dev/null 2>&1; then
   aa_loaded || fail "AppArmor profile installed but not loaded"
 fi
 
+# 3b. resources/package-type must ship: electron-updater 6.6+ reads it to
+#     pick DebUpdater so package-managed installs can self-update.
+[ -f /opt/PhantomChat/resources/package-type ] \
+  || fail "resources/package-type missing — deb installs cannot self-update"
+[ "$(cat /opt/PhantomChat/resources/package-type)" = "deb" ] \
+  || fail "resources/package-type is not 'deb'"
+[ -f /opt/PhantomChat/resources/app-update.yml ] \
+  || fail "resources/app-update.yml missing — installed app has no update feed"
+
 # 4. Removal cleans up after itself.
 sudo apt-get remove -y phantomchat
 [ ! -e /usr/bin/phantomchat ] || fail "/usr/bin/phantomchat left behind after remove"

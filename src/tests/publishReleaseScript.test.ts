@@ -24,6 +24,7 @@ const TAG = `phantomchat-v${VERSION}`;
 const ASSETS = [
   `PhantomChat-${VERSION}.AppImage`,
   `phantomchat_${VERSION}_amd64.deb`,
+  `phantomchat_${VERSION}_x86_64.rpm`,
   `PhantomChat-${VERSION}-x64.dmg`,
   `PhantomChat-${VERSION}-arm64.dmg`,
   `PhantomChat-${VERSION}-x64.zip`,

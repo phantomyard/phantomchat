@@ -79,11 +79,14 @@ jobs:
       - run: pnpm run typecheck:electron
       - run: pnpm run build
       - run: node electron/build.mjs
+      # fpm needs rpmbuild to produce the .rpm target.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
       - run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version=0.0.0-ci.${{ github.run_number }}
       - run: |
           cd release/0.0.0-ci.${{ github.run_number }}
           test -f PhantomChat-*.AppImage
           test -f phantomchat_*_amd64.deb
+          test -f phantomchat_*_x86_64.rpm
           # The update feed (issue #164). Checked on every PR, not just at
           # release time: it is generated as a side effect of the publish
           # provider in electron-builder.yml, so a config change that drops
@@ -91,7 +94,18 @@ jobs:
           # client can see.
           test -f latest-linux.yml
           grep -q '^version: 0.0.0-ci' latest-linux.yml
-          sha256sum PhantomChat-*.AppImage phantomchat_*_amd64.deb > SHA256SUMS.txt
+          # The deb AND the rpm must both be in the feed: electron-updater's
+          # DebUpdater/RpmUpdater pick their payload out of this file, so a
+          # feed without them cannot update package-managed installs.
+          grep -q 'phantomchat_.*_amd64.deb' latest-linux.yml
+          grep -q 'phantomchat_.*_x86_64.rpm' latest-linux.yml
+          # resources/package-type is how electron-updater 6.6+ knows this is
+          # a deb/rpm install — assert it ships in BOTH packages.
+          rpm -qlp phantomchat_*_x86_64.rpm | grep -q 'resources/package-type' \
+            || { echo '::error::rpm is missing resources/package-type — DebUpdater/RpmUpdater can never engage'; exit 1; }
+          dpkg-deb -c phantomchat_*_amd64.deb | grep -q 'resources/package-type' \
+            || { echo '::error::deb is missing resources/package-type — DebUpdater/RpmUpdater can never engage'; exit 1; }
+          sha256sum PhantomChat-*.AppImage phantomchat_*_amd64.deb phantomchat_*_x86_64.rpm > SHA256SUMS.txt
           sha256sum --check --strict SHA256SUMS.txt
       - name: Install the .deb and check maintainer scripts
         run: scripts/check-deb-install.sh release/0.0.0-ci.${{ github.run_number }}/phantomchat_*_amd64.deb
