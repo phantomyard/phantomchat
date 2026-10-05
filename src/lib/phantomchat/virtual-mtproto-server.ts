@@ -792,10 +792,14 @@ export class PhantomChatMTProtoServer {
           // Media from the stored row (same contract as getHistory) — without
           // this the boot-time dialog refresh writes a media-less top message
           // into tweb's render cache and media bubbles flip to empty shells
-          // after every restart (2026-10-05 regression).
+          // after every restart (2026-10-05 regression). The heal write-back is
+          // fire-and-forget: getDialogs is the boot-critical response path, so
+          // legacy-row repairs must never serialize IndexedDB writes in front
+          // of the sidebar render (persistHealedRow swallows its own errors,
+          // and a dropped repair simply heals again on the next read).
           const rowMedia = storedRowMedia(latest, mid);
           if(rowMedia.healed) {
-            await this.persistHealedRow(store, latest, rowMedia.healed, rowMedia.healed.fileMetadata);
+            void this.persistHealedRow(store, latest, rowMedia.healed, rowMedia.healed.fileMetadata);
           }
 
           const msg = this.mapper.createTwebMessage({
@@ -900,8 +904,10 @@ export class PhantomChatMTProtoServer {
             } else {
               const fromPeerId = isOutgoing ? undefined : fromUserId;
               const rowMedia = storedRowMedia(latest, mid);
+              // Fire-and-forget on the response path (same rationale as the
+              // 1:1 branch above): repairs must not hold the boot dialog batch.
               if(rowMedia.healed) {
-                await this.persistHealedRow(store, latest, rowMedia.healed, rowMedia.healed.fileMetadata);
+                void this.persistHealedRow(store, latest, rowMedia.healed, rowMedia.healed.fileMetadata);
               }
               const msg = this.mapper.createTwebMessage({
                 mid,
