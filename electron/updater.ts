@@ -37,6 +37,8 @@ import {
 import {
   resolveUpdateCapability,
   describeNotifyReason,
+  findExecutableOnPath,
+  PRIVILEGE_AGENTS,
   type CapabilityInput,
   type PackageType,
   type UpdateCapability
@@ -110,25 +112,15 @@ function readPackageType(): PackageType | null {
   }
 }
 
-/** True when an installed update can get root: we are root, or one of
- * electron-updater's graphical sudo agents is on PATH. Plain `sudo` needs a
- * terminal, which a desktop app cannot offer, so it does not count. */
+/** True when an installed update can actually get root: we are root, or one
+ * of electron-updater's graphical sudo agents is EXECUTABLE on PATH — see
+ * findExecutableOnPath for why mere existence does not count, and for the
+ * residual polkit-agent risk the gate deliberately accepts. Plain `sudo`
+ * needs a terminal, which a desktop app cannot offer, so it does not count. */
 function detectPrivilegeAgent(): boolean {
   if(process.platform !== 'linux') return false;
   if(typeof process.getuid === 'function' && process.getuid() === 0) return true;
-  // Same agent list electron-updater's LinuxUpdater.determineSudoCommand uses,
-  // minus the bare-sudo fallback.
-  const agents = ['gksudo', 'kdesudo', 'pkexec', 'beesu'];
-  const pathDirs = (process.env.PATH || '').split(':').filter(Boolean);
-  return agents.some((agent) =>
-    pathDirs.some((dir) => {
-      try {
-        return require('node:fs').existsSync(join(dir, agent));
-      } catch {
-        return false;
-      }
-    })
-  );
+  return PRIVILEGE_AGENTS.some((agent) => findExecutableOnPath(agent, process.env.PATH) !== null);
 }
 
 function capabilityInput(): CapabilityInput {

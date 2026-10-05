@@ -142,7 +142,8 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    reads package-type to pick DebUpdater/RpmUpdater), the capability resolver
    (`electron/updateCapability.ts`) may only mark a package install 'auto'
    when a graphical privilege agent (pkexec/gksudo/kdesudo/beesu, or root) is
-   reachable — plain `sudo` cannot prompt from a desktop app — and
+   EXECUTABLE on PATH — a non-executable file with the right name does not
+   count, and plain `sudo` cannot prompt from a desktop app — and
    `latest-linux.yml` must carry the .deb AND the .rpm (CI asserts both, plus
    the package-type file inside both packages). A feed without the package
    payload, or a package without package-type, breaks every package-managed

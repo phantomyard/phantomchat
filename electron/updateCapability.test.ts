@@ -5,7 +5,15 @@
  * install behind.
  */
 import {describe, it, expect} from 'vitest';
-import {resolveUpdateCapability, describeNotifyReason} from './updateCapability';
+import {mkdirSync, mkdtempSync, writeFileSync, chmodSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {
+  resolveUpdateCapability,
+  describeNotifyReason,
+  findExecutableOnPath,
+  PRIVILEGE_AGENTS
+} from './updateCapability';
 
 const packaged = (platform: NodeJS.Platform, env: Record<string, string | undefined> = {}) =>
   ({platform, env, isPackaged: true});
@@ -113,5 +121,60 @@ describe('describeNotifyReason', () => {
     // With an agent present the deb/rpm reasons never appear — capability is auto.
     expect(describeNotifyReason({...packaged('linux'), packageType: 'rpm', privilegeAgentPresent: true})).not.toMatch(/pkexec/i);
     expect(describeNotifyReason({platform: 'linux', env: {}, isPackaged: false})).toMatch(/development/i);
+  });
+});
+
+describe('findExecutableOnPath (privilege-agent probe)', () => {
+  const mkdtempTree = () => {
+    const root = mkdtempSync(join(tmpdir(), 'pc-agent-'));
+    return root;
+  };
+
+  it('finds an executable agent anywhere on PATH', () => {
+    const dir = mkdtempTree();
+    const agent = join(dir, 'pkexec');
+    writeFileSync(agent, '#!/bin/sh\n');
+    chmodSync(agent, 0o755);
+    expect(findExecutableOnPath('pkexec', dir)).toBe(agent);
+  });
+
+  it('rejects a NON-EXECUTABLE file named pkexec (existsSync would pass, command -v would not)', () => {
+    // Kai/Omar's #202 repro: a file named pkexec without the exec bit must
+    // not advertise 'auto' — electron-updater would fall through to bare sudo.
+    const dir = mkdtempTree();
+    const agent = join(dir, 'pkexec');
+    writeFileSync(agent, 'not a program');
+    chmodSync(agent, 0o644);
+    expect(findExecutableOnPath('pkexec', dir)).toBeNull();
+    // Even 000 — existsSync still true, usable it is not.
+    chmodSync(agent, 0o000);
+    expect(findExecutableOnPath('pkexec', dir)).toBeNull();
+  });
+
+  it('rejects a directory named pkexec on PATH', () => {
+    const dir = mkdtempTree();
+    mkdirSync(join(dir, 'pkexec'));
+    expect(findExecutableOnPath('pkexec', dir)).toBeNull();
+  });
+
+  it('returns null for an empty or unset PATH and keeps scanning past misses', () => {
+    expect(findExecutableOnPath('pkexec', '')).toBeNull();
+    expect(findExecutableOnPath('pkexec', undefined)).toBeNull();
+    const emptyDir = mkdtempTree();
+    const realDir = mkdtempTree();
+    const agent = join(realDir, 'gksudo');
+    writeFileSync(agent, '#!/bin/sh\n');
+    chmodSync(agent, 0o755);
+    expect(findExecutableOnPath('gksudo', [emptyDir, realDir].join(':'))).toBe(agent);
+  });
+
+  it('covers every agent the updater can invoke, matching the sudo command list', () => {
+    const dir = mkdtempTree();
+    for(const agent of PRIVILEGE_AGENTS) {
+      const p = join(dir, agent);
+      writeFileSync(p, '#!/bin/sh\n');
+      chmodSync(p, 0o755);
+      expect(findExecutableOnPath(agent, dir)).toBe(p);
+    }
   });
 });

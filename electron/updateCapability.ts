@@ -26,6 +26,9 @@
  * a real `dpkg -i` / `dnf install` — but they only work when the updater can
  * actually get root, hence the privilege-agent gate below.
  */
+import {accessSync, statSync, constants as fsConstants} from 'node:fs';
+import {join} from 'node:path';
+
 export type UpdateCapability =
   /** electron-updater can download and install this build. */
   | 'auto'
@@ -88,6 +91,44 @@ export function isRunningFromReadOnlyImage(appPath: string | undefined): boolean
 function isPackageInstall(input: CapabilityInput): boolean {
   return input.packageType === 'deb' || input.packageType === 'rpm';
 }
+
+/**
+ * The graphical privilege agents electron-updater's LinuxUpdater
+ * `determineSudoCommand` accepts, minus its bare-`sudo` terminal fallback
+ * (a desktop app has no terminal to offer, so plain sudo can never prompt).
+ */
+export const PRIVILEGE_AGENTS = ['gksudo', 'kdesudo', 'pkexec', 'beesu'] as const;
+
+/**
+ * Resolve an agent the way electron-updater's `command -v` check would: a
+ * REGULAR, executable file on PATH. `existsSync` is not enough — a
+ * non-executable file (or a directory) named `pkexec` satisfies existsSync
+ * while `command -v` rejects it and falls through to bare sudo, advertising
+ * an install that would die at the root step (#202 review).
+ *
+ * Residual risk, accepted deliberately: an executable pkexec does not
+ * guarantee a polkit authentication agent is registered in the session, and
+ * electron-updater invokes it with --disable-internal-agent, so that case
+ * fails with an error rather than prompting. No cheap reliable probe exists
+ * for "this session can supply graphical authorization", so the gate stops
+ * at executability. The failure mode stays a surfaced install error after a
+ * completed download — dpkg never ran, the package database is untouched.
+ */
+export function findExecutableOnPath(name: string, pathEnv: string | undefined): string | null {
+  const dirs = (pathEnv || '').split(':').filter(Boolean);
+  for(const dir of dirs) {
+    const candidate = join(dir, name);
+    try {
+      if(!statSync(candidate).isFile()) continue;
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 
 export function resolveUpdateCapability(input: CapabilityInput): UpdateCapability {
   const {platform, env, isPackaged, appPath} = input;

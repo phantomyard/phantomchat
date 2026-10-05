@@ -228,7 +228,7 @@ builds until stable's counter overtakes. See `channelUpdaterFlags()` in
 | Windows (NSIS) | downloads and installs on quit |
 | Linux (AppImage) | downloads and replaces the AppImage |
 | Linux (.deb) | downloads, installs via `dpkg`/`apt` with a password prompt |
-| Linux (.deb), no pkexec on PATH | **notify only** — cannot prompt for root |
+| Linux (.deb), no executable pkexec on PATH | **notify only** — cannot prompt for root |
 | Linux (.rpm) | downloads, installs via `zypper`/`dnf`/`yum` with a password prompt |
 | macOS | downloads and installs on quit (Squirrel.Mac) |
 | macOS, run from the DMG | **notify only** — read-only volume |
@@ -238,9 +238,14 @@ they never overwrite dpkg/rpm-owned files, they install the downloaded
 package with the real package manager (one pkexec password prompt, then
 relaunch). The switch is `resources/package-type`, which electron-builder
 writes into the packaged app — `electron/updateCapability.ts` reads it and
-also requires a graphical privilege agent (pkexec and friends) on PATH;
-without one the install step could never prompt, so the install stays
-notify-only. The one hard edge: an install made BEFORE the deb/rpm target
+also requires a graphical privilege agent (pkexec and friends) EXECUTABLE on
+PATH — a non-executable file with the right name does not count, because
+electron-updater's `command -v` check would reject it and fall through to
+bare sudo. One residual risk is accepted deliberately: an executable pkexec
+still does not prove a polkit authentication agent is registered in the
+session (electron-updater passes `--disable-internal-agent`), so a desktop
+without one fails at the install prompt with a surfaced error — never a
+half-applied update, since dpkg/dnf never ran. The one hard edge: an install made BEFORE the deb/rpm target
 shipped needs one manual update hop — auto-update only engages once a build
 carrying this resolver is installed. macOS went auto in #169: the
 app is Developer ID signed and notarized (Squirrel.Mac's hard precondition),
