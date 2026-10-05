@@ -8,7 +8,7 @@
 
 import '../setup';
 import {describe, it, expect} from 'vitest';
-import {healStoredFileRow, buildPhantomChatMedia} from '../../lib/phantomchat/phantomchat-media-shape';
+import {healStoredFileRow, buildPhantomChatMedia, storedRowMedia} from '../../lib/phantomchat/phantomchat-media-shape';
 
 /** The exact envelope shape ChatAPI.sendFileMessage serializes into content. */
 function makeEnvelope(overrides: Record<string, any> = {}): string {
@@ -126,6 +126,34 @@ describe('healStoredFileRow', () => {
     it('leaves a healthy file row (plain caption content) alone', () => {
       expect(healStoredFileRow({type: 'file', content: 'my caption', fileMetadata: fm})).toBeUndefined();
       expect(healStoredFileRow({type: 'file', content: '{"note":"not an envelope"}', fileMetadata: fm})).toBeUndefined();
+    });
+  });
+
+  describe('storedRowMedia — the shared stored-row → tweb-message media contract (2026-10-05 restart regression)', () => {
+    const MID = 1700000123;
+
+    it('text row: no media, text passes through', () => {
+      const r = storedRowMedia({type: 'text', content: 'hello world'}, MID);
+      expect(r.media).toBeUndefined();
+      expect(r.text).toBe('hello world');
+      expect(r.healed).toBeUndefined();
+    });
+
+    it('healthy file row: media built from the row fileMetadata, caption as text', () => {
+      const fm = {url: 'u', sha256: 's', mimeType: 'audio/ogg', size: 1, keyHex: 'k', ivHex: 'i', mediaType: 'voice' as const};
+      const r = storedRowMedia({type: 'file', content: 'listen', fileMetadata: fm}, MID);
+      expect(r.media).toBeDefined();
+      expect(r.media._).toBe('messageMediaDocument'); // voice → document path
+      expect(r.text).toBe('listen');
+      expect(r.healed).toBeUndefined();
+    });
+
+    it('raw-envelope row: media + text recovered from the envelope, heal flagged for write-back', () => {
+      const r = storedRowMedia({type: 'file', content: makeEnvelope({caption: 'voice note'})}, MID);
+      expect(r.media).toBeDefined();
+      expect(r.text).toBe('voice note');
+      expect(r.healed).toBeDefined();
+      expect(r.healed!.fileMetadata.keyHex).toBe('be5a71d6');
     });
   });
 });

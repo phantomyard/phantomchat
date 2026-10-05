@@ -123,6 +123,19 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    (unknown version = never apply, never overwrite) — that quarantine is
    deliberate: the stale client IS the resurrection poison source.
 
+13. **Every stored-row → tweb-message builder MUST derive media via
+   `storedRowMedia` (phantomchat-media-shape.ts), and `setMessageToStorage`
+   never lets a media-less copy clobber a cached media-bearing mid (2026-10-05
+   restart regression).** tweb does NOT re-fetch a cached history window, so a
+   media-less overwrite of an already-cached mid renders the bubble as an
+   empty `is-message-empty` shell forever — even though the phantomchat store
+   row still carries its `fileMetadata` (media is only ever *added* in this
+   app; no edit path removes it, so carrying cached media forward is always
+   correct). The builders hit so far: getDialogs top message (1:1 + group),
+   searchMessages, delivery-ui `refreshDialogPreview`, message-handler
+   `buildClearedDialogFromStore`. New builder? Use `storedRowMedia` — never
+   hand-roll `createTwebMessage` over a stored row without it.
+
 ## Review checklist (reject a diff that does any of these on a hot path)
 
 - An `await` of a worker/IDB/network call placed *before* a paint or input echo.

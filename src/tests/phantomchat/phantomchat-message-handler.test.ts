@@ -477,6 +477,44 @@ describe('phantomchat-message-handler', () => {
       );
     });
 
+    it('cleared-dialog top message carries media from the stored row (2026-10-05 restart regression)', async() => {
+      // Fresh peer id: earlier tests in this describe leave `lastDialogs`
+      // populated for PEER_ID, which short-circuits the store rebuild.
+      const MEDIA_PEER_ID = 1000000000000002;
+      mockGetPubkey.mockResolvedValue(SENDER_PUBKEY);
+      // resetUnreadForPeer rebuilds the dialog preview from the store. The
+      // rebuilt top message used to omit media, and its write into tweb's
+      // render cache flipped media bubbles to empty shells after restart.
+      mockMessageStore.countUnread.mockResolvedValue(2);
+      mockMessageStore.getMessages.mockResolvedValue([{
+        mid: 77,
+        eventId: 'event-77',
+        senderPubkey: SENDER_PUBKEY,
+        content: 'voice caption',
+        timestamp: 1712345678,
+        isOutgoing: false,
+        twebPeerId: PEER_ID,
+        type: 'file',
+        fileMetadata: {
+          url: 'https://nostr.download/77.bin',
+          sha256: '77',
+          mimeType: 'audio/ogg; codecs=opus',
+          size: 1234,
+          keyHex: 'aabb',
+          ivHex: 'ccdd',
+          mediaType: 'voice',
+          duration: 3
+        }
+      }]);
+
+      await resetUnreadForPeer(MEDIA_PEER_ID);
+
+      const call = mockCreateTwebMessage.mock.calls.find((c: any[]) => (c[0] as any)?.mid === 77);
+      expect(call).toBeDefined();
+      expect((call![0] as any).media).toBeDefined();
+      expect((call![0] as any).text).toBe('voice caption');
+    });
+
     it('group: clears badge when group has unread messages in store', async() => {
       mockGroupStoreGetByPeerId.mockResolvedValue({
         groupId: 'group-abc',

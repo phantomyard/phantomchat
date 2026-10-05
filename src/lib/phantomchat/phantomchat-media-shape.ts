@@ -135,6 +135,38 @@ export function healStoredFileRow(stored: {
   };
 }
 
+export interface StoredRowMedia {
+  media: any | undefined;
+  /** The text a preview/bubble should show: healed caption on file rows, else the stored content. */
+  text: string;
+  /** Set when `healStoredFileRow` recovered fileMetadata from the envelope — callers that own the store may write the healed row back. */
+  healed: HealedFileRow | undefined;
+}
+
+/**
+ * Derive media + display text from a STORED message row — the single shared
+ * contract every stored-row → tweb-message builder must use.
+ *
+ * Bug family this closes (2026-10-05 restart regression): several builders
+ * (getDialogs top message, delivery-ui preview, cleared-dialog, search)
+ * rebuilt tweb messages from stored rows WITHOUT media, and each write
+ * landed in the same render cache the chat renders from — so a restart
+ * flipped media bubbles to `is-message-empty` shells (stored rows keep
+ * fileMetadata; the render cache got overwritten by media-less copies).
+ * tweb never re-fetches a cached window, so the shells stuck forever.
+ */
+export function storedRowMedia(stored: {
+  type?: string;
+  content?: string;
+  fileMetadata?: PhantomChatFileMetadata;
+}, mid: number): StoredRowMedia {
+  const healed = healStoredFileRow(stored);
+  const fm = stored.fileMetadata ?? healed?.fileMetadata;
+  const media = fm ? buildPhantomChatMedia(mid, fm) : undefined;
+  const text = healed ? healed.caption : (stored.content ?? '');
+  return {media, text, healed};
+}
+
 export function buildPhantomChatMedia(mid: number, fm: PhantomChatFileMetadata): any {
   const mime = fm.mimeType || '';
   // Prefer the explicit, sender-tagged media class. Fall back to the legacy

@@ -9,7 +9,7 @@
 import {PhantomChatPeerMapper} from '@lib/phantomchat/phantomchat-peer-mapper';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '@lib/rootScope';
-import {buildPhantomChatMedia, type PhantomChatFileMetadata} from '@lib/phantomchat/phantomchat-media-shape';
+import {buildPhantomChatMedia, storedRowMedia, type PhantomChatFileMetadata} from '@lib/phantomchat/phantomchat-media-shape';
 import {logSwallow} from '@lib/phantomchat/log-swallow';
 import {assertInvariant, validateTwebMessage, validateDialogTopMessage} from '@lib/phantomchat/bridge-invariants';
 import {ensureSenderUserInjected} from '@lib/phantomchat/ensure-sender-user-injected';
@@ -321,13 +321,19 @@ async function buildClearedDialogFromStore(peerId: number, conv: ConvRef, store:
     undefined :
     (peerId >= 1e15 ? peerId : await mapper.mapPubkey(latest.senderPubkey));
 
+  // Media from the stored row — the cleared-dialog refresh writes into the
+  // render cache; a media-less top message clobbers media bubbles there
+  // (2026-10-05 restart regression).
+  const rowMedia = storedRowMedia(latest, latest.mid);
+
   const msg = mapper.createTwebMessage({
     mid: latest.mid,
     peerId,
     fromPeerId,
     date: latest.timestamp,
-    text: latest.content || '',
-    isOutgoing
+    text: rowMedia.text || '',
+    isOutgoing,
+    ...(rowMedia.media ? {media: rowMedia.media} : {})
   });
   const dialog = mapper.createTwebDialog({
     peerId,
