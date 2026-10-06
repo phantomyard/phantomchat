@@ -392,12 +392,14 @@ export function buildTwebDialog(peerId: number, msg: any, timestamp: number, unr
 export async function injectIntoMirrors(
   peerId: number,
   msg: any,
-  senderPubkey: string
+  senderPubkey: string,
+  opts: {hydrateHistory?: boolean} = {}
 ): Promise<{isNewPeer: boolean}> {
   let isNewPeer = false;
   const proxy = MOUNT_CLASS_TO.apiManagerProxy;
+  const hydrateHistory = opts.hydrateHistory !== false;
 
-  if(proxy?.mirrors?.messages) {
+  if(hydrateHistory && proxy?.mirrors?.messages) {
     const storageKey = `${peerId}_history`;
     if(!proxy.mirrors.messages[storageKey]) proxy.mirrors.messages[storageKey] = {};
     proxy.mirrors.messages[storageKey][msg.mid || msg.id] = msg;
@@ -407,9 +409,11 @@ export async function injectIntoMirrors(
   // chat close/reopen. `appendLocalHistoryMessage` stores the object AND
   // inserts the mid into the history slice (plain setMessageToStorage left the
   // slice stale, so live-received messages vanished on reopen until restart).
-  try {
-    await rootScope.managers.appMessagesManager.appendLocalHistoryMessage(msg);
-  } catch(e: any) { console.debug('[MessageHandler] non-critical:', e?.message); }
+  if(hydrateHistory) {
+    try {
+      await rootScope.managers.appMessagesManager.appendLocalHistoryMessage(msg);
+    } catch(e: any) { console.debug('[MessageHandler] non-critical:', e?.message); }
+  }
 
   const result = await ensureSenderUserInjected({
     senderPubkey,
@@ -421,20 +425,50 @@ export async function injectIntoMirrors(
   return {isNewPeer};
 }
 
-/**
- * Dispatch dialog update to chat list. Fires twice:
- * - First dispatch adds the dialog via sortedList.add (returns early, skips setLastMessageN)
- * - Second dispatch (after 500ms) hits the existing-dialog branch for preview text
- */
+const pendingDialogUpdates = new Map<number, any>();
+const pendingDialogReplays = new Map<number, any>();
+let dialogFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let dialogReplayTimer: ReturnType<typeof setTimeout> | null = null;
+
+function dispatchDialogBatch(dialogs: Map<number, any>): void {
+  if(!dialogs.size) return;
+  const updates = new Map<any, {dialog: any}>();
+  dialogs.forEach((dialog, peerId) => {
+    updates.set(peerId.toPeerId ? (peerId as any).toPeerId(false) : peerId, {dialog});
+  });
+  rootScope.dispatchEvent('dialogs_multiupdate' as any, updates);
+}
+
+function flushDialogUpdates(): void {
+  dialogFlushTimer = null;
+  const batch = new Map(pendingDialogUpdates);
+  pendingDialogUpdates.clear();
+  dispatchDialogBatch(batch);
+  batch.forEach((dialog, peerId) => pendingDialogReplays.set(peerId, dialog));
+
+  // A newly-added dialog needs a second pass after sortedList.add has mounted
+  // it so setLastMessageN can paint the preview. Coalesce that pass too: a
+  // reconnect burst should produce two dispatches per turn, not per message.
+  if(dialogReplayTimer === null) {
+    dialogReplayTimer = setTimeout(() => {
+      dialogReplayTimer = null;
+      const replay = new Map(pendingDialogReplays);
+      pendingDialogReplays.clear();
+      dispatchDialogBatch(replay);
+    }, 500);
+  }
+}
+
 export function dispatchDialogUpdate(peerId: number, dialog: any): void {
-  const dispatchFn = () => {
-    rootScope.dispatchEvent('dialogs_multiupdate' as any, new Map([[
-      peerId.toPeerId ? (peerId as any).toPeerId(false) : peerId,
-      {dialog}
-    ]]));
-  };
-  dispatchFn();
-  setTimeout(dispatchFn, 500);
+  const dialogs = new Map([[peerId, dialog]]);
+  dispatchDialogBatch(dialogs);
+  setTimeout(() => dispatchDialogBatch(dialogs), 500);
+}
+
+/** Multiple incoming messages collapse into one chat-list fan-out. */
+function queueDialogUpdate(peerId: number, dialog: any): void {
+  pendingDialogUpdates.set(peerId, dialog);
+  if(dialogFlushTimer === null) dialogFlushTimer = setTimeout(flushDialogUpdates, 0);
 }
 
 /**
@@ -508,8 +542,15 @@ export async function handleIncomingMessage(
 
   const msg = buildTwebMessage(data);
   const peerId = data.peerId;
+  const chatIsOpen = isChatOpenFor(peerId);
 
-  const {isNewPeer} = await injectIntoMirrors(peerId, msg, data.senderPubkey);
+  // IndexedDB is the source of truth for closed chats. Do not inflate every
+  // closed conversation's Worker/main-thread history caches during a startup
+  // or reconnect burst; opening that chat reads its latest local page on
+  // demand. The open chat still receives the direct optimistic projection.
+  const {isNewPeer} = await injectIntoMirrors(peerId, msg, data.senderPubkey, {
+    hydrateHistory: chatIsOpen
+  });
   await invalidateHistoryCache(peerId);
 
   // sortedDialogList reads the sort key from Worker's dialogsStorage, not
@@ -524,17 +565,19 @@ export async function handleIncomingMessage(
   // Dispatch history_append for real-time bubble rendering (when chat is open).
   // bubbles.ts deduplicates by fullMid — if getHistory already loaded this
   // message, the duplicate append is silently skipped.
-  rootScope.dispatchEvent('history_append' as any, {
-    storageKey: `${peerId}_history`,
-    message: msg,
-    peerId
-  });
+  if(chatIsOpen) {
+    rootScope.dispatchEvent('history_append' as any, {
+      storageKey: `${peerId}_history`,
+      message: msg,
+      peerId
+    });
+  }
 
   // Compute unread count. If the chat is already open for this peer, the
   // message is effectively read — keep the counter at 0. Otherwise increment
   // the persisted per-peer counter so multi-message bursts count correctly.
   let unread: number;
-  if(isChatOpenFor(peerId)) {
+  if(chatIsOpen) {
     unread = 0;
     unreadCounts.set(peerId, 0);
   } else {
@@ -545,7 +588,7 @@ export async function handleIncomingMessage(
 
   const dialog = buildTwebDialog(peerId, msg, data.timestamp, unread);
   lastDialogs.set(peerId, dialog);
-  dispatchDialogUpdate(peerId, dialog);
+  queueDialogUpdate(peerId, dialog);
 
   // Fire desktop/system notification when chat is not in the foreground.
   // Worker's notifyAboutMessage path is bypassed by VMT for P2P peers, so

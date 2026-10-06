@@ -163,6 +163,7 @@ describe('phantomchat-message-handler', () => {
     MOUNT_CLASS_TO.apiManagerProxy = {
       mirrors: {messages: {}, peers: {}}
     };
+    (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID}};
   });
 
   describe('buildTwebMessage', () => {
@@ -290,10 +291,10 @@ describe('phantomchat-message-handler', () => {
       );
 
       // Should have dispatched dialogs_multiupdate
-      expect(mockDispatchEvent).toHaveBeenCalledWith(
-        'dialogs_multiupdate',
-        expect.any(Map)
-      );
+      await vi.waitFor(() => expect(mockDispatchEvent).toHaveBeenCalledWith(
+          'dialogs_multiupdate',
+          expect.any(Map)
+      ));
 
       // Should have invalidated history cache
       expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(PEER_ID);
@@ -313,10 +314,20 @@ describe('phantomchat-message-handler', () => {
       const result = await handleIncomingMessage(makeData(), OWN_PUBKEY);
       expect(result).not.toBeNull();
       // Local dialogs_multiupdate dispatch is still expected for new-peer path
-      expect(mockDispatchEvent).toHaveBeenCalledWith(
-        'dialogs_multiupdate',
-        expect.any(Map)
-      );
+      await vi.waitFor(() => expect(mockDispatchEvent).toHaveBeenCalledWith(
+          'dialogs_multiupdate',
+          expect.any(Map)
+      ));
+    });
+
+    it('keeps closed-chat history local until that chat is opened', async() => {
+      (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID + 1}};
+
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+
+      expect(mockAppendLocalHistoryMessage).not.toHaveBeenCalled();
+      expect(mockDispatchEvent).not.toHaveBeenCalledWith('history_append', expect.anything());
+      expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(PEER_ID);
     });
   });
 

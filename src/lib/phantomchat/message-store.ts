@@ -5,9 +5,10 @@
  * chat load without relay queries. Messages are stored per conversation
  * with indexes for efficient retrieval and pagination.
  *
- * DB: phantomchat-messages, version 4
+ * DB: phantomchat-messages, version 5
  * Store: messages (auto-increment key, indexes: conversationId, timestamp, eventId,
- *        conversationTimestamp [v4, composite — drives retention pruning])
+ *        conversationTimestamp [v4, composite — drives retention pruning],
+ *        conversationMid [v5, composite — drives seek + limit history reads])
  *
  * Retention: each conversation is capped at MESSAGE_CAP_PER_CHAT rows (default
  * 500). On every INSERT (not upsert-update) the store prunes the oldest rows
@@ -122,7 +123,7 @@ export type PartialStoredMessage = Omit<StoredMessage, 'mid' | 'twebPeerId'> & {
 // ─── Constants ─────────────────────────────────────────────────────
 
 const DB_NAME = 'phantomchat-messages';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_NAME = 'messages';
 
 /**
@@ -268,6 +269,7 @@ export class MessageStore {
           store.createIndex('timestamp', 'timestamp', {unique: false});
           store.createIndex('eventId', 'eventId', {unique: true});
           store.createIndex('conversationTimestamp', ['conversationId', 'timestamp'], {unique: false});
+          store.createIndex('conversationMid', ['conversationId', 'mid'], {unique: false});
         } else {
           // v4 upgrade path: add the composite index to existing databases.
           // Composite key sorts rows oldest-first per conversation, so the
@@ -275,6 +277,13 @@ export class MessageStore {
           const store = (event.target as IDBOpenDBRequest).transaction!.objectStore(STORE_NAME);
           if(!store.indexNames.contains('conversationTimestamp')) {
             store.createIndex('conversationTimestamp', ['conversationId', 'timestamp'], {unique: false});
+          }
+          // v5: direct chronological paging. `mid` is immutable and encodes
+          // timestamp + sub-second order, so this index can seek to an anchor
+          // and stop at the requested limit instead of decoding + sorting up
+          // to 500 rows on every chat open and scroll event.
+          if(!store.indexNames.contains('conversationMid')) {
+            store.createIndex('conversationMid', ['conversationId', 'mid'], {unique: false});
           }
         }
         if(!db.objectStoreNames.contains(CURSOR_STORE)) {
@@ -421,35 +430,6 @@ export class MessageStore {
   }
 
   /**
-   * Fetch all messages for a conversation, sorted newest-first.
-   * No limit; used by offset-based pagination where the anchor may be
-   * arbitrarily deep in history.
-   */
-  private async getAllMessagesSorted(conversationId: string): Promise<StoredMessage[]> {
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const index = store.index('conversationId');
-      const request = index.openCursor(IDBKeyRange.only(conversationId));
-
-      const results: StoredMessage[] = [];
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = (event) => {
-        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
-        if(cursor) {
-          results.push(cursor.value as StoredMessage);
-          cursor.continue();
-        } else {
-          results.sort((a, b) => b.timestamp - a.timestamp);
-          resolve(results);
-        }
-      };
-    });
-  }
-
-  /**
    * Get messages for a conversation, sorted by timestamp desc.
    *
    * @param conversationId - Deterministic conversation ID
@@ -457,9 +437,34 @@ export class MessageStore {
    * @param before - Optional timestamp for pagination (return messages before this time)
    */
   async getMessages(conversationId: string, limit: number = DEFAULT_LIMIT, before?: number): Promise<StoredMessage[]> {
-    const all = await this.getAllMessagesSorted(conversationId);
-    const filtered = before !== undefined ? all.filter(m => m.timestamp < before) : all;
-    return filtered.slice(0, limit);
+    if(limit <= 0) return [];
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const index = store.index('conversationTimestamp');
+      const upper = before === undefined ? Number.MAX_SAFE_INTEGER : before;
+      const range = IDBKeyRange.bound(
+        [conversationId, 0],
+        [conversationId, upper],
+        false,
+        before !== undefined
+      );
+      const request = index.openCursor(range, 'prev');
+      const results: StoredMessage[] = [];
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if(!cursor || results.length >= limit) {
+          resolve(results);
+          return;
+        }
+        results.push(cursor.value as StoredMessage);
+        if(results.length >= limit) resolve(results);
+        else cursor.continue();
+      };
+    });
   }
 
   /**
@@ -514,28 +519,79 @@ export class MessageStore {
     offsetId: number = 0,
     addOffset: number = 0
   ): Promise<{messages: StoredMessage[]; total: number; offsetIdOffset: number}> {
-    // Full sorted fetch is required because the IndexedDB schema indexes
-    // on timestamp, not mid. A cursor scan is the only way to locate the
-    // anchor message by mid before computing the window slice.
-    const allMsgs = await this.getAllMessagesSorted(conversationId);
-    const total = allMsgs.length;
-    if(total === 0) return {messages: [], total: 0, offsetIdOffset: 0};
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const index = tx.objectStore(STORE_NAME).index('conversationMid');
+      const conversationRange = IDBKeyRange.bound(
+        [conversationId, 0],
+        [conversationId, Number.MAX_SAFE_INTEGER]
+      );
+      const totalReq = index.count(conversationRange);
+      totalReq.onerror = () => reject(totalReq.error);
+      totalReq.onsuccess = () => {
+        const total = totalReq.result;
+        if(total === 0) {
+          resolve({messages: [], total: 0, offsetIdOffset: 0});
+          return;
+        }
 
-    // Sort by mid descending so anchor-based pagination is deterministic
-    // even when two messages share a timestamp.
-    allMsgs.sort((a, b) => b.mid - a.mid);
+        const resolvePage = (anchorPosition: number | null) => {
+          // Unknown anchors deliberately fall back to the newest page. This is
+          // tweb's existing recovery behavior for a stale/truncated mid.
+          const start = Math.max(0, (anchorPosition ?? 0) + (anchorPosition === null ? 0 : addOffset));
+          if(limit <= 0 || start >= total) {
+            resolve({messages: [], total, offsetIdOffset: start});
+            return;
+          }
 
-    let start: number;
-    if(offsetId > 0) {
-      const offsetIndex = allMsgs.findIndex((m) => m.mid === offsetId);
-      // Anchor not found — fall back to the newest page rather than empty.
-      start = offsetIndex === -1 ? 0 : Math.max(0, offsetIndex + addOffset);
-    } else {
-      start = Math.max(0, addOffset);
-    }
+          const messages: StoredMessage[] = [];
+          const cursorReq = index.openCursor(conversationRange, 'prev');
+          let advanced = start === 0;
+          cursorReq.onerror = () => reject(cursorReq.error);
+          cursorReq.onsuccess = () => {
+            const cursor = cursorReq.result;
+            if(!cursor || messages.length >= limit) {
+              resolve({messages, total, offsetIdOffset: start});
+              return;
+            }
+            if(!advanced) {
+              advanced = true;
+              cursor.advance(start);
+              return;
+            }
+            messages.push(cursor.value as StoredMessage);
+            if(messages.length >= limit) resolve({messages, total, offsetIdOffset: start});
+            else cursor.continue();
+          };
+        };
 
-    const messages = allMsgs.slice(start, start + limit);
-    return {messages, total, offsetIdOffset: start};
+        if(offsetId <= 0) {
+          resolvePage(0);
+          return;
+        }
+
+        const anchorReq = index.getKey([conversationId, offsetId]);
+        anchorReq.onerror = () => reject(anchorReq.error);
+        anchorReq.onsuccess = () => {
+          if(anchorReq.result === undefined) {
+            resolvePage(null);
+            return;
+          }
+          // Count rows strictly newer than the anchor. That count is the
+          // anchor's absolute position in the newest-first list.
+          const newerRange = IDBKeyRange.bound(
+            [conversationId, offsetId],
+            [conversationId, Number.MAX_SAFE_INTEGER],
+            true,
+            false
+          );
+          const newerReq = index.count(newerRange);
+          newerReq.onerror = () => reject(newerReq.error);
+          newerReq.onsuccess = () => resolvePage(newerReq.result);
+        };
+      };
+    });
   }
 
   /**
@@ -550,24 +606,15 @@ export class MessageStore {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
-      const index = store.index('conversationId');
-      const request = index.openCursor(IDBKeyRange.only(conversationId));
-
-      let maxTimestamp = 0;
+      const index = store.index('conversationTimestamp');
+      const range = IDBKeyRange.bound(
+        [conversationId, 0],
+        [conversationId, Number.MAX_SAFE_INTEGER]
+      );
+      const request = index.openCursor(range, 'prev');
 
       request.onerror = () => reject(request.error);
-      request.onsuccess = (event) => {
-        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
-        if(cursor) {
-          const msg = cursor.value as StoredMessage;
-          if(msg.timestamp > maxTimestamp) {
-            maxTimestamp = msg.timestamp;
-          }
-          cursor.continue();
-        } else {
-          resolve(maxTimestamp);
-        }
-      };
+      request.onsuccess = () => resolve((request.result?.value as StoredMessage | undefined)?.timestamp ?? 0);
     });
   }
 
