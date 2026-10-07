@@ -253,7 +253,7 @@ describe('MessageStore', () => {
   });
 
   describe('getMessagesPage', () => {
-    it('upgrades populated v4 data and rejects rows missing the required mid', async() => {
+    it('upgrades populated v4 data and skips rows missing the required mid', async() => {
       const isolated = new IDBFactory();
       vi.stubGlobal('indexedDB', isolated);
       let upgraded: MessageStore | undefined;
@@ -302,7 +302,13 @@ describe('MessageStore', () => {
           tx.onerror = () => reject(tx.error);
           tx.oncomplete = () => resolve();
         });
-        await expect(upgraded.getMessagesPage('v4-conversation', 10)).rejects.toThrow('StoredMessage.mid is required');
+        const warn = vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        const pageWithMalformedRow = await upgraded.getMessagesPage('v4-conversation', 10);
+        expect(pageWithMalformedRow.messages.map((msg) => msg.eventId)).toEqual(['v4-existing']);
+        expect(pageWithMalformedRow.total).toBe(1);
+        expect(warn).toHaveBeenCalledWith(
+          '[MessageStore] Skipping 1 row(s) without mid in v4-conversation'
+        );
       } finally {
         await upgraded?.destroy();
         vi.unstubAllGlobals();

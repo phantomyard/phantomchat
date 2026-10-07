@@ -27,8 +27,9 @@
  *   - All write paths supply the full triple. The store never fills identity
  *     fields from fallbacks.
  *   - Read paths consume `row.mid` / `row.timestamp` directly and NEVER recompute
- *     identity from `(eventId, timestamp)` — if a read observes a row without a
- *     mid, that is a bug in the write path and should throw.
+ *     identity from `(eventId, timestamp)`. Legacy rows without a mid are skipped
+ *     by indexed history reads and reported loudly instead of taking down the
+ *     whole conversation.
  *
  * `PartialStoredMessage` exists ONLY as a narrow escape hatch for the rare
  * in-place update case where a caller spreads an existing row through
@@ -550,12 +551,9 @@ export class MessageStore {
 
       const continueWhenCounted = () => {
         if(indexedTotal === undefined || storedTotal === undefined) return;
-        if(indexedTotal !== storedTotal) {
-          reject(new Error(
-            `StoredMessage.mid is required (found ${storedTotal - indexedTotal} unindexed row(s) in ${conversationId})`
-          ));
-          return;
-        }
+        if(indexedTotal !== storedTotal) console.warn(
+          `[MessageStore] Skipping ${storedTotal - indexedTotal} row(s) without mid in ${conversationId}`
+        );
         readPage(indexedTotal);
       };
 
