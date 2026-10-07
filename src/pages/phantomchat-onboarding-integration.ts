@@ -22,6 +22,7 @@ import {PhantomChatSync} from '../lib/phantomchat/phantomchat-sync';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '../lib/rootScope';
 import {handleIncomingMessage, handleIncomingEdit, resetUnreadForPeer} from '@lib/phantomchat/phantomchat-message-handler';
+import {createIncomingScheduler} from '@lib/phantomchat/phantomchat-incoming-scheduler';
 import {createPendingFlush} from '@lib/phantomchat/phantomchat-pending-flush';
 import {createReadReceiptSender} from '@lib/phantomchat/phantomchat-read-receipts';
 import {createDeliveryUI} from '@lib/phantomchat/phantomchat-delivery-ui';
@@ -255,16 +256,24 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       const readReceipts = createReadReceiptSender();
       const deliveryUI = createDeliveryUI();
 
-      // Incoming message handler
-      rootScope.addEventListener('phantomchat_new_message', async(data) => {
-        try {
+      // Incoming message projection is deliberately bounded. Relay catch-up can
+      // persist hundreds of rows in a burst; those rows are already safe in
+      // IndexedDB, so projecting them into tweb in batches keeps reconnect work
+      // from freezing input/scroll. Messages for the open chat jump the queue.
+      const incomingScheduler = createIncomingScheduler<any>({
+        isPriority: (data) => +(MOUNT_CLASS_TO as any).appImManager?.chat?.peerId === +data?.peerId,
+        handle: async(data) => {
           const result = await handleIncomingMessage(data, identity.publicKey);
           if(result) {
             pendingFlush.enqueue(result.peerId, result.msg);
           }
-        } catch(err) {
+        },
+        onError: (err) => {
           console.warn('[PhantomChatOnboardingIntegration] phantomchat_new_message handler error:', err);
         }
+      });
+      rootScope.addEventListener('phantomchat_new_message', (data) => {
+        incomingScheduler.enqueue(data);
       });
 
       // Incoming edit handler — updates existing bubble in place

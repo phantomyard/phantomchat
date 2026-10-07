@@ -10,6 +10,7 @@
 
 import '../setup';
 import 'fake-indexeddb/auto';
+import {IDBFactory} from 'fake-indexeddb';
 import {describe, it, expect, beforeEach, afterAll, vi} from 'vitest';
 import {MessageStore, StoredMessage} from '@lib/phantomchat/message-store';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
@@ -193,6 +194,15 @@ describe('MessageStore', () => {
       expect(msgs[0].timestamp).toBe(200);
       expect(msgs[1].timestamp).toBe(100);
     });
+
+    it('orders same-second messages by immutable mid, not insertion order', async() => {
+      const convId = uniqueConvId();
+      await store.saveMessage(makeMsg({eventId: 'tie-high', conversationId: convId, timestamp: 100, mid: 100_000_002}));
+      await store.saveMessage(makeMsg({eventId: 'tie-low', conversationId: convId, timestamp: 100, mid: 100_000_001}));
+
+      const msgs = await store.getMessages(convId, 2);
+      expect(msgs.map((msg) => msg.eventId)).toEqual(['tie-high', 'tie-low']);
+    });
   });
 
   describe('getMessagesByOffsetId', () => {
@@ -243,6 +253,68 @@ describe('MessageStore', () => {
   });
 
   describe('getMessagesPage', () => {
+    it('upgrades populated v4 data and skips rows missing the required mid', async() => {
+      const isolated = new IDBFactory();
+      vi.stubGlobal('indexedDB', isolated);
+      let upgraded: MessageStore | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const request = indexedDB.open('phantomchat-messages', 4);
+          request.onerror = () => reject(request.error);
+          request.onupgradeneeded = () => {
+            const db = request.result;
+            const messages = db.createObjectStore('messages', {autoIncrement: true});
+            messages.createIndex('conversationId', 'conversationId', {unique: false});
+            messages.createIndex('timestamp', 'timestamp', {unique: false});
+            messages.createIndex('eventId', 'eventId', {unique: true});
+            messages.createIndex('conversationTimestamp', ['conversationId', 'timestamp'], {unique: false});
+          };
+          request.onsuccess = () => {
+            const db = request.result;
+            const tx = db.transaction('messages', 'readwrite');
+            tx.objectStore('messages').add(makeMsg({
+              eventId: 'v4-existing',
+              conversationId: 'v4-conversation',
+              timestamp: 100,
+              mid: 100_000_001
+            }));
+            tx.onerror = () => reject(tx.error);
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+          };
+        });
+
+        upgraded = freshStore();
+        const page = await upgraded.getMessagesPage('v4-conversation', 10);
+        expect(page.messages.map((msg) => msg.eventId)).toEqual(['v4-existing']);
+        const db = await (upgraded as any).getDB() as IDBDatabase;
+        expect(db.version).toBe(5);
+        const indexes = db.transaction('messages').objectStore('messages').indexNames;
+        expect(indexes.contains('conversationMid')).toBe(true);
+
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction('messages', 'readwrite');
+          const malformed = makeMsg({eventId: 'v4-malformed', conversationId: 'v4-conversation'}) as any;
+          delete malformed.mid;
+          tx.objectStore('messages').add(malformed);
+          tx.onerror = () => reject(tx.error);
+          tx.oncomplete = () => resolve();
+        });
+        const warn = vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+        const pageWithMalformedRow = await upgraded.getMessagesPage('v4-conversation', 10);
+        expect(pageWithMalformedRow.messages.map((msg) => msg.eventId)).toEqual(['v4-existing']);
+        expect(pageWithMalformedRow.total).toBe(1);
+        expect(warn).toHaveBeenCalledWith(
+          '[MessageStore] Skipping 1 row(s) without mid in v4-conversation'
+        );
+      } finally {
+        await upgraded?.destroy();
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('reports the true stored total even when the window is a single page', async() => {
       const convId = uniqueConvId();
       for(let i = 1; i <= 5; i++) {

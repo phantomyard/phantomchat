@@ -1275,14 +1275,17 @@ export class ChatAPI {
       // covers every chat: floor it at the OLDEST conversation's newest stored
       // message (less the overlap). A conversation with nothing stored yet adds
       // no floor — the pool's watermark backfill owns cold history.
-      let floor: number | undefined;
-      for(const convId of conversationIds) {
+      const latestTimestamps = await Promise.all(conversationIds.map(async(convId) => {
         try {
-          const latest = await store.getLatestTimestamp(convId);
-          if(latest > 0 && (floor === undefined || latest < floor)) floor = latest;
+          return await store.getLatestTimestamp(convId);
         } catch(err) {
           this.log.warn('[ChatAPI] backfill: no latest timestamp for conversation:', convId, err);
+          return 0;
         }
+      }));
+      let floor: number | undefined;
+      for(const latest of latestTimestamps) {
+        if(latest > 0 && (floor === undefined || latest < floor)) floor = latest;
       }
       const since = floor === undefined ? undefined : Math.max(0, floor - CHAT_OPEN_CATCHUP_OVERLAP_S);
 

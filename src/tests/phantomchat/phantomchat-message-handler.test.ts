@@ -133,6 +133,7 @@ vi.mock('@lib/phantomchat/phantomchat-bridge', () => ({
 import {
   buildTwebMessage,
   buildTwebDialog,
+  createDialogUpdateQueue,
   injectIntoMirrors,
   dispatchDialogUpdate,
   handleIncomingMessage,
@@ -163,6 +164,7 @@ describe('phantomchat-message-handler', () => {
     MOUNT_CLASS_TO.apiManagerProxy = {
       mirrors: {messages: {}, peers: {}}
     };
+    (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID}};
   });
 
   describe('buildTwebMessage', () => {
@@ -290,10 +292,10 @@ describe('phantomchat-message-handler', () => {
       );
 
       // Should have dispatched dialogs_multiupdate
-      expect(mockDispatchEvent).toHaveBeenCalledWith(
-        'dialogs_multiupdate',
-        expect.any(Map)
-      );
+      await vi.waitFor(() => expect(mockDispatchEvent).toHaveBeenCalledWith(
+          'dialogs_multiupdate',
+          expect.any(Map)
+      ));
 
       // Should have invalidated history cache
       expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(PEER_ID);
@@ -313,10 +315,48 @@ describe('phantomchat-message-handler', () => {
       const result = await handleIncomingMessage(makeData(), OWN_PUBKEY);
       expect(result).not.toBeNull();
       // Local dialogs_multiupdate dispatch is still expected for new-peer path
-      expect(mockDispatchEvent).toHaveBeenCalledWith(
-        'dialogs_multiupdate',
-        expect.any(Map)
-      );
+      await vi.waitFor(() => expect(mockDispatchEvent).toHaveBeenCalledWith(
+          'dialogs_multiupdate',
+          expect.any(Map)
+      ));
+    });
+
+    it('keeps closed-chat history local until that chat is opened', async() => {
+      (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID + 1}};
+
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+
+      expect(mockAppendLocalHistoryMessage).not.toHaveBeenCalled();
+      expect(mockDispatchEvent).not.toHaveBeenCalledWith('history_append', expect.anything());
+      expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(PEER_ID);
+      expect((MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.messages[`${PEER_ID}_history`][2000000001]).toBeDefined();
+    });
+  });
+
+  describe('dialog update coalescing', () => {
+    it('gives late arrivals a full replay delay', async() => {
+      vi.useFakeTimers();
+      try {
+        const dispatch = vi.fn();
+        const queue = createDialogUpdateQueue(dispatch, 500);
+
+        queue.enqueue(1, {top_message: 1});
+        await vi.advanceTimersByTimeAsync(0);
+        expect(dispatch).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(490);
+        queue.enqueue(2, {top_message: 2});
+        await vi.advanceTimersByTimeAsync(0);
+        expect(dispatch).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(10);
+        expect(dispatch).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(490);
+        expect(dispatch).toHaveBeenCalledTimes(3);
+        expect([...dispatch.mock.calls[2][0].keys()]).toEqual([1, 2]);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
