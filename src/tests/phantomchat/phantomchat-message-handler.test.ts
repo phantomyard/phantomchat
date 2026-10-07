@@ -133,6 +133,7 @@ vi.mock('@lib/phantomchat/phantomchat-bridge', () => ({
 import {
   buildTwebMessage,
   buildTwebDialog,
+  createDialogUpdateQueue,
   injectIntoMirrors,
   dispatchDialogUpdate,
   handleIncomingMessage,
@@ -328,6 +329,34 @@ describe('phantomchat-message-handler', () => {
       expect(mockAppendLocalHistoryMessage).not.toHaveBeenCalled();
       expect(mockDispatchEvent).not.toHaveBeenCalledWith('history_append', expect.anything());
       expect(mockInvalidateHistoryCache).toHaveBeenCalledWith(PEER_ID);
+      expect((MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.messages[`${PEER_ID}_history`][2000000001]).toBeDefined();
+    });
+  });
+
+  describe('dialog update coalescing', () => {
+    it('gives late arrivals a full replay delay', async() => {
+      vi.useFakeTimers();
+      try {
+        const dispatch = vi.fn();
+        const queue = createDialogUpdateQueue(dispatch, 500);
+
+        queue.enqueue(1, {top_message: 1});
+        await vi.advanceTimersByTimeAsync(0);
+        expect(dispatch).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(490);
+        queue.enqueue(2, {top_message: 2});
+        await vi.advanceTimersByTimeAsync(0);
+        expect(dispatch).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(10);
+        expect(dispatch).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(490);
+        expect(dispatch).toHaveBeenCalledTimes(3);
+        expect([...dispatch.mock.calls[2][0].keys()]).toEqual([1, 2]);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

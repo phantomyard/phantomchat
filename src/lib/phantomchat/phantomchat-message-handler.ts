@@ -399,9 +399,12 @@ export async function injectIntoMirrors(
   const proxy = MOUNT_CLASS_TO.apiManagerProxy;
   const hydrateHistory = opts.hydrateHistory !== false;
 
-  if(hydrateHistory && proxy?.mirrors?.messages) {
+  if(proxy?.mirrors?.messages) {
     const storageKey = `${peerId}_history`;
-    if(!proxy.mirrors.messages[storageKey]) proxy.mirrors.messages[storageKey] = {};
+    // Closed chats retain only their latest message object. Dialog refreshes
+    // use this mirror to resolve top_message, but full history stays in IDB.
+    if(!hydrateHistory) proxy.mirrors.messages[storageKey] = {};
+    else if(!proxy.mirrors.messages[storageKey]) proxy.mirrors.messages[storageKey] = {};
     proxy.mirrors.messages[storageKey][msg.mid || msg.id] = msg;
   }
 
@@ -425,11 +428,6 @@ export async function injectIntoMirrors(
   return {isNewPeer};
 }
 
-const pendingDialogUpdates = new Map<number, any>();
-const pendingDialogReplays = new Map<number, any>();
-let dialogFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let dialogReplayTimer: ReturnType<typeof setTimeout> | null = null;
-
 function dispatchDialogBatch(dialogs: Map<number, any>): void {
   if(!dialogs.size) return;
   const updates = new Map<any, {dialog: any}>();
@@ -439,25 +437,43 @@ function dispatchDialogBatch(dialogs: Map<number, any>): void {
   rootScope.dispatchEvent('dialogs_multiupdate' as any, updates);
 }
 
-function flushDialogUpdates(): void {
-  dialogFlushTimer = null;
-  const batch = new Map(pendingDialogUpdates);
-  pendingDialogUpdates.clear();
-  dispatchDialogBatch(batch);
-  batch.forEach((dialog, peerId) => pendingDialogReplays.set(peerId, dialog));
+export function createDialogUpdateQueue(
+  dispatch: (dialogs: Map<number, any>) => void,
+  replayDelayMs = 500
+): {enqueue(peerId: number, dialog: any): void} {
+  const pending = new Map<number, any>();
+  const pendingReplays = new Map<number, any>();
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  let replayTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // A newly-added dialog needs a second pass after sortedList.add has mounted
-  // it so setLastMessageN can paint the preview. Coalesce that pass too: a
-  // reconnect burst should produce two dispatches per turn, not per message.
-  if(dialogReplayTimer === null) {
-    dialogReplayTimer = setTimeout(() => {
-      dialogReplayTimer = null;
-      const replay = new Map(pendingDialogReplays);
-      pendingDialogReplays.clear();
-      dispatchDialogBatch(replay);
-    }, 500);
-  }
+  const flush = () => {
+    flushTimer = null;
+    const batch = new Map(pending);
+    pending.clear();
+    dispatch(batch);
+    batch.forEach((dialog, peerId) => pendingReplays.set(peerId, dialog));
+
+    // A newly-added dialog needs a second pass after sortedList.add has mounted
+    // it so setLastMessageN can paint the preview. Restart the delay on every
+    // flush so late arrivals also receive the full mount window.
+    if(replayTimer !== null) clearTimeout(replayTimer);
+    replayTimer = setTimeout(() => {
+      replayTimer = null;
+      const replay = new Map(pendingReplays);
+      pendingReplays.clear();
+      dispatch(replay);
+    }, replayDelayMs);
+  };
+
+  return {
+    enqueue(peerId, dialog) {
+      pending.set(peerId, dialog);
+      if(flushTimer === null) flushTimer = setTimeout(flush, 0);
+    }
+  };
 }
+
+const dialogUpdateQueue = createDialogUpdateQueue(dispatchDialogBatch);
 
 export function dispatchDialogUpdate(peerId: number, dialog: any): void {
   const dialogs = new Map([[peerId, dialog]]);
@@ -467,8 +483,7 @@ export function dispatchDialogUpdate(peerId: number, dialog: any): void {
 
 /** Multiple incoming messages collapse into one chat-list fan-out. */
 function queueDialogUpdate(peerId: number, dialog: any): void {
-  pendingDialogUpdates.set(peerId, dialog);
-  if(dialogFlushTimer === null) dialogFlushTimer = setTimeout(flushDialogUpdates, 0);
+  dialogUpdateQueue.enqueue(peerId, dialog);
 }
 
 /**

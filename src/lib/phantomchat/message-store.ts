@@ -8,7 +8,7 @@
  * DB: phantomchat-messages, version 5
  * Store: messages (auto-increment key, indexes: conversationId, timestamp, eventId,
  *        conversationTimestamp [v4, composite — drives retention pruning],
- *        conversationMid [v5, composite — drives seek + limit history reads])
+ *        conversationMid [v5, composite — drives anchor paging])
  *
  * Retention: each conversation is capped at MESSAGE_CAP_PER_CHAT rows (default
  * 500). On every INSERT (not upsert-update) the store prunes the oldest rows
@@ -451,18 +451,33 @@ export class MessageStore {
         before !== undefined
       );
       const request = index.openCursor(range, 'prev');
-      const results: StoredMessage[] = [];
+      const candidates: Array<{message: StoredMessage; key: IDBValidKey}> = [];
+      let boundaryTimestamp: number | undefined;
+
+      const finish = () => {
+        candidates.sort((a, b) => {
+          if(a.message.timestamp !== b.message.timestamp) return b.message.timestamp - a.message.timestamp;
+          if(a.message.mid !== undefined && b.message.mid !== undefined) return b.message.mid - a.message.mid;
+          return Number(b.key) - Number(a.key);
+        });
+        resolve(candidates.slice(0, limit).map(({message}) => message));
+      };
 
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
         const cursor = request.result;
-        if(!cursor || results.length >= limit) {
-          resolve(results);
+        if(!cursor) {
+          finish();
           return;
         }
-        results.push(cursor.value as StoredMessage);
-        if(results.length >= limit) resolve(results);
-        else cursor.continue();
+        const message = cursor.value as StoredMessage;
+        if(boundaryTimestamp !== undefined && message.timestamp !== boundaryTimestamp) {
+          finish();
+          return;
+        }
+        candidates.push({message, key: cursor.primaryKey});
+        if(candidates.length >= limit) boundaryTimestamp = message.timestamp;
+        cursor.continue();
       };
     });
   }
@@ -522,15 +537,40 @@ export class MessageStore {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
-      const index = tx.objectStore(STORE_NAME).index('conversationMid');
+      const store = tx.objectStore(STORE_NAME);
+      const index = store.index('conversationMid');
       const conversationRange = IDBKeyRange.bound(
         [conversationId, 0],
         [conversationId, Number.MAX_SAFE_INTEGER]
       );
       const totalReq = index.count(conversationRange);
+      const storedTotalReq = store.index('conversationId').count(IDBKeyRange.only(conversationId));
+      let indexedTotal: number | undefined;
+      let storedTotal: number | undefined;
+
+      const continueWhenCounted = () => {
+        if(indexedTotal === undefined || storedTotal === undefined) return;
+        if(indexedTotal !== storedTotal) {
+          reject(new Error(
+            `StoredMessage.mid is required (found ${storedTotal - indexedTotal} unindexed row(s) in ${conversationId})`
+          ));
+          return;
+        }
+        readPage(indexedTotal);
+      };
+
       totalReq.onerror = () => reject(totalReq.error);
       totalReq.onsuccess = () => {
-        const total = totalReq.result;
+        indexedTotal = totalReq.result;
+        continueWhenCounted();
+      };
+      storedTotalReq.onerror = () => reject(storedTotalReq.error);
+      storedTotalReq.onsuccess = () => {
+        storedTotal = storedTotalReq.result;
+        continueWhenCounted();
+      };
+
+      const readPage = (total: number) => {
         if(total === 0) {
           resolve({messages: [], total: 0, offsetIdOffset: 0});
           return;
