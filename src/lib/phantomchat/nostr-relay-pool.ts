@@ -2201,6 +2201,12 @@ export class NostrRelayPool {
     // anything — the signal to reset the backoff and wake to ACTIVE (#125).
     this.deliveredMessageCount++;
 
+    // Snapshot the armed timestamp BEFORE the await. A visibility resume can
+    // land while this delivery is still pending and arm a NEW epoch; a
+    // post-await read would then clear and log that fresh breadcrumb as if
+    // this pre-resume message belonged to it, reporting a bogus near-zero
+    // time and losing the real wake's timing (#206 review).
+    const armedAt = this.resumeDeliverAt;
     try {
       await this.onMessageCb(msg);
       // Breadcrumb fires only after delivery COMPLETED successfully — the
@@ -2210,8 +2216,10 @@ export class NostrRelayPool {
       // On a throw the breadcrumb stays armed; the next successful delivery
       // logs the true total, and RESUME_BREADCRUMB_MAX_AGE_MS bounds how long
       // an undelivered wake can keep it alive.
-      if(this.resumeDeliverAt) {
-        const armedAt = this.resumeDeliverAt;
+      // Only consume the one-shot if the epoch is UNCHANGED since the snapshot:
+      // a re-arm during the await means a newer wake owns the breadcrumb, so
+      // leave it armed for that wake's own first delivery.
+      if(armedAt && this.resumeDeliverAt === armedAt) {
         this.resumeDeliverAt = 0;
         const elapsed = Date.now() - armedAt;
         if(elapsed <= RESUME_BREADCRUMB_MAX_AGE_MS) {

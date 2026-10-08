@@ -10,6 +10,10 @@
  * Also pins the staleness cap: a breadcrumb armed by a wake that never
  * resolves must not log a multi-hour elapsed value attributed to that
  * long-gone resume.
+ *
+ * And pins the resume-epoch guard: the armed timestamp is snapshotted before
+ * the await, so a wake that arms a NEW breadcrumb while an earlier delivery
+ * is still pending is not cleared and logged by that older delivery.
  */
 
 import 'fake-indexeddb/auto';
@@ -252,6 +256,45 @@ describe('resume breadcrumbs (wake-latency timing)', () => {
     mockRelayInstances[0].simulateMessage(makeMessage('more'));
     await drainDelivery(pool);
     expect(logLines.filter((l) => l.includes('first message delivered'))).toHaveLength(1);
+  });
+
+  it('does not let a pre-resume delivery clear/log a breadcrumb armed during its await', async() => {
+    // Kai's resume-epoch race: message A starts delivery (snapshot taken),
+    // a visibility resume arms a NEW breadcrumb while A's callback is still
+    // pending, then A completes. A must not consume the newer epoch.
+    let releaseA: (() => void) | null = null;
+    const aDone = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const pool = await makePool(async(msg: Msg) => {
+      if(msg.id === 'A') await aDone;
+    });
+
+    const firstEpoch = Date.now() - 1000;
+    (pool as any).resumeDeliverAt = firstEpoch;
+    (pool as any).resumeConnectAt = 0;
+
+    mockRelayInstances[0].simulateMessage(makeMessage('A'));
+    await flushMicrotasks();
+
+    // A wake lands while A's callback is still pending: re-arm the breadcrumb.
+    const resumeEpoch = Date.now();
+    (pool as any).resumeDeliverAt = resumeEpoch;
+
+    releaseA!();
+    await drainDelivery(pool);
+
+    // The stale pre-resume value must be gone (not logged as a bogus fast
+    // time) and the NEW epoch must still be armed for its own delivery.
+    expect(logLines.some((l) => l.includes('first message delivered'))).toBe(false);
+    expect((pool as any).resumeDeliverAt).toBe(resumeEpoch);
+
+    // The wake's own first delivery consumes it, elapsed from resumeEpoch.
+    mockRelayInstances[0].simulateMessage(makeMessage('B'));
+    await drainDelivery(pool);
+    const deliveredLine = logLines.find((l) => l.includes('first message delivered'));
+    expect(deliveredLine).toBeTruthy();
+    expect((pool as any).resumeDeliverAt).toBe(0);
   });
 
   it('drops a stale connect breadcrumb instead of attributing hours-old times to this resume', async() => {
