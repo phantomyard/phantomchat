@@ -73,6 +73,10 @@ import {MainBroadcastChannelEvents, unversionedMainBroadcastChannelName} from '@
 import {CacheStorageThreadedControls, createCacheStorageThreadedControls} from './apiManagerProxyUtils';
 import type {ThreadedWorkerType} from '@lib/appManagers/appManagersManager';
 
+// How long a phantomchatBridge invocation waits for onboarding to register the
+// server before giving up (see waitForPhantomChatServer).
+const PHANTOMCHAT_BRIDGE_WAIT_MS = 10_000;
+
 export type Mirrors = {
   state: State,
   thumbs: ThumbsStorage['thumbsCache'],
@@ -138,10 +142,38 @@ class ApiManagerProxy extends MTProtoMessagePort {
   private lastServiceWorker: ServiceWorker;
 
   private phantomchatMTProtoServer: any;
+  // Bridge calls that arrive before onboarding registers the server settle here
+  // instead of throwing — the launch race that produced the unhandled
+  // '[apiManagerProxy] phantomchatBridge: server not registered' rejection.
+  private phantomchatServerWaiters: Array<(server: any) => void> = [];
 
   public setPhantomChatMTProtoServer(server: any) {
     this.phantomchatMTProtoServer = server;
+    const waiters = this.phantomchatServerWaiters;
+    this.phantomchatServerWaiters = [];
+    for(const waiter of waiters) waiter(server);
     console.log('[apiManagerProxy] PhantomChatMTProtoServer registered');
+  }
+
+  /**
+   * The bridge server registers late (onboarding integration), but the worker
+   * can invoke phantomchatBridge methods during boot. Wait a bounded window for
+   * registration instead of failing instantly; a genuinely missing server still
+   * surfaces once the timeout elapses.
+   */
+  private waitForPhantomChatServer(): Promise<any> {
+    if(this.phantomchatMTProtoServer) return Promise.resolve(this.phantomchatMTProtoServer);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.phantomchatServerWaiters = this.phantomchatServerWaiters.filter((waiter) => waiter !== settle);
+        reject(new Error('[apiManagerProxy] phantomchatBridge: server not registered within ' + PHANTOMCHAT_BRIDGE_WAIT_MS + 'ms'));
+      }, PHANTOMCHAT_BRIDGE_WAIT_MS);
+      const settle = (server: any) => {
+        clearTimeout(timer);
+        resolve(server);
+      };
+      this.phantomchatServerWaiters.push(settle);
+    });
   }
 
   private pingServiceWorkerPromise: CancellablePromise<void>;
@@ -344,10 +376,8 @@ class ApiManagerProxy extends MTProtoMessagePort {
       mirror: this.onMirrorTask,
 
       phantomchatBridge: async({method, params}: {method: string, params: any}) => {
-        if(!this.phantomchatMTProtoServer) {
-          throw new Error('[apiManagerProxy] phantomchatBridge: server not registered');
-        }
-        return this.phantomchatMTProtoServer.handleMethod(method, params);
+        const server = await this.waitForPhantomChatServer();
+        return server.handleMethod(method, params);
       },
 
       receivedServiceMessagePort: () => {

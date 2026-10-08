@@ -457,6 +457,11 @@ export class NostrRelayPool {
   // RESUME_RACE_GUARD_MS voids a hard reset for the same transition.
   private suppressReconnectBackfillUntil = 0;
   private lastResumeFromIdleAt = 0;
+  // Wake-latency breadcrumbs (set by hardResetSockets / resumeFromIdle): elapsed
+  // to the first relay socket coming back live, and to the first post-resume
+  // chat message delivery. 0 means no resume in flight or already logged.
+  private resumeConnectAt = 0;
+  private resumeDeliverAt = 0;
   // True for the duration of an ATOMIC teardown (hardResetSockets, pool
   // .disconnect). The real NostrRelay.disconnect() synchronously fires
   // onStateChange('disconnected'), which re-enters superviseConnections()
@@ -511,6 +516,7 @@ export class NostrRelayPool {
       this.hardResetSockets('visibility-resume');
     }
   };
+
   private onOnline = (): void => {
     this.resetWrapRetryBudget();
     this.resetRelayCooldowns();
@@ -1763,6 +1769,10 @@ export class NostrRelayPool {
     // backfill at startup.
     instance.onStateChange = () => {
       if(instance.getState() === 'connected') {
+        if(this.resumeConnectAt) {
+          this.log('[NostrRelayPool] resume: first relay connected in', Date.now() - this.resumeConnectAt, 'ms');
+          this.resumeConnectAt = 0;
+        }
         const firstConnect = !this.relayHasConnected.has(config.url);
         this.relayHasConnected.add(config.url);
         if(!firstConnect && this.isSubscribedFlag && config.read) {
@@ -2181,6 +2191,11 @@ export class NostrRelayPool {
     // An idle tick reads this before/after to decide whether it delivered
     // anything — the signal to reset the backoff and wake to ACTIVE (#125).
     this.deliveredMessageCount++;
+
+    if(this.resumeDeliverAt) {
+      this.log('[NostrRelayPool] resume: first message delivered in', Date.now() - this.resumeDeliverAt, 'ms');
+      this.resumeDeliverAt = 0;
+    }
 
     try {
       await this.onMessageCb(msg);
@@ -2939,6 +2954,9 @@ export class NostrRelayPool {
     if(this.idleGated) return;
     if(Date.now() - this.lastResumeFromIdleAt < RESUME_RACE_GUARD_MS) return;
     this.log('[NostrRelayPool] hard reset (' + reason + '): closing every socket, dialing fresh');
+    // Arm the wake-latency breadcrumbs: they clear themselves on the first
+    // 'connected' state change and the first chat delivery after this point.
+    this.resumeConnectAt = this.resumeDeliverAt = Date.now();
 
     // Reset-redials must not each fire a reconnect backfill (burst — see
     // RESUME_BACKFILL_SUPPRESSION_MS).
@@ -2994,6 +3012,8 @@ export class NostrRelayPool {
     this.idleGated = false;
     this.lastResumeFromIdleAt = Date.now();
     this.log('[NostrRelayPool] active: reopening sockets, live streaming');
+    // Same breadcrumbs as hardResetSockets — an idle resume also dials fresh.
+    this.resumeConnectAt = this.resumeDeliverAt = Date.now();
 
     if(!this.backfillPollInterval) this.startBackfillPoll();
     if(!this.recoveryInterval) this.startRecovery();
