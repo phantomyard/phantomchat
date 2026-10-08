@@ -13,6 +13,13 @@
  *     ignored. `unwrapNip17Message` is a pure function, so re-running it is safe.
  *   - On `worker.onerror`, the worker is dropped and all subsequent (and pending)
  *     unwraps go synchronous.
+ *   - A killed worker sends NO onerror (Chrome can terminate the worker while
+ *     the page is frozen — long Android sleep), so silence is the only death
+ *     signal. A timeout on a worker that hasn't produced ANY reply within a
+ *     full round-trip window is therefore treated as worker death: degrade()
+ *     runs, everything in flight falls back synchronously, and a fresh worker
+ *     respawns (bounded). Without this, the post-wake backlog drains serially
+ *     at one 3s timeout per message — an app that looks dead for minutes.
  *
  * This is the lesson from cryptoMessagePort: an invoke that posts to a port with
  * no listener hangs forever. Here there is always a synchronous floor.
@@ -51,6 +58,10 @@ class NostrUnwrapClient {
   private seq = 0;
   private lastDegradeAt = 0;
   private degradeCount = 0;
+  // Liveness breadcrumb: Date.now() of the worker's most recent reply (rumor,
+  // error, or late). A dead worker never updates it — that staleness is what
+  // lets a timeout distinguish "worker is dead" from "worker is slow".
+  private lastWorkerReplyAt = 0;
   private readonly pending = new Map<number, PendingEntry>();
 
   // Dev/prod breadcrumb: which fallback paths actually fire in the wild. Read
@@ -59,7 +70,8 @@ class NostrUnwrapClient {
   readonly stats = {
     syncFallback: 0,   // unwrap ran on the main thread (no usable worker)
     timeout: 0,        // worker round-trip blew past UNWRAP_TIMEOUT_MS
-    degrade: 0,        // worker errored and was dropped
+    timeoutDegrade: 0, // a timeout doubled as worker death (silent worker)
+    degrade: 0,        // worker errored (or silent-death) and was dropped
     respawn: 0,        // a fresh worker was spawned after a death
     cacheMissBounce: 0 // v2 no_matching_key retried on the main thread
   };
@@ -120,6 +132,9 @@ class NostrUnwrapClient {
 
   private onWorkerMessage(e: MessageEvent): void {
     const {id, rumor, error} = e.data as {id: number; rumor?: Rumor; error?: {code?: string; message: string}};
+    // Any reply — even a late one for an already-timed-out id, even an error —
+    // proves the worker is alive and processing.
+    this.lastWorkerReplyAt = Date.now();
     const entry = this.pending.get(id);
     if(!entry) return; // already resolved via timeout fallback — ignore late reply
     if(error) {
@@ -229,6 +244,17 @@ class NostrUnwrapClient {
         if(!entry) return;
         this.pending.delete(id);
         this.stats.timeout++;
+        // Dead-worker detection. A killed worker sends no onerror, so silence
+        // is the only signal. If the worker hasn't produced ANY reply within a
+        // full round-trip window, this timeout is worker death, not a slow
+        // round-trip: degrade() stops the client using the corpse, drains
+        // everything else in flight synchronously (instead of the serial
+        // backlog each eating its own 3s), and arms the bounded respawn.
+        if(Date.now() - this.lastWorkerReplyAt > UNWRAP_TIMEOUT_MS) {
+          this.stats.timeoutDegrade++;
+          console.warn('[unwrap] worker silent past timeout → treating as worker death', {...this.stats});
+          this.degrade();
+        }
         console.warn('[unwrap] worker round-trip exceeded timeout → synchronous fallback', {...this.stats});
         // Worker too slow / lost this request — unwrap synchronously now and
         // ignore any late reply for this id.
@@ -276,6 +302,7 @@ class NostrUnwrapClient {
     this.workerKey = null;
     this.lastDegradeAt = 0;
     this.degradeCount = 0;
+    this.lastWorkerReplyAt = 0;
     for(const entry of this.pending.values()) {
       clearTimeout(entry.timer);
     }
@@ -289,7 +316,7 @@ export function getNostrUnwrapClient(): NostrUnwrapClient {
   if(!singleton) {
     singleton = new NostrUnwrapClient();
     // Live breadcrumb readable from the prod console during a freeze:
-    //   window.__unwrapStats()  →  {syncFallback, timeout, degrade, respawn, cacheMissBounce}
+    //   window.__unwrapStats()  →  {syncFallback, timeout, timeoutDegrade, degrade, respawn, cacheMissBounce}
     if(typeof window !== 'undefined') {
       (window as any).__unwrapStats = () => singleton!.stats;
     }
