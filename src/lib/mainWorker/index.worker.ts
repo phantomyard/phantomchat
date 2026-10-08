@@ -7,6 +7,9 @@
 // just to include
 import '@lib/polyfill';
 import '@helpers/peerIdPolyfill';
+import {installUnhandledRejectionDiagnostics} from '@lib/phantomchat/unhandled-rejection-diagnostics';
+
+installUnhandledRejectionDiagnostics();
 
 import cryptoWorker from '@lib/crypto/cryptoMessagePort';
 import {setEnvironment} from '@environment/utils';

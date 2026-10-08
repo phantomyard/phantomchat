@@ -214,6 +214,11 @@ const RESUME_BACKFILL_SUPPRESSION_MS = 10_000;
 // gated check normally catches this first; the timestamp makes the behavior
 // order-independent.
 const RESUME_RACE_GUARD_MS = 2_000;
+// Breadcrumb staleness cap: a wake whose breadcrumb never resolves (no relay
+// ever connects, no chat ever delivers) must not log a multi-hour "first X in
+// Yms" value attributed to that long-gone resume (#206 review). Elapsed
+// times beyond this window are dropped, not logged.
+const RESUME_BREADCRUMB_MAX_AGE_MS = 120_000;
 // Delay between opening each relay socket. We connect to EVERY relay, but not all
 // at once: a burst of simultaneous WebSocket handshakes on a cold mobile radio
 // trips an "insufficient resources" ceiling and none survive, leaving the app
@@ -457,6 +462,11 @@ export class NostrRelayPool {
   // RESUME_RACE_GUARD_MS voids a hard reset for the same transition.
   private suppressReconnectBackfillUntil = 0;
   private lastResumeFromIdleAt = 0;
+  // Wake-latency breadcrumbs (set by hardResetSockets / resumeFromIdle): elapsed
+  // to the first relay socket coming back live, and to the first post-resume
+  // chat message delivery. 0 means no resume in flight or already logged.
+  private resumeConnectAt = 0;
+  private resumeDeliverAt = 0;
   // True for the duration of an ATOMIC teardown (hardResetSockets, pool
   // .disconnect). The real NostrRelay.disconnect() synchronously fires
   // onStateChange('disconnected'), which re-enters superviseConnections()
@@ -511,6 +521,7 @@ export class NostrRelayPool {
       this.hardResetSockets('visibility-resume');
     }
   };
+
   private onOnline = (): void => {
     this.resetWrapRetryBudget();
     this.resetRelayCooldowns();
@@ -1763,6 +1774,14 @@ export class NostrRelayPool {
     // backfill at startup.
     instance.onStateChange = () => {
       if(instance.getState() === 'connected') {
+        if(this.resumeConnectAt) {
+          const armedAt = this.resumeConnectAt;
+          this.resumeConnectAt = 0;
+          const elapsed = Date.now() - armedAt;
+          if(elapsed <= RESUME_BREADCRUMB_MAX_AGE_MS) {
+            this.log('[NostrRelayPool] resume: first relay connected in', elapsed, 'ms');
+          }
+        }
         const firstConnect = !this.relayHasConnected.has(config.url);
         this.relayHasConnected.add(config.url);
         if(!firstConnect && this.isSubscribedFlag && config.read) {
@@ -2182,8 +2201,31 @@ export class NostrRelayPool {
     // anything — the signal to reset the backoff and wake to ACTIVE (#125).
     this.deliveredMessageCount++;
 
+    // Snapshot the armed timestamp BEFORE the await. A visibility resume can
+    // land while this delivery is still pending and arm a NEW epoch; a
+    // post-await read would then clear and log that fresh breadcrumb as if
+    // this pre-resume message belonged to it, reporting a bogus near-zero
+    // time and losing the real wake's timing (#206 review).
+    const armedAt = this.resumeDeliverAt;
     try {
       await this.onMessageCb(msg);
+      // Breadcrumb fires only after delivery COMPLETED successfully — the
+      // callback contains the IDB/UI work this timing is meant to measure, so
+      // logging at entry would report a falsely-fast number, and logging on a
+      // throw would report "delivered" for a failed delivery (#206 review).
+      // On a throw the breadcrumb stays armed; the next successful delivery
+      // logs the true total, and RESUME_BREADCRUMB_MAX_AGE_MS bounds how long
+      // an undelivered wake can keep it alive.
+      // Only consume the one-shot if the epoch is UNCHANGED since the snapshot:
+      // a re-arm during the await means a newer wake owns the breadcrumb, so
+      // leave it armed for that wake's own first delivery.
+      if(armedAt && this.resumeDeliverAt === armedAt) {
+        this.resumeDeliverAt = 0;
+        const elapsed = Date.now() - armedAt;
+        if(elapsed <= RESUME_BREADCRUMB_MAX_AGE_MS) {
+          this.log('[NostrRelayPool] resume: first message delivered in', elapsed, 'ms');
+        }
+      }
     } catch(err) {
       this.log.error('[NostrRelayPool] onMessage handler threw:', err);
     }
@@ -2939,6 +2981,10 @@ export class NostrRelayPool {
     if(this.idleGated) return;
     if(Date.now() - this.lastResumeFromIdleAt < RESUME_RACE_GUARD_MS) return;
     this.log('[NostrRelayPool] hard reset (' + reason + '): closing every socket, dialing fresh');
+    // Arm the wake-latency breadcrumbs: they clear themselves on the first
+    // 'connected' state change and the first successful chat delivery after
+    // this point (stale values past RESUME_BREADCRUMB_MAX_AGE_MS are dropped).
+    this.resumeConnectAt = this.resumeDeliverAt = Date.now();
 
     // Reset-redials must not each fire a reconnect backfill (burst — see
     // RESUME_BACKFILL_SUPPRESSION_MS).
@@ -2994,6 +3040,8 @@ export class NostrRelayPool {
     this.idleGated = false;
     this.lastResumeFromIdleAt = Date.now();
     this.log('[NostrRelayPool] active: reopening sockets, live streaming');
+    // Same breadcrumbs as hardResetSockets — an idle resume also dials fresh.
+    this.resumeConnectAt = this.resumeDeliverAt = Date.now();
 
     if(!this.backfillPollInterval) this.startBackfillPoll();
     if(!this.recoveryInterval) this.startRecovery();

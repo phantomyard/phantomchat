@@ -58,6 +58,12 @@ import useHasFoldersSidebar, {useIsSidebarCollapsed} from '@stores/foldersSideba
 import appNavigationController from '@components/appNavigationController';
 import {preventCrossTabDynamicImportDeadlock} from '@helpers/preventDeadlock';
 import noop from '@helpers/noop';
+import {installUnhandledRejectionDiagnostics} from '@lib/phantomchat/unhandled-rejection-diagnostics';
+
+// Render unhandled promise rejections as diagnosable log lines instead of
+// Chrome's '#<Object>' (wake-latency investigation 2026-10-08: 36 such
+// rejections in one session, sources invisible).
+installUnhandledRejectionDiagnostics();
 
 // import commonStateStorage from '@lib/commonStateStorage';
 // import { STATE_INIT } from '@config/state';
