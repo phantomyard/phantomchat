@@ -124,7 +124,7 @@ export type PartialStoredMessage = Omit<StoredMessage, 'mid' | 'twebPeerId'> & {
 // ─── Constants ─────────────────────────────────────────────────────
 
 const DB_NAME = 'phantomchat-messages';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const STORE_NAME = 'messages';
 
 /**
@@ -135,7 +135,17 @@ const STORE_NAME = 'messages';
 export const MESSAGE_CAP_PER_CHAT = 500;
 const CURSOR_STORE = 'read-cursors';
 const TOMBSTONE_STORE = 'conversation-tombstones';
+/** One-shot data migrations, keyed by name. See `migrateLegacyGroupConversationKeys`. */
+const MIGRATION_STORE = 'migrations';
 const DEFAULT_LIMIT = 50;
+
+/**
+ * Marker name for the #207 group conversation-key migration. Persisted once the
+ * bare→canonical group-key sweep has completed, so the seed-it-to-top-mid step
+ * runs exactly once per install and a group created AFTER the fix is never
+ * force-read on a later boot.
+ */
+export const GROUP_KEY_MIGRATION = 'group-207-canonical-key-v1';
 
 // ─── Singleton ─────────────────────────────────────────────────────
 
@@ -296,6 +306,10 @@ export class MessageStore {
         // deleted chat/contact does not boomerang back on reconnect.
         if(!db.objectStoreNames.contains(TOMBSTONE_STORE)) {
           db.createObjectStore(TOMBSTONE_STORE, {keyPath: 'conversationId'});
+        }
+        // v6: persisted one-shot migration markers (see GROUP_KEY_MIGRATION).
+        if(!db.objectStoreNames.contains(MIGRATION_STORE)) {
+          db.createObjectStore(MIGRATION_STORE, {keyPath: 'name'});
         }
       };
     });
@@ -875,6 +889,118 @@ export class MessageStore {
       if(newRows === 0) before--;
     }
     return moved;
+  }
+
+  /**
+   * Read a persisted one-shot migration marker. Returns false when the marker
+   * has never been written.
+   */
+  async getMigration(name: string): Promise<boolean> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MIGRATION_STORE, 'readonly');
+      const req = tx.objectStore(MIGRATION_STORE).get(name);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve(!!req.result);
+    });
+  }
+
+  /** Record that a one-shot migration has completed. Idempotent. */
+  async setMigration(name: string): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MIGRATION_STORE, 'readwrite');
+      const req = tx.objectStore(MIGRATION_STORE).put({name, doneAt: Date.now()});
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
+    });
+  }
+
+  /** Clear a migration marker (tests / explicit re-run). */
+  async clearMigration(name: string): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MIGRATION_STORE, 'readwrite');
+      const req = tx.objectStore(MIGRATION_STORE).delete(name);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
+    });
+  }
+
+  /**
+   * One-shot migration of legacy bare-keyed GROUP state onto the canonical
+   * `group:<groupId>` key (#207, review #208).
+   *
+   * Pre-#207 builds wrote group rows and read cursors under BOTH the bare
+   * `<groupId>` and `group:<groupId>`. `resetUnreadForPeer` resolved the bare
+   * id, so a read group's cursor lived under the bare key while its inbound
+   * rows already lived under the canonical key — the "normal" upgrade state.
+   * The boot dialog therefore found canonical rows (non-empty), skipped any
+   * legacy fallback, read a canonical cursor of 0 and reported the whole
+   * retained history as unread.
+   *
+   * So the migration must NOT be gated on the canonical lookup being empty:
+   * for every group we rekey any bare rows forward unconditionally and copy a
+   * bare read cursor onto the canonical key. When NEITHER key holds a cursor we
+   * seed the canonical cursor to the current top mid — exactly what `main`
+   * asserted at boot (it forced unread 0) — so history already read via the
+   * UI-only localStorage path does not resurface.
+   *
+   * Guarded by a persisted marker (GROUP_KEY_MIGRATION): the seed step must run
+   * once per install, otherwise a genuinely-unread group with no cursor yet
+   * would be force-read on every boot. On any per-group failure the marker is
+   * NOT written, so the sweep retries on the next boot rather than silently
+   * skipping the failed group forever.
+   */
+  async migrateLegacyGroupConversationKeys(groupIds: string[]): Promise<void> {
+    if(await this.getMigration(GROUP_KEY_MIGRATION)) return;
+    let failed = false;
+    for(const groupId of groupIds) {
+      try {
+        await this.migrateLegacyGroupConversationKey(groupId);
+      } catch(err) {
+        failed = true;
+        console.warn('[message-store] #207 group-key migration failed for', groupId, err);
+      }
+    }
+    if(!failed) await this.setMigration(GROUP_KEY_MIGRATION);
+  }
+
+  private async migrateLegacyGroupConversationKey(groupId: string): Promise<void> {
+    if(!groupId) return;
+    const canonical = `group:${groupId}`;
+    // Snapshot the bare cursor BEFORE rekeying (rekey only moves message rows,
+    // but read it first so the two reads can't race a concurrent writer).
+    const bareCursor = await this.getReadCursor(groupId);
+    // Unconditional: in the mixed state canonical rows already exist, and the
+    // bare chatCreate/service rows would otherwise be orphaned (rule 15).
+    await this.rekeyConversation(groupId, canonical);
+    const canonicalCursor = await this.getReadCursor(canonical);
+    if(bareCursor > canonicalCursor) {
+      await this.setReadCursor(canonical, bareCursor);
+    }
+    // Seed only when no cursor existed under EITHER key — i.e. the group was
+    // never opened, or was read through the UI-only localStorage path. Do not
+    // do this for a group created after the fix (the persisted marker stops us).
+    if(Math.max(bareCursor, canonicalCursor) === 0) {
+      const top = (await this.getMessages(canonical, 1))[0]?.mid ?? 0;
+      if(top > 0) await this.setReadCursor(canonical, top);
+    }
+  }
+
+  /**
+   * Remove a stored read cursor so a conversation reads as never-opened.
+   * `setReadCursor` is monotonic and cannot walk a cursor back to 0, so tests
+   * and explicit resets need a real delete.
+   */
+  async deleteReadCursor(conversationId: string): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(CURSOR_STORE, 'readwrite');
+      const req = tx.objectStore(CURSOR_STORE).delete(conversationId);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
+    });
   }
 
   /**

@@ -98,6 +98,7 @@ vi.mock('@lib/logger', () => ({
 let GroupAPI: any;
 let VirtualMTProtoServer: any;
 let store: any;
+let GROUP_KEY_MIGRATION: string;
 
 beforeAll(async() => {
   vi.resetModules();
@@ -107,6 +108,7 @@ beforeAll(async() => {
   VirtualMTProtoServer = (vmtMod as any).PhantomChatMTProtoServer;
   const storeMod = await import('@lib/phantomchat/message-store');
   store = (storeMod as any).getMessageStore();
+  GROUP_KEY_MIGRATION = (storeMod as any).GROUP_KEY_MIGRATION;
 });
 
 function seedMessage(overrides: Record<string, unknown> = {}) {
@@ -180,12 +182,23 @@ describe('#207 — getDialogs group branch restores top message + read state', (
   }
 
   async function clearStore() {
+    // Real deletes, not setReadCursor(…, 0) — the cursor write is monotonic so
+    // a 0 write is a no-op and would leak one case's cursor into the next
+    // (review #208 non-blocking). Also reset the one-shot migration marker so
+    // each case exercises the migration independently of test order.
     await store.deleteMessages(CONV_ID);
-    await store.setReadCursor(CONV_ID, 0);
+    await store.deleteMessages(GROUP_ID);
+    await store.deleteReadCursor(CONV_ID);
+    await store.deleteReadCursor(GROUP_ID);
+    await store.clearMigration(GROUP_KEY_MIGRATION);
   }
 
   it('finds canonical `group:`-prefixed rows and reports the real unread count', async() => {
     await clearStore();
+    // Steady state (post-migration): a genuinely new inbound message with no
+    // cursor yet must count as unread. Set the marker so the one-shot seed does
+    // not mark this fresh case read.
+    await store.setMigration(GROUP_KEY_MIGRATION);
     await seedMessage({mid: 201, timestamp: 1_699_000_200});
 
     const result = await (server() as any).getDialogs({}, new Set([GROUP_PEER_ID]));
@@ -208,6 +221,79 @@ describe('#207 — getDialogs group branch restores top message + read state', (
     expect(dialog.unread_count).toBe(0);
     expect(dialog.read_inbox_max_id).toBe(201);
     expect(dialog.read_outbox_max_id).toBe(201);
+  });
+
+  it('migrates a legacy bare read cursor onto the canonical key (mixed state)', async() => {
+    // The normal pre-#207 upgrade state: inbound rows are already canonical,
+    // but the read cursor was written under the BARE id. Canonical rows being
+    // non-empty must NOT skip the cursor migration (review #208 blocker).
+    await clearStore();
+    await seedMessage({mid: 301, timestamp: 1_699_000_300});
+    await store.setReadCursor(GROUP_ID, 301);
+
+    const result = await (server() as any).getDialogs({}, new Set([GROUP_PEER_ID]));
+    const dialog = groupDialog(result);
+
+    expect(dialog.unread_count).toBe(0);
+    expect(dialog.read_inbox_max_id).toBe(301);
+    expect(dialog.read_outbox_max_id).toBe(301);
+    // And the canonical cursor is now the source of truth.
+    expect(await store.getReadCursor(CONV_ID)).toBe(301);
+  });
+
+  it('seeds the canonical cursor to the top when no cursor exists anywhere', async() => {
+    // A group read pre-#207 through the UI-only localStorage path left no
+    // stored cursor; main forced unread 0 at boot. The one-shot migration must
+    // reproduce that instead of repainting the whole history as unread.
+    await clearStore();
+    await seedMessage({mid: 401, timestamp: 1_699_000_400});
+
+    const result = await (server() as any).getDialogs({}, new Set([GROUP_PEER_ID]));
+    const dialog = groupDialog(result);
+
+    expect(dialog.unread_count).toBe(0);
+    expect(dialog.read_inbox_max_id).toBe(401);
+    expect(await store.getReadCursor(CONV_ID)).toBe(401);
+  });
+
+  it('does not force-read a group created after the migration marker is set', async() => {
+    // Once migrated, a brand-new group with no cursor and genuinely-unread
+    // messages must keep its unread badge — the seed step is one-shot only.
+    await clearStore();
+    await store.setMigration(GROUP_KEY_MIGRATION);
+    await seedMessage({mid: 501, timestamp: 1_699_000_500});
+
+    const result = await (server() as any).getDialogs({}, new Set([GROUP_PEER_ID]));
+    const dialog = groupDialog(result);
+
+    expect(dialog.unread_count).toBe(1);
+    expect(dialog.read_inbox_max_id).toBe(0);
+  });
+
+  it('rekeys orphaned bare rows forward even when canonical rows exist', async() => {
+    await clearStore();
+    // Canonical inbound row plus a legacy bare service row — the mixed state
+    // that used to leave the bare row orphaned (review #208 non-blocking 1).
+    await seedMessage({eventId: 'canonical-1', mid: 601, timestamp: 1_699_000_600});
+    await seedMessage({
+      eventId: 'legacy-service-2',
+      conversationId: GROUP_ID,
+      mid: 77,
+      timestamp: 1_699_000_050,
+      serviceType: 'chatCreate',
+      servicePayload: {title: 'Legacy Group'}
+    });
+    await store.setReadCursor(GROUP_ID, 601);
+
+    const result = await (server() as any).getDialogs({}, new Set([GROUP_PEER_ID]));
+    const dialog = groupDialog(result);
+    expect(dialog.top_message).toBe(601);
+    expect(dialog.unread_count).toBe(0);
+
+    // Both rows now live under the canonical key; nothing is left bare.
+    expect((await store.getByEventId('legacy-service-2'))?.conversationId).toBe(CONV_ID);
+    expect((await store.getByEventId('canonical-1'))?.conversationId).toBe(CONV_ID);
+    expect((await store.getMessages(GROUP_ID, 10)).length).toBe(0);
   });
 
   it('tolerates legacy bare-key rows and migrates them onto the canonical key', async() => {

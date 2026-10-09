@@ -852,26 +852,27 @@ export class PhantomChatMTProtoServer {
       const groupStore = getGroupStore();
       const groups = await groupStore.getAll();
 
+      // One-shot legacy group-key migration (#207). Runs before ANY per-group
+      // read so the canonical `group:<id>` key holds the migrated rows AND read
+      // cursor the dialog state below is computed from. Must not be gated on the
+      // canonical lookup being empty — the normal upgrade state already has
+      // canonical rows with only a bare cursor (review #208). The persisted
+      // marker makes it idempotent; failures are logged, not swallowed.
+      if(typeof store.migrateLegacyGroupConversationKeys === 'function') {
+        try {
+          await store.migrateLegacyGroupConversationKeys(groups.map((g: any) => g.groupId));
+        } catch(err) {
+          console.warn(LOG_PREFIX, 'getDialogs: #207 group-key migration failed', err);
+        }
+      }
+
       for(const group of groups) {
         if(onlyPeerIds && !onlyPeerIds.has(group.peerId)) continue;
         try {
-          // Canonical group conversation key (#207). Legacy builds wrote group
-          // rows (notably the chatCreate service row) under the BARE groupId,
-          // and this reader used the bare key too — so the boot dialog missed
-          // the real `group:`-prefixed rows and every store read keyed under
-          // `group:` (read cursor included) looked empty. Prefer the canonical
-          // key, fall back to legacy rows, and migrate them forward.
+          // Canonical group conversation key (#207). Legacy bare-key rows/read
+          // cursors were migrated forward by the one-shot sweep above.
           const convId = `group:${group.groupId}`;
-          let latestMsgs = await store.getMessages(convId, 1);
-          if(latestMsgs.length === 0) {
-            const legacy = await store.getMessages(group.groupId, 1);
-            if(legacy.length > 0) {
-              latestMsgs = legacy;
-              void store.rekeyConversation?.(group.groupId, convId);
-              const bareCursor = await store.getReadCursor?.(group.groupId) ?? 0;
-              if(bareCursor > 0) void store.setReadCursor?.(convId, bareCursor);
-            }
-          }
+          const latestMsgs = await store.getMessages(convId, 1);
           const latest = latestMsgs[0];
           const peerId = group.peerId;
 
@@ -953,6 +954,11 @@ export class PhantomChatMTProtoServer {
             await store.countUnread(convId, this.ownPubkey) :
             0;
           const readInboxMaxId = readCursor > 0 ? readCursor : (unreadCount === 0 ? mid : 0);
+          // readInboxMaxId / readOutboxMaxId are equal: a 1:1 dialog does the
+          // same, and tweb's noIdsDialogs guard only needs to cover the
+          // `unreadCount === 0` case (top > 0 with both markers 0 AND unread 0
+          // triggers the reloadConversation loop). When unreadCount > 0 both
+          // markers going out as 0 is the correct "unseen" state.
           const dialog = this.mapper.createTwebDialog({
             peerId,
             topMessage: mid,
