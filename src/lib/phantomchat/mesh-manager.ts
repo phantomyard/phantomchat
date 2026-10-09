@@ -1,5 +1,8 @@
 import {getRtcConfig, DATA_CHANNEL_NAME, DATA_CHANNEL_OPTIONS, SignalMessage} from '@lib/phantomchat/webrtc-config';
 import {logSwallow} from '@lib/phantomchat/log-swallow';
+import {logger} from '@lib/logger';
+
+const meshLog = logger('PhantomChat/mesh');
 
 const MAX_CONNECTIONS = 50;
 const PING_INTERVAL = 30000;
@@ -167,6 +170,17 @@ export class MeshManager {
   private async handleOffer(fromPubkey: string, signal: SignalMessage & {t: 'offer'}): Promise<void> {
     if(this.peers.size >= MAX_CONNECTIONS) return;
 
+    // Relays re-deliver kind-21050 events, so a duplicate offer can land after
+    // this peer already settled — the mirrored form of the late-answer bug.
+    // Re-applying it would tear down a healthy session to re-run negotiation
+    // with an identical SDP, so a byte-identical offer is a logged no-op. A
+    // DIFFERENT sdp is a genuine renegotiation/restart and proceeds normally.
+    const existing = this.peers.get(fromPubkey);
+    if(existing?.remoteDescriptionSet && existing.pc.remoteDescription?.sdp === signal.sdp) {
+      meshLog.warn('[MeshManager] ignoring re-delivered offer from', fromPubkey, '(identical SDP, session already settled)');
+      return;
+    }
+
     const pc = new RTCPeerConnection(this.rtcConfig());
 
     const sessionId = `${fromPubkey}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -196,7 +210,20 @@ export class MeshManager {
 
     this.setupPeerConnection(fromPubkey, pc);
 
-    await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: signal.sdp}));
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: signal.sdp}));
+    } catch(e) {
+      // Malformed SDP or a state race: drop this signal and the half-built peer
+      // instead of leaving it stuck 'connecting' and rejecting unhandled.
+      meshLog.warn('[MeshManager] setRemoteDescription(offer) failed; dropping signal', e);
+      const current = this.peers.get(fromPubkey);
+      if(current?.sessionId === sessionId) {
+        this.peers.delete(fromPubkey);
+        this.pendingCandidates.delete(fromPubkey);
+        try { pc.close(); } catch(closeErr) { logSwallow('MeshManager.offerCleanupClose', closeErr); }
+      }
+      return;
+    }
     if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== sessionId) return;
     state.remoteDescriptionSet = true;
     await this.flushPendingCandidates(fromPubkey);
@@ -215,7 +242,23 @@ export class MeshManager {
     if(!state) return;
     const expectedSessionId = state.sessionId;
 
-    await state.pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: signal.sdp}));
+    // A late or duplicate answer lands after negotiation has already settled
+    // (relays re-deliver events; reconnects race). setRemoteDescription on a
+    // settled pc throws InvalidStateError 'Called in wrong state: stable', so
+    // an answer is only legal while a local offer is outstanding — anything
+    // else is a logged no-op instead of an unhandled rejection.
+    if(state.pc.signalingState !== 'have-local-offer') {
+      meshLog.warn('[MeshManager] ignoring late/duplicate answer from', fromPubkey, `signalingState=${state.pc.signalingState}`);
+      return;
+    }
+
+    try {
+      await state.pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: signal.sdp}));
+    } catch(e) {
+      // Backstop for a state change racing the guard above.
+      meshLog.warn('[MeshManager] setRemoteDescription(answer) failed; ignoring signal', e);
+      return;
+    }
     if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== expectedSessionId) return;
     state.remoteDescriptionSet = true;
     await this.flushPendingCandidates(fromPubkey);

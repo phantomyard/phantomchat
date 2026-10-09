@@ -18,6 +18,7 @@ import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage'
 import {importFromStored} from './nostr-identity';
 import rootScope from '@lib/rootScope';
 import {swallowHandler} from './log-swallow';
+import {isNetworkOffline, OFFLINE_RETRY_PROBE_MS} from './network-status';
 import {IdleTransportController, TransportMode} from './transport-idle-controller';
 import {
   ReadBackHealth,
@@ -462,6 +463,15 @@ export class NostrRelayPool {
   // RESUME_RACE_GUARD_MS voids a hard reset for the same transition.
   private suppressReconnectBackfillUntil = 0;
   private lastResumeFromIdleAt = 0;
+  // OFFLINE GATE (dial-storm fix). While the device is known-offline the
+  // supervisor refuses to dial and ONE slow probe stands in for the whole
+  // outage; the 'online' trigger coalesces a connectivity-flap cluster into a
+  // single redial wave. Observed without this: 300+ failed dials/minute during
+  // a hard outage, and stacked all-relay waves on every flap of the return
+  // (each flap re-ran resetRelayCooldowns + a full re-supervise).
+  private offlineProbeTimer: ReturnType<typeof setTimeout> | null = null;
+  private onlineWaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly ONLINE_WAVE_DEBOUNCE_MS = 5_000;
   // Wake-latency breadcrumbs (set by hardResetSockets / resumeFromIdle): elapsed
   // to the first relay socket coming back live, and to the first post-resume
   // chat message delivery. 0 means no resume in flight or already logged.
@@ -524,8 +534,46 @@ export class NostrRelayPool {
 
   private onOnline = (): void => {
     this.resetWrapRetryBudget();
-    this.resetRelayCooldowns();
+    // DEBOUNCED redial wave. A radio coming back flaps: the observed return
+    // flipped CONNECTION_NONE → WIFI in 200µs alongside repeated IP churn and
+    // IPv6 temp-address changes, and every 'online' used to fire an immediate
+    // resetRelayCooldowns() + full re-supervise, stacking one all-relay dial
+    // wave per flap. Trailing-edge the trigger 5s so a flap cluster collapses
+    // into ONE coordinated wave, 5s after the last event.
+    if(this.onlineWaveTimer !== null) {
+      clearTimeout(this.onlineWaveTimer);
+    }
+    // The offline probe would only run this same recovery: cancel it so the
+    // wave can't double-fire (probe + debounce) on a clean return.
+    if(this.offlineProbeTimer !== null) {
+      clearTimeout(this.offlineProbeTimer);
+      this.offlineProbeTimer = null;
+    }
+    this.onlineWaveTimer = setTimeout(() => {
+      this.onlineWaveTimer = null;
+      this.resetRelayCooldowns();
+    }, NostrRelayPool.ONLINE_WAVE_DEBOUNCE_MS);
   };
+
+  /**
+   * Single-flight slow probe standing in for the supervisor during an outage.
+   * Re-arms every OFFLINE_RETRY_PROBE_MS while still offline, and once the
+   * network is back runs the same fresh-network-context recovery the 'online'
+   * trigger does; some platforms return to the network without firing
+   * 'online', and the pool must not sit socket-less waiting for an event that
+   * may never come.
+   */
+  private armOfflineProbe(): void {
+    if(this.offlineProbeTimer !== null) return; // single-flight
+    this.offlineProbeTimer = setTimeout(() => {
+      this.offlineProbeTimer = null;
+      if(isNetworkOffline()) {
+        this.armOfflineProbe();
+        return;
+      }
+      this.resetRelayCooldowns();
+    }, OFFLINE_RETRY_PROBE_MS);
+  }
 
   /**
    * Fresh network context = clean slate for relay health. Called on the resume
@@ -973,6 +1021,15 @@ export class NostrRelayPool {
       clearTimeout(timer);
     }
     this.dialTimers.clear();
+
+    if(this.offlineProbeTimer) {
+      clearTimeout(this.offlineProbeTimer);
+      this.offlineProbeTimer = null;
+    }
+    if(this.onlineWaveTimer) {
+      clearTimeout(this.onlineWaveTimer);
+      this.onlineWaveTimer = null;
+    }
 
     for(const entry of this.relayEntries) {
       entry.instance.disconnect();
@@ -2433,6 +2490,15 @@ export class NostrRelayPool {
     // calls inside it synchronously fire onStateChange(.disconnected.), which
     // re-enters here while activeUrls still holds the relays being killed.
     if(this.teardownInFlight) return;
+
+    // OFFLINE GATE (dial-storm fix): no dial can succeed while the device is
+    // known-offline, and the liveness floor below would otherwise force-revive
+    // relays into the dead radio on every sweep: its cooldown-ignoring revive
+    // is exactly the wrong behaviour during an outage. Park on the slow probe.
+    if(isNetworkOffline()) {
+      this.armOfflineProbe();
+      return;
+    }
 
     const now = Date.now();
     const toOpen: RelayEntry[] = [];
