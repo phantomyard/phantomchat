@@ -6,7 +6,7 @@ bug reports, design — is welcome.
 
 ## Ways to contribute
 
-- **Report a bug** — open a [GitHub issue](https://github.com/phantomchat-chat/phantomchat-chat/issues/new/choose)
+- **Report a bug** — open a [GitHub issue](https://github.com/phantomyard/phantomchat/issues/new/choose)
   with clear reproduction steps, browser info, and what you expected vs what
   happened. **Do not report security vulnerabilities in public issues** —
   see [SECURITY.md](SECURITY.md).
@@ -24,8 +24,8 @@ bug reports, design — is welcome.
 ### 1. Fork & clone
 
 ```bash
-git clone git@github.com:<your-username>/phantomchat-chat.git
-cd phantomchat-chat
+git clone git@github.com:<your-username>/phantomchat.git
+cd phantomchat
 pnpm install
 ```
 

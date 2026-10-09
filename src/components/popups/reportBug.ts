@@ -2,9 +2,9 @@ import type {AppManagers} from '@lib/managers';
 import App from '@config/app';
 
 const PHANTOMCHAT_DEV_NPUB = 'npub1zxn3hul7dsaex9l5a8l8scflxzruxh3v9gvvvgcmtdus7aqenmrskmtyqz';
-const GITHUB_ISSUE_URL = 'https://github.com/phantomchat-chat/phantomchat-chat/issues/new';
+const GITHUB_ISSUE_URL = 'https://github.com/phantomyard/phantomchat/issues/new';
 
-function collectDiagnostics(includeNpub: boolean): string {
+function collectDiagnostics(): string {
   const lines: string[] = [];
   lines.push(`App: ${App.versionFull || App.version || 'dev'}`);
   lines.push(`UA: ${navigator.userAgent}`);
@@ -17,15 +17,6 @@ function collectDiagnostics(includeNpub: boolean): string {
     const count = Array.isArray(relays) ? relays.length : (relays?.size ?? 0);
     lines.push(`Connected relays: ${count}`);
   } catch{}
-  if(includeNpub) {
-    try {
-      const id = localStorage.getItem('phantomchat_identity');
-      if(id) {
-        const parsed = JSON.parse(id);
-        if(parsed?.npub) lines.push(`Reporter npub: ${parsed.npub}`);
-      }
-    } catch{}
-  }
   return lines.join('\n');
 }
 
@@ -63,7 +54,7 @@ async function sendPrivateReport(
   title: string,
   description: string
 ): Promise<void> {
-  const body = buildPrivateMessage(title, description, collectDiagnostics(true));
+  const body = buildPrivateMessage(title, description, collectDiagnostics());
 
   const {decodePubkey} = await import('@lib/phantomchat/nostr-identity');
   const {PhantomChatBridge} = await import('@lib/phantomchat/phantomchat-bridge');
@@ -101,7 +92,7 @@ async function sendPrivateReport(
 }
 
 function openGithubIssue(title: string, description: string): void {
-  const body = buildIssueBody(title, description, collectDiagnostics(false));
+  const body = buildIssueBody(title, description, collectDiagnostics());
   const url = GITHUB_ISSUE_URL +
     '?title=' + encodeURIComponent(title || 'Bug report') +
     '&body=' + encodeURIComponent(body) +

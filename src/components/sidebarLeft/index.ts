@@ -48,6 +48,7 @@ import mediaSizes from '@helpers/mediaSizes';
 import {doubleRaf, fastRaf} from '@helpers/schedulers';
 import {getInstallPrompt} from '@helpers/dom/installPrompt';
 import IS_STANDALONE from '@environment/standalone';
+import {isDesktopApp} from '@lib/phantomchat/desktop-api';
 import liteMode from '@helpers/liteMode';
 import AppPowerSavingTab from '@components/sidebarLeft/tabs/powerSaving';
 import Icon from '@components/icon';
@@ -780,7 +781,7 @@ export class AppSidebarLeft extends SidebarSlider {
           });
         }
       },
-      verify: () => !IS_STANDALONE
+      verify: () => !IS_STANDALONE && !isDesktopApp()
     }];
 
     const filteredButtons = menuButtons.filter(Boolean);
@@ -1616,7 +1617,7 @@ export default appSidebarLeft;
 
 function getVersionLink() {
   const btnMenuFooter = document.createElement('a');
-  btnMenuFooter.href = `https://github.com/phantomchat-chat/phantomchat-chat/releases/tag/v${App.version}`;
+  btnMenuFooter.href = `https://github.com/phantomyard/phantomchat/releases/tag/phantomchat-v${App.version}`;
   setBlankToAnchor(btnMenuFooter);
   btnMenuFooter.classList.add('btn-menu-footer');
   btnMenuFooter.addEventListener(CLICK_EVENT_NAME, (e) => {

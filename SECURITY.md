@@ -17,19 +17,13 @@ prefer mature, audited tools such as [Signal](https://signal.org/) or
 Please report security vulnerabilities **privately** — do not open a public
 GitHub issue for security bugs.
 
-**Preferred channel — Nostr DM** (end-to-end encrypted via NIP-17):
+**Reporting channel — Nostr DM** (end-to-end encrypted via NIP-17):
 
 ```
 npub1zxn3hul7dsaex9l5a8l8scflxzruxh3v9gvvvgcmtdus7aqenmrskmtyqz
 ```
 
 Use any NIP-17 capable client (including PhantomChat.chat itself) to send a DM.
-
-**Alternative channel — GitHub Security Advisory**:
-
-1. Go to <https://github.com/phantomchat-chat/phantomchat-chat/security/advisories/new>
-2. Fill in the form — this creates a private advisory visible only to
-   maintainers.
 
 ### What to include in your report
 
