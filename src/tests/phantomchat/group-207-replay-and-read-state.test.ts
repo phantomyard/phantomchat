@@ -241,6 +241,43 @@ describe('#207 — getDialogs group branch restores top message + read state', (
     expect(await store.getReadCursor(CONV_ID)).toBe(301);
   });
 
+  it('upgrades a released legacy group: bare chatCreate cursor + canonical inbound rows', async() => {
+    // The exact shipped pre-#207 state (review #208 blocker). The only bare row
+    // is the chatCreate service row (mid 77), so main's resetUnreadForPeer
+    // derived the bare cursor from that OLDEST mid, not from anything read.
+    // Five inbound rows already live under the canonical key. The upgrade must
+    // report unread 0 and advance the canonical cursor to the top (105), not
+    // stop at the bare creation mid — the bug both reviewers reproduced.
+    await clearStore();
+    await seedMessage({
+      eventId: 'legacy-create',
+      conversationId: GROUP_ID,
+      mid: 77,
+      timestamp: 1_699_000_050,
+      serviceType: 'chatCreate',
+      servicePayload: {title: 'Legacy Group'}
+    });
+    for(let i = 101; i <= 105; i++) {
+      await seedMessage({
+        eventId: `inbound-${i}`,
+        mid: i,
+        timestamp: 1_699_000_000 + i
+      });
+    }
+    // Build the bare cursor the way released resetUnreadForPeer did: from the
+    // only bare row, i.e. the chatCreate mid — NOT hand-set to a canonical mid.
+    const bareTop = (await store.getMessages(GROUP_ID, 1))[0].mid;
+    expect(bareTop).toBe(77);
+    await store.setReadCursor(GROUP_ID, bareTop);
+
+    const result = await (server() as any).getDialogs({}, new Set([GROUP_PEER_ID]));
+    const dialog = groupDialog(result);
+
+    expect(dialog.unread_count).toBe(0);
+    expect(dialog.read_inbox_max_id).toBe(105);
+    expect(await store.getReadCursor(CONV_ID)).toBe(105);
+  });
+
   it('seeds the canonical cursor to the top when no cursor exists anywhere', async() => {
     // A group read pre-#207 through the UI-only localStorage path left no
     // stored cursor; main forced unread 0 at boot. The one-shot migration must

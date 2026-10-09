@@ -940,11 +940,17 @@ export class MessageStore {
    * retained history as unread.
    *
    * So the migration must NOT be gated on the canonical lookup being empty:
-   * for every group we rekey any bare rows forward unconditionally and copy a
-   * bare read cursor onto the canonical key. When NEITHER key holds a cursor we
-   * seed the canonical cursor to the current top mid — exactly what `main`
-   * asserted at boot (it forced unread 0) — so history already read via the
-   * UI-only localStorage path does not resurface.
+   * for every group we rekey any bare rows forward unconditionally and seed the
+   * canonical read cursor to the current top mid — exactly what `main` asserted
+   * at boot (it forced unread 0) — so history already read via the UI-only
+   * localStorage path does not resurface.
+   *
+   * The seed is UNCONDITIONAL, not gated on "no cursor found": a released
+   * build's only bare-cursor writer (`resetUnreadForPeer`) derived the value
+   * from the bare `chatCreate` row — the OLDEST mid in the group — so a legacy
+   * bare cursor is not a read position and must not be trusted (review #208
+   * blocker). Every pre-#207 group therefore seeds to the current top and
+   * reports unread 0, matching `main`.
    *
    * Guarded by a persisted marker (GROUP_KEY_MIGRATION): the seed step must run
    * once per install, otherwise a genuinely-unread group with no cursor yet
@@ -969,23 +975,19 @@ export class MessageStore {
   private async migrateLegacyGroupConversationKey(groupId: string): Promise<void> {
     if(!groupId) return;
     const canonical = `group:${groupId}`;
-    // Snapshot the bare cursor BEFORE rekeying (rekey only moves message rows,
-    // but read it first so the two reads can't race a concurrent writer).
-    const bareCursor = await this.getReadCursor(groupId);
-    // Unconditional: in the mixed state canonical rows already exist, and the
-    // bare chatCreate/service rows would otherwise be orphaned (rule 15).
+    // Rekey any legacy bare-keyed rows forward unconditionally: in the mixed
+    // upgrade state canonical rows already exist, and the bare chatCreate /
+    // service rows would otherwise be orphaned (rule 15). Must run BEFORE the
+    // seed so the top mid below includes the rekeyed rows.
     await this.rekeyConversation(groupId, canonical);
-    const canonicalCursor = await this.getReadCursor(canonical);
-    if(bareCursor > canonicalCursor) {
-      await this.setReadCursor(canonical, bareCursor);
-    }
-    // Seed only when no cursor existed under EITHER key — i.e. the group was
-    // never opened, or was read through the UI-only localStorage path. Do not
-    // do this for a group created after the fix (the persisted marker stops us).
-    if(Math.max(bareCursor, canonicalCursor) === 0) {
-      const top = (await this.getMessages(canonical, 1))[0]?.mid ?? 0;
-      if(top > 0) await this.setReadCursor(canonical, top);
-    }
+    // Seed the canonical cursor to the current top mid for EVERY existing group
+    // in this one-shot sweep (review #208 blocker). Do not gate on "no cursor
+    // found": a released build's only bare cursor pointed at the chatCreate row
+    // (the oldest mid), so trusting it under-reports the top. `main` asserted
+    // unread 0 at every boot; the persisted marker makes this one-shot, so a
+    // group created after the fix is never force-read.
+    const top = (await this.getMessages(canonical, 1))[0]?.mid ?? 0;
+    if(top > 0) await this.setReadCursor(canonical, top);
   }
 
   /**
