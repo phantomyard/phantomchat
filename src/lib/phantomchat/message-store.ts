@@ -136,7 +136,7 @@ export const MESSAGE_CAP_PER_CHAT = 500;
 const CURSOR_STORE = 'read-cursors';
 const TOMBSTONE_STORE = 'conversation-tombstones';
 /** One-shot data migrations, keyed by name. See `migrateLegacyGroupConversationKeys`. */
-const MIGRATION_STORE = 'migrations';
+export const MIGRATION_STORE = 'migrations';
 const DEFAULT_LIMIT = 50;
 
 /**
@@ -146,6 +146,26 @@ const DEFAULT_LIMIT = 50;
  * force-read on a later boot.
  */
 export const GROUP_KEY_MIGRATION = 'group-207-canonical-key-v1';
+
+/**
+ * Companion records for GROUP_KEY_MIGRATION, so a partially-failed sweep can
+ * resume without re-sweeping groups it already finished (#209).
+ *
+ * - COHORT: the group-id set captured on the FIRST attempt. Ids that only show
+ *   up on a later boot (a group created after the fix) are never swept, so a
+ *   retry cannot force-read them.
+ * - DONE: group ids already migrated (rekeyed + cursor-seeded). A group is
+ *   never swept twice, so messages that arrive during a retry window are not
+ *   force-read by a second unconditional seed.
+ * - CEILING: immutable per-group seed ceiling (`{groupId: topMid}`, captured
+ *   before the group is touched). Persisted BEFORE the rekey/seed so a crash or
+ *   a failed DONE write between the two cannot make a retry recompute a higher
+ *   top and advance the cursor past messages that arrived in the window
+ *   (review #211).
+ */
+export const GROUP_KEY_MIGRATION_COHORT = `${GROUP_KEY_MIGRATION}:cohort`;
+export const GROUP_KEY_MIGRATION_DONE = `${GROUP_KEY_MIGRATION}:done`;
+export const GROUP_KEY_MIGRATION_CEILING = `${GROUP_KEY_MIGRATION}:ceiling`;
 
 // ─── Singleton ─────────────────────────────────────────────────────
 
@@ -268,9 +288,42 @@ export class MessageStore {
   private openDB(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
+      // Guards against double-settling when `onblocked` fires and the request
+      // later resolves anyway (the blocker eventually closes).
+      let settled = false;
 
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        if(settled) return;
+        settled = true;
+        reject(request.error);
+      };
+
+      request.onsuccess = () => {
+        const db = request.result;
+        if(settled) { db.close(); return; } // blocked-then-resolved: discard the stale handle
+        settled = true;
+        // When another tab/context opens a HIGHER version (v5→v6 and future
+        // bumps), close this connection so it does not block that upgrade —
+        // otherwise the other context's getDB() waits on `onblocked` forever.
+        db.onversionchange = () => {
+          db.close();
+          if(this.dbPromise) this.dbPromise = null; // reopen lazily at the new version
+        };
+        resolve(db);
+      };
+
+      // OUR upgrade is blocked by another open connection that has not closed
+      // (typically a second tab running an older build with no
+      // `onversionchange` handler). Surface it and reject rather than leave
+      // getDB() pending forever; clearing the cached promise lets a later call
+      // retry once the blocker releases (#209).
+      request.onblocked = () => {
+        if(settled) return;
+        settled = true;
+        console.warn('[message-store] IndexedDB upgrade blocked by another open connection; getDB() rejected, a later call retries once the blocker releases');
+        if(this.dbPromise) this.dbPromise = null;
+        reject(new Error('IndexedDB upgrade blocked by another open connection'));
+      };
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
@@ -910,20 +963,73 @@ export class MessageStore {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(MIGRATION_STORE, 'readwrite');
-      const req = tx.objectStore(MIGRATION_STORE).put({name, doneAt: Date.now()});
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve();
+      // Resolve only on full commit, not on the put request's success: a
+      // request can succeed and the transaction still abort afterwards, so a
+      // pre-commit resolve would let callers proceed on an unpersisted marker
+      // (review #211).
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+      tx.objectStore(MIGRATION_STORE).put({name, doneAt: Date.now()});
     });
   }
 
-  /** Clear a migration marker (tests / explicit re-run). */
+  /**
+   * Read a migration marker's stored payload, or null when unwritten. Used by
+   * migrations that need to persist progress (a set of ids), not just a
+   * done/not-done flag.
+   */
+  async getMigrationValue<T = unknown>(name: string): Promise<T | null> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MIGRATION_STORE, 'readonly');
+      const req = tx.objectStore(MIGRATION_STORE).get(name);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const rec = req.result as {value?: T} | undefined;
+        resolve(rec && 'value' in rec ? (rec.value as T) : null);
+      };
+    });
+  }
+
+  /**
+   * Persist a migration marker's payload (idempotent overwrite).
+   *
+   * Resolves only on `tx.oncomplete`. `setMigrationValue` gates the #209/#207
+   * migration's persisted-before-mutation boundary, so a pre-commit resolve is
+   * not enough: the put request can fire `onsuccess` and the transaction still
+   * abort afterwards (e.g. a quota error on commit), which would leave the
+   * group rekeyed/seeded with no ceiling committed and let a retry recompute a
+   * newer top — the force-read exposure #209 exists to close (review #211).
+   */
+  async setMigrationValue(name: string, value: unknown): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MIGRATION_STORE, 'readwrite');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+      tx.objectStore(MIGRATION_STORE).put({name, value, doneAt: Date.now()});
+    });
+  }
+
+  /**
+   * Clear a single migration marker. NOTE: clearing the global
+   * GROUP_KEY_MIGRATION marker alone does NOT re-arm the #207 sweep — the
+   * frozen cohort, per-group done set and per-group seed ceilings persist, so a
+   * rerun would find nothing to sweep and immediately re-set the marker. A true
+   * re-run must clear all four markers (see the #207 test's reset helper).
+   */
   async clearMigration(name: string): Promise<void> {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(MIGRATION_STORE, 'readwrite');
-      const req = tx.objectStore(MIGRATION_STORE).delete(name);
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve();
+      // Commit-atomic like the other writers: a clear that only resolved on the
+      // delete request could report success while the transaction aborts.
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+      tx.objectStore(MIGRATION_STORE).delete(name);
     });
   }
 
@@ -957,13 +1063,56 @@ export class MessageStore {
    * would be force-read on every boot. On any per-group failure the marker is
    * NOT written, so the sweep retries on the next boot rather than silently
    * skipping the failed group forever.
+   *
+   * A retry must not re-seed a group it already finished, nor sweep a group that
+   * only appeared after the first attempt (#209) — either would force-read
+   * messages that arrived in the retry window. The frozen COHORT and the
+   * per-group DONE set make the sweep resumable without that exposure.
+   *
+   * The per-group seed ceiling is persisted BEFORE any group mutation (#211):
+   * the seed and the DONE write are not atomic, so if the tab dies (or the DONE
+   * write rejects) after the cursor advanced but before the group is marked
+   * done, a retry must seed to the ORIGINAL ceiling — never recompute the
+   * then-current top, which would force-read messages received in between.
    */
   async migrateLegacyGroupConversationKeys(groupIds: string[]): Promise<void> {
     if(await this.getMigration(GROUP_KEY_MIGRATION)) return;
+
+    // Freeze the sweep cohort on the FIRST attempt (#209). Ids that appear on a
+    // later boot — groups created after the fix — are never in the cohort, so a
+    // retry cannot force-read them.
+    let cohort = await this.getMigrationValue<string[]>(GROUP_KEY_MIGRATION_COHORT);
+    if(!cohort) {
+      cohort = [...new Set(groupIds.filter((id): id is string => !!id))];
+      await this.setMigrationValue(GROUP_KEY_MIGRATION_COHORT, cohort);
+    }
+
+    const done = new Set(await this.getMigrationValue<string[]>(GROUP_KEY_MIGRATION_DONE) ?? []);
+    // Immutable per-group seed ceilings, captured before the group is touched
+    // and written down before the first mutation (#211).
+    const ceilings = await this.getMigrationValue<Record<string, number>>(GROUP_KEY_MIGRATION_CEILING) ?? {};
     let failed = false;
-    for(const groupId of groupIds) {
+    for(const groupId of cohort) {
+      // Never re-sweep a group that already migrated: the seed is
+      // unconditional, so re-running it after new messages arrived would
+      // force-read them (review #208 semantics, hardened here).
+      if(done.has(groupId)) continue;
       try {
-        await this.migrateLegacyGroupConversationKey(groupId);
+        let ceiling = ceilings[groupId];
+        if(typeof ceiling !== 'number') {
+          ceiling = await this.getGroupSeedCeiling(groupId);
+          // Persist the ceiling BEFORE mutating the group. If this write fails
+          // we abort without having touched anything, so the group is simply
+          // retried from the same ceiling.
+          ceilings[groupId] = ceiling;
+          await this.setMigrationValue(GROUP_KEY_MIGRATION_CEILING, ceilings);
+        }
+        await this.migrateLegacyGroupConversationKey(groupId, ceiling);
+        // Persist each success immediately so a crash/retry between groups
+        // cannot re-seed an already-migrated group. If this write fails the
+        // group reruns, but the persisted ceiling keeps the seed idempotent.
+        done.add(groupId);
+        await this.setMigrationValue(GROUP_KEY_MIGRATION_DONE, [...done]);
       } catch(err) {
         failed = true;
         console.warn('[message-store] #207 group-key migration failed for', groupId, err);
@@ -972,7 +1121,22 @@ export class MessageStore {
     if(!failed) await this.setMigration(GROUP_KEY_MIGRATION);
   }
 
-  private async migrateLegacyGroupConversationKey(groupId: string): Promise<void> {
+  /**
+   * The immutable seed ceiling for one group: the highest mid across BOTH the
+   * legacy bare-keyed rows and the canonical rows, captured before the group is
+   * mutated. The bare top must be included — the rekey is what moves those rows
+   * forward, so reading only the canonical key would under-report the ceiling
+   * (review #211).
+   */
+  private async getGroupSeedCeiling(groupId: string): Promise<number> {
+    if(!groupId) return 0;
+    const canonical = `group:${groupId}`;
+    const bareTop = (await this.getMessages(groupId, 1))[0]?.mid ?? 0;
+    const canonicalTop = (await this.getMessages(canonical, 1))[0]?.mid ?? 0;
+    return Math.max(bareTop, canonicalTop);
+  }
+
+  private async migrateLegacyGroupConversationKey(groupId: string, seedCeiling?: number): Promise<void> {
     if(!groupId) return;
     const canonical = `group:${groupId}`;
     // Rekey any legacy bare-keyed rows forward unconditionally: in the mixed
@@ -980,14 +1144,15 @@ export class MessageStore {
     // service rows would otherwise be orphaned (rule 15). Must run BEFORE the
     // seed so the top mid below includes the rekeyed rows.
     await this.rekeyConversation(groupId, canonical);
-    // Seed the canonical cursor to the current top mid for EVERY existing group
+    // Seed the canonical cursor to the FROZEN ceiling for EVERY existing group
     // in this one-shot sweep (review #208 blocker). Do not gate on "no cursor
     // found": a released build's only bare cursor pointed at the chatCreate row
     // (the oldest mid), so trusting it under-reports the top. `main` asserted
     // unread 0 at every boot; the persisted marker makes this one-shot, so a
-    // group created after the fix is never force-read.
-    const top = (await this.getMessages(canonical, 1))[0]?.mid ?? 0;
-    if(top > 0) await this.setReadCursor(canonical, top);
+    // group created after the fix is never force-read. The ceiling is passed in
+    // so a retry never recomputes (and advances) it (#211).
+    const ceiling = seedCeiling ?? await this.getGroupSeedCeiling(groupId);
+    if(ceiling > 0) await this.setReadCursor(canonical, ceiling);
   }
 
   /**
