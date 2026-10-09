@@ -112,7 +112,7 @@ The maintainer publishes, for every release, a Nostr event containing:
     ["git-tag", "v0.3.0"],
     ["cid", "bafy..."],
     ["sha256", "..."],
-    ["changelog-url", "https://github.com/phantomchat-chat/phantomchat-chat/releases/tag/v0.3.0"]
+    ["changelog-url", "https://github.com/phantomyard/phantomchat/releases/tag/v0.3.0"]
   ],
   "content": "<optional human-readable release notes>"
 }

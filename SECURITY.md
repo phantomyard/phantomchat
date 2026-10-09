@@ -27,7 +27,7 @@ Use any NIP-17 capable client (including PhantomChat.chat itself) to send a DM.
 
 **Alternative channel — GitHub Security Advisory**:
 
-1. Go to <https://github.com/phantomchat-chat/phantomchat-chat/security/advisories/new>
+1. Go to <https://github.com/phantomyard/phantomchat/security/advisories/new>
 2. Fill in the form — this creates a private advisory visible only to
    maintainers.
 
