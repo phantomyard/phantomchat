@@ -257,17 +257,105 @@ describe('MeshManager', () => {
     expect(mockPC.setRemoteDescription).not.toHaveBeenCalled();
   });
 
-  it('ignores a re-delivered offer whose SDP matches the settled session', async() => {
+  it('ignores a re-delivered offer whose SDP matches an established session', async() => {
     const callbacks = makeCallbacks();
     const manager = new MeshManager(callbacks, undefined, '');
 
     await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+    // Establish the session (the answerer's dc arrives via 'datachannel').
+    pcEventHandlers.datachannel?.({channel: mockDC});
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+    expect(manager.getStatus('alice')).toBe('connected');
     const pcCount = globalThis.RTCPeerConnection.mock.calls.length;
 
     await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'}); // duplicate relay delivery
 
     expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(pcCount);
     expect(callbacks.sendSignal).toHaveBeenCalledTimes(1); // no second answer
+  });
+
+  it('resends the cached answer for a re-delivered identical offer after a failed answer publish', async() => {
+    const callbacks = makeCallbacks();
+    // Model Kai's repro: the first answer publish dies in a relay outage.
+    // (The harness's sendSignal used to resolve unconditionally, leaving the
+    // publish-failure path unmodeled.)
+    callbacks.sendSignal.mockRejectedValueOnce(new Error('relay publish failed'));
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+    expect(manager.getStatus('alice')).toBe('connecting');
+    const pcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    // The peer replays the identical offer — its only active recovery.
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+
+    // The cached answer is RESENT; the session is neither torn down nor rebuilt.
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(pcCount);
+    const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+    expect(answerSignals).toHaveLength(2);
+    expect(answerSignals[1][1].sdp).toBe('v=0\r\nanswer...');
+
+    // The re-sent answer completes the session.
+    pcEventHandlers.datachannel?.({channel: mockDC});
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+    expect(manager.getStatus('alice')).toBe('connected');
+  });
+
+  it('a different-SDP offer tears the previous session down before replacing it', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-v1'});
+    pcEventHandlers.datachannel?.({channel: mockDC});
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+    const oldState = (manager as any).peers.get('alice');
+    expect(oldState.pingTimer).not.toBeNull();
+    expect(oldState.pingTimeoutTimer).not.toBeNull();
+
+    // Genuine renegotiation: same peer, DIFFERENT SDP.
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-v2'});
+
+    // The old session is fully torn down — no orphaned pc or live timers.
+    const newState = (manager as any).peers.get('alice');
+    expect(newState.sessionId).not.toBe(oldState.sessionId);
+    expect(oldState.status).toBe('disconnected');
+    expect(oldState.pingTimer).toBeNull();
+    expect(oldState.pingTimeoutTimer).toBeNull();
+    expect(oldState.reconnectTimer).toBeNull();
+    expect(mockDC.close).toHaveBeenCalled();
+    expect(mockPC.close).toHaveBeenCalled();
+
+    // The replacement negotiated normally.
+    const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+    expect(answerSignals).toHaveLength(2);
+  });
+
+  it('a failed replacement apply leaves no live timers or peers behind', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-v1'});
+    pcEventHandlers.datachannel?.({channel: mockDC});
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+    const oldState = (manager as any).peers.get('alice');
+
+    // The replacement offer's apply fails after the map was overwritten: the
+    // old peer must NOT survive as an orphan with live timers.
+    mockPC.setRemoteDescription.mockRejectedValueOnce(new Error('bogus SDP'));
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-v2'});
+
+    expect((manager as any).peers.size).toBe(0);
+    expect(oldState.pingTimer).toBeNull();
+    expect(oldState.pingTimeoutTimer).toBeNull();
+    expect(oldState.reconnectTimer).toBeNull();
+
+    // No answer published for the dead replacement.
+    const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+    expect(answerSignals).toHaveLength(1);
   });
 
   it('swallows setRemoteDescription(answer) failures instead of rejecting', async() => {
