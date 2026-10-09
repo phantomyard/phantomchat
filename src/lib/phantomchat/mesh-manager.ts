@@ -171,7 +171,7 @@ export class MeshManager {
     if(this.peers.size >= MAX_CONNECTIONS) return;
 
     // Relays re-deliver kind-21050 events, so a duplicate offer can land after
-    // this peer already settled — the mirrored form of the late-answer bug.
+    // this peer already settled, the mirrored form of the late-answer bug.
     // Re-applying it would tear down a healthy session to re-run negotiation
     // with an identical SDP, so a byte-identical offer is a logged no-op. A
     // DIFFERENT sdp is a genuine renegotiation/restart and proceeds normally.
@@ -245,7 +245,7 @@ export class MeshManager {
     // A late or duplicate answer lands after negotiation has already settled
     // (relays re-deliver events; reconnects race). setRemoteDescription on a
     // settled pc throws InvalidStateError 'Called in wrong state: stable', so
-    // an answer is only legal while a local offer is outstanding — anything
+    // an answer is only legal while a local offer is outstanding; anything
     // else is a logged no-op instead of an unhandled rejection.
     if(state.pc.signalingState !== 'have-local-offer') {
       meshLog.warn('[MeshManager] ignoring late/duplicate answer from', fromPubkey, `signalingState=${state.pc.signalingState}`);
