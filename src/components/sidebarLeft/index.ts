@@ -1617,7 +1617,7 @@ export default appSidebarLeft;
 
 function getVersionLink() {
   const btnMenuFooter = document.createElement('a');
-  btnMenuFooter.href = `https://github.com/phantomyard/phantomchat/releases/tag/v${App.version}`;
+  btnMenuFooter.href = `https://github.com/phantomyard/phantomchat/releases/tag/phantomchat-v${App.version}`;
   setBlankToAnchor(btnMenuFooter);
   btnMenuFooter.classList.add('btn-menu-footer');
   btnMenuFooter.addEventListener(CLICK_EVENT_NAME, (e) => {

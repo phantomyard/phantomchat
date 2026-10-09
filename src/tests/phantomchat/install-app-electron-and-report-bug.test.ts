@@ -57,8 +57,10 @@ describe('dead phantomchat-chat repo URL is gone from user-facing sources', () =
     });
   }
 
-  it('the release-notes footer link points at phantomyard/phantomchat', () => {
-    expect(readFile('components/sidebarLeft/index.ts'))
-    .toContain('https://github.com/phantomyard/phantomchat/releases/tag/');
+  it('the release-notes footer link points at phantomyard/phantomchat with the phantomchat-v tag shape', () => {
+    const src = readFile('components/sidebarLeft/index.ts');
+    expect(src).toContain('https://github.com/phantomyard/phantomchat/releases/tag/phantomchat-v${App.version}');
+    // Guard against the bare v<version> shape, which 404s for every shipped release.
+    expect(src).not.toMatch(/releases\/tag\/v\$\{App\.version\}/);
   });
 });
