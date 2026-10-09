@@ -15,12 +15,13 @@
 import '../setup';
 import 'fake-indexeddb/auto';
 import {IDBFactory} from 'fake-indexeddb';
-import {describe, it, expect, vi, afterEach} from 'vitest';
+import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
 import {
   MessageStore,
   GROUP_KEY_MIGRATION,
   GROUP_KEY_MIGRATION_COHORT,
   GROUP_KEY_MIGRATION_DONE,
+  GROUP_KEY_MIGRATION_CEILING,
   StoredMessage
 } from '@lib/phantomchat/message-store';
 
@@ -49,6 +50,12 @@ function freshStore(): MessageStore {
   return new MessageStore();
 }
 
+beforeEach(() => {
+  // Each case gets its own IndexedDB so migration markers/cursors can't leak
+  // between tests (they share DB_NAME otherwise).
+  vi.stubGlobal('indexedDB', new IDBFactory());
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -71,6 +78,9 @@ describe('#209 group-key migration hardening', () => {
 
     expect(await store.getMigration(GROUP_KEY_MIGRATION)).toBe(false);
     expect(await store.getMigrationValue<string[]>(GROUP_KEY_MIGRATION_COHORT)).toEqual([G_A, G_B]);
+    // #211: A's ceiling is frozen before its (successful) mutation; B's is
+    // captured before its rekey threw, so both are persisted for the retry.
+    expect(await store.getMigrationValue<Record<string, number>>(GROUP_KEY_MIGRATION_CEILING)).toEqual({[G_A]: 100, [G_B]: 0});
 
     // A brand-new group appears AFTER the first attempt. It must not enter the
     // retry sweep, so its cursor stays unseeded and its messages stay unread.
@@ -103,6 +113,36 @@ describe('#209 group-key migration hardening', () => {
     await store.migrateLegacyGroupConversationKeys([G_A, G_B]);
 
     expect(await store.getReadCursor(conv(G_A))).toBe(100);
+  });
+
+  it('does not advance the seed ceiling when the DONE write is interrupted (review #211)', async() => {
+    const store = freshStore();
+    await store.saveMessage(makeMsg({conversationId: conv(G_A), mid: 100, timestamp: 100}));
+
+    // First sweep: A seeds to its top (100), then the DONE write rejects — the
+    // exact interruption Kai reproduced. The seed has committed but A is not
+    // marked done and the global marker is withheld, so the sweep will retry.
+    const origSet = store.setMigrationValue.bind(store);
+    const spy = vi.spyOn(store as any, 'setMigrationValue').mockImplementation((async(name: string, value: unknown) => {
+      if(name === GROUP_KEY_MIGRATION_DONE) throw new Error('interrupted');
+      return origSet(name, value);
+    }) as any);
+    await store.migrateLegacyGroupConversationKeys([G_A]);
+    spy.mockRestore();
+
+    expect(await store.getReadCursor(conv(G_A))).toBe(100);
+    expect(await store.getMigration(GROUP_KEY_MIGRATION)).toBe(false);
+    // The ceiling was frozen BEFORE the group was touched.
+    expect(await store.getMigrationValue<Record<string, number>>(GROUP_KEY_MIGRATION_CEILING)).toEqual({[G_A]: 100});
+
+    // A message arrives before the retry. The retry must reseed to the FROZEN
+    // ceiling (100), not recompute the then-current top (200), or it would
+    // force-read the message that arrived in the interruption window.
+    await store.saveMessage(makeMsg({conversationId: conv(G_A), mid: 200, timestamp: 200}));
+    await store.migrateLegacyGroupConversationKeys([G_A]);
+
+    expect(await store.getReadCursor(conv(G_A))).toBe(100);
+    expect(await store.getMigration(GROUP_KEY_MIGRATION)).toBe(true);
   });
 });
 

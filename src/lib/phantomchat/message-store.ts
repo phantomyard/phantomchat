@@ -157,9 +157,15 @@ export const GROUP_KEY_MIGRATION = 'group-207-canonical-key-v1';
  * - DONE: group ids already migrated (rekeyed + cursor-seeded). A group is
  *   never swept twice, so messages that arrive during a retry window are not
  *   force-read by a second unconditional seed.
+ * - CEILING: immutable per-group seed ceiling (`{groupId: topMid}`, captured
+ *   before the group is touched). Persisted BEFORE the rekey/seed so a crash or
+ *   a failed DONE write between the two cannot make a retry recompute a higher
+ *   top and advance the cursor past messages that arrived in the window
+ *   (review #211).
  */
 export const GROUP_KEY_MIGRATION_COHORT = `${GROUP_KEY_MIGRATION}:cohort`;
 export const GROUP_KEY_MIGRATION_DONE = `${GROUP_KEY_MIGRATION}:done`;
+export const GROUP_KEY_MIGRATION_CEILING = `${GROUP_KEY_MIGRATION}:ceiling`;
 
 // ─── Singleton ─────────────────────────────────────────────────────
 
@@ -1038,6 +1044,12 @@ export class MessageStore {
    * only appeared after the first attempt (#209) — either would force-read
    * messages that arrived in the retry window. The frozen COHORT and the
    * per-group DONE set make the sweep resumable without that exposure.
+   *
+   * The per-group seed ceiling is persisted BEFORE any group mutation (#211):
+   * the seed and the DONE write are not atomic, so if the tab dies (or the DONE
+   * write rejects) after the cursor advanced but before the group is marked
+   * done, a retry must seed to the ORIGINAL ceiling — never recompute the
+   * then-current top, which would force-read messages received in between.
    */
   async migrateLegacyGroupConversationKeys(groupIds: string[]): Promise<void> {
     if(await this.getMigration(GROUP_KEY_MIGRATION)) return;
@@ -1052,6 +1064,9 @@ export class MessageStore {
     }
 
     const done = new Set(await this.getMigrationValue<string[]>(GROUP_KEY_MIGRATION_DONE) ?? []);
+    // Immutable per-group seed ceilings, captured before the group is touched
+    // and written down before the first mutation (#211).
+    const ceilings = await this.getMigrationValue<Record<string, number>>(GROUP_KEY_MIGRATION_CEILING) ?? {};
     let failed = false;
     for(const groupId of cohort) {
       // Never re-sweep a group that already migrated: the seed is
@@ -1059,9 +1074,19 @@ export class MessageStore {
       // force-read them (review #208 semantics, hardened here).
       if(done.has(groupId)) continue;
       try {
-        await this.migrateLegacyGroupConversationKey(groupId);
+        let ceiling = ceilings[groupId];
+        if(typeof ceiling !== 'number') {
+          ceiling = await this.getGroupSeedCeiling(groupId);
+          // Persist the ceiling BEFORE mutating the group. If this write fails
+          // we abort without having touched anything, so the group is simply
+          // retried from the same ceiling.
+          ceilings[groupId] = ceiling;
+          await this.setMigrationValue(GROUP_KEY_MIGRATION_CEILING, ceilings);
+        }
+        await this.migrateLegacyGroupConversationKey(groupId, ceiling);
         // Persist each success immediately so a crash/retry between groups
-        // cannot re-seed an already-migrated group.
+        // cannot re-seed an already-migrated group. If this write fails the
+        // group reruns, but the persisted ceiling keeps the seed idempotent.
         done.add(groupId);
         await this.setMigrationValue(GROUP_KEY_MIGRATION_DONE, [...done]);
       } catch(err) {
@@ -1072,7 +1097,22 @@ export class MessageStore {
     if(!failed) await this.setMigration(GROUP_KEY_MIGRATION);
   }
 
-  private async migrateLegacyGroupConversationKey(groupId: string): Promise<void> {
+  /**
+   * The immutable seed ceiling for one group: the highest mid across BOTH the
+   * legacy bare-keyed rows and the canonical rows, captured before the group is
+   * mutated. The bare top must be included — the rekey is what moves those rows
+   * forward, so reading only the canonical key would under-report the ceiling
+   * (review #211).
+   */
+  private async getGroupSeedCeiling(groupId: string): Promise<number> {
+    if(!groupId) return 0;
+    const canonical = `group:${groupId}`;
+    const bareTop = (await this.getMessages(groupId, 1))[0]?.mid ?? 0;
+    const canonicalTop = (await this.getMessages(canonical, 1))[0]?.mid ?? 0;
+    return Math.max(bareTop, canonicalTop);
+  }
+
+  private async migrateLegacyGroupConversationKey(groupId: string, seedCeiling?: number): Promise<void> {
     if(!groupId) return;
     const canonical = `group:${groupId}`;
     // Rekey any legacy bare-keyed rows forward unconditionally: in the mixed
@@ -1080,14 +1120,15 @@ export class MessageStore {
     // service rows would otherwise be orphaned (rule 15). Must run BEFORE the
     // seed so the top mid below includes the rekeyed rows.
     await this.rekeyConversation(groupId, canonical);
-    // Seed the canonical cursor to the current top mid for EVERY existing group
+    // Seed the canonical cursor to the FROZEN ceiling for EVERY existing group
     // in this one-shot sweep (review #208 blocker). Do not gate on "no cursor
     // found": a released build's only bare cursor pointed at the chatCreate row
     // (the oldest mid), so trusting it under-reports the top. `main` asserted
     // unread 0 at every boot; the persisted marker makes this one-shot, so a
-    // group created after the fix is never force-read.
-    const top = (await this.getMessages(canonical, 1))[0]?.mid ?? 0;
-    if(top > 0) await this.setReadCursor(canonical, top);
+    // group created after the fix is never force-read. The ceiling is passed in
+    // so a retry never recomputes (and advances) it (#211).
+    const ceiling = seedCeiling ?? await this.getGroupSeedCeiling(groupId);
+    if(ceiling > 0) await this.setReadCursor(canonical, ceiling);
   }
 
   /**
