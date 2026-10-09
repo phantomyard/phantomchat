@@ -18,6 +18,7 @@ import {IDBFactory} from 'fake-indexeddb';
 import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
 import {
   MessageStore,
+  MIGRATION_STORE,
   GROUP_KEY_MIGRATION,
   GROUP_KEY_MIGRATION_COHORT,
   GROUP_KEY_MIGRATION_DONE,
@@ -48,6 +49,40 @@ function makeMsg(overrides: Partial<StoredMessage> = {}): StoredMessage {
 
 function freshStore(): MessageStore {
   return new MessageStore();
+}
+
+/**
+ * Simulate a migration-store write whose `put` request succeeds but whose
+ * transaction aborts before commit (review #211). `shouldAbort` selects which
+ * records to fail; the request's own `onsuccess` still fires first, exactly the
+ * boundary the fix has to survive — resolving on request success would report a
+ * durable write that never committed.
+ */
+async function abortMigrationWriteAfterRequest(
+  store: MessageStore,
+  shouldAbort: (record: {name?: unknown}) => boolean
+): Promise<void> {
+  const db = await (store as any).getDB() as IDBDatabase;
+  const realTransaction = db.transaction.bind(db);
+  vi.spyOn(db, 'transaction').mockImplementation(((name: string | string[], mode?: IDBTransactionMode, options?: IDBTransactionOptions) => {
+    const tx = (realTransaction as any)(name, mode, options) as any;
+    if(name === MIGRATION_STORE && mode === 'readwrite') {
+      const realObjectStore = tx.objectStore.bind(tx);
+      tx.objectStore = (storeName: string) => {
+        const os = realObjectStore(storeName) as any;
+        const realPut = os.put.bind(os);
+        os.put = (record: any) => {
+          const req = realPut(record);
+          if(shouldAbort(record)) {
+            req.onsuccess = () => tx.onabort?.();
+          }
+          return req;
+        };
+        return os;
+      };
+    }
+    return tx;
+  }) as any);
 }
 
 beforeEach(() => {
@@ -143,6 +178,31 @@ describe('#209 group-key migration hardening', () => {
 
     expect(await store.getReadCursor(conv(G_A))).toBe(100);
     expect(await store.getMigration(GROUP_KEY_MIGRATION)).toBe(true);
+  });
+
+  it('rejects setMigrationValue when the transaction aborts after the request succeeds (review #211)', async() => {
+    const store = freshStore();
+    await abortMigrationWriteAfterRequest(store, () => true);
+
+    // Request success alone is not commit; the write must reject on tx.onabort.
+    await expect(store.setMigrationValue('any-marker', 'any-value')).rejects.toBeDefined();
+  });
+
+  it('does not start any group mutation when the ceiling write is not durably committed (review #211)', async() => {
+    const store = freshStore();
+    await store.saveMessage(makeMsg({conversationId: conv(G_A), mid: 100, timestamp: 100}));
+
+    const rekey = vi.spyOn(store as any, 'rekeyConversation');
+    // Fail ONLY the ceiling write; the cohort write still commits.
+    await abortMigrationWriteAfterRequest(store, (record) => record.name === GROUP_KEY_MIGRATION_CEILING);
+
+    await store.migrateLegacyGroupConversationKeys([G_A]);
+
+    // The ceiling never committed, so the sweep must abort before touching the
+    // group: no rekey, no cursor seed, and the global marker stays withheld.
+    expect(rekey).not.toHaveBeenCalled();
+    expect(await store.getReadCursor(conv(G_A))).toBe(0);
+    expect(await store.getMigration(GROUP_KEY_MIGRATION)).toBe(false);
   });
 });
 

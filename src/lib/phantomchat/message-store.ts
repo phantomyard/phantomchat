@@ -136,7 +136,7 @@ export const MESSAGE_CAP_PER_CHAT = 500;
 const CURSOR_STORE = 'read-cursors';
 const TOMBSTONE_STORE = 'conversation-tombstones';
 /** One-shot data migrations, keyed by name. See `migrateLegacyGroupConversationKeys`. */
-const MIGRATION_STORE = 'migrations';
+export const MIGRATION_STORE = 'migrations';
 const DEFAULT_LIMIT = 50;
 
 /**
@@ -320,7 +320,7 @@ export class MessageStore {
       request.onblocked = () => {
         if(settled) return;
         settled = true;
-        console.warn('[message-store] IndexedDB upgrade blocked by another open connection; retrying after it closes');
+        console.warn('[message-store] IndexedDB upgrade blocked by another open connection; getDB() rejected, a later call retries once the blocker releases');
         if(this.dbPromise) this.dbPromise = null;
         reject(new Error('IndexedDB upgrade blocked by another open connection'));
       };
@@ -963,9 +963,14 @@ export class MessageStore {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(MIGRATION_STORE, 'readwrite');
-      const req = tx.objectStore(MIGRATION_STORE).put({name, doneAt: Date.now()});
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve();
+      // Resolve only on full commit, not on the put request's success: a
+      // request can succeed and the transaction still abort afterwards, so a
+      // pre-commit resolve would let callers proceed on an unpersisted marker
+      // (review #211).
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+      tx.objectStore(MIGRATION_STORE).put({name, doneAt: Date.now()});
     });
   }
 
@@ -987,25 +992,44 @@ export class MessageStore {
     });
   }
 
-  /** Persist a migration marker's payload (idempotent overwrite). */
+  /**
+   * Persist a migration marker's payload (idempotent overwrite).
+   *
+   * Resolves only on `tx.oncomplete`. `setMigrationValue` gates the #209/#207
+   * migration's persisted-before-mutation boundary, so a pre-commit resolve is
+   * not enough: the put request can fire `onsuccess` and the transaction still
+   * abort afterwards (e.g. a quota error on commit), which would leave the
+   * group rekeyed/seeded with no ceiling committed and let a retry recompute a
+   * newer top — the force-read exposure #209 exists to close (review #211).
+   */
   async setMigrationValue(name: string, value: unknown): Promise<void> {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(MIGRATION_STORE, 'readwrite');
-      const req = tx.objectStore(MIGRATION_STORE).put({name, value, doneAt: Date.now()});
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+      tx.objectStore(MIGRATION_STORE).put({name, value, doneAt: Date.now()});
     });
   }
 
-  /** Clear a migration marker (tests / explicit re-run). */
+  /**
+   * Clear a single migration marker. NOTE: clearing the global
+   * GROUP_KEY_MIGRATION marker alone does NOT re-arm the #207 sweep — the
+   * frozen cohort, per-group done set and per-group seed ceilings persist, so a
+   * rerun would find nothing to sweep and immediately re-set the marker. A true
+   * re-run must clear all four markers (see the #207 test's reset helper).
+   */
   async clearMigration(name: string): Promise<void> {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(MIGRATION_STORE, 'readwrite');
-      const req = tx.objectStore(MIGRATION_STORE).delete(name);
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve();
+      // Commit-atomic like the other writers: a clear that only resolved on the
+      // delete request could report success while the transaction aborts.
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+      tx.objectStore(MIGRATION_STORE).delete(name);
     });
   }
 
