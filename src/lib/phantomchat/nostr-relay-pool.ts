@@ -571,7 +571,11 @@ export class NostrRelayPool {
         this.armOfflineProbe();
         return;
       }
-      this.resetRelayCooldowns();
+      // Same recovery as the 'online' trigger — routed THROUGH it so a late
+      // 'online' landing inside the debounce window coalesces into ONE wave
+      // (probe + event can no longer double-fire) and the wrap-retry budget
+      // resets on both paths alike (Lena, #212).
+      this.onOnline();
     }, OFFLINE_RETRY_PROBE_MS);
   }
 

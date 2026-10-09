@@ -17,11 +17,7 @@ import {NostrRelayPool} from '@lib/phantomchat/nostr-relay-pool';
 import {createNostrRelay} from '@lib/phantomchat/nostr-relay';
 
 function setOnLine(value: boolean): void {
-  Object.defineProperty(globalThis, 'navigator', {
-    value: {onLine: value},
-    configurable: true,
-    writable: true
-  });
+  vi.stubGlobal('navigator', {onLine: value});
 }
 
 function stubInstance() {
@@ -78,6 +74,9 @@ describe('offline gate: pool supervision', () => {
   afterEach(() => {
     pool.disconnect();
     vi.useRealTimers();
+    // setOnLine / MockWebSocket stub globals via vi.stubGlobal — restore the
+    // real ones so a --no-isolate run or a future file merge cannot leak them.
+    vi.unstubAllGlobals();
   });
 
   it('dials nothing while offline and parks on the slow probe', async() => {
@@ -107,11 +106,50 @@ describe('offline gate: pool supervision', () => {
     setOnLine(true);
     await vi.advanceTimersByTimeAsync(30_000);
 
+    // The probe fires at 30s and routes recovery through the same debounced
+    // wave as 'online' — nothing dials until the wave settles.
+    expect(instance.resetReconnectBackoff).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(instance.resetReconnectBackoff).toHaveBeenCalledTimes(1);
     expect(instance.connect).toHaveBeenCalledTimes(1);
 
     // The probe does not re-arm once recovery has run.
     expect(pool.offlineProbeTimer).toBeNull();
+  });
+
+  it('probe recovery and a late online event inside the debounce window fire ONE wave', async() => {
+    const instance = stubInstance();
+    pool.relayEntries.push({config: {url: 'wss://gate-a', read: true, write: true}, instance});
+
+    await pool.superviseConnections();
+    expect(pool.offlineProbeTimer).not.toBeNull();
+
+    // Network returns silently; the probe runs recovery at 30s...
+    setOnLine(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    // ...and the late 'online' event lands inside the debounce window.
+    pool.onOnline();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // The two triggers coalesce: exactly one wave, no double-fire.
+    expect(instance.resetReconnectBackoff).toHaveBeenCalledTimes(1);
+    expect(instance.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it('disconnect() clears the offline probe and wave timers', async() => {
+    const instance = stubInstance();
+    pool.relayEntries.push({config: {url: 'wss://gate-a', read: true, write: true}, instance});
+
+    await pool.superviseConnections();
+    expect(pool.offlineProbeTimer).not.toBeNull();
+    pool.onOnline(); // schedules a wave
+    expect(pool.onlineWaveTimer).not.toBeNull();
+
+    pool.disconnect();
+    expect(pool.offlineProbeTimer).toBeNull();
+    expect(pool.onlineWaveTimer).toBeNull();
   });
 
   it('coalesces a cluster of online flaps into a single redial wave', async() => {
@@ -140,11 +178,12 @@ describe('offline gate: per-relay retry loop', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     MockWebSocket.count = 0;
-    (global as any).WebSocket = MockWebSocket;
+    vi.stubGlobal('WebSocket', MockWebSocket);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it('connect() while offline defers the dial and redials on the probe', async() => {
