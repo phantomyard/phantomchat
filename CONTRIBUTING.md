@@ -24,8 +24,8 @@ bug reports, design — is welcome.
 ### 1. Fork & clone
 
 ```bash
-git clone git@github.com:<your-username>/phantomchat-chat.git
-cd phantomchat-chat
+git clone git@github.com:<your-username>/phantomchat.git
+cd phantomchat
 pnpm install
 ```
 
