@@ -32,16 +32,33 @@ beforeEach(() => {
   mockPC = {
     createOffer: vi.fn().mockResolvedValue({type: 'offer', sdp: 'v=0\r\noffer...'}),
     createAnswer: vi.fn().mockResolvedValue({type: 'answer', sdp: 'v=0\r\nanswer...'}),
-    setLocalDescription: vi.fn().mockResolvedValue(undefined),
-    setRemoteDescription: vi.fn().mockResolvedValue(undefined),
+    setLocalDescription: vi.fn(),
+    setRemoteDescription: vi.fn(),
     addIceCandidate: vi.fn().mockResolvedValue(undefined),
     createDataChannel: vi.fn().mockReturnValue(mockDC),
     close: vi.fn(),
     connectionState: 'new',
+    signalingState: 'stable',
+    localDescription: null,
+    remoteDescription: null,
     addEventListener: vi.fn((event, handler) => { pcEventHandlers[event] = handler; }),
-    removeEventListener: vi.fn(),
-    localDescription: {type: 'offer', sdp: 'v=0\r\noffer...'}
+    removeEventListener: vi.fn()
   };
+
+  // Model realistic signalingState transitions so the wrong-state guards can be
+  // exercised the way a browser drives them: an offer applied to a stable pc
+  // goes to have-remote-offer, a local offer to have-local-offer, and applying
+  // an answer settles back to 'stable'.
+  mockPC.setLocalDescription.mockImplementation((desc) => {
+    mockPC.localDescription = desc;
+    mockPC.signalingState = desc && desc.type === 'offer' ? 'have-local-offer' : 'stable';
+    return Promise.resolve(undefined);
+  });
+  mockPC.setRemoteDescription.mockImplementation((desc) => {
+    mockPC.remoteDescription = desc;
+    mockPC.signalingState = desc && desc.type === 'offer' ? 'have-remote-offer' : 'stable';
+    return Promise.resolve(undefined);
+  });
 
   globalThis.RTCPeerConnection = vi.fn().mockImplementation(() => mockPC);
   globalThis.RTCSessionDescription = vi.fn().mockImplementation((desc) => desc);
@@ -59,6 +76,45 @@ function makeCallbacks() {
     onPeerConnected: vi.fn(),
     onPeerDisconnected: vi.fn()
   };
+}
+
+// Independent PC/DC stubs for bulk filler peers: the shared mockPC models ONE
+// session's negotiated state, and 49 connect() calls on it would overwrite
+// alice's cached answer (localDescription) the at-cap test needs to observe.
+function makeStandalonePC() {
+  const dc = {
+    readyState: 'connecting',
+    send: vi.fn(),
+    close: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn()
+  };
+  const pc: any = {
+    createOffer: vi.fn().mockResolvedValue({type: 'offer', sdp: 'v=0\r\nfiller-offer...'}),
+    createAnswer: vi.fn().mockResolvedValue({type: 'answer', sdp: 'v=0\r\nfiller-answer...'}),
+    setLocalDescription: vi.fn(),
+    setRemoteDescription: vi.fn(),
+    addIceCandidate: vi.fn().mockResolvedValue(undefined),
+    createDataChannel: vi.fn().mockReturnValue(dc),
+    close: vi.fn(),
+    connectionState: 'new',
+    signalingState: 'stable',
+    localDescription: null,
+    remoteDescription: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn()
+  };
+  pc.setLocalDescription.mockImplementation((desc) => {
+    pc.localDescription = desc;
+    pc.signalingState = desc && desc.type === 'offer' ? 'have-local-offer' : 'stable';
+    return Promise.resolve(undefined);
+  });
+  pc.setRemoteDescription.mockImplementation((desc) => {
+    pc.remoteDescription = desc;
+    pc.signalingState = desc && desc.type === 'offer' ? 'have-remote-offer' : 'stable';
+    return Promise.resolve(undefined);
+  });
+  return pc;
 }
 
 describe('MeshManager', () => {
@@ -209,6 +265,221 @@ describe('MeshManager', () => {
     expect(mockPC.setRemoteDescription).toHaveBeenCalledWith(
       expect.objectContaining({type: 'answer', sdp: 'v=0\r\nanswer-from-bob'})
     );
+  });
+
+  it('ignores a re-delivered answer after negotiation settled (no wrong-state throw)', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.connect('bob');
+    await manager.handleSignal('bob', {t: 'answer', sdp: 'v=0\r\nanswer-from-bob'});
+    expect(mockPC.signalingState).toBe('stable');
+
+    mockPC.setRemoteDescription.mockClear();
+    await manager.handleSignal('bob', {t: 'answer', sdp: 'v=0\r\nanswer-from-bob'}); // relay re-delivery
+
+    expect(mockPC.setRemoteDescription).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stray answer when no local offer is outstanding', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+    // We are the answerer: the pc settled to 'stable'. A wrong-role answer
+    // must be a logged no-op, not a wrong-state throw.
+    expect(mockPC.signalingState).toBe('stable');
+    mockPC.setRemoteDescription.mockClear();
+
+    await manager.handleSignal('alice', {t: 'answer', sdp: 'v=0\r\nstray-answer'});
+
+    expect(mockPC.setRemoteDescription).not.toHaveBeenCalled();
+  });
+
+  it('ignores a re-delivered offer whose SDP matches an established session', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+    // Establish the session (the answerer's dc arrives via 'datachannel').
+    pcEventHandlers.datachannel?.({channel: mockDC});
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+    expect(manager.getStatus('alice')).toBe('connected');
+    const pcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'}); // duplicate relay delivery
+
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(pcCount);
+    expect(callbacks.sendSignal).toHaveBeenCalledTimes(1); // no second answer
+  });
+
+  it('resends the cached answer for a re-delivered identical offer after a failed answer publish', async() => {
+    const callbacks = makeCallbacks();
+    // Model Kai's repro: the first answer publish dies in a relay outage.
+    // (The harness's sendSignal used to resolve unconditionally, leaving the
+    // publish-failure path unmodeled.)
+    callbacks.sendSignal.mockRejectedValueOnce(new Error('relay publish failed'));
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+    expect(manager.getStatus('alice')).toBe('connecting');
+    const pcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    // The peer replays the identical offer — its only active recovery.
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+
+    // The cached answer is RESENT; the session is neither torn down nor rebuilt.
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(pcCount);
+    const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+    expect(answerSignals).toHaveLength(2);
+    expect(answerSignals[1][1].sdp).toBe('v=0\r\nanswer...');
+
+    // The re-sent answer completes the session.
+    pcEventHandlers.datachannel?.({channel: mockDC});
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+    expect(manager.getStatus('alice')).toBe('connected');
+  });
+
+  it('an at-cap replay from a tracked peer still resends the cached answer', async() => {
+    const callbacks = makeCallbacks();
+    callbacks.sendSignal.mockRejectedValueOnce(new Error('relay publish failed'));
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+    expect(manager.getStatus('alice')).toBe('connecting');
+
+    // Fill the map to exactly MAX_CONNECTIONS (Kai's repro), with alice's
+    // shared mockPC kept intact by giving every filler its own PC.
+    globalThis.RTCPeerConnection.mockImplementation(() => makeStandalonePC());
+    for(let i = 0; i < 49; i++) {
+      await manager.connect(`filler-${i}`);
+    }
+    expect((manager as any).peers.size).toBe(50);
+    const pcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    // Alice replays the identical offer at the cap: the capacity guard must
+    // not shadow the tracked-peer replay path, or her answer is never
+    // re-sent and both sides wedge 'connecting'.
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(pcCount); // no rebuild
+    const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+    expect(answerSignals).toHaveLength(2);
+    expect(answerSignals[1][1].sdp).toBe('v=0\r\nanswer...'); // the CACHED answer
+  });
+
+  it('the connection cap still drops an offer from a NEW peer at capacity', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    globalThis.RTCPeerConnection.mockImplementation(() => makeStandalonePC());
+    for(let i = 0; i < 50; i++) {
+      await manager.connect(`filler-${i}`);
+    }
+    expect((manager as any).peers.size).toBe(50);
+    const pcCount = globalThis.RTCPeerConnection.mock.calls.length;
+    const signalCount = callbacks.sendSignal.mock.calls.length;
+
+    // The cap applies to pubkeys we do not track yet.
+    await manager.handleSignal('newcomer', {t: 'offer', sdp: 'v=0\r\noffer-from-newcomer'});
+
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(pcCount);
+    expect(callbacks.sendSignal.mock.calls.length).toBe(signalCount);
+    expect(manager.getStatus('newcomer')).toBe('disconnected');
+  });
+
+  it('a different-SDP offer tears the previous session down before replacing it', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-v1'});
+    pcEventHandlers.datachannel?.({channel: mockDC});
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+    const oldState = (manager as any).peers.get('alice');
+    expect(oldState.pingTimer).not.toBeNull();
+    expect(oldState.pingTimeoutTimer).not.toBeNull();
+
+    // Genuine renegotiation: same peer, DIFFERENT SDP.
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-v2'});
+
+    // The old session is fully torn down — no orphaned pc or live timers.
+    const newState = (manager as any).peers.get('alice');
+    expect(newState.sessionId).not.toBe(oldState.sessionId);
+    expect(oldState.status).toBe('disconnected');
+    expect(oldState.pingTimer).toBeNull();
+    expect(oldState.pingTimeoutTimer).toBeNull();
+    expect(oldState.reconnectTimer).toBeNull();
+    expect(mockDC.close).toHaveBeenCalled();
+    expect(mockPC.close).toHaveBeenCalled();
+
+    // The replacement negotiated normally.
+    const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+    expect(answerSignals).toHaveLength(2);
+  });
+
+  it('a failed replacement apply leaves no live timers or peers behind', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-v1'});
+    pcEventHandlers.datachannel?.({channel: mockDC});
+    mockDC.readyState = 'open';
+    dcEventHandlers.open?.();
+    const oldState = (manager as any).peers.get('alice');
+
+    // The replacement offer's apply fails after the map was overwritten: the
+    // old peer must NOT survive as an orphan with live timers.
+    mockPC.setRemoteDescription.mockRejectedValueOnce(new Error('bogus SDP'));
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-v2'});
+
+    expect((manager as any).peers.size).toBe(0);
+    expect(oldState.pingTimer).toBeNull();
+    expect(oldState.pingTimeoutTimer).toBeNull();
+    expect(oldState.reconnectTimer).toBeNull();
+
+    // No answer published for the dead replacement.
+    const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+    expect(answerSignals).toHaveLength(1);
+  });
+
+  it('swallows setRemoteDescription(answer) failures instead of rejecting', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.connect('bob');
+    mockPC.setRemoteDescription.mockRejectedValue(
+      new Error("Failed to execute 'setRemoteDescription': Called in wrong state: stable")
+    );
+
+    await expect(
+      manager.handleSignal('bob', {t: 'answer', sdp: 'v=0\r\nanswer-from-bob'})
+    ).resolves.toBeUndefined();
+
+    // Remote description never landed, so a follow-up candidate must still be
+    // buffered rather than applied to a bare pc.
+    await manager.handleSignal('bob', {
+      t: 'candidate',
+      candidate: 'candidate:x 1 UDP 1 10.0.0.9 40009 typ host',
+      sdpMid: '0',
+      sdpMLineIndex: 0
+    });
+    expect(mockPC.addIceCandidate).not.toHaveBeenCalled();
+  });
+
+  it('swallows setRemoteDescription(offer) failures and drops the half-built peer', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+    mockPC.setRemoteDescription.mockRejectedValue(new Error('bogus SDP'));
+
+    await expect(
+      manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\nbad'})
+    ).resolves.toBeUndefined();
+
+    expect(callbacks.sendSignal).not.toHaveBeenCalled(); // no answer for a dead pc
+    expect(manager.getStatus('alice')).toBe('disconnected');
   });
 
   it('handleSignal with candidate adds it once the remote description is set', async() => {

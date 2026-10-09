@@ -387,9 +387,14 @@ describe('resume triggers reset relay cooldowns', () => {
     expect(instance.initialize).toHaveBeenCalledTimes(1);
   });
 
-  it('is wired into the online resume trigger', () => {
+  it('is wired into the online resume trigger (debounced 5s to coalesce flaps)', () => {
     const spy = vi.spyOn(pool, 'resetRelayCooldowns');
     pool.onOnline();
+    // Not immediate: a connectivity return fires 'online' once per flap (IP
+    // churn, IPv6 temp addresses), and stacked all-relay waves are the dial
+    // storm this suppresses. One wave fires 5s after the LAST trigger.
+    expect(spy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(5_000);
     expect(spy).toHaveBeenCalledTimes(1);
   });
 });

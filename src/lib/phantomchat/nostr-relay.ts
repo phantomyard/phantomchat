@@ -18,6 +18,7 @@ import {finalizeEvent, verifyEvent} from 'nostr-tools/pure';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromStored} from './nostr-identity';
 import {logSwallow, swallowHandler} from './log-swallow';
+import {isNetworkOffline, OFFLINE_RETRY_PROBE_MS} from './network-status';
 
 // Use the etc namespace for utility functions
 const {bytesToHex, hexToBytes} = secp256k1.etc;
@@ -439,6 +440,18 @@ export class NostrRelay {
       return;
     }
 
+    // OFFLINE GATE (dial-storm fix): a dial cannot succeed without a network.
+    // Retry timers that fire mid-outage park on the slow probe instead of
+    // burning a burst attempt into a dead radio, which also exhausted the
+    // 6-attempt budget and benched the relay for 60s on failures earned on a
+    // network that no longer exists.
+    if(isNetworkOffline()) {
+      this.log('[NostrRelay] offline, deferring dial:', this.relayUrl);
+      this.setConnectionState('reconnecting');
+      this.scheduleOfflineProbe();
+      return;
+    }
+
     this.log('[NostrRelay] connecting to relay:', this.relayUrl);
     this.setConnectionState('connecting');
 
@@ -515,6 +528,20 @@ export class NostrRelay {
       clearTimeout(this.connectTimeout);
       this.connectTimeout = null;
     }
+  }
+
+  /**
+   * Park on the slow offline probe. Always re-arms (clearing any prior timer),
+   * so a fired/stale reconnectTimeout can never leave us in 'reconnecting' with
+   * nothing scheduled: the probe is the ONLY recovery path during an outage.
+   */
+  private scheduleOfflineProbe(): void {
+    if(this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+    }
+    this.reconnectTimeout = setTimeout(() => {
+      this.connect();
+    }, OFFLINE_RETRY_PROBE_MS);
   }
 
   /**
@@ -1940,6 +1967,18 @@ export class NostrRelay {
     this.stopLatencyRefresh();
     this.setLatency(-1);
     this.setConnectionState('reconnecting');
+
+    // OFFLINE GATE (dial-storm fix): skip the burst/backoff burn entirely while
+    // the device is known-offline: every attempt fails identically, and the
+    // wave of close/error events is what produced the 300+ dials/min storm. One
+    // slow probe stands in for the whole outage (no attempt counter burn, no
+    // 60s cooldown earned on a dead radio); the burst schedule resumes once the
+    // network is back.
+    if(isNetworkOffline()) {
+      this.log('[NostrRelay] offline, retry deferred to probe:', this.relayUrl);
+      this.scheduleOfflineProbe();
+      return;
+    }
 
     // Fast burst for the first few attempts, then steady jittered backoff, then
     // a short cooldown once a relay proves persistently unreachable (#61 R4).

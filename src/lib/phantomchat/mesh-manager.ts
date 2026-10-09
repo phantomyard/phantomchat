@@ -1,5 +1,8 @@
 import {getRtcConfig, DATA_CHANNEL_NAME, DATA_CHANNEL_OPTIONS, SignalMessage} from '@lib/phantomchat/webrtc-config';
 import {logSwallow} from '@lib/phantomchat/log-swallow';
+import {logger} from '@lib/logger';
+
+const meshLog = logger('PhantomChat/mesh');
 
 const MAX_CONNECTIONS = 50;
 const PING_INTERVAL = 30000;
@@ -130,6 +133,13 @@ export class MeshManager {
       verified: false
     };
 
+    // Replacing a stale 'disconnected' entry steals the map slot from a state
+    // whose backoff reconnect timer is still live: torn down first, or that
+    // timer later deletes THIS session out of the map (same gap Lena flagged
+    // in handleOffer, #212).
+    const previous = this.peers.get(pubkey);
+    if(previous) this.teardownPeerState(previous);
+
     this.peers.set(pubkey, state);
     this.setupDataChannel(pubkey, dc);
     this.setupPeerConnection(pubkey, pc);
@@ -165,7 +175,49 @@ export class MeshManager {
   }
 
   private async handleOffer(fromPubkey: string, signal: SignalMessage & {t: 'offer'}): Promise<void> {
-    if(this.peers.size >= MAX_CONNECTIONS) return;
+    // The cap only applies to NEW pubkeys. An already-tracked peer must stay
+    // recoverable at exactly MAX_CONNECTIONS: the replay path below is its
+    // only recovery when an answer publish failed, and a cap-first guard
+    // silently blocked that resend (Kai, #212).
+    if(!this.peers.has(fromPubkey) && this.peers.size >= MAX_CONNECTIONS) return;
+
+    // Relays re-deliver kind-21050 events, so a duplicate offer can land after
+    // this peer already negotiated, the mirrored form of the late-answer bug.
+    // Re-applying identical SDP would tear the session down to re-run
+    // negotiation for nothing — but a flat discard strands the peer whenever
+    // our ANSWER never published (sendSignal rejects during a relay outage):
+    // the replayed offer is then the peer's only active recovery, and dropping
+    // it leaves both sides 'connecting' forever (Kai/Lena, #212). So:
+    //  - established (dc open): a byte-identical offer is a logged no-op;
+    //  - still connecting: RESEND the cached local answer
+    //    (pc.localDescription) — no teardown, and the replay recovers the
+    //    lost publish;
+    //  - disconnected or no answer built yet: fall through to a fresh
+    //    negotiation below. A DIFFERENT sdp is a genuine renegotiation/
+    //    restart and always proceeds normally.
+    const existing = this.peers.get(fromPubkey);
+    if(existing?.remoteDescriptionSet && existing.pc.remoteDescription?.sdp === signal.sdp) {
+      if(existing.status === 'connected') {
+        meshLog.warn('[MeshManager] ignoring re-delivered offer from', fromPubkey, '(identical SDP, session established)');
+        return;
+      }
+      const cachedAnswerSdp = existing.status === 'connecting' && existing.pc.localDescription?.type === 'answer' ?
+        existing.pc.localDescription.sdp :
+        null;
+      if(cachedAnswerSdp) {
+        meshLog.warn('[MeshManager] re-delivered offer while connecting from', fromPubkey, '- resending cached answer');
+        await this.callbacks.sendSignal(fromPubkey, {t: 'answer', sdp: cachedAnswerSdp})
+        .catch((e) => logSwallow('MeshManager.resendAnswer', e));
+        return;
+      }
+    }
+
+    // Replacement path (genuine renegotiation/restart): tear the previous
+    // session down before building the new one. Dropping the old PeerState
+    // from the map without pc.close() + timer cleanup leaked an orphan
+    // connection with live reconnect/ping timers (Lena, #212).
+    const previous = this.peers.get(fromPubkey);
+    if(previous) this.teardownPeerState(previous);
 
     const pc = new RTCPeerConnection(this.rtcConfig());
 
@@ -189,6 +241,7 @@ export class MeshManager {
     this.peers.set(fromPubkey, state);
 
     pc.addEventListener('datachannel', (event: RTCDataChannelEvent) => {
+      if(this.peers.get(fromPubkey) !== state) return;
       const dc = event.channel;
       state.dc = dc;
       this.setupDataChannel(fromPubkey, dc);
@@ -196,7 +249,20 @@ export class MeshManager {
 
     this.setupPeerConnection(fromPubkey, pc);
 
-    await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: signal.sdp}));
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription({type: 'offer', sdp: signal.sdp}));
+    } catch(e) {
+      // Malformed SDP or a state race: drop this signal and the half-built peer
+      // instead of leaving it stuck 'connecting' and rejecting unhandled.
+      meshLog.warn('[MeshManager] setRemoteDescription(offer) failed; dropping signal', e);
+      const current = this.peers.get(fromPubkey);
+      if(current?.sessionId === sessionId) {
+        this.peers.delete(fromPubkey);
+        this.pendingCandidates.delete(fromPubkey);
+        this.teardownPeerState(state);
+      }
+      return;
+    }
     if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== sessionId) return;
     state.remoteDescriptionSet = true;
     await this.flushPendingCandidates(fromPubkey);
@@ -207,7 +273,12 @@ export class MeshManager {
     await pc.setLocalDescription(answer);
     if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== sessionId) return;
 
-    await this.callbacks.sendSignal(fromPubkey, {t: 'answer', sdp: pc.localDescription.sdp});
+    // A failed answer publish (relay outage) is survivable: the session stays
+    // 'connecting' and a re-delivered identical offer resends the cached answer
+    // (guard above), so swallow the rejection instead of letting the bridge's
+    // fire-and-forget handleSignal call go unhandled.
+    await this.callbacks.sendSignal(fromPubkey, {t: 'answer', sdp: pc.localDescription.sdp})
+    .catch((e) => logSwallow('MeshManager.publishAnswer', e));
   }
 
   private async handleAnswer(fromPubkey: string, signal: SignalMessage & {t: 'answer'}): Promise<void> {
@@ -215,7 +286,23 @@ export class MeshManager {
     if(!state) return;
     const expectedSessionId = state.sessionId;
 
-    await state.pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: signal.sdp}));
+    // A late or duplicate answer lands after negotiation has already settled
+    // (relays re-deliver events; reconnects race). setRemoteDescription on a
+    // settled pc throws InvalidStateError 'Called in wrong state: stable', so
+    // an answer is only legal while a local offer is outstanding; anything
+    // else is a logged no-op instead of an unhandled rejection.
+    if(state.pc.signalingState !== 'have-local-offer') {
+      meshLog.warn('[MeshManager] ignoring late/duplicate answer from', fromPubkey, `signalingState=${state.pc.signalingState}`);
+      return;
+    }
+
+    try {
+      await state.pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: signal.sdp}));
+    } catch(e) {
+      // Backstop for a state change racing the guard above.
+      meshLog.warn('[MeshManager] setRemoteDescription(answer) failed; ignoring signal', e);
+      return;
+    }
     if(!this.peers.has(fromPubkey) || this.peers.get(fromPubkey)!.sessionId !== expectedSessionId) return;
     state.remoteDescriptionSet = true;
     await this.flushPendingCandidates(fromPubkey);
@@ -269,10 +356,15 @@ export class MeshManager {
     }
   }
 
+  // Stale-event guards throughout setup*: teardownPeerState() closes dc/pc
+  // when a session is replaced or dropped, and their close/error/
+  // connectionstatechange events arrive asynchronously — by then the map holds
+  // the NEW state, which those events must not tear down. The identity checks
+  // (state.dc === dc, state.pc === pc) drop them.
   private setupDataChannel(pubkey: string, dc: RTCDataChannel): void {
     dc.addEventListener('open', () => {
       const state = this.peers.get(pubkey);
-      if(!state) return;
+      if(!state || state.dc !== dc) return;
 
       state.status = 'connected';
       state.reconnectAttempts = 0;
@@ -288,7 +380,7 @@ export class MeshManager {
 
     dc.addEventListener('message', (event: MessageEvent) => {
       const state = this.peers.get(pubkey);
-      if(!state) return;
+      if(!state || state.dc !== dc) return;
 
       const data = event.data as string;
 
@@ -323,19 +415,21 @@ export class MeshManager {
     });
 
     dc.addEventListener('close', () => {
+      if(this.peers.get(pubkey)?.dc !== dc) return;
       this.handleDisconnect(pubkey);
     });
 
     dc.addEventListener('error', () => {
+      if(this.peers.get(pubkey)?.dc !== dc) return;
       this.handleDisconnect(pubkey);
     });
   }
 
   private setupPeerConnection(pubkey: string, pc: RTCPeerConnection): void {
     pc.addEventListener('connectionstatechange', () => {
-      if(pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-        this.handleDisconnect(pubkey);
-      }
+      if(pc.connectionState !== 'failed' && pc.connectionState !== 'closed') return;
+      if(this.peers.get(pubkey)?.pc !== pc) return;
+      this.handleDisconnect(pubkey);
     });
 
     pc.addEventListener('icecandidate', async(event: RTCPeerConnectionIceEvent) => {
@@ -418,9 +512,17 @@ export class MeshManager {
     return Boolean(state && state.status === 'connected' && state.verified);
   }
 
-  private stopPing(pubkey: string): void {
-    const state = this.peers.get(pubkey);
-    if(!state) return;
+  /**
+   * Synchronous full teardown of one session: every timer cleared, dc + pc
+   * closed, state marked disconnected. Anything that retires a PeerState
+   * (disconnect, a replacing offer, a failed apply) goes through here so no
+   * orphan timers or half-open sockets survive it.
+   */
+  private teardownPeerState(state: PeerState): void {
+    if(state.reconnectTimer !== null) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
 
     if(state.pingTimer !== null) {
       clearInterval(state.pingTimer);
@@ -431,6 +533,18 @@ export class MeshManager {
       clearTimeout(state.pingTimeoutTimer);
       state.pingTimeoutTimer = null;
     }
+
+    const dc = state.dc;
+    state.status = 'disconnected';
+    state.dc = null;
+
+    if(dc) {
+      try { dc.close(); } catch(e) { logSwallow('MeshManager.teardownPeerState.dcClose', e); }
+    }
+
+    try {
+      state.pc.close();
+    } catch(e) { logSwallow('MeshManager.teardownPeerState.pcClose', e); }
   }
 
   private handleDisconnect(pubkey: string, fromPingTimeout = false): void {
@@ -439,15 +553,8 @@ export class MeshManager {
 
     if(state.status === 'disconnected' && !fromPingTimeout) return;
 
-    this.stopPing(pubkey);
-
     const wasConnected = state.status === 'connected';
-    state.status = 'disconnected';
-    state.dc = null;
-
-    try {
-      state.pc.close();
-    } catch(e) { logSwallow('MeshManager.handleDisconnect.pcClose', e); }
+    this.teardownPeerState(state);
 
     if(wasConnected) {
       this.callbacks.onPeerDisconnected(pubkey);
@@ -489,23 +596,7 @@ export class MeshManager {
     if(!state) return;
 
     state.reconnectAttempts = Infinity;
-
-    if(state.reconnectTimer !== null) {
-      clearTimeout(state.reconnectTimer);
-      state.reconnectTimer = null;
-    }
-
-    this.stopPing(pubkey);
-
-    try {
-      if(state.dc) state.dc.close();
-    } catch(e) { logSwallow('MeshManager.disconnect.dcClose', e); }
-
-    try {
-      state.pc.close();
-    } catch(e) { logSwallow('MeshManager.disconnect.pcClose', e); }
-
-    state.status = 'disconnected';
+    this.teardownPeerState(state);
     this.peers.delete(pubkey);
     this.pendingCandidates.delete(pubkey);
   }
