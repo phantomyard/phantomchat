@@ -99,6 +99,8 @@ let GroupAPI: any;
 let VirtualMTProtoServer: any;
 let store: any;
 let GROUP_KEY_MIGRATION: string;
+let GROUP_KEY_MIGRATION_COHORT: string;
+let GROUP_KEY_MIGRATION_DONE: string;
 
 beforeAll(async() => {
   vi.resetModules();
@@ -109,6 +111,8 @@ beforeAll(async() => {
   const storeMod = await import('@lib/phantomchat/message-store');
   store = (storeMod as any).getMessageStore();
   GROUP_KEY_MIGRATION = (storeMod as any).GROUP_KEY_MIGRATION;
+  GROUP_KEY_MIGRATION_COHORT = (storeMod as any).GROUP_KEY_MIGRATION_COHORT;
+  GROUP_KEY_MIGRATION_DONE = (storeMod as any).GROUP_KEY_MIGRATION_DONE;
 });
 
 function seedMessage(overrides: Record<string, unknown> = {}) {
@@ -191,6 +195,10 @@ describe('#207 — getDialogs group branch restores top message + read state', (
     await store.deleteReadCursor(CONV_ID);
     await store.deleteReadCursor(GROUP_ID);
     await store.clearMigration(GROUP_KEY_MIGRATION);
+    // #209: the sweep cohort/done records must also be reset, or a case that
+    // runs the migration would leave the group marked done for the next case.
+    await store.clearMigration(GROUP_KEY_MIGRATION_COHORT);
+    await store.clearMigration(GROUP_KEY_MIGRATION_DONE);
   }
 
   it('finds canonical `group:`-prefixed rows and reports the real unread count', async() => {

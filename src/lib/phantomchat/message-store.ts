@@ -147,6 +147,20 @@ const DEFAULT_LIMIT = 50;
  */
 export const GROUP_KEY_MIGRATION = 'group-207-canonical-key-v1';
 
+/**
+ * Companion records for GROUP_KEY_MIGRATION, so a partially-failed sweep can
+ * resume without re-sweeping groups it already finished (#209).
+ *
+ * - COHORT: the group-id set captured on the FIRST attempt. Ids that only show
+ *   up on a later boot (a group created after the fix) are never swept, so a
+ *   retry cannot force-read them.
+ * - DONE: group ids already migrated (rekeyed + cursor-seeded). A group is
+ *   never swept twice, so messages that arrive during a retry window are not
+ *   force-read by a second unconditional seed.
+ */
+export const GROUP_KEY_MIGRATION_COHORT = `${GROUP_KEY_MIGRATION}:cohort`;
+export const GROUP_KEY_MIGRATION_DONE = `${GROUP_KEY_MIGRATION}:done`;
+
 // ─── Singleton ─────────────────────────────────────────────────────
 
 let _instance: MessageStore | null = null;
@@ -268,9 +282,42 @@ export class MessageStore {
   private openDB(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
+      // Guards against double-settling when `onblocked` fires and the request
+      // later resolves anyway (the blocker eventually closes).
+      let settled = false;
 
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        if(settled) return;
+        settled = true;
+        reject(request.error);
+      };
+
+      request.onsuccess = () => {
+        const db = request.result;
+        if(settled) { db.close(); return; } // blocked-then-resolved: discard the stale handle
+        settled = true;
+        // When another tab/context opens a HIGHER version (v5→v6 and future
+        // bumps), close this connection so it does not block that upgrade —
+        // otherwise the other context's getDB() waits on `onblocked` forever.
+        db.onversionchange = () => {
+          db.close();
+          if(this.dbPromise) this.dbPromise = null; // reopen lazily at the new version
+        };
+        resolve(db);
+      };
+
+      // OUR upgrade is blocked by another open connection that has not closed
+      // (typically a second tab running an older build with no
+      // `onversionchange` handler). Surface it and reject rather than leave
+      // getDB() pending forever; clearing the cached promise lets a later call
+      // retry once the blocker releases (#209).
+      request.onblocked = () => {
+        if(settled) return;
+        settled = true;
+        console.warn('[message-store] IndexedDB upgrade blocked by another open connection; retrying after it closes');
+        if(this.dbPromise) this.dbPromise = null;
+        reject(new Error('IndexedDB upgrade blocked by another open connection'));
+      };
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
@@ -916,6 +963,35 @@ export class MessageStore {
     });
   }
 
+  /**
+   * Read a migration marker's stored payload, or null when unwritten. Used by
+   * migrations that need to persist progress (a set of ids), not just a
+   * done/not-done flag.
+   */
+  async getMigrationValue<T = unknown>(name: string): Promise<T | null> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MIGRATION_STORE, 'readonly');
+      const req = tx.objectStore(MIGRATION_STORE).get(name);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const rec = req.result as {value?: T} | undefined;
+        resolve(rec && 'value' in rec ? (rec.value as T) : null);
+      };
+    });
+  }
+
+  /** Persist a migration marker's payload (idempotent overwrite). */
+  async setMigrationValue(name: string, value: unknown): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MIGRATION_STORE, 'readwrite');
+      const req = tx.objectStore(MIGRATION_STORE).put({name, value, doneAt: Date.now()});
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve();
+    });
+  }
+
   /** Clear a migration marker (tests / explicit re-run). */
   async clearMigration(name: string): Promise<void> {
     const db = await this.getDB();
@@ -957,13 +1033,37 @@ export class MessageStore {
    * would be force-read on every boot. On any per-group failure the marker is
    * NOT written, so the sweep retries on the next boot rather than silently
    * skipping the failed group forever.
+   *
+   * A retry must not re-seed a group it already finished, nor sweep a group that
+   * only appeared after the first attempt (#209) — either would force-read
+   * messages that arrived in the retry window. The frozen COHORT and the
+   * per-group DONE set make the sweep resumable without that exposure.
    */
   async migrateLegacyGroupConversationKeys(groupIds: string[]): Promise<void> {
     if(await this.getMigration(GROUP_KEY_MIGRATION)) return;
+
+    // Freeze the sweep cohort on the FIRST attempt (#209). Ids that appear on a
+    // later boot — groups created after the fix — are never in the cohort, so a
+    // retry cannot force-read them.
+    let cohort = await this.getMigrationValue<string[]>(GROUP_KEY_MIGRATION_COHORT);
+    if(!cohort) {
+      cohort = [...new Set(groupIds.filter((id): id is string => !!id))];
+      await this.setMigrationValue(GROUP_KEY_MIGRATION_COHORT, cohort);
+    }
+
+    const done = new Set(await this.getMigrationValue<string[]>(GROUP_KEY_MIGRATION_DONE) ?? []);
     let failed = false;
-    for(const groupId of groupIds) {
+    for(const groupId of cohort) {
+      // Never re-sweep a group that already migrated: the seed is
+      // unconditional, so re-running it after new messages arrived would
+      // force-read them (review #208 semantics, hardened here).
+      if(done.has(groupId)) continue;
       try {
         await this.migrateLegacyGroupConversationKey(groupId);
+        // Persist each success immediately so a crash/retry between groups
+        // cannot re-seed an already-migrated group.
+        done.add(groupId);
+        await this.setMigrationValue(GROUP_KEY_MIGRATION_DONE, [...done]);
       } catch(err) {
         failed = true;
         console.warn('[message-store] #207 group-key migration failed for', groupId, err);
