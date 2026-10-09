@@ -855,8 +855,23 @@ export class PhantomChatMTProtoServer {
       for(const group of groups) {
         if(onlyPeerIds && !onlyPeerIds.has(group.peerId)) continue;
         try {
-          const convId = group.groupId;
-          const latestMsgs = await store.getMessages(convId, 1);
+          // Canonical group conversation key (#207). Legacy builds wrote group
+          // rows (notably the chatCreate service row) under the BARE groupId,
+          // and this reader used the bare key too — so the boot dialog missed
+          // the real `group:`-prefixed rows and every store read keyed under
+          // `group:` (read cursor included) looked empty. Prefer the canonical
+          // key, fall back to legacy rows, and migrate them forward.
+          const convId = `group:${group.groupId}`;
+          let latestMsgs = await store.getMessages(convId, 1);
+          if(latestMsgs.length === 0) {
+            const legacy = await store.getMessages(group.groupId, 1);
+            if(legacy.length > 0) {
+              latestMsgs = legacy;
+              void store.rekeyConversation?.(group.groupId, convId);
+              const bareCursor = await store.getReadCursor?.(group.groupId) ?? 0;
+              if(bareCursor > 0) void store.setReadCursor?.(convId, bareCursor);
+            }
+          }
           const latest = latestMsgs[0];
           const peerId = group.peerId;
 
@@ -924,21 +939,28 @@ export class PhantomChatMTProtoServer {
             }
           }
 
-          // Mark the dialog as fully read by setting both read cursors to the
-          // top message id. Without this, tweb's getDialogs branch in
-          // appMessagesManager triggers `noIdsDialogs` for every group on every
-          // pass (top_message > 0, both read markers 0, unread_count 0) →
-          // calls reloadConversation → static stub returns empty → no fix →
-          // infinite spam loop. The 1:1 branch above already does this with
-          // a real readCursor; groups have no per-cursor read state yet, so
-          // mid is the safe lower bound (≥ any historical message we'd have).
+          // Restore the group's REAL read state (#207) instead of forcing the
+          // markers to mid. `resetUnreadForPeer` advances the `group:`-keyed
+          // read cursor when the user opens the chat, so reading it back here
+          // is what makes a fully-read group stay read across restarts. Keep
+          // the noIdsDialogs guard: tweb's appMessagesManager loops
+          // reloadConversation for a dialog with top_message>0, both read
+          // markers 0 AND unread_count 0, so for that all-zero case (e.g. a
+          // group whose only messages are our own outgoing ones) fall back to
+          // mid.
+          const readCursor = typeof store.getReadCursor === 'function' ? await store.getReadCursor(convId) : 0;
+          const unreadCount = this.ownPubkey && typeof store.countUnread === 'function' ?
+            await store.countUnread(convId, this.ownPubkey) :
+            0;
+          const readInboxMaxId = readCursor > 0 ? readCursor : (unreadCount === 0 ? mid : 0);
           const dialog = this.mapper.createTwebDialog({
             peerId,
             topMessage: mid,
             topMessageDate: topDate,
             isGroup: true,
-            readInboxMaxId: mid,
-            readOutboxMaxId: mid
+            unreadCount,
+            readInboxMaxId,
+            readOutboxMaxId: readInboxMaxId
           });
           // Rule 8 on the response path (see the 1:1 branch above). Skip
           // message-less groups — there is no preview to render.

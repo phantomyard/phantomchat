@@ -990,6 +990,27 @@ export class GroupAPI {
         this.log.warn('[GroupAPI] reject: sender is not a member of', groupId.slice(0, 8), '; sender =', senderPubkey.slice(0, 8));
         return;
       }
+
+      // Persistent replay dedup (#207). `sentMessageIds` above is in-memory and
+      // empty after every restart, and relays re-deliver kind-1059 gift-wraps
+      // (24h TTL) on every reconnect/boot. Without a persistent check the live
+      // receive path re-rendered already-read group messages, rewound the read
+      // marker and repainted unread badges. Mirror `chat-api-receive.ts` step 7b:
+      // look the rumor id up in the message store and drop it before any
+      // save/render/dispatch. `saveMessage` upserts by eventId, so a replay of
+      // anything we have ever persisted is already present for the lookup.
+      try {
+        const msgStore = getMessageStore();
+        const eventId: string | undefined = rumor?.id;
+        const seen = !!eventId && (msgStore.hasSeenEventId?.(eventId) || await msgStore.getByEventId(eventId));
+        if(seen) {
+          this.log('[GroupAPI] dedup: dropping replayed group message:', eventId);
+          return;
+        }
+      } catch(err) {
+        this.log.warn('[GroupAPI] persistent dedup lookup failed:', err);
+      }
+
       this.handleIncomingGroupMessageAuthorised(groupId, rumor, senderPubkey);
     }).catch((err) => this.log.warn('[GroupAPI] membership check failed:', err));
   }

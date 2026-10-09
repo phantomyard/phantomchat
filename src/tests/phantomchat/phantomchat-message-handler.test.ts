@@ -582,7 +582,10 @@ describe('phantomchat-message-handler', () => {
         'dialogs_multiupdate',
         expect.any(Map)
       );
-      expect(mockMessageStore.setReadCursor).toHaveBeenCalledWith('group-abc', 50);
+      // #207: the group conversation key is canonical `group:<groupId>`. The
+      // old bare key meant this cursor write silently missed the real rows, so
+      // the badge reappeared after every restart.
+      expect(mockMessageStore.setReadCursor).toHaveBeenCalledWith('group:group-abc', 50);
     });
 
     it('no-op when no source has unread (cache empty, mirror empty, store has 0)', async() => {

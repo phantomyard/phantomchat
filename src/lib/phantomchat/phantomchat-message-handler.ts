@@ -304,7 +304,12 @@ async function resolveConversation(peerId: number): Promise<ConvRef | null> {
     const {getGroupStore} = await import('@lib/phantomchat/group-store');
     const group = await getGroupStore().getByPeerId(peerId);
     if(!group) return null;
-    return {convId: group.groupId, ownPk};
+    // Canonical group conversation key (#207). Group rows and their read
+    // cursors live under `group:<groupId>`; returning the bare id made
+    // `resetUnreadForPeer`'s setReadCursor/countUnread silently miss the real
+    // rows, so a group's unread badge could never be cleared at the store level
+    // and reappeared after every restart.
+    return {convId: `group:${group.groupId}`, ownPk};
   }
 
   return null;

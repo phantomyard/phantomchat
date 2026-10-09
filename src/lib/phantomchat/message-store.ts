@@ -843,6 +843,41 @@ export class MessageStore {
   }
 
   /**
+   * Re-key every stored row in `fromConversationId` onto `toConversationId`
+   * (issue #207: legacy group rows were written under the bare groupId before
+   * `group:<groupId>` was enforced as the canonical group conversation key).
+   * Rows keep their primary key (eventId) and identity triple; only the
+   * `conversationId` field changes, so edits, reactions and eventId dedup are
+   * unaffected. Paginates the same way `GroupAPI.rekeyGroupMessages` does so a
+   * long history is migrated in full, and moving rows out of the source key is
+   * itself the pagination cursor. Returns the number of rows moved.
+   */
+  async rekeyConversation(fromConversationId: string, toConversationId: string, pageSize = 1000): Promise<number> {
+    if(!fromConversationId || !toConversationId || fromConversationId === toConversationId) return 0;
+    const seen = new Set<string>();
+    let before: number | undefined;
+    let moved = 0;
+    for(;;) {
+      const rows = await this.getMessages(fromConversationId, pageSize, before);
+      if(rows.length === 0) break;
+      let newRows = 0;
+      for(const row of rows) {
+        if(seen.has(row.eventId)) continue;
+        seen.add(row.eventId);
+        newRows++;
+        await this.saveMessage({...row, conversationId: toConversationId});
+        moved++;
+      }
+      if(rows.length < pageSize) break;
+      // Timestamp ties can straddle a page boundary; if a full page yielded
+      // nothing new, nudge the strict `<` cursor to keep making progress.
+      before = rows[rows.length - 1].timestamp;
+      if(newRows === 0) before--;
+    }
+    return moved;
+  }
+
+  /**
    * Get a deterministic conversation ID from two public keys.
    * Sorts both hex pubkeys alphabetically and joins with ':'.
    */

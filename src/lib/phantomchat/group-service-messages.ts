@@ -11,7 +11,8 @@
  *
  * The rows are NEVER transmitted over the wire. They are produced on both
  * creator and receiver sides at group_create time and stored alongside
- * regular group messages under `conversationId = group.groupId`.
+ * regular group messages under `conversationId = 'group:<groupId>'` (the
+ * canonical group conversation key — see issue #207).
  */
 
 import {getMessageStore, type StoredMessage} from './message-store';
@@ -100,7 +101,10 @@ export async function writeGroupCreateServiceMessage(
 
   const row: StoredMessage = {
     eventId,
-    conversationId: input.groupId,
+    // Canonical group conversation key (#207). Writing the service row bare
+    // meant VMT getDialogs / store read cursors keyed under `group:` never
+    // saw it; every group reader must agree on `group:<groupId>`.
+    conversationId: `group:${input.groupId}`,
     senderPubkey: input.adminPubkey,
     content: '',
     type: 'text',
