@@ -175,7 +175,11 @@ export class MeshManager {
   }
 
   private async handleOffer(fromPubkey: string, signal: SignalMessage & {t: 'offer'}): Promise<void> {
-    if(this.peers.size >= MAX_CONNECTIONS) return;
+    // The cap only applies to NEW pubkeys. An already-tracked peer must stay
+    // recoverable at exactly MAX_CONNECTIONS: the replay path below is its
+    // only recovery when an answer publish failed, and a cap-first guard
+    // silently blocked that resend (Kai, #212).
+    if(!this.peers.has(fromPubkey) && this.peers.size >= MAX_CONNECTIONS) return;
 
     // Relays re-deliver kind-21050 events, so a duplicate offer can land after
     // this peer already negotiated, the mirrored form of the late-answer bug.

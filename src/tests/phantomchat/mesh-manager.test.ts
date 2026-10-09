@@ -78,6 +78,45 @@ function makeCallbacks() {
   };
 }
 
+// Independent PC/DC stubs for bulk filler peers: the shared mockPC models ONE
+// session's negotiated state, and 49 connect() calls on it would overwrite
+// alice's cached answer (localDescription) the at-cap test needs to observe.
+function makeStandalonePC() {
+  const dc = {
+    readyState: 'connecting',
+    send: vi.fn(),
+    close: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn()
+  };
+  const pc: any = {
+    createOffer: vi.fn().mockResolvedValue({type: 'offer', sdp: 'v=0\r\nfiller-offer...'}),
+    createAnswer: vi.fn().mockResolvedValue({type: 'answer', sdp: 'v=0\r\nfiller-answer...'}),
+    setLocalDescription: vi.fn(),
+    setRemoteDescription: vi.fn(),
+    addIceCandidate: vi.fn().mockResolvedValue(undefined),
+    createDataChannel: vi.fn().mockReturnValue(dc),
+    close: vi.fn(),
+    connectionState: 'new',
+    signalingState: 'stable',
+    localDescription: null,
+    remoteDescription: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn()
+  };
+  pc.setLocalDescription.mockImplementation((desc) => {
+    pc.localDescription = desc;
+    pc.signalingState = desc && desc.type === 'offer' ? 'have-local-offer' : 'stable';
+    return Promise.resolve(undefined);
+  });
+  pc.setRemoteDescription.mockImplementation((desc) => {
+    pc.remoteDescription = desc;
+    pc.signalingState = desc && desc.type === 'offer' ? 'have-remote-offer' : 'stable';
+    return Promise.resolve(undefined);
+  });
+  return pc;
+}
+
 describe('MeshManager', () => {
   it('getStatus returns disconnected for unknown peer', () => {
     const callbacks = makeCallbacks();
@@ -301,6 +340,54 @@ describe('MeshManager', () => {
     mockDC.readyState = 'open';
     dcEventHandlers.open?.();
     expect(manager.getStatus('alice')).toBe('connected');
+  });
+
+  it('an at-cap replay from a tracked peer still resends the cached answer', async() => {
+    const callbacks = makeCallbacks();
+    callbacks.sendSignal.mockRejectedValueOnce(new Error('relay publish failed'));
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+    expect(manager.getStatus('alice')).toBe('connecting');
+
+    // Fill the map to exactly MAX_CONNECTIONS (Kai's repro), with alice's
+    // shared mockPC kept intact by giving every filler its own PC.
+    globalThis.RTCPeerConnection.mockImplementation(() => makeStandalonePC());
+    for(let i = 0; i < 49; i++) {
+      await manager.connect(`filler-${i}`);
+    }
+    expect((manager as any).peers.size).toBe(50);
+    const pcCount = globalThis.RTCPeerConnection.mock.calls.length;
+
+    // Alice replays the identical offer at the cap: the capacity guard must
+    // not shadow the tracked-peer replay path, or her answer is never
+    // re-sent and both sides wedge 'connecting'.
+    await manager.handleSignal('alice', {t: 'offer', sdp: 'v=0\r\noffer-from-alice'});
+
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(pcCount); // no rebuild
+    const answerSignals = callbacks.sendSignal.mock.calls.filter(([_pk, sig]: [any, any]) => sig.t === 'answer');
+    expect(answerSignals).toHaveLength(2);
+    expect(answerSignals[1][1].sdp).toBe('v=0\r\nanswer...'); // the CACHED answer
+  });
+
+  it('the connection cap still drops an offer from a NEW peer at capacity', async() => {
+    const callbacks = makeCallbacks();
+    const manager = new MeshManager(callbacks, undefined, '');
+
+    globalThis.RTCPeerConnection.mockImplementation(() => makeStandalonePC());
+    for(let i = 0; i < 50; i++) {
+      await manager.connect(`filler-${i}`);
+    }
+    expect((manager as any).peers.size).toBe(50);
+    const pcCount = globalThis.RTCPeerConnection.mock.calls.length;
+    const signalCount = callbacks.sendSignal.mock.calls.length;
+
+    // The cap applies to pubkeys we do not track yet.
+    await manager.handleSignal('newcomer', {t: 'offer', sdp: 'v=0\r\noffer-from-newcomer'});
+
+    expect(globalThis.RTCPeerConnection).toHaveBeenCalledTimes(pcCount);
+    expect(callbacks.sendSignal.mock.calls.length).toBe(signalCount);
+    expect(manager.getStatus('newcomer')).toBe('disconnected');
   });
 
   it('a different-SDP offer tears the previous session down before replacing it', async() => {
