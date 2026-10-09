@@ -149,6 +149,25 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    payload, or a package without package-type, breaks every package-managed
    install's update path silently.
 
+15. **A group conversation has EXACTLY ONE store key: `group:<groupId>`.** Every
+   message-store call for a group — `saveMessage` / `getMessages` /
+   `countUnread` / `setReadCursor` / `getReadCursor` / `getTombstone` — and
+   every dialog/history reader (`getDialogs` group branch, `getGroupHistory`,
+   `resolveConversation`) MUST use it. The bare `<groupId>` key is legacy-only
+   (rows written before #207); readers must tolerate it and migrate it forward
+   (`MessageStore.rekeyConversation`), never write it anew. A bare-key write
+   splits a group's rows and read cursor so a fully-read dialog reappears
+   unread after every restart.
+
+16. **Receive paths need PERSISTENT replay dedup, not just an in-memory set.**
+   Relays re-deliver kind-1059 gift-wraps (24h TTL) on every reconnect/boot, so
+   an in-session `Set` is empty exactly when replays arrive. Before save /
+   render / dispatch, gate on `store.hasSeenEventId(id) ||
+   await store.getByEventId(id)` (see `chat-api-receive.ts` step 7b for the DM
+   path and `GroupAPI.handleIncomingGroupMessage` for the group path). A
+   replayed already-read message must not re-bump unread; an own-message echo
+   must never dispatch `unreadCount: 1`.
+
 ## Review checklist (reject a diff that does any of these on a hot path)
 
 - An `await` of a worker/IDB/network call placed *before* a paint or input echo.
@@ -184,3 +203,22 @@ hot-path change and put the numbers in the PR.
   `payload.adminPubkey` when a binding exists (#188).
 - `sync-crdt.ts` must stay TEXT: no literal NUL bytes in string literals —
   use the `\u0000` escape (runtime-identical, keeps GitHub diffs readable).
+
+## Session note — 2026-10-09 (PR: group unread after restart, #207)
+
+- The live group receive path (`GroupAPI.handleIncomingGroupMessage`) now has a
+  persistent replay dedup gate before the membership-authorized render, matching
+  `chat-api-receive.ts` step 7b. Replays of already-persisted rumors are dropped
+  before `handleGroupIncoming`, so they neither re-render nor re-bump unread.
+- `handleGroupIncoming` builds its dialog from `isOutgoing`: own echoes dispatch
+  `unreadCount: 0` with the read marker at `mid`; only genuinely new incoming
+  messages use `unreadCount: 1` / `readInboxMaxId: mid - 1`.
+- Canonical group conversation key is `group:<groupId>` everywhere (rule 15):
+  `writeGroupCreateServiceMessage` (was bare), `getDialogs` group branch and
+  `phantomchat-message-handler.ts` `resolveConversation` (was bare) now use it.
+  The getDialogs group branch reads the REAL `getReadCursor` + `countUnread`
+  instead of forcing both markers to `mid`, with the noIdsDialogs all-zero
+  fallback preserved. Legacy bare-key rows are tolerated and migrated via
+  `MessageStore.rekeyConversation`.
+- Live repro: the `phantomchat:0aea…` conversation (Phantom Yard), the busiest
+  group inside the relay replay window.

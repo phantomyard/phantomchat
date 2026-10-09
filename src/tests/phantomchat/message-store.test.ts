@@ -290,9 +290,11 @@ describe('MessageStore', () => {
         const page = await upgraded.getMessagesPage('v4-conversation', 10);
         expect(page.messages.map((msg) => msg.eventId)).toEqual(['v4-existing']);
         const db = await (upgraded as any).getDB() as IDBDatabase;
-        expect(db.version).toBe(5);
+        expect(db.version).toBe(6);
         const indexes = db.transaction('messages').objectStore('messages').indexNames;
         expect(indexes.contains('conversationMid')).toBe(true);
+        // v6: one-shot migration markers store (see GROUP_KEY_MIGRATION).
+        expect(db.objectStoreNames.contains('migrations')).toBe(true);
 
         await new Promise<void>((resolve, reject) => {
           const tx = db.transaction('messages', 'readwrite');

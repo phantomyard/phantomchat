@@ -519,14 +519,19 @@ export async function handleGroupIncoming(
     peerId: groupPeerId,
     topMessage: mid,
     topMessageDate: timestampSec,
-    unreadCount: 1,
+    // #207: an own echo (cross-device send, or a self-wrap that wasn't
+    // deduped) is never unread. Only a genuinely new *incoming* message may
+    // bump the badge. Same-device echoes are dropped earlier by the persistent
+    // replay dedup in GroupAPI.handleIncomingGroupMessage, but a message sent
+    // from another device of ours legitimately reaches this path.
+    unreadCount: isOutgoing ? 0 : 1,
     // Outbox cursor (= our own read state on members' messages) is consistent
-    // with unreadCount=1: we have not read this incoming message yet, so leave
-    // read_inbox_max_id at 0 isn't safe (after the user reads it tweb wipes
-    // unread → noIdsDialogs branch fires). Set it to mid - 1 to model "all
-    // prior messages read, this one pending". After the user opens the chat,
-    // unread → 0 and the readInboxMaxId is bumped to mid by other paths.
-    readInboxMaxId: mid > 0 ? mid - 1 : 0,
+    // with unreadCount: for an incoming message we have not read yet, leave
+    // read_inbox_max_id at mid - 1 to model "all prior messages read, this one
+    // pending"; for our own echo everything up to mid is read. (After the user
+    // opens the chat, unread → 0 and the readInboxMaxId is bumped to mid by
+    // other paths.)
+    readInboxMaxId: isOutgoing || mid <= 0 ? mid : mid - 1,
     readOutboxMaxId: mid
   });
   (dialog as any).topMessage = msg;
