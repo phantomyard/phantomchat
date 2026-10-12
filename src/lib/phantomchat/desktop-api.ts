@@ -54,6 +54,12 @@ export interface PhantomChatDesktopApi {
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   getPermissionSettings?(): Promise<PermissionSettings>;
   setPermissionSetting?(permission: string, setting: PermissionSetting): Promise<PermissionSettings>;
+  /**
+   * Reset ALL permission overrides and remembered grants to defaults in one
+   * atomic main-process step (issue #215, review on #216). Optional so an
+   * older packaged bridge degrades instead of throwing.
+   */
+  resetPermissionSettings?(): Promise<PermissionSettings>;
 }
 
 export function getDesktopApi(): PhantomChatDesktopApi | null {

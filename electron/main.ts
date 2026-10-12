@@ -105,7 +105,9 @@ const PERMISSION_LABELS: Record<string, string> = {
   'serial': 'use serial devices',
   'usb': 'use USB devices',
   'window-management': 'manage windows',
-  'file-system': 'read and write files',
+  // Electron 39 emits the camelCase 'fileSystem' permission identifier
+  // (review blocker on #216) — the settings tab's entry must match.
+  'fileSystem': 'read and write files',
   'local-fonts': 'see your installed fonts',
   'sensors': 'use motion sensors',
   'idle-detection': 'watch for idle state',
@@ -170,6 +172,16 @@ ipcMain.handle('desktop:open-external', (_event, url: unknown) => {
 // per-permission overrides ('allow' | 'ask' | 'deny'). Strictly validated —
 // the renderer is untrusted input for our own config file.
 ipcMain.handle('desktop:get-permission-settings', () => permissionSettings);
+// Atomic reset (review blocker on #216): the old renderer-side loop could
+// only clear the 14 visible keys, so "Always allow" grants for unlisted
+// permissions (midiSysex, idle-detection, a future Electron permission)
+// silently survived "Reset to defaults". Main replaces the whole settings
+// object in one step instead.
+ipcMain.handle('desktop:reset-permission-settings', () => {
+  permissionSettings = defaultPermissionSettings();
+  savePermissionSettings();
+  return permissionSettings;
+});
 ipcMain.handle('desktop:set-permission-setting', (_event, permission: unknown, setting: unknown) => {
   if(typeof permission !== 'string' || !/^[a-zA-Z-]{1,64}$/.test(permission)) return permissionSettings;
   if(!isPermissionSetting(setting)) return permissionSettings;
@@ -301,10 +313,12 @@ function createWindow(): void {
   // contract — promptless clipboard, native Allow / Always allow / Deny
   // prompts for everything else, remembered grants, and settings-tab
   // overrides that win over all of it. Foreign origins are denied outright.
-  // Electron 39 requires BOTH handlers — most APIs CHECK first and only
-  // REQUEST after the check passes, so the check handler is not optional
-  // (review blocker on #153). The check is now just the doorbell for the
-  // app origin; the request handler below is the real gate.
+  // Electron 39 requires BOTH handlers — the check handler is not optional
+  // (review blocker on #153). Both apply the SAME policy: the request
+  // handler is the interactive gate (prompt / remembered grant), and the
+  // check handler answers permission queries from the same settings so a
+  // denied or un-granted permission is never reported as granted
+  // (review blocker on #216).
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
     const req = {
       permission,
@@ -324,13 +338,18 @@ function createWindow(): void {
       callback(choice !== 'deny');
     });
   });
+  // The check path mirrors the request policy exactly (review blocker on
+  // #216): navigator.permissions.query reports granted only when the
+  // effective decision is 'allow', so a deny override or an ungranted,
+  // un-promptless permission can never be reported as granted — that is
+  // what keeps a denied permission from bypassing its own denial.
   session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
     return isPermissionCheckAllowed({
       permission,
       requestingOrigin,
       requestingUrl: (details as {requestingUrl?: string}).requestingUrl,
       mediaType: (details as {mediaType?: string}).mediaType
-    }, isDev ? DEV_URL : undefined);
+    }, permissionSettings, isDev ? DEV_URL : undefined);
   });
 
   if(isDev) {

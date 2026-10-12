@@ -108,14 +108,31 @@ export type PermissionCheck = {
  * Synchronous check-side of the policy.
  *
  * Electron 39 requires setPermissionCheckHandler for complete permission
- * handling: most APIs CHECK first and only REQUEST after the check denies,
- * so the check must answer "a request may come" for the app's own origin
- * (review blocker on #153). The real gate is the request handler's prompt —
- * this is just the doorbell. Non-app origins are denied here outright.
+ * handling, and — crucially — the CHECK result is what permission QUERIES
+ * (navigator.permissions.query) report as granted/denied; the request
+ * handler only fires from actual API use. So the check must mirror the
+ * request handler's policy exactly: it answers "granted" (true) only when
+ * the effective decision for this permission is 'allow' — an explicit
+ * allow override, a remembered "Always allow" grant, or one of the
+ * promptless clipboard defaults. A 'prompt' state and an explicit deny
+ * both answer false, otherwise a request handler that would deny or
+ * prompt is silently bypassed and query reports granted (review blocker
+ * on #216). Non-app origins are denied here outright.
  */
-export function isPermissionCheckAllowed(req: PermissionCheck, devUrl?: string): boolean {
-  return isTrustedAppUrl(req.requestingUrl, devUrl)
-    || isTrustedAppUrl(req.requestingOrigin, devUrl);
+export function isPermissionCheckAllowed(
+  req: PermissionCheck,
+  settings: PermissionSettings,
+  devUrl?: string
+): boolean {
+  if(!isTrustedAppUrl(req.requestingUrl, devUrl)
+    && !isTrustedAppUrl(req.requestingOrigin, devUrl)) {
+    return false;
+  }
+  const override = settings.overrides[req.permission];
+  if(override === 'allow') return true;
+  if(override === 'deny') return false;
+  if(settings.granted.includes(req.permission)) return true;
+  return PROMPTLESS_PERMISSIONS.has(req.permission);
 }
 
 // ─── Persistence ─────────────────────────────────────────────

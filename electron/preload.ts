@@ -50,6 +50,12 @@ export interface PhantomChatDesktopApi {
    * truth, not what was sent.
    */
   setPermissionSetting(permission: string, setting: PermissionSetting): Promise<PermissionSettings>;
+  /**
+   * Replace the whole permission settings object (overrides + remembered
+   * grants) with defaults atomically — the only correct "Reset to
+   * defaults", since grants can exist for permissions the tab never lists.
+   */
+  resetPermissionSettings(): Promise<PermissionSettings>;
 }
 
 const api: PhantomChatDesktopApi = {
@@ -67,7 +73,8 @@ const api: PhantomChatDesktopApi = {
   },
   getPermissionSettings: () => ipcRenderer.invoke('desktop:get-permission-settings'),
   setPermissionSetting: (permission: string, setting: PermissionSetting) =>
-    ipcRenderer.invoke('desktop:set-permission-setting', permission, setting)
+    ipcRenderer.invoke('desktop:set-permission-setting', permission, setting),
+  resetPermissionSettings: () => ipcRenderer.invoke('desktop:reset-permission-settings')
 };
 
 contextBridge.exposeInMainWorld('phantomchatDesktop', api);

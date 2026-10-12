@@ -78,34 +78,79 @@ describe('resolvePermissionRequest', () => {
 });
 
 describe('isPermissionCheckAllowed (setPermissionCheckHandler path)', () => {
-  // Electron 39 checks permissions BEFORE requesting them — the check must
-  // answer "a request may come" for the app origin or most APIs never fire a
-  // request at all (review blocker on #153). The real gate is the request
-  // handler's prompt.
-  it('answers yes for the app origin, any permission, any media type', () => {
-    for(const permission of ['media', 'notifications', 'clipboard-read', 'geolocation', 'fullscreen', 'unknown']) {
-      expect(isPermissionCheckAllowed({permission, requestingOrigin: APP_ORIGIN})).toBe(true);
-    }
-    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: APP_ORIGIN, mediaType: 'screen'})).toBe(true);
-    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: APP_ORIGIN})).toBe(true);
+  // The check result is what navigator.permissions.query reports, so it
+  // must mirror the request policy EXACTLY (review blocker on #216): true
+  // only when the effective decision is 'allow', false for both 'prompt'
+  // and 'deny'. Otherwise a request handler that would deny is bypassed.
+  it('answers yes only for effective-allow states: promptless defaults, remembered grants, allow overrides', () => {
+    const settings = defaultPermissionSettings();
+    // Promptless clipboard pair is allowed by default.
+    expect(isPermissionCheckAllowed({permission: 'clipboard-read', requestingOrigin: APP_ORIGIN}, settings)).toBe(true);
+    expect(isPermissionCheckAllowed({permission: 'clipboard-sanitized-write', requestingOrigin: APP_ORIGIN}, settings)).toBe(true);
+    // Remembered "Always allow" grant.
+    const granted = grantAlways(defaultPermissionSettings(), 'media');
+    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: APP_ORIGIN}, granted)).toBe(true);
+    // Explicit allow override, incl. one that beats a recorded grant.
+    const allow: PermissionSettings = {...defaultPermissionSettings(), overrides: {'geolocation': 'allow'}};
+    expect(isPermissionCheckAllowed({permission: 'geolocation', requestingOrigin: APP_ORIGIN}, allow)).toBe(true);
+    const allowGrant: PermissionSettings = {...defaultPermissionSettings(), overrides: {'midi': 'allow'}, granted: ['midi']};
+    expect(isPermissionCheckAllowed({permission: 'midi', requestingOrigin: APP_ORIGIN}, allowGrant)).toBe(true);
   });
 
-  it('denies foreign origins on the check path', () => {
+  // Integration-level regression for the #216 review blocker: with the old
+  // origin-only check, an app-origin geolocation with a deny request
+  // handler reported navigator.permissions.query as 'granted' and the
+  // request handler was never called. The check must NOT report granted
+  // for a denied or un-granted ('ask') permission.
+  it('never reports granted for a denied or ask (un-granted, promptless-default) permission', () => {
+    const deny: PermissionSettings = {...defaultPermissionSettings(), overrides: {'geolocation': 'deny'}};
+    expect(isPermissionCheckAllowed({permission: 'geolocation', requestingOrigin: APP_ORIGIN}, deny)).toBe(false);
+    // 'ask' = no override, no grant, not promptless: the default state for
+    // media/notifications/geolocation/etc.
+    expect(isPermissionCheckAllowed({permission: 'geolocation', requestingOrigin: APP_ORIGIN}, defaultPermissionSettings())).toBe(false);
+    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: APP_ORIGIN, mediaType: 'screen'}, defaultPermissionSettings())).toBe(false);
+    expect(isPermissionCheckAllowed({permission: 'notifications', requestingOrigin: APP_ORIGIN}, defaultPermissionSettings())).toBe(false);
+    // An explicit deny even beats a remembered grant (tab wins).
+    const denyBeatsGrant: PermissionSettings = {...defaultPermissionSettings(), overrides: {'media': 'deny'}, granted: ['media']};
+    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: APP_ORIGIN}, denyBeatsGrant)).toBe(false);
+    // Turning OFF the promptless clipboard default is honoured too.
+    const clipboardOff: PermissionSettings = {...defaultPermissionSettings(), overrides: {'clipboard-read': 'deny'}};
+    expect(isPermissionCheckAllowed({permission: 'clipboard-read', requestingOrigin: APP_ORIGIN}, clipboardOff)).toBe(false);
+  });
+
+  it('denies foreign origins on the check path, regardless of settings', () => {
+    const allow: PermissionSettings = {...defaultPermissionSettings(), overrides: {'media': 'allow'}};
     for(const requestingOrigin of ['https://evil.example', 'app://localhost.evil', 'file://', 'null', undefined]) {
-      expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin, mediaType: 'audio'})).toBe(false);
-      expect(isPermissionCheckAllowed({permission: 'notifications', requestingOrigin})).toBe(false);
+      expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin, mediaType: 'audio'}, defaultPermissionSettings())).toBe(false);
+      expect(isPermissionCheckAllowed({permission: 'notifications', requestingOrigin}, defaultPermissionSettings())).toBe(false);
+      expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin}, allow)).toBe(false);
     }
   });
 
   it('trusts the dev server origin in dev only, on both handler paths', () => {
-    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: 'http://localhost:8080', mediaType: 'audio'}, DEV)).toBe(true);
-    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: 'http://localhost:8080', mediaType: 'audio'})).toBe(false);
-    expect(isPermissionCheckAllowed({permission: 'notifications', requestingOrigin: 'http://localhost:9999'}, DEV)).toBe(false);
+    const granted = grantAlways(defaultPermissionSettings(), 'media');
+    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: 'http://localhost:8080', mediaType: 'audio'}, granted, DEV)).toBe(true);
+    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: 'http://localhost:8080', mediaType: 'audio'}, granted)).toBe(false);
+    expect(isPermissionCheckAllowed({permission: 'notifications', requestingOrigin: 'http://localhost:9999'}, granted, DEV)).toBe(false);
   });
 
   it('a full requestingUrl vouches on the check path too, when present', () => {
-    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: 'null', requestingUrl: APP, mediaType: 'audio'})).toBe(true);
-    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: 'null', requestingUrl: 'https://evil.example/', mediaType: 'audio'})).toBe(false);
+    const granted = grantAlways(defaultPermissionSettings(), 'media');
+    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: 'null', requestingUrl: APP, mediaType: 'audio'}, granted)).toBe(true);
+    expect(isPermissionCheckAllowed({permission: 'media', requestingOrigin: 'null', requestingUrl: 'https://evil.example/', mediaType: 'audio'}, granted)).toBe(false);
+  });
+
+  it('uses the exact Electron 39 permission identifier for file access (fileSystem, not file-system)', () => {
+    // Electron emits 'fileSystem' camelCase; a kebab-case key would store an
+    // override Electron never consults (review blocker on #216).
+    const deny: PermissionSettings = {...defaultPermissionSettings(), overrides: {'fileSystem': 'deny'}};
+    expect(isPermissionCheckAllowed({permission: 'fileSystem', requestingOrigin: APP_ORIGIN}, deny)).toBe(false);
+    expect(isPermissionCheckAllowed({permission: 'fileSystem', requestingOrigin: APP_ORIGIN}, defaultPermissionSettings())).toBe(false);
+    const allow: PermissionSettings = {...defaultPermissionSettings(), overrides: {'fileSystem': 'allow'}};
+    expect(isPermissionCheckAllowed({permission: 'fileSystem', requestingOrigin: APP_ORIGIN}, allow)).toBe(true);
+    // The request path must agree on the identifier.
+    expect(resolvePermissionRequest({permission: 'fileSystem', requestingUrl: APP}, allow)).toBe('allow');
+    expect(resolvePermissionRequest({permission: 'fileSystem', requestingUrl: APP}, defaultPermissionSettings())).toBe('prompt');
   });
 });
 

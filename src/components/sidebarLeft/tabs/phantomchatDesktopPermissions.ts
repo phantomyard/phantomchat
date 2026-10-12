@@ -42,7 +42,9 @@ const PERMISSION_ENTRIES: PermissionEntry[] = [
   {permission: 'notifications', title: 'Notifications', subtitle: 'New-message notifications.'},
   {permission: 'display-capture', title: 'Screen capture', subtitle: 'Sharing your screen in calls.'},
   {permission: 'geolocation', title: 'Location', subtitle: 'Your device location.'},
-  {permission: 'file-system', title: 'File access', subtitle: 'Reading and writing files you pick.'},
+  // Electron 39 emits the camelCase 'fileSystem' identifier (review
+  // blocker on #216) — must match electron/main.ts's PERMISSION_LABELS.
+  {permission: 'fileSystem', title: 'File access', subtitle: 'Reading and writing files you pick.'},
   {permission: 'midi', title: 'MIDI', subtitle: 'MIDI devices (in/out).'},
   {permission: 'hid', title: 'HID devices', subtitle: 'Human-interface devices (gamepads, etc.).'},
   {permission: 'serial', title: 'Serial devices', subtitle: 'Serial-port devices.'},
@@ -139,11 +141,13 @@ export default class AppPhantomChatDesktopPermissionsTab extends SliderSuperTab 
   }
 
   private async onReset() {
-    if(!this.api?.setPermissionSetting) return;
+    // Main-process reset (review blocker on #216): replaces the whole
+    // settings object — overrides AND remembered grants, including for
+    // permissions this tab doesn't list — with defaults atomically. A
+    // per-key loop here could never clear grants it can't see.
+    if(typeof this.api?.resetPermissionSettings !== 'function') return;
     try {
-      for(const {entry} of this.rows) {
-        await this.api.setPermissionSetting(entry.permission, 'ask');
-      }
+      await this.api.resetPermissionSettings();
       await this.refresh();
       toast('Permissions reset to defaults');
     } catch(err) {
