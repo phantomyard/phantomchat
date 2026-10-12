@@ -13,7 +13,11 @@
     <meta name="msapplication-TileColor" content="#2d89ef">
     <meta name="msapplication-TileImage" content="assets/img/mstile-144x144.png?v=jw3mK7G9Ry">
     <meta name="msapplication-config" content="browserconfig.xml?v=jw3mK7G9Ry">
-    <meta name="theme-color" content="#ffffff">
+    <!-- #213: media-scoped pair so the PWA title bar matches the system
+         color-scheme before the app boots; themeController collapses this
+         to a single unscoped meta once the real palette color is known. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14161D">
     <meta name="color-scheme" content="light">
     <meta name="google" content="notranslate">
     <!-- <meta name="robots" content="noindex"> -->
