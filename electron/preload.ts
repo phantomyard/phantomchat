@@ -7,8 +7,9 @@
  */
 import {contextBridge, ipcRenderer} from 'electron';
 import type {UpdateState} from './updater';
+import type {PermissionSettings, PermissionSetting} from './permissions';
 
-export type {UpdateState};
+export type {UpdateState, PermissionSettings, PermissionSetting};
 
 export interface PhantomChatDesktopApi {
   /** Installed app version (electron app version, e.g. "1.0.42"). */
@@ -41,6 +42,14 @@ export interface PhantomChatDesktopApi {
    * the raw IpcRendererEvent is deliberately not forwarded.
    */
   onUpdateState(listener: (state: UpdateState) => void): () => void;
+  /** Current permission overrides + remembered grants (issue #215). */
+  getPermissionSettings(): Promise<PermissionSettings>;
+  /**
+   * Set one permission's setting ('allow' | 'ask' | 'deny'). The main
+   * process validates both arguments; the returned state is the source of
+   * truth, not what was sent.
+   */
+  setPermissionSetting(permission: string, setting: PermissionSetting): Promise<PermissionSettings>;
 }
 
 const api: PhantomChatDesktopApi = {
@@ -55,7 +64,10 @@ const api: PhantomChatDesktopApi = {
     const handler = (_event: unknown, state: UpdateState) => listener(state);
     ipcRenderer.on('desktop:update-state', handler);
     return () => ipcRenderer.removeListener('desktop:update-state', handler);
-  }
+  },
+  getPermissionSettings: () => ipcRenderer.invoke('desktop:get-permission-settings'),
+  setPermissionSetting: (permission: string, setting: PermissionSetting) =>
+    ipcRenderer.invoke('desktop:set-permission-setting', permission, setting)
 };
 
 contextBridge.exposeInMainWorld('phantomchatDesktop', api);

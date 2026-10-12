@@ -26,6 +26,7 @@ import Button from '@components/button';
 import InputField from '@components/inputField';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import {putPreloader} from '@components/putPreloader';
+import {copyTextToClipboard} from '@helpers/clipboard';
 
 import './onboarding.css';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
@@ -162,7 +163,7 @@ export class PhantomChatOnboarding {
     const btnCopy = Button('btn-primary btn-secondary btn-primary-transparent primary');
     btnCopy.textContent = 'Copy npub';
     btnCopy.addEventListener('click', () => {
-      navigator.clipboard.writeText(npub);
+      copyTextToClipboard(npub);
       btnCopy.textContent = 'Copied!';
       setTimeout(() => {
         btnCopy.textContent = 'Copy npub';

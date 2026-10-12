@@ -12,6 +12,7 @@ import CheckboxField from '@components/checkboxField';
 import AppPhantomChatSecurityTab from '@components/sidebarLeft/tabs/phantomchatSecurity';
 import AppPhantomChatSeedPhraseTab from '@components/sidebarLeft/tabs/phantomchatSeedPhrase';
 import {getReadReceiptsEnabled, setReadReceiptsEnabledSetting} from '@lib/phantomchat/read-receipts-setting';
+import {hasDesktopPermissionApi} from '@lib/phantomchat/desktop-api';
 
 export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
   public static getInitArgs(fromTab: SliderSuperTab) {
@@ -101,6 +102,26 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTab {
       readReceiptsRow.container,
       relayPrivacyRow.container
     );
+
+
+    // Desktop only (issue #215): per-permission device-access toggles. The
+    // PWA already lives inside the browser's own permission model, so the
+    // row exists only when the Electron permission API is in the preload.
+    if(hasDesktopPermissionApi()) {
+      const permissionsRow = new Row({
+        title: 'App Permissions',
+        subtitle: 'What phantomchat may access on this device (clipboard, camera, devices)',
+        icon: 'lock',
+        clickable: async() => {
+          const {default: AppPhantomChatDesktopPermissionsTab} =
+            await import('@components/sidebarLeft/tabs/phantomchatDesktopPermissions');
+          const tab = this.slider.createTab(AppPhantomChatDesktopPermissionsTab);
+          tab.open();
+        },
+        listenerSetter: this.listenerSetter
+      });
+      privacySection.content.append(permissionsRow.container);
+    }
 
     // Section 3: Danger Zone
     const dangerSection = new SettingSection({

@@ -10,12 +10,21 @@
  *    see build.mjs), navigation away from app:// is blocked, window.open is
  *    denied and vetted https links are handed to the OS browser
  */
-import {app, BrowserWindow, session, shell, protocol, net, ipcMain} from 'electron';
-import {readFileSync, existsSync} from 'fs';
+import {app, BrowserWindow, session, shell, protocol, net, ipcMain, dialog} from 'electron';
+import {readFileSync, writeFileSync, renameSync, mkdirSync, existsSync} from 'fs';
 import {join, normalize, relative, isAbsolute, extname} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
-import {isPermissionAllowed, isPermissionCheckAllowed} from './permissions';
+import {
+  resolvePermissionRequest,
+  isPermissionCheckAllowed,
+  parsePermissionSettings,
+  defaultPermissionSettings,
+  grantAlways,
+  PERMISSION_SETTINGS_FILE,
+  isPermissionSetting,
+  type PermissionSettings
+} from './permissions';
 import {initUpdater} from './updater';
 
 // NOTE: this module is bundled to CommonJS by electron/build.mjs, so the
@@ -53,6 +62,98 @@ if(!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
+// Permission prompt policy state (issue #215). Lives in userData, same
+// contract as the update-ring file: unreadable degrades to defaults.
+let permissionSettings: PermissionSettings = defaultPermissionSettings();
+
+function permissionSettingsPath(): string {
+  return join(app.getPath('userData'), PERMISSION_SETTINGS_FILE);
+}
+
+function loadPermissionSettings(): void {
+  try {
+    permissionSettings = parsePermissionSettings(JSON.parse(readFileSync(permissionSettingsPath(), 'utf8')));
+  } catch{
+    permissionSettings = defaultPermissionSettings();
+  }
+}
+
+function savePermissionSettings(): void {
+  const filePath = permissionSettingsPath();
+  const tempPath = filePath + '.tmp';
+  try {
+    mkdirSync(app.getPath('userData'), {recursive: true});
+    writeFileSync(tempPath, JSON.stringify(permissionSettings, null, 2));
+    renameSync(tempPath, filePath);
+  } catch(err) {
+    console.error('could not persist permission settings', err);
+  }
+}
+
+// Human labels for the permission prompt. Unknown permissions fall back to
+// the raw Chromium name.
+const PERMISSION_LABELS: Record<string, string> = {
+  'media': 'use your microphone and camera',
+  'clipboard-read': 'read your clipboard',
+  'clipboard-sanitized-write': 'copy to your clipboard',
+  'notifications': 'show notifications',
+  'geolocation': 'know your location',
+  'display-capture': 'capture your screen',
+  'midi': 'use MIDI devices',
+  'midiSysex': 'send full MIDI messages',
+  'hid': 'use HID devices',
+  'serial': 'use serial devices',
+  'usb': 'use USB devices',
+  'window-management': 'manage windows',
+  'file-system': 'read and write files',
+  'local-fonts': 'see your installed fonts',
+  'sensors': 'use motion sensors',
+  'idle-detection': 'watch for idle state',
+  'persistent-storage': 'keep persistent storage'
+};
+
+/**
+ * Native permission prompt (issue #215): Electron shows no Chrome permission
+ * bubbles, so the request handler pops a real dialog instead. 'Allow' once,
+ * 'Always allow' persists to permissions.json, Esc/window-close denies.
+ * Prompts are serialized so two simultaneous requests cannot stack dialogs.
+ */
+let promptChain: Promise<unknown> = Promise.resolve();
+
+function promptForPermission(
+  permission: string,
+  mediaTypes?: string[]
+): Promise<'allow' | 'always' | 'deny'> {
+  const ask = async(): Promise<'allow' | 'always' | 'deny'> => {
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    let what = PERMISSION_LABELS[permission] ?? `access "${permission}"`;
+    if(permission === 'media' && mediaTypes?.length) {
+      const types = mediaTypes.includes('screen') ? 'your screen'
+        : mediaTypes.includes('video') ? 'your camera'
+          : mediaTypes.includes('audio') ? 'your microphone' : 'media devices';
+      what = `use ${types}`;
+    }
+    try {
+      const {response} = await dialog.showMessageBox(win!, {
+        type: 'question',
+        message: `phantomchat wants to ${what}`,
+        detail: 'You can change this later in Settings → Privacy & Security → Permissions.',
+        buttons: ['Allow', 'Always allow', 'Deny'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true
+      });
+      return response === 0 ? 'allow' : response === 1 ? 'always' : 'deny';
+    } catch(err) {
+      console.error('permission prompt failed', err);
+      return 'deny';
+    }
+  };
+  const result = promptChain.then(ask, ask);
+  promptChain = result.catch(() => 'deny');
+  return result;
+}
+
 let mainWindow: BrowserWindow | null = null;
 // The strict CSP, resolved once at startup (throws — fail closed — when the
 // packaged CSP is broken). createWindow consumes it after whenReady.
@@ -63,6 +164,25 @@ ipcMain.handle('desktop:get-version', () => app.getVersion());
 ipcMain.handle('desktop:get-platform', () => process.platform);
 ipcMain.handle('desktop:open-external', (_event, url: unknown) => {
   if(typeof url === 'string') handOffToBrowser(url);
+});
+
+// Permission settings (issue #215): read for the Permissions tab, and
+// per-permission overrides ('allow' | 'ask' | 'deny'). Strictly validated —
+// the renderer is untrusted input for our own config file.
+ipcMain.handle('desktop:get-permission-settings', () => permissionSettings);
+ipcMain.handle('desktop:set-permission-setting', (_event, permission: unknown, setting: unknown) => {
+  if(typeof permission !== 'string' || !/^[a-zA-Z-]{1,64}$/.test(permission)) return permissionSettings;
+  if(!isPermissionSetting(setting)) return permissionSettings;
+  if(setting === 'ask') {
+    delete permissionSettings.overrides[permission];
+    permissionSettings.granted = permissionSettings.granted.filter((p) => p !== permission);
+  } else {
+    permissionSettings.overrides[permission] = setting;
+    // An override makes any remembered grant from the prompt redundant.
+    permissionSettings.granted = permissionSettings.granted.filter((p) => p !== permission);
+  }
+  savePermissionSettings();
+  return permissionSettings;
 });
 
 function serveFromDisk(filePath: string): Response {
@@ -177,17 +297,32 @@ function createWindow(): void {
     }
   });
 
-  // Default-deny permissions: only mic, camera and notifications, and only
-  // for the app's own pages (see permissions.ts). Electron 39 requires BOTH
-  // handlers for a complete boundary — most APIs CHECK first and only REQUEST
-  // after a check denies, so the check handler is not optional (review
-  // blocker on #153).
+  // Permission policy (issue #215): the app's own pages get the local-app
+  // contract — promptless clipboard, native Allow / Always allow / Deny
+  // prompts for everything else, remembered grants, and settings-tab
+  // overrides that win over all of it. Foreign origins are denied outright.
+  // Electron 39 requires BOTH handlers — most APIs CHECK first and only
+  // REQUEST after the check passes, so the check handler is not optional
+  // (review blocker on #153). The check is now just the doorbell for the
+  // app origin; the request handler below is the real gate.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
-    callback(isPermissionAllowed({
+    const req = {
       permission,
       requestingUrl: details.requestingUrl,
       mediaTypes: (details as {mediaTypes?: string[]}).mediaTypes
-    }, isDev ? DEV_URL : undefined));
+    };
+    const decision = resolvePermissionRequest(req, permissionSettings, isDev ? DEV_URL : undefined);
+    if(decision !== 'prompt') {
+      callback(decision === 'allow');
+      return;
+    }
+    void promptForPermission(permission, req.mediaTypes).then((choice) => {
+      if(choice === 'always') {
+        grantAlways(permissionSettings, permission);
+        savePermissionSettings();
+      }
+      callback(choice !== 'deny');
+    });
   });
   session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
     return isPermissionCheckAllowed({
@@ -220,6 +355,7 @@ app.whenReady().then(() => {
   // Resolved before anything is served — a broken packaged CSP aborts the
   // boot instead of starting an unprotected renderer.
   activeCsp = getCsp();
+  loadPermissionSettings();
   if(!isDev) {
     protocol.handle('app', (request) => serveFile(new URL(request.url)));
   }
