@@ -7,7 +7,6 @@
 import type {AppTheme} from '@config/state';
 import type {Theme} from '@layer';
 import type AppBackgroundTab from '@components/sidebarLeft/tabs/background';
-import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import rootScope from '@lib/rootScope';
 import {changeColorAccent, ColorRgb, getAccentColor, getAverageColor, getRgbColorFromTelegramColor, hexToRgb, hslaStringToHex, hslaStringToRgba, hslaToRgba, hsvToRgb, mixColors, rgbaToHexa, rgbaToHsla, rgbToHsv} from '@helpers/color';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -16,6 +15,7 @@ import {TelegramWebViewTheme} from '@types';
 import windowSize from '@helpers/windowSize';
 import liteMode from '@helpers/liteMode';
 import {useAppSettings} from '@stores/appSettings';
+import {applyThemeColorToMeta} from '@helpers/themeColorMeta';
 import {logger} from '@lib/logger';
 import pause from '@helpers/schedulers/pause';
 import Transitions, {getTransition} from '@config/transitions';
@@ -116,7 +116,6 @@ const log = logger('THEME');
 
 export class ThemeController {
   private themeColor: string;
-  private _themeColorElem: Element;
   private systemTheme: AppTheme['name'];
   private styleElement: HTMLStyleElement;
   public AppBackgroundTab: typeof AppBackgroundTab;
@@ -141,23 +140,12 @@ export class ThemeController {
     });
   }
 
-  private get themeColorElem() {
-    if(this._themeColorElem !== undefined) {
-      return this._themeColorElem;
-    }
-
-    return this._themeColorElem = document.head.querySelector('[name="theme-color"]') as Element || null;
-  }
-
   public setThemeColor(color = this.themeColor) {
     if(!color) {
       color = this.isNight() ? '#14161D' : '#ffffff';
     }
 
-    const themeColorElem = this.themeColorElem;
-    if(themeColorElem) {
-      themeColorElem.setAttribute('content', color);
-    }
+    applyThemeColorToMeta(document.head, color);
   }
 
   public setThemeListener() {
@@ -207,7 +195,7 @@ export class ThemeController {
     element.style.setProperty('--message-highlighting-color-rgb', highlightingRgba.slice(0, 3).join(','));
     element.style.setProperty('--message-highlighting-alpha', '' + highlightingRgba[3] / 255);
 
-    if(!IS_TOUCH_SUPPORTED && hsla) {
+    if(hsla) {
       this.themeColor = hslaStringToHex(hsla);
     }
   }
@@ -220,6 +208,10 @@ export class ThemeController {
     colorScheme?.setAttribute('content', isNight ? 'dark' : 'light');
 
     document.documentElement.classList.toggle('night', isNight);
+    // Compute the theme palette color BEFORE painting the title bar meta,
+    // so a fresh launch gets the palette color immediately (#213) instead
+    // of only after the next theme toggle.
+    this.applyHighlightingColor();
     this.setThemeColor();
     const theme = this.getTheme();
     this.applyTheme(theme);
@@ -234,7 +226,6 @@ export class ThemeController {
     this.applyTheme(rootScope.settings.themes.find((theme) => theme.name === 'night'), e, true);
     style.textContent = `.night {${e.style.cssText}}`;
 
-    this.applyHighlightingColor();
     !silent && rootScope.dispatchEventSingle('theme_changed');
     _log('end');
   }
