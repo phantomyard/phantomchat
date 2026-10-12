@@ -4,6 +4,7 @@ import Icons from '@/icons';
 
 import Scrollable from '@components/scrollable2';
 import {IconTsx} from '@components/iconTsx';
+import {copyTextToClipboard} from '@helpers/clipboard';
 
 import styles from '@components/iconLibrary/iconLibrary.module.scss';
 
@@ -23,7 +24,9 @@ const IconLibrary: Component<{}> = () => {
   };
 
   const onClick = (icon: Icon) => {
-    navigator.clipboard.writeText(icon).then(() => {
+    // Shared helper (issue #215, review on #216): execCommand fallback
+    // covers clipboard-write being denied; a raw writeText silently no-ops.
+    void copyTextToClipboard(icon).then(() => {
       setCopied(true);
 
       self.clearTimeout(timeout);

@@ -3,6 +3,7 @@ import type QRCodeStylingType from 'qr-code-styling';
 import classNames from '@helpers/string/classNames';
 import usePhantomChatIdentity from '@stores/phantomchatIdentity';
 import {getAvatarForQR} from '@lib/phantomchat/avatar-for-qr';
+import {copyTextToClipboard} from '@helpers/clipboard';
 import styles from './key-exchange.module.scss';
 
 export interface KeyExchangeProps {
@@ -73,13 +74,12 @@ export default function KeyExchange(props: KeyExchangeProps) {
   const handleCopy = async() => {
     const currentNpub = npub();
     if(!currentNpub) return;
-    try {
-      await navigator.clipboard.writeText(currentNpub);
-      setCopied(true);
-      copiedTimeout = setTimeout(() => setCopied(false), 2000);
-    } catch(err) {
-      console.warn('[KeyExchange] copy failed', err);
-    }
+    // copyTextToClipboard (issue #215): routed through the shared helper so
+    // the execCommand fallback covers clipboard-write being denied — a raw
+    // writeText here would fail silently once "Write clipboard" is off.
+    await copyTextToClipboard(currentNpub);
+    setCopied(true);
+    copiedTimeout = setTimeout(() => setCopied(false), 2000);
   };
 
   const handleShare = async() => {

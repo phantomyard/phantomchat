@@ -9,6 +9,7 @@ import EditPeer from '@components/editPeer';
 import {i18n, i18n_, LangPackKey} from '@lib/langPack';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import rootScope from '@lib/rootScope';
+import {copyTextToClipboard} from '@helpers/clipboard';
 import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
 import SettingSection, {generateSection} from '@components/settingSection';
 import Row from '@components/row';
@@ -175,7 +176,10 @@ export default class AppEditProfileTab extends SliderSuperTab {
       subtitle: 'Your Nostr public key (npub)',
       icon: 'copy',
       clickable: () => {
-        navigator.clipboard.writeText(npubValue).then(() => toast('Copied to clipboard'));
+        // copyTextToClipboard has an execCommand fallback — a raw
+        // navigator.clipboard.writeText() rejects hard when the Electron
+        // permission layer denies clipboard-sanitized-write (issue #215).
+        copyTextToClipboard(npubValue).then(() => toast('Copied to clipboard'));
       },
       listenerSetter: this.listenerSetter
     });

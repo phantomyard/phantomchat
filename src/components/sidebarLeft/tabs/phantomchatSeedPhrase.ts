@@ -11,6 +11,7 @@ import SettingSection from '@components/settingSection';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import Button from '@components/button';
 import {toast} from '@components/toast';
+import {copyTextToClipboard} from '@helpers/clipboard';
 import usePhantomChatIdentity from '@stores/phantomchatIdentity';
 import {
   deriveKeyFromPin,
@@ -203,7 +204,7 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
       const copyBtn = Button('btn-primary btn-color-primary seed-copy-btn');
       copyBtn.textContent = 'Copy';
       copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(seed).then(() => {
+        copyTextToClipboard(seed).then(() => {
           copyBtn.textContent = 'Copied!';
           setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
           toast('Recovery phrase copied');
@@ -262,7 +263,7 @@ export default class AppPhantomChatSeedPhraseTab extends SliderSuperTab {
     nsecCopyBtn.style.cssText = 'margin-top:0.5rem';
     nsecCopyBtn.textContent = 'Copy nsec';
     nsecCopyBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(nsec).then(() => {
+      copyTextToClipboard(nsec).then(() => {
         nsecCopyBtn.textContent = 'Copied!';
         setTimeout(() => { nsecCopyBtn.textContent = 'Copy nsec'; }, 1500);
         toast('Private key (nsec) copied');

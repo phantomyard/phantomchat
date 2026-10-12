@@ -36,6 +36,13 @@ export interface UpdateState {
   error: string | null;
 }
 
+export type PermissionSetting = 'ask' | 'allow' | 'deny';
+
+export interface PermissionSettings {
+  overrides: Record<string, PermissionSetting>;
+  granted: string[];
+}
+
 export interface PhantomChatDesktopApi {
   getVersion(): Promise<string>;
   getPlatform(): Promise<string>;
@@ -45,6 +52,14 @@ export interface PhantomChatDesktopApi {
   checkForUpdates(): Promise<UpdateState>;
   installUpdate(): Promise<boolean>;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
+  getPermissionSettings?(): Promise<PermissionSettings>;
+  setPermissionSetting?(permission: string, setting: PermissionSetting): Promise<PermissionSettings>;
+  /**
+   * Reset ALL permission overrides and remembered grants to defaults in one
+   * atomic main-process step (issue #215, review on #216). Optional so an
+   * older packaged bridge degrades instead of throwing.
+   */
+  resetPermissionSettings?(): Promise<PermissionSettings>;
 }
 
 export function getDesktopApi(): PhantomChatDesktopApi | null {
@@ -55,6 +70,17 @@ export function getDesktopApi(): PhantomChatDesktopApi | null {
 /** True only inside the packaged Electron app; false in the PWA. */
 export function isDesktopApp(): boolean {
   return getDesktopApi() !== null;
+}
+
+/**
+ * True when this desktop build's preload exposes the permission-settings API
+ * (issue #215). Older installs have the bridge but not these methods.
+ */
+export function hasDesktopPermissionApi(): boolean {
+  const api = getDesktopApi();
+  return !!api &&
+    typeof api.getPermissionSettings === 'function' &&
+    typeof api.setPermissionSetting === 'function';
 }
 
 /**
