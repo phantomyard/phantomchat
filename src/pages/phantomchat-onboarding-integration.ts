@@ -34,7 +34,7 @@ import {CrdtSync} from '@lib/phantomchat/crdt-sync';
 import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTACTS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/contacts-sync-adapter';
 import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
-import {markChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
+import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
 import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
 import {getAllMappings, getMapping, setMappingDisplayName, setMappingUpdatedAt, setDeliberateAddAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
 import {getMessageStore} from '@lib/phantomchat/message-store';
@@ -188,11 +188,22 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // fire first and recreate the black gap this fix eliminates.
       await pageIm.default.mount();
 
-      // Chat UI is rendered — dismiss the boot splash so the user sees the
-      // app instead of the loading screen. This is the authoritative dismiss
-      // for the cold-start path; the splash stays visible through all the
-      // heavy init work above (identity decrypt, bridge, VMT, pageIm import).
-      requestAnimationFrame(() => (window as any).__hideBootSplash?.());
+      // Cold-start ready gate (#217) — the authoritative dismissal for the
+      // identity flow. The chat UI is rendered here, but its DATA is not yet
+      // wired: ChatAPI, read-state sync and the preview populate all start
+      // further down this function, and they are exactly what the gate waits
+      // on ('read-state' marks on the first read-state reconcile settle,
+      // 'previews' marks when the launch-dialogs preview populate finishes).
+      // So the dismissal is SCHEDULED here — not fired — and runs once both
+      // signals land (or READY_TIMEOUT_MS lifts it, so a dead relay or a
+      // mid-boot failure can never wedge the splash). Scheduling instead of
+      // awaiting keeps the init below flowing while the splash holds; the
+      // chat list then paints ready-loaded and synced instead of
+      // empty-then-populate. (Review round 1, kaieriksen: the gate originally
+      // lived only in index.ts's fallback branches — unreachable here.)
+      void whenChatListReady().then(() => {
+        requestAnimationFrame(() => (window as any).__hideBootSplash?.());
+      });
 
       // Kick off background relay fetch to pick up edits made from other devices.
       refreshOwnProfileFromRelaysFn?.(identity.publicKey).catch((err) => {
