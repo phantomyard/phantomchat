@@ -307,7 +307,14 @@ function setRootClasses() {
 
 function onInstanceDeactivated(reason: InstanceDeactivateReason) {
   const onVersionClick = () => {
-    appNavigationController.reload();
+    // #223: a plain reload re-serves the stale bundle from the same SW/HTTP
+    // caches and this overlay loops forever. Recover deterministically:
+    // unregister the service workers, clear the app-shell caches, then
+    // navigate cache-busted. Falls back to a plain reload only if the
+    // update-checker module cannot load at all.
+    import('@lib/phantomchat/phantomchat-update-checker')
+    .then(({hardReloadClearingCaches}) => hardReloadClearingCaches())
+    .catch(() => appNavigationController.reload());
   };
 
   const onTabsClick = () => {

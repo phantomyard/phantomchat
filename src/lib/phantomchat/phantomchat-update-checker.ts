@@ -47,6 +47,35 @@ function currentVersion(): string {
  * reload, because a reload with a partially-cleared cache still beats a stale
  * bundle.
  */
+export const CACHE_BUST_PARAM = 'pc_cb';
+
+/**
+ * Build a cache-busted navigation target — a URL the HTTP cache has never
+ * seen. The app shell is served with `max-age=600`, so `location.reload()` can
+ * re-serve the exact stale shell the version-yield overlay just rejected,
+ * looping "click to reload" forever (#223). A fresh query value forces the
+ * navigation to hit the network instead of the cache.
+ */
+export function cacheBustedHref(href: string, now: number = Date.now()): string {
+  const url = new URL(href);
+  url.searchParams.set(CACHE_BUST_PARAM, String(now));
+  return url.href;
+}
+
+/**
+ * Remove the cache-bust marker from a URL after landing. Keeps the marker
+ * from lingering in the address bar across later plain reloads. Returns the
+ * input unchanged when no marker is present.
+ */
+export function stripCacheBustParam(href: string): string {
+  const url = new URL(href);
+  if(!url.searchParams.has(CACHE_BUST_PARAM)) {
+    return href;
+  }
+  url.searchParams.delete(CACHE_BUST_PARAM);
+  return url.href;
+}
+
 export async function hardReloadClearingCaches(): Promise<void> {
   try {
     if(typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
@@ -68,9 +97,11 @@ export async function hardReloadClearingCaches(): Promise<void> {
     log.error('cache clear failed', err);
   }
 
-  // With the SW gone and CacheStorage emptied, a normal reload fetches a fresh
-  // index.html + bundle from the network.
-  location.reload();
+  // With the SW gone and CacheStorage emptied, navigate to a cache-busted URL
+  // so even the HTTP cache cannot re-serve the old shell — a plain
+  // location.reload() is exactly the loop that bricked #223 behind the
+  // version-yield overlay.
+  location.replace(cacheBustedHref(location.href));
 }
 
 /**
@@ -139,6 +170,16 @@ function showUpdatePill(latest: string): void {
 export function startUpdateChecker(): void {
   if(started) return;
   started = true;
+  // A previous hard reload lands on ?pc_cb=... — drop the marker so it does
+  // not linger in the URL across later reloads.
+  try {
+    const cleaned = stripCacheBustParam(location.href);
+    if(cleaned !== location.href) {
+      history.replaceState(history.state, '', cleaned);
+    }
+  } catch(err) {
+    log.error('cache-bust param strip failed', err);
+  }
   setTimeout(() => {
     void checkOnce();
     setInterval(() => void checkOnce(), POLL_INTERVAL_MS);
