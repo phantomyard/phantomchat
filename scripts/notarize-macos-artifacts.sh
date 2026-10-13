@@ -33,13 +33,19 @@ notarize() {
   local artifact="$1"
   local response submission_id
 
-  # Submit once and retry only the wait by id. A lost wait connection must not
-  # create a duplicate notarization submission for bytes Apple already has.
-  response="$(retry xcrun notarytool submit "$artifact" \
+  # Submit exactly once per run — never retried, so a lost connection can
+  # neither resubmit bytes Apple already accepted nor merge two attempts'
+  # stdout into one unparseable response. A submit-phase flake fails the job;
+  # the rerun starts at macos-notarize and reuses the exact signed bytes from
+  # macos-package. Only the wait is retried, by submission id.
+  if ! response="$(xcrun notarytool submit "$artifact" \
     --apple-id "$APPLE_ID" \
     --password "$APPLE_APP_SPECIFIC_PASSWORD" \
     --team-id "$APPLE_TEAM_ID" \
-    --output-format json)"
+    --output-format json)"; then
+    echo "notarytool submit failed (single-shot by design); rerun reuses the signed artifacts" >&2
+    return 1
+  fi
   submission_id="$(jq -er '.id' <<<"$response")" \
     || { echo "notarytool returned no submission id: $response" >&2; return 1; }
   retry xcrun notarytool wait "$submission_id" \
