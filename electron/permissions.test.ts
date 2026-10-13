@@ -16,7 +16,8 @@ import {
   PROMPTLESS_PERMISSIONS,
   PERMISSION_SETTINGS_FILE,
   isPermissionSetting,
-  type PermissionSettings
+  type PermissionSettings,
+  type PermissionSetting
 } from './permissions';
 
 const APP = 'app://localhost/index.html';
@@ -188,7 +189,7 @@ describe('parsePermissionSettings (defensive JSON parse)', () => {
  * mic/camera, no notifications) with no discoverable fix.
  */
 describe('parsePermissionSettings — #219 loop-corruption repair', () => {
-  const loopCorrupted = {
+  const loopCorrupted: {overrides: Record<string, PermissionSetting>, granted: string[]} = {
     overrides: {
       'clipboard-read': 'allow',
       'clipboard-sanitized-write': 'allow',
