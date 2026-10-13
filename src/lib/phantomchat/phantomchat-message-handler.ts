@@ -269,21 +269,95 @@ export async function resetUnreadForPeer(peerId: number): Promise<void> {
       } catch(e: any) { logSwallow('MessageHandler.resetUnread.cursor', e); }
     }
 
-    let base: any = mirrored || cached;
-    if(!base && conv && store) {
-      base = await buildClearedDialogFromStore(peerId, conv, store);
-    }
-    if(!base) return;
-
-    const cleared = {...base, unread_count: 0};
-    if(proxy?.mirrors?.dialogs) {
-      proxy.mirrors.dialogs[peerId] = cleared;
-    }
-    lastDialogs.set(peerId, cleared);
-    dispatchDialogUpdate(peerId, cleared);
+    await dispatchDialogWithUnread(peerId, 0, conv, store);
   } catch(e: any) {
     logSwallow('MessageHandler.resetUnreadForPeer', e);
   }
+}
+
+/**
+ * Re-derive a peer's unread badge from the STORE read cursor and repaint it —
+ * the receive side of cross-device read-state sync (#217). When sync learns
+ * that ANOTHER device read a conversation further than this one, the cursor
+ * has already been advanced (monotonically) by the sync apply path; this
+ * clears or shrinks the stale badge WITHOUT the user clicking the chat open.
+ *
+ * The count is always DERIVED (`store.countUnread`) rather than decremented,
+ * so a partially-advanced cursor lands on the right remaining number instead
+ * of a binary clear.
+ */
+export async function applyRemoteReadState(peerId: number): Promise<void> {
+  try {
+    const conv = await resolveConversation(peerId);
+    const store = conv ? (await import('@lib/phantomchat/message-store')).getMessageStore() : null;
+
+    let count = 0;
+    if(conv && store) {
+      try {
+        count = await store.countUnread(conv.convId, conv.ownPk);
+      } catch{ /* ignore — empty store, IDB closed, etc. */ }
+    }
+    if((unreadCounts.get(peerId) ?? 0) !== count) {
+      unreadCounts.set(peerId, count);
+      persistUnreadCounts();
+    }
+    await dispatchDialogWithUnread(peerId, count, conv, store);
+  } catch(e: any) {
+    logSwallow('MessageHandler.applyRemoteReadState', e);
+  }
+}
+
+/**
+ * Normalize the device-local unread counter map against the STORE (#217).
+ * The map persists across reloads in localStorage and can hold counts that
+ * predate a read done on ANOTHER device (or the one-shot boot cursor seed).
+ * Every entry is re-derived via `store.countUnread` so the next live incoming
+ * message increments from truth, not from a stale device-local ghost.
+ */
+export async function reconcileUnreadFromStore(): Promise<void> {
+  try {
+    for(const peerId of [...unreadCounts.keys()]) {
+      const conv = await resolveConversation(peerId);
+      const store = conv ? (await import('@lib/phantomchat/message-store')).getMessageStore() : null;
+      let count = 0;
+      if(conv && store) {
+        try {
+          count = await store.countUnread(conv.convId, conv.ownPk);
+        } catch{ /* ignore */ }
+      }
+      if((unreadCounts.get(peerId) ?? 0) !== count) {
+        unreadCounts.set(peerId, count);
+        persistUnreadCounts();
+      }
+    }
+  } catch(e: any) {
+    logSwallow('MessageHandler.reconcileUnreadFromStore', e);
+  }
+}
+
+/**
+ * Shared badge-repaint tail: rebuild the peer's dialog with the GIVEN unread
+ * count and fan it out to the chat list (mirrors → lastDialogs → dispatch).
+ * Source priority for the base dialog: apiManagerProxy mirrors, then the
+ * live-session cache, then a freshly-built one from message-store (see
+ * `resetUnreadForPeer` for why the store fallback makes post-reload work).
+ */
+async function dispatchDialogWithUnread(peerId: number, unreadCount: number, conv: ConvRef | null, store: any): Promise<void> {
+  const proxy = (MOUNT_CLASS_TO as any).apiManagerProxy;
+  const mirrored = proxy?.mirrors?.dialogs?.[peerId];
+  const cached = lastDialogs.get(peerId);
+  let base: any = mirrored || cached;
+  if(!base && conv && store) {
+    base = await buildClearedDialogFromStore(peerId, conv, store);
+  }
+  if(!base) return;
+
+  const updated = {...base, unread_count: unreadCount};
+  if(proxy?.mirrors?.dialogs) {
+    proxy.mirrors.dialogs[peerId] = updated;
+  }
+  lastDialogs.set(peerId, updated);
+  dispatchDialogUpdate(peerId, updated);
 }
 
 interface ConvRef {convId: string; ownPk: string;}

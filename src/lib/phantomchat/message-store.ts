@@ -17,6 +17,10 @@
  * failure-atomic — a prune failure aborts the insert with it.
  */
 
+// Read-state sync trigger (#217) — tiny no-import module, safe in every
+// context this store runs in (main thread, worker, tests).
+import {schedulePublish} from './phantomchat-sync-triggers';
+
 /**
  * Stored message interface for IndexedDB.
  *
@@ -1315,8 +1319,31 @@ export class MessageStore {
         }
         const putReq = store.put({conversationId, lastReadMid: mid});
         putReq.onerror = () => reject(putReq.error);
-        putReq.onsuccess = () => resolve();
+        putReq.onsuccess = () => {
+          // The cursor genuinely advanced — schedule a cross-device read-state
+          // publish (#217). No-op when no publisher is registered (pre-boot /
+          // worker-only contexts); the registered publisher debounces, so a
+          // burst of readHistory calls collapses into one publish.
+          schedulePublish('read-state');
+          resolve();
+        };
       };
+    });
+  }
+
+  /**
+   * Enumerate every read cursor. Used by read-state-sync to export the local
+   * read state as a CRDT map (#217). `lastReadMid` is the message `mid` unit
+   * (chronological: timestamp * 1e6 + slot).
+   */
+  async getAllReadCursors(): Promise<Array<{conversationId: string; lastReadMid: number}>> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(CURSOR_STORE, 'readonly');
+      const req = tx.objectStore(CURSOR_STORE).getAll();
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () =>
+        resolve((req.result as Array<{conversationId: string; lastReadMid: number}>) ?? []);
     });
   }
 

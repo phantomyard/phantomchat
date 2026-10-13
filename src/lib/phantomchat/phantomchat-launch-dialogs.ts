@@ -17,8 +17,10 @@
  *    anything missed in it (ChatAPI.catchUpConversation, throttled to once a
  *    minute per chat).
  *
- * Everything here is fire-and-forget background work: nothing a user action
- * waits on, and every failure is swallowed to a debug line.
+ * Everything here is fire-and-forget background work except the returned
+ * `previewsReady` promise (#217): the cold-start ready gate waits on it so the
+ * chat list paints with real summaries instead of the empty-then-populate
+ * flash. Failures are swallowed to a debug line either way.
  */
 
 import type {ChatCatchUpOutcome} from './chat-api';
@@ -156,7 +158,7 @@ export function installLaunchDialogs(opts: {
   chatAPI: {catchUpConversation(pubkey: string): Promise<ChatCatchUpOutcome>};
   launchedWithDeepLink: boolean;
   isMobile(): boolean;
-}): void {
+}): {previewsReady: Promise<number>} {
   const {rootScope, appImManager, chatAPI} = opts;
   const getDialogs = async(): Promise<DialogRef[]> => {
     const dialogs = await rootScope.managers.dialogsStorage.getFolderDialogs(0);
@@ -175,7 +177,7 @@ export function installLaunchDialogs(opts: {
     });
   }
 
-  void refreshDialogPreviews({
+  const previewsReady = refreshDialogPreviews({
     getDialogs,
     reloadConversation: (peerId) => rootScope.managers.appMessagesManager.reloadConversation(peerId)
   });
@@ -187,4 +189,6 @@ export function installLaunchDialogs(opts: {
     launchedWithDeepLink: opts.launchedWithDeepLink,
     openPeer: (peerId) => appImManager.setInnerPeer({peerId})
   }).catch((err) => console.debug(LOG_PREFIX, 'top chat open failed', (err as Error)?.message));
+
+  return {previewsReady};
 }

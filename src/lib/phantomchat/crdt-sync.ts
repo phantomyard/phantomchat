@@ -73,6 +73,22 @@ export type CrdtSyncDeps<T> = {
 
   adapter: LocalAdapter<T>;
 
+  /**
+   * Domain-specific merge override. Defaults to the generic union merge
+   * (`mergeMaps` from sync-crdt.ts: per-item LWW + tombstones).
+   *
+   * Only domains whose payload is NOT an LWW register need this — read-state
+   * is one: its value is a monotonic counter (the read cursor) where the
+   * MAXIMUM must win regardless of which device wrote last, or a device that
+   * read less far but later would drag every sibling's cursor backwards.
+   *
+   * A custom merge MUST be commutative, associative and idempotent (devices
+   * fold snapshots in arbitrary orders) and should return entries taken
+   * WHOLESALE from one input so `differs` sees genuine no-ops as no-ops.
+   * Tombstone semantics are up to the domain.
+   */
+  merge?: (local: SyncMap<T>, remote: SyncMap<T>) => SyncMap<T>;
+
   encrypt: (plaintext: string) => string;
   decrypt: (ciphertext: string) => string;
   nowSeconds: () => number;
@@ -197,7 +213,7 @@ export class CrdtSync<T> {
     // No garbage collection: tombstones persist forever. An expired tombstone
     // is a resurrection on a timer — exactly the bug class this engine exists
     // to prevent.
-    const merged = mergeMaps(local, remoteMap);
+    const merged = (this.deps.merge ?? mergeMaps)(local, remoteMap);
 
     const localChanged = differs(merged, local);
     const remoteChanged = differs(merged, remoteMap);
@@ -322,7 +338,7 @@ export class CrdtSync<T> {
     // Same rule as reconcile(): an equal-map older snapshot still must be
     // rewritten at the current version, or the v2 quarantine never lands.
     const versionChanged = remote.status === 'ok' && remote.version !== this.deps.version;
-    const merged = remoteMap ? mergeMaps(local, remoteMap) : local;
+    const merged = remoteMap ? (this.deps.merge ?? mergeMaps)(local, remoteMap) : local;
 
     // Converge locally too: the remote may hold entries this device has not
     // seen (an add from another device, or a tombstone for a contact that

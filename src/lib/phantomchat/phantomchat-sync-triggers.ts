@@ -15,7 +15,7 @@
  * them in.
  */
 
-export type SyncDomain = 'contacts' | 'groups';
+export type SyncDomain = 'contacts' | 'groups' | 'read-state';
 
 type Publisher = () => void;
 
@@ -44,4 +44,5 @@ export function schedulePublish(domain: SyncDomain): void {
 export function clearSyncPublishers(): void {
   delete publishers.contacts;
   delete publishers.groups;
+  delete publishers['read-state'];
 }

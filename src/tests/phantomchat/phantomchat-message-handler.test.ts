@@ -140,6 +140,9 @@ import {
   handleIncomingEdit,
   rehydrateOpenChatOnVisible,
   resetUnreadForPeer,
+  applyRemoteReadState,
+  reconcileUnreadFromStore,
+  getUnreadForPeer,
   startRecoveryWatchdog,
   cancelRecoveryWatchdog
 } from '@lib/phantomchat/phantomchat-message-handler';
@@ -604,6 +607,76 @@ describe('phantomchat-message-handler', () => {
       delete (window as any).__phantomchatOwnPubkey;
       // Should not throw — just no-ops because conv resolution returns null.
       await expect(resetUnreadForPeer(PEER_ID)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('cross-device read state (#217)', () => {
+    beforeEach(() => {
+      (window as any).__phantomchatOwnPubkey = OWN_PUBKEY;
+      mockGetPubkey.mockResolvedValue(SENDER_PUBKEY);
+      mockMessageStore.countUnread.mockResolvedValue(0);
+      mockMessageStore.getMessages.mockResolvedValue([]);
+      mockGroupStoreGetByPeerId.mockResolvedValue(null);
+    });
+
+    it('applyRemoteReadState: repaints the badge from the store without a click', async() => {
+      // Sync learned ANOTHER device read further; the cursor has already
+      // advanced monotonically. Two messages remain above the synced cursor —
+      // the badge must shrink to the DERIVED count and the dispatch must carry
+      // it, so stale blue bubbles clear themselves.
+      mockMessageStore.countUnread.mockResolvedValue(2);
+      mockMessageStore.getMessages.mockResolvedValue([{
+        mid: 88,
+        eventId: 'event-88',
+        senderPubkey: SENDER_PUBKEY,
+        content: 'still unread',
+        timestamp: 1712345678,
+        isOutgoing: false,
+        twebPeerId: PEER_ID
+      }]);
+
+      await applyRemoteReadState(PEER_ID);
+
+      const call = mockDispatchEvent.mock.calls.find((c) => c[0] === 'dialogs_multiupdate');
+      expect(call).toBeDefined();
+      expect((call![1] as Map<any, any>).get(PEER_ID).dialog.unread_count).toBe(2);
+      expect(getUnreadForPeer(PEER_ID)).toBe(2);
+    });
+
+    it('applyRemoteReadState: a fully-read conversation clears the stale counter to 0', async() => {
+      mockMessageStore.countUnread.mockResolvedValue(5);
+      mockMessageStore.getMessages.mockResolvedValue([{
+        mid: 90,
+        eventId: 'event-90',
+        senderPubkey: SENDER_PUBKEY,
+        content: 'hi',
+        timestamp: 1712345678,
+        isOutgoing: false,
+        twebPeerId: PEER_ID
+      }]);
+      await applyRemoteReadState(PEER_ID);
+      expect(getUnreadForPeer(PEER_ID)).toBe(5);
+
+      mockMessageStore.countUnread.mockResolvedValue(0);
+      await applyRemoteReadState(PEER_ID);
+      const calls = mockDispatchEvent.mock.calls.filter((c) => c[0] === 'dialogs_multiupdate');
+      const last = calls[calls.length - 1];
+      expect((last[1] as Map<any, any>).get(PEER_ID).dialog.unread_count).toBe(0);
+      expect(getUnreadForPeer(PEER_ID)).toBe(0);
+    });
+
+    it('reconcileUnreadFromStore: normalizes stale counter-map entries at boot', async() => {
+      // The counter map persists in localStorage across reloads; entries can
+      // predate a read done on another device. Boot reconciliation re-derives
+      // every entry from the store so the next live increment starts from
+      // truth instead of a stale device-local ghost.
+      mockMessageStore.countUnread.mockResolvedValue(5);
+      await applyRemoteReadState(PEER_ID);
+      expect(getUnreadForPeer(PEER_ID)).toBe(5);
+
+      mockMessageStore.countUnread.mockResolvedValue(0);
+      await reconcileUnreadFromStore();
+      expect(getUnreadForPeer(PEER_ID)).toBe(0);
     });
   });
 

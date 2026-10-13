@@ -21,7 +21,7 @@ import {PhantomChatMTProtoServer} from '../lib/phantomchat/virtual-mtproto-serve
 import {PhantomChatSync} from '../lib/phantomchat/phantomchat-sync';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '../lib/rootScope';
-import {handleIncomingMessage, handleIncomingEdit, resetUnreadForPeer} from '@lib/phantomchat/phantomchat-message-handler';
+import {handleIncomingMessage, handleIncomingEdit, resetUnreadForPeer, applyRemoteReadState, reconcileUnreadFromStore} from '@lib/phantomchat/phantomchat-message-handler';
 import {createIncomingScheduler} from '@lib/phantomchat/phantomchat-incoming-scheduler';
 import {createPendingFlush} from '@lib/phantomchat/phantomchat-pending-flush';
 import {createReadReceiptSender} from '@lib/phantomchat/phantomchat-read-receipts';
@@ -33,8 +33,10 @@ import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/n
 import {CrdtSync} from '@lib/phantomchat/crdt-sync';
 import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTACTS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/contacts-sync-adapter';
 import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
+import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
+import {markChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
 import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
-import {getAllMappings, setMappingDisplayName, setMappingUpdatedAt, setDeliberateAddAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
+import {getAllMappings, getMapping, setMappingDisplayName, setMappingUpdatedAt, setDeliberateAddAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
 import {getMessageStore} from '@lib/phantomchat/message-store';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
@@ -556,6 +558,46 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             chatAPI: crdtChatAPI, adapter: groupsAdapter, ...crdtCrypto
           });
 
+          // --- Read-state sync (#217): the per-conversation read cursors ride
+          // the same self-addressed CRDT channel so "read up to here" is a fact
+          // shared by every device on the account. Custom merge (max-wins on the
+          // cursor) — see read-state-sync-adapter.ts for why LWW would drag
+          // siblings' cursors backwards. ---
+          const conversationToPeerId = async(convId: string): Promise<number | null> => {
+            if(convId.startsWith('group:')) {
+              const rec = await getGroupStore().get(convId.slice('group:'.length));
+              if(!rec) return null;
+              return rec.peerId ?? groupIdToPeerId(rec.groupId);
+            }
+            const parts = convId.split(':');
+            if(parts.length !== 2) return null;
+            const other = parts[0] === ownPubkey ? parts[1] : parts[0];
+            if(!other || other === ownPubkey) return null;
+            const mapping = await getMapping(other);
+            return mapping?.peerId ?? null;
+          };
+          const readStateAdapter = createReadStateAdapter({
+            listReadCursors: () => store.getAllReadCursors(),
+            setReadCursor: (convId, mid) => store.setReadCursor(convId, mid),
+            // A cursor learned from another device shrinks/clears the stale
+            // unread badge here without the user clicking the chat open.
+            onCursorAdvanced: async(convId) => {
+              try {
+                const peerId = await conversationToPeerId(convId);
+                if(peerId != null) await applyRemoteReadState(peerId);
+              } catch(e) {
+                console.warn('[read-state-sync] badge refresh failed', e);
+              }
+            },
+            logPrefix: '[read-state-sync]'
+          });
+          const readStateSync = new CrdtSync({
+            dTag: READ_STATE_SYNC_D_TAG, version: READ_STATE_SYNC_VERSION,
+            acceptedVersions: READ_STATE_SYNC_ACCEPTED_VERSIONS,
+            merge: mergeReadStateMaps,
+            chatAPI: crdtChatAPI, adapter: readStateAdapter, ...crdtCrypto
+          });
+
           // Receive-side self-heal. A per-relay queryRawEvents returns [] the
           // instant the socket isn't 'connected' (nostr-relay.ts), so on a
           // freshly-paired (cold) device — relays still handshaking when this
@@ -568,11 +610,18 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           // instead of coming up blank.
           const crdtRelayPool = (chatAPI as any).relayPool;
           const reconcileOnce = async() => {
-            const [c, g] = await Promise.all([
+            const [c, g, r] = await Promise.all([
               contactsSync.reconcile().catch((e) => { console.warn('[contacts-sync] reconcile failed', e); return 'failed'; }),
-              groupsSync.reconcile().catch((e) => { console.warn('[groups-sync] reconcile failed', e); return 'failed'; })
+              groupsSync.reconcile().catch((e) => { console.warn('[groups-sync] reconcile failed', e); return 'failed'; }),
+              readStateSync.reconcile().catch((e) => { console.warn('[read-state-sync] reconcile failed', e); return 'failed'; })
             ]);
-            console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g);
+            console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g, 'read-state:', r);
+            // Read state has had its first settle (#217): badges are
+            // account-true (or the relay said nothing — the ready gate's own
+            // bound covers a dead relay). Mark the cold-start gate and
+            // normalize the device-local unread counters against the store.
+            markChatListReady('read-state');
+            void reconcileUnreadFromStore();
             // Post-apply convergence (duplicate-groups regression 2026-10-04,
             // round 2): boot-only convergence (#196) misses a rival successor
             // that first ARRIVES via sync after the boot sweep — the init
@@ -597,7 +646,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             } catch(e) {
               console.warn('[groups-sync] post-reconcile convergence failed', e);
             }
-            return {c, g};
+            return {c, g, r};
           };
           // 'failed' = relay hiccup; 'no-remote-nothing-local' = we queried but
           // saw nothing (could be a genuinely empty relay, or a cold miss). Any
@@ -610,14 +659,14 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                 await crdtRelayPool.whenSubscribed(10000) :
                 true;
               if(ready) {
-                const {c, g} = await reconcileOnce();
+                const {c, g, r} = await reconcileOnce();
                 // Stop only once BOTH domains got a definitive read. Using OR
                 // here would abandon a still-inconclusive domain the moment the
                 // other resolved — e.g. groups 'in-sync' but contacts
                 // 'no-remote-nothing-local' on a cold relay would leave
                 // contacts blank forever. Keep retrying while either is
                 // inconclusive; re-running a settled domain is idempotent.
-                if(!inconclusive(c) && !inconclusive(g)) break;
+                if(!inconclusive(c) && !inconclusive(g) && !inconclusive(r)) break;
               }
               // No relay live yet, or both sides inconclusive: back off and
               // retry so a cold boot self-heals rather than giving up.
@@ -643,6 +692,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           };
           registerSyncPublisher('contacts', mkDebounced(() => contactsSync.publishWithRetry(), '[contacts-sync]'));
           registerSyncPublisher('groups', mkDebounced(() => groupsSync.publishWithRetry(), '[groups-sync]'));
+          // Read cursors advance constantly (every readHistory) — the debounce
+          // collapses a scrolling session into one publish.
+          registerSyncPublisher('read-state', mkDebounced(() => readStateSync.publishWithRetry(), '[read-state-sync]'));
 
           // PERIODIC reconcile — reconcile is not only a boot concern. A
           // device that stays open for days must still see deletes and adds
@@ -697,7 +749,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             chatAPI,
             launchedWithDeepLink: isChatDeepLink(launchHash),
             isMobile: () => mediaSizes.activeScreen === ScreenSize.mobile
-          });
+          }).previewsReady
+          .then(() => markChatListReady('previews'))
+          .catch(() => markChatListReady('previews'));
         } catch(err) {
           console.warn('[PhantomChatOnboardingIntegration] launch dialogs init failed:', err);
         }
