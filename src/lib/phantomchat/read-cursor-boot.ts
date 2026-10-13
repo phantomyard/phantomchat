@@ -20,6 +20,15 @@
  * the warm also breaks message persistence everywhere else on this path;
  * turning it into a wedged, silent boot would be strictly worse than the
  * worst case here (the pre-#218 over-badge/over-notify on covered backfill).
+ *
+ * Cap interplay (PR #218 review round 4, robertclawson): the warm cap
+ * deliberately MATCHES the ready-gate cap rather than nesting inside it. A
+ * never-settling warm therefore fails open at ~the same moment the splash
+ * lifts — for up to that first 10s, receive may be off (or, post-fail-open,
+ * covered backfill unbadged/unprojected). Accepted for this broken-IndexedDB
+ * edge: shrinking the warm cap would fail open during legitimately slow
+ * cold-start IDB opens, trading a real common-path regression for a rarer
+ * and milder one.
  */
 import {getMessageStore, type MessageStore} from './message-store';
 

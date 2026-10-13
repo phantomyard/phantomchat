@@ -117,6 +117,22 @@ describe('receive boot — cursor warm gates the receive path (#218 review round
     expect(projection).toBeGreaterThan(gate);
   });
 
+  it('onMessage/onEditMessage are wired BELOW the gate — no pre-listener window (#222)', () => {
+    // ChatAPI.connect() calls relayPool.subscribeMessages() itself, so it is a
+    // second receive source that can fire during the warm. The sync wiring
+    // (which dispatches into projection) must therefore not exist above the
+    // gate: above it, a connect() delivery during the warm would dispatch
+    // phantomchat_new_message while the projection listener is not yet
+    // installed — stored but never projected until the next load.
+    const gate = flowSrc.indexOf('await startReceiveAfterCursorWarm(startChatAPI)');
+    expect(gate).toBeGreaterThan(-1);
+
+    const onMessage = flowSrc.indexOf('chatAPI.onMessage =');
+    const onEditMessage = flowSrc.indexOf('chatAPI.onEditMessage =');
+    expect(onMessage).toBeGreaterThan(gate);
+    expect(onEditMessage).toBeGreaterThan(gate);
+  });
+
   it('failure behavior is explicit in the gate module (fail open + logged + time-bounded)', () => {
     expect(gateSrc).toContain('fail open');
     expect(gateSrc).toMatch(/catch\s*\(/);
