@@ -14,20 +14,28 @@ import {
 
 /*
  * Desktop-only: per-permission toggles for what the app may access on this
- * device (issue #215).
+ * device (issue #215, freeze + list redesign per owner decision on #219).
  *
  * The MAIN process owns the real policy — prompts, remembered grants and
  * overrides all live in permissions.json next to the update-ring file.
- * Everything here is a view over that state: a checkbox writes an explicit
- * override ('allow' | 'deny'), and "Reset to defaults" puts every permission
- * back on 'ask' (prompt on first use) except the promptless clipboard pair,
- * which the main process re-allows by default.
+ * Everything here is a view over that state.
  *
- * Keep this list in sync with PERMISSION_LABELS in electron/main.ts.
+ * Owner decision (2026-10-13): only permissions that CAN show a user prompt
+ * get a toggle here. Permissions that cannot prompt — the clipboard pair,
+ * whose Ctrl+C/V keyboard flows cannot wait on a dialog — are allowed by
+ * default with NO toggle at all. So every listed row is ON by default,
+ * meaning "the app asks you the first time it's needed" (never a silent
+ * failure), and the toggle exists so a worried user can block the
+ * permission outright.
+ *
+ * Toggle semantics: ON writes 'ask' (clears any override and remembered
+ * grant — the native prompt returns on next use), OFF writes 'deny'.
+ * "Reset to defaults" clears every override and remembered grant, so all
+ * rows return to ON/ask and the main process re-allows the clipboard pair.
+ *
+ * Keep this list in sync with PERMISSION_LABELS in electron/main.ts — and
+ * keep the promptless clipboard pair OUT of it (those get no toggle).
  */
-
-/** Keyboard-shortcut flows the main process grants without prompting. */
-const PROMPTLESS = new Set(['clipboard-read', 'clipboard-sanitized-write']);
 
 type PermissionEntry = {
   permission: string;
@@ -36,8 +44,6 @@ type PermissionEntry = {
 };
 
 const PERMISSION_ENTRIES: PermissionEntry[] = [
-  {permission: 'clipboard-read', title: 'Read clipboard', subtitle: 'Paste images and text from other apps (Ctrl+V). Turn off to stop the app reading your clipboard.'},
-  {permission: 'clipboard-sanitized-write', title: 'Write clipboard', subtitle: 'Copy messages, npubs and keys (Ctrl+C). Turn off to block all copies from the app.'},
   {permission: 'media', title: 'Microphone & camera', subtitle: 'Voice messages and voice/video calls.'},
   {permission: 'notifications', title: 'Notifications', subtitle: 'New-message notifications.'},
   {permission: 'display-capture', title: 'Screen capture', subtitle: 'Sharing your screen in calls.'},
@@ -54,12 +60,18 @@ const PERMISSION_ENTRIES: PermissionEntry[] = [
   {permission: 'sensors', title: 'Motion sensors', subtitle: 'Accelerometer and friends.'}
 ];
 
-/** Effective state as the main process would decide it, for the checkbox. */
-function effectiveState(settings: PermissionSettings, permission: string): PermissionSetting {
-  const override = settings.overrides[permission];
-  if(override) return override;
-  if(settings.granted.includes(permission)) return 'allow';
-  return PROMPTLESS.has(permission) ? 'allow' : 'ask';
+/**
+ * A row is ON unless the permission is explicitly blocked: 'ask' (the
+ * default — prompt on first use) and 'allow' ("Always allow" in a prompt)
+ * both read as enabled.
+ */
+function isPermissionEnabled(settings: PermissionSettings, permission: string): boolean {
+  return settings.overrides[permission] !== 'deny';
+}
+
+/** ON = back to prompting on first use; OFF = blocked. */
+function toggleSetting(checked: boolean): PermissionSetting {
+  return checked ? 'ask' : 'deny';
 }
 
 export default class AppPhantomChatDesktopPermissionsTab extends SliderSuperTab {
@@ -78,7 +90,7 @@ export default class AppPhantomChatDesktopPermissionsTab extends SliderSuperTab 
 
     const section = new SettingSection({
       name: 'Device access' as any,
-      caption: 'Unchecked permissions are blocked. Unlisted ones ask on first use; the prompt\'s "Always allow" is remembered here.' as any
+      caption: 'On by default — the app asks you the first time a permission is needed ("Always allow" is remembered). Turn a permission off to block it. Clipboard copy/paste is always available. Unlisted permissions ask on first use.' as any
     });
 
     for(const entry of PERMISSION_ENTRIES) {
@@ -121,7 +133,12 @@ export default class AppPhantomChatDesktopPermissionsTab extends SliderSuperTab 
     try {
       const settings = await this.api.getPermissionSettings();
       for(const {entry, checkbox} of this.rows) {
-        checkbox.checked = effectiveState(settings, entry.permission) === 'allow';
+        // setValueSilently, NEVER `checkbox.checked =`: the checked setter
+        // fires a synthetic 'change' event (checkboxField.ts), which re-enters
+        // each row's own change listener -> onToggled -> save -> refresh() and
+        // froze the app the moment this tab opened (#219), while clobbering
+        // permissions.json with synthetic overrides.
+        checkbox.setValueSilently(isPermissionEnabled(settings, entry.permission));
       }
     } catch(err) {
       console.error('could not load permission settings', err);
@@ -131,7 +148,7 @@ export default class AppPhantomChatDesktopPermissionsTab extends SliderSuperTab 
   private async onToggled(permission: string, allowed: boolean) {
     if(!this.api?.setPermissionSetting) return;
     try {
-      await this.api.setPermissionSetting(permission, allowed ? 'allow' : 'deny');
+      await this.api.setPermissionSetting(permission, toggleSetting(allowed));
       // Reflect main's validated state, not our click.
       await this.refresh();
     } catch(err) {
