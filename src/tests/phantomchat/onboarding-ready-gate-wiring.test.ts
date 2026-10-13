@@ -56,4 +56,29 @@ describe('cold-start ready gate — PhantomChat identity flow (#217/#218)', () =
     expect(gateSrc).toMatch(/setTimeout\s*\(\s*finish\s*,\s*timeoutMs\s*\)/);
     expect(gateSrc).toMatch(/READY_TIMEOUT_MS\s*=\s*10_000/);
   });
+
+  it('normalizes the unread counters BEFORE the gate lifts (#218 review)', () => {
+    // reconcileUnreadFromStore is awaited ahead of the mark so the ordering is
+    // explicit, not accidental — no fire-and-forget reconcile racing the lift.
+    const normalize = flowSrc.indexOf('await reconcileUnreadFromStore()');
+    const mark = flowSrc.indexOf("markChatListReady('read-state')");
+    expect(normalize).toBeGreaterThan(-1);
+    expect(mark).toBeGreaterThan(normalize);
+    expect(flowSrc).not.toMatch(/void\s+reconcileUnreadFromStore\(\)/);
+  });
+
+  it('offline cold start marks read-state immediately instead of holding the bound (#218 review)', () => {
+    // navigator.onLine === false: no relay can answer and local cursors are
+    // all there is — the splash must not sit out the full ready-gate bound.
+    expect(flowSrc).toMatch(
+      /navigator\.onLine === false[\s\S]{0,500}markChatListReady\('read-state'\)/
+    );
+  });
+
+  it('read-state no-remote does not hold the retry loop hostage (#218 review)', () => {
+    // 'no-remote-nothing-local' is the NORMAL read-state steady state on an
+    // account that has read nothing yet — only a hard failure keeps retrying.
+    expect(flowSrc).toContain('rBlocking');
+    expect(flowSrc).toMatch(/!rBlocking\(r\)/);
+  });
 });

@@ -19,6 +19,7 @@ afterAll(() => {
   vi.unmock('@lib/phantomchat/virtual-peers-db');
   vi.unmock('@lib/phantomchat/message-store');
   vi.unmock('@lib/phantomchat/group-store');
+  vi.unmock('@lib/phantomchat/phantomchat-notify');
   vi.restoreAllMocks();
 });
 
@@ -40,10 +41,18 @@ const mockMessageStore = {
   getConversationId: vi.fn((a: string, b: string) => `conv-${a.slice(0, 4)}-${b.slice(0, 4)}`),
   countUnread: vi.fn().mockResolvedValue(0),
   getMessages: vi.fn().mockResolvedValue([]),
-  setReadCursor: vi.fn().mockResolvedValue(undefined)
+  setReadCursor: vi.fn().mockResolvedValue(undefined),
+  peekReadCursor: vi.fn().mockReturnValue(0)
 };
 vi.mock('@lib/phantomchat/message-store', () => ({
   getMessageStore: () => mockMessageStore
+}));
+
+// Mock the desktop-notification dispatch so receive-path suppression (#218)
+// is observable without a real Notification API.
+const mockNotifyIncoming = vi.fn();
+vi.mock('@lib/phantomchat/phantomchat-notify', () => ({
+  notifyIncoming: (...args: any[]) => mockNotifyIncoming(...args)
 }));
 const mockGroupStoreGetByPeerId = vi.fn().mockResolvedValue(null);
 vi.mock('@lib/phantomchat/group-store', () => ({
@@ -677,6 +686,95 @@ describe('phantomchat-message-handler', () => {
       mockMessageStore.countUnread.mockResolvedValue(0);
       await reconcileUnreadFromStore();
       expect(getUnreadForPeer(PEER_ID)).toBe(0);
+    });
+  });
+
+  describe('cross-device read state — receive path (#218)', () => {
+    // Fresh peer id: the module-level unread counter map persists across
+    // tests in this file, so the assertions must own their counter.
+    const RX_PEER = 1000000000000042;
+    const makeRxData = (mid: number, extra: Record<string, unknown> = {}) => ({
+      senderPubkey: SENDER_PUBKEY,
+      peerId: RX_PEER,
+      mid,
+      timestamp: 1712345678,
+      message: {content: 'Hello from peer', ...extra}
+    });
+
+    beforeEach(async() => {
+      (window as any).__phantomchatOwnPubkey = OWN_PUBKEY;
+      mockGetPubkey.mockResolvedValue(SENDER_PUBKEY);
+      mockMessageStore.peekReadCursor.mockReturnValue(0);
+      mockMessageStore.countUnread.mockResolvedValue(0);
+      mockMessageStore.getMessages.mockResolvedValue([]);
+      mockGroupStoreGetByPeerId.mockResolvedValue(null);
+      // RX_PEER's chat is CLOSED (PEER_ID is the open one) — these tests pin
+      // the closed-chat receive path, where the round-1 bug lived.
+      (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: PEER_ID}};
+      // The counter map is module state shared across tests in this file —
+      // derive RX_PEER to 0 from the store so each test owns its count.
+      await reconcileUnreadFromStore();
+    });
+
+    it('cursor-first/message-second: a cursor-covered backfill does not badge a closed chat', async() => {
+      // The read cursor (local, or learned from another device and applied)
+      // already covers this mid; the relay is backfilling history that was
+      // read elsewhere. Round 1 repainted only on cursor ADVANCE, so the
+      // handler's unconditional +1 left a blue badge nothing would clear.
+      mockMessageStore.peekReadCursor.mockReturnValue(2000000042);
+      const result = await handleIncomingMessage(makeRxData(2000000042), OWN_PUBKEY);
+
+      expect(result).not.toBeNull();
+      expect(getUnreadForPeer(RX_PEER)).toBe(0);
+      const dialogCall = mockCreateTwebDialog.mock.calls.at(-1)![0];
+      expect(dialogCall.unreadCount).toBe(0);
+    });
+
+    it('cursor-covered backfill suppresses the desktop notification', async() => {
+      mockMessageStore.peekReadCursor.mockReturnValue(2000000042);
+      await handleIncomingMessage(makeRxData(2000000042), OWN_PUBKEY);
+      expect(mockNotifyIncoming).not.toHaveBeenCalled();
+
+      // An uncovered message right after still notifies exactly once.
+      mockMessageStore.peekReadCursor.mockReturnValue(2000000042);
+      await handleIncomingMessage(makeRxData(2000000043), OWN_PUBKEY);
+      expect(mockNotifyIncoming).toHaveBeenCalledTimes(1);
+    });
+
+    it('a message beyond the cursor still increments and notifies', async() => {
+      mockMessageStore.peekReadCursor.mockReturnValue(2000000042);
+      await handleIncomingMessage(makeRxData(2000000043), OWN_PUBKEY);
+      expect(getUnreadForPeer(RX_PEER)).toBe(1);
+      expect(mockNotifyIncoming).toHaveBeenCalledTimes(1);
+    });
+
+    it('a covered backfill never erases a badge held by a genuinely unread newer message', async() => {
+      // Out-of-order backfill: the newer message lands first (unread, +1),
+      // then an OLDER already-read one arrives. The covered message must not
+      // reset the counter — the badge belongs to the newer message.
+      mockMessageStore.peekReadCursor.mockReturnValue(2000000042);
+      await handleIncomingMessage(makeRxData(2000000043), OWN_PUBKEY);
+      expect(getUnreadForPeer(RX_PEER)).toBe(1);
+
+      await handleIncomingMessage(makeRxData(2000000042), OWN_PUBKEY);
+      expect(getUnreadForPeer(RX_PEER)).toBe(1);
+    });
+
+    it('derives the P2P conversation key without an IDB lookup', async() => {
+      mockMessageStore.peekReadCursor.mockReturnValue(0);
+      await handleIncomingMessage(makeRxData(2000000042), OWN_PUBKEY);
+      // getConversationId mock: sorted-pubkey key over own + sender.
+      expect(mockMessageStore.peekReadCursor).toHaveBeenCalledWith('conv-aaaa-bbbb');
+    });
+
+    it('derives the canonical group conversation key from the dispatch payload', async() => {
+      mockMessageStore.peekReadCursor.mockReturnValue(2000000042);
+      await handleIncomingMessage(
+        makeRxData(2000000042, {groupId: 'group-abc'}),
+        OWN_PUBKEY
+      );
+      expect(mockMessageStore.peekReadCursor).toHaveBeenCalledWith('group:group-abc');
+      expect(getUnreadForPeer(RX_PEER)).toBe(0);
     });
   });
 

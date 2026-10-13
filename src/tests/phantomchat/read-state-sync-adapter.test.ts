@@ -54,6 +54,14 @@ describe('mergeReadStateMaps (#217 — max-wins on the read cursor)', () => {
     expect(mergeReadStateMaps(live, dead).conv).toBe(live.conv);
     expect(mergeReadStateMaps(dead, live).conv).toBe(live.conv);
     expect(mergeReadStateMaps(dead, dead)).toEqual({});
+    // One-sided tombstones must drop too (#218 review): keeping one while
+    // dropping the both-sided pair broke idempotence for that input — a
+    // device holding such a remote saw differs(merged, local) on every
+    // reconcile and re-ran apply forever.
+    expect(mergeReadStateMaps(dead, {})).toEqual({});
+    expect(mergeReadStateMaps({}, dead)).toEqual({});
+    const once = mergeReadStateMaps(dead, {});
+    expect(mergeReadStateMaps(once, {})).toEqual(once);
   });
 
   it('ignores garbage cursor values instead of letting them win', () => {

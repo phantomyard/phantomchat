@@ -26,7 +26,10 @@
  * item that can be removed. If a tombstone-shaped entry ever shows up in a
  * snapshot (corrupt/hostile blob), it is dropped on read and loses to any
  * live entry in merge — absence of a cursor just means "never read here",
- * which is exactly what a fresh device must see.
+ * which is exactly what a fresh device must see. Dropping is done on the
+ * INPUTS of the merge (not case-by-case inside it) so one-sided and
+ * both-sided tombstones agree: `merge({x: tomb}, {}) = merge({x: tomb},
+ * {x: tomb}) = {}` — idempotent for every input (#218 review).
  *
  * `updatedAt` is NOT load-bearing in this domain (max-wins is entirely on
  * `lastReadMid`), so read() exports 0 and the merge keeps the winner entry
@@ -72,6 +75,10 @@ function isPositiveMid(v: unknown): v is number {
 /**
  * Domain merge: max-wins on `lastReadMid` (see header). Pure, commutative,
  * associative, idempotent. The winning entry is returned unchanged.
+ * Tombstone-shaped entries are filtered out of BOTH inputs up front (see
+ * header) — this domain has no deletes, so keeping a one-sided tombstone
+ * while dropping a both-sided one broke idempotence and left a device with
+ * such a remote re-running `apply` on every reconcile forever.
  */
 export function mergeReadStateMaps(
   local: SyncMap<ReadStateData>,
@@ -80,16 +87,11 @@ export function mergeReadStateMaps(
   const out: SyncMap<ReadStateData> = {};
   const ids = new Set([...Object.keys(local), ...Object.keys(remote)]);
   for(const id of ids) {
-    const a = local[id];
-    const b = remote[id];
-    if(!a) { out[id] = b; continue; }
+    const a = local[id]?.deleted ? undefined : local[id];
+    const b = remote[id]?.deleted ? undefined : remote[id];
+    if(!a && !b) continue; // dropped tombstone pair — see header
+    if(!a) { out[id] = b as SyncEntry<ReadStateData>; continue; }
     if(!b) { out[id] = a; continue; }
-
-    // No deletes in this domain: a tombstone-shaped entry loses to any live
-    // entry and is dropped outright when it is the only one (see header).
-    if(a.deleted && b.deleted) continue;
-    if(a.deleted) { out[id] = b; continue; }
-    if(b.deleted) { out[id] = a; continue; }
 
     const am = isPositiveMid((a.data as ReadStateData)?.lastReadMid) ? (a.data as ReadStateData).lastReadMid : 0;
     const bm = isPositiveMid((b.data as ReadStateData)?.lastReadMid) ? (b.data as ReadStateData).lastReadMid : 0;

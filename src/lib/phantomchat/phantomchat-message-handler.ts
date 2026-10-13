@@ -14,13 +14,14 @@ import {logSwallow} from '@lib/phantomchat/log-swallow';
 import {assertInvariant, validateTwebMessage, validateDialogTopMessage} from '@lib/phantomchat/bridge-invariants';
 import {ensureSenderUserInjected} from '@lib/phantomchat/ensure-sender-user-injected';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
+import {getMessageStore} from '@lib/phantomchat/message-store';
 
 export interface IncomingMessageData {
   senderPubkey: string;
   peerId: number;
   mid: number;
   timestamp: number;
-  message: {content: string; type?: string; fileMetadata?: PhantomChatFileMetadata};
+  message: {content: string; type?: string; fileMetadata?: PhantomChatFileMetadata; groupId?: string};
 }
 
 export interface HandleMessageResult {
@@ -638,6 +639,17 @@ export async function handleIncomingMessage(
   const peerId = data.peerId;
   const chatIsOpen = isChatOpenFor(peerId);
 
+  // Cross-device read state (#218): a message the read cursor already covers
+  // was read on ANOTHER device (or earlier on this one) — the cursor ride-along
+  // on the sync channel is what makes that true. The lookup is a synchronous
+  // in-memory read (message-store readCursorCache): the receive hot path must
+  // never touch IndexedDB per message. Covers the cursor-first/message-second
+  // ordering (relay backfill of already-read history) AND the later-boot case
+  // where the merged cursor equals the local one and no badge repaint fires.
+  const convId = conversationIdForIncoming(data, ownPubkey);
+  const readUpTo = convId ? getMessageStore().peekReadCursor(convId) : 0;
+  const alreadyReadOnSyncedDevice = data.mid > 0 && data.mid <= readUpTo;
+
   // IndexedDB is the source of truth for closed chats. Do not inflate every
   // closed conversation's Worker/main-thread history caches during a startup
   // or reconnect burst; opening that chat reads its latest local page on
@@ -668,12 +680,18 @@ export async function handleIncomingMessage(
   }
 
   // Compute unread count. If the chat is already open for this peer, the
-  // message is effectively read — keep the counter at 0. Otherwise increment
-  // the persisted per-peer counter so multi-message bursts count correctly.
+  // message is effectively read — keep the counter at 0. If the message is
+  // already covered by the read cursor (read on another device), do NOT
+  // increment and do NOT repaint the badge (#218): the message is read
+  // account-wide, so it must come back with no blue bubble and no click.
+  // Otherwise increment the persisted per-peer counter so multi-message
+  // bursts count correctly.
   let unread: number;
   if(chatIsOpen) {
     unread = 0;
     unreadCounts.set(peerId, 0);
+  } else if(alreadyReadOnSyncedDevice) {
+    unread = unreadCounts.get(peerId) ?? 0;
   } else {
     unread = (unreadCounts.get(peerId) ?? 0) + 1;
     unreadCounts.set(peerId, unread);
@@ -687,15 +705,33 @@ export async function handleIncomingMessage(
   // Fire desktop/system notification when chat is not in the foreground.
   // Worker's notifyAboutMessage path is bypassed by VMT for P2P peers, so
   // this is the sole notification trigger for incoming PhantomChat traffic.
-  try {
-    const {notifyIncoming} = await import('@lib/phantomchat/phantomchat-notify');
-    notifyIncoming({
-      peerId,
-      mid: data.mid,
-      senderPubkey: data.senderPubkey,
-      message: data.message
-    }, ownPubkey);
-  } catch(e: any) { console.debug('[MessageHandler] notify dispatch:', e?.message); }
+  // Suppressed for messages already read on a synced device (#218) — the user
+  // has seen them elsewhere; a notification would re-surface read content.
+  if(!alreadyReadOnSyncedDevice) {
+    try {
+      const {notifyIncoming} = await import('@lib/phantomchat/phantomchat-notify');
+      notifyIncoming({
+        peerId,
+        mid: data.mid,
+        senderPubkey: data.senderPubkey,
+        message: data.message
+      }, ownPubkey);
+    } catch(e: any) { console.debug('[MessageHandler] notify dispatch:', e?.message); }
+  }
 
   return {msg, peerId, dialog, isNewPeer};
+}
+
+/**
+ * Derive the message-store conversation id for an incoming message WITHOUT
+ * any IndexedDB lookup (#218) — pure string work over fields the dispatch
+ * already carries. Group dispatches carry `message.groupId`; P2P maps through
+ * the sorted-pubkey conversation key. Returns null when it cannot be derived
+ * (caller then falls back to pre-#218 badge behaviour).
+ */
+function conversationIdForIncoming(data: IncomingMessageData, ownPubkey: string): string | null {
+  const groupId = (data.message as {groupId?: string} | undefined)?.groupId;
+  if(typeof groupId === 'string' && groupId) return `group:${groupId}`;
+  if(!data.senderPubkey || !ownPubkey || data.senderPubkey === ownPubkey) return null;
+  return getMessageStore().getConversationId(ownPubkey, data.senderPubkey);
 }

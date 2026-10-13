@@ -265,6 +265,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       startChatAPI();
 
       // --- Wire extracted modules ---
+      // Seed the in-memory read-cursor view before any incoming message can ask
+      // it "already read on another device?" (#218). The receive hot path is
+      // synchronous by design (no IndexedDB per message), so this boot-time
+      // warm is what gives it the pre-existing cursors.
+      void getMessageStore().warmReadCursorCache();
       const pendingFlush = createPendingFlush();
       const readReceipts = createReadReceiptSender();
       const deliveryUI = createDeliveryUI();
@@ -629,10 +634,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g, 'read-state:', r);
             // Read state has had its first settle (#217): badges are
             // account-true (or the relay said nothing — the ready gate's own
-            // bound covers a dead relay). Mark the cold-start gate and
-            // normalize the device-local unread counters against the store.
+            // bound covers a dead relay). Normalize the device-local unread
+            // counters against the store BEFORE the gate lifts (#218 review),
+            // so the ordering is explicit rather than accidental.
+            await reconcileUnreadFromStore();
             markChatListReady('read-state');
-            void reconcileUnreadFromStore();
             // Post-apply convergence (duplicate-groups regression 2026-10-04,
             // round 2): boot-only convergence (#196) misses a rival successor
             // that first ARRIVES via sync after the boot sweep — the init
@@ -663,6 +669,14 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           // saw nothing (could be a genuinely empty relay, or a cold miss). Any
           // other outcome means we got a definitive read — stop retrying.
           const inconclusive = (o: string) => o === 'failed' || o === 'no-remote-nothing-local';
+          // Read-state is a PASSENGER in this loop (#218 review): its own
+          // cold-miss self-heal rides the contacts/groups retries and the 30-min
+          // interval, while 'no-remote-nothing-local' is its NORMAL steady state
+          // on an account that has read nothing yet. Letting it hold the loop
+          // burned all 5 attempts (~30s of backoff + repeated contacts/groups
+          // convergence) on every boot of such an account. Only a hard failure
+          // keeps the loop alive for it.
+          const rBlocking = (o: string) => o === 'failed';
           void (async() => {
             const MAX_ATTEMPTS = 5;
             for(let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -677,7 +691,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                 // 'no-remote-nothing-local' on a cold relay would leave
                 // contacts blank forever. Keep retrying while either is
                 // inconclusive; re-running a settled domain is idempotent.
-                if(!inconclusive(c) && !inconclusive(g) && !inconclusive(r)) break;
+                if(!inconclusive(c) && !inconclusive(g) && !rBlocking(r)) break;
               }
               // No relay live yet, or both sides inconclusive: back off and
               // retry so a cold boot self-heals rather than giving up.
@@ -686,6 +700,17 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               }
             }
           })();
+
+          // Offline cold start (#218 review): no relay can answer and no remote
+          // read-state is coming — local cursors are all there is. Mark the gate
+          // immediately (after the same store normalization) instead of holding
+          // the splash for the full ready-gate bound on every offline boot.
+          if(typeof navigator !== 'undefined' && navigator.onLine === false) {
+            void (async() => {
+              await reconcileUnreadFromStore();
+              markChatListReady('read-state');
+            })();
+          }
 
           // Debounced publishers, triggered from mutation sites via the
           // trigger registry (addP2PContact, deleteContacts, GroupAPI).
