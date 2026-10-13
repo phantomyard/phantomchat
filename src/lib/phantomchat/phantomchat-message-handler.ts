@@ -14,13 +14,14 @@ import {logSwallow} from '@lib/phantomchat/log-swallow';
 import {assertInvariant, validateTwebMessage, validateDialogTopMessage} from '@lib/phantomchat/bridge-invariants';
 import {ensureSenderUserInjected} from '@lib/phantomchat/ensure-sender-user-injected';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
+import {getMessageStore} from '@lib/phantomchat/message-store';
 
 export interface IncomingMessageData {
   senderPubkey: string;
   peerId: number;
   mid: number;
   timestamp: number;
-  message: {content: string; type?: string; fileMetadata?: PhantomChatFileMetadata};
+  message: {content: string; type?: string; fileMetadata?: PhantomChatFileMetadata; groupId?: string};
 }
 
 export interface HandleMessageResult {
@@ -269,21 +270,95 @@ export async function resetUnreadForPeer(peerId: number): Promise<void> {
       } catch(e: any) { logSwallow('MessageHandler.resetUnread.cursor', e); }
     }
 
-    let base: any = mirrored || cached;
-    if(!base && conv && store) {
-      base = await buildClearedDialogFromStore(peerId, conv, store);
-    }
-    if(!base) return;
-
-    const cleared = {...base, unread_count: 0};
-    if(proxy?.mirrors?.dialogs) {
-      proxy.mirrors.dialogs[peerId] = cleared;
-    }
-    lastDialogs.set(peerId, cleared);
-    dispatchDialogUpdate(peerId, cleared);
+    await dispatchDialogWithUnread(peerId, 0, conv, store);
   } catch(e: any) {
     logSwallow('MessageHandler.resetUnreadForPeer', e);
   }
+}
+
+/**
+ * Re-derive a peer's unread badge from the STORE read cursor and repaint it —
+ * the receive side of cross-device read-state sync (#217). When sync learns
+ * that ANOTHER device read a conversation further than this one, the cursor
+ * has already been advanced (monotonically) by the sync apply path; this
+ * clears or shrinks the stale badge WITHOUT the user clicking the chat open.
+ *
+ * The count is always DERIVED (`store.countUnread`) rather than decremented,
+ * so a partially-advanced cursor lands on the right remaining number instead
+ * of a binary clear.
+ */
+export async function applyRemoteReadState(peerId: number): Promise<void> {
+  try {
+    const conv = await resolveConversation(peerId);
+    const store = conv ? (await import('@lib/phantomchat/message-store')).getMessageStore() : null;
+
+    let count = 0;
+    if(conv && store) {
+      try {
+        count = await store.countUnread(conv.convId, conv.ownPk);
+      } catch{ /* ignore — empty store, IDB closed, etc. */ }
+    }
+    if((unreadCounts.get(peerId) ?? 0) !== count) {
+      unreadCounts.set(peerId, count);
+      persistUnreadCounts();
+    }
+    await dispatchDialogWithUnread(peerId, count, conv, store);
+  } catch(e: any) {
+    logSwallow('MessageHandler.applyRemoteReadState', e);
+  }
+}
+
+/**
+ * Normalize the device-local unread counter map against the STORE (#217).
+ * The map persists across reloads in localStorage and can hold counts that
+ * predate a read done on ANOTHER device (or the one-shot boot cursor seed).
+ * Every entry is re-derived via `store.countUnread` so the next live incoming
+ * message increments from truth, not from a stale device-local ghost.
+ */
+export async function reconcileUnreadFromStore(): Promise<void> {
+  try {
+    for(const peerId of [...unreadCounts.keys()]) {
+      const conv = await resolveConversation(peerId);
+      const store = conv ? (await import('@lib/phantomchat/message-store')).getMessageStore() : null;
+      let count = 0;
+      if(conv && store) {
+        try {
+          count = await store.countUnread(conv.convId, conv.ownPk);
+        } catch{ /* ignore */ }
+      }
+      if((unreadCounts.get(peerId) ?? 0) !== count) {
+        unreadCounts.set(peerId, count);
+        persistUnreadCounts();
+      }
+    }
+  } catch(e: any) {
+    logSwallow('MessageHandler.reconcileUnreadFromStore', e);
+  }
+}
+
+/**
+ * Shared badge-repaint tail: rebuild the peer's dialog with the GIVEN unread
+ * count and fan it out to the chat list (mirrors → lastDialogs → dispatch).
+ * Source priority for the base dialog: apiManagerProxy mirrors, then the
+ * live-session cache, then a freshly-built one from message-store (see
+ * `resetUnreadForPeer` for why the store fallback makes post-reload work).
+ */
+async function dispatchDialogWithUnread(peerId: number, unreadCount: number, conv: ConvRef | null, store: any): Promise<void> {
+  const proxy = (MOUNT_CLASS_TO as any).apiManagerProxy;
+  const mirrored = proxy?.mirrors?.dialogs?.[peerId];
+  const cached = lastDialogs.get(peerId);
+  let base: any = mirrored || cached;
+  if(!base && conv && store) {
+    base = await buildClearedDialogFromStore(peerId, conv, store);
+  }
+  if(!base) return;
+
+  const updated = {...base, unread_count: unreadCount};
+  if(proxy?.mirrors?.dialogs) {
+    proxy.mirrors.dialogs[peerId] = updated;
+  }
+  lastDialogs.set(peerId, updated);
+  dispatchDialogUpdate(peerId, updated);
 }
 
 interface ConvRef {convId: string; ownPk: string;}
@@ -564,6 +639,17 @@ export async function handleIncomingMessage(
   const peerId = data.peerId;
   const chatIsOpen = isChatOpenFor(peerId);
 
+  // Cross-device read state (#218): a message the read cursor already covers
+  // was read on ANOTHER device (or earlier on this one) — the cursor ride-along
+  // on the sync channel is what makes that true. The lookup is a synchronous
+  // in-memory read (message-store readCursorCache): the receive hot path must
+  // never touch IndexedDB per message. Covers the cursor-first/message-second
+  // ordering (relay backfill of already-read history) AND the later-boot case
+  // where the merged cursor equals the local one and no badge repaint fires.
+  const convId = conversationIdForIncoming(data, ownPubkey);
+  const readUpTo = convId ? getMessageStore().peekReadCursor(convId) : 0;
+  const alreadyReadOnSyncedDevice = data.mid > 0 && data.mid <= readUpTo;
+
   // IndexedDB is the source of truth for closed chats. Do not inflate every
   // closed conversation's Worker/main-thread history caches during a startup
   // or reconnect burst; opening that chat reads its latest local page on
@@ -594,12 +680,18 @@ export async function handleIncomingMessage(
   }
 
   // Compute unread count. If the chat is already open for this peer, the
-  // message is effectively read — keep the counter at 0. Otherwise increment
-  // the persisted per-peer counter so multi-message bursts count correctly.
+  // message is effectively read — keep the counter at 0. If the message is
+  // already covered by the read cursor (read on another device), do NOT
+  // increment and do NOT repaint the badge (#218): the message is read
+  // account-wide, so it must come back with no blue bubble and no click.
+  // Otherwise increment the persisted per-peer counter so multi-message
+  // bursts count correctly.
   let unread: number;
   if(chatIsOpen) {
     unread = 0;
     unreadCounts.set(peerId, 0);
+  } else if(alreadyReadOnSyncedDevice) {
+    unread = unreadCounts.get(peerId) ?? 0;
   } else {
     unread = (unreadCounts.get(peerId) ?? 0) + 1;
     unreadCounts.set(peerId, unread);
@@ -613,15 +705,33 @@ export async function handleIncomingMessage(
   // Fire desktop/system notification when chat is not in the foreground.
   // Worker's notifyAboutMessage path is bypassed by VMT for P2P peers, so
   // this is the sole notification trigger for incoming PhantomChat traffic.
-  try {
-    const {notifyIncoming} = await import('@lib/phantomchat/phantomchat-notify');
-    notifyIncoming({
-      peerId,
-      mid: data.mid,
-      senderPubkey: data.senderPubkey,
-      message: data.message
-    }, ownPubkey);
-  } catch(e: any) { console.debug('[MessageHandler] notify dispatch:', e?.message); }
+  // Suppressed for messages already read on a synced device (#218) — the user
+  // has seen them elsewhere; a notification would re-surface read content.
+  if(!alreadyReadOnSyncedDevice) {
+    try {
+      const {notifyIncoming} = await import('@lib/phantomchat/phantomchat-notify');
+      notifyIncoming({
+        peerId,
+        mid: data.mid,
+        senderPubkey: data.senderPubkey,
+        message: data.message
+      }, ownPubkey);
+    } catch(e: any) { console.debug('[MessageHandler] notify dispatch:', e?.message); }
+  }
 
   return {msg, peerId, dialog, isNewPeer};
+}
+
+/**
+ * Derive the message-store conversation id for an incoming message WITHOUT
+ * any IndexedDB lookup (#218) — pure string work over fields the dispatch
+ * already carries. Group dispatches carry `message.groupId`; P2P maps through
+ * the sorted-pubkey conversation key. Returns null when it cannot be derived
+ * (caller then falls back to pre-#218 badge behaviour).
+ */
+function conversationIdForIncoming(data: IncomingMessageData, ownPubkey: string): string | null {
+  const groupId = (data.message as {groupId?: string} | undefined)?.groupId;
+  if(typeof groupId === 'string' && groupId) return `group:${groupId}`;
+  if(!data.senderPubkey || !ownPubkey || data.senderPubkey === ownPubkey) return null;
+  return getMessageStore().getConversationId(ownPubkey, data.senderPubkey);
 }

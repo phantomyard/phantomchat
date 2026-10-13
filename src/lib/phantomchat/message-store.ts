@@ -17,6 +17,10 @@
  * failure-atomic — a prune failure aborts the insert with it.
  */
 
+// Read-state sync trigger (#217) — tiny no-import module, safe in every
+// context this store runs in (main thread, worker, tests).
+import {schedulePublish} from './phantomchat-sync-triggers';
+
 /**
  * Stored message interface for IndexedDB.
  *
@@ -214,6 +218,14 @@ export class MessageStore {
   // the "delete boomerang" suppression never goes stale (mirrors the
   // message-requests block cache; listener activated on the READ path).
   private tombstoneCache = new Map<string, number>();
+  /**
+   * In-memory mirror of the read-cursors store (#218). The incoming-message
+   * hot path must ask "was this mid already read on another device?" WITHOUT
+   * an IndexedDB round-trip per message, so it reads this view synchronously
+   * (`peekReadCursor`). Hydrated at boot via `warmReadCursorCache` and
+   * advanced on every cursor write — it never lags the store.
+   */
+  private readCursorCache = new Map<string, number>();
   private tsChannel: BroadcastChannel | null = null;
   private tsChannelInit = false;
 
@@ -1166,7 +1178,10 @@ export class MessageStore {
       const tx = db.transaction(CURSOR_STORE, 'readwrite');
       const req = tx.objectStore(CURSOR_STORE).delete(conversationId);
       req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve();
+      req.onsuccess = () => {
+        this.readCursorCache.delete(conversationId);
+        resolve();
+      };
     });
   }
 
@@ -1289,9 +1304,35 @@ export class MessageStore {
       req.onerror = () => reject(req.error);
       req.onsuccess = () => {
         const row = req.result as {conversationId: string; lastReadMid: number} | undefined;
-        resolve(row?.lastReadMid ?? 0);
+        const mid = row?.lastReadMid ?? 0;
+        if(mid > (this.readCursorCache.get(conversationId) ?? 0)) this.readCursorCache.set(conversationId, mid);
+        resolve(mid);
       };
     });
+  }
+
+  /**
+   * Synchronous read-cursor lookup against the in-memory view (#218).
+   * Returns 0 for unknown/never-read conversations. This is the ONLY cursor
+   * accessor the receive hot path may use — no IndexedDB per message.
+   */
+  peekReadCursor(conversationId: string): number {
+    return this.readCursorCache.get(conversationId) ?? 0;
+  }
+
+  /**
+   * Seed the in-memory cursor view from the store at boot (#218), before the
+   * first incoming message can arrive. Monotonic: never lowers a value a
+   * write already advanced to.
+   */
+  async warmReadCursorCache(): Promise<void> {
+    const rows = await this.getAllReadCursors();
+    for(const row of rows) {
+      if(!row || typeof row.conversationId !== 'string' || !row.conversationId) continue;
+      if(row.lastReadMid > (this.readCursorCache.get(row.conversationId) ?? 0)) {
+        this.readCursorCache.set(row.conversationId, row.lastReadMid);
+      }
+    }
   }
 
   /**
@@ -1310,13 +1351,41 @@ export class MessageStore {
       getReq.onsuccess = () => {
         const existing = getReq.result as {conversationId: string; lastReadMid: number} | undefined;
         if(existing && existing.lastReadMid >= mid) {
+          // Keep the in-memory view in step even on a no-op write (#218).
+          if(existing.lastReadMid > (this.readCursorCache.get(conversationId) ?? 0)) {
+            this.readCursorCache.set(conversationId, existing.lastReadMid);
+          }
           resolve();
           return;
         }
         const putReq = store.put({conversationId, lastReadMid: mid});
         putReq.onerror = () => reject(putReq.error);
-        putReq.onsuccess = () => resolve();
+        putReq.onsuccess = () => {
+          this.readCursorCache.set(conversationId, mid);
+          // The cursor genuinely advanced — schedule a cross-device read-state
+          // publish (#217). No-op when no publisher is registered (pre-boot /
+          // worker-only contexts); the registered publisher debounces, so a
+          // burst of readHistory calls collapses into one publish.
+          schedulePublish('read-state');
+          resolve();
+        };
       };
+    });
+  }
+
+  /**
+   * Enumerate every read cursor. Used by read-state-sync to export the local
+   * read state as a CRDT map (#217). `lastReadMid` is the message `mid` unit
+   * (chronological: timestamp * 1e6 + slot).
+   */
+  async getAllReadCursors(): Promise<Array<{conversationId: string; lastReadMid: number}>> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(CURSOR_STORE, 'readonly');
+      const req = tx.objectStore(CURSOR_STORE).getAll();
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () =>
+        resolve((req.result as Array<{conversationId: string; lastReadMid: number}>) ?? []);
     });
   }
 
@@ -1444,6 +1513,7 @@ export class MessageStore {
     this.tsChannel = null;
     this.tsChannelInit = false;
     this.tombstoneCache.clear();
+    this.readCursorCache.clear();
     this.seenEventIds.clear();
     _instance = null;
   }

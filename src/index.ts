@@ -443,9 +443,11 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
 
   // Boot plumbing is complete — signal ready but do NOT dismiss the splash yet.
   // The splash stays visible through the heavy init work (loadAllStates,
-  // mountPhantomChatOnboarding, pageIm.mount) and is dismissed from within
-  // those paths once the chat UI is actually rendered. This eliminates the
-  // cold-start black screen between splash dismissal and first paint.
+  // mountPhantomChatOnboarding, pageIm.mount) and the chat-list READY GATE
+  // (#217 — previews populated + read state synced across devices), and is
+  // dismissed from within those paths once the chat UI is actually rendered.
+  // This eliminates the cold-start black screen between splash dismissal and
+  // first paint — and the empty-then-populate flash with stale unread badges.
   bootProgress?.(4, 4, 'Ready');
 
   // Poll for a newer deployed build and surface a prominent "Update" pill that
@@ -771,6 +773,8 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   } else {
     console.log('Will mount IM page:', Date.now() / 1000);
 
+    const {whenChatListReady} = await import('@lib/phantomchat/phantomchat-ready-gate');
+
     const fontsPromise = loadFonts();
     fadeInWhenFontsReady(document.getElementById('main-columns'), fontsPromise);
 
@@ -786,7 +790,11 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
       await page.mount();
       console.timeLog(TIME_LABEL, 'await page.mount()');
 
-      // Chat list is mounted — dismiss the boot splash.
+      // Chat list is mounted — hold the boot splash until it is READY to paint
+      // (#217): previews populated and cross-device read state applied (the
+      // gate is bounded — it resolves on its own timeout if a relay is dead),
+      // then dismiss.
+      await whenChatListReady();
       requestAnimationFrame(() => (window as any).__hideBootSplash?.());
 
       await fontsPromise;
@@ -800,7 +808,9 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
       page.pageEl.classList.remove('main-screen-enter', 'main-screen-entering');
     } else {
       await page.mount();
-      // Chat list is mounted — dismiss the boot splash.
+      // Chat list is mounted — hold the boot splash until it is READY (#217),
+      // then dismiss (bounded wait; see above).
+      await whenChatListReady();
       requestAnimationFrame(() => (window as any).__hideBootSplash?.());
     }
   }

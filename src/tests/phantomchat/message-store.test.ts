@@ -506,6 +506,46 @@ describe('MessageStore', () => {
     });
   });
 
+  describe('read-cursor view (#218)', () => {
+    it('peekReadCursor starts at 0 and advances with setReadCursor', async() => {
+      const conv = uniqueConvId();
+      expect(store.peekReadCursor(conv)).toBe(0);
+      await store.setReadCursor(conv, 1000);
+      expect(store.peekReadCursor(conv)).toBe(1000);
+    });
+
+    it('a monotonic no-op write never lowers the view', async() => {
+      const conv = uniqueConvId();
+      await store.setReadCursor(conv, 1000);
+      await store.setReadCursor(conv, 500); // late, behind — silent no-op
+      expect(store.peekReadCursor(conv)).toBe(1000);
+      expect(await store.getReadCursor(conv)).toBe(1000);
+    });
+
+    it('warmReadCursorCache seeds a fresh instance and never lowers a higher value', async() => {
+      const conv = uniqueConvId();
+      await store.setReadCursor(conv, 777);
+
+      const cold = freshStore();
+      expect(cold.peekReadCursor(conv)).toBe(0); // not warmed yet
+      await cold.warmReadCursorCache();
+      expect(cold.peekReadCursor(conv)).toBe(777);
+
+      // A write that advanced past the store snapshot must win.
+      await cold.setReadCursor(conv, 999);
+      await cold.warmReadCursorCache();
+      expect(cold.peekReadCursor(conv)).toBe(999);
+    });
+
+    it('deleteReadCursor clears the view', async() => {
+      const conv = uniqueConvId();
+      await store.setReadCursor(conv, 42);
+      expect(store.peekReadCursor(conv)).toBe(42);
+      await store.deleteReadCursor(conv);
+      expect(store.peekReadCursor(conv)).toBe(0);
+    });
+  });
+
   describe('tombstones', () => {
     it('returns 0 for a conversation that has never been deleted', async() => {
       expect(await store.getTombstone(uniqueConvId())).toBe(0);
