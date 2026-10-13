@@ -243,18 +243,6 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
         console.warn('[PhantomChatOnboardingIntegration] GroupAPI init failed:', err);
       }
 
-      // --- Initialize PhantomChatSync ---
-      const sync = new PhantomChatSync(identity.publicKey, (event: string, data: any) => {
-        rootScope.dispatchEvent(event as any, data);
-      });
-      chatAPI.onMessage = (msg: any) => {
-        sync.onIncomingMessage(msg, msg.from);
-      };
-      chatAPI.onEditMessage = (edit: any) => {
-        sync.onIncomingEdit(edit);
-      };
-      console.log('[PhantomChatOnboardingIntegration] PhantomChatSync wired to ChatAPI');
-
       // ChatAPI owns its own NostrRelayPool. Start its global subscription
       // immediately over direct WebSocket — there is no Tor layer to wait for.
       const startChatAPI = () => {
@@ -270,11 +258,34 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // relay backfill racing an un-warmed cache would re-badge and re-notify
       // messages the persisted cursor already covers. startReceiveAfterCursorWarm
       // awaits the warm (explicit fail-open on error — see the module) and only
-      // then starts the subscription. The wire-up below is synchronous, so the
-      // projection path installs after the warm as well. ChatAPI's global
-      // subscription is the only remote message receive source on this path:
-      // GroupAPI is publish/local-dispatch and receives through it.
+      // then starts the subscription.
+      //
+      // Receive sources on this path (#222): the global subscription started
+      // here AND ChatAPI.connect(), which calls relayPool.subscribeMessages()
+      // itself (chat-api.ts) — a connect() arriving during the warm is a live
+      // second source. The onMessage/onEditMessage wiring therefore sits BELOW
+      // the gate: during the warm such a delivery is persisted by the receive
+      // pipeline but not dispatched into projection, matching the pre-#218
+      // boot semantics where backfill surfaces via the ready-loaded paint.
+      // Wiring it above the gate would dispatch phantomchat_new_message while
+      // the projection listener is not yet installed — stored but never
+      // projected until the next load. GroupAPI is publish/local-dispatch and
+      // receives through the same pipeline.
       await startReceiveAfterCursorWarm(startChatAPI);
+
+      // --- Initialize PhantomChatSync ---
+      // Wired after the gate (see the receive-boot note above) so no delivery
+      // can reach the sync/projection pipeline before it exists.
+      const sync = new PhantomChatSync(identity.publicKey, (event: string, data: any) => {
+        rootScope.dispatchEvent(event as any, data);
+      });
+      chatAPI.onMessage = (msg: any) => {
+        sync.onIncomingMessage(msg, msg.from);
+      };
+      chatAPI.onEditMessage = (edit: any) => {
+        sync.onIncomingEdit(edit);
+      };
+      console.log('[PhantomChatOnboardingIntegration] PhantomChatSync wired to ChatAPI');
 
       // --- Wire extracted modules ---
       const pendingFlush = createPendingFlush();
