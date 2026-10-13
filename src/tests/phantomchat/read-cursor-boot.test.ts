@@ -77,6 +77,32 @@ describe('receive boot — cursor warm gates the receive path (#218 review round
     warn.mockRestore();
   });
 
+  it('a permanently pending warm cannot wedge the boot — bounded, fails open on timeout', async() => {
+    vi.useFakeTimers();
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      // A warm that neither resolves nor rejects (e.g. an IndexedDB request
+      // stuck pending around a blocked database).
+      const store: WarmStore = {warmReadCursorCache: vi.fn(() => new Promise<void>(() => {}))};
+      const startReceive = vi.fn();
+
+      const boot = startReceiveAfterCursorWarm(startReceive, store, 5_000);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(startReceive).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await boot;
+      expect(startReceive).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('fail open'),
+        expect.any(Error)
+      );
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('identity flow routes its ONLY subscription start through the gate', () => {
     // No fire-and-forget warm anywhere, and no bare startChatAPI() call that
     // could open a receive source before the warm.
@@ -91,9 +117,14 @@ describe('receive boot — cursor warm gates the receive path (#218 review round
     expect(projection).toBeGreaterThan(gate);
   });
 
-  it('failure behavior is explicit in the gate module (fail open + logged)', () => {
+  it('failure behavior is explicit in the gate module (fail open + logged + time-bounded)', () => {
     expect(gateSrc).toContain('fail open');
     expect(gateSrc).toMatch(/catch\s*\(/);
     expect(gateSrc).toMatch(/console\.warn/);
+    // The warm await is raced against a finite timeout — never-settling is a
+    // failure mode too (PR #218 review round 4, kaieriksen).
+    expect(gateSrc).toContain('CURSOR_WARM_TIMEOUT_MS');
+    expect(gateSrc).toContain('Promise.race');
+    expect(gateSrc).toContain('clearTimeout');
   });
 });
