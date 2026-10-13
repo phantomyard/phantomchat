@@ -11,11 +11,13 @@ import {
   isTrustedAppUrl,
   grantAlways,
   parsePermissionSettings,
+  isLegacyLoopCorruption,
   defaultPermissionSettings,
   PROMPTLESS_PERMISSIONS,
   PERMISSION_SETTINGS_FILE,
   isPermissionSetting,
-  type PermissionSettings
+  type PermissionSettings,
+  type PermissionSetting
 } from './permissions';
 
 const APP = 'app://localhost/index.html';
@@ -174,6 +176,67 @@ describe('parsePermissionSettings (defensive JSON parse)', () => {
   it('skips granted entries that an explicit override already governs', () => {
     const parsed = parsePermissionSettings({overrides: {media: 'deny'}, granted: ['media']});
     expect(parsed.granted).toEqual([]);
+  });
+});
+
+/*
+ * #219 repair: 1.0.304's App Permissions tab loop wrote an explicit override
+ * for every one of its 14 rows the moment it opened (clipboard pair always
+ * 'allow', promptable ones mostly hard 'deny') and wiped every remembered
+ * grant. The tab froze before any user could touch it, so a file carrying the
+ * loop's full fingerprint was never chosen by anyone — repair it to defaults
+ * (prompt on first use) or bug-era users keep silent hard blocks (no
+ * mic/camera, no notifications) with no discoverable fix.
+ */
+describe('parsePermissionSettings — #219 loop-corruption repair', () => {
+  const loopCorrupted: {overrides: Record<string, PermissionSetting>, granted: string[]} = {
+    overrides: {
+      'clipboard-read': 'allow',
+      'clipboard-sanitized-write': 'allow',
+      'media': 'deny',
+      'notifications': 'allow',
+      'display-capture': 'deny',
+      'geolocation': 'deny',
+      'fileSystem': 'deny',
+      'midi': 'deny',
+      'hid': 'deny',
+      'serial': 'deny',
+      'usb': 'deny',
+      'window-management': 'deny',
+      'local-fonts': 'deny',
+      'sensors': 'deny'
+    },
+    granted: []
+  };
+
+  it('repairs a 1.0.304 loop-corrupted file to defaults', () => {
+    // The observed live file on the owner's machine (2026-10-13 09:13).
+    expect(parsePermissionSettings(loopCorrupted)).toEqual(defaultPermissionSettings());
+  });
+
+  it('repairs even when the loop landed on a remembered grant', () => {
+    // The loop's setPermissionSetting handler wiped grants one by one; a
+    // straggler must not save a corrupted file from repair.
+    const raw = {...loopCorrupted, granted: ['midiSysex']};
+    expect(parsePermissionSettings(raw)).toEqual(defaultPermissionSettings());
+  });
+
+  it('keeps a deliberate config that lacks the full 14-key fingerprint', () => {
+    const raw = {overrides: {'media': 'deny', 'clipboard-read': 'allow'}, granted: ['midiSysex']};
+    const parsed = parsePermissionSettings(raw);
+    expect(parsed.overrides).toEqual({'media': 'deny', 'clipboard-read': 'allow'});
+    expect(parsed.granted).toEqual(['midiSysex']);
+  });
+
+  it('keeps a deliberate config when either clipboard key is not the loop\'s allow/allow', () => {
+    const raw = {overrides: {...loopCorrupted.overrides, 'clipboard-read': 'deny'}};
+    expect(parsePermissionSettings(raw).overrides['clipboard-read']).toBe('deny');
+  });
+
+  it('detects the fingerprint on the overrides alone', () => {
+    expect(isLegacyLoopCorruption(loopCorrupted.overrides)).toBe(true);
+    expect(isLegacyLoopCorruption({media: 'deny'})).toBe(false);
+    expect(isLegacyLoopCorruption({})).toBe(false);
   });
 });
 
