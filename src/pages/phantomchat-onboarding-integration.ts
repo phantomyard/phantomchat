@@ -38,6 +38,7 @@ import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat
 import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
 import {getAllMappings, getMapping, setMappingDisplayName, setMappingUpdatedAt, setDeliberateAddAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
 import {getMessageStore} from '@lib/phantomchat/message-store';
+import {startReceiveAfterCursorWarm} from '@lib/phantomchat/read-cursor-boot';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
 import {createConversationResidueWipe} from '@lib/phantomchat/contacts-residue-wipe';
@@ -262,14 +263,20 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
         });
       };
 
-      startChatAPI();
+      // --- Receive boot (#218) ---
+      // The in-memory read-cursor view must be seeded BEFORE any receive source
+      // starts and before the projection path below is installed: the receive
+      // hot path is synchronous by design (no IndexedDB per message), so a
+      // relay backfill racing an un-warmed cache would re-badge and re-notify
+      // messages the persisted cursor already covers. startReceiveAfterCursorWarm
+      // awaits the warm (explicit fail-open on error — see the module) and only
+      // then starts the subscription. The wire-up below is synchronous, so the
+      // projection path installs after the warm as well. ChatAPI's global
+      // subscription is the only remote message receive source on this path:
+      // GroupAPI is publish/local-dispatch and receives through it.
+      await startReceiveAfterCursorWarm(startChatAPI);
 
       // --- Wire extracted modules ---
-      // Seed the in-memory read-cursor view before any incoming message can ask
-      // it "already read on another device?" (#218). The receive hot path is
-      // synchronous by design (no IndexedDB per message), so this boot-time
-      // warm is what gives it the pre-existing cursors.
-      void getMessageStore().warmReadCursorCache();
       const pendingFlush = createPendingFlush();
       const readReceipts = createReadReceiptSender();
       const deliveryUI = createDeliveryUI();
