@@ -3,13 +3,13 @@ name: app-release
 # Desktop-app release pipeline (issue #150) — mirrors phantombot's release.yml.
 #
 # Fires on pushes to main (i.e. PR merges — branch protection requires PRs, so
-# a push to main IS a merge) except docs-only merges, which the paths-ignore
-# denylist below filters out. Cuts a GitHub Release tagged
+# a push to main IS a merge) except changes that cannot alter desktop payloads,
+# which the paths-ignore denylist below filters out. Cuts a GitHub Release tagged
 # phantomchat-v1.0.<N> with Linux (AppImage + deb + rpm), macOS (Intel +
 # Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, plus
 # SHA256SUMS.txt. The Windows installers are Authenticode signed in the
 # publish job and the macOS DMGs are Developer ID signed, notarized and
-# stapled in the macos job; Linux is unsigned (checksums only).
+# stapled in the macos-notarize job; Linux is unsigned (checksums only).
 #
 # VERSION SYNC: <N> is NOT this workflow's run_number — it is the run_number
 # of the deploy.yml (PWA) run for the same commit, so the desktop app and the
@@ -45,7 +45,8 @@ name: app-release
 # forgot to list can never silently skip one. Over-releasing is harmless (a
 # duplicate-content build at a higher version); under-releasing ships a fix
 # to nobody. This repo squash-merges, so the pushed commit carries the PR's
-# FULL diff and a mixed PR (docs + src) still releases.
+# FULL diff and a mixed PR (docs + src) still releases. Keep this list limited
+# to files that cannot affect packaged bytes: unknown paths deliberately build.
 #
 # Promotion fails closed until every required architecture exists
 # (REQUIRED_ARTIFACTS in scripts/promote-release.sh).
@@ -58,6 +59,10 @@ on:
       - 'AGENTS.md'
       - 'LICENSE'
       - 'docs/**'
+      - '.github/**'
+      - '.husky/**'
+      - 'src/tests/**'
+      - 'scripts/**'
 
 permissions:
   contents: write        # create release + tag + upload assets
@@ -185,7 +190,7 @@ jobs:
             release/${{ steps.ver.outputs.version }}/latest-linux.yml
           if-no-files-found: error
 
-  macos:
+  macos-package:
     needs: linux
     strategy:
       fail-fast: false
@@ -217,11 +222,12 @@ jobs:
           APP_VERSION: ${{ needs.linux.outputs.version }}
 
       # Fail before a 10-minute package run rather than after it, and fail
-      # loudly: a missing secret must never degrade into an unsigned release.
+      # loudly: a missing certificate must never degrade into an unsigned
+      # release. Apple API credentials belong only in macos-notarize below.
       - name: Require Apple signing credentials
         run: |
           missing=()
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          for name in CSC_LINK CSC_KEY_PASSWORD; do
             [[ -n "${!name:-}" ]] || missing+=("$name")
           done
           if (( ${#missing[@]} )); then
@@ -232,9 +238,6 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Package and Developer ID sign the macOS DMG and update zip
         # Two targets from ONE signed .app: the DMG a human downloads, and the
@@ -261,6 +264,65 @@ jobs:
         env:
           VERSION: ${{ needs.linux.outputs.version }}
 
+      # Preserve the expensive signed package boundary. If Apple or CloudKit
+      # flakes later, rerunning failed jobs starts at macos-notarize and reuses
+      # these exact signed bytes instead of rebuilding or signing again.
+      - name: Upload signed macOS inputs for notarization
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-macos-${{ matrix.arch }}
+          path: |
+            release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.dmg
+            release/${{ needs.linux.outputs.version }}/PhantomChat-${{ needs.linux.outputs.version }}-${{ matrix.arch }}.zip
+            release/${{ needs.linux.outputs.version }}/latest-mac.yml
+          if-no-files-found: error
+
+  macos-notarize:
+    needs: [linux, macos-package]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout pushed commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download signed macOS inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signed-macos-${{ matrix.arch }}
+          path: release/${{ needs.linux.outputs.version }}
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Require Apple notarization credentials
+        run: |
+          missing=()
+          for name in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "missing Apple notarization secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
       # Signing alone does not clear Gatekeeper: since Catalina a quarantined
       # app must also carry an Apple notarization ticket. Notarize the DMG the
       # user actually downloads and staple the ticket to it, so first launch
@@ -280,46 +342,9 @@ jobs:
       # itself shells out to 7za/zip; the archiver is not the contract, the
       # layout is.)
       - name: Notarize, staple, and re-zip the stapled app
-        run: |
-          set -euo pipefail
-          DMG="release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg"
-          ZIP="release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.zip"
-          # electron-builder puts the x64 app under mac/ and the arm64 app
-          # under mac-arm64/; glob rather than hardcode either layout, and
-          # fail closed if that ever yields anything but one app.
-          shopt -s nullglob
-          APPS=( release/${VERSION}/mac*/PhantomChat.app )
-          shopt -u nullglob
-          [[ ${#APPS[@]} -eq 1 ]] || { echo "::error::expected exactly one packaged .app, found ${#APPS[@]}: ${APPS[*]-none}"; exit 1; }
-          APP="${APPS[0]}"
-          [[ -f "$ZIP" ]] || { echo "::error::${ZIP} missing — electron-builder produced no update zip"; exit 1; }
-
-          xcrun notarytool submit "$DMG" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait --timeout 30m
-          xcrun stapler staple "$DMG"
-
-          # The ticket the DMG submission produced covers every cdhash inside
-          # it, so stapling the .app itself normally just works. If Apple ever
-          # scopes a ticket to the submitted container only, fall back to
-          # notarizing the app on its own — notarytool takes a zip — rather
-          # than shipping an update payload with no ticket.
-          if ! xcrun stapler staple "$APP"; then
-            echo "stapling the .app from the DMG ticket failed; notarizing the zip directly"
-            xcrun notarytool submit "$ZIP" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              --wait --timeout 30m
-            xcrun stapler staple "$APP"
-          fi
-          xcrun stapler validate "$APP"
-
-          rm -f "$ZIP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-          [[ -s "$ZIP" ]] || { echo "::error::re-zipping the stapled app produced no artifact"; exit 1; }
+        run: scripts/notarize-macos-artifacts.sh \
+          "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg" \
+          "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.zip"
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.linux.outputs.version }}
@@ -453,7 +478,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [linux, macos, windows]
+    needs: [linux, macos-notarize, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pushed commit
