@@ -8,11 +8,12 @@
  *
  *  - Promptless (granted without asking): clipboard read and sanitized
  *    write. These fire from keyboard shortcuts (Ctrl+C/Ctrl+V) which cannot
- *    wait on a dialog. Both can still be disabled in Settings →
- *    Privacy & Security → Permissions.
+ *    wait on a dialog. Per owner decision on #219 they are always available
+ *    with NO settings toggle — only permissions that can prompt get one.
  *  - Everything else prompts per request; "Always allow" is remembered.
- *  - The settings tab sets explicit overrides ('allow' | 'deny') that win
- *    over both the promptless defaults and remembered grants.
+ *  - The settings tab sets explicit overrides: 'ask' (clear the override and
+ *    any remembered grant — prompt again on next use), 'allow', 'deny'.
+ *    Overrides win over both the promptless defaults and remembered grants.
  *
  * The decision logic here is pure and unit-tested; main.ts owns the dialog,
  * persistence and the Electron handler wiring.
@@ -146,6 +147,33 @@ export function isPermissionSetting(value: unknown): value is PermissionSetting 
   return value === 'ask' || value === 'allow' || value === 'deny';
 }
 
+/**
+ * The 1.0.304 App Permissions tab had a feedback loop (#219): opening it
+ * wrote an explicit override for EVERY row it listed — all 14 of these keys —
+ * with the promptless clipboard pair always as 'allow' and every promptable
+ * permission as whatever state it had just read (so most became hard 'deny'),
+ * while the same code path wiped the remembered-grants list. Users were left
+ * with silent hard blocks (no mic/camera, no notifications) they never chose,
+ * and the tab that could undo them froze the app.
+ *
+ * Files matching that fingerprint (all 14 keys present, both clipboard keys
+ * 'allow' — the loop could not produce anything else for them) are repaired
+ * to defaults on load: every permission prompts again on first use. A
+ * deliberate config that does not match the fingerprint is kept as-is.
+ */
+const LEGACY_LOOP_KEYS = [
+  'clipboard-read', 'clipboard-sanitized-write', 'media', 'notifications',
+  'display-capture', 'geolocation', 'fileSystem', 'midi', 'hid', 'serial',
+  'usb', 'window-management', 'local-fonts', 'sensors'
+] as const;
+
+export function isLegacyLoopCorruption(overrides: Record<string, PermissionSetting>): boolean {
+  if(overrides['clipboard-read'] !== 'allow' || overrides['clipboard-sanitized-write'] !== 'allow') {
+    return false;
+  }
+  return LEGACY_LOOP_KEYS.every((key) => key in overrides);
+}
+
 /** Defensive parse: anything unreadable becomes the default policy. */
 export function parsePermissionSettings(raw: unknown): PermissionSettings {
   const settings = defaultPermissionSettings();
@@ -165,6 +193,8 @@ export function parsePermissionSettings(raw: unknown): PermissionSettings {
       }
     }
   }
+  // #219 repair: 1.0.304's tab loop corrupted whole files — restore defaults.
+  if(isLegacyLoopCorruption(settings.overrides)) return defaultPermissionSettings();
   return settings;
 }
 
