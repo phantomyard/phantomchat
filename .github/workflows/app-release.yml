@@ -342,7 +342,8 @@ jobs:
       # itself shells out to 7za/zip; the archiver is not the contract, the
       # layout is.)
       - name: Notarize, staple, and re-zip the stapled app
-        run: scripts/notarize-macos-artifacts.sh \
+        run: |
+          scripts/notarize-macos-artifacts.sh \
           "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg" \
           "release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.zip"
         env:
