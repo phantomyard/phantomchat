@@ -405,9 +405,12 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   const perf = performance.now();
   // Boot splash progress: src/index.ts has finished parsing and started
   // executing — switch the splash bar from indeterminate to determinate.
-  // Total of 4 phases: workspace setup, integrity, account, ready.
+  // Total of 8 phases; the later ones (identity, relays, chat mount) are
+  // reported from phantomchat-onboarding-integration.ts so the bar keeps
+  // moving through the real heavy work instead of parking at 100% while
+  // the splash waits for the chat UI to paint.
   const bootProgress = (window as any).__bootProgress as undefined | ((step: number, total: number, label?: string) => void);
-  bootProgress?.(1, 4, 'Setting up workspace');
+  bootProgress?.(1, 8, 'Setting up workspace');
   // PhantomChat.chat: Telegram redirect disabled -- this is not a Telegram client
   // randomlyChooseVersionFromSearch();
   setSidebarLeftWidth();
@@ -421,7 +424,7 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   cancelImageEvents();
   setRootClasses();
 
-  bootProgress?.(3, 4, 'Loading account');
+  bootProgress?.(2, 8, 'Loading account');
   await checkLastActiveAccountFromTMe();
 
   if(IS_INSTALL_PROMPT_SUPPORTED) {
@@ -448,14 +451,15 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   // If this value is cached, and a different tab locks/unlocks, we'll see the wrong state of the app.
   await preventCrossTabDynamicImportDeadlock();
 
-  // Boot plumbing is complete — signal ready but do NOT dismiss the splash yet.
-  // The splash stays visible through the heavy init work (loadAllStates,
-  // mountPhantomChatOnboarding, pageIm.mount) and the chat-list READY GATE
-  // (#217 — previews populated + read state synced across devices), and is
-  // dismissed from within those paths once the chat UI is actually rendered.
-  // This eliminates the cold-start black screen between splash dismissal and
-  // first paint — and the empty-then-populate flash with stale unread badges.
-  bootProgress?.(4, 4, 'Ready');
+  // Boot plumbing is complete — do NOT signal Ready and do NOT dismiss the
+  // splash here. The splash stays visible through the heavy init work
+  // (loadAllStates, identity decrypt, bridge/relay init, pageIm.mount) and
+  // the chat-list READY GATE (#217 — previews populated + read state synced
+  // across devices). Phase 8/8 'Ready' is emitted inside the identity flow's
+  // ready-gate callback (phantomchat-onboarding-integration.ts) so the bar is
+  // still climbing honestly when the splash lifts — no motionless 100%.
+  // (Rebase note: main's bootProgress?.(4, 4, 'Ready') here was the very bug
+  // this splash rework removes; the gate + phase 8 replace it.)
 
   // Poll for a newer deployed build and surface a prominent "Update" pill that
   // hard-clears the app-shell cache on tap — kills the "am I on a stale bundle?"
@@ -470,6 +474,7 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
 
     const langPack = await I18n.getCacheLangPackAndApply();
     setDocumentLangPackProperties(langPack);
+    bootProgress?.(3, 8, 'Loading settings');
 
     if(IS_BETA) import('./pages/pageIm'); // cache it
     // const settings = await commonStateStorage.get('settings');
@@ -485,6 +490,7 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   // * (4) exit if not updated
 
   // * (1)
+  bootProgress?.(4, 8, 'Loading data');
   const allStates = await apiManagerProxy.loadAllStates();
   const stateResult = allStates[getCurrentAccount()];
 
