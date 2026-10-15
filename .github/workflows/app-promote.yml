@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to promote (e.g. phantomchat-v1.0.42). Leave empty to promote the newest prerelease.'
+        description: 'Release tag to promote (e.g. phantomchat-v1.0.42). Leave empty to promote the newest release if it is a preview.'
         required: false
         default: ''
 
@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: "Resolve tag (default: newest prerelease)"
+      - name: "Resolve tag (default: newest release preview)"
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,9 +46,18 @@ jobs:
             fi
             echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"
           else
-            NEWEST="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease)][0].tagName')"
+            # Pick the most recently CREATED release, not the newest release
+            # that still has prerelease=true. Filtering first can silently
+            # select an obsolete preview after newer releases were promoted.
+            LATEST="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq 'sort_by(.created_at) | last | [.tag_name, (.prerelease | tostring)] | @tsv')"
+            IFS=$'\t' read -r NEWEST IS_PRERELEASE <<< "$LATEST"
             if [[ -z "$NEWEST" || "$NEWEST" == "null" ]]; then
-              echo "::error::No prerelease found to promote — is everything already stable?"
+              echo "::error::No app release found to promote."
+              exit 1
+            fi
+            if [[ "$IS_PRERELEASE" != "true" ]]; then
+              echo "::error::Newest app release ${NEWEST} is already stable; build a new preview before promoting."
               exit 1
             fi
             echo "tag=$NEWEST" >> "$GITHUB_OUTPUT"
