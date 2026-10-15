@@ -73,11 +73,18 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
 
   let identityHandled = false;
 
+  // Boot splash progress reporter — src/index.ts installs window.__bootProgress
+  // and reports phases 1-4 (workspace, account, settings, data); this handler
+  // owns phases 5-8 (identity, relays, chat mount, ready) so the bar keeps
+  // moving through the heavy init instead of parking at 100%.
+  const bootProgress = (window as any).__bootProgress as undefined | ((step: number, total: number, label?: string) => void);
+
   const handleIdentity = async() => {
     if(identityHandled) return;
     identityHandled = true;
     window.removeEventListener('phantomchat-identity-created', handleIdentityFallback);
     console.log('[PhantomChatOnboardingIntegration] onIdentityCreated fired');
+    bootProgress?.(5, 8, 'Decrypting identity');
 
     try {
       // --- Load & decrypt identity ---
@@ -103,8 +110,20 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       });
 
       // --- Initialize bridge ---
+      bootProgress?.(6, 8, 'Connecting to relays');
       const bridge = PhantomChatBridge.getInstance();
       await bridge.init(identity.publicKey);
+
+      // Give the relay pool a short, capped window to actually subscribe so
+      // the progress bar reflects real relay connectivity. whenSubscribed has
+      // its own hard ceiling and never rejects, but the try/catch keeps the
+      // boot path immune even if that guarantee ever changes — worst case we
+      // lose at most 5s of splash time on a dead network.
+      try {
+        await bridge.getRelayPool()?.whenSubscribed(5000);
+      } catch(err) {
+        console.warn('[PhantomChatOnboardingIntegration] relay subscribe wait skipped:', err);
+      }
 
       // Publish NIP-65 relay list
       try {
@@ -157,6 +176,13 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       console.log('[PhantomChatOnboardingIntegration] Virtual MTProto Server registered');
 
       // --- Import chat page (loads the module graph incl. phantomchatIdentity store) ---
+      // NOTE: phase 7/8 'Loading chats' is deliberately NOT emitted here. The
+      // bar holds on phase 6 'Connecting to relays' until the ChatAPI relay
+      // subscription has actually gone live (or given up within its own
+      // 8s timeout) — see startChatAPI below. Emitting it before the mount
+      // would let the bar run past 'Connecting to relays' with no connection
+      // existing (review round 1, kaieriksen). The pageIm import/mount is
+      // fast module-graph work and happens under the relay label.
       const pageIm = await import('./pageIm');
 
       // Re-dispatch identity_loaded so stores registered inside pageIm module graph
@@ -202,7 +228,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // chat list then paints ready-loaded and synced instead of
       // empty-then-populate. (Review round 1, kaieriksen: the gate originally
       // lived only in index.ts's fallback branches — unreachable here.)
+      // The 8/8 'Ready' progress update lives INSIDE this gate callback too
+      // (review round 1, kaieriksen, splash rework): the bar reaches 100% at
+      // the same moment the splash lifts, never before.
       void whenChatListReady().then(() => {
+        bootProgress?.(8, 8, 'Ready');
         requestAnimationFrame(() => (window as any).__hideBootSplash?.());
       });
 
@@ -245,9 +275,22 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
 
       // ChatAPI owns its own NostrRelayPool. Start its global subscription
       // immediately over direct WebSocket — there is no Tor layer to wait for.
+      // This is the REAL relay-connect readiness signal the splash phase 6
+      // waits on: initGlobalSubscription() calls subscribeMessages() and
+      // internally awaits the pool's whenSubscribed(8000) (EOSE), so its
+      // settlement — resolved or failed — is the honest end of the
+      // 'Connecting to relays' phase. The advance is fire-and-forget: boot
+      // keeps flowing, no second serial wait (review round 1, kaieriksen).
       const startChatAPI = () => {
-        chatAPI.initGlobalSubscription().catch((err) => {
+        chatAPI.initGlobalSubscription()
+        .catch((err) => {
           console.warn('[PhantomChatOnboardingIntegration] global subscription failed:', err);
+        })
+        .finally(() => {
+          // Fail-open: advance the bar even if the subscription failed —
+          // the ready gate below still bounds the splash, so a dead relay
+          // can only cost the phase label accuracy, never the dismissal.
+          bootProgress?.(7, 8, 'Loading chats');
         });
       };
 
