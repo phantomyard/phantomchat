@@ -2,9 +2,9 @@ name: app-release
 
 # Desktop-app release pipeline (issue #150) — mirrors phantombot's release.yml.
 #
-# Fires on pushes to main (i.e. PR merges — branch protection requires PRs, so
-# a push to main IS a merge) except changes that cannot alter desktop payloads,
-# which the paths-ignore denylist below filters out. Cuts a GitHub Release tagged
+# Fires on payload-changing pushes to main and can also be started manually from
+# main. The manual button exists so a release-infrastructure-only fix can retry a
+# failed build without requiring a dummy payload PR. Cuts a GitHub Release tagged
 # phantomchat-v1.0.<N> with Linux (AppImage + deb + rpm), macOS (Intel +
 # Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, plus
 # SHA256SUMS.txt. The Windows installers are Authenticode signed in the
@@ -24,7 +24,7 @@ name: app-release
 # preserved in the release title/notes so the audit trail stays intact.
 #
 # The version/tag are synthesized BY THIS WORKFLOW from that counter — nobody
-# pushes a phantomchat-v* tag by hand and there is no dispatch input, so no
+# pushes a phantomchat-v* tag by hand and the dispatch has no inputs, so no
 # user-controlled text can reach a shell. Every value crosses step boundaries
 # env-bound; there is zero ${{ }} interpolation inside run: blocks (the
 # posture established in review round 3). The strict-semver grammar guard
@@ -63,6 +63,7 @@ on:
       - '.husky/**'
       - 'src/tests/**'
       - 'scripts/**'
+  workflow_dispatch:
 
 permissions:
   contents: write        # create release + tag + upload assets
@@ -78,6 +79,14 @@ jobs:
       pr-title: ${{ steps.pr.outputs.title }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require main for manual releases
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Manual app releases must run from main (got ${GITHUB_REF})."
+            exit 1
+          fi
+
       - name: Checkout pushed commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
