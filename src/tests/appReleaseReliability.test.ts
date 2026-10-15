@@ -3,9 +3,18 @@ import {chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSy
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
+import {load} from 'js-yaml';
 
 const WORKFLOW = readFileSync(join(process.cwd(), '.github', 'workflows', 'app-release.yml'), 'utf8');
 const NOTARIZE = readFileSync(join(process.cwd(), 'scripts', 'notarize-macos-artifacts.sh'), 'utf8');
+
+type Workflow = {
+  jobs: {
+    'macos-notarize': {
+      steps: Array<{name?: string; run?: string}>;
+    };
+  };
+};
 
 type Sandbox = {
   bin: string;
@@ -71,6 +80,19 @@ describe('macOS release retry boundary', () => {
     // Upload in macos-package and download in macos-notarize: both sides of
     // the signed-artifact handoff must keep the same artifact name.
     expect(WORKFLOW.match(/name: signed-macos-\$\{\{ matrix\.arch \}\}/g)?.length).toBe(2);
+  });
+
+  it('passes artifact paths without YAML-folded leading spaces', () => {
+    const workflow = load(WORKFLOW) as Workflow;
+    const command = workflow.jobs['macos-notarize'].steps.find(
+      ({name}) => name === 'Notarize, staple, and re-zip the stapled app'
+    )?.run;
+
+    expect(command).toBe(
+      'scripts/notarize-macos-artifacts.sh \\\n' +
+      '"release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.dmg" \\\n' +
+      '"release/${VERSION}/PhantomChat-${VERSION}-${ARCH}.zip"\n'
+    );
   });
 
   it('retries ticket operations without resubmitting an accepted artifact', () => {
