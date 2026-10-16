@@ -653,11 +653,15 @@ export class MessageStore {
           return;
         }
 
-        const resolvePage = (anchorPosition: number | null) => {
-          // Unknown anchors deliberately fall back to the newest page. This is
-          // tweb's existing recovery behavior for a stale/truncated mid.
+        const resolvePage = (anchorPosition: number | null, limitOverride?: number) => {
+          // Unknown anchors are resolved by the caller below (see anchorReq
+          // handler): an unknown-but-in-range anchor resolves to the rows AT
+          // OR BEYOND it (newest-first), and an out-of-range one to an empty
+          // page. Only the initial newest-first fetch (offsetId <= 0) uses
+          // anchorPosition 0 directly.
           const start = Math.max(0, (anchorPosition ?? 0) + (anchorPosition === null ? 0 : addOffset));
-          if(limit <= 0 || start >= total) {
+          const pageLimit = limitOverride ?? limit;
+          if(limit <= 0 || pageLimit <= 0 || start >= total) {
             resolve({messages: [], total, offsetIdOffset: start});
             return;
           }
@@ -668,7 +672,7 @@ export class MessageStore {
           cursorReq.onerror = () => reject(cursorReq.error);
           cursorReq.onsuccess = () => {
             const cursor = cursorReq.result;
-            if(!cursor || messages.length >= limit) {
+            if(!cursor || messages.length >= pageLimit) {
               resolve({messages, total, offsetIdOffset: start});
               return;
             }
@@ -678,7 +682,7 @@ export class MessageStore {
               return;
             }
             messages.push(cursor.value as StoredMessage);
-            if(messages.length >= limit) resolve({messages, total, offsetIdOffset: start});
+            if(messages.length >= pageLimit) resolve({messages, total, offsetIdOffset: start});
             else cursor.continue();
           };
         };
@@ -692,7 +696,31 @@ export class MessageStore {
         anchorReq.onerror = () => reject(anchorReq.error);
         anchorReq.onsuccess = () => {
           if(anchorReq.result === undefined) {
-            resolvePage(null);
+            // Fix(#231): the anchor mid has no stored row. Resolve it by its
+            // POSITION, not by falling back to the newest page: count the
+            // rows at-or-beyond the anchor (mid >= offsetId — they are the
+            // newest `atOrBeyond` rows), and return those, capped by the page
+            // limit. This keeps tweb's stale-anchor recovery (a stale old mid
+            // still yields the newest page) while no longer re-serving rows
+            // BELOW the anchor to newer-direction fetchers — that is what
+            // fed voice bubbles from ABOVE the clicked one into the
+            // auto-advance queue and looped the chat.
+            const atOrBeyondReq = index.count(IDBKeyRange.bound(
+              [conversationId, offsetId],
+              [conversationId, Number.MAX_SAFE_INTEGER]
+            ));
+            atOrBeyondReq.onerror = () => reject(atOrBeyondReq.error);
+            atOrBeyondReq.onsuccess = () => {
+              const atOrBeyond = atOrBeyondReq.result;
+              if(atOrBeyond === 0) {
+                // Anchor is OUT OF RANGE (newer than every stored row): the
+                // tweb stale/truncated-mid recovery contract still applies —
+                // fall back to the newest page, exactly as before.
+                resolvePage(null);
+                return;
+              }
+              resolvePage(0, Math.min(limit, atOrBeyond));
+            };
             return;
           }
           // Count rows strictly newer than the anchor. That count is the

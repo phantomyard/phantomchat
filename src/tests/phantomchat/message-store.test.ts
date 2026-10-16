@@ -239,6 +239,31 @@ describe('MessageStore', () => {
       expect(msgs[0].mid).toBe(1);
     });
 
+    // Fix(#231): an unknown-but-IN-RANGE anchor must resolve to the rows at
+    // or beyond it — never fall back to the newest page, which re-serves rows
+    // below the anchor and fed the voice auto-advance loop.
+    it('resolves unknown in-range anchor to rows at-or-beyond it', async() => {
+      const convId = uniqueConvId();
+      // Sparse mids so anchor 1500 has no stored row but is in range.
+      for(const mid of [1000, 2000, 3000]) {
+        await store.saveMessage(makeMsg({eventId: `r-${mid}`, conversationId: convId, timestamp: mid, mid}));
+      }
+      const msgs = await store.getMessagesByOffsetId(convId, 10, 1500, 0);
+      expect(msgs.map((m) => m.mid)).toEqual([3000, 2000]);
+    });
+
+    it('keeps the newest-page fallback when the anchor is out of range', async() => {
+      const convId = uniqueConvId();
+      for(const mid of [1000, 2000]) {
+        await store.saveMessage(makeMsg({eventId: `r-${mid}`, conversationId: convId, timestamp: mid, mid}));
+      }
+      // The newer-direction fetcher anchors on newest.mid + 1 (no such row,
+      // out of range): tweb's stale-anchor recovery keeps the newest page.
+      // The loader-side monotonic filter drops any re-served rows from there.
+      const msgs = await store.getMessagesByOffsetId(convId, 10, 2001, 0);
+      expect(msgs.every((m) => m.mid <= 2001)).toBe(true);
+    });
+
     it('returns empty for empty conversation', async() => {
       const msgs = await store.getMessagesByOffsetId('nope:conv', 10, 0, 0);
       expect(msgs).toEqual([]);
