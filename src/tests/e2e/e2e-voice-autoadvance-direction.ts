@@ -1,16 +1,20 @@
 /**
  * E2E regression test for issue #231: voice auto-advance must play DOWN only.
  *
- * Alice sends 5 voice notes (real 1s Opus silence) to Bob in rapid succession
+ * Alice sends 15 voice notes (real 1s Opus silence) to Bob in rapid succession
  * (same-second mids, like the original Megan's-chat report). Bob clicks play
- * on voice #2. Before the fix, after the below-voices finished, the playback
+ * on voice #2 — the clicked voice has 13 voices BELOW it, more than the
+ * playback controller's loadCount (10), so a store that answered a
+ * newer-direction fetch with the newest page instead of the window next to
+ * the anchor would be visible at this scale (small fixtures can't tell
+ * "next window" from "newest window"). Before the fix, after the below-voices finished, the playback
  * queue wrapped around to the TOP of the chat and looped the whole chat
  * forever: the newer-direction history fetch anchored on a non-existent mid
  * (`anchor.mid + 1`), the store's unknown-anchor fallback returned the whole
  * recent window, and SearchListLoader re-queued it (above-voices + dups).
  *
  * Asserts:
- *   - voices below the clicked one play, in order: exactly [1, 2, 3, 4]
+ *   - voices below the clicked one play, in order: exactly [1..14]
  *   - NO voice above the clicked one ever plays
  *   - playback STOPS (no wrap, no loop)
  *
@@ -186,17 +190,18 @@ async function main() {
   await pageA.waitForTimeout(3000);
 
   const b64 = await makeVoiceBlob(pageA);
-  for(let i = 0; i < 5; i++) {
+  const VOICES = 15;
+  for(let i = 0; i < VOICES; i++) {
     const r = await sendVoice(pageA, b64, 1);
     if(!r.ok) { console.log(`  send ${i} FAILED: ${r.reason}`); process.exit(2); }
     await pageA.waitForTimeout(600); // burst — mostly same-second mids
   }
-  console.log('  5 voice notes sent');
+  console.log(`  ${VOICES} voice notes sent`);
 
   await pageB.waitForTimeout(12000);
   const count = await pageB.locator('.bubble .audio.is-voice').count();
   console.log(`  Bob sees ${count} voice bubbles`);
-  if(count < 5) { console.log('FAIL: fewer than 5 voice bubbles on receiver'); process.exit(2); }
+  if(count < VOICES) { console.log(`FAIL: fewer than ${VOICES} voice bubbles on receiver`); process.exit(2); }
 
   // Map every play event to a voice-bubble DOM index via the controller's
   // mediaDetails (the <audio> lives outside the bubble host).
@@ -224,21 +229,27 @@ async function main() {
 
   // Wait for the chain to finish: poll the log until it stops growing
   let prev = -1;
-  for(let i = 0; i < 6; i++) {
+  let stable = 0;
+  for(let i = 0; i < 40; i++) {
     await pageB.waitForTimeout(2000);
     const n = await pageB.evaluate(() => (window as any).__playLog.length);
     console.log(`  [t+${(i + 1) * 2}s] play events: ${n}`);
-    if(n === prev && n > 0) break;
+    if(n === prev && n > 0) {
+      if(++stable >= 3) break;
+    } else {
+      stable = 0;
+    }
     prev = n;
   }
 
   const idxes = await pageB.evaluate(() => (window as any).__playLog.map((l: any) => l.idx));
   let pass = true;
-  if(JSON.stringify(idxes) !== JSON.stringify([1, 2, 3, 4])) {
+  const expected = Array.from({length: VOICES - 1}, (_, i) => i + 1);
+  if(JSON.stringify(idxes) !== JSON.stringify(expected)) {
     pass = false;
-    console.log(`  ✗ expected exact sequence [1,2,3,4], got ${JSON.stringify(idxes)}`);
+    console.log(`  ✗ expected exact sequence [1..${VOICES - 1}], got ${JSON.stringify(idxes)}`);
   } else {
-    console.log('  ✓ played exactly [1,2,3,4] in order (below only, then STOP)');
+    console.log(`  ✓ played exactly [1..${VOICES - 1}] in order (below only, then STOP)`);
   }
   const above = idxes.filter((i: number) => i < 1);
   if(above.length) {

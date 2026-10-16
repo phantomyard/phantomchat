@@ -655,10 +655,11 @@ export class MessageStore {
 
         const resolvePage = (anchorPosition: number | null, limitOverride?: number) => {
           // Unknown anchors are resolved by the caller below (see anchorReq
-          // handler): an unknown-but-in-range anchor resolves to the rows AT
-          // OR BEYOND it (newest-first), and an out-of-range one to an empty
-          // page. Only the initial newest-first fetch (offsetId <= 0) uses
-          // anchorPosition 0 directly.
+          // handler): an unknown-but-in-range anchor resolves to the rows next
+          // to it (addOffset-shifted, like a known anchor), and an out-of-range
+          // one falls back to the newest page (tweb stale-mid recovery). Only
+          // the initial newest-first fetch (offsetId <= 0) uses anchorPosition
+          // 0 directly.
           const start = Math.max(0, (anchorPosition ?? 0) + (anchorPosition === null ? 0 : addOffset));
           const pageLimit = limitOverride ?? limit;
           if(limit <= 0 || pageLimit <= 0 || start >= total) {
@@ -712,14 +713,24 @@ export class MessageStore {
             atOrBeyondReq.onerror = () => reject(atOrBeyondReq.error);
             atOrBeyondReq.onsuccess = () => {
               const atOrBeyond = atOrBeyondReq.result;
-              if(atOrBeyond === 0) {
-                // Anchor is OUT OF RANGE (newer than every stored row): the
-                // tweb stale/truncated-mid recovery contract still applies —
-                // fall back to the newest page, exactly as before.
+              if(atOrBeyond === 0 || atOrBeyond >= total) {
+                // Anchor is OUT OF RANGE (newer than every stored row, or
+                // older than all of them): the tweb stale/truncated-mid
+                // recovery contract still applies — fall back to the newest
+                // page, exactly as before.
                 resolvePage(null);
                 return;
               }
-              resolvePage(0, Math.min(limit, atOrBeyond));
+              // An unknown-but-in-range anchor has no row of its own, so the
+              // count of rows at-or-beyond it (mid >= offsetId — none can sit
+              // AT offsetId) IS its position in the newest-first list. Resolve
+              // it like a known anchor: addOffset shifts from that position,
+              // so `addOffset = -N` returns the N rows just newer than the
+              // anchor and `addOffset = 0` the rows just older. Resolving from
+              // position 0 instead re-served the newest page — in a long chat
+              // that silently skipped every voice between the clicked one and
+              // the bottom (the loop became a skip).
+              resolvePage(atOrBeyond);
             };
             return;
           }
