@@ -68,6 +68,26 @@ export default class SearchListLoader<Item extends {mid: number, peerId: PeerId}
             .filter(Boolean);
           }
 
+          // Fix(#231): a *newer*-direction fetch must only return messages
+          // strictly NEWER than the fetch anchor. The P2P virtual server's
+          // unknown-anchor fallback can return the whole recent window (above
+          // the anchor + duplicates), which the auto-advance player then
+          // re-queues — voices ABOVE the clicked bubble play and the chat
+          // loops forever. Monotonic filter + dedupe bound the queue: it can
+          // only ever grow with genuinely new, strictly-newer messages.
+          if(!older) {
+            const anchorMid = (anchor as {mid?: number} | undefined)?.mid;
+            const known = new Set<number>();
+            if(anchorMid !== undefined) known.add(anchorMid);
+            for(const it of this.previous) known.add(it.mid);
+            for(const it of this.next) known.add(it.mid);
+            if(this.current) known.add(this.current.mid);
+            value.messages = (value.messages as Message.message[]).filter(
+              (m) => !!m && !known.has(m.mid) &&
+                (anchorMid === undefined || m.mid > anchorMid)
+            );
+          }
+
           return {count: value.count, items: value.messages};
         });
       },
