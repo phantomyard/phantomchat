@@ -919,6 +919,12 @@ describe('ChatAPI', () => {
       expect(catchUpInbox).not.toHaveBeenCalled();
     });
 
+    test('a zero-conversation backfill still dispatches completion (cold profile)', async() => {
+      messageStoreMocks.getAllConversationIds.mockResolvedValueOnce([]);
+      await chatApi.backfillConversations();
+      expect(rootScope.dispatchEvent).toHaveBeenCalledWith('phantomchat_backfill_complete', undefined);
+    });
+
     test('full backfill: one inbox walk floored at the oldest conversation\'s newest message', async() => {
       messageStoreMocks.getAllConversationIds.mockResolvedValueOnce(['conv-a', 'conv-b', 'conv-empty']);
       messageStoreMocks.getLatestTimestamp.mockImplementation(async(id: string) =>

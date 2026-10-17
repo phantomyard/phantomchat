@@ -21,6 +21,18 @@
  * `previewsReady` promise (#217): the cold-start ready gate waits on it so the
  * chat list paints with real summaries instead of the empty-then-populate
  * flash. Failures are swallowed to a debug line either way.
+ *
+ * On a COLD profile the one boot-time refresh is not enough (#234-class bug):
+ * the local message store is still empty when it runs, so every preview
+ * renders blank, and the #159 background backfill fills the store only
+ * afterwards — largely during the receive gate, whose deliveries are stored
+ * but deliberately not projected (see the receive-boot note in the onboarding
+ * integration). Nothing re-ran the refresh, so previews stayed blank until a
+ * new live message landed in each chat. `wirePreviewRefreshReruns` closes
+ * that gap: the refresh re-runs when ChatAPI's backfill pass completes and a
+ * couple of times on a bounded schedule (the catch-up poll delivers a page
+ * every BACKFILL_POLL_INTERVAL_MS), so the sidebar converges without waiting
+ * for user activity.
  */
 
 import type {ChatCatchUpOutcome} from './chat-api';
@@ -30,6 +42,55 @@ const LOG_PREFIX = '[PhantomChatLaunchDialogs]';
 /** How long openTopChatOnDesktop waits for a first-ever dialog list to load. */
 export const TOP_CHAT_WAIT_ATTEMPTS = 10;
 export const TOP_CHAT_WAIT_INTERVAL_MS = 500;
+
+/**
+ * Post-install re-runs of the preview refresh. The relay catch-up poll
+ * delivers a page every 15s (BACKFILL_POLL_INTERVAL_MS), so the first re-run
+ * lands just after the first cold-profile page and the second covers a slow
+ * multi-page drain; later drains surface through the backfill-complete event.
+ */
+export const PREVIEW_RERUN_DELAYS_MS = [20_000, 60_000];
+
+/**
+ * Re-run the preview refresh when the backfill settles and on a bounded
+ * post-install schedule. Runs are coalesced: a backfill burst plus the timed
+ * re-runs must never stack concurrent refreshes — one runs at a time and a
+ * request that arrives mid-run gets one trailing re-run, not one per event.
+ */
+export function wirePreviewRefreshReruns(opts: {
+  run: () => Promise<number>;
+  /** Subscribe to ChatAPI backfill completion ('phantomchat_backfill_complete'). */
+  onBackfillComplete?: (fn: () => void) => void;
+  /** Injectable timer (defaults to setTimeout) so tests don't wait real time. */
+  schedule?: (fn: () => void, ms: number) => void;
+  delaysMs?: number[];
+}): void {
+  const schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
+  let inFlight = false;
+  let requested = false;
+  const runOnce = () => {
+    if(inFlight) {
+      requested = true;
+      return;
+    }
+    inFlight = true;
+    Promise.resolve()
+    .then(opts.run)
+    .catch((err) => console.debug(LOG_PREFIX, 'preview re-run failed', (err as Error)?.message))
+    .finally(() => {
+      inFlight = false;
+      if(requested) {
+        requested = false;
+        runOnce();
+      }
+    });
+  };
+
+  opts.onBackfillComplete?.(runOnce);
+  for(const ms of (opts.delaysMs ?? PREVIEW_RERUN_DELAYS_MS)) {
+    schedule(runOnce, ms);
+  }
+}
 
 export interface DialogRef {
   peerId: number;
@@ -177,9 +238,20 @@ export function installLaunchDialogs(opts: {
     });
   }
 
-  const previewsReady = refreshDialogPreviews({
+  const refreshOnce = () => refreshDialogPreviews({
     getDialogs,
     reloadConversation: (peerId) => rootScope.managers.appMessagesManager.reloadConversation(peerId)
+  });
+  const previewsReady = refreshOnce();
+
+  // Cold-profile convergence: the boot refresh above ran against a store the
+  // background backfill hadn't filled yet. Re-run when a backfill pass
+  // completes and on the bounded post-install schedule (see the header note).
+  wirePreviewRefreshReruns({
+    run: refreshOnce,
+    onBackfillComplete: typeof rootScope.addEventListener === 'function' ?
+      (fn) => { rootScope.addEventListener('phantomchat_backfill_complete', fn); } :
+      undefined
   });
 
   void openTopChatOnDesktop({
