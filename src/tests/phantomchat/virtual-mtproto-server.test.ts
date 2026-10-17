@@ -251,6 +251,52 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result.messages).toContain(dialog.topMessage);
     });
 
+    // #236: the contact-init dialog seed carries a fresh Date.now()-based
+    // timestamp, so on a freshly synced device it outranks every backfilled
+    // row and used to become the dialog top message — rendering an empty
+    // sidebar preview (the chat view itself filters seeds out of bubbles,
+    // so only the left column went blank). The newest NON-seed row must win;
+    // seed-only conversations still get a dialog.
+    it('skips the contact-init seed when picking the dialog top message (#236)', async () => {
+      const seed = {
+        ...mockMessage,
+        eventId: 'contact-init-' + PEER_PUBKEY,
+        content: '',
+        timestamp: 1700000100,
+        mid: 999000000009
+      };
+      const real = {
+        ...mockMessage,
+        eventId: 'ev-real',
+        content: 'real last message',
+        timestamp: 1700000000,
+        mid: MID
+      };
+      mockStore.getMessages.mockResolvedValue([seed, real]);
+
+      const result = await server.handleMethod('messages.getDialogs', {});
+      const dialog = result.dialogs[0];
+
+      expect(dialog.top_message).toBe(MID);
+      expect(dialog.topMessage.message).toBe('real last message');
+      expect(result.messages).toContain(dialog.topMessage);
+    });
+
+    it('keeps the dialog when the conversation only has the contact-init seed', async () => {
+      const seed = {
+        ...mockMessage,
+        eventId: 'contact-init-' + PEER_PUBKEY,
+        content: '',
+        timestamp: 1700000100,
+        mid: 999000000009
+      };
+      mockStore.getMessages.mockResolvedValue([seed]);
+
+      const result = await server.handleMethod('messages.getDialogs', {});
+      expect(result.dialogs.length).toBe(1);
+      expect(result.dialogs[0].top_message).toBe(999000000009);
+    });
+
     // 2026-10-05 restart regression: the boot-time dialog preview used to
     // rebuild the top message WITHOUT media, and tweb's render cache served
     // that media-less copy forever — media bubbles rendered as empty shells
