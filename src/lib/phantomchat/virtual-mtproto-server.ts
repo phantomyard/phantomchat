@@ -763,10 +763,19 @@ export class PhantomChatMTProtoServer {
           // Skip self:self conversations — the user is not their own chat.
           if(peerPubkey === this.ownPubkey) continue;
 
-          const latestMsgs = await store.getMessages(convId, 1);
+          // #236: the newest row by timestamp is not always a real message —
+          // the `contact-init-<pubkey>` dialog seed carries fresh-Date.now()
+          // timestamps, so on a freshly synced device it outranks every
+          // backfilled row and becomes the dialog top message. That renders
+          // an empty sidebar preview (the chat view filters seeds out of
+          // bubbles via getHistory, so the open chat looks fine). Pick the
+          // newest NON-seed row; fall back to the seed itself only when the
+          // conversation has no real messages yet, so fresh contacts still
+          // get a dialog.
+          const latestMsgs = await store.getMessages(convId, 8);
           if(latestMsgs.length === 0) continue;
 
-          const latest = latestMsgs[0];
+          const latest = latestMsgs.find((m) => !m.eventId.startsWith('contact-init-')) ?? latestMsgs[0];
           const peerId = await this.mapper.mapPubkey(peerPubkey);
           if(onlyPeerIds && !onlyPeerIds.has(peerId)) continue;
 
