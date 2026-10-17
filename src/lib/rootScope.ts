@@ -293,6 +293,7 @@ export type BroadcastEvents = {
   'phantomchat_retry_file_send': {peerId: number; mid: number},
   'phantomchat_profile_update': {peerId: number; pubkey: string; displayName: string; about?: string; picture?: string},
   'phantomchat_backfill_complete': void,
+  'phantomchat_backfill_progress': {delivered: number},
   'phantomchat_conversation_deleted': {peerPubkey: string; conversationId: string},
   'phantomchat_recovery_requested': void,
   'phantomchat_read_receipts_toggle': boolean,

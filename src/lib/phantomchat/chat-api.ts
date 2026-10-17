@@ -1266,6 +1266,13 @@ export class ChatAPI {
 
       if(conversationIds.length === 0) {
         this.log('[ChatAPI] no conversations to backfill');
+        // Still dispatch: a no-op pass IS a completed pass, and on a cold
+        // profile this is the only completion signal boot-time listeners get
+        // at init — conversations only exist once the pool's background
+        // history drain has delivered something. A silent early-return left
+        // launch-time listeners (the chat-list preview refresh re-run) never
+        // triggered until a relay happened to reconnect.
+        rootScope.dispatchEvent('phantomchat_backfill_complete', undefined);
         return;
       }
 

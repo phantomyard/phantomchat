@@ -10,7 +10,8 @@ import {
   openTopChatOnDesktop,
   onChatOpenedCatchUp,
   isChatDeepLink,
-  installLaunchDialogs
+  installLaunchDialogs,
+  wirePreviewRefreshReruns
 } from '@lib/phantomchat/phantomchat-launch-dialogs';
 
 const noSleep = () => Promise.resolve();
@@ -181,5 +182,163 @@ describe('installLaunchDialogs wiring', () => {
     await vi.waitFor(() => expect(appImManager.setInnerPeer).toHaveBeenCalledWith({peerId: 77}));
     expect(rootScope.managers.dialogsStorage.getFolderDialogs).toHaveBeenCalledWith(0);
     expect(listeners.peer_changed).toBeTypeOf('function');
+  });
+
+  it('re-runs the preview refresh when the backfill pass completes (cold-profile convergence)', async() => {
+    const listeners: Record<string, (p: unknown) => void> = {};
+    const appImManager = {
+      addEventListener: vi.fn((ev: string, cb: any) => { listeners[ev] = cb; }),
+      setInnerPeer: vi.fn(),
+      chat: undefined as any
+    };
+    const reloadConversation = vi.fn().mockResolvedValue(undefined);
+    const rootScope = {
+      managers: {
+        dialogsStorage: {getFolderDialogs: vi.fn().mockResolvedValue([{peerId: 77}])},
+        appMessagesManager: {reloadConversation}
+      },
+      addEventListener: vi.fn((ev: string, cb: any) => { listeners[ev] = cb; })
+    };
+    const chatAPI = {catchUpConversation: vi.fn().mockResolvedValue('ran')};
+
+    installLaunchDialogs({rootScope, appImManager, chatAPI, launchedWithDeepLink: false, isMobile: () => false});
+
+    // Boot refresh ran once.
+    await vi.waitFor(() => expect(reloadConversation).toHaveBeenCalledTimes(1));
+    expect(listeners.phantomchat_backfill_complete).toBeTypeOf('function');
+
+    // The backfill completing re-runs the refresh against the now-filled store.
+    listeners.phantomchat_backfill_complete!(undefined);
+    await vi.waitFor(() => expect(reloadConversation).toHaveBeenCalledTimes(2));
+  });
+
+  it('survives a rootScope without addEventListener (test stubs)', () => {
+    const appImManager = {
+      addEventListener: vi.fn(),
+      setInnerPeer: vi.fn(),
+      chat: undefined as any
+    };
+    const reloadConversation = vi.fn().mockResolvedValue(undefined);
+    expect(() => installLaunchDialogs({
+      rootScope: {managers: {
+        dialogsStorage: {getFolderDialogs: vi.fn().mockResolvedValue([])},
+        appMessagesManager: {reloadConversation}
+      }},
+      appImManager,
+      chatAPI: {catchUpConversation: vi.fn().mockResolvedValue('ran')},
+      launchedWithDeepLink: false,
+      isMobile: () => false
+    })).not.toThrow();
+  });
+});
+
+describe('wirePreviewRefreshReruns', () => {
+  it('runs on the injected schedule, bounded', async() => {
+    const scheduled: Array<{fn: () => void; ms: number}> = [];
+    const run = vi.fn().mockResolvedValue(3);
+    wirePreviewRefreshReruns({
+      run,
+      schedule: (fn, ms) => scheduled.push({fn, ms}),
+      delaysMs: [100, 200]
+    });
+    // Wiring alone runs nothing — the install-time run is previewsReady's.
+    expect(run).toHaveBeenCalledTimes(0);
+    expect(scheduled.map((s) => s.ms)).toEqual([100, 200]);
+
+    scheduled[0].fn();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    scheduled[1].fn();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    // No further scheduled runs exist — the schedule is bounded.
+    expect(scheduled).toHaveLength(2);
+  });
+
+  it('coalesces overlapping requests into one trailing run', async() => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const run = vi.fn().mockImplementation(() => gate.then(() => 1));
+    const scheduled: Array<{fn: () => void; ms: number}> = [];
+    const backfillCbs: Array<() => void> = [];
+    wirePreviewRefreshReruns({
+      run,
+      schedule: (fn, ms) => scheduled.push({fn, ms}),
+      delaysMs: [100],
+      onBackfillComplete: (fn) => { backfillCbs.push(fn); }
+    });
+
+    expect(run).toHaveBeenCalledTimes(0); // wiring alone runs nothing
+
+    scheduled[0].fn();  // first run starts, gated mid-flight
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    backfillCbs[0]!();  // event fires while the run is in flight
+    backfillCbs[0]!();  // and again — must collapse
+
+    release();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  });
+
+  it('a drain-progress row after the last fixed timer still re-runs', async() => {
+    // #234 review: the fixed timers can expire before a deep drain reaches the
+    // newest message of a quieter conversation. Progress must come from the
+    // pool's per-page event, not from the bounded schedule.
+    const scheduled: Array<{fn: () => void; ms: number}> = [];
+    const run = vi.fn().mockResolvedValue(1);
+    const progressCbs: Array<() => void> = [];
+    wirePreviewRefreshReruns({
+      run,
+      schedule: (fn, ms) => scheduled.push({fn, ms}),
+      delaysMs: [100, 200],
+      onBackfillProgress: (fn) => { progressCbs.push(fn); }
+    });
+
+    scheduled[0].fn();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    scheduled[1].fn();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(scheduled).toHaveLength(2); // schedule exhausted
+
+    // The next drain page lands AFTER the last timer: the event drives it.
+    progressCbs[0]!();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  });
+
+  it('coalesces overlapping progress events into one trailing run', async() => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const run = vi.fn().mockImplementation(() => gate.then(() => 1));
+    const progressCbs: Array<() => void> = [];
+    wirePreviewRefreshReruns({
+      run,
+      schedule: () => {},
+      delaysMs: [],
+      onBackfillProgress: (fn) => { progressCbs.push(fn); }
+    });
+
+    expect(run).toHaveBeenCalledTimes(0); // wiring alone runs nothing
+
+    progressCbs[0]!(); // run starts, gated mid-flight
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    progressCbs[0]!(); // page lands while the run is in flight
+    progressCbs[0]!(); // and again — must collapse
+
+    release();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  });
+
+  it('a failing re-run does not break later ones', async() => {
+    const scheduled: Array<{fn: () => void; ms: number}> = [];
+    const run = vi.fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(2);
+    wirePreviewRefreshReruns({
+      run,
+      schedule: (fn, ms) => scheduled.push({fn, ms}),
+      delaysMs: [100, 200]
+    });
+
+    scheduled[0].fn();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    scheduled[1].fn();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   });
 });

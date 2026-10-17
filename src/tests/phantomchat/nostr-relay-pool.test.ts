@@ -994,6 +994,44 @@ describe('NostrRelayPool', () => {
       }
     });
 
+    it('a drain page that delivers rows dispatches backfill progress (#234 review)', async() => {
+      // The cold drain resumes across catch-up ticks when pages truncate, and
+      // those ticks never fired ANY event — launch-time listeners (chat-list
+      // preview refresh re-runs) had only fixed timers to converge on. Every
+      // tick that delivers a genuinely-new row now signals progress.
+      vi.useFakeTimers();
+      try {
+        const pagedSpy = vi.spyOn(MockNostrRelayClass.prototype, 'getMessagesPaged')
+        .mockResolvedValue({messages: [makeMessage('progress-1')], outcome: 'exhausted'});
+
+        const pool = new NostrRelayPool({
+          relays: [{url: 'wss://relay1.test', read: true, write: true}],
+          onMessage: vi.fn()
+        });
+        await pool.initialize();
+        pool.subscribeMessages();
+        await vi.advanceTimersByTimeAsync(0); // flush the startup walk
+
+        const progressCalls = () => (rootScope.dispatchEvent as any).mock.calls
+        .filter((c: any[]) => c[0] === 'phantomchat_backfill_progress');
+        // The startup page delivered a row → progress fired.
+        const afterStartup = progressCalls().length;
+        expect(afterStartup).toBeGreaterThan(0);
+        const payload = progressCalls()[0]![1];
+        expect(payload).toEqual({delivered: 1});
+
+        // An idle tick (nothing new delivered) stays silent.
+        pagedSpy.mockResolvedValue({messages: [], outcome: 'exhausted'});
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(progressCalls().length).toBe(afterStartup);
+
+        pagedSpy.mockRestore();
+        pool.disconnect();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('updates lastSeenTimestamp as messages arrive', async() => {
       const onMessage = vi.fn();
       const relays = [
