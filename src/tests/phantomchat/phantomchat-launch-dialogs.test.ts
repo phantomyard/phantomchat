@@ -277,6 +277,54 @@ describe('wirePreviewRefreshReruns', () => {
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
   });
 
+  it('a drain-progress row after the last fixed timer still re-runs', async() => {
+    // #234 review: the fixed timers can expire before a deep drain reaches the
+    // newest message of a quieter conversation. Progress must come from the
+    // pool's per-page event, not from the bounded schedule.
+    const scheduled: Array<{fn: () => void; ms: number}> = [];
+    const run = vi.fn().mockResolvedValue(1);
+    const progressCbs: Array<() => void> = [];
+    wirePreviewRefreshReruns({
+      run,
+      schedule: (fn, ms) => scheduled.push({fn, ms}),
+      delaysMs: [100, 200],
+      onBackfillProgress: (fn) => { progressCbs.push(fn); }
+    });
+
+    scheduled[0].fn();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    scheduled[1].fn();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(scheduled).toHaveLength(2); // schedule exhausted
+
+    // The next drain page lands AFTER the last timer: the event drives it.
+    progressCbs[0]!();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  });
+
+  it('coalesces overlapping progress events into one trailing run', async() => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const run = vi.fn().mockImplementation(() => gate.then(() => 1));
+    const progressCbs: Array<() => void> = [];
+    wirePreviewRefreshReruns({
+      run,
+      schedule: () => {},
+      delaysMs: [],
+      onBackfillProgress: (fn) => { progressCbs.push(fn); }
+    });
+
+    expect(run).toHaveBeenCalledTimes(0); // wiring alone runs nothing
+
+    progressCbs[0]!(); // run starts, gated mid-flight
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    progressCbs[0]!(); // page lands while the run is in flight
+    progressCbs[0]!(); // and again — must collapse
+
+    release();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  });
+
   it('a failing re-run does not break later ones', async() => {
     const scheduled: Array<{fn: () => void; ms: number}> = [];
     const run = vi.fn()

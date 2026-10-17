@@ -29,10 +29,11 @@
  * but deliberately not projected (see the receive-boot note in the onboarding
  * integration). Nothing re-ran the refresh, so previews stayed blank until a
  * new live message landed in each chat. `wirePreviewRefreshReruns` closes
- * that gap: the refresh re-runs when ChatAPI's backfill pass completes and a
- * couple of times on a bounded schedule (the catch-up poll delivers a page
- * every BACKFILL_POLL_INTERVAL_MS), so the sidebar converges without waiting
- * for user activity.
+ * that gap: the refresh re-runs when the cold drain delivers rows (the pool's
+ * per-page 'phantomchat_backfill_progress' event — a deep drain resumes
+ * across 15s catch-up ticks, which the pass-level backfill-complete event
+ * never covers) plus a couple of bounded-timer backstops, so the sidebar
+ * converges without waiting for user activity.
  */
 
 import type {ChatCatchUpOutcome} from './chat-api';
@@ -44,10 +45,12 @@ export const TOP_CHAT_WAIT_ATTEMPTS = 10;
 export const TOP_CHAT_WAIT_INTERVAL_MS = 500;
 
 /**
- * Post-install re-runs of the preview refresh. The relay catch-up poll
- * delivers a page every 15s (BACKFILL_POLL_INTERVAL_MS), so the first re-run
- * lands just after the first cold-profile page and the second covers a slow
- * multi-page drain; later drains surface through the backfill-complete event.
+ * Post-install re-runs of the preview refresh — a BACKSTOP only. The real
+ * convergence signal is the pool's per-page 'phantomchat_backfill_progress'
+ * event (fired every time a cold-drain tick delivers new rows), which keeps
+ * re-running the refresh no matter how long a deep drain takes. These two
+ * fixed timers cover a drain that has not delivered anything yet (slow relay
+ * connects, long first page) so the schedule stays bounded.
  */
 export const PREVIEW_RERUN_DELAYS_MS = [20_000, 60_000];
 
@@ -61,6 +64,8 @@ export function wirePreviewRefreshReruns(opts: {
   run: () => Promise<number>;
   /** Subscribe to ChatAPI backfill completion ('phantomchat_backfill_complete'). */
   onBackfillComplete?: (fn: () => void) => void;
+  /** Subscribe to pool cold-drain progress ('phantomchat_backfill_progress'). */
+  onBackfillProgress?: (fn: () => void) => void;
   /** Injectable timer (defaults to setTimeout) so tests don't wait real time. */
   schedule?: (fn: () => void, ms: number) => void;
   delaysMs?: number[];
@@ -87,6 +92,7 @@ export function wirePreviewRefreshReruns(opts: {
   };
 
   opts.onBackfillComplete?.(runOnce);
+  opts.onBackfillProgress?.(runOnce);
   for(const ms of (opts.delaysMs ?? PREVIEW_RERUN_DELAYS_MS)) {
     schedule(runOnce, ms);
   }
@@ -251,6 +257,9 @@ export function installLaunchDialogs(opts: {
     run: refreshOnce,
     onBackfillComplete: typeof rootScope.addEventListener === 'function' ?
       (fn) => { rootScope.addEventListener('phantomchat_backfill_complete', fn); } :
+      undefined,
+    onBackfillProgress: typeof rootScope.addEventListener === 'function' ?
+      (fn) => { rootScope.addEventListener('phantomchat_backfill_progress', fn); } :
       undefined
   });
 

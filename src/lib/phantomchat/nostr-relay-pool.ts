@@ -2666,12 +2666,14 @@ export class NostrRelayPool {
 
     this.applyWalkEvidence(pages);
 
+    const before = this.deliveredMessageCount;
     for(const page of pages) {
       if(!page) continue;
       for(const msg of page.messages) {
         await this.handleIncomingMessage(msg);
       }
     }
+    this.notifyBackfillProgress(before);
   }
 
   /**
@@ -2704,9 +2706,11 @@ export class NostrRelayPool {
     // poll owns clearing.
     this.applyWalkEvidence([page], {mayClear: false});
 
+    const before = this.deliveredMessageCount;
     for(const msg of page?.messages ?? []) {
       await this.handleIncomingMessage(msg);
     }
+    this.notifyBackfillProgress(before);
   }
 
   private startRecovery(): void {
@@ -2730,6 +2734,23 @@ export class NostrRelayPool {
     this.backfillPollInterval = setInterval(() => {
       void this.backfillRecent();
     }, BACKFILL_POLL_INTERVAL_MS);
+  }
+
+  /**
+   * Signal UI listeners that a background walk just delivered fresh rows to
+   * the store. This is the per-PAGE completion signal the cold-profile chat
+   * list converges on: the startup walk resumes across BACKFILL_POLL_INTERVAL
+   * ticks when pages truncate, and those resume ticks never fire the (pass-)
+   * level phantomchat_backfill_complete event — a deep drain would otherwise
+   * finish delivering long after every fixed re-run timer expired with no
+   * event for launch-time listeners to react to (#234 review). Only a
+   * genuinely-new delivery fires it; an idle/duplicate-only tick is silent.
+   */
+  private notifyBackfillProgress(before: number): void {
+    const delivered = this.deliveredMessageCount - before;
+    if(delivered > 0) {
+      rootScope.dispatchEvent('phantomchat_backfill_progress', {delivered});
+    }
   }
 
   /**
@@ -2926,12 +2947,14 @@ export class NostrRelayPool {
 
       this.applyWalkEvidence(pages);
 
+      const before = this.deliveredMessageCount;
       for(const page of pages) {
         if(!page) continue;
         for(const msg of page.messages) {
           await this.handleIncomingMessage(msg);
         }
       }
+      this.notifyBackfillProgress(before);
 
       // The since-walk above can only reach wraps ABOVE the watermark. Anything
       // we released that now sits below it is invisible to that walk by
