@@ -444,9 +444,11 @@ export interface SignalQuitDeps {
  * that has not finished after timeoutMs, exits hard and deliberately leaves
  * the marker in place: a quit that hangs is itself freeze evidence.
  *
- * On Linux, Chromium owns SIGTERM/SIGINT and already quits gracefully, so
- * these handlers never run there. They matter where Node's handlers are the
- * ones that fire (macOS), and they are harmless everywhere else.
+ * On Linux, Chromium installs its own graceful TERM/INT handler only some
+ * time after startup and it then replaces these; before that (verified on
+ * Electron 39.8.10: ~1 s in) a signal used to kill the app outright with no
+ * quit events. These handlers cover that window, and any platform where
+ * Node's handlers are the ones that fire.
  */
 export function createSignalQuitHandler(deps: SignalQuitDeps): (signal: string) => void {
   let quitting = false;

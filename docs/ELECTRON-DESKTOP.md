@@ -200,7 +200,7 @@ What each event means — first the ones that matter for a freeze, then the rest
 | `alive` | Every 5 min: beats, worst gaps, stalls, window state, per-process CPU/RAM |
 | `previous-session-unclean` | At startup: the last session never quit cleanly (killed, crashed, power loss). Its final lines are just above |
 | `app-quit-clean` | A normal quit |
-| `signal-quit` | SIGTERM/SIGINT turned into a normal quit (macOS; on Linux Chromium quits gracefully on its own) |
+| `signal-quit` | SIGTERM/SIGINT turned into a normal quit by the app's own handler (early in startup, or wherever Chromium's handler is not in charge). Later on Linux, Chromium quits gracefully on its own and this line is absent |
 | `signal-quit-timeout` / `signal-repeat-exit` | The graceful quit hung for 10 s, or a second signal arrived: hard exit, marker kept |
 
 Everything else the code logs:
