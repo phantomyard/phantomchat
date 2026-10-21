@@ -11,7 +11,6 @@ import {join} from 'path';
 import {
   DEFAULT_THRESHOLDS,
   DiagnosticsLog,
-  GPU_DISABLE_SWITCHES,
   HEARTBEAT_INTERVAL_MS,
   LivenessMonitor,
   LOG_FILE_NAME,
@@ -20,7 +19,6 @@ import {
   clearSessionMarker,
   createSignalQuitHandler,
   formatLogLine,
-  gpuOptOutRequested,
   parseHeartbeat,
   readStaleSessionMarker,
   writeSessionMarker
@@ -29,21 +27,6 @@ import {HEARTBEAT_CHANNEL} from './diagnosticsElectron';
 
 const AT = new Date('2026-10-21T21:00:00.000Z');
 const events = (list: {event: string}[]) => list.map((e) => e.event);
-
-describe('GPU switch-off', () => {
-  it('disables GPU compositing, rasterization and video paths, not just "disable-gpu"', () => {
-    for(const sw of ['disable-gpu', 'disable-gpu-compositing', 'disable-gpu-rasterization', 'disable-accelerated-video-decode']) {
-      expect(GPU_DISABLE_SWITCHES).toContain(sw);
-    }
-  });
-
-  it('stays off unless PHANTOMCHAT_ENABLE_GPU is exactly "1"', () => {
-    expect(gpuOptOutRequested({})).toBe(false);
-    expect(gpuOptOutRequested({PHANTOMCHAT_ENABLE_GPU: 'true'})).toBe(false);
-    expect(gpuOptOutRequested({PHANTOMCHAT_ENABLE_GPU: '0'})).toBe(false);
-    expect(gpuOptOutRequested({PHANTOMCHAT_ENABLE_GPU: '1'})).toBe(true);
-  });
-});
 
 describe('formatLogLine', () => {
   it('writes time, level, event and key=value on one line', () => {

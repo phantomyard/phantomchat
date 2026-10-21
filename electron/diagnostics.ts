@@ -6,38 +6,12 @@
  * per-line text to a rotating file under userData/logs. No DevTools, no
  * remote endpoints, nothing leaves the machine.
  *
- * This module holds the Electron-free parts (log writer, liveness monitor,
- * the GPU switch list) so they can be unit-tested; main.ts wires them to
+ * This module holds the Electron-free parts (log writer, liveness monitor)
+ * so they can be unit-tested; main.ts wires them to
  * Electron events.
  */
 import {appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync} from 'fs';
 import {join} from 'path';
-
-// --- GPU ---------------------------------------------------------------------
-
-/**
- * Chromium switches that keep every rendering path off the GPU. Applied on
- * top of app.disableHardwareAcceleration(), which on its own still leaves
- * some accelerated paths (video decode, canvas) negotiable. Rendering is
- * done in software by the compositor instead.
- */
-export const GPU_DISABLE_SWITCHES: readonly string[] = [
-  'disable-gpu',
-  'disable-gpu-compositing',
-  'disable-gpu-rasterization',
-  'disable-accelerated-2d-canvas',
-  'disable-accelerated-video-decode',
-  'disable-accelerated-video-encode'
-];
-
-/**
- * Escape hatch for A/B testing only: PHANTOMCHAT_ENABLE_GPU=1 restores the
- * Electron defaults so a freeze can be compared with and without the GPU.
- * Any other value (or none) keeps the GPU off.
- */
-export function gpuOptOutRequested(env: NodeJS.ProcessEnv): boolean {
-  return env.PHANTOMCHAT_ENABLE_GPU === '1';
-}
 
 // --- Log writer ----------------------------------------------------------------
 

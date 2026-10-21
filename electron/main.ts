@@ -72,7 +72,7 @@ const hasInstanceLock = app.requestSingleInstanceLock();
 if(!hasInstanceLock) {
   app.quit();
 } else {
-  // GPU off + freeze/crash logging (issue #243). Must run before 'ready',
+  // Freeze/crash logging (issue #243). Must run before 'ready',
   // and only in the primary instance: a second launch must not write into
   // the running instance's log or clear its unclean-exit marker.
   startDiagnosticsEarly();

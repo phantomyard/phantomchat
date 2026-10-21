@@ -6,15 +6,11 @@
  *
  *   cat ~/.config/phantomchat/logs/phantomchat.log       (Linux)
  *   phantomchat --log-path                                (prints the path)
- *
- * Also owns the GPU switch-off, which must run before app 'ready'.
  */
 import {app, crashReporter, ipcMain, powerMonitor, type BrowserWindow} from 'electron';
 import {release} from 'os';
 import {
   DiagnosticsLog,
-  GPU_DISABLE_SWITCHES,
-  gpuOptOutRequested,
   HEARTBEAT_INTERVAL_MS,
   LivenessMonitor,
   parseHeartbeat,
@@ -61,17 +57,12 @@ function windowState(win: BrowserWindow | undefined): Record<string, unknown> {
 }
 
 /**
- * Before app 'ready'. Turns the GPU off, opens the log, records whether the
+ * Before app 'ready'. Opens the log, records whether the
  * previous session ended uncleanly, and starts local-only crash dumps.
  * Call only in the instance that holds the single-instance lock — a second
  * launch must not touch the running instance's log or marker.
  */
 export function startDiagnosticsEarly(): void {
-  const gpuEnabled = gpuOptOutRequested(process.env);
-  if(!gpuEnabled) {
-    app.disableHardwareAcceleration();
-    for(const sw of GPU_DISABLE_SWITCHES) app.commandLine.appendSwitch(sw);
-  }
   // Lets webContents.mainFrame.collectJavaScriptCallStack() report where a
   // frozen renderer is stuck (paired with the Document-Policy header main.ts
   // adds to app:// responses).
@@ -87,10 +78,8 @@ export function startDiagnosticsEarly(): void {
     arch: process.arch,
     os: release(),
     pid: process.pid,
-    gpu: gpuEnabled ? 'ENABLED (PHANTOMCHAT_ENABLE_GPU=1)' : 'disabled',
     log: log.path
   });
-  if(gpuEnabled) log.warn('gpu-opt-in', {note: 'GPU acceleration re-enabled by PHANTOMCHAT_ENABLE_GPU=1 — testing only'});
 
   const stale = readStaleSessionMarker(dir);
   if(stale) {
@@ -148,8 +137,8 @@ export function startDiagnosticsEarly(): void {
   for(const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => onSignal(sig));
 
   // getGPUFeatureStatus() is only authoritative after 'gpu-info-update', so
-  // log on that event (once) and keep a bounded fallback for platforms or
-  // GPU-off modes where it never fires.
+  // log on that event (once) and keep a bounded fallback for platforms where
+  // it never fires.
   app.once('gpu-info-update', () => logGpuFeatureStatus('gpu-info-update'));
 }
 
@@ -165,7 +154,7 @@ function logGpuFeatureStatus(source: string): void {
   }
 }
 
-/** After app 'ready': GPU proof, power events, heartbeat IPC, timers. */
+/** After app 'ready': GPU status, power events, heartbeat IPC, timers. */
 export function startDiagnosticsAfterReady(getWindow: () => BrowserWindow | null): void {
   setTimeout(() => logGpuFeatureStatus('fallback-no-gpu-info-update'), GPU_STATUS_FALLBACK_MS).unref();
 

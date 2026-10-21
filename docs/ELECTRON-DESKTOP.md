@@ -186,8 +186,8 @@ What each event means — first the ones that matter for a freeze, then the rest
 
 | Event | Meaning |
 |---|---|
-| `app-start` | Version, Electron/Chrome, OS, PID, GPU state, log path |
-| `gpu-feature-status` | Chromium's own report, taken on `gpu-info-update` (`source=` says which); every entry should read `disabled_*` |
+| `app-start` | Version, Electron/Chrome, OS, PID, log path |
+| `gpu-feature-status` | Chromium's own report, taken on `gpu-info-update` (`source=` says which): which rendering paths are hardware-accelerated |
 | `page-loaded` | `rendererPid` / `mainPid` — inspect a live freeze with `top -p <pid>` |
 | `renderer-heartbeat-missed` | The window's JS thread stopped (beats every 5 s; logged after ~20 s visible, ~150 s hidden). Followed by `renderer-js-stack` (the stuck function) or `renderer-js-stack-unavailable` |
 | `renderer-heartbeat-recovered` | It came back; `stalledForMs` is how long it was frozen |
@@ -215,18 +215,14 @@ Everything else the code logs:
 | `window-created` / `window-closed`, `window-show` / `window-hide` / `window-minimize` / `window-restore` | Window lifecycle and visibility |
 | `power-ac` / `power-battery`, `os-shutdown` | Power source changes; the OS is shutting down |
 | `app-before-quit`, `process-exit` | Quit sequence around `app-quit-clean` |
-| `gpu-opt-in`, `gpu-feature-status-unavailable` | GPU re-enabled by `PHANTOMCHAT_ENABLE_GPU=1`; Chromium gave no GPU report |
+| `gpu-feature-status-unavailable` | Chromium gave no GPU report |
 | `crash-dumps` / `crash-dumps-unavailable` | Where local crash dumps go, or why they are off |
 
 Crash dumps are written locally only (`uploadToServer: false`) to the path in
 the `crash-dumps` line.
 
-**GPU is off.** The app calls `app.disableHardwareAcceleration()` and adds the
-switches in `GPU_DISABLE_SWITCHES` (`electron/diagnostics.ts`), so compositing,
-rasterization, canvas and video decode/encode all run in software. For A/B
-testing only, `PHANTOMCHAT_ENABLE_GPU=1 phantomchat` restores Electron's
-defaults; `app-start` then says `gpu=ENABLED` and a `gpu-opt-in` warning is
-logged.
+**GPU is left at Electron's defaults.** The diagnostics only observe; they
+do not change rendering. `gpu-feature-status` records what Chromium chose.
 
 ## Release channels (preview / stable)
 
