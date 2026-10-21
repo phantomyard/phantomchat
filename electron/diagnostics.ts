@@ -273,6 +273,9 @@ export class LivenessMonitor {
   private suspended = false;
   private heartbeatStallSince: number | undefined;
   private frameStallSince: number | undefined;
+  // A run of consecutive late main-process checks, reported as one
+  // begin/end pair so a chronically lagging main loop cannot churn the log.
+  private mainLag: {since: number; lateChecks: number; worstLateByMs: number} | undefined;
   // Counters for the periodic summary.
   private beats = 0;
   private maxBeatGapMs = 0;
@@ -317,7 +320,20 @@ export class LivenessMonitor {
     if(this.lastCheckAt !== undefined && !this.suspended) {
       const lateBy = now - this.lastCheckAt - HEARTBEAT_INTERVAL_MS;
       if(lateBy >= this.t.mainLagMs) {
-        events.push({level: 'ERROR', event: 'main-event-loop-stalled', fields: {lateByMs: lateBy}});
+        if(this.mainLag === undefined) {
+          this.mainLag = {since: this.lastCheckAt, lateChecks: 1, worstLateByMs: lateBy};
+          events.push({level: 'ERROR', event: 'main-event-loop-stalled', fields: {lateByMs: lateBy}});
+        } else {
+          this.mainLag.lateChecks++;
+          this.mainLag.worstLateByMs = Math.max(this.mainLag.worstLateByMs, lateBy);
+        }
+      } else if(this.mainLag !== undefined) {
+        events.push({level: 'WARN', event: 'main-event-loop-recovered', fields: {
+          lateChecks: this.mainLag.lateChecks,
+          worstLateByMs: this.mainLag.worstLateByMs,
+          laggingForMs: this.lastCheckAt - this.mainLag.since
+        }});
+        this.mainLag = undefined;
       }
     }
     this.lastCheckAt = now;
@@ -344,6 +360,8 @@ export class LivenessMonitor {
   /** After resume, restart every clock from now. */
   resume(now: number): void {
     this.suspended = false;
+    // A lag run that straddles a sleep has no meaningful end; drop it.
+    this.mainLag = undefined;
     this.lastCheckAt = now;
     if(this.lastBeatAt !== undefined) this.lastBeatAt = now;
   }
@@ -402,4 +420,50 @@ export class RateLimiter {
     this.dropped++;
     return {allow: false, droppedBefore};
   }
+}
+
+// --- Signal-driven quit -----------------------------------------------------
+
+export const SIGNAL_QUIT_TIMEOUT_MS = 10_000;
+
+const SIGNAL_NUMBERS: Record<string, number> = {SIGINT: 2, SIGTERM: 15};
+
+export interface SignalQuitDeps {
+  /** Starts Electron's normal quit (before-quit -> will-quit -> exit). */
+  quit(): void;
+  /** Exits immediately, skipping the quit events. */
+  exit(code: number): void;
+  log(level: LogLevel, event: string, fields: LogFields): void;
+  setTimer(fn: () => void, ms: number): void;
+  timeoutMs?: number;
+}
+
+/**
+ * Turns SIGTERM/SIGINT into a graceful app.quit() so 'will-quit' records the
+ * shutdown and clears the unclean-session marker. A second signal, or a quit
+ * that has not finished after timeoutMs, exits hard and deliberately leaves
+ * the marker in place: a quit that hangs is itself freeze evidence.
+ *
+ * On Linux, Chromium owns SIGTERM/SIGINT and already quits gracefully, so
+ * these handlers never run there. They matter where Node's handlers are the
+ * ones that fire (macOS), and they are harmless everywhere else.
+ */
+export function createSignalQuitHandler(deps: SignalQuitDeps): (signal: string) => void {
+  let quitting = false;
+  return (signal) => {
+    const code = 128 + (SIGNAL_NUMBERS[signal] ?? 0);
+    if(quitting) {
+      deps.log('WARN', 'signal-repeat-exit', {signal, code});
+      deps.exit(code);
+      return;
+    }
+    quitting = true;
+    deps.log('INFO', 'signal-quit', {signal});
+    const timeoutMs = deps.timeoutMs ?? SIGNAL_QUIT_TIMEOUT_MS;
+    deps.setTimer(() => {
+      deps.log('ERROR', 'signal-quit-timeout', {signal, timeoutMs, code, note: 'graceful quit did not finish; exiting hard'});
+      deps.exit(code);
+    }, timeoutMs);
+    deps.quit();
+  };
 }

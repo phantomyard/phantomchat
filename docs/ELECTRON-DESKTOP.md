@@ -182,24 +182,41 @@ grep -E 'ERROR|WARN' ~/.config/phantomchat/logs/phantomchat.log
 tail -f ~/.config/phantomchat/logs/phantomchat.log
 ```
 
-What each event means:
+What each event means — first the ones that matter for a freeze, then the rest:
 
 | Event | Meaning |
 |---|---|
 | `app-start` | Version, Electron/Chrome, OS, PID, GPU state, log path |
-| `gpu-feature-status` | Chromium's own report; every entry should read `disabled_*` |
+| `gpu-feature-status` | Chromium's own report, taken on `gpu-info-update` (`source=` says which); every entry should read `disabled_*` |
 | `page-loaded` | `rendererPid` / `mainPid` — inspect a live freeze with `top -p <pid>` |
 | `renderer-heartbeat-missed` | The window's JS thread stopped (beats every 5 s; logged after ~20 s visible, ~150 s hidden). Followed by `renderer-js-stack` (the stuck function) or `renderer-js-stack-unavailable` |
 | `renderer-heartbeat-recovered` | It came back; `stalledForMs` is how long it was frozen |
-| `renderer-frames-stalled` / `-recovered` | JS is running but no frame got painted for 10 s while visible: a compositor/paint wedge, not a JS hang |
+| `renderer-frames-stalled` / `renderer-frames-recovered` | JS is running but no frame got painted for 10 s while visible: a compositor/paint wedge, not a JS hang |
 | `window-unresponsive` | Chromium's hang monitor (needs pending input, so it fires when you click a frozen window) |
-| `main-event-loop-stalled` | The main process itself was blocked |
+| `main-event-loop-stalled` / `main-event-loop-recovered` | The main process itself was blocked. One pair per run of late 5 s checks; the recovery carries `lateChecks` and `worstLateByMs` |
 | `renderer-gone` / `child-process-gone` | A renderer, GPU or utility process died, with `reason` and `exitCode` |
 | `renderer-console-error` | `console.error` from the page (max 20/min) |
-| `power-suspend` / `power-resume`, `screen-locked` / `-unlocked` | Sleep and lock, to line freezes up against idle |
+| `power-suspend` / `power-resume`, `screen-locked` / `screen-unlocked` | Sleep and lock, to line freezes up against idle |
 | `alive` | Every 5 min: beats, worst gaps, stalls, window state, per-process CPU/RAM |
 | `previous-session-unclean` | At startup: the last session never quit cleanly (killed, crashed, power loss). Its final lines are just above |
 | `app-quit-clean` | A normal quit |
+| `signal-quit` | SIGTERM/SIGINT turned into a normal quit (macOS; on Linux Chromium quits gracefully on its own) |
+| `signal-quit-timeout` / `signal-repeat-exit` | The graceful quit hung for 10 s, or a second signal arrived: hard exit, marker kept |
+
+Everything else the code logs:
+
+| Event | Meaning |
+|---|---|
+| `renderer-js-stack` / `renderer-js-stack-unavailable` | The frozen renderer's JS stack (after `renderer-heartbeat-missed` or `window-unresponsive`), or why there isn't one |
+| `window-responsive-again` | Chromium's hang monitor cleared |
+| `main-uncaught-exception` | The main process threw; message and stack |
+| `load-failed` / `preload-error` | The page or the preload script failed to load |
+| `renderer-console-errors-dropped` | How many console errors the 20/min cap discarded |
+| `window-created` / `window-closed`, `window-show` / `window-hide` / `window-minimize` / `window-restore` | Window lifecycle and visibility |
+| `power-ac` / `power-battery`, `os-shutdown` | Power source changes; the OS is shutting down |
+| `app-before-quit`, `process-exit` | Quit sequence around `app-quit-clean` |
+| `gpu-opt-in`, `gpu-feature-status-unavailable` | GPU re-enabled by `PHANTOMCHAT_ENABLE_GPU=1`; Chromium gave no GPU report |
+| `crash-dumps` / `crash-dumps-unavailable` | Where local crash dumps go, or why they are off |
 
 Crash dumps are written locally only (`uploadToServer: false`) to the path in
 the `crash-dumps` line.

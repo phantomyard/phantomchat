@@ -16,7 +16,9 @@ import {
   LivenessMonitor,
   LOG_FILE_NAME,
   RateLimiter,
+  SIGNAL_QUIT_TIMEOUT_MS,
   clearSessionMarker,
+  createSignalQuitHandler,
   formatLogLine,
   gpuOptOutRequested,
   parseHeartbeat,
@@ -191,6 +193,29 @@ describe('LivenessMonitor', () => {
     expect(events(m.check(HEARTBEAT_INTERVAL_MS * 2 + 9_000))).toEqual(['main-event-loop-stalled']);
   });
 
+  it('reports a run of late main-loop checks as one begin/end pair', () => {
+    const m = new LivenessMonitor();
+    let t = 0;
+    m.check(t);
+    const late = () => events(m.check(t += HEARTBEAT_INTERVAL_MS + 6_000));
+    expect(late()).toEqual(['main-event-loop-stalled']);
+    expect(late()).toEqual([]);
+    expect(late()).toEqual([]);
+    const end = m.check(t += HEARTBEAT_INTERVAL_MS);
+    expect(events(end)).toEqual(['main-event-loop-recovered']);
+    expect(end[0].fields).toMatchObject({lateChecks: 3, worstLateByMs: 6_000});
+    expect(late()).toEqual(['main-event-loop-stalled']);
+  });
+
+  it('does not close a main-loop lag run across a suspend', () => {
+    const m = new LivenessMonitor();
+    m.check(0);
+    expect(events(m.check(HEARTBEAT_INTERVAL_MS + 6_000))).toEqual(['main-event-loop-stalled']);
+    m.suspend();
+    m.resume(100_000);
+    expect(m.check(100_000 + HEARTBEAT_INTERVAL_MS)).toEqual([]);
+  });
+
   it('summary counts since the last summary, then resets', () => {
     const m = new LivenessMonitor();
     m.beat(0, ok);
@@ -208,6 +233,64 @@ describe('RateLimiter', () => {
     expect(r.take(2).allow).toBe(false);
     expect(r.take(3).allow).toBe(false);
     expect(r.take(1_000)).toEqual({allow: true, droppedBefore: 2});
+  });
+});
+
+describe('signal-driven quit', () => {
+  function harness() {
+    const calls: string[] = [];
+    const timers: {fn: () => void; ms: number}[] = [];
+    const logged: string[] = [];
+    const handle = createSignalQuitHandler({
+      quit: () => calls.push('quit'),
+      exit: (code) => calls.push(`exit:${code}`),
+      log: (_level, event) => logged.push(event),
+      setTimer: (fn, ms) => timers.push({fn, ms})
+    });
+    return {calls, timers, logged, handle};
+  }
+
+  it('turns the first SIGTERM into a graceful quit, with no hard exit', () => {
+    const h = harness();
+    h.handle('SIGTERM');
+    expect(h.calls).toEqual(['quit']);
+    expect(h.logged).toEqual(['signal-quit']);
+    expect(h.timers.map((t) => t.ms)).toEqual([SIGNAL_QUIT_TIMEOUT_MS]);
+  });
+
+  it('exits hard (marker kept) when the graceful quit never finishes', () => {
+    const h = harness();
+    h.handle('SIGTERM');
+    h.timers[0].fn();
+    expect(h.calls).toEqual(['quit', 'exit:143']);
+    expect(h.logged).toEqual(['signal-quit', 'signal-quit-timeout']);
+  });
+
+  it('a second signal exits immediately with the conventional code', () => {
+    const h = harness();
+    h.handle('SIGINT');
+    h.handle('SIGINT');
+    expect(h.calls).toEqual(['quit', 'exit:130']);
+    expect(h.logged).toEqual(['signal-quit', 'signal-repeat-exit']);
+  });
+});
+
+describe('main-process lifecycle wiring', () => {
+  const src = readFileSync(join(__dirname, 'diagnosticsElectron.ts'), 'utf8');
+
+  it('routes SIGTERM and SIGINT through the graceful-quit handler', () => {
+    expect(src).toMatch(/for\(const sig of \['SIGTERM', 'SIGINT'\] as const\) process\.on\(sig, \(\) => onSignal\(sig\)\)/);
+    expect(src).toContain('quit: () => app.quit()');
+  });
+
+  it('clears the unclean-session marker on will-quit', () => {
+    expect(src).toMatch(/app\.on\('will-quit', \(\) => \{[^}]*clearSessionMarker\(dir\)/);
+  });
+
+  it('reads the GPU feature status from gpu-info-update, not straight after ready', () => {
+    expect(src).toContain(`app.once('gpu-info-update'`);
+    const afterReady = src.slice(src.indexOf('export function startDiagnosticsAfterReady'));
+    expect(afterReady).not.toMatch(/log\?\.info\('gpu-feature-status'/);
   });
 });
 

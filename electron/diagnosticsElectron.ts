@@ -22,6 +22,7 @@ import {
   readStaleSessionMarker,
   writeSessionMarker,
   clearSessionMarker,
+  createSignalQuitHandler,
   type LivenessEvent,
   type SessionMarker
 } from './diagnostics';
@@ -31,6 +32,7 @@ export const HEARTBEAT_CHANNEL = 'desktop:diag-heartbeat';
 
 const SUMMARY_INTERVAL_MS = 5 * 60_000;
 const CALL_STACK_TIMEOUT_MS = 5_000;
+const GPU_STATUS_FALLBACK_MS = 10_000;
 
 let log: DiagnosticsLog | undefined;
 const liveness = new LivenessMonitor();
@@ -132,15 +134,40 @@ export function startDiagnosticsEarly(): void {
     clearSessionMarker(dir);
   });
   process.on('exit', (code) => log?.info('process-exit', {code}));
+
+  // Routine TERM/INT shutdowns (logout, service stop, Ctrl-C) must end in a
+  // graceful quit, or they would leave the same marker as a crash.
+  const onSignal = createSignalQuitHandler({
+    quit: () => app.quit(),
+    exit: (code) => app.exit(code),
+    log: (level, event, fields) => log?.write(level, event, fields),
+    setTimer: (fn, ms) => {
+      setTimeout(fn, ms).unref();
+    }
+  });
+  for(const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => onSignal(sig));
+
+  // getGPUFeatureStatus() is only authoritative after 'gpu-info-update', so
+  // log on that event (once) and keep a bounded fallback for platforms or
+  // GPU-off modes where it never fires.
+  app.once('gpu-info-update', () => logGpuFeatureStatus('gpu-info-update'));
+}
+
+let gpuStatusLogged = false;
+
+function logGpuFeatureStatus(source: string): void {
+  if(gpuStatusLogged) return;
+  gpuStatusLogged = true;
+  try {
+    log?.info('gpu-feature-status', {source, ...(app.getGPUFeatureStatus() as unknown as Record<string, unknown>)});
+  } catch(err) {
+    log?.warn('gpu-feature-status-unavailable', {source, error: String(err)});
+  }
 }
 
 /** After app 'ready': GPU proof, power events, heartbeat IPC, timers. */
 export function startDiagnosticsAfterReady(getWindow: () => BrowserWindow | null): void {
-  try {
-    log?.info('gpu-feature-status', app.getGPUFeatureStatus() as unknown as Record<string, unknown>);
-  } catch(err) {
-    log?.warn('gpu-feature-status-unavailable', {error: String(err)});
-  }
+  setTimeout(() => logGpuFeatureStatus('fallback-no-gpu-info-update'), GPU_STATUS_FALLBACK_MS).unref();
 
   // Sleep/lock: the "freezes after idle" theory is tested directly by these.
   powerMonitor.on('suspend', () => {
