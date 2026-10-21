@@ -78,3 +78,27 @@ const api: PhantomChatDesktopApi = {
 };
 
 contextBridge.exposeInMainWorld('phantomchatDesktop', api);
+
+// Liveness heartbeat for the diagnostics log (issue #243). Not exposed to
+// the page: it runs here, on the renderer's main thread, so if that thread
+// hangs the beats stop and the main process logs the gap. Each beat also
+// reports how long a single requestAnimationFrame probe has been waiting —
+// rAF only fires when a frame is actually produced, so live timers with a
+// waiting probe on a visible page mean the compositor/paint path is wedged.
+// One probe per beat (not a continuous rAF loop) keeps it near-free.
+// Interval and channel must match diagnostics.ts / diagnosticsElectron.ts.
+let frameProbeSince: number | null = null;
+setInterval(() => {
+  const visible = document.visibilityState === 'visible';
+  const now = performance.now();
+  ipcRenderer.send('desktop:diag-heartbeat', {
+    visible,
+    frameWaitMs: frameProbeSince === null ? 0 : Math.round(now - frameProbeSince)
+  });
+  if(visible && frameProbeSince === null) {
+    frameProbeSince = now;
+    requestAnimationFrame(() => {
+      frameProbeSince = null;
+    });
+  }
+}, 5_000);

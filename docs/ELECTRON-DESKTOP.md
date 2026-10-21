@@ -161,6 +161,56 @@ SmartScreen may still warn until the certificate accumulates reputation;
 verify the published SHA-256 checksum before choosing **More info → Run
 anyway**.
 
+## Diagnostics: freezes and crashes (issue #243)
+
+Everything needed to diagnose a freeze is in one plain-text file, readable
+over SSH with `cat`. No DevTools, no debug port, nothing sent anywhere.
+
+| Platform | Log file |
+|---|---|
+| Linux | `~/.config/phantomchat/logs/phantomchat.log` |
+| macOS | `~/Library/Logs/phantomchat/phantomchat.log` |
+| Windows | `%APPDATA%\phantomchat\logs\phantomchat.log` |
+
+`phantomchat --log-path` prints the exact path. The file rotates at 5 MiB
+(`phantomchat.log.1` … `.3`). One event per line:
+`<UTC time> <LEVEL> <event> key=value …`; a JS stack follows on `  | ` lines.
+
+```bash
+cat ~/.config/phantomchat/logs/phantomchat.log
+grep -E 'ERROR|WARN' ~/.config/phantomchat/logs/phantomchat.log
+tail -f ~/.config/phantomchat/logs/phantomchat.log
+```
+
+What each event means:
+
+| Event | Meaning |
+|---|---|
+| `app-start` | Version, Electron/Chrome, OS, PID, GPU state, log path |
+| `gpu-feature-status` | Chromium's own report; every entry should read `disabled_*` |
+| `page-loaded` | `rendererPid` / `mainPid` — inspect a live freeze with `top -p <pid>` |
+| `renderer-heartbeat-missed` | The window's JS thread stopped (beats every 5 s; logged after ~20 s visible, ~150 s hidden). Followed by `renderer-js-stack` (the stuck function) or `renderer-js-stack-unavailable` |
+| `renderer-heartbeat-recovered` | It came back; `stalledForMs` is how long it was frozen |
+| `renderer-frames-stalled` / `-recovered` | JS is running but no frame got painted for 10 s while visible: a compositor/paint wedge, not a JS hang |
+| `window-unresponsive` | Chromium's hang monitor (needs pending input, so it fires when you click a frozen window) |
+| `main-event-loop-stalled` | The main process itself was blocked |
+| `renderer-gone` / `child-process-gone` | A renderer, GPU or utility process died, with `reason` and `exitCode` |
+| `renderer-console-error` | `console.error` from the page (max 20/min) |
+| `power-suspend` / `power-resume`, `screen-locked` / `-unlocked` | Sleep and lock, to line freezes up against idle |
+| `alive` | Every 5 min: beats, worst gaps, stalls, window state, per-process CPU/RAM |
+| `previous-session-unclean` | At startup: the last session never quit cleanly (killed, crashed, power loss). Its final lines are just above |
+| `app-quit-clean` | A normal quit |
+
+Crash dumps are written locally only (`uploadToServer: false`) to the path in
+the `crash-dumps` line.
+
+**GPU is off.** The app calls `app.disableHardwareAcceleration()` and adds the
+switches in `GPU_DISABLE_SWITCHES` (`electron/diagnostics.ts`), so compositing,
+rasterization, canvas and video decode/encode all run in software. For A/B
+testing only, `PHANTOMCHAT_ENABLE_GPU=1 phantomchat` restores Electron's
+defaults; `app-start` then says `gpu=ENABLED` and a `gpu-opt-in` warning is
+logged.
+
 ## Release channels (preview / stable)
 
 Same release-ring model as PhantomBot — including the naming: releases
