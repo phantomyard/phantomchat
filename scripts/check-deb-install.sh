@@ -1,8 +1,12 @@
 #!/bin/bash
 # Install the built .deb on the CI runner and prove the maintainer scripts did
-# their job: `phantomchat` on PATH, chrome-sandbox usable, AppArmor profile in
-# place where AppArmor is on, and a clean removal. Guards against a custom
-# afterInstall/afterRemove silently replacing electron-builder's stock ones.
+# their job: `phantomchat` on PATH, chrome-sandbox setuid, AppArmor profile in
+# place where AppArmor is on, and a clean removal. afterInstall is our
+# corrected copy of electron-builder's stock template (electron/build/
+# after-install.sh) — this script guards it against regressing any of the
+# stock behaviour AND against ever going back to mode 0755, which is what
+# left installs aborting with "SUID sandbox helper not configured correctly"
+# whenever the AppArmor userns profile load raced a relaunch.
 # Usage: scripts/check-deb-install.sh path/to/phantomchat_<ver>_amd64.deb
 set -euo pipefail
 
@@ -16,12 +20,14 @@ command -v phantomchat >/dev/null || fail "phantomchat is not on PATH"
 [ "$(readlink -f "$(command -v phantomchat)")" = /opt/PhantomChat/phantomchat ] \
   || fail "phantomchat resolves to $(readlink -f "$(command -v phantomchat)")"
 
-# 2. chrome-sandbox: root-owned, and either setuid (no user namespaces) or
-#    0755 backed by the AppArmor profile (user namespaces available).
+# 2. chrome-sandbox: root-owned and setuid, UNCONDITIONALLY. The setuid
+#    helper is Chromium's fallback whenever the namespace sandbox is
+#    unavailable (restricted userns, profile not yet loaded) and is inert
+#    when it is — so 0755 is never acceptable, whatever the host supports.
 sandbox=/opt/PhantomChat/chrome-sandbox
 [ "$(stat -c %U "$sandbox")" = root ] || fail "chrome-sandbox not owned by root"
 mode="$(stat -c %a "$sandbox")"
-case "$mode" in 4755|755) ;; *) fail "chrome-sandbox mode is $mode" ;; esac
+[ "$mode" = 4755 ] || fail "chrome-sandbox mode is $mode (want 4755 setuid)"
 
 # 3. AppArmor profile installed AND loaded whenever AppArmor is enabled on the
 #    host (installed-but-not-loaded still blocks user namespaces).
