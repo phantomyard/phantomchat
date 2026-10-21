@@ -131,8 +131,8 @@ removed separately.
 
 Both DMGs are Developer ID signed, notarized by Apple and stapled, so a
 quarantined download opens normally — no `xattr` dance. The CI package check
-refuses to publish a DMG that fails `stapler validate`, `codesign --verify` or
-`spctl --assess`.
+requires notarization and stapling to succeed, then verifies the shipped bytes
+locally with `codesign --verify` and `spctl --assess`.
 
 ### Windows
 
@@ -373,7 +373,9 @@ Three separate things have to hold, and the package check verifies each one:
 2. **Notarization** — Apple scans the DMG (`notarytool submit --wait`). Since
    Catalina a signed-but-unnotarized app is still blocked.
 3. **Stapling** — `stapler staple` attaches the ticket to the DMG so first
-   launch works offline; `stapler validate` proves it.
+   launch works offline. The staple operation fails closed; later package
+   checks stay local so a redundant CloudKit lookup cannot reject an artifact
+   that Apple already accepted and stapled.
 
 The hardened runtime is required for notarization, and Electron needs the JIT,
 unsigned-executable-memory and library-validation exceptions in

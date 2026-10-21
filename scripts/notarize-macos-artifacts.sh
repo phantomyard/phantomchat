@@ -76,8 +76,6 @@ if ! retry xcrun stapler staple "$APP"; then
   notarize "$ZIP"
   retry xcrun stapler staple "$APP"
 fi
-retry xcrun stapler validate "$DMG"
-retry xcrun stapler validate "$APP"
 
 rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"

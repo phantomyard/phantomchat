@@ -7,6 +7,8 @@ import {load} from 'js-yaml';
 
 const WORKFLOW = readFileSync(join(process.cwd(), '.github', 'workflows', 'app-release.yml'), 'utf8');
 const NOTARIZE = readFileSync(join(process.cwd(), 'scripts', 'notarize-macos-artifacts.sh'), 'utf8');
+const CHECK_PACKAGE = readFileSync(join(process.cwd(), 'scripts', 'check-macos-package.sh'), 'utf8');
+const CHECK_UPDATE_ZIP = readFileSync(join(process.cwd(), 'scripts', 'check-macos-update-zip.sh'), 'utf8');
 
 type Workflow = {
   jobs: {
@@ -106,6 +108,20 @@ describe('macOS release retry boundary', () => {
     expect(NOTARIZE).toMatch(/response="\$\(xcrun notarytool submit/);
   });
 
+  it('keeps post-staple verification local and blocking', () => {
+    for(const script of [NOTARIZE, CHECK_PACKAGE, CHECK_UPDATE_ZIP]) {
+      expect(script).not.toMatch(/stapler validate/);
+    }
+    for(const script of [CHECK_PACKAGE, CHECK_UPDATE_ZIP]) {
+      expect(script).toMatch(/codesign --verify --deep --strict[\s\S]*?\|\| \{[\s\S]*?exit 1; \}/);
+      expect(script).toMatch(/Authority=Developer ID Application: Andrew Hodges \(644GWVQQ4P\)/);
+      expect(script).toMatch(/spctl --assess --type execute[\s\S]*?\|\| \{[\s\S]*?exit 1; \}/);
+    }
+    expect(CHECK_PACKAGE).toMatch(/flags=\.\*runtime/);
+    expect(CHECK_PACKAGE).toMatch(/file "\$EXECUTABLE" \| grep -q "\$FILE_ARCH"/);
+    expect(CHECK_UPDATE_ZIP).toMatch(/zip does not contain PhantomChat\.app at its root/);
+  });
+
   it('skips desktop releases for non-payload-only changes', () => {
     for(const ignored of ['.github/**', 'src/tests/**', 'scripts/**']) {
       expect(WORKFLOW).toContain(`- '${ignored}'`);
@@ -134,6 +150,59 @@ fi`);
     expect(readFileSync(join(sandbox.state, 'notarytool-wait'), 'utf8')).toBe('3');
     expect(Number(readFileSync(join(sandbox.state, 'stapler-staple'), 'utf8'))).toBeGreaterThan(1);
     expect(readFileSync(sandbox.zip, 'utf8')).toBe('zip');
+  });
+
+  it('does not perform a CloudKit validation lookup after successful stapling', () => {
+    // Run 39586434529 failed with exit 68 only after Apple accepted the
+    // submission and stapler had already reported success. Any validate call
+    // is a regression and makes this otherwise-successful fixture fail.
+    const sandbox = setupSandbox(String.raw`
+operation="$1-$2"
+printf '%s\n' "$operation" >> "$TEST_STATE/operations"
+if [[ "$operation" == "notarytool-submit" ]]; then
+  printf '{"id":"accepted-submission"}\n'
+elif [[ "$operation" == "stapler-validate" ]]; then
+  exit 68
+fi`);
+
+    runNotarize(sandbox);
+
+    expect(readFileSync(join(sandbox.state, 'operations'), 'utf8')).not.toContain('stapler-validate');
+    expect(readFileSync(sandbox.zip, 'utf8')).toBe('zip');
+  });
+
+  it('fails closed when Apple rejects notarization', () => {
+    const sandbox = setupSandbox(String.raw`
+operation="$1-$2"
+printf '%s\n' "$operation" >> "$TEST_STATE/operations"
+if [[ "$operation" == "notarytool-submit" ]]; then
+  printf '{"id":"rejected-submission"}\n'
+elif [[ "$operation" == "notarytool-wait" ]]; then
+  exit 1
+fi`);
+
+    expect(() => runNotarize(sandbox)).toThrow();
+    expect(readFileSync(join(sandbox.state, 'operations'), 'utf8')).not.toContain('stapler-staple');
+    expect(readFileSync(sandbox.zip, 'utf8')).toBe('signed zip');
+  });
+
+  it('fails closed when stapling exhausts its retries', () => {
+    const sandbox = setupSandbox(String.raw`
+operation="$1-$2"
+counter="$TEST_STATE/$operation"
+count=0
+[[ -f "$counter" ]] && count="$(cat "$counter")"
+count=$((count + 1))
+printf '%s' "$count" > "$counter"
+if [[ "$operation" == "notarytool-submit" ]]; then
+  printf '{"id":"accepted-submission"}\n'
+elif [[ "$operation" == "stapler-staple" ]]; then
+  exit 68
+fi`);
+
+    expect(() => runNotarize(sandbox)).toThrow();
+    expect(readFileSync(join(sandbox.state, 'stapler-staple'), 'utf8')).toBe('4');
+    expect(readFileSync(sandbox.zip, 'utf8')).toBe('signed zip');
   });
 
   it('never resubmits after a lost-connection submit flake', () => {
