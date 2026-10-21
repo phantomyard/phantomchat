@@ -14,6 +14,7 @@ import {app, BrowserWindow, session, shell, protocol, net, ipcMain, dialog} from
 import {readFileSync, writeFileSync, renameSync, mkdirSync, existsSync} from 'fs';
 import {join, normalize, relative, isAbsolute, extname} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
+import {attachEditableContextMenu} from './contextMenu';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
 import {
   resolvePermissionRequest,
@@ -283,6 +284,11 @@ function createWindow(): void {
       spellcheck: true
     }
   });
+
+  // Native right-click menu for text fields: spell-check corrections + edit
+  // commands. Electron has no default menu; Web K's own DOM menus cover
+  // bubbles, the send button and search but not the composer.
+  attachEditableContextMenu(mainWindow.webContents);
 
   if(activeCsp) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
