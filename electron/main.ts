@@ -27,6 +27,8 @@ import {
   type PermissionSettings
 } from './permissions';
 import {initUpdater} from './updater';
+import {attachWindowDiagnostics, logsDir, startDiagnosticsAfterReady, startDiagnosticsEarly} from './diagnosticsElectron';
+import {LOG_FILE_NAME} from './diagnostics';
 
 // NOTE: this module is bundled to CommonJS by electron/build.mjs, so the
 // Node globals __dirname/__filename are available at runtime and point at
@@ -41,6 +43,13 @@ if(process.argv.includes('--uninstall')) {
 
 if(process.argv.includes('--install')) {
   process.exit(installDesktopEntry());
+}
+
+// `phantomchat --log-path` prints where the diagnostics log lives (issue
+// #243) so it can be found over SSH without knowing the platform layout.
+if(process.argv.includes('--log-path')) {
+  process.stdout.write(join(logsDir(), LOG_FILE_NAME) + '\n');
+  process.exit(0);
 }
 
 // Standard, secure scheme so the renderer gets a proper origin (localStorage,
@@ -59,8 +68,14 @@ const CSP_FILE = join(__dirname, 'csp.json');
 
 // Single instance: a second launch focuses the existing window instead of
 // forking a second app instance (matches the PWA tab model).
-if(!app.requestSingleInstanceLock()) {
+const hasInstanceLock = app.requestSingleInstanceLock();
+if(!hasInstanceLock) {
   app.quit();
+} else {
+  // Freeze/crash logging (issue #243). Must run before 'ready',
+  // and only in the primary instance: a second launch must not write into
+  // the running instance's log or clear its unclean-exit marker.
+  startDiagnosticsEarly();
 }
 
 // Permission prompt policy state (issue #215). Lives in userData, same
@@ -289,12 +304,19 @@ function createWindow(): void {
   // commands. Electron has no default menu; Web K's own DOM menus cover
   // bubbles, the send button and search but not the composer.
   attachEditableContextMenu(mainWindow.webContents);
+  attachWindowDiagnostics(mainWindow);
 
   if(activeCsp) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       // CSP only for the packaged app:// origin; the dev server is exempt.
+      // Document-Policy opts the page in to JS call-stack collection, so a
+      // frozen renderer's stack can be written to the diagnostics log.
       if(details.url.startsWith('app://')) {
-        callback({responseHeaders: {...details.responseHeaders, 'Content-Security-Policy': [activeCsp!]}});
+        callback({responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [activeCsp!],
+          'Document-Policy': ['include-js-call-stacks-in-crash-reports']
+        }});
       } else {
         callback({});
       }
@@ -385,6 +407,7 @@ app.whenReady().then(() => {
     protocol.handle('app', (request) => serveFile(new URL(request.url)));
   }
   createWindow();
+  startDiagnosticsAfterReady(() => mainWindow);
 
   // After the window exists: the updater pushes state to it, and a check is
   // deliberately deferred (see FIRST_CHECK_DELAY_MS) so it never competes

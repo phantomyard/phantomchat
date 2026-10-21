@@ -161,6 +161,69 @@ SmartScreen may still warn until the certificate accumulates reputation;
 verify the published SHA-256 checksum before choosing **More info → Run
 anyway**.
 
+## Diagnostics: freezes and crashes (issue #243)
+
+Everything needed to diagnose a freeze is in one plain-text file, readable
+over SSH with `cat`. No DevTools, no debug port, nothing sent anywhere.
+
+| Platform | Log file |
+|---|---|
+| Linux | `~/.config/phantomchat/logs/phantomchat.log` |
+| macOS | `~/Library/Logs/phantomchat/phantomchat.log` |
+| Windows | `%APPDATA%\phantomchat\logs\phantomchat.log` |
+
+`phantomchat --log-path` prints the exact path. The file rotates at 5 MiB
+(`phantomchat.log.1` … `.3`). One event per line:
+`<UTC time> <LEVEL> <event> key=value …`; a JS stack follows on `  | ` lines.
+
+```bash
+cat ~/.config/phantomchat/logs/phantomchat.log
+grep -E 'ERROR|WARN' ~/.config/phantomchat/logs/phantomchat.log
+tail -f ~/.config/phantomchat/logs/phantomchat.log
+```
+
+What each event means — first the ones that matter for a freeze, then the rest:
+
+| Event | Meaning |
+|---|---|
+| `app-start` | Version, Electron/Chrome, OS, PID, log path |
+| `gpu-feature-status` | Chromium's own report, taken on `gpu-info-update` (`source=` says which): which rendering paths are hardware-accelerated |
+| `page-loaded` | `rendererPid` / `mainPid` — inspect a live freeze with `top -p <pid>` |
+| `renderer-heartbeat-missed` | The window's JS thread stopped (beats every 5 s; logged after ~20 s visible, ~150 s hidden). Followed by `renderer-js-stack` (the stuck function) or `renderer-js-stack-unavailable` |
+| `renderer-heartbeat-recovered` | It came back; `stalledForMs` is how long it was frozen |
+| `renderer-frames-stalled` / `renderer-frames-recovered` | JS is running but no frame got painted for 10 s while visible: a compositor/paint wedge, not a JS hang |
+| `window-unresponsive` | Chromium's hang monitor (needs pending input, so it fires when you click a frozen window) |
+| `main-event-loop-stalled` / `main-event-loop-recovered` | The main process itself was blocked. One pair per run of late 5 s checks; the recovery carries `lateChecks` and `worstLateByMs` |
+| `renderer-gone` / `child-process-gone` | A renderer, GPU or utility process died, with `reason` and `exitCode` |
+| `renderer-console-error` | `console.error` from the page (max 20/min) |
+| `power-suspend` / `power-resume`, `screen-locked` / `screen-unlocked` | Sleep and lock, to line freezes up against idle |
+| `alive` | Every 5 min: beats, worst gaps, stalls, window state, per-process CPU/RAM |
+| `previous-session-unclean` | At startup: the last session never quit cleanly (killed, crashed, power loss). Its final lines are just above |
+| `app-quit-clean` | A normal quit |
+| `signal-quit` | SIGTERM/SIGINT turned into a normal quit by the app's own handler (early in startup, or wherever Chromium's handler is not in charge). Later on Linux, Chromium quits gracefully on its own and this line is absent |
+| `signal-quit-timeout` / `signal-repeat-exit` | The graceful quit hung for 10 s, or a second signal arrived: hard exit, marker kept |
+
+Everything else the code logs:
+
+| Event | Meaning |
+|---|---|
+| `renderer-js-stack` / `renderer-js-stack-unavailable` | The frozen renderer's JS stack (after `renderer-heartbeat-missed` or `window-unresponsive`), or why there isn't one |
+| `window-responsive-again` | Chromium's hang monitor cleared |
+| `main-uncaught-exception` | The main process threw; message and stack |
+| `load-failed` / `preload-error` | The page or the preload script failed to load |
+| `renderer-console-errors-dropped` | How many console errors the 20/min cap discarded |
+| `window-created` / `window-closed`, `window-show` / `window-hide` / `window-minimize` / `window-restore` | Window lifecycle and visibility |
+| `power-ac` / `power-battery`, `os-shutdown` | Power source changes; the OS is shutting down |
+| `app-before-quit`, `process-exit` | Quit sequence around `app-quit-clean` |
+| `gpu-feature-status-unavailable` | Chromium gave no GPU report |
+| `crash-dumps` / `crash-dumps-unavailable` | Where local crash dumps go, or why they are off |
+
+Crash dumps are written locally only (`uploadToServer: false`) to the path in
+the `crash-dumps` line.
+
+**GPU is left at Electron's defaults.** The diagnostics only observe; they
+do not change rendering. `gpu-feature-status` records what Chromium chose.
+
 ## Release channels (preview / stable)
 
 Same release-ring model as PhantomBot — including the naming: releases
