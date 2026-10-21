@@ -84,19 +84,27 @@ linux:
 deb:
   packageCategory: net
   artifactName: phantomchat_${version}_${arch}.${ext}
-  # No afterInstall/afterRemove on purpose: electron-builder's stock
-  # maintainer scripts create /usr/bin/phantomchat (update-alternatives),
-  # set chrome-sandbox permissions, install + load the bundled AppArmor
-  # profile (Ubuntu 24+) and refresh the desktop/MIME databases. A custom
-  # script REPLACES all of that, and the previous one left the package with
-  # no command on PATH and an app that aborted with a FATAL sandbox error.
-  # scripts/check-deb-install.sh (CI) installs the .deb and asserts it.
+  # afterInstall is a CORRECTED copy of electron-builder's stock template,
+  # not a light custom script: it keeps the PATH link (update-alternatives),
+  # the AppArmor profile install + load and the desktop/MIME database
+  # refresh, and changes exactly one thing — chrome-sandbox is always
+  # installed setuid (4755). The stock script gates that on a root-run
+  # `unshare --user` probe, which ALWAYS passes under dpkg (root holds
+  # CAP_SYS_ADMIN) and so always strips the setuid bit; on Ubuntu 24+ with
+  # restricted unprivileged userns a launch that races the AppArmor profile
+  # load then aborts with "FATAL: SUID sandbox helper not configured
+  # correctly". See the script header for the full story.
+  # afterRemove stays stock on purpose. scripts/check-deb-install.sh (CI)
+  # installs the .deb and asserts PATH, sandbox mode, AppArmor and removal.
+  afterInstall: electron/build/after-install.sh
 
 rpm:
   artifactName: phantomchat_${version}_${arch}.${ext}
   # fpm needs rpmbuild on the build machine (CI installs the `rpm` package;
-  # locally: sudo apt install rpm). Same stock-maintainer-script rule as deb:
-  # no custom scripts, fpm's own handle the PATH symlink and desktop files.
+  # locally: sudo apt install rpm). Same corrected after-install script as
+  # deb: fpm's stock scriptlet has the same root-run `unshare` misdetection,
+  # and the script works unmodified on rpm-based distros.
+  afterInstall: electron/build/after-install.sh
 
 appImage:
   # Artifacts must keep a predictable, versioned name for the checksums and
