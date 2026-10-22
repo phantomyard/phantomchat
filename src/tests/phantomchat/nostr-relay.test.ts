@@ -7,6 +7,7 @@
 
 import '../setup';
 import {NostrRelay, createNostrRelay, NOSTR_KIND_GIFTWRAP, SUBSCRIBE_REPLAY_LIMIT} from '@lib/phantomchat/nostr-relay';
+import {NostrRelayPool} from '@lib/phantomchat/nostr-relay-pool';
 import {nip44Encrypt, nip44Decrypt, getConversationKey} from '@lib/phantomchat/nostr-crypto';
 import {generateSecretKey, getPublicKey, finalizeEvent} from 'nostr-tools/pure';
 import {bytesToHex} from 'nostr-tools/utils';
@@ -1072,7 +1073,7 @@ describe('Integration: NIP-44 with NostrRelay patterns', () => {
  * Bad-relay cooldown (#61 R4). A relay that never manages to connect must not
  * reconnect-and-log every ~10s forever. After the burst + a few steady retries
  * it is benched for 60 seconds: no reconnect attempt during the window, and the
- * next successful connect resets everything. Complements the pool-level FLAP
+ * next sustained healthy connection resets everything. Complements the pool-level FLAP
  * cooldown (relay-cooldown.test.ts), which only covers connect-then-drop churn —
  * this covers a relay that never connects at all.
  */
@@ -1112,21 +1113,86 @@ describe('NostrRelay bad-relay cooldown', () => {
     expect(connectSpy.mock.calls.length).toBeGreaterThan(callsAtBench);
   });
 
-  it('a fresh connect resets the cooldown flag', () => {
-    const relay: any = new NostrRelay('wss://flaky.example');
-    vi.spyOn(relay, 'connect').mockImplementation(() => { relay.handleDisconnect(); });
-
-    relay.connectionState = 'connecting';
-    relay.handleDisconnect();
-    for(let i = 0; i < 60 && !relay.inCooldown; i++) {
-      vi.advanceTimersByTime(1_000);
+  it('brief successful opens still exhaust the retry budget and cool down', () => {
+    const relay: any = new NostrRelay('wss://flapping.example');
+    vi.spyOn(relay, 'startLatencyRefresh').mockImplementation(() => {});
+    relay.connect();
+    for(let i = 0; i < 7; i++) {
+      vi.advanceTimersByTime(10);
+      const ws = getLastMockWs()!;
+      ws.simulateError();
+      ws.close();
+      if(i < 6) vi.advanceTimersToNextTimer();
     }
     expect(relay.inCooldown).toBe(true);
+    const last = getLastMockWs();
+    vi.advanceTimersByTime(59_000);
+    expect(getLastMockWs()).toBe(last);
+    relay.disconnect();
+  });
 
-    // The onopen path resets these; verify the flag clears.
-    relay.reconnectAttempts = 0;
-    relay.inCooldown = false;
+  it('a pool bench during the reconnect notification leaves no retry armed', () => {
+    const relay: any = new NostrRelay('wss://benched.example');
+    relay.onStateChange = (state: string) => {
+      if(state === 'reconnecting') relay.disconnect();
+    };
+    relay.connect();
+    vi.advanceTimersByTime(10);
+    getLastMockWs()!.close();
+    expect(relay.getState()).toBe('disconnected');
+    expect(relay.reconnectTimeout).toBeNull();
+    const last = getLastMockWs();
+    vi.advanceTimersByTime(60_000);
+    expect(getLastMockWs()).toBe(last);
+  });
+
+  it('the real pool benches a flapping instance for the whole window', () => {
+    const url = 'wss://pool-flap.example';
+    const pool: any = new NostrRelayPool({relays: [], onMessage: () => {}});
+    const relay: any = new NostrRelay(url);
+    vi.spyOn(relay, 'startLatencyRefresh').mockImplementation(() => {});
+    pool.relayEntries.push({config: {url, read: true, write: true}, instance: relay});
+    pool.activeUrls.add(url);
+    relay.onStateChange = (state: string) => pool.trackRelayHealth(url, state);
+    relay.connect();
+    for(let i = 0; i < 3; i++) {
+      vi.advanceTimersByTime(10);
+      getLastMockWs()!.simulateError();
+      getLastMockWs()!.close();
+      if(i < 2) vi.advanceTimersToNextTimer();
+    }
+    expect(pool.relayHealth.get(url).cooldownUntil - Date.now()).toBe(60_000);
+    expect(pool.activeUrls.has(url)).toBe(false);
+    expect(relay.getState()).toBe('disconnected');
+    const last = getLastMockWs();
+    vi.advanceTimersByTime(59_000);
+    expect(getLastMockWs()).toBe(last);
+    expect(relay.getState()).toBe('disconnected');
+    relay.disconnect();
+  });
+
+  it('error logs identify the relay and its retry state', () => {
+    const relay: any = new NostrRelay('wss://identified.example');
+    const error = vi.spyOn(relay.log, 'error');
+    relay.connect();
+    vi.advanceTimersByTime(10);
+    getLastMockWs()!.simulateError();
+    expect(error).toHaveBeenCalledWith('[NostrRelay] WebSocket error:',
+      'wss://identified.example', 'attempt:', 0, 'cooldown:', false, expect.any(Event));
+    relay.disconnect();
+  });
+
+  it('a sustained successful connection refunds the retry budget', () => {
+    const relay: any = new NostrRelay('wss://recovered.example');
+    vi.spyOn(relay, 'startLatencyRefresh').mockImplementation(() => {});
+    relay.reconnectAttempts = 7;
+    relay.inCooldown = true;
+    relay.connect();
+    vi.advanceTimersByTime(30_010);
+    getLastMockWs()!.close();
+    expect(relay.reconnectAttempts).toBe(1);
     expect(relay.inCooldown).toBe(false);
+    relay.disconnect();
   });
 });
 
