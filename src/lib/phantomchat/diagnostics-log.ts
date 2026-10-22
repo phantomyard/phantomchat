@@ -32,9 +32,18 @@ export const DIAG_MAX_LINE_CHARS = 2000;
 export const DIAG_LINES_PER_MINUTE = 1200;
 export const DIAG_MAX_BUFFERED_LINES = 5000;
 const FLUSH_INTERVAL_MS = 2000;
+// #254: createWritable({keepExistingData}) rewrites the WHOLE file (up to
+// DIAG_MAX_FILE_BYTES) on every flush. Where sync access handles are not
+// available (window contexts, old Safari) the file must still be copied — so
+// flush at most every 15s instead of every 2s and accept the copy.
+const COPY_FLUSH_INTERVAL_MS = 15_000;
+// #254: a write that never settles must not pin the Web Lock forever — one
+// hung write used to silence the log in BOTH the window and the worker.
+export const WRITE_TIMEOUT_MS = 8_000;
 const LOCK_NAME = 'phantomchat-diag-log';
 const LOCK_WAIT_MS = 5000;
 const DEFAULT_HEARTBEAT_MS = 30_000;
+const ENCODER = new TextEncoder();
 
 export type DiagLevel = 'E' | 'W' | 'I';
 
@@ -45,6 +54,15 @@ type DirectoryLike = {
 type FileHandleLike = {
   getFile(): Promise<Blob>;
   createWritable(options?: {keepExistingData?: boolean}): Promise<WritableLike>;
+  // Workers only (#254): writes in place, no whole-file swap copy.
+  createSyncAccessHandle?(): SyncAccessHandleLike;
+};
+
+type SyncAccessHandleLike = {
+  write(buffer: Uint8Array, options?: {at?: number}): number;
+  flush(): void;
+  close(): void;
+  truncate?(size: number): void;
 };
 
 type WritableLike = {
@@ -71,6 +89,8 @@ type State = {
   options: DiagnosticsLogOptions;
   buffer: string[];
   flushing: Promise<void> | null;
+  flushTimer: any;
+  flushIntervalMs: number;
   minuteStart: number;
   minuteCount: number;
   dropped: number;
@@ -84,6 +104,9 @@ type State = {
 };
 
 let state: State | null = null;
+
+// #254: sentinel rejected by the bounded write when the OPFS write stalls.
+const WRITE_STALL = {stall: true};
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const FORMAT_ONLY_RE = /^(%s\s*)+$/;
@@ -206,13 +229,46 @@ export function registerDiagnosticsProbe(name: string, probe: () => string | und
   state?.probes.set(name, probe);
 }
 
-async function appendChunk(dir: DirectoryLike, chunk: string) {
+/**
+ * Append a chunk. Returns the write path used (#254):
+ * - 'sync' — in place via FileSystemSyncAccessHandle (workers): no swap file,
+ *   so steady-state logging creates no new OPFS backing file per flush.
+ * - 'copy' — createWritable({keepExistingData}), which rewrites the whole
+ *   file; the caller slows its flush cadence in that mode.
+ */
+async function appendChunk(dir: DirectoryLike, chunk: string): Promise<'sync' | 'copy'> {
   const handle = await dir.getFileHandle(DIAG_LOG_FILE, {create: true});
   const file = await handle.getFile();
   const bytes = new Blob([chunk]).size;
+  const rotate = file.size > 0 && file.size + bytes > DIAG_MAX_FILE_BYTES;
 
-  if(file.size > 0 && file.size + bytes > DIAG_MAX_FILE_BYTES) {
-    // Rotate: current → .1 (one generation kept), then start fresh.
+  if(typeof handle.createSyncAccessHandle === 'function') {
+    if(rotate) {
+      // Rotate: current → .1 (one generation kept), then start fresh.
+      const text = await file.text();
+      const oldHandle = await dir.getFileHandle(DIAG_LOG_OLD_FILE, {create: true});
+      const oldSync = oldHandle.createSyncAccessHandle!();
+      try {
+        oldSync.truncate?.(0);
+        oldSync.write(ENCODER.encode(text));
+        oldSync.flush();
+      } finally {
+        oldSync.close();
+      }
+    }
+
+    const sync = handle.createSyncAccessHandle!();
+    try {
+      if(rotate) sync.truncate?.(0);
+      sync.write(ENCODER.encode(chunk), {at: rotate ? 0 : file.size});
+      sync.flush();
+    } finally {
+      sync.close();
+    }
+    return 'sync';
+  }
+
+  if(rotate) {
     const old = await dir.getFileHandle(DIAG_LOG_OLD_FILE, {create: true});
     const oldWritable = await old.createWritable();
     await oldWritable.write(file);
@@ -221,13 +277,14 @@ async function appendChunk(dir: DirectoryLike, chunk: string) {
     const fresh = await handle.createWritable();
     await fresh.write(chunk);
     await fresh.close();
-    return;
+    return 'copy';
   }
 
   const writable = await handle.createWritable({keepExistingData: true});
   if(writable.seek) await writable.seek(file.size);
   await writable.write(chunk);
   await writable.close();
+  return 'copy';
 }
 
 /**
@@ -256,6 +313,22 @@ function getLocks() {
 }
 
 /**
+ * #254: once a flush has gone through on the copy path, re-arm the flush
+ * timer at the slow cadence — windows have no sync access handles, so their
+ * every-2s flush was rewriting the whole file each time.
+ */
+function slowFlushTimer(s: State) {
+  if(s.flushIntervalMs === COPY_FLUSH_INTERVAL_MS) return;
+  s.flushIntervalMs = COPY_FLUSH_INTERVAL_MS;
+  if(s.flushTimer) {
+    clearInterval(s.flushTimer);
+    s.timers = s.timers.filter((t) => t !== s.flushTimer);
+    s.flushTimer = setInterval(() => flushDiagnosticsLog(), COPY_FLUSH_INTERVAL_MS);
+    s.timers.push(s.flushTimer);
+  }
+}
+
+/**
  * Write buffered lines to OPFS. Resolves once this batch is written (or has
  * failed and been put back). Safe to call often; concurrent calls coalesce.
  */
@@ -271,15 +344,38 @@ export function flushDiagnosticsLog(): Promise<void> {
   const chunk = lines.join('');
   const getDirectory = s.options.getDirectory || getDefaultDirectory;
 
+  let writeMode: 'sync' | 'copy' | null = null;
   const write = async() => {
     const dir = await getDirectory();
-    await appendChunk(dir, chunk);
+    writeMode = await appendChunk(dir, chunk);
+  };
+
+  // #254: bound the whole write. A hung OPFS write used to pin the Web Lock
+  // and this context's `flushing` promise forever, silencing the log in both
+  // the window and the worker. Racing the write settles the lock callback at
+  // the timeout — which releases the lock (an AbortSignal cannot release a
+  // lock once its callback is running) — while the batch is kept in memory.
+  const bounded = async() => {
+    if(typeof setTimeout === 'undefined') {
+      await write();
+      return;
+    }
+
+    let timer: any;
+    const stall = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(WRITE_STALL), WRITE_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([write(), stall]);
+    } finally {
+      clearTimeout(timer);
+    }
   };
 
   const locks = getLocks();
   const run = locks ?
-    locks.request(LOCK_NAME, {signal: typeof AbortSignal !== 'undefined' && (AbortSignal as any).timeout ? (AbortSignal as any).timeout(LOCK_WAIT_MS) : undefined}, write) :
-    write();
+    locks.request(LOCK_NAME, {signal: typeof AbortSignal !== 'undefined' && (AbortSignal as any).timeout ? (AbortSignal as any).timeout(LOCK_WAIT_MS) : undefined}, bounded) :
+    bounded();
 
   s.flushing = Promise.resolve(run).catch((err: any) => {
     if(state !== s) return;
@@ -288,6 +384,10 @@ export function flushDiagnosticsLog(): Promise<void> {
     // bounded in-memory buffer so export still has the boot line and every
     // error logged before the first flush.
     s.buffer.unshift(...lines);
+    if(err === WRITE_STALL) {
+      // Marker lands in the in-memory buffer so the export still shows it.
+      pushLine('W', 'diag write stalled — ' + lines.length + ' lines kept in memory, will retry');
+    }
     if(isStorageUnsupported(err)) {
       // No OPFS here (old Safari, private mode): stop trying, keep memory-only.
       s.storageBroken = err?.message || String(err);
@@ -299,7 +399,10 @@ export function flushDiagnosticsLog(): Promise<void> {
       s.dropped += cut;
     }
   }).finally(() => {
-    if(state === s) s.flushing = null;
+    if(state === s) {
+      s.flushing = null;
+      if(writeMode === 'copy') slowFlushTimer(s);
+    }
   });
 
   return s.flushing;
@@ -332,6 +435,8 @@ export function installDiagnosticsLog(options: DiagnosticsLogOptions) {
     options,
     buffer: [],
     flushing: null,
+    flushTimer: null,
+    flushIntervalMs: FLUSH_INTERVAL_MS,
     minuteStart: options.now ? options.now() : Date.now(),
     minuteCount: 0,
     dropped: 0,
@@ -375,7 +480,8 @@ export function installDiagnosticsLog(options: DiagnosticsLogOptions) {
   diagLog('I', 'boot ' + options.context + ' ua=' + ua);
 
   if(options.autoFlush !== false) {
-    s.timers.push(setInterval(() => flushDiagnosticsLog(), FLUSH_INTERVAL_MS));
+    s.flushTimer = setInterval(() => flushDiagnosticsLog(), FLUSH_INTERVAL_MS);
+    s.timers.push(s.flushTimer);
 
     const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     if(heartbeatMs > 0) {

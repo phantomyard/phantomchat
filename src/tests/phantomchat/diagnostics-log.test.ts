@@ -17,7 +17,8 @@ import {
   DIAG_LOG_FILE,
   DIAG_LOG_OLD_FILE,
   DIAG_MAX_FILE_BYTES,
-  DIAG_LINES_PER_MINUTE
+  DIAG_LINES_PER_MINUTE,
+  WRITE_TIMEOUT_MS
 } from '@lib/phantomchat/diagnostics-log';
 import SuperMessagePort, {SLOW_INVOKE_MS} from '@lib/superMessagePort';
 
@@ -27,8 +28,25 @@ import SuperMessagePort, {SLOW_INVOKE_MS} from '@lib/superMessagePort';
  * createWritable with keepExistingData + seek), with real Blob semantics.
  */
 
-function fakeOpfs() {
+function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean} = {}) {
   const files = new Map<string, string>();
+  let writeCount = 0;
+  const decoder = new TextDecoder();
+  // #254 fake: an in-place handle over the same in-memory string.
+  const syncHandle = (name: string) => ({
+    write(buffer: Uint8Array, options?: {at?: number}) {
+      const text = decoder.decode(buffer);
+      const at = options?.at ?? 0;
+      const content = files.get(name);
+      files.set(name, content.slice(0, at) + text + content.slice(at + text.length));
+      return text.length;
+    },
+    flush() {},
+    close() {},
+    truncate(size: number) {
+      files.set(name, files.get(name).slice(0, size));
+    }
+  });
   const dir = {
     async getFileHandle(name: string, options?: {create?: boolean}) {
       if(!files.has(name)) {
@@ -45,9 +63,20 @@ function fakeOpfs() {
           blob.__content = content;
           return blob;
         },
-        async createWritable(opts?: {keepExistingData?: boolean}) {
+        ...(opts.sync ? {createSyncAccessHandle: () => syncHandle(name)} : {}),
+        async createWritable(writableOpts?: {keepExistingData?: boolean}) {
+          writeCount++;
+          if(opts.hangFirstWrite && writeCount === 1) {
+            // #254 fake: the first write() never settles.
+            return {
+              async seek() {},
+              write: () => new Promise<void>(() => {}),
+              async close() {}
+            };
+          }
+
           // Like the real API: writes land in a swap copy, committed on close.
-          let swap = opts?.keepExistingData ? files.get(name) : '';
+          let swap = writableOpts?.keepExistingData ? files.get(name) : '';
           // Spec: the cursor starts at 0 even with keepExistingData, so an
           // append without seek() overwrites the head of the file.
           let pos = 0;
@@ -68,7 +97,7 @@ function fakeOpfs() {
       };
     }
   };
-  return {files, getDirectory: async() => dir};
+  return {files, getDirectory: async() => dir, get createWritableCalls() { return writeCount; }};
 }
 
 let clock = 0;
@@ -321,6 +350,99 @@ describe('diagnostics log', () => {
     await flushDiagnosticsLog();
     const line = opfs.files.get(DIAG_LOG_FILE).split('\n').find((l) => l.includes('yyy'));
     expect(line.length).toBeLessThan(2100);
+  });
+});
+
+describe('#254: in-place writes and the stall bound', () => {
+  beforeEach(() => {
+    clock = Date.parse('2026-10-22T07:00:00Z');
+  });
+
+  afterEach(() => {
+    uninstallDiagnosticsLogForTests();
+    vi.useRealTimers();
+  });
+
+  it('steady-state flushes append in place: zero createWritable calls, so no new OPFS backing file per flush', async() => {
+    const opfs = fakeOpfs({sync: true});
+    install({getDirectory: opfs.getDirectory});
+    diagLog('I', 'one');
+    await flushDiagnosticsLog();
+    diagLog('I', 'two');
+    await flushDiagnosticsLog();
+    diagLog('I', 'three');
+    await flushDiagnosticsLog();
+    expect(opfs.createWritableCalls).toBe(0);
+    const text = opfs.files.get(DIAG_LOG_FILE);
+    expect(text.indexOf('one')).toBeGreaterThan(-1);
+    expect(text.indexOf('three')).toBeGreaterThan(text.indexOf('one'));
+  });
+
+  it('rotates one generation in sync mode too, still without a swap-file write', async() => {
+    const opfs = fakeOpfs({sync: true});
+    install({getDirectory: opfs.getDirectory});
+    opfs.files.set(DIAG_LOG_FILE, 'x'.repeat(DIAG_MAX_FILE_BYTES - 10) + '\n');
+    diagLog('I', 'after rotation');
+    await flushDiagnosticsLog();
+    expect(opfs.files.get(DIAG_LOG_OLD_FILE).length).toBe(DIAG_MAX_FILE_BYTES - 9);
+    expect(opfs.files.get(DIAG_LOG_FILE)).toContain('after rotation');
+    expect(opfs.createWritableCalls).toBe(0);
+  });
+
+  it('a hung write releases the Web Lock, keeps the lines in memory and logs a stall marker', async() => {
+    vi.useFakeTimers();
+    const opfs = fakeOpfs({hangFirstWrite: true});
+    let held = false;
+    const locks = {
+      async request(_name: string, _options: any, cb: () => Promise<void>) {
+        if(held) throw Object.assign(new Error('lock wait timed out'), {name: 'AbortError'});
+        held = true;
+        try {
+          return await cb();
+        } finally {
+          held = false;
+        }
+      }
+    };
+    install({getDirectory: opfs.getDirectory, locks});
+
+    diagLog('E', 'before stall');
+    const flush1 = flushDiagnosticsLog();
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS - 1);
+    // Still hung mid-write: the batch is in flight and the lock is held.
+    expect(getBufferedDiagnosticsForTests()).toEqual([]);
+    expect(held).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(2);
+    await flush1;
+    const buffered = getBufferedDiagnosticsForTests().join('');
+    expect(buffered).toContain('before stall');
+    expect(buffered).toContain('diag write stalled');
+    // The lock callback settled at the timeout, so the lock is free again —
+    // the OTHER context is no longer silenced by this one's hung write.
+    expect(held).toBe(false);
+
+    diagLog('E', 'after stall');
+    await flushDiagnosticsLog();
+    const text = opfs.files.get(DIAG_LOG_FILE);
+    expect(text).toContain('before stall');
+    expect(text).toContain('diag write stalled');
+    expect(text).toContain('after stall');
+  });
+
+  it('copy-only contexts slow their flush cadence from 2s to 15s', async() => {
+    vi.useFakeTimers();
+    const opfs = fakeOpfs(); // no sync handles: window / old Safari
+    install({getDirectory: opfs.getDirectory, autoFlush: true});
+    diagLog('E', 'first');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(opfs.files.get(DIAG_LOG_FILE)).toContain('first');
+
+    diagLog('E', 'second');
+    await vi.advanceTimersByTimeAsync(2_000); // the old cadence would have flushed here
+    expect(opfs.files.get(DIAG_LOG_FILE) || '').not.toContain('second');
+    await vi.advanceTimersByTimeAsync(13_000); // 15s after the first copy flush
+    expect(opfs.files.get(DIAG_LOG_FILE)).toContain('second');
   });
 });
 
