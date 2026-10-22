@@ -55,7 +55,8 @@ type FileHandleLike = {
   getFile(): Promise<Blob>;
   createWritable(options?: {keepExistingData?: boolean}): Promise<WritableLike>;
   // Workers only (#254): writes in place, no whole-file swap copy.
-  createSyncAccessHandle?(): SyncAccessHandleLike;
+  // Spec: returns a Promise; only the handle's own methods are synchronous.
+  createSyncAccessHandle?(): Promise<SyncAccessHandleLike>;
 };
 
 type SyncAccessHandleLike = {
@@ -247,7 +248,7 @@ async function appendChunk(dir: DirectoryLike, chunk: string): Promise<'sync' | 
       // Rotate: current → .1 (one generation kept), then start fresh.
       const text = await file.text();
       const oldHandle = await dir.getFileHandle(DIAG_LOG_OLD_FILE, {create: true});
-      const oldSync = oldHandle.createSyncAccessHandle!();
+      const oldSync = await oldHandle.createSyncAccessHandle!();
       try {
         oldSync.truncate?.(0);
         oldSync.write(ENCODER.encode(text));
@@ -257,7 +258,7 @@ async function appendChunk(dir: DirectoryLike, chunk: string): Promise<'sync' | 
       }
     }
 
-    const sync = handle.createSyncAccessHandle!();
+    const sync = await handle.createSyncAccessHandle!();
     try {
       if(rotate) sync.truncate?.(0);
       sync.write(ENCODER.encode(chunk), {at: rotate ? 0 : file.size});

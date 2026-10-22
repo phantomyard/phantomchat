@@ -29,6 +29,11 @@ import SuperMessagePort, {SLOW_INVOKE_MS} from '@lib/superMessagePort';
  */
 
 function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean} = {}) {
+  // #255 P1: createSyncAccessHandle must resolve asynchronously, like the
+  // real API — the fake defers at least one microtask so an implementation
+  // that treats it as synchronous fails loudly.
+  const delayMicrotasks = <T,>(value: T): Promise<T> =>
+    (async() => { await Promise.resolve(); return value; })();
   const files = new Map<string, string>();
   let writeCount = 0;
   const decoder = new TextDecoder();
@@ -63,7 +68,10 @@ function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean} = {}) {
           blob.__content = content;
           return blob;
         },
-        ...(opts.sync ? {createSyncAccessHandle: () => syncHandle(name)} : {}),
+        // Real OPFS: the handle arrives as a Promise (#255 P1 regression fake);
+        // `delayMicrotasks` defers resolution a tick so a sync (un-awaited)
+        // acquisition would write onto the Promise object and lose the batch.
+        ...(opts.sync ? {createSyncAccessHandle: () => delayMicrotasks(syncHandle(name))} : {}),
         async createWritable(writableOpts?: {keepExistingData?: boolean}) {
           writeCount++;
           if(opts.hangFirstWrite && writeCount === 1) {
@@ -387,6 +395,19 @@ describe('#254: in-place writes and the stall bound', () => {
     expect(opfs.files.get(DIAG_LOG_OLD_FILE).length).toBe(DIAG_MAX_FILE_BYTES - 9);
     expect(opfs.files.get(DIAG_LOG_FILE)).toContain('after rotation');
     expect(opfs.createWritableCalls).toBe(0);
+  });
+
+  it('acquires the sync handle asynchronously: the fake\'s handle is a Promise and both acquisitions still land (P1 regression)', async() => {
+    const opfs = fakeOpfs({sync: true});
+    install({getDirectory: opfs.getDirectory});
+    const dir: any = await opfs.getDirectory();
+    const fileHandle: any = await dir.getFileHandle(DIAG_LOG_FILE, {create: true});
+    const acquisition = fileHandle.createSyncAccessHandle();
+    expect(acquisition).toBeInstanceOf(Promise);
+    await acquisition.then((sync: any) => sync.close());
+    diagLog('I', 'async-acquired');
+    await flushDiagnosticsLog();
+    expect(opfs.files.get(DIAG_LOG_FILE)).toContain('async-acquired');
   });
 
   it('a hung write releases the Web Lock, keeps the lines in memory and logs a stall marker', async() => {
