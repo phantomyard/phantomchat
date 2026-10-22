@@ -108,6 +108,25 @@ const WAKE_STALE_INVOKE_THRESHOLD = 10000;
 // const PING_INTERVAL = DEBUG && false ? 0x7FFFFFFF : 5000;
 // const PING_TIMEOUT = DEBUG && false ? 0x7FFFFFFF : 10000;
 
+/**
+ * Diagnostic label for an invoke: the task type, plus `name.method` for
+ * manager calls (nearly every main-to-worker call is type 'manager', so the
+ * type alone says nothing). Only the routing fields are read — never `args`,
+ * which can carry message content.
+ */
+export function describeInvoke(type: string, payload: any): string {
+  const name = payload?.name;
+  const method = payload?.method;
+  if(typeof name === 'string' && typeof method === 'string') {
+    return `${type}:${name}.${method}`;
+  }
+
+  if(typeof method === 'string') {
+    return `${type}:${method}`;
+  }
+
+  return type;
+}
 
 class SuperMessagePort<
   Workers extends Listeners,
@@ -126,6 +145,8 @@ class SuperMessagePort<
       resolve: any,
       reject: any,
       taskType: string,
+      // Human-readable call label for diagnostics — see describeInvoke().
+      label: string,
       port?: SendPort,
       startTime: number
     }
@@ -332,7 +353,7 @@ class SuperMessagePort<
         continue;
       }
 
-      this.log.error('rejecting stale invoke on wake', task.taskType, id);
+      this.log.error(`rejecting stale invoke on wake: ${task.label} (task ${id})`);
       task.reject(error);
       delete this.awaiting[id];
     }
@@ -666,7 +687,14 @@ class SuperMessagePort<
     let task: InvokeTask;
     const promise = new Promise<Awaited<ReturnType<Send[T]>>>((resolve, reject) => {
       task = this.createInvokeTask(type as string, payload, withAck, undefined, transfer);
-      this.awaiting[task.id] = {resolve, reject, taskType: type as string, port, startTime: Date.now()};
+      this.awaiting[task.id] = {
+        resolve,
+        reject,
+        taskType: type as string,
+        label: describeInvoke(type as string, payload),
+        port,
+        startTime: Date.now()
+      };
       this.pushTask(task, port);
     });
 
@@ -683,7 +711,10 @@ class SuperMessagePort<
         }
 
         delete this.awaiting[task.id];
-        deferred.reject(makeError('TIMEOUT'));
+        // One plain string so it survives console-message capture in the
+        // desktop diagnostics log (objects stringify to nothing useful).
+        this.log.error(`invoke TIMEOUT after ${effectiveTimeout}ms: ${deferred.label} (task ${task.id}, ${Object.keys(this.awaiting).length} still awaiting)`);
+        deferred.reject(makeError('TIMEOUT', deferred.label));
       }, effectiveTimeout);
 
       promise.finally(() => ctx.clearTimeout(timeoutId)).catch(() => {});

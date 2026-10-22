@@ -1,6 +1,6 @@
 // @ts-nocheck
 import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
-import SuperMessagePort from '@lib/superMessagePort';
+import SuperMessagePort, {describeInvoke} from '@lib/superMessagePort';
 
 /**
  * Unit tests for SuperMessagePort's invoke backstop:
@@ -170,5 +170,73 @@ describe('SuperMessagePort invoke backstop', () => {
 
       expect(rejected).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('SuperMessagePort timeout diagnostics (#246)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const managerPayload = {
+    name: 'appMessagesManager',
+    method: 'getHistory',
+    args: [{secret: 'message body'}],
+    accountNumber: 1
+  };
+
+  it('logs the manager name.method when an invoke times out', async() => {
+    const port = new TestPort(60000);
+    const errorSpy = vi.spyOn(port['log'], 'error').mockImplementation(() => {});
+    port.invoke('manager', managerPayload).catch(() => {});
+    port.invoke('manager', {name: 'appUsersManager', method: 'getSelf', args: []}, undefined, undefined, undefined, 120000).catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(60001);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const line = errorSpy.mock.calls[0][0];
+    expect(typeof line).toBe('string');
+    expect(line).toContain('invoke TIMEOUT after 60000ms');
+    expect(line).toContain('manager:appMessagesManager.getHistory');
+    expect(line).toContain('1 still awaiting');
+  });
+
+  it('attaches the label to the TIMEOUT error and never leaks args', async() => {
+    const port = new TestPort(60000);
+    const errorSpy = vi.spyOn(port['log'], 'error').mockImplementation(() => {});
+    const rejection = vi.fn();
+    port.invoke('manager', managerPayload).catch(rejection);
+
+    await vi.advanceTimersByTimeAsync(60001);
+
+    expect(rejection.mock.calls[0][0]).toMatchObject({
+      type: 'TIMEOUT',
+      message: 'manager:appMessagesManager.getHistory'
+    });
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('message body');
+  });
+
+  it('names the call when wake recovery rejects a stale invoke', async() => {
+    const port = new TestPort(60000);
+    const errorSpy = vi.spyOn(port['log'], 'error').mockImplementation(() => {});
+    port.invoke('manager', managerPayload).catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(11000);
+    setVisibility('visible');
+    port.triggerWake();
+    await Promise.resolve();
+
+    expect(errorSpy.mock.calls[0][0]).toContain('manager:appMessagesManager.getHistory');
+  });
+
+  it('describeInvoke falls back to the bare type for non-manager payloads', () => {
+    expect(describeInvoke('manager', managerPayload)).toBe('manager:appMessagesManager.getHistory');
+    expect(describeInvoke('crypto', {method: 'sha256', args: []})).toBe('crypto:sha256');
+    expect(describeInvoke('createObjectURL', new Blob())).toBe('createObjectURL');
+    expect(describeInvoke('environment', undefined)).toBe('environment');
   });
 });
