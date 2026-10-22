@@ -88,6 +88,33 @@ let state: State | null = null;
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const FORMAT_ONLY_RE = /^(%s\s*)+$/;
 
+// Objects are NEVER serialised into the log. console.error(obj) is all over
+// the app and its libraries — tasks with manager args, messages, peers — and
+// the log is persistent and user-exported, so content must not reach it. An
+// object is reduced to its class name plus a few allowlisted identifier-like
+// fields (an API error's type/code, a TL constructor), never free text.
+const SAFE_FIELDS = ['_', 'type', 'code'] as const;
+const SAFE_VALUE_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+function describeObject(arg: object): string {
+  const name = Array.isArray(arg) ? 'Array(' + arg.length + ')' : ((arg as any)?.constructor?.name || 'object');
+  const parts: string[] = [];
+  for(const field of SAFE_FIELDS) {
+    let value: unknown;
+    try {
+      value = (arg as any)[field];
+    } catch{
+      continue;
+    }
+
+    if((typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && SAFE_VALUE_RE.test(value))) {
+      parts.push(field + '=' + value);
+    }
+  }
+
+  return '[' + name + (parts.length ? ' ' + parts.join(' ') : '') + ']';
+}
+
 function stringifyArg(arg: unknown): string {
   if(typeof arg === 'string') return arg;
   if(arg instanceof Error) {
@@ -96,15 +123,7 @@ function stringifyArg(arg: unknown): string {
   }
 
   if(arg === null || arg === undefined || typeof arg !== 'object') return String(arg);
-
-  // DOM events/transactions etc. stringify to '{}' — keep the class name.
-  const name = (arg as any)?.constructor?.name;
-  try {
-    const json = JSON.stringify(arg);
-    if(json && json !== '{}') return json.length > 300 ? json.slice(0, 300) + '…' : json;
-  } catch{}
-
-  return '[' + (name || 'object') + ']';
+  return describeObject(arg);
 }
 
 /**
@@ -264,15 +283,16 @@ export function flushDiagnosticsLog(): Promise<void> {
 
   s.flushing = Promise.resolve(run).catch((err: any) => {
     if(state !== s) return;
-    const message = err?.message || String(err);
+    // Put the batch back in front whatever happened: on a transient failure
+    // (lock timeout, quota) it is retried; with no OPFS at all it stays in the
+    // bounded in-memory buffer so export still has the boot line and every
+    // error logged before the first flush.
+    s.buffer.unshift(...lines);
     if(isStorageUnsupported(err)) {
       // No OPFS here (old Safari, private mode): stop trying, keep memory-only.
-      s.storageBroken = message;
-      return;
+      s.storageBroken = err?.message || String(err);
     }
 
-    // Transient (lock timeout, quota): put the batch back in front.
-    s.buffer.unshift(...lines);
     if(s.buffer.length > DIAG_MAX_BUFFERED_LINES) {
       const cut = s.buffer.length - DIAG_MAX_BUFFERED_LINES;
       s.buffer.splice(0, cut);

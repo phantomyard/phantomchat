@@ -104,6 +104,15 @@ describe('formatConsoleArgs', () => {
     expect(formatConsoleArgs([new IDBTransaction()])).toBe('[IDBTransaction]');
   });
 
+  it('never serialises object content — class name and identifier-like type/code only', () => {
+    const task = {type: 'invoke', id: 7, payload: {type: 'manager', payload: {name: 'm', method: 'x', args: ['PRIVATE_MESSAGE_SENTINEL']}}};
+    expect(formatConsoleArgs(['task', task])).toBe('task [Object type=invoke]');
+    expect(formatConsoleArgs([{type: 'FLOOD_WAIT_5', code: 420, message: 'PRIVATE_MESSAGE_SENTINEL'}])).toBe('[Object type=FLOOD_WAIT_5 code=420]');
+    // Free text in an allowlisted field is still dropped.
+    expect(formatConsoleArgs([{type: 'hello PRIVATE_MESSAGE_SENTINEL'}])).toBe('[Object]');
+    expect(formatConsoleArgs([['PRIVATE_MESSAGE_SENTINEL']])).toBe('[Array(1)]');
+  });
+
   it('keeps a real %s inside a message that is not just the style token', () => {
     expect(formatConsoleArgs(['100%s done'])).toBe('100%s done');
   });
@@ -237,8 +246,29 @@ describe('diagnostics log', () => {
     });
     diagLog('E', 'memory only');
     await flushDiagnosticsLog();
+    diagLog('E', 'after the switch');
+    await flushDiagnosticsLog();
     const text = await readDiagnosticsLog();
     expect(text).toContain('OPFS unavailable in this browser');
+    // The batch the failed flush took is kept, not just the notice.
+    expect(text).toContain('boot win:test');
+    expect(text).toContain('memory only');
+    expect(text).toContain('after the switch');
+  });
+
+  it('keeps the first batch when the export itself is the first (failing) flush', async() => {
+    installDiagnosticsLog({
+      context: 'win:test',
+      locks: null,
+      now: () => clock,
+      autoFlush: false,
+      getDirectory: async() => {
+        throw new Error('OPFS unavailable');
+      }
+    });
+    diagLog('E', 'FIRST_BATCH_SENTINEL');
+    const text = await readDiagnosticsLog();
+    expect(text).toContain('FIRST_BATCH_SENTINEL');
   });
 
   it('serialises writes through the cross-context Web Lock', async() => {
@@ -382,6 +412,44 @@ describe('superMessagePort diagnostics hooks', () => {
     const lines = getBufferedDiagnosticsForTests().join('');
     expect(lines).toContain('slow handler 32000ms: manager:appStateManager.save');
     expect(lines).not.toContain('secret');
+  });
+});
+
+describe('privacy: captured console never persists manager args', () => {
+  // Silence the real console underneath the capture wrapper (spy first, so
+  // the wrapper installed afterwards still sees every call).
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    uninstallDiagnosticsLogForTests();
+    vi.restoreAllMocks();
+  });
+
+  it('a throwing manager handler logs its label, not its args', async() => {
+    const opfs = fakeOpfs();
+    installDiagnosticsLog({context: 'worker', locks: null, autoFlush: false, getDirectory: opfs.getDirectory});
+    const port = new TestPort();
+    port.addEventListener('manager', () => {
+      throw new Error('handler failed');
+    });
+    await port.handle('manager', {name: 'appMessagesManager', method: 'sendText', args: ['PRIVATE_MESSAGE_SENTINEL']});
+
+    const text = await readDiagnosticsLog();
+    expect(text).toContain('worker task error: manager:appMessagesManager.sendText');
+    expect(text).toContain('handler failed');
+    expect(text).not.toContain('PRIVATE_MESSAGE_SENTINEL');
+  });
+
+  it('an app console.error with a private object stores no content', async() => {
+    const opfs = fakeOpfs();
+    installDiagnosticsLog({context: 'win:t', locks: null, autoFlush: false, getDirectory: opfs.getDirectory});
+    console.error('send failed', {message: 'PRIVATE_MESSAGE_SENTINEL', peerId: 12345}, ['PRIVATE_MESSAGE_SENTINEL']);
+    const text = await readDiagnosticsLog();
+    expect(text).toContain('send failed [Object] [Array(1)]');
+    expect(text).not.toContain('PRIVATE_MESSAGE_SENTINEL');
   });
 });
 

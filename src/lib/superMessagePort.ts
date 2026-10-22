@@ -459,7 +459,8 @@ class SuperMessagePort<
           this.postMessage(ports, task);
           // }
         } catch(err) {
-          this.log.error('postMessage error:', err, task, ports);
+          // Never the task itself: it carries manager args (#246 privacy).
+          this.log.error(`postMessage error: ${task.type}`, err);
         }
       });
 
@@ -645,7 +646,8 @@ class SuperMessagePort<
 
       resultTaskPayload.result = result;
     } catch(error) {
-      this.log.error('worker task error:', error, task);
+      // Label only — the task carries manager args (#246 privacy).
+      this.log.error(`worker task error: ${describeInvoke(innerTask.type, innerTask.payload)} (task ${id})`, error);
       if(innerTask.void) {
         return;
       }
@@ -776,7 +778,7 @@ class SuperMessagePort<
       });
 
       const interval = ctx.setInterval(() => {
-        this.log.error('task still has no result', task, port);
+        this.log.error(`task still has no result: ${describeInvoke(type as string, payload)} (task ${task.id})`);
       }, IS_WORKER ? 60e3 : 5e3);
     } else if(false) {
       // let timedOut = false;
