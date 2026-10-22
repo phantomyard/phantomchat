@@ -3,9 +3,9 @@
     "wss://nos.lol",
     "wss://relay.nostr.com",
     "wss://relay.primal.net",
-    "wss://relay.kaleidoswap.com",
-    "wss://offchain.pub",
     "wss://relay.nostrhub.fr",
-    "wss://nostr.sathoarder.com"
+    "wss://nostr.sathoarder.com",
+    "wss://relay.snort.social",
+    "wss://nostr.data.haus"
   ]
 }
