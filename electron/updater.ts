@@ -20,7 +20,8 @@
  * feed, fetched over TLS from GitHub and verified before install.
  */
 import {app, ipcMain, shell, net, type BrowserWindow} from 'electron';
-import {readFileSync} from 'node:fs';
+import {readFileSync, writeFileSync} from 'node:fs';
+import {spawn} from 'node:child_process';
 import {join} from 'node:path';
 import type {AppUpdater} from 'electron-updater';
 import {
@@ -53,6 +54,13 @@ import {
   type ReleaseSummary,
   type ResolvedRelease
 } from './updateFeed';
+import {
+  createInstallNowHandler,
+  helperArgs,
+  helperScript,
+  installShellCommand,
+  resolvePrivilegeAgent
+} from './updateRestart';
 
 const RELEASES_API = `https://api.github.com/repos/${REPO_SLUG}/releases`;
 
@@ -164,6 +172,10 @@ function markChecked(): void {
 
 let updaterInstance: AppUpdater | null = null;
 
+/** The downloaded installer path from the last 'update-downloaded' event —
+ * what the clean-quit helper installs. Null until a download completes. */
+let downloadedUpdateFile: string | null = null;
+
 /**
  * Loaded lazily and ONLY on the auto path. Importing it eagerly would
  * construct a platform updater (including MacUpdater) on installs that can
@@ -193,6 +205,8 @@ function getUpdater(): AppUpdater {
     // that promise settles only once the DOWNLOAD finishes, so a slow transfer
     // would leave 'Last checked' reporting a stale time for its duration.
     markChecked();
+    // A new download invalidates whatever the previous one left behind.
+    downloadedUpdateFile = null;
     publish({
       status: 'downloading',
       availableVersion: info.version,
@@ -211,6 +225,7 @@ function getUpdater(): AppUpdater {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    downloadedUpdateFile = info.downloadedFile ?? null;
     publish({status: 'ready', availableVersion: info.version, progressPercent: 100, error: null});
   });
 
@@ -264,6 +279,59 @@ async function checkViaReleasesApi(): Promise<void> {
     publish({status: 'available', availableVersion: picked!.version, releaseUrl: picked!.url, error: null});
   } else {
     publish({status: 'up-to-date', availableVersion: null, releaseUrl: null, error: null});
+  }
+}
+
+// --- Linux clean-quit install (issue #244) -----------------------------------
+
+/**
+ * Install path for Linux deb/rpm that puts the app's CLEAN QUIT first.
+ *
+ * electron-updater's quitAndInstall runs the whole privileged install
+ * (pkexec … dpkg -i …) synchronously on the main thread BEFORE quitting: the
+ * window freezes behind the polkit prompt, GNOME offers Force Quit/Wait, and
+ * force-quitting kills the app mid IndexedDB write — the corruption vector
+ * behind issue #244. Here the app writes a tiny detached helper and quits
+ * immediately; the helper waits for the exit, installs, and relaunches —
+ * the same experience the macOS and Windows builds already give.
+ *
+ * Returns false when this install cannot use the helper (AppImage, no
+ * downloaded file path, unknown package type or privilege agent), and the
+ * caller falls back to electron-updater's stock quitAndInstall.
+ */
+function tryCleanQuitInstall(): boolean {
+  if(process.platform !== 'linux') return false;
+  const packageType = readPackageType();
+  if(packageType !== 'deb' && packageType !== 'rpm') return false;
+  if(!downloadedUpdateFile) return false;
+
+  const findExecutable = (name: string) => findExecutableOnPath(name, process.env.PATH);
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  const agent = resolvePrivilegeAgent(isRoot, findExecutable);
+  if(!agent) return false;
+  const command = installShellCommand(packageType, downloadedUpdateFile, findExecutable);
+  if(!command) return false;
+
+  try {
+    const helperPath = join(app.getPath('userData'), 'linux-update-helper.sh');
+    writeFileSync(helperPath, helperScript(), {mode: 0o755});
+    const logPath = join(app.getPath('userData'), 'linux-update-helper.log');
+    // Detached + unref: the helper must outlive the app it is about to
+    // install over. stdio goes to the log file from inside the script.
+    const child = spawn('/bin/bash', [
+      helperPath,
+      ...helperArgs({
+        pid: process.pid,
+        agent,
+        exePath: app.getPath('exe'),
+        logPath,
+        installCommand: command
+      })
+    ], {detached: true, stdio: 'ignore'});
+    child.unref();
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -358,10 +426,22 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
     return state;
   });
 
+  // Latch semantics live in createInstallNowHandler (unit-tested in
+  // updateRestart.test.ts): the helper path latches, the stock fallback
+  // stays retryable after a failed install (#248 review).
+  const handleInstallNow = createInstallNowHandler({
+    tryCleanQuitInstall,
+    quitApp: () => app.quit(),
+    // isSilent=true, isForceRunAfter=true — relaunch into the new version.
+    stockQuitAndInstall: () => getUpdater().quitAndInstall(true, true),
+    setAutoInstallOnAppQuit: (value) => {
+      getUpdater().autoInstallOnAppQuit = value;
+    }
+  });
+
   ipcMain.handle('desktop:update-install-now', () => {
     if(capability === 'auto' && state.status === 'ready') {
-      // isSilent=true, isForceRunAfter=true — relaunch into the new version.
-      getUpdater().quitAndInstall(true, true);
+      handleInstallNow();
       return true;
     }
     // Re-validated at the boundary, not just at parse time: this is the one
