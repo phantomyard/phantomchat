@@ -7,7 +7,12 @@
 // just to include
 import '@lib/polyfill';
 import '@helpers/peerIdPolyfill';
+// Persistent OPFS diagnostics log (#246) — the only record of what this
+// worker printed once it hangs. Evaluated before the imports below so their
+// boot-time errors are kept too.
+import '@lib/mainWorker/installDiagnosticsLog';
 import {installUnhandledRejectionDiagnostics} from '@lib/phantomchat/unhandled-rejection-diagnostics';
+import {registerDiagnosticsProbe} from '@lib/phantomchat/diagnostics-log';
 
 installUnhandledRejectionDiagnostics();
 
@@ -39,6 +44,7 @@ const log = logger('MTPROTO');
 // let haveState = false;
 
 const port = new MTProtoMessagePort<false>();
+registerDiagnosticsProbe('mp', () => port.describeOutstanding());
 
 const mainBroadcastChannel = createBroadcastChannelWrapper<MainBroadcastChannelEvents>(unversionedMainBroadcastChannelName);
 

@@ -178,6 +178,25 @@ export default function showReportBugPopup(managers: AppManagers): void {
   privateBtn.classList.add('btn-primary', 'btn-transparent');
   privateBtn.style.cssText = btnBaseStyle + 'border:1px solid var(--border-color);color:var(--primary-text-color);background:transparent;';
 
+  // #246: the persistent diagnostics log (window + shared worker). Stays on
+  // this device until the user downloads it and chooses to attach it.
+  const diag = makeOptionButton('📄', 'Download diagnostics log', 'Saves a local log file to attach to your report. Review it first — it can include chat names or IDs.');
+  const diagBtn = diag.btn;
+  diagBtn.classList.add('btn-primary', 'btn-transparent');
+  diagBtn.style.cssText = btnBaseStyle + 'border:1px solid var(--border-color);color:var(--primary-text-color);background:transparent;';
+  diagBtn.addEventListener('click', async() => {
+    diagBtn.disabled = true;
+    try {
+      const {exportDiagnosticsLog} = await import('@lib/phantomchat/diagnostics-log');
+      await exportDiagnosticsLog(collectDiagnostics() + '\n\n');
+    } catch(err) {
+      console.error('[ReportBug] diagnostics export failed', err);
+      errorEl.textContent = 'Could not export the diagnostics log.';
+    } finally {
+      diagBtn.disabled = false;
+    }
+  });
+
   const cancelBtn = document.createElement('button');
   cancelBtn.textContent = 'Cancel';
   cancelBtn.classList.add('btn-primary', 'btn-transparent');
@@ -224,7 +243,7 @@ export default function showReportBugPopup(managers: AppManagers): void {
     if(e.target === overlay) overlay.remove();
   });
 
-  btnRow.append(githubBtn, privateBtn, cancelBtn);
+  btnRow.append(githubBtn, privateBtn, diagBtn, cancelBtn);
   dialog.append(title, desc, titleInput, descInput, errorEl, btnRow);
   overlay.append(dialog);
   document.body.append(overlay);

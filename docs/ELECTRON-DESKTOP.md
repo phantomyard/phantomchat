@@ -224,6 +224,39 @@ the `crash-dumps` line.
 **GPU is left at Electron's defaults.** The diagnostics only observe; they
 do not change rendering. `gpu-feature-status` records what Chromium chose.
 
+## Diagnostics: web + desktop persistent log (issue #246)
+
+The desktop log above only sees the renderer. The white-screen hang in #246
+lives in the **SharedWorker**, and it reproduces in the Chrome PWA too, so the
+web code keeps its own log that covers both windows and the worker.
+
+- **Where:** the Origin Private File System (OPFS) of the app's origin —
+  `phantomchat-diag.log`, plus one older generation `phantomchat-diag.1.log`
+  (1 MB each). Not IndexedDB (that is what wedges) and not localStorage (the
+  worker cannot reach it). Survives a white screen, a renderer crash and a
+  restart. Never leaves the device on its own.
+- **What:** every `console.warn`/`console.error` from each window and the
+  worker (so every logger error, every `invoke TIMEOUT … <manager.method>` and
+  every IDB `transaction not finished`), uncaught errors, a boot line, and a
+  30 s heartbeat per context: `heartbeat lag=<ms> mp{awaiting=N [...] handling=M [...]}`.
+  `awaiting` = invokes this side is waiting on; `handling` = invokes it is
+  still executing, oldest first, by `manager.method` label (never args).
+  Invokes or handlers slower than 5 s get a `slow invoke` / `slow handler` line.
+- **Reading the heartbeat:** worker heartbeats that stop, or show a huge `lag`,
+  mean the worker's event loop is blocked (CPU). Normal `lag` with `handling`
+  growing means it is idle, awaiting a promise that never settles (e.g. IDB).
+- **Line format:** `<ISO time> <context> <E|W|I> <text>`; context is `worker`
+  or `win:<tab id>`. Back-to-back duplicates collapse into
+  `(previous line repeated Nx)`; a 1200 lines/min cap per context reports what
+  it dropped.
+- **Export:** Report a Bug → **Download diagnostics log**; or press
+  **Ctrl+Alt+Shift+D** (works on a white screen — the window's JS still runs);
+  or call `__phantomchatExportDiagnostics()` in the window's DevTools console.
+  The export reads OPFS directly, so it works while the worker is hung.
+- **Privacy:** console lines can include chat names, peer IDs or pubkeys.
+  Review the file before attaching it publicly; the private report route is
+  end-to-end encrypted.
+
 ## Release channels (preview / stable)
 
 Same release-ring model as PhantomBot — including the naming: releases

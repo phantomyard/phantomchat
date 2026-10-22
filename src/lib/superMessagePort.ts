@@ -12,6 +12,7 @@ import {IS_WORKER} from '@helpers/context';
 import EventListenerBase from '@helpers/eventListenerBase';
 import makeError from '@helpers/makeError';
 import {WorkerTaskTemplate, WorkerTaskVoidTemplate} from '@types';
+import {diagLog} from '@lib/phantomchat/diagnostics-log';
 import {logger} from '@lib/logger';
 
 type SuperMessagePortTask = WorkerTaskTemplate & {
@@ -105,6 +106,11 @@ const USE_BATCHING = true;
 // during a quick tab switch) untouched.
 const WAKE_STALE_INVOKE_THRESHOLD = 10000;
 
+// Invokes (either side) slower than this get one line in the persistent
+// diagnostics log (#246), so a slow-then-stuck worker shows up before the
+// 60 s TIMEOUT backstop fires.
+export const SLOW_INVOKE_MS = 5000;
+
 // const PING_INTERVAL = DEBUG && false ? 0x7FFFFFFF : 5000;
 // const PING_TIMEOUT = DEBUG && false ? 0x7FFFFFFF : 10000;
 
@@ -152,6 +158,9 @@ class SuperMessagePort<
     }
   };
   protected pending: Map<SendPort, Task[]>;
+  // Invokes this side is currently HANDLING (receiver side), for the
+  // diagnostics heartbeat: what the worker is stuck inside.
+  protected inflight: Map<number, {label: string, startTime: number}>;
 
   protected log: ReturnType<typeof logger>;
   protected debug: boolean;
@@ -184,6 +193,7 @@ class SuperMessagePort<
     this.taskId = Math.random(); // [0 <-> 1] Have some decimals to prevent tabs from overlapping ids
     this.awaiting = {};
     this.pending = new Map();
+    this.inflight = new Map();
     this.log = logger('MP' + (logSuffix ? '-' + logSuffix : ''));
     this.debug = DEBUG;
     this.heldLocks = new Map();
@@ -449,7 +459,8 @@ class SuperMessagePort<
           this.postMessage(ports, task);
           // }
         } catch(err) {
-          this.log.error('postMessage error:', err, task, ports);
+          // Never the task itself: it carries manager args (#246 privacy).
+          this.log.error(`postMessage error: ${task.type}`, err);
         }
       });
 
@@ -469,6 +480,11 @@ class SuperMessagePort<
     }
 
     this.debug && this.log.debug('done', deferred.taskType, result, error);
+    const elapsed = Date.now() - deferred.startTime;
+    if(elapsed >= SLOW_INVOKE_MS) {
+      diagLog('W', `slow invoke ${elapsed}ms: ${deferred.label}${'error' in task.payload ? ' (error)' : ''}`);
+    }
+
     'error' in task.payload ? deferred.reject(error) : deferred.resolve(result);
     delete this.awaiting[taskId];
   };
@@ -615,7 +631,12 @@ class SuperMessagePort<
       }
 
       if(isPromise) {
-        result = await result;
+        this.inflight.set(id, {label: describeInvoke(innerTask.type, innerTask.payload), startTime: Date.now()});
+        try {
+          result = await result;
+        } finally {
+          this.endInflight(id);
+        }
       }
 
       if(result instanceof SuperMessagePort.TransferableResult) {
@@ -625,7 +646,8 @@ class SuperMessagePort<
 
       resultTaskPayload.result = result;
     } catch(error) {
-      this.log.error('worker task error:', error, task);
+      // Label only — the task carries manager args (#246 privacy).
+      this.log.error(`worker task error: ${describeInvoke(innerTask.type, innerTask.payload)} (task ${id})`, error);
       if(innerTask.void) {
         return;
       }
@@ -641,6 +663,36 @@ class SuperMessagePort<
 
     this.pushTask(resultTask, source);
   };
+
+  protected endInflight(id: number) {
+    const entry = this.inflight.get(id);
+    if(!entry) return;
+    this.inflight.delete(id);
+    const elapsed = Date.now() - entry.startTime;
+    if(elapsed >= SLOW_INVOKE_MS) {
+      diagLog('W', `slow handler ${elapsed}ms: ${entry.label}`);
+    }
+  }
+
+  /**
+   * One-line summary for the diagnostics heartbeat (#246): how many invokes
+   * this side is waiting on and how many it is still handling, oldest first.
+   * Labels only (describeInvoke) — never args.
+   */
+  public describeOutstanding(limit = 5): string {
+    const now = Date.now();
+    const fmt = (list: {label: string, startTime: number}[]) => {
+      if(!list.length) return '0';
+      const top = list
+      .map(({label, startTime}) => ({label, age: now - startTime}))
+      .sort((a, b) => b.age - a.age)
+      .slice(0, limit)
+      .map(({label, age}) => `${label} ${Math.round(age / 1000)}s`);
+      return `${list.length} [${top.join(', ')}]`;
+    };
+
+    return `awaiting=${fmt(Object.values(this.awaiting))} handling=${fmt([...this.inflight.values()])}`;
+  }
 
   protected createTask<T extends Task['type'], K extends Task = Parameters<TaskMap[T]>[0]>(type: T, payload: K['payload'], transfer?: Transferable[]): K {
     return {
@@ -726,7 +778,7 @@ class SuperMessagePort<
       });
 
       const interval = ctx.setInterval(() => {
-        this.log.error('task still has no result', task, port);
+        this.log.error(`task still has no result: ${describeInvoke(type as string, payload)} (task ${task.id})`);
       }, IS_WORKER ? 60e3 : 5e3);
     } else if(false) {
       // let timedOut = false;
