@@ -40,6 +40,11 @@ const COPY_FLUSH_INTERVAL_MS = 15_000;
 // #254: a write that never settles must not pin the Web Lock forever — one
 // hung write used to silence the log in BOTH the window and the worker.
 export const WRITE_TIMEOUT_MS = 8_000;
+// #255 (P3): the raced write itself keeps running after the timeout — if it
+// lands late, the requeued batch is written a second time and doubled lines
+// appear in the log. Duplicates are the cheaper failure for a diagnostics
+// log; the alternative (dropping the requeue) would lose lines outright.
+// Anyone reading a log with doubled lines: this is why.
 const LOCK_NAME = 'phantomchat-diag-log';
 const LOCK_WAIT_MS = 5000;
 const DEFAULT_HEARTBEAT_MS = 30_000;
@@ -64,6 +69,9 @@ type SyncAccessHandleLike = {
   flush(): void;
   close(): void;
   truncate?(size: number): void;
+  // Spec method; when read AFTER acquisition it is the live file size,
+  // unlike the pre-acquisition getFile() snapshot (#255 minor).
+  getSize?(): number;
 };
 
 type WritableLike = {
@@ -261,7 +269,12 @@ async function appendChunk(dir: DirectoryLike, chunk: string): Promise<'sync' | 
     const sync = await handle.createSyncAccessHandle!();
     try {
       if(rotate) sync.truncate?.(0);
-      sync.write(ENCODER.encode(chunk), {at: rotate ? 0 : file.size});
+      // #255: getSize() after acquisition is the live size — the getFile()
+      // snapshot was taken before, and a write that stalled while holding
+      // the handle can have moved the file since. Prefer the handle's own
+      // size when the browser exposes it.
+      const at = rotate ? 0 : (typeof sync.getSize === 'function' ? sync.getSize() : file.size);
+      sync.write(ENCODER.encode(chunk), {at});
       sync.flush();
     } finally {
       sync.close();
@@ -392,6 +405,19 @@ export function flushDiagnosticsLog(): Promise<void> {
     if(isStorageUnsupported(err)) {
       // No OPFS here (old Safari, private mode): stop trying, keep memory-only.
       s.storageBroken = err?.message || String(err);
+    }
+    // #255 (P2): a stalled write can leave a sync access handle holding the
+    // file's exclusive lock FOREVER — it is never closed, so every later
+    // acquisition (and createWritable on the same file) rejects with
+    // NoModificationAllowedError. That is not isStorageUnsupported, but it
+    // is just as permanent for this session, and retrying every 2s would
+    // burn the worker without ever landing a byte. Falling back to the copy
+    // path cannot work either: createWritable needs the same exclusive
+    // access and rejects the same way. So: mark it once, stop flushing, keep
+    // everything in the bounded memory buffer for export.
+    if(err?.name === 'NoModificationAllowedError') {
+      pushLine('W', 'diag log file locked by a stalled write — lines kept in memory only, will not retry');
+      s.storageBroken = 'stalled write left the diag log file locked';
     }
 
     if(s.buffer.length > DIAG_MAX_BUFFERED_LINES) {

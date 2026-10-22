@@ -28,7 +28,7 @@ import SuperMessagePort, {SLOW_INVOKE_MS} from '@lib/superMessagePort';
  * createWritable with keepExistingData + seek), with real Blob semantics.
  */
 
-function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean} = {}) {
+function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean, hangFirstSyncAcquisition?: boolean, getSizeDrift?: number} = {}) {
   // #255 P1: createSyncAccessHandle must resolve asynchronously, like the
   // real API — the fake defers at least one microtask so an implementation
   // that treats it as synchronous fails loudly.
@@ -36,13 +36,17 @@ function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean} = {}) {
     (async() => { await Promise.resolve(); return value; })();
   const files = new Map<string, string>();
   let writeCount = 0;
+  let syncAcquisitionCount = 0;
   const decoder = new TextDecoder();
   // #254 fake: an in-place handle over the same in-memory string.
   const syncHandle = (name: string) => ({
     write(buffer: Uint8Array, options?: {at?: number}) {
       const text = decoder.decode(buffer);
       const at = options?.at ?? 0;
-      const content = files.get(name);
+      let content = files.get(name);
+      // Real OPFS zero-pads when writing past EOF; the fake pads with spaces
+      // so the drift test mirrors native placement.
+      if(at > content.length) content = content + ' '.repeat(at - content.length);
       files.set(name, content.slice(0, at) + text + content.slice(at + text.length));
       return text.length;
     },
@@ -50,6 +54,12 @@ function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean} = {}) {
     close() {},
     truncate(size: number) {
       files.set(name, files.get(name).slice(0, size));
+    },
+    getSize() {
+      // #255 minor seam: getSize() is read AFTER acquisition, so a stalled
+      // write can have moved the file since the pre-acquisition getFile()
+      // snapshot. Drift makes the two disagree on demand.
+      return files.get(name).length + (opts.getSizeDrift || 0);
     }
   });
   const dir = {
@@ -71,7 +81,19 @@ function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean} = {}) {
         // Real OPFS: the handle arrives as a Promise (#255 P1 regression fake);
         // `delayMicrotasks` defers resolution a tick so a sync (un-awaited)
         // acquisition would write onto the Promise object and lose the batch.
-        ...(opts.sync ? {createSyncAccessHandle: () => delayMicrotasks(syncHandle(name))} : {}),
+        ...(opts.sync ? {createSyncAccessHandle: () => {
+          syncAcquisitionCount++;
+          // #255 P2 fake: the FIRST acquisition hangs for good — the handle
+          // is held and never closed, exactly like a stalled sync write. Every
+          // later acquisition on the locked file rejects the way real OPFS
+          // does when a sync access handle is still open.
+          if(opts.hangFirstSyncAcquisition) {
+            if(syncAcquisitionCount === 1) return new Promise(() => {});
+            const locked = Object.assign(new Error('file already locked'), {name: 'NoModificationAllowedError'});
+            return delayMicrotasks({}).then(() => { throw locked; });
+          }
+          return delayMicrotasks(syncHandle(name));
+        }} : {}),
         async createWritable(writableOpts?: {keepExistingData?: boolean}) {
           writeCount++;
           if(opts.hangFirstWrite && writeCount === 1) {
@@ -105,7 +127,7 @@ function fakeOpfs(opts: {sync?: boolean, hangFirstWrite?: boolean} = {}) {
       };
     }
   };
-  return {files, getDirectory: async() => dir, get createWritableCalls() { return writeCount; }};
+  return {files, getDirectory: async() => dir, get createWritableCalls() { return writeCount; }, get syncAcquisitions() { return syncAcquisitionCount; }};
 }
 
 let clock = 0;
@@ -449,6 +471,59 @@ describe('#254: in-place writes and the stall bound', () => {
     expect(text).toContain('before stall');
     expect(text).toContain('diag write stalled');
     expect(text).toContain('after stall');
+  });
+
+  it('a stalled sync handle locks the file for the session: one marker, then no more acquisition attempts (P2)', async() => {
+    vi.useFakeTimers();
+    const opfs = fakeOpfs({sync: true, hangFirstSyncAcquisition: true});
+    install({getDirectory: opfs.getDirectory});
+
+    diagLog('E', 'before stall');
+    const flush1 = flushDiagnosticsLog();
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS + 2);
+    await flush1;
+    // The acquisition hung: stall marker, lines kept in memory, file empty.
+    const buffered1 = getBufferedDiagnosticsForTests().join('');
+    expect(buffered1).toContain('before stall');
+    expect(buffered1).toContain('diag write stalled');
+    expect(opfs.files.get(DIAG_LOG_FILE) || '').not.toContain('before stall');
+    expect(opfs.syncAcquisitions).toBe(1);
+
+    // Next flush: the hung handle still holds the exclusive lock, so the
+    // acquisition rejects with NoModificationAllowedError.
+    diagLog('E', 'after stall');
+    await flushDiagnosticsLog();
+    const buffered2 = getBufferedDiagnosticsForTests().join('');
+    expect(buffered2).toContain('after stall');
+    expect(buffered2).toContain('locked by a stalled write');
+    expect(opfs.syncAcquisitions).toBe(2);
+
+    // Retrying forever would never land a byte (createWritable needs the
+    // same exclusive access) — so the log goes memory-only: no further
+    // acquisition attempts, exactly one locked-marker, lines still kept.
+    diagLog('E', 'third');
+    await flushDiagnosticsLog();
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS * 3);
+    const buffered3 = getBufferedDiagnosticsForTests().join('');
+    expect(buffered3).toContain('third');
+    expect((buffered3.match(/locked by a stalled write/g) || []).length).toBe(1);
+    expect(opfs.syncAcquisitions).toBe(2);
+  });
+
+  it('appends at the post-acquisition live size, not the pre-acquisition getFile() snapshot (#255 minor)', async() => {
+    // Stalled-write edge: between the getFile() snapshot and the sync
+    // acquisition the file grew (drift 40) — the append must land at the
+    // LIVE size, leaving the drifted gap, not overwrite per the snapshot.
+    const opfs = fakeOpfs({sync: true, getSizeDrift: 40});
+    install({getDirectory: opfs.getDirectory});
+    opfs.files.set(DIAG_LOG_FILE, 'x'.repeat(40) + '\n'); // 41 live-at-snapshot
+    diagLog('I', 'appended after live size');
+    await flushDiagnosticsLog();
+    const text = opfs.files.get(DIAG_LOG_FILE);
+    expect(text.startsWith('x'.repeat(40))).toBe(true);
+    // 41 snapshot bytes + 40 drifted bytes, THEN the line — not at 41.
+    expect(text.slice(41, 81)).toBe(' '.repeat(40));
+    expect(text.indexOf('appended after live size')).toBeGreaterThan(81);
   });
 
   it('copy-only contexts slow their flush cadence from 2s to 15s', async() => {
