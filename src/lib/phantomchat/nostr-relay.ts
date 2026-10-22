@@ -252,6 +252,8 @@ export class NostrRelay {
   // (±25% jitter so a fleet of dropped relays doesn't re-dial in lockstep)
   // indefinitely. A relay glitch should not permanently kill the subscription.
   private reconnectAttempts: number = 0;
+  private connectedAt: number = -1;
+  private readonly reconnectHealthyAfterMs = 30_000;
   private readonly reconnectBurstDelays: number[] = [1000, 2000, 4000];
   private readonly reconnectBackoffMs: number = 10000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -260,7 +262,8 @@ export class NostrRelay {
   // "bad" and benched for reconnectCooldownMs instead of hammering it every ~10s
   // forever. During the cooldown window no reconnect is attempted and nothing is
   // logged, so a permanently-dead relay stops spamming the console. One line is
-  // logged on entering cooldown; counters + the flag reset on the next connect.
+  // logged on entering cooldown; counters + the flag reset after a sustained
+  // healthy connection. Brief opens must not refund the failure budget.
   // The bench is deliberately SHORT (60s): a long bench risks every relay
   // sitting in cooldown simultaneously (the all-red "Reconnecting..." stall),
   // and a resumed network is detected faster than any long cooldown would allow.
@@ -480,9 +483,8 @@ export class NostrRelay {
       this.ws.onopen = () => {
         this.clearConnectTimeout();
         this.log('[NostrRelay] connected to relay');
+        this.connectedAt = Date.now();
         this.setConnectionState('connected');
-        this.reconnectAttempts = 0;
-        this.inCooldown = false;
         // NIP-42: the AUTH challenge is per-connection — a fresh socket must
         // re-authenticate when the relay challenges it again.
         this.authState = 'none';
@@ -508,7 +510,8 @@ export class NostrRelay {
       };
 
       this.ws.onerror = (error) => {
-        this.log.error('[NostrRelay] WebSocket error:', error);
+        this.log.error('[NostrRelay] WebSocket error:', this.relayUrl,
+          'attempt:', this.reconnectAttempts, 'cooldown:', this.inCooldown, error);
       };
 
       this.ws.onclose = (event) => {
@@ -610,6 +613,7 @@ export class NostrRelay {
       this.ws = null;
     }
 
+    this.connectedAt = -1;
     this.setConnectionState('disconnected');
     this.liveReqArmed = false;
     this.subscriptionReady?.resolve(false);
@@ -1966,7 +1970,15 @@ export class NostrRelay {
 
     this.stopLatencyRefresh();
     this.setLatency(-1);
+    if(this.connectedAt >= 0 && Date.now() - this.connectedAt >= this.reconnectHealthyAfterMs) {
+      this.reconnectAttempts = 0;
+      this.inCooldown = false;
+    }
+    this.connectedAt = -1;
     this.setConnectionState('reconnecting');
+    // Pool health tracking can synchronously bench/disconnect us in this
+    // notification. Do not resurrect its stopped retry loop afterwards.
+    if(this.getState() !== 'reconnecting') return;
 
     // OFFLINE GATE (dial-storm fix): skip the burst/backoff burn entirely while
     // the device is known-offline: every attempt fails identically, and the
