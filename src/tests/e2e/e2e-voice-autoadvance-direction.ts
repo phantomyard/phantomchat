@@ -17,6 +17,7 @@
  *   - voices below the clicked one play, in order: exactly [1..14]
  *   - NO voice above the clicked one ever plays
  *   - playback STOPS (no wrap, no loop)
+ *   - replay after new incoming voices in the same chat includes the new tail
  *
  * Prereqs:
  *   - Dev server on APP_URL (default http://localhost:8090)
@@ -255,6 +256,38 @@ async function main() {
   if(above.length) {
     pass = false;
     console.log(`  ✗ played ABOVE the clicked bubble: ${JSON.stringify(above)}`);
+  }
+
+  // Keep the same chat/context after draining the queue, then receive more
+  // voices. A second user gesture must seed from today's DOM, not the old
+  // exhausted loader (P2P receives dispatch history_append, not multiappend).
+  const EXTRA = 3;
+  for(let i = 0; i < EXTRA; i++) {
+    const r = await sendVoice(pageA, b64, 1);
+    if(!r.ok) throw new Error(`additional send failed: ${r.reason}`);
+    await pageA.waitForTimeout(600);
+  }
+  await pageB.waitForFunction((n) => document.querySelectorAll('.bubble .audio.is-voice').length === n, VOICES + EXTRA);
+  await pageB.evaluate(() => {
+    (window as any).__playLog = [];
+    const bubbles = Array.from(document.querySelectorAll('.bubble .audio.is-voice')) as HTMLElement[];
+    (window as any).__secondMids = bubbles.map((el) => el.dataset.mid);
+  });
+  await pageB.locator('.bubble .audio.is-voice').nth(VOICES - 1).locator('.audio-toggle').click();
+  await pageB.waitForTimeout(9000);
+  const second = await pageB.evaluate(() => (window as any).__playLog.map((entry: any) =>
+    (window as any).__secondMids.indexOf(entry.mid)));
+  const expectedSecond = Array.from({length: EXTRA + 1}, (_, i) => VOICES - 1 + i);
+  if(JSON.stringify(second) !== JSON.stringify(expectedSecond)) {
+    pass = false;
+    console.log(`  ✗ same-chat fresh voices: expected ${JSON.stringify(expectedSecond)}, got ${JSON.stringify(second)}`);
+  } else {
+    console.log('  ✓ same-chat fresh voices play in order, then STOP');
+  }
+
+  if(!await pageB.evaluate(() => !(window as any).appMediaPlaybackController.playingMedia)) {
+    pass = false;
+    console.log('  ✗ playback did not stop after the final voice');
   }
 
   await browser.close();
