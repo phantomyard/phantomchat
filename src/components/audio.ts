@@ -878,7 +878,13 @@ export default class AudioElement extends HTMLElement {
       useSearch: false
     });
     const loaderFactoryChanged = this.listLoaderFactory && appMediaPlaybackController.getListLoaderFactory() !== this.listLoaderFactory;
-    if(searchContextChanged || loaderFactoryChanged) {
+    // P2P receives render via history_append, while SearchListLoader listens
+    // for history_multiappend. The chat context can stay identical after new
+    // voices arrive, leaving an exhausted/stale queue behind. A voice play
+    // gesture must seed from the current bubbles again. Custom playlists own
+    // their targets and must retain their loader.
+    const refreshVoiceTargets = !this.listLoaderFactory && this.classList.contains('is-voice');
+    if(searchContextChanged || loaderFactoryChanged || refreshVoiceTargets) {
       const thisTarget = this.dataset.toBeSkipped ? this.audio.parentElement : this;
       const [prev, next] = !hadSearchContext ? [] : findMediaTargets(thisTarget, this.message.mid/* , this.searchContext.useSearch */);
       appMediaPlaybackController.setTargets({peerId: this.message.peerId, mid: this.message.mid}, prev, next, this.listLoaderFactory);
