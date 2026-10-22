@@ -7,6 +7,7 @@
 /* @refresh reload */
 
 import App from '@config/app';
+import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
 import blurActiveElement from '@helpers/dom/blurActiveElement';
 import {IS_STICKY_INPUT_BUGGED} from '@helpers/dom/fixSafariStickyInputFocusing';
 import loadFonts from '@helpers/dom/loadFonts';
@@ -59,11 +60,18 @@ import appNavigationController from '@components/appNavigationController';
 import {preventCrossTabDynamicImportDeadlock} from '@helpers/preventDeadlock';
 import noop from '@helpers/noop';
 import {installUnhandledRejectionDiagnostics} from '@lib/phantomchat/unhandled-rejection-diagnostics';
+import {installWindowDiagnosticsLog, registerDiagnosticsProbe} from '@lib/phantomchat/diagnostics-log';
 
 // Render unhandled promise rejections as diagnosable log lines instead of
 // Chrome's '#<Object>' (wake-latency investigation 2026-10-08: 36 such
 // rejections in one session, sources invisible).
 installUnhandledRejectionDiagnostics();
+
+// Persistent OPFS diagnostics log shared with the SharedWorker (#246):
+// survives a white screen and a restart; export via Report a Bug,
+// Ctrl+Alt+Shift+D, or window.__phantomchatExportDiagnostics().
+installWindowDiagnosticsLog(() => `PhantomChat ${App.versionFull || App.version || 'dev'}\nUA: ${navigator.userAgent}\nExported: ${new Date().toISOString()}\n\n`);
+registerDiagnosticsProbe('mp', () => MTProtoMessagePort.getInstance()?.describeOutstanding());
 
 // import commonStateStorage from '@lib/commonStateStorage';
 // import { STATE_INIT } from '@config/state';
