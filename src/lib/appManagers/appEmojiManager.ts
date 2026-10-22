@@ -342,14 +342,23 @@ export class AppEmojiManager extends AppManager {
       const promises: Promise<any>[] = [];
       do {
         const ids = allIds.splice(0, 100);
-        const promise = this.getCustomEmojiDocuments(ids).then((docs) => {
-          docs.forEach((doc, idx) => {
-            const docId = ids[idx];
+        // Settle EVERY requested id, matched by id rather than by position.
+        // PhantomChat has no custom-emoji server: apiManager stubs
+        // messages.getCustomEmojiDocuments to [], and a real server may also
+        // omit or reorder ids. Resolving only what came back left the rest of
+        // the deferreds in the map forever, and the .finally below re-ran the
+        // batch in an endless pause(0) loop — every caller awaiting a custom
+        // emoji hung until its 60s TIMEOUT (#246).
+        const settle = (docs: MyDocument[]) => {
+          const byId = new Map<DocId, MyDocument>();
+          docs?.forEach((doc) => doc && byId.set(doc.id, doc));
+          ids.forEach((docId) => {
             const deferred = this.getCustomEmojiDocumentPromises.get(docId);
             this.getCustomEmojiDocumentPromises.delete(docId);
-            deferred.resolve(doc);
+            deferred?.resolve(byId.get(docId));
           });
-        });
+        };
+        const promise = this.getCustomEmojiDocuments(ids).then(settle, () => settle([]));
 
         promises.push(promise);
       } while(allIds.length);
