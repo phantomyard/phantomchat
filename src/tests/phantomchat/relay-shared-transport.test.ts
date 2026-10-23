@@ -200,6 +200,45 @@ describe('shared relay transport (#257)', () => {
     expect(seen2).toHaveLength(1);
   });
 
+  it('defers startup history until a consumer attaches — boot-order regression (#261 review P1)', async() => {
+    // REAL boot order: the bridge acquires + initializes the pool (backfill
+    // starts, NO consumer yet); ChatAPI is constructed only after further
+    // onboarding/UI awaits. Early relay history must survive that window.
+    const bridge = acquireSharedRelayPool({
+      relays: [],
+      preloadedIdentity: {publicKey: 'test-public-key', privateKeyHex: 'short'}
+    });
+    const mk = (id: string): DecryptedMessage => ({
+      id,
+      from: 'peer-pubkey-hex',
+      content: JSON.stringify({id, type: 'text', content: 'early ' + id, timestamp: Date.now()}),
+      timestamp: Math.floor(Date.now() / 1000)
+    });
+    const early1 = mk('early-1');
+    const early2 = mk('early-2');
+    await (bridge.pool as any).handleIncomingMessage(early1);
+    await (bridge.pool as any).handleIncomingMessage(early2);
+
+    // Held, not consumed: nothing durable may claim an undelivered message —
+    // the watermark is the "everything at or below is delivered" claim.
+    expect((bridge.pool as any).lastSeenTimestamp).toBe(0);
+
+    // ChatAPI attaches its listener (its constructor wires the shared pool).
+    const seen: DecryptedMessage[] = [];
+    bridge.pool.addOnMessageListener((m: DecryptedMessage) => { seen.push(m); });
+    await vi.advanceTimersByTimeAsync(10);
+
+    // The held history drained to the consumer, in order, exactly once each.
+    expect(seen.map((m) => m.id)).toEqual(['early-1', 'early-2']);
+    expect((bridge.pool as any).lastSeenTimestamp).toBeGreaterThan(0);
+
+    // A relay replay of the same wraps is deduped — not double-delivered, and
+    // not lost: the original regression delivered ZERO here (burned at boot).
+    await (bridge.pool as any).handleIncomingMessage(early1);
+    expect(seen).toHaveLength(2);
+    expect(seen.filter((m) => m.id === 'early-1')).toHaveLength(1);
+  });
+
   it('disconnects only when the LAST consumer releases', async() => {
     const a = acquireSharedRelayPool({
       relays: RELAYS,
