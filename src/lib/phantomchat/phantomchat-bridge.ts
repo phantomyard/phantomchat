@@ -10,7 +10,7 @@
 
 import type {User} from '@layer';
 import {initVirtualPeersDB, storeMapping, getPubkey, getAllMappings} from './virtual-peers-db';
-import {NostrRelayPool, DEFAULT_RELAYS, loadCanonicalRelays, RelayConfig} from './nostr-relay-pool';
+import {NostrRelayPool, DEFAULT_RELAYS, loadCanonicalRelays, RelayConfig, acquireSharedRelayPool} from './nostr-relay-pool';
 import {OfflineQueue} from './offline-queue';
 import {MeshManager} from '@lib/phantomchat/mesh-manager';
 import {MessageRouter} from '@lib/phantomchat/message-router';
@@ -127,20 +127,21 @@ export class PhantomChatBridge {
   }
 
   /**
-   * Initialize NostrRelayPool and OfflineQueue.
+   * Initialize the (shared) NostrRelayPool and OfflineQueue.
    *
    * The relay pool always connects via direct WebSocket — the relay transport
    * opens immediately. The app remains usable while the pool connects: chats
    * read from the local IndexedDB store and outgoing messages queue in
    * OfflineQueue.
+   *
+   * SHARED TRANSPORT (#257): this acquires the one pool per JS context — one
+   * socket and one backoff counter per relay URL, shared with ChatAPI and any
+   * other consumer. The bridge is an app-lifetime singleton and intentionally
+   * never releases its handle: keeping the transport alive across ChatAPI
+   * re-creations (account switch) is exactly what the shared pool is for.
    */
   private initTransport(relays?: RelayConfig[]): void {
-    const pool = new NostrRelayPool({
-      relays: [...(relays ?? DEFAULT_RELAYS)],
-      onMessage: () => {
-        // Message routing is handled by Phase 4
-      }
-    });
+    const {pool} = acquireSharedRelayPool({relays: [...(relays ?? DEFAULT_RELAYS)]});
 
     const queue = new OfflineQueue(pool);
 

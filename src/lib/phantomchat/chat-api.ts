@@ -15,7 +15,7 @@
  */
 
 import {Logger, logger} from '@lib/logger';
-import {NostrRelayPool, PublishResult, DEFAULT_RELAYS, RELAY_DIAL_STAGGER_MS} from './nostr-relay-pool';
+import {NostrRelayPool, PublishResult, DEFAULT_RELAYS, acquireSharedRelayPool, getSharedRelayPool} from './nostr-relay-pool';
 import {DecryptedMessage, NostrEvent, NOSTR_KIND_P2P_SIGNAL} from './nostr-relay';
 import {OfflineQueue} from './offline-queue';
 import {getMessageStore, StoredMessage} from './message-store';
@@ -166,6 +166,14 @@ export class ChatAPI {
   private offlineQueue: OfflineQueue | null;
   private deliveryTracker: DeliveryTracker | null = null;
 
+  // Shared-transport bookkeeping (#257). When ChatAPI runs on the shared
+  // NostrRelayPool, its handlers are wired ADDITIVELY and detached on destroy;
+  // the release handle drops the refcount (the pool is torn down only when the
+  // last consumer releases it).
+  private _sharedPoolRelease: (() => void) | null = null;
+  private _messageListener: ((msg: DecryptedMessage) => void) | null = null;
+  private _stateListener: ((connectedCount: number, totalCount: number) => void) | null = null;
+
   // Optional P2P fast-path (issue #61). Wired by the bridge after construction.
   // When set AND the recipient has advertised P2P capability, a live copy of the
   // outgoing payload is pushed over the fastest direct transport, IN PARALLEL
@@ -250,30 +258,33 @@ export class ChatAPI {
       // identity decryption in the relay pool.
       const privateKeyHex = typeof relayPool === 'string' ? relayPool : undefined;
 
-      // Create real NostrRelayPool
-      this.relayPool = new NostrRelayPool({
+      // SHARED transport (#257): one NostrRelayPool per JS context — one
+      // socket and one backoff counter per relay URL, shared with the bridge
+      // and every other consumer. The shared pool owns the transport policy
+      // (dial-staggered, idle-capable) and loads the identity exactly once.
+      const acquired = acquireSharedRelayPool({
         relays: [...DEFAULT_RELAYS],
-        // Connect to every relay, but dial them one at a time so a cold mobile
-        // radio isn't slammed with a burst of handshakes ("insufficient
-        // resources" → stuck reconnecting).
-        dialStaggerMs: RELAY_DIAL_STAGGER_MS,
-        // Phase 1 idle transport (#125): stop holding a socket open while idle —
-        // close on inactivity/background and heartbeat with one-shot REQs,
-        // reopening for live streaming on activity or a new message.
-        idleTransport: true,
-        // Re-broadcast the transport's ACTIVE⇄IDLE transitions as an app event so
-        // the WebRTC mesh can follow them (P2P is a foreground-only optimisation;
-        // the relay stays the delivery floor). Kept as a thin re-dispatch here —
-        // ChatAPI owns the pool, the bridge owns the mesh.
-        onTransportMode: (mode) => {
-          rootScope.dispatchEvent('phantomchat_transport_mode', {mode});
-        },
-        onMessage: (msg: DecryptedMessage) => this.handleRelayMessage(msg),
-        onStateChange: (connectedCount: number, _totalCount: number) => {
-          this.handlePoolStateChange(connectedCount);
-        },
         ...(privateKeyHex ? {preloadedIdentity: {publicKey: ownId, privateKeyHex}} : {})
       });
+      this.relayPool = acquired.pool;
+      this._sharedPoolRelease = acquired.release;
+
+      // Wire our handlers onto the shared pool (additive + reversible — the
+      // pool outlives us and other consumers share it).
+      this._messageListener = (msg: DecryptedMessage) => this.handleRelayMessage(msg);
+      this.relayPool.addOnMessageListener(this._messageListener);
+      this._stateListener = (connectedCount: number, _totalCount: number) => {
+        this.handlePoolStateChange(connectedCount);
+      };
+      this.relayPool.addStateChangeListener(this._stateListener);
+      // Re-broadcast the transport's ACTIVE⇄IDLE transitions as an app event so
+      // the WebRTC mesh can follow them (P2P is a foreground-only optimisation;
+      // the relay stays the delivery floor). Kept as a thin re-dispatch here —
+      // ChatAPI consumes the shared pool, the bridge owns the mesh.
+      this.relayPool.setOnTransportMode((mode) => {
+        rootScope.dispatchEvent('phantomchat_transport_mode', {mode});
+      });
+
       this.offlineQueue = new OfflineQueue(this.relayPool);
     }
 
@@ -1905,7 +1916,32 @@ export class ChatAPI {
   destroy(): void {
     this.log('[ChatAPI] destroying');
 
-    this.relayPool.disconnect();
+    // Shared transport (#257): the pool outlives ChatAPI — detach our handlers
+    // and release the refcount instead of tearing the transport down. The
+    // pool is disconnected only when the LAST consumer releases it. (The
+    // getSharedRelayPool() check also covers a shared pool handed in via the
+    // DI path, which never carried a release handle.)
+    const onSharedPool = !!this._sharedPoolRelease || this.relayPool === getSharedRelayPool();
+    if(onSharedPool) {
+      if(this._messageListener) {
+        this.relayPool.removeOnMessageListener(this._messageListener);
+      }
+      if(this._stateListener) {
+        this.relayPool.removeStateChangeListener(this._stateListener);
+      }
+      this.relayPool.setOnTransportMode(null);
+      this.relayPool.setOnReceipt(null);
+      this.relayPool.setOnRawEvent(null);
+      this.relayPool.setOnPresence(null);
+      if(this._sharedPoolRelease) {
+        this._sharedPoolRelease();
+        this._sharedPoolRelease = null;
+      }
+      this._messageListener = null;
+      this._stateListener = null;
+    } else {
+      this.relayPool.disconnect();
+    }
     if(this.offlineQueue) {
       this.offlineQueue.destroy();
     }

@@ -1,0 +1,228 @@
+/**
+ * Shared relay transport (#257).
+ *
+ * Field symptom (Atlas diag log, 2026-10-22): ~4-5 separate NostrRelay
+ * instances dialled the SAME failing relay URL in one window, each with its
+ * own reconnect counter and cooldown ladder (`attempt: 7 cooldown: true`
+ * interleaved with `attempt: 4` / `attempt: 5` within 20s). Cause: the bridge
+ * and ChatAPI each constructed a NostrRelayPool over the full relay list (and
+ * re-creation multiplied them), so benching a relay in one pool did not bench
+ * it in the others and the backoff never held.
+ *
+ * Acceptance (#257): "two consumers asking for the same URL in one context
+ * share one socket and one counter."
+ */
+import 'fake-indexeddb/auto';
+import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
+import '../setup';
+import {
+  acquireSharedRelayPool,
+  getSharedRelayPool,
+  resetSharedRelayPool
+} from '@lib/phantomchat/nostr-relay-pool';
+import type {DecryptedMessage} from '@lib/phantomchat/nostr-relay';
+
+// App-event bus: the pool's debounced state notify dispatches through
+// rootScope, whose MTProto port does not exist in tests.
+vi.mock('@lib/rootScope', () => ({
+  default: {
+    dispatchEvent: vi.fn(),
+    addEventListener: vi.fn()
+  }
+}));
+
+// Identity store: NostrRelay.initialize() decrypts the stored identity per
+// relay — mocked so real relay instances can complete startup in tests.
+vi.mock('@lib/phantomchat/key-storage', () => ({
+  loadEncryptedIdentity: vi.fn(async() => ({iv: 'iv', encryptedKeys: 'ek'})),
+  loadBrowserKey: vi.fn(async() => 'browser-key'),
+  decryptKeys: vi.fn(async() => ({seed: 'seed', nsec: 'nsec'}))
+}));
+vi.mock('@lib/phantomchat/nostr-identity', () => ({
+  importFromStored: vi.fn(() => ({
+    npub: 'npub-test',
+    publicKey: 'test-public-key',
+    privateKey: 'a'.repeat(64)
+  }))
+}));
+
+// Minimal WebSocket mock: counts every dial, opens itself like the real thing.
+class MockWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  static created: MockWebSocket[] = [];
+
+  readyState = MockWebSocket.CONNECTING;
+  onopen: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+
+  sent: string[] = [];
+
+  constructor(public url: string) {
+    MockWebSocket.created.push(this);
+    setTimeout(() => {
+      if(this.readyState === MockWebSocket.CONNECTING) {
+        this.readyState = MockWebSocket.OPEN;
+        this.onopen?.(new Event('open'));
+      }
+    }, 5);
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.(new CloseEvent('close'));
+  }
+
+  simulateError(): void {
+    this.onerror?.(new Event('error'));
+  }
+}
+
+const RELAYS = [
+  {url: 'wss://shared-a.test', read: true, write: true},
+  {url: 'wss://shared-b.test', read: true, write: true}
+];
+
+describe('shared relay transport (#257)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    MockWebSocket.created = [];
+    vi.stubGlobal('WebSocket', MockWebSocket);
+  });
+
+  afterEach(() => {
+    resetSharedRelayPool();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('two consumers share one pool — ONE socket per relay URL, not one per consumer', async() => {
+    // Consumer 1 (e.g. the bridge) creates the transport…
+    const c1 = acquireSharedRelayPool({
+      relays: RELAYS,
+      preloadedIdentity: {publicKey: 'test-public-key', privateKeyHex: 'short'}
+    });
+    // …consumer 2 (e.g. ChatAPI) asks for the same URLs later.
+    const c2 = acquireSharedRelayPool({relays: RELAYS});
+
+    expect(c2.pool).toBe(c1.pool);
+    expect(getSharedRelayPool()).toBe(c1.pool);
+
+    await c1.pool.initialize();
+    await c2.pool.initialize(); // "ensure up" from the second consumer
+    await vi.advanceTimersByTimeAsync(1_000); // cover the dial stagger (350ms/relay)
+
+    // ONE socket per URL across both consumers (2 relays => 2 dials, not 4).
+    expect(MockWebSocket.created.length).toBe(2);
+    const urls = MockWebSocket.created.map((ws) => ws.url).sort();
+    expect(urls).toEqual(['wss://shared-a.test', 'wss://shared-b.test']);
+
+    // …and ONE relay entry (one NostrRelay = one backoff counter) per URL.
+    const entries = (c1.pool as any).relayEntries;
+    expect(entries.length).toBe(2);
+    expect((c2.pool as any).relayEntries).toBe(entries);
+  });
+
+  it('initialize() is single-flight — a second consumer never re-runs startup', async() => {
+    const c1 = acquireSharedRelayPool({
+      relays: RELAYS,
+      preloadedIdentity: {publicKey: 'test-public-key', privateKeyHex: 'short'}
+    });
+    const c2 = acquireSharedRelayPool({relays: RELAYS});
+
+    const spy = vi.spyOn(c1.pool as any, 'runInitialize');
+    await c1.pool.initialize();
+    await c2.pool.initialize();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(MockWebSocket.created.length).toBe(2); // no re-dial wave
+  });
+
+  it('shares ONE reconnect counter per URL — consumers cannot hold separate ladders', async() => {
+    const c1 = acquireSharedRelayPool({
+      relays: [RELAYS[0]],
+      preloadedIdentity: {publicKey: 'test-public-key', privateKeyHex: 'short'}
+    });
+    const c2 = acquireSharedRelayPool({relays: [RELAYS[0]]});
+    await c1.pool.initialize();
+    await vi.advanceTimersByTimeAsync(500);
+
+    const instance = (c1.pool as any).relayEntries[0].instance;
+    // Both consumers observe the SAME counter object.
+    expect((c2.pool as any).relayEntries[0].instance).toBe(instance);
+    expect(instance.reconnectAttempts).toBe(0);
+
+    // One failed dial advances the ladder exactly ONCE, visible to both.
+    MockWebSocket.created[0].simulateError();
+    MockWebSocket.created[0].close();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(instance.reconnectAttempts).toBe(1);
+    expect((c2.pool as any).relayEntries[0].instance.reconnectAttempts).toBe(1);
+  });
+
+  it('fans each message out to every consumer over the shared socket', async() => {
+    const primary = vi.fn();
+    const c1 = acquireSharedRelayPool({relays: []});
+    c1.pool.setOnMessage(primary);
+    const seen1: DecryptedMessage[] = [];
+    const seen2: DecryptedMessage[] = [];
+    const listener1 = (m: DecryptedMessage) => { seen1.push(m); };
+    const listener2 = (m: DecryptedMessage) => { seen2.push(m); };
+    c1.pool.addOnMessageListener(listener1);
+    c1.pool.addOnMessageListener(listener2);
+
+    const textMsg: DecryptedMessage = {
+      id: 'text-1',
+      from: 'peer-pubkey-hex',
+      content: JSON.stringify({id: 'm1', type: 'text', content: 'hi', timestamp: Date.now()}),
+      timestamp: Math.floor(Date.now() / 1000)
+    };
+    await (c1.pool as any).handleIncomingMessage(textMsg);
+
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(seen1).toEqual([textMsg]);
+    expect(seen2).toEqual([textMsg]);
+
+    // A detached consumer stops receiving (the pool outlives its consumers).
+    c1.pool.removeOnMessageListener(listener2);
+    await (c1.pool as any).handleIncomingMessage({...textMsg, id: 'text-2'});
+    expect(seen1).toHaveLength(2);
+    expect(seen2).toHaveLength(1);
+  });
+
+  it('disconnects only when the LAST consumer releases', async() => {
+    const a = acquireSharedRelayPool({
+      relays: RELAYS,
+      preloadedIdentity: {publicKey: 'test-public-key', privateKeyHex: 'short'}
+    });
+    const b = acquireSharedRelayPool({relays: RELAYS});
+    await a.pool.initialize();
+    const disconnectSpy = vi.spyOn(a.pool, 'disconnect');
+
+    // Double release is idempotent — cannot drop the refcount twice.
+    a.release();
+    a.release();
+    expect(getSharedRelayPool()).toBe(a.pool);
+    expect(disconnectSpy).not.toHaveBeenCalled();
+
+    b.release();
+    expect(getSharedRelayPool()).toBeNull();
+    expect(disconnectSpy).toHaveBeenCalledTimes(1);
+
+    // A fresh JS-context equivalent: the next acquire gets a NEW transport.
+    const c = acquireSharedRelayPool({relays: RELAYS});
+    expect(c.pool).not.toBe(a.pool);
+    c.release();
+    expect(getSharedRelayPool()).toBeNull();
+  });
+});

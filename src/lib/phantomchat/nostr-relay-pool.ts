@@ -297,7 +297,13 @@ export class NostrRelayPool {
   private relayEntries: RelayEntry[] = [];
   private configs: RelayConfig[];
   private onMessageCb: (msg: DecryptedMessage) => void | Promise<void>;
+  // Additional message consumers (#257 shared transport): fanned out in
+  // enqueueLiveDelivery alongside the primary onMessageCb, so several
+  // consumers can be served by ONE socket per relay URL.
+  private _onMessageListeners: Array<(msg: DecryptedMessage) => void | Promise<void>> = [];
   private onStateChangeCb?: (connectedCount: number, totalCount: number, eligibleCount: number) => void;
+  // Single-flight memo for initialize() — see the method's doc comment.
+  private _initializePromise: Promise<void> | null = null;
 
   // Dedup LRU — keyed by the DECRYPTED rumor/message id (post-unwrap).
   private seenIds: Set<string> = new Set();
@@ -660,13 +666,29 @@ export class NostrRelayPool {
   }
   private _stateChangeListeners: Array<(connectedCount: number, totalCount: number, eligibleCount: number) => void> = [];
 
-  setOnReceipt(cb: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void): void {
-    // Wire receipt handler to all relay instances
-    for(const entry of this.relayEntries) {
-      entry.instance.onReceipt(cb);
-    }
-    // Store for future relays added after this call
-    this._onReceiptCb = cb;
+  /**
+   * Register an ADDITIONAL message listener (#257 shared transport). The
+   * primary `onMessageCb` and every listener receive each decrypted message
+   * exactly once per socket delivery. Reversible like the state listeners —
+   * the shared pool outlives its consumers, so a consumer that tears down
+   * (ChatAPI destroy) must detach or its callback keeps firing.
+   */
+  addOnMessageListener(cb: (msg: DecryptedMessage) => void | Promise<void>): void {
+    this._onMessageListeners.push(cb);
+  }
+
+  removeOnMessageListener(cb: (msg: DecryptedMessage) => void | Promise<void>): void {
+    const i = this._onMessageListeners.indexOf(cb);
+    if(i !== -1) this._onMessageListeners.splice(i, 1);
+  }
+
+  /**
+   * Register the receipt consumer. Pass `null` to UNWIRE — consumers whose
+   * lifetime is shorter than the shared pool's detach here so a replayed
+   * receipt cannot reach a stale handler (mirrors `setOnDigest`).
+   */
+  setOnReceipt(cb: ((receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void) | null): void {
+    this._onReceiptCb = cb ?? undefined;
   }
 
   /**
@@ -674,11 +696,12 @@ export class NostrRelayPool {
    * kind-5 deletes). The pool dedupes by `event.id` just like gift-wrap
    * messages, so callers receive each event at most once across all relays.
    */
-  setOnRawEvent(cb: (event: NostrEvent) => void): void {
-    this._onRawEventCb = cb;
-    for(const entry of this.relayEntries) {
-      entry.instance.onRawEvent((ev) => this.handleIncomingRawEvent(ev));
-    }
+  /**
+   * Register the plaintext non-giftwrap consumer (kind-7 reactions, kind-5
+   * deletes). Pass `null` to UNWIRE (mirrors `setOnDigest`).
+   */
+  setOnRawEvent(cb: ((event: NostrEvent) => void) | null): void {
+    this._onRawEventCb = cb ?? undefined;
   }
 
   private _onReceiptCb?: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void;
@@ -695,8 +718,17 @@ export class NostrRelayPool {
    * intercepted in `handleIncomingMessage` and NEVER surfaced as chat bubbles.
    * The pool's normal rumor-id dedup applies, so each ping/pong fires once.
    */
-  setOnPresence(cb: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void): void {
-    this._onPresenceCb = cb;
+  setOnPresence(cb: ((presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void) | null): void {
+    this._onPresenceCb = cb ?? undefined;
+  }
+
+  /**
+   * Register the ACTIVE⇄IDLE transport-mode consumer (the WebRTC mesh follows
+   * the transport's activity state). Pass `null` to UNWIRE. Setter exists so a
+   * consumer of the SHARED pool can wire this after construction (#257).
+   */
+  setOnTransportMode(cb: ((mode: TransportMode) => void) | null): void {
+    this.onTransportModeChange = cb ?? null;
   }
 
   /**
@@ -836,7 +868,27 @@ export class NostrRelayPool {
 
   // ─── Lifecycle ─────────────────────────────────────────────────
 
+  /**
+   * Single-flight (#257): initialize() is called from several "ensure the
+   * transport is up" paths (connect, lazy publish, query). On a SHARED pool
+   * those must not re-run startup — a second startBackfillPoll/startRecovery
+   * would double the timers and walk history twice. The first caller runs the
+   * startup; everyone else awaits the same promise. disconnect() clears the
+   * memo so a disposed pool can be initialized again.
+   */
   async initialize(): Promise<void> {
+    if(!this._initializePromise) {
+      this._initializePromise = this.runInitialize();
+    }
+    try {
+      await this._initializePromise;
+    } catch(err) {
+      this._initializePromise = null;
+      throw err;
+    }
+  }
+
+  private async runInitialize(): Promise<void> {
     this.log('[NostrRelayPool] initializing');
 
     this.registerResumeTriggers();
@@ -980,6 +1032,10 @@ export class NostrRelayPool {
 
   disconnect(): void {
     this.log('[NostrRelayPool] disconnecting all relays');
+
+    // Clear the initialize() memo — a disposed pool must be able to start up
+    // again if someone re-initializes it (test/DI paths).
+    this._initializePromise = null;
 
     // Atomic teardown (see teardownInFlight): every instance.disconnect() in
     // the loop below synchronously fires onStateChange('disconnected'), which
@@ -1354,6 +1410,12 @@ export class NostrRelayPool {
    * Used for publishing pre-built gift-wrap events.
    */
   async publishRawEvent(event: NostrEvent): Promise<PublishResult> {
+    // Sending is activity (same as publish()): wake to ACTIVE if we were idle
+    // so sockets reopen for this event. The relay-level pendingPublishes buffer
+    // holds it and flushes on open, so a send that races the reconnect is not
+    // dropped.
+    this.noteActivity();
+
     const successes: string[] = [];
     const failures: {url: string; error: string}[] = [];
 
@@ -1680,6 +1742,9 @@ export class NostrRelayPool {
   private _pendingNip65PrivateKey: Uint8Array | null = null;
 
   private _publishNip65Now(privateKey: Uint8Array): void {
+    // Sending is activity — reopen idle sockets for the NIP-65 publish.
+    this.noteActivity();
+
     const enabledConfigs = this.configs.filter(c => this.enabled.get(c.url) !== false);
     const event = buildNip65Event(enabledConfigs, privateKey);
 
@@ -1816,16 +1881,16 @@ export class NostrRelayPool {
     // Wire up message handler with dedup
     instance.onMessage((msg: DecryptedMessage) => this.enqueueLiveDelivery(msg));
 
-    // Wire receipt handler if registered
-    if(this._onReceiptCb) {
-      instance.onReceipt(this._onReceiptCb);
-    }
+    // Receipt + raw-event handlers are pool-level FORWARDERS wired once per
+    // instance: the consumer slots (_onReceiptCb / _onRawEventCb) can be set,
+    // cleared and re-set at will — shared-pool consumers come and go, so
+    // per-instance wiring never has to be redone. Optional-call so test mocks
+    // without the methods don't break (the real NostrRelay always has them).
+    instance.onReceipt?.((receipt) => this._onReceiptCb?.(receipt));
 
-    // Wire raw-event handler (kind-7 reactions, kind-5 deletes) if
-    // a consumer is registered. Dedup happens inside handleIncomingRawEvent.
-    if(this._onRawEventCb) {
-      instance.onRawEvent((ev) => this.handleIncomingRawEvent(ev));
-    }
+    // Raw events (kind-7 reactions, kind-5 deletes). Dedup happens inside
+    // handleIncomingRawEvent.
+    instance.onRawEvent?.((ev) => this.handleIncomingRawEvent(ev));
 
     // Notify pool on relay state change so ConnectionStatusComponent updates.
     // Also detect RE-connects: a fresh REQ only streams events from now
@@ -2270,6 +2335,12 @@ export class NostrRelayPool {
     const armedAt = this.resumeDeliverAt;
     try {
       await this.onMessageCb(msg);
+      // Shared-transport fan-out (#257): every additional consumer receives
+      // the same decrypted message through the SAME socket — one connection
+      // and one unwrap per relay URL, every consumer served.
+      for(const listener of this._onMessageListeners) {
+        await listener(msg);
+      }
       // Breadcrumb fires only after delivery COMPLETED successfully — the
       // callback contains the IDB/UI work this timing is meant to measure, so
       // logging at entry would report a falsely-fast number, and logging on a
@@ -3503,4 +3574,95 @@ export class NostrRelayPool {
       };
     });
   }
+}
+
+// ─── Shared transport (issue #257) ─────────────────────────────────────────
+//
+// ONE NostrRelayPool per JS context, shared by every consumer (bridge,
+// ChatAPI, group-api, device-sync / mesh signaling). Before this, each
+// consumer constructed its own pool over the full relay list — at least two
+// sockets per relay URL per window, each NostrRelay keeping its OWN reconnect
+// counter and cooldown ladder, so benching a bad relay in one pool did not
+// bench it in the others and the diag log showed interleaved attempt counters
+// for the same URL.
+//
+// The shared pool owns the transport policy — dial-staggered, idle-capable
+// (one app-wide ACTIVE/IDLE rhythm; per-consumer socket policies over the same
+// relays are incoherent by construction) — and loads the identity ONCE.
+// Consumers subscribe via the add/setter callbacks and hold a release handle:
+// the pool is disconnected only when the LAST acquirer releases it.
+
+let _sharedPool: NostrRelayPool | null = null;
+let _sharedPoolAcquirers = 0;
+
+export interface SharedRelayPoolOptions {
+  /**
+   * Relay set. Applied when the acquiring caller CREATES the pool (typically
+   * the bridge, with the canonical /relays.json list); later acquirers share
+   * that set.
+   */
+  relays?: RelayConfig[];
+  /**
+   * Pre-decrypted identity, honoured only at pool creation — the shared pool
+   * decrypts its identity exactly once either way (preloaded skips the PBKDF2
+   * when the acquirer already has the keys).
+   */
+  preloadedIdentity?: { publicKey: string; privateKeyHex: string };
+}
+
+/**
+ * Acquire the shared transport. Every call bumps the refcount; the returned
+ * `release` must be called when the consumer tears down. Releasing is
+ * idempotent, and only the last release disconnects the pool.
+ */
+export function acquireSharedRelayPool(
+  options: SharedRelayPoolOptions = {}
+): { pool: NostrRelayPool; release: () => void } {
+  if(!_sharedPool) {
+    _sharedPool = new NostrRelayPool({
+      relays: [...(options.relays ?? DEFAULT_RELAYS)],
+      // The primary message slot stays a no-op: real consumers wire
+      // addOnMessageListener (or setOnMessage) and detach on teardown.
+      onMessage: () => {},
+      dialStaggerMs: RELAY_DIAL_STAGGER_MS,
+      idleTransport: true,
+      ...(options.preloadedIdentity ? {preloadedIdentity: options.preloadedIdentity} : {})
+    });
+  }
+  _sharedPoolAcquirers++;
+  const pool = _sharedPool;
+  let released = false;
+  return {
+    pool,
+    release: () => {
+      if(released) return;
+      released = true;
+      _sharedPoolAcquirers--;
+      if(_sharedPoolAcquirers <= 0 && _sharedPool === pool) {
+        _sharedPool = null;
+        _sharedPoolAcquirers = 0;
+        pool.disconnect();
+      }
+    }
+  };
+}
+
+/**
+ * The current shared pool, if any — diagnostics and tests.
+ */
+export function getSharedRelayPool(): NostrRelayPool | null {
+  return _sharedPool;
+}
+
+/**
+ * TEST-ONLY: drop the shared pool without touching any consumer's release
+ * handles. Mirrors "a fresh JS context" so tests cannot leak transport state
+ * into each other through the module singleton.
+ */
+export function resetSharedRelayPool(): void {
+  if(_sharedPool) {
+    _sharedPool.disconnect();
+  }
+  _sharedPool = null;
+  _sharedPoolAcquirers = 0;
 }
