@@ -239,6 +239,37 @@ describe('shared relay transport (#257)', () => {
     expect(seen.filter((m) => m.id === 'early-1')).toHaveLength(1);
   });
 
+  it('wake-on-send: a send on an IDLE shared pool wakes it to ACTIVE (publishRawEvent + publishNip65)', async() => {
+    const c = acquireSharedRelayPool({
+      relays: [RELAYS[0]],
+      preloadedIdentity: {publicKey: 'test-public-key', privateKeyHex: 'short'}
+    });
+    await c.pool.initialize();
+    await vi.advanceTimersByTimeAsync(1_000); // cover the dial stagger
+
+    // Page Lifecycle freeze path: hard-suspend to tick mode (zero sockets).
+    const idleCtl = () => (c.pool as any).idleController;
+    idleCtl().onFreeze();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(c.pool.getTransportMode()).toBe('idle');
+
+    // A send is activity: the publish must wake the transport to ACTIVE even
+    // though no socket was up when it fired (the relay-level pendingPublishes
+    // buffer holds the event and flushes on open). The publish RESULT is
+    // irrelevant to this contract — wake-on-send is.
+    await (c.pool as any).publishRawEvent({id: 'ev1', kind: 7, content: '+', tags: [], created_at: 1, pubkey: 'peer', sig: 'sig'});
+    await vi.advanceTimersByTimeAsync(10);
+    expect(c.pool.getTransportMode()).toBe('active');
+
+    // Same contract on the NIP-65 advert path (_publishNip65Now).
+    idleCtl().onFreeze();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(c.pool.getTransportMode()).toBe('idle');
+    (c.pool as any).publishNip65(new Uint8Array(32).fill(2));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(c.pool.getTransportMode()).toBe('active');
+  });
+
   it('disconnects only when the LAST consumer releases', async() => {
     const a = acquireSharedRelayPool({
       relays: RELAYS,

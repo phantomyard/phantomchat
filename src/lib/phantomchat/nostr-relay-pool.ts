@@ -3705,6 +3705,10 @@ export class NostrRelayPool {
 // The shared pool owns the transport policy — dial-staggered, idle-capable
 // (one app-wide ACTIVE/IDLE rhythm; per-consumer socket policies over the same
 // relays are incoherent by construction) — and loads the identity ONCE.
+// First-acquirer-wins applies to the RELAY SET and the IDENTITY both: options
+// are honoured only at pool creation (the normal boot order is safe because
+// the bridge creates the pool only after onboarding has an identity), so a
+// later acquirer's `relays` / `preloadedIdentity` are ignored.
 // Consumers subscribe via the add/setter callbacks and hold a release handle:
 // the pool is disconnected only when the LAST acquirer releases it.
 
