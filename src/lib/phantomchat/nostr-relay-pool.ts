@@ -134,10 +134,10 @@ export const DEFAULT_RELAYS: RelayConfig[] = Array.isArray(_testRelays) ? _testR
   {url: 'wss://nos.lol', read: true, write: true},
   {url: 'wss://relay.nostr.com', read: true, write: true},
   {url: 'wss://relay.primal.net', read: true, write: true},
-  {url: 'wss://relay.kaleidoswap.com', read: true, write: true},
-  {url: 'wss://offchain.pub', read: true, write: true},
   {url: 'wss://relay.nostrhub.fr', read: true, write: true},
-  {url: 'wss://nostr.sathoarder.com', read: true, write: true}
+  {url: 'wss://nostr.sathoarder.com', read: true, write: true},
+  {url: 'wss://relay.snort.social', read: true, write: true},
+  {url: 'wss://nostr.data.haus', read: true, write: true}
 ];
 
 /**
