@@ -2449,33 +2449,45 @@ export class NostrRelayPool {
     // this pre-resume message belonged to it, reporting a bogus near-zero
     // time and losing the real wake's timing (#206 review).
     const armedAt = this.resumeDeliverAt;
+    // Per-consumer isolation (review nit): the fan-out serves N INDEPENDENT
+    // consumers, so one throwing handler must not starve the others. Any
+    // failure still leaves the breadcrumb armed — the #206 contract is
+    // "logged after a COMPLETED delivery", and a consumer that threw did not
+    // complete its work.
+    let deliveryFailed = false;
     try {
       await this.onMessageCb(msg);
-      // Shared-transport fan-out (#257): every additional consumer receives
-      // the same decrypted message through the SAME socket — one connection
-      // and one unwrap per relay URL, every consumer served.
-      for(const listener of this._onMessageListeners) {
-        await listener(msg);
-      }
-      // Breadcrumb fires only after delivery COMPLETED successfully — the
-      // callback contains the IDB/UI work this timing is meant to measure, so
-      // logging at entry would report a falsely-fast number, and logging on a
-      // throw would report "delivered" for a failed delivery (#206 review).
-      // On a throw the breadcrumb stays armed; the next successful delivery
-      // logs the true total, and RESUME_BREADCRUMB_MAX_AGE_MS bounds how long
-      // an undelivered wake can keep it alive.
-      // Only consume the one-shot if the epoch is UNCHANGED since the snapshot:
-      // a re-arm during the await means a newer wake owns the breadcrumb, so
-      // leave it armed for that wake's own first delivery.
-      if(armedAt && this.resumeDeliverAt === armedAt) {
-        this.resumeDeliverAt = 0;
-        const elapsed = Date.now() - armedAt;
-        if(elapsed <= RESUME_BREADCRUMB_MAX_AGE_MS) {
-          this.log('[NostrRelayPool] resume: first message delivered in', elapsed, 'ms');
-        }
-      }
     } catch(err) {
+      deliveryFailed = true;
       this.log.error('[NostrRelayPool] onMessage handler threw:', err);
+    }
+    // Shared-transport fan-out (#257): every additional consumer receives
+    // the same decrypted message through the SAME socket — one connection
+    // and one unwrap per relay URL, every consumer served.
+    for(const listener of this._onMessageListeners) {
+      try {
+        await listener(msg);
+      } catch(err) {
+        deliveryFailed = true;
+        this.log.error('[NostrRelayPool] message listener threw:', err);
+      }
+    }
+    // Breadcrumb fires only after delivery COMPLETED successfully — the
+    // callbacks contain the IDB/UI work this timing is meant to measure, so
+    // logging at entry would report a falsely-fast number, and logging on a
+    // throw would report "delivered" for a failed delivery (#206 review).
+    // On a throw the breadcrumb stays armed; the next successful delivery
+    // logs the true total, and RESUME_BREADCRUMB_MAX_AGE_MS bounds how long
+    // an undelivered wake can keep it alive.
+    // Only consume the one-shot if the epoch is UNCHANGED since the snapshot:
+    // a re-arm during the await means a newer wake owns the breadcrumb, so
+    // leave it armed for that wake's own first delivery.
+    if(!deliveryFailed && armedAt && this.resumeDeliverAt === armedAt) {
+      this.resumeDeliverAt = 0;
+      const elapsed = Date.now() - armedAt;
+      if(elapsed <= RESUME_BREADCRUMB_MAX_AGE_MS) {
+        this.log('[NostrRelayPool] resume: first message delivered in', elapsed, 'ms');
+      }
     }
 
     if(msg.timestamp > this.lastSeenTimestamp && !this.backfillGapOpen) {

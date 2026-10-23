@@ -270,6 +270,27 @@ describe('shared relay transport (#257)', () => {
     expect(c.pool.getTransportMode()).toBe('active');
   });
 
+  it('fan-out is consumer-isolated: one throwing handler cannot starve the rest (#257 review nit)', async() => {
+    const c = acquireSharedRelayPool({relays: []});
+    c.pool.setOnMessage(() => { throw new Error('boom'); });
+    const seen: DecryptedMessage[] = [];
+    c.pool.addOnMessageListener(() => { throw new Error('boom'); });
+    c.pool.addOnMessageListener((m: DecryptedMessage) => { seen.push(m); });
+
+    const msg: DecryptedMessage = {
+      id: 'iso-1',
+      from: 'peer-pubkey-hex',
+      content: JSON.stringify({id: 'm-iso', type: 'text', content: 'hi', timestamp: Date.now()}),
+      timestamp: Math.floor(Date.now() / 1000)
+    };
+    await (c.pool as any).handleIncomingMessage(msg);
+
+    // The throwing primary and throwing first listener are logged, not obeyed:
+    // the healthy consumer still receives exactly one copy (previously the
+    // first throw skipped every consumer after it).
+    expect(seen).toEqual([msg]);
+  });
+
   it('disconnects only when the LAST consumer releases', async() => {
     const a = acquireSharedRelayPool({
       relays: RELAYS,
