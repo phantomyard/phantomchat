@@ -1108,8 +1108,9 @@ describe('NostrRelay bad-relay cooldown', () => {
     vi.advanceTimersByTime(59_000);
     expect(connectSpy.mock.calls.length).toBe(callsAtBench);
 
-    // Once the cooldown elapses, it retries (then re-benches).
-    vi.advanceTimersByTime(2_000);
+    // Once the cooldown elapses, it retries (then re-benches). The cooldown
+    // window jitters +0–25% (#257), so a full window can take up to 75s.
+    vi.advanceTimersByTime(20_000);
     expect(connectSpy.mock.calls.length).toBeGreaterThan(callsAtBench);
   });
 

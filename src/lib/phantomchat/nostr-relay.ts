@@ -259,16 +259,24 @@ export class NostrRelay {
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   // Bad-relay cooldown (#61 R4). After this many consecutive failed reconnects
   // (the 3-step burst + a few steady ~10s backoff tries), a relay is treated as
-  // "bad" and benched for reconnectCooldownMs instead of hammering it every ~10s
-  // forever. During the cooldown window no reconnect is attempted and nothing is
-  // logged, so a permanently-dead relay stops spamming the console. One line is
-  // logged on entering cooldown; counters + the flag reset after a sustained
-  // healthy connection. Brief opens must not refund the failure budget.
-  // The bench is deliberately SHORT (60s): a long bench risks every relay
-  // sitting in cooldown simultaneously (the all-red "Reconnecting..." stall),
-  // and a resumed network is detected faster than any long cooldown would allow.
+  // "bad" and benched instead of hammering it every ~10s forever. During a
+  // cooldown window no reconnect is attempted and one line is logged on
+  // entering it; counters reset after a sustained healthy connection. Brief
+  // opens must not refund the failure budget.
+  // #257: a relay that is PERMANENTLY bad (e.g. fails from browser origins only)
+  // was still dialled once per flat 60s window forever — ~60 dials/hour per
+  // instance, and duplicate instances multiply it. The bench now ESCALATES
+  // 60s → 2m → 5m → 15m (capped, ±25% jitter) per consecutive window, so a
+  // never-recovering relay settles at ~4 dials/hour. The ladder only advances
+  // while the relay keeps failing: it resets to the 60s base together with the
+  // attempt counter after a sustained healthy connection (30s rule), and the
+  // fresh-network reset (offline→online) clears it too, so the all-relays-red
+  // stall stays impossible — a resumed network re-probes everything at the
+  // short base schedule.
   private readonly reconnectCooldownAfter: number = 6;
-  private readonly reconnectCooldownMs: number = 60_000; // 60 seconds
+  private reconnectCooldownMs: number = 60_000; // first-window bench (base of the ladder)
+  private readonly reconnectCooldownLadder: number[] = [60_000, 120_000, 300_000, 900_000];
+  private cooldownWindow: number = 0;
   private inCooldown: boolean = false;
   // Connect-attempt watchdog. A WebSocket handshake can hang in 'connecting'
   // for minutes (browser TCP timeout) when the network is half-up — far longer
@@ -582,6 +590,7 @@ export class NostrRelay {
     if(this.connectionState === 'disconnected') return; // intentional — stay down
     this.reconnectAttempts = 0;
     this.inCooldown = false;
+    this.cooldownWindow = 0;
     if(this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -1973,6 +1982,7 @@ export class NostrRelay {
     if(this.connectedAt >= 0 && Date.now() - this.connectedAt >= this.reconnectHealthyAfterMs) {
       this.reconnectAttempts = 0;
       this.inCooldown = false;
+      this.cooldownWindow = 0;
     }
     this.connectedAt = -1;
     this.setConnectionState('reconnecting');
@@ -1999,21 +2009,32 @@ export class NostrRelay {
     // (network blip) from re-dialing in lockstep forever.
     const useCooldown = this.reconnectAttempts >= this.reconnectCooldownAfter;
     const jitter = 1 + (Math.random() * 0.5 - 0.25); // ±25%
+    // #257: escalating cooldown ladder. Every consecutive cooldown window pushes
+    // the next bench one rung up (60s → 2m → 5m → 15m cap), so a permanently bad
+    // relay is dialled ~4×/hour per instance instead of ~60×. The ladder resets
+    // to the 60s base together with the attempt counter after a sustained
+    // healthy connection, and on a fresh network context (offline→online).
+    // Cooldown windows jitter ONE-SIDED (+0–25%): the stated window is a floor,
+    // never a sub-window dial (lockstep avoidance without shortening benches).
+    const cooldownJitter = 1 + Math.random() * 0.25;
+    const cooldownDelay = Math.round(
+      this.reconnectCooldownLadder[Math.min(this.cooldownWindow, this.reconnectCooldownLadder.length - 1)] * cooldownJitter
+    );
     const delay = useCooldown ?
-      this.reconnectCooldownMs :
+      cooldownDelay :
       (this.reconnectAttempts < this.reconnectBurstDelays.length ?
         this.reconnectBurstDelays[this.reconnectAttempts] :
         Math.round(this.reconnectBackoffMs * jitter));
     this.reconnectAttempts++;
+    if(useCooldown) this.cooldownWindow++;
 
     if(useCooldown) {
-      // Log ONCE on entering cooldown, then stay silent for the whole window so
-      // a dead relay doesn't spam a reconnect line every ~10s.
-      if(!this.inCooldown) {
-        this.inCooldown = true;
-        this.log('[NostrRelay]', this.relayUrl, 'unreachable after', this.reconnectAttempts - 1,
-          'attempts — cooling down', this.reconnectCooldownMs / 1000, 's before retry');
-      }
+      // Log ONCE per cooldown window (on its entry), with the escalation level,
+      // then stay silent for the whole window so a dead relay doesn't spam a
+      // reconnect line every ~10s.
+      this.inCooldown = true;
+      this.log('[NostrRelay]', this.relayUrl, 'unreachable after', this.reconnectAttempts - 1,
+        'attempts — cooling down', Math.round(cooldownDelay / 1000), 's (window', this.cooldownWindow + ')');
     } else {
       this.log('[NostrRelay] reconnecting in', delay, 'ms (attempt', this.reconnectAttempts + ')');
     }
