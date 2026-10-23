@@ -58,7 +58,8 @@ const scriptHashes = inlineScripts.map((body) => `'sha256-${createHash('sha256')
 
 const csp = [
   "default-src 'self'",
-  `script-src 'self' ${scriptHashes.join(' ')}`,
+  // rlottie compiles WebAssembly in a worker; keep JavaScript eval blocked.
+  `script-src 'self' 'wasm-unsafe-eval' ${scriptHashes.join(' ')}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "media-src 'self' data: blob:",
