@@ -929,16 +929,35 @@ export class NostrRelayPool {
    * Load the transport identity: pre-decrypted keys when provided (avoids
    * redundant PBKDF2 on cold start — onboarding already did this work ~100ms
    * earlier), otherwise decrypted from the encrypted store (key-storage).
-   * Shared by runInitialize() and reloadIdentity() (#262).
+   * Shared by runInitialize() and reloadIdentity() (#262). Permissive: a
+   * partial or failed load leaves whatever state was already there (boot
+   * behaviour). The STRICT staged variant is readIdentity(); reloadIdentity()
+   * uses that so a switch can never half-apply.
    */
   private async loadIdentity(preloaded?: {publicKey: string; privateKeyHex: string}): Promise<void> {
+    const staged = await this.readIdentity(preloaded);
+    if(staged) {
+      this.publicKey = staged.publicKey;
+      if(staged.privateKeyBytes) {
+        this.privateKeyBytes = staged.privateKeyBytes;
+      }
+    }
+  }
+
+  /**
+   * STAGED identity read — resolves the replacement identity (or null when
+   * there is none to be had) WITHOUT touching any live state. `privateKeyBytes`
+   * is null for a partial identity (public key only). Errors are swallowed to
+   * null: callers decide what a missing identity means.
+   */
+  private async readIdentity(preloaded?: {publicKey: string; privateKeyHex: string}): Promise<{publicKey: string, privateKeyBytes: Uint8Array | null} | null> {
     if(preloaded) {
-      this.publicKey = preloaded.publicKey;
+      let bytes: Uint8Array | null = null;
       if(preloaded.privateKeyHex && preloaded.privateKeyHex.length === 64) {
         const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
-        this.privateKeyBytes = h2b(preloaded.privateKeyHex);
+        bytes = h2b(preloaded.privateKeyHex);
       }
-      return;
+      return {publicKey: preloaded.publicKey, privateKeyBytes: bytes};
     }
     // Load identity from encrypted store (key-storage)
     try {
@@ -948,11 +967,12 @@ export class NostrRelayPool {
         if(browserKey) {
           const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
           const identity = importFromStored({seed, nsec});
-          this.publicKey = identity.publicKey;
+          let bytes: Uint8Array | null = null;
           if(identity.privateKey && identity.privateKey.length === 64) {
             const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
-            this.privateKeyBytes = h2b(identity.privateKey);
+            bytes = h2b(identity.privateKey);
           }
+          return {publicKey: identity.publicKey, privateKeyBytes: bytes};
         } else {
           this.log.warn('[NostrRelayPool] no browser key — cannot decrypt identity');
         }
@@ -960,6 +980,7 @@ export class NostrRelayPool {
     } catch(err) {
       this.log.warn('[NostrRelayPool] failed to load encrypted identity:', err);
     }
+    return null;
   }
 
   /**
@@ -967,25 +988,45 @@ export class NostrRelayPool {
    * (#262). The shared pool loads its identity ONCE per context and the bridge
    * never releases its handle, so an account switch MUST call this or the old
    * account's keys keep driving the transport (signing, AUTH, unwrap, '#p'
-   * filters). Zeroes the previous private key, re-derives from `preloaded` or
-   * the encrypted store, and pushes the new keys into every live relay
-   * instance.
+   * filters).
    *
-   * Scope: consumer-side session state (warmed key caches, subscriptions bound
-   * to the old '#p' filter) belongs to the account-switch flow itself — this
-   * guarantees the keys BEHIND the transport are the new account's.
+   * The replacement is STAGED first and committed atomically only on complete
+   * success (a usable key): the pool keys are swapped and every live relay
+   * instance gets the new keys (setIdentity also re-arms its live '#p' REQ on
+   * the new pubkey). On an empty or failed load nothing is half-applied:
+   * clearIdentity() runs FIRST so pool and relay instances agree the
+   * transport is identity-less, then the failure is thrown to the caller —
+   * a failed switch is never silent.
    */
   async reloadIdentity(preloaded?: {publicKey: string; privateKeyHex: string}): Promise<void> {
+    const staged = await this.readIdentity(preloaded);
+    if(!staged || !staged.privateKeyBytes) {
+      this.clearIdentity();
+      throw new Error('reloadIdentity: no usable identity to load');
+    }
+    if(this.privateKeyBytes) {
+      this.privateKeyBytes.fill(0);
+    }
+    this.privateKeyBytes = staged.privateKeyBytes;
+    this.publicKey = staged.publicKey;
+    for(const entry of this.relayEntries) {
+      entry.instance.setIdentity?.({publicKey: this.publicKey, privateKey: this.privateKeyBytes});
+    }
+  }
+
+  /**
+   * Explicit identity teardown — the logout path (#262). Zeroes the pool's
+   * key copies and clears EVERY live relay instance (its key copies go too,
+   * and its live '#p' REQ is dropped). Safe to call in any state.
+   */
+  clearIdentity(): void {
     if(this.privateKeyBytes) {
       this.privateKeyBytes.fill(0);
       this.privateKeyBytes = null;
     }
     this.publicKey = '';
-    await this.loadIdentity(preloaded);
-    if(this.privateKeyBytes) {
-      for(const entry of this.relayEntries) {
-        entry.instance.setIdentity?.({publicKey: this.publicKey, privateKey: this.privateKeyBytes});
-      }
+    for(const entry of this.relayEntries) {
+      entry.instance.clearIdentity?.();
     }
   }
 

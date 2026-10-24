@@ -460,7 +460,47 @@ export class NostrRelay {
     this.privateKey = new Uint8Array(identity.privateKey);
     this.publicKey = identity.publicKey;
     this.ownId = npubEncode(identity.publicKey);
+    // The armed live REQ filters on the OLD '#p' — without a re-arm the
+    // socket keeps streaming the previous account's wraps (and misses the
+    // new account's) until a reconnect recycles it. No consumer can fix
+    // this from outside (subscriptionId/liveReqArmed are private), so the
+    // transport owns it: drop the stale REQ and arm a fresh one.
+    this.rearmLiveSubscription();
     this.log('[NostrRelay] identity reloaded for pubkey:', this.publicKey.slice(0, 8) + '...');
+  }
+
+  /**
+   * Drop the loaded identity — the logout / failed-reload path (#262).
+   * Zeroes the key copies this instance holds (AUTH, signing and unwrap all
+   * read them), clears the identity fields and drops the live '#p'
+   * subscription: with no identity no filter can be valid, and leaving the
+   * old one armed would keep streaming the logged-out account's wraps.
+   */
+  clearIdentity(): void {
+    if(this.privateKey.length) {
+      this.privateKey.fill(0);
+    }
+    this.privateKey = new Uint8Array();
+    this.publicKey = '';
+    this.ownId = '';
+    this.unsubscribeMessages();
+    this.pendingSubscribe = false;
+    this.log('[NostrRelay] identity cleared');
+  }
+
+  /** Drop the armed live REQ (if any) and arm a fresh one on the CURRENT
+   * identity. No-op when nothing was armed — a disconnected relay arms
+   * `pendingSubscribe` so the next onopen re-subscribes. */
+  private rearmLiveSubscription(): void {
+    if(!this.liveReqArmed && !this.pendingSubscribe) {
+      return;
+    }
+    this.unsubscribeMessages();
+    if(this.connectionState === 'connected') {
+      this.subscribeMessages();
+    } else {
+      this.pendingSubscribe = true;
+    }
   }
 
   /**
