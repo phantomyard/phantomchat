@@ -112,7 +112,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // --- Initialize bridge ---
       bootProgress?.(6, 8, 'Connecting to relays');
       const bridge = PhantomChatBridge.getInstance();
-      await bridge.init(identity.publicKey);
+      // The decrypted keys ride along so the shared transport's one identity
+      // load skips the redundant PBKDF2 (#262 — the bridge acquires the pool
+      // first, so ChatAPI's own preloadedIdentity never fires here).
+      await bridge.init(identity.publicKey, identity.privateKey);
 
       // Give the relay pool a short, capped window to actually subscribe so
       // the progress bar reflects real relay connectivity. whenSubscribed has

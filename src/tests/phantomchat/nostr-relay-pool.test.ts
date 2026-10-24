@@ -133,6 +133,24 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
     }
 
     sendRawEvent(_event: any): void {}
+
+    // Raw-event forwarder + identity reload (#262). Compatibility surface:
+    // whichever MockRelay wins the isolate:false registration race must
+    // support both test suites (see relay-failover.test.ts).
+    rawEventHandler: ((event: any) => void) | null = null;
+    identitiesSet: Array<{publicKey: string; privateKey: Uint8Array}> = [];
+
+    onRawEvent(handler: (event: any) => void): void {
+      this.rawEventHandler = handler;
+    }
+
+    simulateRawEvent(event: any): void {
+      this.rawEventHandler?.(event);
+    }
+
+    setIdentity(identity: {publicKey: string; privateKey: Uint8Array}): void {
+      this.identitiesSet.push(identity);
+    }
   }
 
   return {mockRelayInstances: instances, MockNostrRelayClass: MockRelay};
@@ -1608,4 +1626,149 @@ describe('NostrRelayPool', () => {
     });
   });
 
+});
+
+// ─── #262 follow-ups: pre-attach raw events + identity lifecycle ───────────
+
+describe('NostrRelayPool — pre-attach raw events (#262)', () => {
+  beforeEach(() => {
+    mockRelayInstances.length = 0;
+    localStorage.clear();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makeRaw(id: string, kind = 7): any {
+    return {id, kind, content: '', pubkey: 'author', created_at: Math.floor(Date.now() / 1000), tags: [], sig: 'sig'};
+  }
+
+  async function makePool(): Promise<NostrRelayPool> {
+    const pool = new NostrRelayPool({relays: [{url: 'wss://raw.test', read: true, write: true}]});
+    await pool.initialize();
+    return pool;
+  }
+
+  it('holds raw events until setOnRawEvent attaches, then delivers in order', async() => {
+    const pool = await makePool();
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-1', 7));
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-2', 5));
+
+    const seen: any[] = [];
+    pool.setOnRawEvent((ev) => seen.push(ev));
+
+    expect(seen.map((e) => e.id)).toEqual(['ra-1', 'ra-2']);
+  });
+
+  it('delivers a replayed copy once — the held copy, not the replay', async() => {
+    const pool = await makePool();
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-3', 7));
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-3', 7)); // relay replay while deferred
+
+    const seen: any[] = [];
+    pool.setOnRawEvent((ev) => seen.push(ev));
+
+    expect(seen.map((e) => e.id)).toEqual(['ra-3']);
+  });
+
+  it('dispatches immediately once a consumer is attached', async() => {
+    const pool = await makePool();
+    const seen: any[] = [];
+    pool.setOnRawEvent((ev) => seen.push(ev));
+
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-4', 7));
+
+    expect(seen.map((e) => e.id)).toEqual(['ra-4']);
+  });
+
+  it('re-defers the remainder when the consumer detaches mid-drain', async() => {
+    const pool = await makePool();
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-5', 7));
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-6', 5));
+
+    const first: string[] = [];
+    pool.setOnRawEvent((ev) => {
+      first.push(ev.id);
+      pool.setOnRawEvent(null); // detach mid-drain
+    });
+    expect(first).toEqual(['ra-5']);
+
+    const second: string[] = [];
+    pool.setOnRawEvent((ev) => second.push(ev.id));
+    expect(second).toEqual(['ra-6']);
+  });
+
+  it('caps the deferred buffer at 500, evicting oldest first', async() => {
+    const pool = await makePool();
+    for(let i = 0; i < 501; i++) {
+      (pool as any).handleIncomingRawEvent(makeRaw(`cap-${i}`, 7));
+    }
+
+    const seen: string[] = [];
+    pool.setOnRawEvent((ev) => seen.push(ev.id));
+
+    expect(seen).toHaveLength(500);
+    expect(seen[0]).toBe('cap-1'); // cap-0 evicted
+    expect(seen[499]).toBe('cap-500');
+  });
+
+  it('a throwing raw handler is contained and later dispatch keeps working', async() => {
+    const pool = await makePool();
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-7', 7));
+    pool.setOnRawEvent(() => {
+      throw new Error('boom');
+    });
+
+    const seen: string[] = [];
+    pool.setOnRawEvent((ev) => seen.push(ev.id));
+    (pool as any).handleIncomingRawEvent(makeRaw('ra-8', 5));
+    expect(seen).toEqual(['ra-8']);
+  });
+});
+
+describe('NostrRelayPool — identity lifecycle (#262)', () => {
+  beforeEach(() => {
+    mockRelayInstances.length = 0;
+    localStorage.clear();
+    // REAL timers on purpose: runInitialize with a loaded private key reaches
+    // warmV2KeyCache -> message store, whose async settles fake timers freeze.
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reloadIdentity(preloaded) replaces the pool keys', async() => {
+    const pool = new NostrRelayPool({
+      relays: [{url: 'wss://id.test', read: true, write: true}],
+      preloadedIdentity: {publicKey: 'old-pubkey', privateKeyHex: 'a'.repeat(64)}
+    });
+    await pool.initialize();
+    expect((pool as any).publicKey).toBe('old-pubkey');
+
+    await pool.reloadIdentity({publicKey: 'new-pubkey', privateKeyHex: 'b'.repeat(64)});
+
+    expect((pool as any).publicKey).toBe('new-pubkey');
+    const key = pool.getPrivateKey();
+    expect(key).not.toBeNull();
+    expect(key!.length).toBe(32); // 64 hex chars -> 32 key bytes
+  });
+
+  it('reloadIdentity zeroes the OLD private key buffer', async() => {
+    const pool = new NostrRelayPool({
+      relays: [{url: 'wss://id.test', read: true, write: true}],
+      preloadedIdentity: {publicKey: 'old-pubkey', privateKeyHex: 'a'.repeat(64)}
+    });
+    await pool.initialize();
+    const oldKey = pool.getPrivateKey()!;
+    expect([...oldKey].some((b) => b !== 0)).toBe(true);
+
+    await pool.reloadIdentity({publicKey: 'new-pubkey', privateKeyHex: 'b'.repeat(64)});
+
+    expect(pool.getPrivateKey()).not.toBe(oldKey);
+    expect([...oldKey].every((b) => b === 0)).toBe(true);
+  });
 });

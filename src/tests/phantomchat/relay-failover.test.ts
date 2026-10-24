@@ -110,6 +110,24 @@ const {mockRelayInstances, MockNostrRelayClass} = vi.hoisted(() => {
       this.connected = false;
       this.connectionState = 'disconnected';
     }
+
+    // Compatibility methods used by nostr-relay-pool.test.ts (#262).
+    // When isolate:false, both files mock @lib/phantomchat/nostr-relay
+    // and whichever mock wins must support both test suites.
+    rawEventHandler: ((event: any) => void) | null = null;
+    identitiesSet: Array<{publicKey: string; privateKey: Uint8Array}> = [];
+
+    onRawEvent(handler: (event: any) => void): void {
+      this.rawEventHandler = handler;
+    }
+
+    simulateRawEvent(event: any): void {
+      this.rawEventHandler?.(event);
+    }
+
+    setIdentity(identity: {publicKey: string; privateKey: Uint8Array}): void {
+      this.identitiesSet.push(identity);
+    }
   }
 
   return {

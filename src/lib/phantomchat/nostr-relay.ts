@@ -17,6 +17,9 @@ import {getNostrUnwrapClient} from './nostr-unwrap-client';
 import {finalizeEvent, verifyEvent} from 'nostr-tools/pure';
 import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from './key-storage';
 import {importFromStored} from './nostr-identity';
+// npubEncode comes straight from nostr-tools (not via nostr-identity) so a
+// partial nostr-identity mock in tests cannot break setIdentity().
+import {npubEncode} from 'nostr-tools/nip19';
 import {logSwallow, swallowHandler} from './log-swallow';
 import {isNetworkOffline, OFFLINE_RETRY_PROBE_MS} from './network-status';
 
@@ -440,6 +443,24 @@ export class NostrRelay {
       this.log.error('[NostrRelay] initialization failed:', err);
       throw err;
     }
+  }
+
+  /**
+   * Replace the loaded identity — the account-switch / logout reload path
+   * (#262). Called by NostrRelayPool.reloadIdentity() for every live relay
+   * instance, so the old account's keys cannot keep driving signing, AUTH,
+   * unwrap or the '#p' subscription filters after a switch. The private key
+   * is copied (and the previous one zeroed) so a caller-owned buffer is never
+   * aliased.
+   */
+  setIdentity(identity: {publicKey: string; privateKey: Uint8Array}): void {
+    if(this.privateKey.length) {
+      this.privateKey.fill(0);
+    }
+    this.privateKey = new Uint8Array(identity.privateKey);
+    this.publicKey = identity.publicKey;
+    this.ownId = npubEncode(identity.publicKey);
+    this.log('[NostrRelay] identity reloaded for pubkey:', this.publicKey.slice(0, 8) + '...');
   }
 
   /**

@@ -214,6 +214,9 @@ export class ChatAPI {
    * @param ownId - The user's public key
    * @param privateKeyHex - Optional 64-char hex private key. When provided,
    *   the relay pool skips redundant identity decryption at initialize() time.
+   *   Fallback path only: in the real boot order the bridge already passes the
+   *   keys at the shared pool's acquire (#262), so this fires solely when
+   *   ChatAPI acquires the pool first (tests / DI-less boots).
    */
   constructor(ownId: string, privateKeyHex?: string);
 
@@ -255,7 +258,8 @@ export class ChatAPI {
       }
     } else {
       // privateKeyHex may be passed as the 2nd arg (string) to skip redundant
-      // identity decryption in the relay pool.
+      // identity decryption in the relay pool — the fallback for boots where
+      // ChatAPI acquires the shared pool before the bridge does.
       const privateKeyHex = typeof relayPool === 'string' ? relayPool : undefined;
 
       // SHARED transport (#257): one NostrRelayPool per JS context — one

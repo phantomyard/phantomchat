@@ -316,4 +316,43 @@ describe('shared relay transport (#257)', () => {
     c.release();
     expect(getSharedRelayPool()).toBeNull();
   });
+
+  // ─── Identity lifecycle (#262) ───────────────────────────────────────────
+
+  it('a preloaded identity at acquire wins over the encrypted store', async() => {
+    // REAL timers: startup with a loaded key reaches the message store via
+    // warmV2KeyCache, whose async settles fake timers freeze.
+    vi.useRealTimers();
+    // The store mock resolves to publicKey 'test-public-key'; the preloaded
+    // key must win — the shared pool takes its identity from the FIRST
+    // acquirer (the bridge, in the real boot order).
+    const c = acquireSharedRelayPool({
+      relays: RELAYS,
+      preloadedIdentity: {publicKey: '11'.repeat(32), privateKeyHex: 'a'.repeat(64)}
+    });
+    await c.pool.initialize();
+
+    expect((c.pool as any).publicKey).toBe('11'.repeat(32));
+    expect(c.pool.getPrivateKey()).not.toBeNull();
+  });
+
+  it('reloadIdentity replaces the keys AND pushes them into every relay instance', async() => {
+    vi.useRealTimers();
+    const c = acquireSharedRelayPool({
+      relays: RELAYS,
+      preloadedIdentity: {publicKey: 'test-public-key', privateKeyHex: 'a'.repeat(64)}
+    });
+    await c.pool.initialize();
+
+    await c.pool.reloadIdentity({publicKey: 'cd'.repeat(32), privateKeyHex: 'b'.repeat(64)});
+
+    expect((c.pool as any).publicKey).toBe('cd'.repeat(32));
+    // Every live relay instance got the new account's keys — signing, AUTH,
+    // unwrap and the '#p' filters all read the instance's own copy.
+    const entries = (c.pool as any).relayEntries as any[];
+    expect(entries.length).toBe(2);
+    for(const entry of entries) {
+      expect(entry.instance.getPublicKey()).toBe('cd'.repeat(32));
+    }
+  });
 });

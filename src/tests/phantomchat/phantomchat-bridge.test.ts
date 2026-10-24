@@ -531,4 +531,27 @@ describe('PhantomChatBridge network restart wiring (PR #83 Copilot review)', () 
     vi.advanceTimersByTime(500);
     expect(restartAllSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('init() forwards the decrypted keys to the shared transport acquire (#262)', async () => {
+    // The pool's initialize() is stubbed in this suite, so the observable is
+    // the acquire call itself: the bridge must hand the keys to the shared
+    // transport on creation (first-acquirer-wins — the pool takes its
+    // identity from the bridge's acquire in the real boot order).
+    const acquireSpy = vi.spyOn(relayPool, 'acquireSharedRelayPool');
+    const pubkey = '1'.repeat(64);
+    const privhex = '2'.repeat(64);
+
+    await bridge.init(pubkey, privhex);
+
+    expect(acquireSpy).toHaveBeenCalledWith({
+      relays: expect.any(Array),
+      preloadedIdentity: {publicKey: pubkey, privateKeyHex: privhex}
+    });
+
+    // Without keys nothing is forwarded — the pool falls back to its own
+    // store decrypt (the pre-#262 behavior).
+    acquireSpy.mockClear();
+    await bridge.init(pubkey);
+    expect(acquireSpy.mock.calls[0][0]).not.toHaveProperty('preloadedIdentity');
+  });
 });

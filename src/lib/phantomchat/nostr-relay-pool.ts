@@ -186,6 +186,12 @@ const DEDUP_CACHE_MAX = 10_000;
 // so the next session's replay re-fetches it.
 const PENDING_DELIVERY_MAX = 2_000;
 
+// Cap for raw events (kind-7 reactions, kind-5 deletes, ephemeral kinds)
+// held for a raw consumer that has not attached yet (see deferUndeliveredRaw,
+// #262). Same boot window as deferUndelivered, much lower volume; a runaway
+// guard, not a working set.
+const PENDING_RAW_EVENTS_MAX = 500;
+
 // Consecutive unwrap failures tolerated for a single wrap before it is PARKED
 // (claim kept, no further retries) until the next resume trigger. Caps the
 // 15s-poll re-unwrap loop for a deterministically-bad wrap; see releaseWrapId.
@@ -726,6 +732,9 @@ export class NostrRelayPool {
    */
   setOnRawEvent(cb: ((event: NostrEvent) => void) | null): void {
     this._onRawEventCb = cb ?? undefined;
+    if(cb) {
+      this.drainUndeliveredRaw();
+    }
   }
 
   private _onReceiptCb?: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void;
@@ -916,42 +925,77 @@ export class NostrRelayPool {
     }
   }
 
+  /**
+   * Load the transport identity: pre-decrypted keys when provided (avoids
+   * redundant PBKDF2 on cold start — onboarding already did this work ~100ms
+   * earlier), otherwise decrypted from the encrypted store (key-storage).
+   * Shared by runInitialize() and reloadIdentity() (#262).
+   */
+  private async loadIdentity(preloaded?: {publicKey: string; privateKeyHex: string}): Promise<void> {
+    if(preloaded) {
+      this.publicKey = preloaded.publicKey;
+      if(preloaded.privateKeyHex && preloaded.privateKeyHex.length === 64) {
+        const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
+        this.privateKeyBytes = h2b(preloaded.privateKeyHex);
+      }
+      return;
+    }
+    // Load identity from encrypted store (key-storage)
+    try {
+      const record = await loadEncryptedIdentity();
+      if(record) {
+        const browserKey = await loadBrowserKey();
+        if(browserKey) {
+          const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
+          const identity = importFromStored({seed, nsec});
+          this.publicKey = identity.publicKey;
+          if(identity.privateKey && identity.privateKey.length === 64) {
+            const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
+            this.privateKeyBytes = h2b(identity.privateKey);
+          }
+        } else {
+          this.log.warn('[NostrRelayPool] no browser key — cannot decrypt identity');
+        }
+      }
+    } catch(err) {
+      this.log.warn('[NostrRelayPool] failed to load encrypted identity:', err);
+    }
+  }
+
+  /**
+   * Replace the transport identity — the account-switch / logout reload path
+   * (#262). The shared pool loads its identity ONCE per context and the bridge
+   * never releases its handle, so an account switch MUST call this or the old
+   * account's keys keep driving the transport (signing, AUTH, unwrap, '#p'
+   * filters). Zeroes the previous private key, re-derives from `preloaded` or
+   * the encrypted store, and pushes the new keys into every live relay
+   * instance.
+   *
+   * Scope: consumer-side session state (warmed key caches, subscriptions bound
+   * to the old '#p' filter) belongs to the account-switch flow itself — this
+   * guarantees the keys BEHIND the transport are the new account's.
+   */
+  async reloadIdentity(preloaded?: {publicKey: string; privateKeyHex: string}): Promise<void> {
+    if(this.privateKeyBytes) {
+      this.privateKeyBytes.fill(0);
+      this.privateKeyBytes = null;
+    }
+    this.publicKey = '';
+    await this.loadIdentity(preloaded);
+    if(this.privateKeyBytes) {
+      for(const entry of this.relayEntries) {
+        entry.instance.setIdentity?.({publicKey: this.publicKey, privateKey: this.privateKeyBytes});
+      }
+    }
+  }
+
   private async runInitialize(): Promise<void> {
     this.log('[NostrRelayPool] initializing');
 
     this.registerResumeTriggers();
 
-    // Use pre-decrypted identity if provided (avoids redundant PBKDF2 on cold
-    // start — onboarding already did this work ~100ms earlier).
-    if(this._preloadedIdentity) {
-      this.publicKey = this._preloadedIdentity.publicKey;
-      if(this._preloadedIdentity.privateKeyHex && this._preloadedIdentity.privateKeyHex.length === 64) {
-        const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
-        this.privateKeyBytes = h2b(this._preloadedIdentity.privateKeyHex);
-      }
-      this._preloadedIdentity = undefined; // free the reference
-    } else {
-      // Load identity from encrypted store (key-storage)
-      try {
-        const record = await loadEncryptedIdentity();
-        if(record) {
-          const browserKey = await loadBrowserKey();
-          if(browserKey) {
-            const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-            const identity = importFromStored({seed, nsec});
-            this.publicKey = identity.publicKey;
-            if(identity.privateKey && identity.privateKey.length === 64) {
-              const {hexToBytes: h2b} = await import('@noble/secp256k1').then(m => m.etc);
-              this.privateKeyBytes = h2b(identity.privateKey);
-            }
-          } else {
-            this.log.warn('[NostrRelayPool] no browser key — cannot decrypt identity');
-          }
-        }
-      } catch(err) {
-        this.log.warn('[NostrRelayPool] failed to load encrypted identity:', err);
-      }
-    }
+    await this.loadIdentity(this._preloadedIdentity);
+    this._preloadedIdentity = undefined; // free the reference
 
     // Load relay config from IndexedDB if none provided
     if(this.configs.length === 0) {
@@ -2599,6 +2643,8 @@ export class NostrRelayPool {
     return null;
   }
 
+  private pendingRawDelivery: NostrEvent[] = [];
+
   private handleIncomingRawEvent(event: NostrEvent): void {
     if(!event.id) return;
     // Reuse the same LRU as gift-wrap dedup; event ids are globally unique.
@@ -2609,12 +2655,52 @@ export class NostrRelayPool {
       const evicted = this.seenOrder.shift()!;
       this.seenIds.delete(evicted);
     }
-    if(this._onRawEventCb) {
-      try {
-        this._onRawEventCb(event);
-      } catch(err) {
-        this.log.error('[NostrRelayPool] raw event handler threw:', err);
-      }
+    this.dispatchRawEvent(event);
+  }
+
+  /**
+   * Deliver a dedup-claimed raw event to the raw consumer — or hold it when
+   * none has attached yet (#262, same boot-order window as deferred message
+   * delivery: the shared transport starts backfilling at bridge init, while
+   * ChatAPI wires setOnRawEvent only after further onboarding awaits). The id
+   * is claimed once at handleIncomingRawEvent entry, so a replayed copy while
+   * deferred is deduped and the HELD copy is what gets delivered. A consumer
+   * that detaches mid-drain re-defers the remainder instead of burning it.
+   */
+  private dispatchRawEvent(event: NostrEvent): void {
+    const cb = this._onRawEventCb;
+    if(!cb) {
+      this.deferUndeliveredRaw(event);
+      return;
+    }
+    try {
+      cb(event);
+    } catch(err) {
+      this.log.error('[NostrRelayPool] raw event handler threw:', err);
+    }
+  }
+
+  private deferUndeliveredRaw(event: NostrEvent): void {
+    this.pendingRawDelivery.push(event);
+    while(this.pendingRawDelivery.length > PENDING_RAW_EVENTS_MAX) {
+      const evicted = this.pendingRawDelivery.shift()!;
+      this.log.warn(
+        '[NostrRelayPool] deferred raw-event buffer full, dropped oldest:',
+        evicted.id.slice(0, 8)
+      );
+    }
+  }
+
+  /**
+   * Re-dispatch held raw events once the raw consumer attaches. Drains only
+   * what is held NOW (snapshot) — same shape as drainUndelivered().
+   */
+  private drainUndeliveredRaw(): void {
+    if(this.pendingRawDelivery.length === 0) return;
+    const batch = this.pendingRawDelivery;
+    this.pendingRawDelivery = [];
+    for(const event of batch) {
+      this.dispatchRawEvent(event);
     }
   }
 
@@ -3718,9 +3804,10 @@ export class NostrRelayPool {
 // (one app-wide ACTIVE/IDLE rhythm; per-consumer socket policies over the same
 // relays are incoherent by construction) — and loads the identity ONCE.
 // First-acquirer-wins applies to the RELAY SET and the IDENTITY both: options
-// are honoured only at pool creation (the normal boot order is safe because
-// the bridge creates the pool only after onboarding has an identity), so a
-// later acquirer's `relays` / `preloadedIdentity` are ignored.
+// are honoured only at pool creation (the normal boot order passes the keys at
+// the BRIDGE's acquire — see phantomchat-bridge init() — so the one identity
+// load skips the redundant PBKDF2), so a later acquirer's `relays` /
+// `preloadedIdentity` are ignored.
 // Consumers subscribe via the add/setter callbacks and hold a release handle:
 // the pool is disconnected only when the LAST acquirer releases it.
 
@@ -3737,7 +3824,9 @@ export interface SharedRelayPoolOptions {
   /**
    * Pre-decrypted identity, honoured only at pool creation — the shared pool
    * decrypts its identity exactly once either way (preloaded skips the PBKDF2
-   * when the acquirer already has the keys).
+   * when the acquirer already has the keys). In the real boot order the BRIDGE
+   * passes these at acquire (#262); ChatAPI's own preloadedIdentity is the
+   * fallback for boots where ChatAPI acquires the pool first (tests/DI).
    */
   preloadedIdentity?: { publicKey: string; privateKeyHex: string };
 }
