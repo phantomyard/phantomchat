@@ -76,7 +76,14 @@ export interface PublishResult {
 
 export interface RelayPoolOptions {
   relays?: RelayConfig[];
-  onMessage: (msg: DecryptedMessage) => void | Promise<void>;
+  /**
+   * Primary message consumer. OPTIONAL: the shared transport is created
+   * before its consumers attach (see acquireSharedRelayPool), so a pool with
+   * no handler yet is a real state — a message arriving in that window is
+   * DEFERRED until a consumer registers, never delivered to a placeholder and
+   * burned through the dedup gate (boot-order regression, #261 review).
+   */
+  onMessage?: (msg: DecryptedMessage) => void | Promise<void>;
   // eligibleCount = relays the pool is currently trying to keep connected
   // (active set). Benched relays (flap/connect-fail cooldown) are excluded so
   // consumers like the device-sync all-green hard rule aren't held hostage by
@@ -171,6 +178,13 @@ export async function loadCanonicalRelays(): Promise<RelayConfig[] | null> {
 }
 
 const DEDUP_CACHE_MAX = 10_000;
+
+// Cap for messages held for a consumer that has not attached yet (see
+// deferUndelivered). The pre-attach window is boot/onboarding, so this is a
+// runaway guard, not a working set. Evicting loses the message for THIS
+// session only: the watermark is never advanced for an undelivered message,
+// so the next session's replay re-fetches it.
+const PENDING_DELIVERY_MAX = 2_000;
 
 // Consecutive unwrap failures tolerated for a single wrap before it is PARKED
 // (claim kept, no further retries) until the next resume trigger. Caps the
@@ -297,7 +311,17 @@ export class NostrRelayPool {
   private relayEntries: RelayEntry[] = [];
   private configs: RelayConfig[];
   private onMessageCb: (msg: DecryptedMessage) => void | Promise<void>;
+  // Additional message consumers (#257 shared transport): fanned out in
+  // enqueueLiveDelivery alongside the primary onMessageCb, so several
+  // consumers can be served by ONE socket per relay URL.
+  private _onMessageListeners: Array<(msg: DecryptedMessage) => void | Promise<void>> = [];
+  // Whether a REAL primary consumer registered (constructor option or
+  // setOnMessage). The shared pool is created before its consumers attach, so
+  // "nobody is listening yet" is a real state — see hasMessageConsumers().
+  private _primaryAttached = false;
   private onStateChangeCb?: (connectedCount: number, totalCount: number, eligibleCount: number) => void;
+  // Single-flight memo for initialize() — see the method's doc comment.
+  private _initializePromise: Promise<void> | null = null;
 
   // Dedup LRU — keyed by the DECRYPTED rumor/message id (post-unwrap).
   private seenIds: Set<string> = new Set();
@@ -617,7 +641,10 @@ export class NostrRelayPool {
   constructor(options: RelayPoolOptions) {
     this.log = logger('NostrRelayPool');
     this.configs = options.relays ? [...options.relays] : [];
-    this.onMessageCb = options.onMessage;
+    // No-op primary unless a real consumer registered at construction; shared-
+    // pool consumers attach later via setOnMessage / addOnMessageListener.
+    this.onMessageCb = options.onMessage ?? (() => {});
+    this._primaryAttached = options.onMessage != null;
     this.onStateChangeCb = options.onStateChange;
     this._preloadedIdentity = options.preloadedIdentity;
     // Default: connect to EVERY relay (Infinity). A finite cap is opt-in (tests).
@@ -631,8 +658,10 @@ export class NostrRelayPool {
 
   // ─── Callback setters (for DI / test path) ─────────────────────
 
-  setOnMessage(cb: (msg: DecryptedMessage) => void | Promise<void>): void {
-    this.onMessageCb = cb;
+  setOnMessage(cb: ((msg: DecryptedMessage) => void | Promise<void>) | null): void {
+    this.onMessageCb = cb ?? (() => {});
+    this._primaryAttached = cb != null;
+    if(cb) this.drainUndelivered();
   }
 
   setOnStateChange(cb: (connectedCount: number, totalCount: number) => void): void {
@@ -660,13 +689,30 @@ export class NostrRelayPool {
   }
   private _stateChangeListeners: Array<(connectedCount: number, totalCount: number, eligibleCount: number) => void> = [];
 
-  setOnReceipt(cb: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void): void {
-    // Wire receipt handler to all relay instances
-    for(const entry of this.relayEntries) {
-      entry.instance.onReceipt(cb);
-    }
-    // Store for future relays added after this call
-    this._onReceiptCb = cb;
+  /**
+   * Register an ADDITIONAL message listener (#257 shared transport). The
+   * primary `onMessageCb` and every listener receive each decrypted message
+   * exactly once per socket delivery. Reversible like the state listeners —
+   * the shared pool outlives its consumers, so a consumer that tears down
+   * (ChatAPI destroy) must detach or its callback keeps firing.
+   */
+  addOnMessageListener(cb: (msg: DecryptedMessage) => void | Promise<void>): void {
+    this._onMessageListeners.push(cb);
+    this.drainUndelivered();
+  }
+
+  removeOnMessageListener(cb: (msg: DecryptedMessage) => void | Promise<void>): void {
+    const i = this._onMessageListeners.indexOf(cb);
+    if(i !== -1) this._onMessageListeners.splice(i, 1);
+  }
+
+  /**
+   * Register the receipt consumer. Pass `null` to UNWIRE — consumers whose
+   * lifetime is shorter than the shared pool's detach here so a replayed
+   * receipt cannot reach a stale handler (mirrors `setOnDigest`).
+   */
+  setOnReceipt(cb: ((receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void) | null): void {
+    this._onReceiptCb = cb ?? undefined;
   }
 
   /**
@@ -674,11 +720,12 @@ export class NostrRelayPool {
    * kind-5 deletes). The pool dedupes by `event.id` just like gift-wrap
    * messages, so callers receive each event at most once across all relays.
    */
-  setOnRawEvent(cb: (event: NostrEvent) => void): void {
-    this._onRawEventCb = cb;
-    for(const entry of this.relayEntries) {
-      entry.instance.onRawEvent((ev) => this.handleIncomingRawEvent(ev));
-    }
+  /**
+   * Register the plaintext non-giftwrap consumer (kind-7 reactions, kind-5
+   * deletes). Pass `null` to UNWIRE (mirrors `setOnDigest`).
+   */
+  setOnRawEvent(cb: ((event: NostrEvent) => void) | null): void {
+    this._onRawEventCb = cb ?? undefined;
   }
 
   private _onReceiptCb?: (receipt: {eventId: string; type: 'delivery' | 'read'; from: string}) => void;
@@ -695,8 +742,18 @@ export class NostrRelayPool {
    * intercepted in `handleIncomingMessage` and NEVER surfaced as chat bubbles.
    * The pool's normal rumor-id dedup applies, so each ping/pong fires once.
    */
-  setOnPresence(cb: (presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void): void {
-    this._onPresenceCb = cb;
+  setOnPresence(cb: ((presence: {type: 'ping' | 'pong'; from: string; nonce: string}) => void) | null): void {
+    this._onPresenceCb = cb ?? undefined;
+    if(cb) this.drainUndelivered();
+  }
+
+  /**
+   * Register the ACTIVE⇄IDLE transport-mode consumer (the WebRTC mesh follows
+   * the transport's activity state). Pass `null` to UNWIRE. Setter exists so a
+   * consumer of the SHARED pool can wire this after construction (#257).
+   */
+  setOnTransportMode(cb: ((mode: TransportMode) => void) | null): void {
+    this.onTransportModeChange = cb ?? null;
   }
 
   /**
@@ -719,6 +776,7 @@ export class NostrRelayPool {
    */
   setOnDigest(cb: ((digest: {deviceId: string; conv: string; count: number; latestId: string; sentAt?: number}) => void) | null): void {
     this._onDigestCb = cb ?? undefined;
+    if(cb) this.drainUndelivered();
   }
 
   /**
@@ -729,6 +787,7 @@ export class NostrRelayPool {
    */
   setOnSyncRequest(cb: ((req: {deviceId: string; targetId: string; conv: string; haveIds: string[]; recentOnly?: boolean; limit?: number; sentAt?: number}) => void) | null): void {
     this._onSyncReqCb = cb ?? undefined;
+    if(cb) this.drainUndelivered();
   }
 
   /**
@@ -739,6 +798,7 @@ export class NostrRelayPool {
    */
   setOnSyncResponse(cb: ((res: {deviceId: string; targetId: string; conv: string; rows: unknown[]; seq: number; last: boolean; sentAt?: number}) => void) | null): void {
     this._onSyncResCb = cb ?? undefined;
+    if(cb) this.drainUndelivered();
   }
 
   /**
@@ -836,7 +896,27 @@ export class NostrRelayPool {
 
   // ─── Lifecycle ─────────────────────────────────────────────────
 
+  /**
+   * Single-flight (#257): initialize() is called from several "ensure the
+   * transport is up" paths (connect, lazy publish, query). On a SHARED pool
+   * those must not re-run startup — a second startBackfillPoll/startRecovery
+   * would double the timers and walk history twice. The first caller runs the
+   * startup; everyone else awaits the same promise. disconnect() clears the
+   * memo so a disposed pool can be initialized again.
+   */
   async initialize(): Promise<void> {
+    if(!this._initializePromise) {
+      this._initializePromise = this.runInitialize();
+    }
+    try {
+      await this._initializePromise;
+    } catch(err) {
+      this._initializePromise = null;
+      throw err;
+    }
+  }
+
+  private async runInitialize(): Promise<void> {
     this.log('[NostrRelayPool] initializing');
 
     this.registerResumeTriggers();
@@ -980,6 +1060,10 @@ export class NostrRelayPool {
 
   disconnect(): void {
     this.log('[NostrRelayPool] disconnecting all relays');
+
+    // Clear the initialize() memo — a disposed pool must be able to start up
+    // again if someone re-initializes it (test/DI paths).
+    this._initializePromise = null;
 
     // Atomic teardown (see teardownInFlight): every instance.disconnect() in
     // the loop below synchronously fires onStateChange('disconnected'), which
@@ -1354,6 +1438,12 @@ export class NostrRelayPool {
    * Used for publishing pre-built gift-wrap events.
    */
   async publishRawEvent(event: NostrEvent): Promise<PublishResult> {
+    // Sending is activity (same as publish()): wake to ACTIVE if we were idle
+    // so sockets reopen for this event. The relay-level pendingPublishes buffer
+    // holds it and flushes on open, so a send that races the reconnect is not
+    // dropped.
+    this.noteActivity();
+
     const successes: string[] = [];
     const failures: {url: string; error: string}[] = [];
 
@@ -1680,6 +1770,9 @@ export class NostrRelayPool {
   private _pendingNip65PrivateKey: Uint8Array | null = null;
 
   private _publishNip65Now(privateKey: Uint8Array): void {
+    // Sending is activity — reopen idle sockets for the NIP-65 publish.
+    this.noteActivity();
+
     const enabledConfigs = this.configs.filter(c => this.enabled.get(c.url) !== false);
     const event = buildNip65Event(enabledConfigs, privateKey);
 
@@ -1816,16 +1909,16 @@ export class NostrRelayPool {
     // Wire up message handler with dedup
     instance.onMessage((msg: DecryptedMessage) => this.enqueueLiveDelivery(msg));
 
-    // Wire receipt handler if registered
-    if(this._onReceiptCb) {
-      instance.onReceipt(this._onReceiptCb);
-    }
+    // Receipt + raw-event handlers are pool-level FORWARDERS wired once per
+    // instance: the consumer slots (_onReceiptCb / _onRawEventCb) can be set,
+    // cleared and re-set at will — shared-pool consumers come and go, so
+    // per-instance wiring never has to be redone. Optional-call so test mocks
+    // without the methods don't break (the real NostrRelay always has them).
+    instance.onReceipt?.((receipt) => this._onReceiptCb?.(receipt));
 
-    // Wire raw-event handler (kind-7 reactions, kind-5 deletes) if
-    // a consumer is registered. Dedup happens inside handleIncomingRawEvent.
-    if(this._onRawEventCb) {
-      instance.onRawEvent((ev) => this.handleIncomingRawEvent(ev));
-    }
+    // Raw events (kind-7 reactions, kind-5 deletes). Dedup happens inside
+    // handleIncomingRawEvent.
+    instance.onRawEvent?.((ev) => this.handleIncomingRawEvent(ev));
 
     // Notify pool on relay state change so ConnectionStatusComponent updates.
     // Also detect RE-connects: a fresh REQ only streams events from now
@@ -2127,6 +2220,56 @@ export class NostrRelayPool {
   }
 
   /**
+   * Messages held for a consumer that has not attached yet (boot order: the
+   * shared transport comes up at bridge init and starts backfilling, while
+   * ChatAPI is constructed only after further onboarding/UI awaits). Held
+   * OUTSIDE the watermark claim: the id is claimed once at
+   * handleIncomingMessage entry (so a replayed copy while deferred is
+   * deduped, and the held copy is what gets delivered), but nothing durable
+   * claims an undelivered message — the watermark only advances on real
+   * delivery, so a session that ends before the attach loses nothing across
+   * reload.
+   */
+  private pendingDelivery: DecryptedMessage[] = [];
+
+  private hasMessageConsumers(): boolean {
+    return this._primaryAttached || this._onMessageListeners.length > 0;
+  }
+
+  private deferUndelivered(msg: DecryptedMessage): void {
+    this.pendingDelivery.push(msg);
+    while(this.pendingDelivery.length > PENDING_DELIVERY_MAX) {
+      const evicted = this.pendingDelivery.shift()!;
+      this.log.warn(
+        '[NostrRelayPool] deferred-delivery buffer full, dropped oldest undelivered message:',
+        evicted.id.slice(0, 8)
+      );
+    }
+  }
+
+  /**
+   * Re-dispatch held messages once a consumer attaches (message listeners and
+   * every control-envelope setter call this on registration). Drains only what
+   * is held NOW (snapshot): a message re-deferred mid-drain — its consumer
+   * detached again — lands in the fresh buffer and waits for the next attach
+   * instead of spinning through an attach/detach loop.
+   */
+  private drainUndelivered(): void {
+    if(this.pendingDelivery.length === 0) return;
+    const batch = this.pendingDelivery;
+    this.pendingDelivery = [];
+    void (async(): Promise<void> => {
+      for(const msg of batch) {
+        try {
+          await this.dispatchMessage(msg);
+        } catch(err) {
+          this.log.error('[NostrRelayPool] deferred delivery failed:', err);
+        }
+      }
+    })();
+  }
+
+  /**
    * Serialize a live socket delivery onto the pool-wide pump — see the
    * field comment on liveDeliveryQueue for why. The pump body runs
    * synchronously up to the first message's first await, preserving the
@@ -2168,6 +2311,16 @@ export class NostrRelayPool {
       this.seenIds.delete(evicted);
     }
 
+    await this.dispatchMessage(msg);
+  }
+
+  /**
+   * Route + deliver ONE already-claimed message. Split from
+   * `handleIncomingMessage` so a message held for an un-attached consumer
+   * (deferUndelivered) can be re-dispatched at attach time WITHOUT passing
+   * through the dedup gate again — its id was claimed on first sight.
+   */
+  private async dispatchMessage(msg: DecryptedMessage): Promise<void> {
     // Presence PING/PONG interception. These ride the gift-wrap path but are
     // control envelopes, not chat: route them to the presence callback and stop
     // — they must never reach onMessageCb (no bubble, no auto-add, no delivery
@@ -2177,11 +2330,15 @@ export class NostrRelayPool {
     // replayed ping/pong is consumed once.
     const presence = this.parsePresenceEnvelope(msg);
     if(presence) {
-      if(msg.from !== this.publicKey && this._onPresenceCb) {
-        try {
-          this._onPresenceCb({type: presence.type, from: msg.from, nonce: presence.nonce});
-        } catch(err) {
-          this.log.error('[NostrRelayPool] presence handler threw:', err);
+      if(msg.from !== this.publicKey) {
+        if(this._onPresenceCb) {
+          try {
+            this._onPresenceCb({type: presence.type, from: msg.from, nonce: presence.nonce});
+          } catch(err) {
+            this.log.error('[NostrRelayPool] presence handler threw:', err);
+          }
+        } else {
+          this.deferUndelivered(msg);
         }
       }
       return;
@@ -2195,11 +2352,15 @@ export class NostrRelayPool {
     // echo by deviceId.
     const digest = this.parseDigestEnvelope(msg);
     if(digest) {
-      if(msg.from === this.publicKey && this._onDigestCb) {
-        try {
-          this._onDigestCb(digest);
-        } catch(err) {
-          this.log.error('[NostrRelayPool] digest handler threw:', err);
+      if(msg.from === this.publicKey) {
+        if(this._onDigestCb) {
+          try {
+            this._onDigestCb(digest);
+          } catch(err) {
+            this.log.error('[NostrRelayPool] digest handler threw:', err);
+          }
+        } else {
+          this.deferUndelivered(msg);
         }
       }
       return;
@@ -2210,11 +2371,15 @@ export class NostrRelayPool {
     // as a bubble. The device-sync module owns targeting (deviceId) and strict-union.
     const syncReq = this.parseSyncRequestEnvelope(msg);
     if(syncReq) {
-      if(msg.from === this.publicKey && this._onSyncReqCb) {
-        try {
-          this._onSyncReqCb(syncReq);
-        } catch(err) {
-          this.log.error('[NostrRelayPool] sync-request handler threw:', err);
+      if(msg.from === this.publicKey) {
+        if(this._onSyncReqCb) {
+          try {
+            this._onSyncReqCb(syncReq);
+          } catch(err) {
+            this.log.error('[NostrRelayPool] sync-request handler threw:', err);
+          }
+        } else {
+          this.deferUndelivered(msg);
         }
       }
       return;
@@ -2222,13 +2387,29 @@ export class NostrRelayPool {
 
     const syncRes = this.parseSyncResponseEnvelope(msg);
     if(syncRes) {
-      if(msg.from === this.publicKey && this._onSyncResCb) {
-        try {
-          this._onSyncResCb(syncRes);
-        } catch(err) {
-          this.log.error('[NostrRelayPool] sync-response handler threw:', err);
+      if(msg.from === this.publicKey) {
+        if(this._onSyncResCb) {
+          try {
+            this._onSyncResCb(syncRes);
+          } catch(err) {
+            this.log.error('[NostrRelayPool] sync-response handler threw:', err);
+          }
+        } else {
+          this.deferUndelivered(msg);
         }
       }
+      return;
+    }
+
+    // BOOT-ORDER GATE (#261 review): a chat message whose consumer has not
+    // attached yet is HELD, not delivered to a placeholder. Delivering it
+    // anyway burned it twice over: the dedup claim marked it seen (so every
+    // later replay was dropped) and the watermark advanced past it — startup
+    // history reached ChatAPI as nothing at all. Held messages drain the
+    // moment a message consumer registers (see drainUndelivered).
+
+    if(!this.hasMessageConsumers()) {
+      this.deferUndelivered(msg);
       return;
     }
 
@@ -2268,27 +2449,45 @@ export class NostrRelayPool {
     // this pre-resume message belonged to it, reporting a bogus near-zero
     // time and losing the real wake's timing (#206 review).
     const armedAt = this.resumeDeliverAt;
+    // Per-consumer isolation (review nit): the fan-out serves N INDEPENDENT
+    // consumers, so one throwing handler must not starve the others. Any
+    // failure still leaves the breadcrumb armed — the #206 contract is
+    // "logged after a COMPLETED delivery", and a consumer that threw did not
+    // complete its work.
+    let deliveryFailed = false;
     try {
       await this.onMessageCb(msg);
-      // Breadcrumb fires only after delivery COMPLETED successfully — the
-      // callback contains the IDB/UI work this timing is meant to measure, so
-      // logging at entry would report a falsely-fast number, and logging on a
-      // throw would report "delivered" for a failed delivery (#206 review).
-      // On a throw the breadcrumb stays armed; the next successful delivery
-      // logs the true total, and RESUME_BREADCRUMB_MAX_AGE_MS bounds how long
-      // an undelivered wake can keep it alive.
-      // Only consume the one-shot if the epoch is UNCHANGED since the snapshot:
-      // a re-arm during the await means a newer wake owns the breadcrumb, so
-      // leave it armed for that wake's own first delivery.
-      if(armedAt && this.resumeDeliverAt === armedAt) {
-        this.resumeDeliverAt = 0;
-        const elapsed = Date.now() - armedAt;
-        if(elapsed <= RESUME_BREADCRUMB_MAX_AGE_MS) {
-          this.log('[NostrRelayPool] resume: first message delivered in', elapsed, 'ms');
-        }
-      }
     } catch(err) {
+      deliveryFailed = true;
       this.log.error('[NostrRelayPool] onMessage handler threw:', err);
+    }
+    // Shared-transport fan-out (#257): every additional consumer receives
+    // the same decrypted message through the SAME socket — one connection
+    // and one unwrap per relay URL, every consumer served.
+    for(const listener of this._onMessageListeners) {
+      try {
+        await listener(msg);
+      } catch(err) {
+        deliveryFailed = true;
+        this.log.error('[NostrRelayPool] message listener threw:', err);
+      }
+    }
+    // Breadcrumb fires only after delivery COMPLETED successfully — the
+    // callbacks contain the IDB/UI work this timing is meant to measure, so
+    // logging at entry would report a falsely-fast number, and logging on a
+    // throw would report "delivered" for a failed delivery (#206 review).
+    // On a throw the breadcrumb stays armed; the next successful delivery
+    // logs the true total, and RESUME_BREADCRUMB_MAX_AGE_MS bounds how long
+    // an undelivered wake can keep it alive.
+    // Only consume the one-shot if the epoch is UNCHANGED since the snapshot:
+    // a re-arm during the await means a newer wake owns the breadcrumb, so
+    // leave it armed for that wake's own first delivery.
+    if(!deliveryFailed && armedAt && this.resumeDeliverAt === armedAt) {
+      this.resumeDeliverAt = 0;
+      const elapsed = Date.now() - armedAt;
+      if(elapsed <= RESUME_BREADCRUMB_MAX_AGE_MS) {
+        this.log('[NostrRelayPool] resume: first message delivered in', elapsed, 'ms');
+      }
     }
 
     if(msg.timestamp > this.lastSeenTimestamp && !this.backfillGapOpen) {
@@ -3503,4 +3702,101 @@ export class NostrRelayPool {
       };
     });
   }
+}
+
+// ─── Shared transport (issue #257) ─────────────────────────────────────────
+//
+// ONE NostrRelayPool per JS context, shared by every consumer (bridge,
+// ChatAPI, group-api, device-sync / mesh signaling). Before this, each
+// consumer constructed its own pool over the full relay list — at least two
+// sockets per relay URL per window, each NostrRelay keeping its OWN reconnect
+// counter and cooldown ladder, so benching a bad relay in one pool did not
+// bench it in the others and the diag log showed interleaved attempt counters
+// for the same URL.
+//
+// The shared pool owns the transport policy — dial-staggered, idle-capable
+// (one app-wide ACTIVE/IDLE rhythm; per-consumer socket policies over the same
+// relays are incoherent by construction) — and loads the identity ONCE.
+// First-acquirer-wins applies to the RELAY SET and the IDENTITY both: options
+// are honoured only at pool creation (the normal boot order is safe because
+// the bridge creates the pool only after onboarding has an identity), so a
+// later acquirer's `relays` / `preloadedIdentity` are ignored.
+// Consumers subscribe via the add/setter callbacks and hold a release handle:
+// the pool is disconnected only when the LAST acquirer releases it.
+
+let _sharedPool: NostrRelayPool | null = null;
+let _sharedPoolAcquirers = 0;
+
+export interface SharedRelayPoolOptions {
+  /**
+   * Relay set. Applied when the acquiring caller CREATES the pool (typically
+   * the bridge, with the canonical /relays.json list); later acquirers share
+   * that set.
+   */
+  relays?: RelayConfig[];
+  /**
+   * Pre-decrypted identity, honoured only at pool creation — the shared pool
+   * decrypts its identity exactly once either way (preloaded skips the PBKDF2
+   * when the acquirer already has the keys).
+   */
+  preloadedIdentity?: { publicKey: string; privateKeyHex: string };
+}
+
+/**
+ * Acquire the shared transport. Every call bumps the refcount; the returned
+ * `release` must be called when the consumer tears down. Releasing is
+ * idempotent, and only the last release disconnects the pool.
+ */
+export function acquireSharedRelayPool(
+  options: SharedRelayPoolOptions = {}
+): { pool: NostrRelayPool; release: () => void } {
+  if(!_sharedPool) {
+    _sharedPool = new NostrRelayPool({
+      relays: [...(options.relays ?? DEFAULT_RELAYS)],
+      // NO primary message handler: real consumers wire addOnMessageListener
+      // (or setOnMessage) and detach on teardown. Messages arriving before the
+      // first consumer attaches are deferred and drained at attach — a no-op
+      // placeholder would burn them through the dedup gate (boot-order
+      // regression, #261 review).
+      dialStaggerMs: RELAY_DIAL_STAGGER_MS,
+      idleTransport: true,
+      ...(options.preloadedIdentity ? {preloadedIdentity: options.preloadedIdentity} : {})
+    });
+  }
+  _sharedPoolAcquirers++;
+  const pool = _sharedPool;
+  let released = false;
+  return {
+    pool,
+    release: () => {
+      if(released) return;
+      released = true;
+      _sharedPoolAcquirers--;
+      if(_sharedPoolAcquirers <= 0 && _sharedPool === pool) {
+        _sharedPool = null;
+        _sharedPoolAcquirers = 0;
+        pool.disconnect();
+      }
+    }
+  };
+}
+
+/**
+ * The current shared pool, if any — diagnostics and tests.
+ */
+export function getSharedRelayPool(): NostrRelayPool | null {
+  return _sharedPool;
+}
+
+/**
+ * TEST-ONLY: drop the shared pool without touching any consumer's release
+ * handles. Mirrors "a fresh JS context" so tests cannot leak transport state
+ * into each other through the module singleton.
+ */
+export function resetSharedRelayPool(): void {
+  if(_sharedPool) {
+    _sharedPool.disconnect();
+  }
+  _sharedPool = null;
+  _sharedPoolAcquirers = 0;
 }
