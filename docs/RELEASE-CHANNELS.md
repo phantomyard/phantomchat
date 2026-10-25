@@ -159,3 +159,6 @@ It never silently rolls Preview back. Archives with missing/corrupt assets or
 unsafe paths/links fail before Pages publication. The original source pin remains
 Electron's independent embedded Stable frontend baseline; changing PWA Stable
 never changes an installed Electron binary.
+
+Default Electron promotion never falls back to an older Preview when the newest
+published desktop release is already Stable; it stops with an explicit message.

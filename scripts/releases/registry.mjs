@@ -18,19 +18,22 @@ function validPwaRecord(record) {
 }
 export function selectRelease(releases, kind, input = '') {
   const eligible = releases.filter(r => {
-    if(kind === 'electron') return !r.draft && r.prerelease && /^phantomchat-v\d+\.\d+\.\d+$/.test(r.tag_name);
+    if(kind === 'electron') return !r.draft && /^phantomchat-v\d+\.\d+\.\d+$/.test(r.tag_name);
     return r.draft && /^pwa-v\d+\.\d+\.\d+(?:-stable-\d+)?$/.test(r.tag_name) &&
       validPwaRecord(r.record) && (kind === 'site' || r.record.operation === 'preview');
   });
   if(input) {
     const found = eligible.find(r => r.tag_name === input);
     if(!found) throw new Error(`No successfully published ${kind} Preview release: ${input}`);
+    if(kind === 'electron' && !found.prerelease) throw new Error(`${found.tag_name} is already Stable; refusing to select an older Preview`);
     return found;
   }
-  return eligible.sort((a, b) => {
+  const selected = eligible.sort((a, b) => {
     const date = r => kind === 'electron' ? r.published_at : r.record.publishedAt;
     return date(b).localeCompare(date(a)) || b.id - a.id;
   })[0];
+  if(kind === 'electron' && selected && !selected.prerelease) throw new Error(`${selected.tag_name} is already Stable; refusing to select an older Preview`);
+  return selected;
 }
 function releases() {
   const rows = gh('api', '--paginate', `repos/${repo()}/releases?per_page=100`,

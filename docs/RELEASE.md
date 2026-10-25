@@ -67,3 +67,6 @@ one concurrency group; Electron operations serialize independently.
 PWA jobs need `pages:write`, `id-token:write` and `contents:write` for private
 archive management. Electron publication/promotion need release write access.
 No repository settings or live deployments are changed by merging the workflows.
+
+Default Electron promotion never falls back to an older Preview when the newest
+published desktop release is already Stable; it stops with an explicit message.

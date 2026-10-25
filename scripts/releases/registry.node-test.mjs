@@ -18,6 +18,9 @@ test('default selection isolates products, excludes drafts/unpublished candidate
   assert.equal(selectRelease(releases, 'pwa', 'pwa-v1.0.21').id, 21);
   assert.throws(() => selectRelease(releases, 'pwa', 'phantomchat-v1.0.24'));
   assert.throws(() => selectRelease(releases, 'pwa', 'pwa-v1.0.23'));
+  releases.push({id: 26, draft: false, prerelease: false, tag_name: 'phantomchat-v1.0.26', published_at: '2026-10-26T12:00:00Z'});
+  assert.throws(() => selectRelease(releases, 'electron'), /already Stable/);
+  assert.equal(selectRelease(releases, 'electron', 'phantomchat-v1.0.24').id, 24);
 });
 test('archive checksum and tar entry safety fail closed', () => {
   const dir = mkdtempSync(join(tmpdir(), 'registry-test-'));
