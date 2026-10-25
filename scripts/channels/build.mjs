@@ -41,7 +41,7 @@ try {
       }
     }
     const bucket = channel === 'stable' ? 'cachedAssets-stable' : 'cachedAssets-preview';
-    patch('src/lib/serviceWorker/cache.ts', "'cachedAssets'", JSON.stringify(bucket));
+    patch('src/lib/serviceWorker/cache.ts', "'cachedAssets'", "'" + bucket + "'");
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'regs.map((r)', "regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')).map((r)");
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'keys.map((k)', `keys.filter(k => k === '${bucket}').map((k)`);
     patch('src/lib/apiManagerProxy.ts', 'registration.active && !navigator.serviceWorker.controller', "registration.active && (!navigator.serviceWorker.controller || new URL(navigator.serviceWorker.controller.scriptURL).pathname.startsWith('/preview/') !== location.pathname.startsWith('/preview/'))");
