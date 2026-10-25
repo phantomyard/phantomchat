@@ -1,5 +1,6 @@
 import {chromium} from 'playwright';
 import express from 'express';
+import {mkdirSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage, openChannelSettings} from './runtime-identity.mjs';
 
@@ -31,10 +32,17 @@ try {
       await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = reject; });
       db.close();
     });
-    page.on('dialog', dialog => dialog.accept());
+    let acceptPreview = false;
+    page.on('dialog', dialog => acceptPreview ? dialog.accept() : dialog.dismiss());
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     await openChannelSettings(page);
-    await page.getByRole('combobox', {name: 'Release channel'}).selectOption('preview');
+    assert.equal(await page.getByRole('combobox').count(), 0);
+    await page.getByRole('radio', {name: 'Preview', exact: true}).locator('../..').click();
+    assert.equal(new URL(page.url()).pathname, '/');
+    assert.equal(await page.getByRole('radio', {name: 'Stable', exact: true}).isChecked(), true);
+    acceptPreview = true;
+    await page.getByRole('radio', {name: 'Stable', exact: true}).focus();
+    await page.keyboard.press('ArrowDown');
     await page.waitForURL(url => url.pathname === '/preview/index.html' && url.searchParams.get('channel') === 'preview');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL.includes('/preview/'));
@@ -43,23 +51,32 @@ try {
     await identityFingerprint(page, identity);
     await assertOfflineMessage(page, 'channel-fixture-stable', 101);
     await writeOfflineMessage(page, 'channel-fixture-preview', 102);
+    assert.ok(['#456783', '#8aacc8'].includes(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase())), 'Preview must render quiet stock accents on an existing Stable profile');
     assert.equal(await page.locator('#manifest').getAttribute('href'), '/site.webmanifest');
     assert.equal(await page.evaluate(() => localStorage.getItem('channel-smoke-existing-setting')), 'keep');
     await page.reload();
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     await openChannelSettings(page);
-    assert.equal(await page.getByRole('combobox', {name: 'Release channel'}).inputValue(), 'preview');
+    assert.equal(await page.getByRole('radio', {name: 'Preview', exact: true}).isChecked(), true);
+    for(const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({colorScheme});
+      await page.waitForTimeout(350);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      mkdirSync('.channel-build/screenshots', {recursive: true});
+      await page.screenshot({path: `.channel-build/screenshots/updates-${viewport.width}-${colorScheme}.png`});
+    }
     await page.goto(origin + '/');
     await page.waitForURL('**/preview/index.html');
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     await openChannelSettings(page);
-    await page.getByRole('combobox', {name: 'Release channel'}).selectOption('stable');
+    await page.getByRole('radio', {name: 'Stable', exact: true}).locator('../..').click();
     await page.waitForURL(url => url.pathname === '/index.html' && url.searchParams.get('channel') === 'stable');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     assert.equal(new URL(page.url()).searchParams.get('account'), '1');
     await identityFingerprint(page, identity);
     await assertOfflineMessage(page, 'channel-fixture-stable', 101);
     await assertOfflineMessage(page, 'channel-fixture-preview', 102);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase()), '#3080ff', 'Stable must retain its original saved stock palette');
     const stored = await page.evaluate(async() => {
       const request = indexedDB.open('channel-smoke-existing-data', 1);
       const db = await new Promise(resolve => { request.onsuccess = () => resolve(request.result); });

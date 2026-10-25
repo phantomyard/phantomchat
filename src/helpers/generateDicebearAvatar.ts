@@ -8,72 +8,60 @@ interface BgGradient {
 }
 
 const bgGradients: BgGradient[] = [
-  // 1. Electric Cyans / Neon Aqua
-  {start: '#032030', end: '#00f2fe', cloak: '#094a6b', stroke: '#38bdf888'},
-  {start: '#02293a', end: '#06b6d4', cloak: '#08536f', stroke: '#22d3ee88'},
-  {start: '#042232', end: '#38bdf8', cloak: '#0c4764', stroke: '#7dd3fc88'},
+  {start: '#31434e', end: '#56878a', cloak: '#3d5561', stroke: '#789bab66'},
+  {start: '#324750', end: '#50787f', cloak: '#3d5862', stroke: '#78a4ab66'},
+  {start: '#31444f', end: '#5f8798', cloak: '#3c5460', stroke: '#789aab66'},
 
-  // 2. Acid Lime / Neon Green
-  {start: '#152b02', end: '#a3e635', cloak: '#38600a', stroke: '#bef26488'},
-  {start: '#122602', end: '#84cc16', cloak: '#2f5509', stroke: '#a3e63588'},
-  {start: '#1c2e03', end: '#ccff00', cloak: '#42680a', stroke: '#d9f99d88'},
-  {start: '#0f2908', end: '#4ade80', cloak: '#245f1b', stroke: '#86efac88'},
+  {start: '#3d4c30', end: '#7e925c', cloak: '#4e5e3b', stroke: '#98ab7866'},
+  {start: '#3b4b2f', end: '#6e8151', cloak: '#4a5a39', stroke: '#97ab7866'},
+  {start: '#414d30', end: '#808a56', cloak: '#52603c', stroke: '#99ab7866'},
+  {start: '#364d30', end: '#5e9672', cloak: '#43633e', stroke: '#78ab8a66'},
 
-  // 3. Vivid Emerald / Mint
-  {start: '#022b1c', end: '#10b981', cloak: '#0a5c40', stroke: '#34d39988'},
-  {start: '#032a22', end: '#14b8a6', cloak: '#0c5c4e', stroke: '#2dd4bf88'},
-  {start: '#022617', end: '#059669', cloak: '#075239', stroke: '#10b98188'},
+  {start: '#304c42', end: '#4c7a6b', cloak: '#3a5d51', stroke: '#78ab9866'},
+  {start: '#304c46', end: '#4d7b76', cloak: '#3a5d57', stroke: '#78aba466'},
+  {start: '#2f4b3f', end: '#446c60', cloak: '#38594e', stroke: '#78ab9a66'},
 
-  // 4. Bright Gold / Sun Yellow
-  {start: '#2b2302', end: '#facc15', cloak: '#634f09', stroke: '#fef08a88'},
-  {start: '#2a1f02', end: '#eab308', cloak: '#5e4308', stroke: '#fde04788'},
-  {start: '#2e2603', end: '#ffd700', cloak: '#6b570a', stroke: '#fef08a88'},
+  {start: '#4c4630', end: '#8f8459', cloak: '#5f573b', stroke: '#aba47866'},
+  {start: '#4c442f', end: '#867a54', cloak: '#5d523a', stroke: '#aba37866'},
+  {start: '#4d4830', end: '#8a8256', cloak: '#615a3d', stroke: '#aba47866'},
 
-  // 5. Amber / Honey
-  {start: '#2e1903', end: '#f59e0b', cloak: '#693709', stroke: '#fbbf2488'},
-  {start: '#2b1702', end: '#fbbf24', cloak: '#613207', stroke: '#fde68a88'},
-  {start: '#2c1504', end: '#d97706', cloak: '#5f2d0a', stroke: '#f59e0b88'},
+  {start: '#4d3f30', end: '#8a7757', cloak: '#604e3c', stroke: '#ab9c7866'},
+  {start: '#4c3e30', end: '#93845c', cloak: '#5d4b3a', stroke: '#aba07866'},
+  {start: '#4d3c30', end: '#816a50', cloak: '#5e493b', stroke: '#ab987866'},
 
-  // 6. Tangerine / Vibrant Orange
-  {start: '#331202', end: '#ff7700', cloak: '#6e2b07', stroke: '#fdba7488'},
-  {start: '#301003', end: '#f97316', cloak: '#6b250a', stroke: '#fb923c88'},
-  {start: '#320e02', end: '#ea580c', cloak: '#692008', stroke: '#f9731688'},
+  {start: '#4e3b31', end: '#8a6e56', cloak: '#614a3d', stroke: '#ab927866'},
+  {start: '#4e3931', end: '#8f6f59', cloak: '#61473d', stroke: '#ab8f7866'},
+  {start: '#4e3831', end: '#876655', cloak: '#60453c', stroke: '#ab8d7866'},
 
-  // 7. Coral / Watermelon
-  {start: '#340f0c', end: '#ff5757', cloak: '#6d2621', stroke: '#fca5a588'},
-  {start: '#320d09', end: '#ff6b4a', cloak: '#6e231b', stroke: '#ff8a7088'},
-  {start: '#330c14', end: '#f43f5e', cloak: '#6e1d2e', stroke: '#fda4af88'},
+  {start: '#523533', end: '#a16969', cloak: '#694442', stroke: '#ab787866'},
+  {start: '#503532', end: '#9f7065', cloak: '#674441', stroke: '#ab817866'},
+  {start: '#513339', end: '#99606a', cloak: '#684149', stroke: '#ab787e66'},
 
-  // 8. Ferrari Red / Crimson / Ruby
-  {start: '#330505', end: '#ef4444', cloak: '#6b1111', stroke: '#f8717188'},
-  {start: '#300404', end: '#dc2626', cloak: '#630e0e', stroke: '#ef444488'},
-  {start: '#350611', end: '#e11d48', cloak: '#6d1326', stroke: '#fb718588'},
+  {start: '#4f3232', end: '#996060', cloak: '#633e3e', stroke: '#ab787866'},
+  {start: '#4e3131', end: '#8b5757', cloak: '#603c3c', stroke: '#ab787866'},
+  {start: '#503239', end: '#8a5662', cloak: '#653f47', stroke: '#ab787f66'},
 
-  // 9. Hot Pink / Neon Rose
-  {start: '#330524', end: '#ff2a85', cloak: '#6b144e', stroke: '#f472b688'},
-  {start: '#2f0525', end: '#ec4899', cloak: '#641351', stroke: '#f472b688'},
-  {start: '#2d0430', end: '#d946ef', cloak: '#5e1363', stroke: '#e879f988'},
+  {start: '#4f3246', end: '#965e76', cloak: '#643f58', stroke: '#ab789366'},
+  {start: '#4e3147', end: '#9a607d', cloak: '#623d59', stroke: '#ab789366'},
+  {start: '#4c314e', end: '#92609a', cloak: '#5f3d62', stroke: '#a478ab66'},
 
-  // 10. Royal Blue / Electric Cobalt
-  {start: '#05183b', end: '#2563eb', cloak: '#10367a', stroke: '#60a5fa88'},
-  {start: '#071f45', end: '#3b82f6', cloak: '#13408a', stroke: '#93c5fd88'},
-  {start: '#051230', end: '#1d4ed8', cloak: '#0f2c6e', stroke: '#3b82f688'},
-  {start: '#06263e', end: '#0ea5e9', cloak: '#114a72', stroke: '#38bdf888'},
+  {start: '#333e52', end: '#5a6a8f', cloak: '#414f67', stroke: '#788fab66'},
+  {start: '#354255', end: '#607599', cloak: '#44546d', stroke: '#7890ab66'},
+  {start: '#313a4e', end: '#556287', cloak: '#3e4a64', stroke: '#788bab66'},
+  {start: '#344653', end: '#557888', cloak: '#3f5665', stroke: '#789bab66'},
 
-  // 11. Cyber Violet
-  {start: '#1f0738', end: '#9333ea', cloak: '#47187c', stroke: '#c084fc88'},
-  {start: '#1a0736', end: '#8b5cf6', cloak: '#3d1678', stroke: '#a78bfa88'},
+  {start: '#423351', end: '#795c93', cloak: '#55436a', stroke: '#9178ab66'},
+  {start: '#3f3351', end: '#7968a0', cloak: '#514269', stroke: '#8578ab66'},
 
-  // 12. Cyber Steel / Teal
-  {start: '#022423', end: '#00f5d4', cloak: '#0a4f4d', stroke: '#5eead488'},
-  {start: '#131926', end: '#94a3b8', cloak: '#303b4f', stroke: '#cbd5e188'}
+  {start: '#2e4a49', end: '#558780', cloak: '#385958', stroke: '#78aba366'},
+  {start: '#323b50', end: '#6a7e9c', cloak: '#3f4c64', stroke: '#788fab66'}
 ];
 
 const eyePalettes = [
-  '#00f0ff', '#10b981', '#fbbf24', '#f43f5e',
-  '#38bdf8', '#a3e635', '#d946ef', '#ff7849',
-  '#fde047', '#ff2a6d', '#05ffa1', '#b388ff',
-  '#ff9100', '#00e5ff', '#76ff03', '#ffffff'
+  '#56878a', '#4c7a6b', '#93845c', '#99606a',
+  '#5f8798', '#7e925c', '#92609a', '#9f7465',
+  '#9e9564', '#965e70', '#578b78', '#8a78aa',
+  '#8a7456', '#56858a', '#6f8b57', '#adadad'
 ];
 
 function hashString(str: string): number[] {
@@ -155,7 +143,7 @@ export function generatePhantomAvatarSvg(seed: string): string {
       <stop offset="100%" stop-color="${bg.end}"/>
     </linearGradient>
     <filter id="glow-${id}" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feGaussianBlur stdDeviation="0.7" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -208,14 +196,14 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
       <stop offset="100%" stop-color="${bg.end}"/>
     </linearGradient>
     <filter id="glow-${id}" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feGaussianBlur stdDeviation="0.7" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
     <filter id="glow-w-${id}" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feGaussianBlur stdDeviation="0.6" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>

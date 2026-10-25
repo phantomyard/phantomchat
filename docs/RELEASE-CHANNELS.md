@@ -63,11 +63,12 @@ Direct builder execution must use `pnpm build`. Without APP_VERSION, local Previ
 is explicitly labelled with the pinned version plus `-preview-local`. Release and
 CI builds supply the candidate version.
 
-The selector is intentionally available to end users inside Settings (no floating
-control over messaging): volunteers opt into Preview
+The selector is intentionally available to end users inside Settings → Updates (no floating
+control over messaging), using the same Row/RadioField/RadioForm components as
+the Electron updater: volunteers opt into Preview
 on their existing identity. The Stable SHA pins the frontend only; both frontend
 channels run inside the candidate Electron shell, controlled by the existing
-independent desktop binary update ring. Native shell changes require compatibility
+independent desktop binary update ring, available through Updates → Desktop updates. Native shell changes require compatibility
 review and native tests, but do not create a second pinned Electron executable.
 Stable SHA/version must resolve to the same `phantomchat-v<version>` release tag.
 
@@ -82,3 +83,17 @@ The runtime smokes now create a disposable identity through the real UI, decrypt
 its real IndexedDB record with its non-exportable browser key after both switches,
 and verify actual ChatAPI offline sends persisted by each channel remain readable
 after returning to Stable. They do not claim relay delivery or bilateral messaging.
+
+The shared application Updates tab is copied from the candidate into both build
+trees, and the builder redirects the existing Updates row to it on web and desktop.
+This deliberately updates channel navigation on pinned Stable without promoting
+Preview app styling. The shell exposes routing only; it no longer injects a select
+control into the main Settings page. Cosmetic compatibility entries cover only
+colours/wallpapers, generated avatar palettes and filled-control contrast; no
+schema, state version or stored-row format changes are approved by those entries.
+
+Existing saved stock themes are rendered through a presentation-only palette
+substitution in Preview. Custom accents, outgoing colours and wallpapers are
+preserved; no saved preferences are rewritten. Returning to Stable restores its
+original stock palette. The browser/native round trips assert both appearances
+on the same identity, in addition to encrypted-key and message durability.

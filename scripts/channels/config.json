@@ -3,7 +3,8 @@
   "compatibilityApprovals": {
     "public/channel-switcher.js": {
       "stable": "absent",
-      "preview": "3af7f7795b2091e0006388ab257523118461fd497c3d467d12f20be5c8948115"
+      "preview": "73edaf28910b166c177f12a1f4971d23d8e27fda57b055ffe181226164836406",
+      "reason": "Routing-only shell API for the shared native-component Updates tab; same preference key, confirmation and navigation semantics. Requires independent content review."
     },
     "electron/build.mjs": {
       "stable": "0b66d8d2260d03eda5c9249f4aa4024678ab2c8e1f100bea55bf2f430575337f",
@@ -14,6 +15,36 @@
       "stable": "9b30105371285cf7ff0a8d34beca655dc9f2d20fec353826c969f17699448752",
       "preview": "d34fb62184fa6cae05d2a4c1064d6bc30cb35f215e3839b918781dd0ddaedae2",
       "reason": "Build/check commands only; dependency declarations and stored formats unchanged."
+    },
+    "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
+      "stable": "absent",
+      "preview": "4f715b54e56912e7df4e04cabee45e7a71f790f3fe27e45bc2097c3426b3d091",
+      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. No database access; delegates routing to the shell. Copied to pinned Stable by the builder. Independent desktop installer ring remains accessible."
+    },
+    "index.html": {
+      "stable": "918e4efad6f7c9d06b84759a06d0760bf4a8a8eb1df6c527508d669d69788a52",
+      "preview": "237f53e19ed58d9df6e319a140d03dbcbaabca0825e339f62e36762d86fcc514",
+      "reason": "Cosmetic splash/theme colours only; manifest, origin and storage unchanged."
+    },
+    "src/config/state.ts": {
+      "stable": "153d04ba78a391bf2e1053404a245bfca2e80fbd29a67f6c37263aa3a19526c3",
+      "preview": "b2532b5e77f1bf158996efc57184f773e9494df6ff4a93808dc2a1010cb4be5d",
+      "reason": "Default theme palette values only, sourced from render-only palette helper; no state shape, schema, keys or migration changes."
+    },
+    "src/helpers/generateDicebearAvatar.ts": {
+      "stable": "a0313477f28d25311948e1ea0a952f579d61c6f80c2f86ef4b78250527445e7b",
+      "preview": "3b187ade0f0f344164d2c6a4b05267baec955980bccec1ca80da0726d5a759f3",
+      "reason": "Only generated avatar colour palettes and glow styling change; input identity and avatar generation contract unchanged."
+    },
+    "src/helpers/themeController.ts": {
+      "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
+      "preview": "71ef1ea6eec0d6ea9bd9461d7e8021a13330c118064039255abfcf2b73b545bc",
+      "reason": "Theme tokens/filled-control contrast plus render-only stock-default substitution through getThemeSettings. Existing shared theme preferences are never rewritten; custom accents and wallpapers are preserved."
+    },
+    "src/helpers/understatedTheme.ts": {
+      "stable": "absent",
+      "preview": "3d435680f5a26ffb5413640ab5e100a05e50a4aebee8455b9e2002b3e8c394d6",
+      "reason": "Presentation-only stock-default recognition and palette remapping; copies settings for rendering, never persists or mutates input. Shared palette constants feed new defaults. Unit and existing-profile cross-channel checks required."
     }
   },
   "stableVersion": "1.0.335"

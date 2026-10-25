@@ -4,6 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
+import {renderUnderstatedDefaults} from '@helpers/understatedTheme';
 import type {AppTheme} from '@config/state';
 import type {Theme} from '@layer';
 import type AppBackgroundTab from '@components/sidebarLeft/tabs/background';
@@ -88,27 +89,27 @@ const colorMap: {
 } = {
   day: {
     // 'background-color': '#f4f4f5',
-    'primary-color': '#3080FF',
-    'message-out-primary-color': '#5CA853',
+    'primary-color': '#456783',
+    'message-out-primary-color': '#456783',
     'message-background-color': '#ffffff',
     'surface-color': '#ffffff',
     'danger-color': '#df3f40',
-    'primary-text-color': '#000000',
-    'secondary-text-color': '#707579',
-    'saved-color': '#359AD4',
-    'green-color': '#70b768'
+    'primary-text-color': '#202b36',
+    'secondary-text-color': '#626f7c',
+    'saved-color': '#456783',
+    'green-color': '#38784f'
   },
   night: {
     // 'background-color': '#181818',
-    'primary-color': '#3080FF',
-    'message-out-primary-color': '#3080FF',
-    'message-background-color': '#1C1E27',
-    'surface-color': '#1C1E27',
+    'primary-color': '#8aacc8',
+    'message-out-primary-color': '#8aacc8',
+    'message-background-color': '#202832',
+    'surface-color': '#202832',
     'danger-color': '#ff595a',
-    'primary-text-color': '#ffffff',
-    'secondary-text-color': '#aaaaaa',
-    'saved-color': '#3080FF',
-    'green-color': '#5CC85E'
+    'primary-text-color': '#e6edf3',
+    'secondary-text-color': '#a5b1bd',
+    'saved-color': '#8aacc8',
+    'green-color': '#83bc98'
   }
 };
 
@@ -142,7 +143,7 @@ export class ThemeController {
 
   public setThemeColor(color = this.themeColor) {
     if(!color) {
-      color = this.isNight() ? '#14161D' : '#ffffff';
+      color = this.isNight() ? '#171e26' : '#ffffff';
     }
 
     applyThemeColorToMeta(document.head, color);
@@ -375,7 +376,15 @@ export class ThemeController {
       l: hsla.l - darkenAlpha * 100
     };
 
+    // Choose the readable foreground for filled accent controls, including custom themes.
+    const linearRgb = rgb.map((channel) => {
+      const value = channel / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    const luminance = linearRgb[0] * 0.2126 + linearRgb[1] * 0.7152 + linearRgb[2] * 0.0722;
+
     const properties: [string, string][] = [
+      name === 'primary-color' && ['accent-fill-text-color', luminance > 0.179 ? '#000000' : '#ffffff'],
       [name, hex],
       appColor.rgb && [name + '-rgb', rgb.join(',')],
       appColor.light && ['light-' + name, `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${lightenAlpha})`],
@@ -425,7 +434,7 @@ export class ThemeController {
     const themeSettings = Array.isArray(theme.settings) ?
       theme.settings.find((settings) => settings.base_theme._ === (isNight ? 'baseThemeNight' : 'baseThemeClassic')) :
       theme.settings;
-    return themeSettings;
+    return renderUnderstatedDefaults(themeSettings, theme.id);
   }
 
   public applyTheme(theme: Theme | AppTheme, element = document.documentElement, saveToCache?: boolean) {

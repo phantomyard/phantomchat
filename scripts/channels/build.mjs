@@ -49,7 +49,12 @@ try {
         writeFileSync(target, text.replaceAll('k_build', 'k_build_preview'));
       }
     }
-    patch('src/components/sidebarLeft/tabs/settings.ts', "this.container.classList.add('settings-container');", "this.container.classList.add('settings-container');\n    window.dispatchEvent(new CustomEvent('phantomchat-channel-settings', {detail: this.scrollable}));");
+    // Share the channel UI with pinned Stable without promoting its app code.
+    const updatesTab = 'src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts';
+    writeFileSync(join(tree, updatesTab), execFileSync('git', ['show', `${candidate}:${updatesTab}`]));
+    patch('src/components/sidebarLeft/tabs/settings.ts', "import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';", '');
+    patch('src/components/sidebarLeft/tabs/settings.ts', 'if(hasDesktopUpdateApi()) {', 'if(window.phantomchatChannels) {');
+    patch('src/components/sidebarLeft/tabs/settings.ts', "await import('@components/sidebarLeft/tabs/phantomchatDesktopUpdates')", "await import('@components/sidebarLeft/tabs/phantomchatApplicationUpdates')");
     const bucket = channel === 'stable' ? 'cachedAssets-stable' : 'cachedAssets-preview';
     patch('src/lib/serviceWorker/cache.ts', "'cachedAssets'", "'" + bucket + "'");
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'regs.map((r)', "regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')).map((r)");
