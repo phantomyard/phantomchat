@@ -206,8 +206,8 @@ export const DEFAULT_THEME: Theme = {
     _: 'themeSettings',
     pFlags: {},
     base_theme: {_: 'baseThemeClassic'},
-    accent_color: 0x3080FF,
-    message_colors: [0x5CA853],
+    accent_color: 0x456783,
+    message_colors: [0x456783],
     wallpaper: {
       _: 'wallPaper',
       pFlags: {
@@ -221,19 +221,19 @@ export const DEFAULT_THEME: Theme = {
       settings: {
         _: 'wallPaperSettings',
         pFlags: {},
-        intensity: 50,
-        background_color: 0xdbddbb,
-        second_background_color: 0x6ba587,
-        third_background_color: 0xd5d88d,
-        fourth_background_color: 0x88b884
+        intensity: 12,
+        background_color: 0xe7edf2,
+        second_background_color: 0xdfe7ee,
+        third_background_color: 0xecf0f4,
+        fourth_background_color: 0xd8e2ea
       }
     }
   }, {
     _: 'themeSettings',
     pFlags: {},
     base_theme: {_: 'baseThemeNight'},
-    accent_color: 0x3080FF,
-    message_colors: [0x3080FF],
+    accent_color: 0x8aacc8,
+    message_colors: [0x344b60],
     wallpaper: {
       _: 'wallPaper',
       pFlags: {
@@ -248,11 +248,11 @@ export const DEFAULT_THEME: Theme = {
       settings: {
         _: 'wallPaperSettings',
         pFlags: {},
-        intensity: -50,
-        background_color: 0xfec496,
-        second_background_color: 0xdd6cb9,
-        third_background_color: 0x962fbf,
-        fourth_background_color: 0x4f5bd5
+        intensity: -12,
+        background_color: 0x171e26,
+        second_background_color: 0x202b36,
+        third_background_color: 0x1c2530,
+        fourth_background_color: 0x263340
       }
     }
   }],

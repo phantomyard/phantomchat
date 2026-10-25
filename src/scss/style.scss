@@ -125,7 +125,7 @@
   --popup-sticker-size: 80px;
   --disabled-opacity: .3;
   --round-video-size: 280px;
-  --menu-box-shadow: 0px 0px 10px var(--menu-box-shadow-color);
+  --menu-box-shadow: 0 8px 28px var(--menu-box-shadow-color);
   --menu-backdrop-filter: blur(50px);
   --font-regular: "Roboto", -apple-system, apple color emoji, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
   --font-monospace: 'Roboto Mono', monospace;
@@ -135,6 +135,8 @@
   --selection-background-color: rgba(var(--primary-color-rgb), .4);
   --selection-color: inherit;
   --white: #ffffff;
+  --accent-fill-text-color: #fff;
+  --chatlist-active-fill-color: var(--primary-color);
 
   --ripple-duration: .7s;
   --ripple-start-scale: 0;
@@ -163,13 +165,13 @@
   --chat-input-btn-send-margin: #{$btn-send-margin};
 
   // https://github.com/overtake/TelegramSwift/blob/5cc7d2475fe4738a6aa0486c23eaf80a89d33b97/submodules/TGUIKit/TGUIKit/PresentationTheme.swift#L2054
-  @include avatar-color("red", #FF845E, #D45246);
-  @include avatar-color("orange", #FEBB5B, #F68136);
-  @include avatar-color("violet", #B694F9, #6C61DF);
-  @include avatar-color("green", #9AD164, #46BA43);
-  @include avatar-color("cyan", #53edd6, #28c9b7);
-  @include avatar-color("blue", #5CAFFA, #408ACF);
-  @include avatar-color("pink", #FF8AAC, #D95574);
+  @include avatar-color("red", #a87770, #8e625d);
+  @include avatar-color("orange", #a88c68, #8b7153);
+  @include avatar-color("violet", #8d81a5, #72688c);
+  @include avatar-color("green", #7d9678, #637e60);
+  @include avatar-color("cyan", #729b96, #587f7b);
+  @include avatar-color("blue", #7895af, #5c7893);
+  @include avatar-color("pink", #ab8293, #8e697a);
   // @include avatar-color("saved", #69BFFA, #3D9DE0);
   @include avatar-color("archive", #B8C2CC, #9EAAB5);
 
@@ -257,16 +259,16 @@
   // * Day theme
   --body-background-color: #fff;
   --body-background-color-rgb: 255, 255, 255;
-  --background-color-true: #f4f4f5;
+  --background-color-true: #f1f4f7;
   // --background-color: #fff;
   --background-color: var(--background-color-true);
-  --border-color: #dfe1e5;
+  --border-color: #dce2e8;
   --scrollbar-color: rgba(0, 0, 0, .2);
   --section-box-shadow-color: rgba(0, 0, 0, .06);
-  --menu-box-shadow-color: rgba(0, 0, 0, .15);
+  --menu-box-shadow-color: rgba(23, 30, 38, .12);
 
   --input-search-background-color: #fff;
-  --input-search-border-color: #dfe1e5;
+  --input-search-border-color: #dce2e8;
 
   --secondary-color: #c4c9cc;
   --warning-color: #fed85a;
@@ -280,7 +282,7 @@
   --chatlist-status-color: var(--avatar-online-color);
   --chatlist-pinned-color: #a2abb2;
   --badge-text-color: #fff;
-  --link-color: #00488f;
+  --link-color: var(--primary-color);
   --ripple-color: rgba(0, 0, 0, #{$hover-alpha});
   --skeleton-color: rgba(0, 0, 0, .12);
   --poll-circle-color: var(--border-color);
@@ -319,17 +321,19 @@
 .night {
 //:root {
   // * Night theme
-  --body-background-color: #14161D;
-  --body-background-color-rgb: 20, 22, 29;
-  --background-color-true: #14161D;
+  --accent-fill-text-color: #000000;
+  --chatlist-active-fill-color: #456783;
+  --body-background-color: #171e26;
+  --body-background-color-rgb: 23, 30, 38;
+  --background-color-true: #171e26;
   // --background-color: #212121;
   --background-color: var(--background-color-true);
-  --border-color: #0c0d12;
+  --border-color: #35414d;
   --scrollbar-color: rgba(255, 255, 255, .2);
   --section-box-shadow-color: rgba(0, 0, 0, .12);
 
-  --input-search-background-color: #181818;
-  --input-search-border-color: #2f2f2f;
+  --input-search-background-color: #202832;
+  --input-search-border-color: #3b4855;
 
   --secondary-color: #707579;
 
