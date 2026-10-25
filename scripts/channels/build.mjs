@@ -49,6 +49,7 @@ try {
         writeFileSync(target, text.replaceAll('k_build', 'k_build_preview'));
       }
     }
+    patch('src/components/sidebarLeft/tabs/settings.ts', "this.container.classList.add('settings-container');", "this.container.classList.add('settings-container');\n    window.dispatchEvent(new CustomEvent('phantomchat-channel-settings', {detail: this.scrollable}));");
     const bucket = channel === 'stable' ? 'cachedAssets-stable' : 'cachedAssets-preview';
     patch('src/lib/serviceWorker/cache.ts', "'cachedAssets'", "'" + bucket + "'");
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'regs.map((r)', "regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')).map((r)");

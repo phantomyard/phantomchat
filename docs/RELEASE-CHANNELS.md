@@ -63,7 +63,8 @@ Direct builder execution must use `pnpm build`. Without APP_VERSION, local Previ
 is explicitly labelled with the pinned version plus `-preview-local`. Release and
 CI builds supply the candidate version.
 
-The selector is intentionally available to end users: volunteers opt into Preview
+The selector is intentionally available to end users inside Settings (no floating
+control over messaging): volunteers opt into Preview
 on their existing identity. The Stable SHA pins the frontend only; both frontend
 channels run inside the candidate Electron shell, controlled by the existing
 independent desktop binary update ring. Native shell changes require compatibility

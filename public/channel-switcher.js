@@ -21,11 +21,11 @@
       if(manifest.getAttribute('href') !== canonical) manifest.href = canonical;
     }).observe(manifest, {attributes: true, attributeFilter: ['href']});
   }
-  addEventListener('DOMContentLoaded', () => {
+  addEventListener('phantomchat-channel-settings', event => {
     const select = document.createElement('select');
     select.setAttribute('aria-label', 'Release channel');
     select.title = 'Stable / Preview — both share your identity and local data';
-    select.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:100000;max-width:160px;padding:6px;border:1px solid #78818c;border-radius:6px;background:#24282e;color:#eee;font:12px system-ui';
+    select.style.cssText = 'max-width:160px;padding:6px;border:1px solid #78818c;border-radius:6px;background:var(--surface-color,#24282e);color:var(--primary-text-color,#eee);font:14px system-ui';
     for(const [value, label] of [['stable', 'Stable'], ['preview', 'Preview']]) {
       const option = document.createElement('option');
       option.value = value;
@@ -46,6 +46,11 @@
       target.hash = location.hash;
       location.assign(target.href);
     };
-    document.body.append(select);
+    const label = document.createElement('label');
+    label.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px';
+    const title = document.createElement('span');
+    title.textContent = 'Application channel';
+    label.append(title, select);
+    event.detail.append(label);
   });
 })();

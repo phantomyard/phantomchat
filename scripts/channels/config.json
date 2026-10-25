@@ -3,7 +3,7 @@
   "compatibilityApprovals": {
     "public/channel-switcher.js": {
       "stable": "absent",
-      "preview": "3aca7cb5d4db891c9f299a81dd17d0bfe1e7290cd1aa8cb61569bb34fe0a351d"
+      "preview": "3af7f7795b2091e0006388ab257523118461fd497c3d467d12f20be5c8948115"
     },
     "electron/build.mjs": {
       "stable": "0b66d8d2260d03eda5c9249f4aa4024678ab2c8e1f100bea55bf2f430575337f",

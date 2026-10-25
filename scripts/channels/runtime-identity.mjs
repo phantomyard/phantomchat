@@ -8,7 +8,7 @@ export async function createDisposableIdentity(page) {
 }
 
 export async function identityFingerprint(page, expected) {
-  await page.locator('#new-menu').waitFor({state: 'visible', timeout: 60000});
+  await page.waitForFunction(() => !!window.__phantomchatChatAPI, {timeout: 60000});
   const actual = await page.evaluate(async() => {
     const request = indexedDB.open('PhantomChat.chat');
     const db = await new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
@@ -53,4 +53,10 @@ export async function assertOfflineMessage(page, id, mid) {
       return row?.content === id && row.mid === mid && row.twebPeerId === 1000000000000001;
     } finally { db.close(); }
   }, {id, mid}, {timeout: 30000});
+}
+
+export async function openChannelSettings(page) {
+  await page.locator('.sidebar-tools-button').first().click();
+  await page.locator('.btn-menu-item').filter({hasText: 'Settings'}).first().click();
+  await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
 }
