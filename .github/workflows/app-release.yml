@@ -1,6 +1,6 @@
 name: Electron — build and publish Preview
 
-# Manual only. Select any branch in Run workflow. Independent of PWA releases.
+# Manual only, main branch only. Independent of PWA releases.
 on:
   workflow_dispatch:
 
@@ -14,6 +14,7 @@ permissions:
 
 jobs:
   linux:
+    if: github.ref == 'refs/heads/main'
     outputs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
@@ -124,6 +125,7 @@ jobs:
           if-no-files-found: error
 
   macos-package:
+    if: github.ref == 'refs/heads/main'
     needs: linux
     strategy:
       fail-fast: false
@@ -214,6 +216,7 @@ jobs:
           if-no-files-found: error
 
   macos-notarize:
+    if: github.ref == 'refs/heads/main'
     needs: [linux, macos-package]
     strategy:
       fail-fast: false
@@ -341,6 +344,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: github.ref == 'refs/heads/main'
     needs: linux
     strategy:
       fail-fast: false
@@ -419,6 +423,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: [linux, macos-notarize, windows]
     runs-on: ubuntu-latest
     steps:

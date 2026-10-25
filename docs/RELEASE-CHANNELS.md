@@ -102,7 +102,7 @@ on the same identity, in addition to encrypted-key and message durability.
 
 Pushes and merges trigger no builds or publication. Pull requests run typechecks,
 unit tests and archive/promotion regression tests only. Four Actions buttons own
-publication; use Run workflow's branch picker to select any reviewed branch:
+publication. PWA Preview accepts any reviewed branch; Electron Preview requires main:
 
 - `deploy.yml`: **PWA — build and publish Preview**. Builds the candidate and a
   separate promotion-ready candidate with Stable's asset-cache/build-marker
@@ -114,22 +114,25 @@ publication; use Run workflow's branch picker to select any reviewed branch:
   Downloads and verifies the archive and publishes the prebuilt Stable variant;
   it never recompiles application code. Current Preview bytes are preserved.
 - `app-release.yml`: **Electron — build and publish Preview**. Builds, verifies,
-  signs/notarizes and publishes installers using the selected branch commit.
+  signs/notarizes and publishes installers using the dispatched main commit.
+  Every job requires `refs/heads/main`; dispatching another branch skips all jobs,
+  including signing and publication.
   Desktop versions are independently `1.1.<Electron workflow run_number>`;
   the minor bump prevents downgrade from the previous shared PWA counter.
   The candidate embedded frontend shares the binary version. No PWA workflow
   run is needed. Existing native packaging/signature/feed verification remains.
 - `app-promote.yml`: **Electron — promote to Stable**. Optional `tag` selects a
   desktop Preview release. Empty selects the newest published, non-draft
-  `phantomchat-v*` Preview across all branches. Existing checksum/artifact gates
+  `phantomchat-v*` Preview. Existing checksum/artifact gates
   run before the same release becomes stable/latest; no rebuild or signing.
 
 Each build button always builds **and publishes to Preview**. Promotion is a
 separate explicit action. Merely merging this change does not dispatch anything.
 The workflow files must exist on the default branch before GitHub offers their
 manual buttons; the chosen branch must also contain the workflow implementation.
-Only dispatch trusted, reviewed branches: release jobs have publication/signing
-credentials and intentionally execute the selected branch's code.
+Only dispatch trusted, reviewed branches for PWA publication: these jobs execute
+the selected branch code with publication credentials. Electron signing and
+publication jobs are restricted to main; this does not restrict PWA Preview.
 
 PWA archives are durable GitHub **draft releases**, with `bundle.tar.gz` and
 `SHA256SUMS.txt`, not expiring Actions artifacts. They remain drafts permanently:
