@@ -1,9 +1,11 @@
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import {resolve} from 'node:path';
 
-export function checkCompatibility(config, candidate = 'HEAD') {
-  const git = (...args) => execFileSync('git', args);
+export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd()) {
+  const git = (...args) => execFileSync('git', args, {cwd});
   const files = git('diff', '--name-only', config.stableRef, candidate, '--', 'src', 'public', 'index.html').toString().trim().split('\n').filter(Boolean);
   const blocked = files.filter(file => {
     if(file.startsWith('src/tests/')) return false;
@@ -20,6 +22,6 @@ export function checkCompatibility(config, candidate = 'HEAD') {
   if(blocked.length) throw new Error(`Shared-state compatibility review required (exact Stable/Preview hashes):\n${blocked.join('\n')}`);
   return files;
 }
-if(process.argv[1]?.endsWith('/check.mjs')) {
+if(process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   checkCompatibility(JSON.parse(readFileSync('scripts/channels/config.json', 'utf8')), process.argv[2] || 'HEAD');
 }

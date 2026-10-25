@@ -34,6 +34,8 @@ try {
     await page.waitForURL('**/preview/index.html?channel=preview');
     await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
+    await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL.includes('/preview/'));
+    assert.equal(await page.evaluate(async() => new URL((await navigator.serviceWorker.ready).scope).pathname), '/preview/');
     assert.equal(await page.locator('#manifest').getAttribute('href'), '/site.webmanifest');
     assert.equal(await page.evaluate(() => localStorage.getItem('channel-smoke-existing-setting')), 'keep');
     await page.reload();
