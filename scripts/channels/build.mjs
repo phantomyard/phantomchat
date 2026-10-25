@@ -7,19 +7,25 @@ import {stateSmoke} from './state-smoke.mjs';
 if(!process.env.npm_execpath) throw new Error('Run this builder with pnpm build (pnpm supplies the package-manager executable).');
 const root = process.cwd();
 const candidate = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim();
-const config = JSON.parse(readFileSync('scripts/channels/config.json', 'utf8'));
+const config = JSON.parse(readFileSync(process.env.CHANNEL_BASELINE || 'scripts/channels/config.json', 'utf8'));
 if(!/^[a-f0-9]{40}$/.test(config.stableRef) || !/^\d+\.\d+\.\d+$/.test(config.stableVersion)) {
   throw new Error('Stable requires an immutable commit SHA and release version');
 }
-const releasedStable = execFileSync('git', ['rev-parse', `phantomchat-v${config.stableVersion}^{commit}`]).toString().trim();
-if(releasedStable !== config.stableRef) throw new Error('Stable SHA must match its phantomchat-v release tag');
+// A deployed PWA baseline is bound to a checksummed archive + authenticated
+// release record. Historical local/Electron pins retain their release-tag check.
+if(!process.env.CHANNEL_BASELINE) {
+  const releasedStable = execFileSync('git', ['rev-parse', `phantomchat-v${config.stableVersion}^{commit}`]).toString().trim();
+  if(releasedStable !== config.stableRef) throw new Error('Stable SHA must match its phantomchat-v release tag');
+}
 checkCompatibility(config, candidate);
 const run = (cmd, args, cwd = root, env = {}) => execFileSync(cmd, args, {cwd, stdio: 'inherit', env: {...process.env, ...env}});
 // Scratch is inside this checkout, never a shared /tmp or live profile.
 mkdirSync('.channel-build', {recursive: true});
 const scratch = mkdtempSync(resolve('.channel-build/run-'));
 try {
-  for(const [channel, ref] of [['stable', config.stableRef], ['preview', candidate]]) {
+  const variants = [['stable', config.stableRef], ['preview', candidate]];
+  if(process.env.PWA_RELEASE === '1') variants.push(['promotion', candidate]);
+  for(const [channel, ref] of variants) {
     const tree = join(scratch, channel);
     mkdirSync(tree);
     const archive = join(scratch, `${channel}.tar`);
@@ -55,7 +61,7 @@ try {
     patch('src/components/sidebarLeft/tabs/settings.ts', "import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';", '');
     patch('src/components/sidebarLeft/tabs/settings.ts', 'if(hasDesktopUpdateApi()) {', 'if(window.phantomchatChannels) {');
     patch('src/components/sidebarLeft/tabs/settings.ts', "await import('@components/sidebarLeft/tabs/phantomchatDesktopUpdates')", "await import('@components/sidebarLeft/tabs/phantomchatApplicationUpdates')");
-    const bucket = channel === 'stable' ? 'cachedAssets-stable' : 'cachedAssets-preview';
+    const bucket = channel === 'preview' ? 'cachedAssets-preview' : 'cachedAssets-stable';
     patch('src/lib/serviceWorker/cache.ts', "'cachedAssets'", "'" + bucket + "'");
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'regs.map((r)', "regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')).map((r)");
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'keys.map((k)', `keys.filter(k => k === '${bucket}').map((k)`);
@@ -71,6 +77,10 @@ try {
     writeFileSync(html, readFileSync(html, 'utf8').replace('<head>', '<head>\n<script defer src="/channel-switcher.js"></script>'));
   }
   await stateSmoke(join(scratch, 'stable'), join(scratch, 'preview'));
+  if(process.env.PWA_RELEASE === '1') {
+    rmSync('dist-stable-candidate', {recursive: true, force: true});
+    cpSync(join(scratch, 'promotion/dist'), 'dist-stable-candidate', {recursive: true});
+  }
   rmSync('dist', {recursive: true, force: true});
   cpSync(join(scratch, 'stable/dist'), 'dist', {recursive: true});
   cpSync(join(scratch, 'preview/dist'), 'dist/preview', {recursive: true});

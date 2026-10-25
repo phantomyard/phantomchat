@@ -40,9 +40,11 @@ describe('release tag namespace', () => {
     expect(source, `${file} pushes a ref to origin`).not.toMatch(/\bgit\s+push\b[^\n]*origin/);
   });
 
-  it('deploy.yml grants no job contents: write', () => {
-    // The tag job was the only reason it ever needed one.
-    expect(code(readFileSync(join(WORKFLOW_DIR, 'deploy.yml'), 'utf8'))).not.toMatch(/contents:\s*write/);
+  it('PWA archive releases remain drafts outside the desktop updater feed', () => {
+    const registry = readFileSync(join(process.cwd(), 'scripts/releases/registry.mjs'), 'utf8');
+    expect(registry).toContain("'--draft'");
+    expect(registry).not.toContain("'--draft=false'");
+    expect(registry).not.toContain("'--prerelease'");
   });
 
   it('publish-release.sh only ever creates a namespaced tag', () => {

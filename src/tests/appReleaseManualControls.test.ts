@@ -4,32 +4,26 @@ import {describe, expect, it} from 'vitest';
 import {load} from 'js-yaml';
 
 type Step = {name?: string; if?: string; run?: string};
-type Workflow = {
-  on: Record<string, unknown>;
-  jobs: Record<string, {steps: Step[]}>;
-};
+type Workflow = {on: Record<string, unknown>; jobs: Record<string, {steps: Step[]}>};
+const readWorkflow = (name: string) => load(readFileSync(join(process.cwd(), '.github', 'workflows', name), 'utf8')) as Workflow;
 
-const readWorkflow = (name: string) => load(
-  readFileSync(join(process.cwd(), '.github', 'workflows', name), 'utf8'),
-) as Workflow;
-
-describe('desktop release manual controls', () => {
-  it('offers a main-only manual app release button', () => {
-    const workflow = readWorkflow('app-release.yml');
-    expect(workflow.on).toHaveProperty('workflow_dispatch');
-
-    const guard = workflow.jobs.linux.steps.find(({name}) => name === 'Require main for manual releases');
-    expect(guard?.if).toBe("github.event_name == 'workflow_dispatch'");
-    expect(guard?.run).toContain('refs/heads/main');
-    expect(guard?.run).toContain('exit 1');
+describe('manual independent release controls', () => {
+  it.each(['deploy.yml', 'pwa-promote.yml', 'app-release.yml', 'app-promote.yml'])('%s cannot build or publish on a push or merge', name => {
+    const workflow = readWorkflow(name);
+    expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch']);
+    const scripts = Object.values(workflow.jobs).flatMap(job => job.steps).map(step => step.run || '').join('\n');
+    expect(scripts).not.toContain('refs/heads/main');
+    if(name.includes('promote')) expect(scripts).not.toMatch(/pnpm (?:run )?build|electron-builder/);
   });
-
-  it('defaults promotion to the newest created release without falling back to stale previews', () => {
-    const workflow = readWorkflow('app-promote.yml');
-    const resolve = workflow.jobs.promote.steps.find(({name}) => name === 'Resolve tag (default: newest release preview)');
-
-    expect(resolve?.run).toContain('sort_by(.created_at) | last');
-    expect(resolve?.run).toContain('IS_PRERELEASE');
-    expect(resolve?.run).not.toContain('select(.isPrerelease)');
+  it('PR CI has no application/native builds', () => {
+    const workflow = readWorkflow('ci.yml');
+    expect(Object.keys(workflow.on)).toEqual(['pull_request']);
+    expect(Object.keys(workflow.jobs)).toEqual(['typecheck', 'test']);
+    expect(JSON.stringify(workflow)).not.toMatch(/pnpm (?:run )?build|electron-builder/);
+  });
+  it('Electron release does not look up a PWA deploy version', () => {
+    const source = JSON.stringify(readWorkflow('app-release.yml'));
+    expect(source).not.toContain('workflows/deploy.yml');
+    expect(source).toContain('GITHUB_RUN_NUMBER');
   });
 });

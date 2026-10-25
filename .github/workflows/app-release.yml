@@ -1,77 +1,20 @@
-name: app-release
+name: Electron — build and publish Preview
 
-# Desktop-app release pipeline (issue #150) — mirrors phantombot's release.yml.
-#
-# Fires on payload-changing pushes to main and can also be started manually from
-# main. The manual button exists so a release-infrastructure-only fix can retry a
-# failed build without requiring a dummy payload PR. Cuts a GitHub Release tagged
-# phantomchat-v1.0.<N> with Linux (AppImage + deb + rpm), macOS (Intel +
-# Apple Silicon DMG), and Windows (x64 + arm64 NSIS) artifacts, plus
-# SHA256SUMS.txt. The Windows installers are Authenticode signed in the
-# publish job and the macOS DMGs are Developer ID signed, notarized and
-# stapled in the macos-notarize job; Linux is unsigned (checksums only).
-#
-# VERSION SYNC: <N> is NOT this workflow's run_number — it is the run_number
-# of the deploy.yml (PWA) run for the same commit, so the desktop app and the
-# PWA from one merge carry the same 1.0.<N>. See "Resolve version" below.
-#
-# Why a run_number and not the PR number (same rationale as phantombot):
-# PR numbers can regress if a later-numbered PR merges before an earlier one
-# (v1.0.50 shipping after v1.0.49 confuses humans and breaks ordering
-# heuristics). github.run_number is a per-workflow monotonic counter — it only
-# ever goes up, and every value points at exactly one Actions run, so a
-# deployed artifact pivots to its build in one click. The originating PR is
-# preserved in the release title/notes so the audit trail stays intact.
-#
-# The version/tag are synthesized BY THIS WORKFLOW from that counter — nobody
-# pushes a phantomchat-v* tag by hand and the dispatch has no inputs, so no
-# user-controlled text can reach a shell. Every value crosses step boundaries
-# env-bound; there is zero ${{ }} interpolation inside run: blocks (the
-# posture established in review round 3). The strict-semver grammar guard
-# stays in scripts/publish-release.sh as defense in depth.
-#
-# RELEASE RINGS — every release cut here is a PRERELEASE (preview channel).
-# `gh release create --prerelease` keeps it out of /releases/latest, which is
-# what a stable client will resolve against once in-app updates land; a merge
-# therefore reaches only preview-ring users. Promotion to stable is a HUMAN
-# act: run the app-promote workflow. It flips metadata on a release that
-# ALREADY EXISTS — no rebuild, no re-tag. The bytes stable users install are
-# byte-for-byte the ones that soaked on preview. Why CI cannot decide this:
-# green tests are the bar for MERGING; if they were also the bar for stable,
-# the two rings would be the same ring. Stable means a human ran the build.
-#
-# paths-ignore is a DENYLIST (fail-open to releasing), not an allowlist:
-# anything NOT listed still triggers a release, so a functional change we
-# forgot to list can never silently skip one. Over-releasing is harmless (a
-# duplicate-content build at a higher version); under-releasing ships a fix
-# to nobody. This repo squash-merges, so the pushed commit carries the PR's
-# FULL diff and a mixed PR (docs + src) still releases. Keep this list limited
-# to files that cannot affect packaged bytes: unknown paths deliberately build.
-#
-# Promotion fails closed until every required architecture exists
-# (REQUIRED_ARTIFACTS in scripts/promote-release.sh).
-
+# Manual only, main branch only. Independent of PWA releases.
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'README.md'
-      - 'AGENTS.md'
-      - 'LICENSE'
-      - 'docs/**'
-      - '.github/**'
-      - '.husky/**'
-      - 'src/tests/**'
-      - 'scripts/**'
   workflow_dispatch:
+
+concurrency:
+  group: electron-release
+  cancel-in-progress: false
 
 permissions:
   contents: write        # create release + tag + upload assets
   pull-requests: read    # commits->pulls lookup for the release audit trail
-  actions: read          # look up the PWA deploy run to share its version
 
 jobs:
   linux:
+    if: github.ref == 'refs/heads/main'
     outputs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
@@ -79,18 +22,10 @@ jobs:
       pr-title: ${{ steps.pr.outputs.title }}
     runs-on: ubuntu-latest
     steps:
-      - name: Require main for manual releases
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "::error::Manual app releases must run from main (got ${GITHUB_REF})."
-            exit 1
-          fi
-
-      - name: Checkout pushed commit
+      - name: Checkout selected commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # github.sha on a push to main is the merge commit itself.
+          # Pin every job to the selected branch commit at dispatch time.
           ref: ${{ github.sha }}
           fetch-depth: 0
 
@@ -124,42 +59,17 @@ jobs:
           cache: pnpm
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck:electron
+      - run: node --test scripts/releases/registry.node-test.mjs
+      - run: pnpm exec vitest run
 
-      # Versioning: the desktop app ships the SAME version as the PWA built
-      # from the same merge. deploy.yml fires on the same push and stamps
-      # the PWA 1.0.<its run_number>, so we look up that deploy run by
-      # head_sha and reuse its run_number. Both runs are created by the one
-      # push event, so the lookup only retries briefly while GitHub lists
-      # it. deploy.yml's counter is monotonic, so desktop versions still
-      # only ever go up (they skip numbers when a docs-only merge or a
-      # manual branch deploy bumps the PWA without a desktop release).
-      # The version feeds the bundled UI (APP_VERSION) and the packaged app
-      # via electron-builder's extraMetadata override; the checked-in
-      # package.json is never mutated. Fails closed: no deploy run, no
-      # release. publish-release.sh re-checks the grammar before publishing.
-      - name: Resolve version (shared with the PWA deploy)
+      # Independent counter; minor bump avoids regression from the old PWA counter.
+      # The candidate frontend and binary share this desktop release version.
+      - name: Resolve independent desktop version
         id: ver
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
         run: |
-          RUN_NUMBER=""
-          for attempt in $(seq 1 12); do
-            RUN_NUMBER=$(gh api "repos/${REPO}/actions/workflows/deploy.yml/runs?head_sha=${SHA}&event=push&per_page=1" \
-              --jq '.workflow_runs[0].run_number // ""' 2>/dev/null || true)
-            [ -n "$RUN_NUMBER" ] && break
-            echo "deploy run for ${SHA} not listed yet (attempt ${attempt}), retrying in 10s"
-            sleep 10
-          done
-          if ! [[ "$RUN_NUMBER" =~ ^[0-9]+$ ]]; then
-            echo "::error::no numeric deploy.yml run number for ${SHA} (got '${RUN_NUMBER}')"
-            exit 1
-          fi
-          VERSION="1.0.${RUN_NUMBER}"
-          TAG="phantomchat-v${VERSION}"
-          echo "Desktop version ${VERSION} (PWA deploy run #${RUN_NUMBER})"
-          printf 'version=%s\ntag=%s\n' "$VERSION" "$TAG" >> "$GITHUB_OUTPUT"
+          VERSION="1.1.${GITHUB_RUN_NUMBER}"
+          printf 'version=%s\ntag=phantomchat-v%s\n' "$VERSION" "$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build frontend + electron main/preload
         run: |
@@ -167,6 +77,10 @@ jobs:
           node electron/build.mjs
         env:
           APP_VERSION: ${{ steps.ver.outputs.version }}
+
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/channels/browser-smoke.mjs
+      - run: xvfb-run -a node scripts/channels/electron-smoke.mjs
 
       - name: Install rpmbuild for the rpm target
         run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
@@ -189,6 +103,16 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
+      - name: Verify Linux package-manager update support
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          rpm -qlp "release/${VERSION}/phantomchat_${VERSION}_x86_64.rpm" > rpm-files.txt
+          dpkg-deb -c "release/${VERSION}/phantomchat_${VERSION}_amd64.deb" > deb-files.txt
+          grep -q 'resources/package-type' rpm-files.txt
+          grep -q 'resources/package-type' deb-files.txt
+          scripts/check-deb-install.sh "release/${VERSION}/phantomchat_${VERSION}_amd64.deb"
+
       - name: Upload Linux artifacts for publication
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -201,6 +125,7 @@ jobs:
           if-no-files-found: error
 
   macos-package:
+    if: github.ref == 'refs/heads/main'
     needs: linux
     strategy:
       fail-fast: false
@@ -212,7 +137,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout pushed commit
+      - name: Checkout selected commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
@@ -231,6 +156,8 @@ jobs:
           node electron/build.mjs
         env:
           APP_VERSION: ${{ needs.linux.outputs.version }}
+
+      - run: node scripts/channels/electron-smoke.mjs
 
       # Fail before a 10-minute package run rather than after it, and fail
       # loudly: a missing certificate must never degrade into an unsigned
@@ -289,6 +216,7 @@ jobs:
           if-no-files-found: error
 
   macos-notarize:
+    if: github.ref == 'refs/heads/main'
     needs: [linux, macos-package]
     strategy:
       fail-fast: false
@@ -300,7 +228,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout pushed commit
+      - name: Checkout selected commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
@@ -416,6 +344,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: github.ref == 'refs/heads/main'
     needs: linux
     strategy:
       fail-fast: false
@@ -427,7 +356,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout pushed commit
+      - name: Checkout selected commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
@@ -449,6 +378,8 @@ jobs:
 
       # Unsigned here on purpose: Authenticode signing happens once, in the
       # publish job, against the installers that are actually published.
+      - run: node scripts/channels/electron-smoke.mjs
+
       - name: Package Windows installer (signed later, in publish)
         shell: pwsh
         run: pnpm exec electron-builder --win nsis "--$env:ARCH" --publish never "-c.extraMetadata.version=$env:VERSION"
@@ -492,10 +423,11 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: [linux, macos-notarize, windows]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout pushed commit
+      - name: Checkout selected commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
@@ -571,7 +503,7 @@ jobs:
       # document-sealing "eSeal" credential which is marked DEFAULT, so an
       # omitted id would silently sign with the wrong one.
       #
-      # This workflow only runs on push to main, so secrets are always
+      # This workflow runs only on an explicit manual dispatch, so secrets are
       # available and a fork PR can never reach this job.
       - name: Assert signing credentials are present
         env:

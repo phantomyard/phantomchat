@@ -1,53 +1,27 @@
-name: deploy
+name: PWA — build and publish Preview
 
-# Publishes the built PWA to GitHub Pages. Pages serves it at the custom domain
-# in public/CNAME (chat.phantomyard.ai) and auto-provisions the Let's Encrypt
-# certificate once DNS resolves — no Terraform/ACM, the same pattern as
-# phantombot.bot.
-#
-# Deploy policy (2026-06-27): auto-deploy ONLY on merge to main. PR branches run
-# tests/checks (ci.yml) but never auto-ship to the live Pages target. To deploy a
-# feature branch on demand, use the manual "Run workflow" button (workflow_dispatch)
-# in the Actions tab and pick the branch — gated by repo write access, so only
-# collaborators (Andrew, Robbie, Kai, Lena) can trigger it. APP_VERSION =
-# 1.0.<run_number> still bumps each run → new service worker → clients refresh.
-#
-# NO TAG JOB, deliberately (issue: Preview-channel 404). This workflow used to
-# push a bare `v1.0.<run_number>` git tag after each deploy. Those tags carry no
-# release and no assets, but they still appear in GitHub's releases.atom feed —
-# and electron-updater's prerelease path (the Preview channel sets
-# allowPrerelease) takes the FIRST atom entry without checking that a release
-# exists, then fetches
-# releases/download/<that tag>/latest-mac.yml → 404. Because a PWA deploy lands
-# well before the desktop release publishes, a single such tag poisons Preview
-# for every platform until the next real release. The in-bundle version comes
-# from APP_VERSION/run_number, so nothing depends on the tag. Do not add it back.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
-# Least-privilege: Pages deploys need pages:write + id-token:write for the
-# OIDC handshake that actions/deploy-pages performs. contents:read is enough
-# to check out and build.
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
-# Never cancel an in-flight production deploy; queue instead.
+# Share the lock with promotion: both preserve the other live channel.
 concurrency:
-  group: pages
+  group: pwa-publication
   cancel-in-progress: false
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history so `generate-changelog` (part of `pnpm run build`)
-          # can read tags/commits.
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -55,23 +29,45 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Versioning scheme: 1.0.<build_number>. github.run_number is the monotonic
-      # per-workflow build counter (never regresses), matching phantombot's
-      # 1.0.<build_number> tags. Vite bakes APP_VERSION into the bundle and emits
-      # dist/version + dist/version.json.
-      - run: pnpm run build
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: node --test scripts/releases/registry.node-test.mjs
+      - run: pnpm exec vitest run
+      - name: Load the published Stable baseline
+        id: baseline
+        run: node scripts/releases/registry.mjs baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Build Preview and its promotion-ready Stable variant
+        run: pnpm run build
         env:
           APP_VERSION: 1.0.${{ github.run_number }}
+          PWA_RELEASE: '1'
+          CHANNEL_BASELINE: ${{ steps.baseline.outputs.baseline }}
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Verify existing Stable and new Preview
+        run: node scripts/channels/browser-smoke.mjs
+      - name: Verify the prebuilt promotion variant
+        run: |
+          cp -a dist-stable-candidate .channel-build/promotion-check
+          cp -a dist/preview .channel-build/promotion-check/preview
+          CHANNEL_SMOKE_DIST=.channel-build/promotion-check node scripts/channels/browser-smoke.mjs
+      - name: Archive verified release and preserve published Stable bytes
+        id: release
+        run: node scripts/releases/registry.mjs prepare-preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL_BASELINE: ${{ steps.baseline.outputs.baseline }}
+      - name: Verify the exact assembled publication
+        run: node scripts/channels/browser-smoke.mjs
+        env:
+          CHANNEL_SMOKE_DIST: .release-work/payload/site
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
+          path: .release-work/payload/site
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: Record successful publication
+        run: node scripts/releases/registry.mjs published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}

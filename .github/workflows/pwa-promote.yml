@@ -1,0 +1,57 @@
+name: PWA — promote to Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'PWA release (pwa-v...). Empty selects newest successfully published Preview.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pwa-publication
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # Test dependencies only; no app compilation or signing during promotion.
+      - run: pnpm install --frozen-lockfile
+      - name: Verify archives and assemble prebuilt Stable with current Preview
+        id: release
+        run: node scripts/releases/registry.mjs prepare-stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_INPUT: ${{ inputs.release }}
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Verify promoted artifact channel round trip
+        run: node scripts/channels/browser-smoke.mjs
+        env:
+          CHANNEL_SMOKE_DIST: .release-work/payload/site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .release-work/payload/site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Record successful publication
+        run: node scripts/releases/registry.mjs published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}

@@ -174,14 +174,12 @@ solid-js/store  → src/vendor/solid/store
 
 ## Release & Deployment
 
-- **Web application channels:** `pnpm build` packages the pinned Stable source at `/` and the committed candidate at `/preview/index.html`. Main merges update Preview; Stable source promotion requires a reviewed SHA/version pin change in `scripts/channels/config.json`. Both share live identity/storage. Read [`docs/RELEASE-CHANNELS.md`](docs/RELEASE-CHANNELS.md) before changing release routing, storage contracts, dependencies or promotion. The same combined output is packaged by Electron.
-
-Full reference: [`docs/RELEASE.md`](docs/RELEASE.md). Day-to-day rules:
-
-- **CI** (`.github/workflows/ci.yml`) runs on every PR to `main`: `typecheck` + `test`, both required status checks.
-- **Deploy** (`.github/workflows/deploy.yml`) runs on every push to `main` (after a PR merges): build → publish `dist/` to GitHub Pages. Served at `chat.phantomyard.ai`. It creates **no git tag** and has no `contents: write`: a bare `v1.0.<run_number>` tag has no release behind it but still tops the `releases.atom` feed, which breaks the desktop Preview update channel (404 on `latest-mac.yml`). Only `app-release.yml` may tag, and only as `phantomchat-v*` — enforced by `src/tests/releaseTagNamespace.test.ts` and `scripts/publish-release.sh`. See `docs/RELEASE.md` → "No bare tags".
-- Versioning is **`1.0.<build_number>`** — CI sets `APP_VERSION=1.0.${github.run_number}`. There is no release-please, no CHANGELOG-gated release, no manual `pnpm version`. Don't hand-edit `package.json` version to ship.
-- No self-update / signed-manifest / IPFS / mirror system — updates ship via a normal Pages redeploy; the service worker picks up the new bundle and the sidebar "Update" button (driven by the `/version` poll) prompts a reload.
+- **Web application channels:** Stable `/` and Preview `/preview/index.html` share identity and IndexedDB. Read [docs/RELEASE-CHANNELS.md](docs/RELEASE-CHANNELS.md) for the compatibility gate and artifact promotion contract.
+- **CI** runs typechecks and tests on PRs only. Pushes/merges trigger no builds or publication.
+- **Publication is manual:** `deploy.yml` builds/publishes PWA Preview; `pwa-promote.yml` promotes prebuilt PWA Stable. `app-release.yml` independently builds/publishes Electron Preview; `app-promote.yml` promotes the existing desktop release. Each supports the Run workflow branch picker. Blank promotion input selects the newest successfully published Preview for that product.
+- PWA versions use `1.0.<deploy run_number>`; desktop versions independently use `1.1.<app-release run_number>`. Do not hand-edit `package.json` to ship.
+- PWA archives remain draft releases forever, outside Electron's public update feed. No bare tags. See [docs/RELEASE.md](docs/RELEASE.md).
+- Andrew owns manual publication/promotion. A merge never authorizes deployment.
 
 ## Architecture Notes
 

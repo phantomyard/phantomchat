@@ -259,21 +259,15 @@ web code keeps its own log that covers both windows and the worker.
 
 ## Release channels (preview / stable)
 
-Same release-ring model as PhantomBot — including the naming: releases
-are cut automatically and tagged with the release workflow's own monotonic
-run counter, never by hand.
+Desktop builds and publication are independent of PWA publication. Both products
+have manual Preview publication and Stable promotion; pushes/merges never build.
 
-1. **Every merge to main cuts a preview release.** The **app-release**
-   workflow fires on each push to main (except docs-only merges) and
-   publishes `phantomchat-v1.0.<N>`, where `<N>` is the run number of the
-   PWA **deploy** run for the same commit, so the desktop app and the PWA
-   from one merge show the same version. Run numbers never regress (PR
-   numbers can); desktop versions skip numbers when a docs-only merge or a
-   manual branch deploy bumps the PWA without a desktop release. The workflow builds
-   from a clean checkout and publishes the artifacts + `SHA256SUMS.txt` as
-   a GitHub **prerelease** — the preview channel. Stable users see
-   nothing; `/releases/latest` does not return prereleases. The originating
-   PR is preserved in the release title and notes.
+1. **Build and publish Preview manually.** Run **Electron — build and publish
+   Preview** (`app-release.yml`) and select any reviewed branch. It publishes
+   `phantomchat-v1.1.<N>`, where `<N>` is this workflow's own run number.
+   The minor bump avoids downgrade from the former shared PWA counter.
+   No PWA run is required. Native runtime/package/signing checks precede the
+   GitHub prerelease and its checksummed assets. Stable users see no update.
 2. **Promote to stable** via the **app-promote** workflow (tag optional —
    defaults to the newest prerelease; pressing the button is the human act
    that makes it stable). Promotion:
