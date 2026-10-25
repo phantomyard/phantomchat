@@ -58,6 +58,6 @@ export async function assertOfflineMessage(page, id, mid) {
 export async function openChannelSettings(page) {
   await page.locator('.sidebar-tools-button:visible').first().click();
   await page.locator('.btn-menu-item:visible').filter({hasText: 'Settings'}).first().click();
-  await page.locator('.row:visible').filter({hasText: /^Updates$/}).click();
+  await page.locator('.row-title:visible').filter({hasText: /^Updates$/}).click();
   await page.getByRole('radio', {name: 'Stable', exact: true}).waitFor();
 }

@@ -25,7 +25,7 @@ try {
   await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
   await openChannelSettings(page);
   // Native installer controls remain reachable and own a separate radio group.
-  await page.locator('.row:visible').filter({hasText: /^Desktop updates$/}).click();
+  await page.locator('.row-title:visible').filter({hasText: /^Desktop updates$/}).click();
   await page.locator('input[name="input-radio-phantomchat-update-channel"]').first().waitFor({state: 'attached'});
   assert.equal(await page.locator('input[name="input-radio-phantomchat-application-channel"]:checked').inputValue(), 'stable');
   await page.locator('.phantomchat-desktop-updates .sidebar-header .btn-icon').first().click();
