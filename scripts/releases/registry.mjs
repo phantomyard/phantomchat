@@ -49,10 +49,10 @@ export function verifyArchive(directory) {
   if(JSON.stringify(names) !== JSON.stringify(['SHA256SUMS.txt', 'bundle.tar.gz'])) throw new Error('Unexpected archive assets');
   const expected = readFileSync(`${directory}/SHA256SUMS.txt`, 'utf8');
   if(expected !== `${digest(`${directory}/bundle.tar.gz`)}  bundle.tar.gz\n`) throw new Error('Archive checksum mismatch');
-  const entries = execFileSync('tar', ['-tzf', `${directory}/bundle.tar.gz`], {encoding: 'utf8'}).trim().split('\n');
+  const entries = execFileSync('tar', ['-tzf', `${directory}/bundle.tar.gz`], {encoding: 'utf8', maxBuffer: 32 * 1024 * 1024}).trim().split('\n');
   if(entries.some(p => p.startsWith('/') || p.split('/').includes('..') || !/^(site|stable-candidate)(\/|$)/.test(p))) throw new Error('Unsafe archive path');
   // Only regular files/directories are permitted; never extract symlinks/devices.
-  const types = execFileSync('tar', ['-tvzf', `${directory}/bundle.tar.gz`], {encoding: 'utf8'}).trim().split('\n');
+  const types = execFileSync('tar', ['-tvzf', `${directory}/bundle.tar.gz`], {encoding: 'utf8', maxBuffer: 32 * 1024 * 1024}).trim().split('\n');
   if(types.some(p => !['-', 'd'].includes(p[0]))) throw new Error('Unsafe archive entry type');
 }
 function download(release, directory) {
