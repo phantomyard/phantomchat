@@ -50,7 +50,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const a = process.argv.slice(2), file = process.env.MOCK_STATE;
 const list = JSON.parse(fs.readFileSync(file));
-if(a[0] === 'api') { console.log(JSON.stringify([list])); process.exit(); }
+if(a[0] === 'api') { console.log(list.map(r => JSON.stringify(r)).join('\\n')); process.exit(); }
 const tag = a[2];
 const option = name => a[a.indexOf(name) + 1];
 if(a[1] === 'create') {

@@ -7,7 +7,7 @@ import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {checkCompatibility} from '../channels/check.mjs';
 
-const gh = (...args) => execFileSync('gh', args, {encoding: 'utf8'}).trim();
+const gh = (...args) => execFileSync('gh', args, {encoding: 'utf8', maxBuffer: 32 * 1024 * 1024}).trim();
 const repo = () => process.env.GITHUB_REPOSITORY || 'phantomyard/phantomchat';
 function validPwaRecord(record) {
   return record?.schema === 1 && ['preview', 'stable'].includes(record.operation) &&
@@ -33,8 +33,9 @@ export function selectRelease(releases, kind, input = '') {
   })[0];
 }
 function releases() {
-  const pages = JSON.parse(gh('api', '--paginate', '--slurp', `repos/${repo()}/releases?per_page=100`));
-  return pages.flat().map(r => {
+  const rows = gh('api', '--paginate', `repos/${repo()}/releases?per_page=100`,
+    '--jq', '.[] | {id,tag_name,draft,prerelease,published_at,body} | @json');
+  return rows.split('\n').filter(Boolean).map(row => JSON.parse(row)).map(r => {
     try { r.record = JSON.parse(r.body); } catch { /* Desktop/historical release. */ }
     return r;
   });
