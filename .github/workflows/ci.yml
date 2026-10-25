@@ -1,18 +1,15 @@
 name: ci
 
-# Runs on every PR targeting main. No `push:` block on purpose — the
-# `pull_request` event already restricts this to branches with an open PR.
-# Branch protection on main wires `typecheck` and `test` as required status
-# checks, mirroring the phantombot repo's CI contract.
-#
-# Toolchain note: phantombot is a Bun project; PhantomChat is a Vite/SolidJS
-# PWA built with pnpm (packageManager pin: pnpm@9.15.3). The job *names*
-# (`typecheck`, `test`), triggers, least-privilege permissions and per-job
-# concurrency match phantombot; only the runtime is adapted to pnpm.
-
+# PR updates run typechecks, unit tests, and the production browser smoke.
+# Native Electron builds/packaging run only after a push to main or a manual
+# dispatch. app-release.yml independently owns publishing desktop releases.
+# Branch protection keeps the existing typecheck/test status names.
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 # Explicit least-privilege scope. `pull_request` defaults to read-only
 # already, but stating it makes the intended attack surface auditable.
@@ -25,7 +22,7 @@ jobs:
     # Per-job concurrency so a new push to the PR cancels the in-flight run
     # of *this* job only — the sibling `test` job cancels independently.
     concurrency:
-      group: ci-typecheck-${{ github.head_ref }}
+      group: ci-typecheck-${{ github.head_ref || github.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
@@ -42,11 +39,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:channels
       - run: npx tsc --noEmit
+      - run: pnpm run typecheck:electron
 
   test:
     runs-on: ubuntu-latest
     concurrency:
-      group: ci-test-${{ github.head_ref }}
+      group: ci-test-${{ github.head_ref || github.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
@@ -63,14 +61,34 @@ jobs:
       # browser/Tor e2e suites and runs unit tests under jsdom.
       - run: pnpm exec vitest run
 
-  build-linux:
-    # Proves the desktop pipeline (issue #150, PR#1) builds from a clean
-    # checkout on every PR: PWA build, electron main/preload bundle + CSP,
-    # and the AppImage/deb packaging. Artifacts are NOT published here —
-    # releases go through app-release.yml (tag/manual, prerelease-first).
+  browser:
     runs-on: ubuntu-latest
     concurrency:
-      group: ci-build-linux-${{ github.head_ref }}
+      group: ci-browser-${{ github.head_ref || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+        env:
+          APP_VERSION: 0.0.0-ci.${{ github.run_number }}
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/channels/browser-smoke.mjs
+
+  build-linux:
+    # Keep native runtime, package, and update-feed verification after merge.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-build-linux-${{ github.head_ref || github.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
@@ -87,8 +105,6 @@ jobs:
       - run: pnpm run build
         env:
           APP_VERSION: 0.0.0-ci.${{ github.run_number }}
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: node scripts/channels/browser-smoke.mjs
       - run: node electron/build.mjs
       - run: xvfb-run -a node scripts/channels/electron-smoke.mjs
       # fpm needs rpmbuild to produce the .rpm target.
@@ -99,10 +115,10 @@ jobs:
           test -f PhantomChat-*.AppImage
           test -f phantomchat_*_amd64.deb
           test -f phantomchat_*_x86_64.rpm
-          # The update feed (issue #164). Checked on every PR, not just at
+          # The update feed (issue #164). Checked on main/manual CI, as well as at
           # release time: it is generated as a side effect of the publish
           # provider in electron-builder.yml, so a config change that drops
-          # it must fail HERE rather than produce a release nobody's installed
+          # it must fail CI rather than produce a release nobody's installed
           # client can see.
           test -f latest-linux.yml
           grep -q '^version: 0.0.0-ci' latest-linux.yml
@@ -123,6 +139,7 @@ jobs:
         run: scripts/check-deb-install.sh release/0.0.0-ci.${{ github.run_number }}/phantomchat_*_amd64.deb
 
   build-macos:
+    if: github.event_name != 'pull_request'
     # Build and mount each architecture on native hardware. Cross-packaging
     # alone cannot prove the bundled Electron executable starts on that CPU.
     strategy:
@@ -135,7 +152,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     concurrency:
-      group: ci-build-macos-${{ matrix.arch }}-${{ github.head_ref }}
+      group: ci-build-macos-${{ matrix.arch }}-${{ github.head_ref || github.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
@@ -155,7 +172,7 @@ jobs:
       - run: node electron/build.mjs
       - run: node scripts/channels/electron-smoke.mjs
       # Same two targets the release builds (issue #169), so a packaging
-      # change that breaks the update zip or the feed fails on the PR rather
+      # change that breaks the update zip or the feed fails in native CI rather
       # than on a user's Mac. Signing is not exercised here — electron-builder
       # skips it on pull requests anyway.
       - name: Package unsigned DMG and update zip
@@ -180,6 +197,7 @@ jobs:
           VERSION: 0.0.0-ci.${{ github.run_number }}
 
   build-windows:
+    if: github.event_name != 'pull_request'
     # Build, install, launch and uninstall each architecture on native
     # hardware. The hosted image is fresh, so this also exercises first-time
     # Start Menu integration without inheriting a previous installation.
@@ -193,7 +211,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     concurrency:
-      group: ci-build-windows-${{ matrix.arch }}-${{ github.head_ref }}
+      group: ci-build-windows-${{ matrix.arch }}-${{ github.head_ref || github.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
