@@ -109,12 +109,14 @@ publication. PWA Preview accepts any reviewed branch; Electron Preview requires 
   namespace. Reuses the published Stable files instead of rebuilding them. Keeps
   compatibility and cross-version storage fixtures plus a fast entry-asset check.
   Unit tests stay in PR CI; Preview installs no browser and repeats no browser
-  round trips. Full artifact browser verification remains on Stable promotion.
+  round trips. Stable promotion also uses archive and entry-asset checks only.
 - `pwa-promote.yml`: **PWA — promote to Stable**. Optional `release` is a
   `pwa-v1.0.<PWA workflow run_number>` archive identifier. Empty selects the newest
   successfully published Preview by publication time, across all branches.
   Downloads and verifies the archive and publishes the prebuilt Stable variant;
-  it never recompiles application code. Current Preview bytes are preserved.
+  it never recompiles application code. No dependency installation, Chromium, or
+  browser round trips run: only archive/compatibility validation and a fast
+  entry-asset check before Pages deployment. Current Preview bytes are preserved.
 - `app-release.yml`: **Electron — build and publish Preview**. Builds, verifies,
   signs/notarizes and publishes installers using the dispatched main commit.
   Every job requires `refs/heads/main`; dispatching another branch skips all jobs,
@@ -159,7 +161,7 @@ After a PWA promotion, the next Preview build checks compatibility against the
 Exact-content compatibility approvals must be refreshed in a reviewed PR when
 that baseline changes; stale approvals fail closed. Explicit older PWA promotion
 also checks the selected Stable source against current Preview using the chosen
-branch's reviewed exact-content approvals, then runs artifact browser round trips.
+branch's reviewed exact-content approvals, then verifies assembled entry assets.
 It never silently rolls Preview back. Archives with missing/corrupt assets or
 unsafe paths/links fail before Pages publication. The original source pin remains
 Electron's independent embedded Stable frontend baseline; changing PWA Stable
