@@ -94,3 +94,6 @@ chat-session-*.md
 release/
 
 .channel-build/
+
+/node_modules
+!public/channel-switcher.js
