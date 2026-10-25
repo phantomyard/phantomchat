@@ -1,6 +1,7 @@
 import {chromium} from 'playwright';
 import express from 'express';
 import assert from 'node:assert/strict';
+import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage} from './runtime-identity.mjs';
 
 const app = express();
 app.use(express.static('dist'));
@@ -19,6 +20,8 @@ try {
     await page.goto(origin + '/');
     await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
+    const identity = await createDisposableIdentity(page);
+    await writeOfflineMessage(page, 'channel-fixture-stable', 101);
     await page.evaluate(async() => {
       localStorage.setItem('channel-smoke-existing-setting', 'keep');
       const request = indexedDB.open('channel-smoke-existing-data', 1);
@@ -36,6 +39,9 @@ try {
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL.includes('/preview/'));
     assert.equal(await page.evaluate(async() => new URL((await navigator.serviceWorker.ready).scope).pathname), '/preview/');
+    await identityFingerprint(page, identity);
+    await assertOfflineMessage(page, 'channel-fixture-stable', 101);
+    await writeOfflineMessage(page, 'channel-fixture-preview', 102);
     assert.equal(await page.locator('#manifest').getAttribute('href'), '/site.webmanifest');
     assert.equal(await page.evaluate(() => localStorage.getItem('channel-smoke-existing-setting')), 'keep');
     await page.reload();
@@ -48,6 +54,9 @@ try {
     await page.waitForURL('**/index.html?channel=stable');
     await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
+    await identityFingerprint(page, identity);
+    await assertOfflineMessage(page, 'channel-fixture-stable', 101);
+    await assertOfflineMessage(page, 'channel-fixture-preview', 102);
     const stored = await page.evaluate(async() => {
       const request = indexedDB.open('channel-smoke-existing-data', 1);
       const db = await new Promise(resolve => { request.onsuccess = () => resolve(request.result); });

@@ -32,7 +32,7 @@ read cursors, tombstones, folders/settings, encrypted keys and stored sync forma
 A changed schema version needs older-code reopening proof; otherwise it cannot
 ship with shared state. The gate is conservative and cannot prove semantic safety.
 
-The only initial approval is the standalone channel selector: it writes a new
+Initial approvals cover the CSP builder, package build commands and the standalone channel selector: it writes a new
 release-choice localStorage key and does not rewrite existing app state.
 The packaging script applies a deliberately narrow shared infrastructure patch
 to both source trees: independent asset caches, SW unregister filtering and
@@ -55,3 +55,29 @@ the combined output. After `node electron/build.mjs`, run
 native desktop runners). Both use disposable data and block live connections.
 The build also runs real Stable/Preview MessageStore code against the same
 IndexedDB fixture, including writes and cursor changes followed by Stable reopen.
+
+The gate scans src/, public/, electron/, index.html, package.json and the
+dependency lock. Root scripts/ and workflow files implement the gate/build itself
+and require normal PR review; they are not self-approved by this content check.
+Direct builder execution must use `pnpm build`. Without APP_VERSION, local Preview
+is explicitly labelled with the pinned version plus `-preview-local`. Release and
+CI builds supply the candidate version.
+
+The selector is intentionally available to end users: volunteers opt into Preview
+on their existing identity. The Stable SHA pins the frontend only; both frontend
+channels run inside the candidate Electron shell, controlled by the existing
+independent desktop binary update ring. Native shell changes require compatibility
+review and native tests, but do not create a second pinned Electron executable.
+Stable SHA/version must resolve to the same `phantomchat-v<version>` release tag.
+
+The divergent dependency-lock install path is not exercised by this initial
+release (both locks match). A future reviewed dependency change exercises the
+independent install and all native build/runtime gates before it can deploy;
+packages requiring postinstall work may fail that build and need an explicit
+toolchain change. No successful build or compatibility guarantee is inferred
+from merely approving the lock hash.
+
+The runtime smokes now create a disposable identity through the real UI, decrypt
+its real IndexedDB record with its non-exportable browser key after both switches,
+and verify actual ChatAPI offline sends persisted by each channel remain readable
+after returning to Stable. They do not claim relay delivery or bilateral messaging.

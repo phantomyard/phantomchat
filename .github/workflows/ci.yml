@@ -85,6 +85,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck:electron
       - run: pnpm run build
+        env:
+          APP_VERSION: 0.0.0-ci.${{ github.run_number }}
       - run: pnpm exec playwright install --with-deps chromium
       - run: node scripts/channels/browser-smoke.mjs
       - run: node electron/build.mjs
@@ -148,6 +150,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck:electron
       - run: pnpm run build
+        env:
+          APP_VERSION: 0.0.0-ci.${{ github.run_number }}
       - run: node electron/build.mjs
       - run: node scripts/channels/electron-smoke.mjs
       # Same two targets the release builds (issue #169), so a packaging

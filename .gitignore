@@ -96,4 +96,5 @@ release/
 .channel-build/
 
 /node_modules
+# Override public/*.js above: this shared shell is versioned source.
 !public/channel-switcher.js

@@ -4,6 +4,16 @@
     "public/channel-switcher.js": {
       "stable": "absent",
       "preview": "ddf2b9cc505a975ac2473b61e705132a4e78531d092e92e47b8d1ba3f063b206"
+    },
+    "electron/build.mjs": {
+      "stable": "0b66d8d2260d03eda5c9249f4aa4024678ab2c8e1f100bea55bf2f430575337f",
+      "preview": "93dae478f33aabf64d97c331ec25cab6cab810a8c1ba9bf9871d9a7f439bc994",
+      "reason": "CSP hashes cover both app shells; no native storage format change."
+    },
+    "package.json": {
+      "stable": "9b30105371285cf7ff0a8d34beca655dc9f2d20fec353826c969f17699448752",
+      "preview": "d34fb62184fa6cae05d2a4c1064d6bc30cb35f215e3839b918781dd0ddaedae2",
+      "reason": "Build/check commands only; dependency declarations and stored formats unchanged."
     }
   },
   "stableVersion": "1.0.335"

@@ -6,7 +6,7 @@ import {resolve} from 'node:path';
 
 export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd()) {
   const git = (...args) => execFileSync('git', args, {cwd});
-  const files = git('diff', '--name-only', config.stableRef, candidate, '--', 'src', 'public', 'index.html', 'pnpm-lock.yaml').toString().trim().split('\n').filter(Boolean);
+  const files = git('diff', '--name-only', config.stableRef, candidate, '--', 'src', 'public', 'index.html', 'pnpm-lock.yaml', 'package.json', 'electron').toString().trim().split('\n').filter(Boolean);
   const blocked = files.filter(file => {
     if(file.startsWith('src/tests/')) return false;
     // Only presentation assets are intrinsically storage-neutral. JS/TS,

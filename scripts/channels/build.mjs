@@ -4,12 +4,15 @@ import {resolve, join} from 'node:path';
 import {checkCompatibility} from './check.mjs';
 import {stateSmoke} from './state-smoke.mjs';
 
+if(!process.env.npm_execpath) throw new Error('Run this builder with pnpm build (pnpm supplies the package-manager executable).');
 const root = process.cwd();
 const candidate = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim();
 const config = JSON.parse(readFileSync('scripts/channels/config.json', 'utf8'));
 if(!/^[a-f0-9]{40}$/.test(config.stableRef) || !/^\d+\.\d+\.\d+$/.test(config.stableVersion)) {
   throw new Error('Stable requires an immutable commit SHA and release version');
 }
+const releasedStable = execFileSync('git', ['rev-parse', `phantomchat-v${config.stableVersion}^{commit}`]).toString().trim();
+if(releasedStable !== config.stableRef) throw new Error('Stable SHA must match its phantomchat-v release tag');
 checkCompatibility(config, candidate);
 const run = (cmd, args, cwd = root, env = {}) => execFileSync(cmd, args, {cwd, stdio: 'inherit', env: {...process.env, ...env}});
 // Scratch is inside this checkout, never a shared /tmp or live profile.
@@ -55,7 +58,7 @@ try {
     // Keep noServiceWorker debugging from unregistering the other channel.
     patch('src/lib/apiManagerProxy.ts', 'for(const reg of regs)', "for(const reg of regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')))");
     run('node', ['src/scripts/generate_changelog.js'], tree);
-    run(process.execPath, [process.env.npm_execpath, 'exec', 'vite', 'build', '--mode', 'production'], tree, {NODE_ENV: 'production', APP_VERSION: channel === 'stable' ? (config.stableVersion) : process.env.APP_VERSION || '1.0.0'});
+    run(process.execPath, [process.env.npm_execpath, 'exec', 'vite', 'build', '--mode', 'production'], tree, {NODE_ENV: 'production', APP_VERSION: channel === 'stable' ? (config.stableVersion) : process.env.APP_VERSION || `${config.stableVersion}-preview-local`});
     const out = join(tree, 'dist');
     writeFileSync(join(out, 'channel-switcher.js'), execFileSync('git', ['show', `${candidate}:public/channel-switcher.js`]));
     const html = join(out, 'index.html');
