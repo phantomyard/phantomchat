@@ -1,4 +1,3 @@
-import {understatedPalette} from '@helpers/understatedTheme';
 /*
  * https://github.com/morethanwords/tweb
  * Copyright (C) 2019-2021 Eduard Kuzmenko
@@ -207,8 +206,8 @@ export const DEFAULT_THEME: Theme = {
     _: 'themeSettings',
     pFlags: {},
     base_theme: {_: 'baseThemeClassic'},
-    accent_color: understatedPalette.baseThemeClassic.accent,
-    message_colors: [understatedPalette.baseThemeClassic.message],
+    accent_color: 0x3080FF,
+    message_colors: [0x5CA853],
     wallpaper: {
       _: 'wallPaper',
       pFlags: {
@@ -222,19 +221,19 @@ export const DEFAULT_THEME: Theme = {
       settings: {
         _: 'wallPaperSettings',
         pFlags: {},
-        intensity: understatedPalette.baseThemeClassic.intensity,
-        background_color: understatedPalette.baseThemeClassic.colors[0],
-        second_background_color: understatedPalette.baseThemeClassic.colors[1],
-        third_background_color: understatedPalette.baseThemeClassic.colors[2],
-        fourth_background_color: understatedPalette.baseThemeClassic.colors[3]
+        intensity: 50,
+        background_color: 0xdbddbb,
+        second_background_color: 0x6ba587,
+        third_background_color: 0xd5d88d,
+        fourth_background_color: 0x88b884
       }
     }
   }, {
     _: 'themeSettings',
     pFlags: {},
     base_theme: {_: 'baseThemeNight'},
-    accent_color: understatedPalette.baseThemeNight.accent,
-    message_colors: [understatedPalette.baseThemeNight.message],
+    accent_color: 0x3080FF,
+    message_colors: [0x3080FF],
     wallpaper: {
       _: 'wallPaper',
       pFlags: {
@@ -249,11 +248,11 @@ export const DEFAULT_THEME: Theme = {
       settings: {
         _: 'wallPaperSettings',
         pFlags: {},
-        intensity: understatedPalette.baseThemeNight.intensity,
-        background_color: understatedPalette.baseThemeNight.colors[0],
-        second_background_color: understatedPalette.baseThemeNight.colors[1],
-        third_background_color: understatedPalette.baseThemeNight.colors[2],
-        fourth_background_color: understatedPalette.baseThemeNight.colors[3]
+        intensity: -50,
+        background_color: 0xfec496,
+        second_background_color: 0xdd6cb9,
+        third_background_color: 0x962fbf,
+        fourth_background_color: 0x4f5bd5
       }
     }
   }],

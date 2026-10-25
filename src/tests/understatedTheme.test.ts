@@ -6,11 +6,11 @@ import type {ThemeSettings} from '../layer';
 function stock(night = false): ThemeSettings {
   return {
     _: 'themeSettings', pFlags: {}, base_theme: {_: night ? 'baseThemeNight' : 'baseThemeClassic'},
-    accent_color: 0x3080FF, message_colors: [night ? 0x3080FF : 0x5CA853],
+    accent_color: night ? 0x8aacc8 : 0x456783, message_colors: [night ? 0x28649a : 0x397fc1],
     wallpaper: {_: 'wallPaper', id: '', access_hash: '', slug: 'pattern', pFlags: {pattern: true},
-      document: {} as any, settings: {_: 'wallPaperSettings', pFlags: {}, intensity: night ? -50 : 50,
-        background_color: night ? 0xfec496 : 0xdbddbb, second_background_color: night ? 0xdd6cb9 : 0x6ba587,
-        third_background_color: night ? 0x962fbf : 0xd5d88d, fourth_background_color: night ? 0x4f5bd5 : 0x88b884}}
+      document: {} as any, settings: {_: 'wallPaperSettings', pFlags: {}, intensity: night ? -12 : 12,
+        background_color: night ? 0x171e26 : 0xe7edf2, second_background_color: night ? 0x202b36 : 0xdfe7ee,
+        third_background_color: night ? 0x1c2530 : 0xecf0f4, fourth_background_color: night ? 0x263340 : 0xd8e2ea}}
   };
 }
 describe('render-only stock theme refresh', () => {
@@ -43,7 +43,7 @@ describe('render-only stock theme refresh', () => {
     const custom = renderUnderstatedDefaults(saved, '');
     expect(custom.wallpaper).toBe(saved.wallpaper);
     expect(custom.wallpaper.settings.background_color).toBe(0x123456);
-    saved.wallpaper.settings.background_color = 0xdbddbb;
+    saved.wallpaper.settings.background_color = 0xe7edf2;
     const restored = renderUnderstatedDefaults(saved, '');
     expect(restored.wallpaper).not.toBe(saved.wallpaper);
     expect(restored.wallpaper.settings.background_color).toBe(understatedPalette.baseThemeClassic.colors[0]);
@@ -56,7 +56,7 @@ describe('render-only stock theme refresh', () => {
       expect(renderUnderstatedDefaults(custom, '')).toBe(custom);
     }
   });
-  it('preserves a custom wallpaper while rendering stock accents quietly', () => {
+  it('preserves a custom wallpaper while restoring original stock accents', () => {
     const saved = stock();
     (saved.wallpaper as any).slug = 'custom-photo';
     const result = renderUnderstatedDefaults(saved, '');

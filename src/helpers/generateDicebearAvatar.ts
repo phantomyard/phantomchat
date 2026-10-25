@@ -8,60 +8,60 @@ interface BgGradient {
 }
 
 const bgGradients: BgGradient[] = [
-  {start: '#31434e', end: '#56878a', cloak: '#3d5561', stroke: '#789bab66'},
-  {start: '#324750', end: '#50787f', cloak: '#3d5862', stroke: '#78a4ab66'},
-  {start: '#31444f', end: '#5f8798', cloak: '#3c5460', stroke: '#789aab66'},
+  {start: '#27363e', end: '#456c6e', cloak: '#31444e', stroke: '#607c8966'},
+  {start: '#283940', end: '#406066', cloak: '#31464e', stroke: '#60838966'},
+  {start: '#27363f', end: '#4c6c7a', cloak: '#30434d', stroke: '#607b8966'},
 
-  {start: '#3d4c30', end: '#7e925c', cloak: '#4e5e3b', stroke: '#98ab7866'},
-  {start: '#3b4b2f', end: '#6e8151', cloak: '#4a5a39', stroke: '#97ab7866'},
-  {start: '#414d30', end: '#808a56', cloak: '#52603c', stroke: '#99ab7866'},
-  {start: '#364d30', end: '#5e9672', cloak: '#43633e', stroke: '#78ab8a66'},
+  {start: '#313d26', end: '#65754a', cloak: '#3e4b2f', stroke: '#7a896066'},
+  {start: '#2f3c26', end: '#586741', cloak: '#3b482e', stroke: '#79896066'},
+  {start: '#343e26', end: '#666e45', cloak: '#424d30', stroke: '#7a896066'},
+  {start: '#2b3e26', end: '#4b785b', cloak: '#364f32', stroke: '#60896e66'},
 
-  {start: '#304c42', end: '#4c7a6b', cloak: '#3a5d51', stroke: '#78ab9866'},
-  {start: '#304c46', end: '#4d7b76', cloak: '#3a5d57', stroke: '#78aba466'},
-  {start: '#2f4b3f', end: '#446c60', cloak: '#38594e', stroke: '#78ab9a66'},
+  {start: '#263d35', end: '#3d6256', cloak: '#2e4a41', stroke: '#60897a66'},
+  {start: '#263d38', end: '#3e625e', cloak: '#2e4a46', stroke: '#60898366'},
+  {start: '#263c32', end: '#36564d', cloak: '#2d473e', stroke: '#60897b66'},
 
-  {start: '#4c4630', end: '#8f8459', cloak: '#5f573b', stroke: '#aba47866'},
-  {start: '#4c442f', end: '#867a54', cloak: '#5d523a', stroke: '#aba37866'},
-  {start: '#4d4830', end: '#8a8256', cloak: '#615a3d', stroke: '#aba47866'},
+  {start: '#3d3826', end: '#726a47', cloak: '#4c462f', stroke: '#89836066'},
+  {start: '#3d3626', end: '#6b6243', cloak: '#4a422e', stroke: '#89826066'},
+  {start: '#3e3a26', end: '#6e6845', cloak: '#4e4831', stroke: '#89836066'},
 
-  {start: '#4d3f30', end: '#8a7757', cloak: '#604e3c', stroke: '#ab9c7866'},
-  {start: '#4c3e30', end: '#93845c', cloak: '#5d4b3a', stroke: '#aba07866'},
-  {start: '#4d3c30', end: '#816a50', cloak: '#5e493b', stroke: '#ab987866'},
+  {start: '#3e3226', end: '#6e5f46', cloak: '#4d3e30', stroke: '#897d6066'},
+  {start: '#3d3226', end: '#766a4a', cloak: '#4a3c2e', stroke: '#89806066'},
+  {start: '#3e3026', end: '#675540', cloak: '#4b3a2f', stroke: '#897a6066'},
 
-  {start: '#4e3b31', end: '#8a6e56', cloak: '#614a3d', stroke: '#ab927866'},
-  {start: '#4e3931', end: '#8f6f59', cloak: '#61473d', stroke: '#ab8f7866'},
-  {start: '#4e3831', end: '#876655', cloak: '#60453c', stroke: '#ab8d7866'},
+  {start: '#3e2f27', end: '#6e5845', cloak: '#4e3b31', stroke: '#89756066'},
+  {start: '#3e2e27', end: '#725947', cloak: '#4e3931', stroke: '#89726066'},
+  {start: '#3e2d27', end: '#6c5244', cloak: '#4d3730', stroke: '#89716066'},
 
-  {start: '#523533', end: '#a16969', cloak: '#694442', stroke: '#ab787866'},
-  {start: '#503532', end: '#9f7065', cloak: '#674441', stroke: '#ab817866'},
-  {start: '#513339', end: '#99606a', cloak: '#684149', stroke: '#ab787e66'},
+  {start: '#422a29', end: '#815454', cloak: '#543635', stroke: '#89606066'},
+  {start: '#402a28', end: '#7f5a51', cloak: '#523634', stroke: '#89676066'},
+  {start: '#41292e', end: '#7a4d55', cloak: '#53343a', stroke: '#89606566'},
 
-  {start: '#4f3232', end: '#996060', cloak: '#633e3e', stroke: '#ab787866'},
-  {start: '#4e3131', end: '#8b5757', cloak: '#603c3c', stroke: '#ab787866'},
-  {start: '#503239', end: '#8a5662', cloak: '#653f47', stroke: '#ab787f66'},
+  {start: '#3f2828', end: '#7a4d4d', cloak: '#4f3232', stroke: '#89606066'},
+  {start: '#3e2727', end: '#6f4646', cloak: '#4d3030', stroke: '#89606066'},
+  {start: '#40282e', end: '#6e454e', cloak: '#513239', stroke: '#89606666'},
 
-  {start: '#4f3246', end: '#965e76', cloak: '#643f58', stroke: '#ab789366'},
-  {start: '#4e3147', end: '#9a607d', cloak: '#623d59', stroke: '#ab789366'},
-  {start: '#4c314e', end: '#92609a', cloak: '#5f3d62', stroke: '#a478ab66'},
+  {start: '#3f2838', end: '#784b5e', cloak: '#503246', stroke: '#89607666'},
+  {start: '#3e2739', end: '#7b4d64', cloak: '#4e3147', stroke: '#89607666'},
+  {start: '#3d273e', end: '#754d7b', cloak: '#4c314e', stroke: '#83608966'},
 
-  {start: '#333e52', end: '#5a6a8f', cloak: '#414f67', stroke: '#788fab66'},
-  {start: '#354255', end: '#607599', cloak: '#44546d', stroke: '#7890ab66'},
-  {start: '#313a4e', end: '#556287', cloak: '#3e4a64', stroke: '#788bab66'},
-  {start: '#344653', end: '#557888', cloak: '#3f5665', stroke: '#789bab66'},
+  {start: '#293242', end: '#485572', cloak: '#343f52', stroke: '#60728966'},
+  {start: '#2a3544', end: '#4d5e7a', cloak: '#364357', stroke: '#60738966'},
+  {start: '#272e3e', end: '#444e6c', cloak: '#323b50', stroke: '#606f8966'},
+  {start: '#2a3842', end: '#44606d', cloak: '#324551', stroke: '#607c8966'},
 
-  {start: '#423351', end: '#795c93', cloak: '#55436a', stroke: '#9178ab66'},
-  {start: '#3f3351', end: '#7968a0', cloak: '#514269', stroke: '#8578ab66'},
+  {start: '#352941', end: '#614a76', cloak: '#443655', stroke: '#74608966'},
+  {start: '#322941', end: '#615380', cloak: '#413554', stroke: '#6a608966'},
 
-  {start: '#2e4a49', end: '#558780', cloak: '#385958', stroke: '#78aba366'},
-  {start: '#323b50', end: '#6a7e9c', cloak: '#3f4c64', stroke: '#788fab66'}
+  {start: '#253b3a', end: '#446c66', cloak: '#2d4746', stroke: '#60898266'},
+  {start: '#282f40', end: '#55657d', cloak: '#323d50', stroke: '#60728966'}
 ];
 
 const eyePalettes = [
-  '#56878a', '#4c7a6b', '#93845c', '#99606a',
-  '#5f8798', '#7e925c', '#92609a', '#9f7465',
-  '#9e9564', '#965e70', '#578b78', '#8a78aa',
-  '#8a7456', '#56858a', '#6f8b57', '#adadad'
+  '#456c6e', '#3d6256', '#766a4a', '#7a4d55',
+  '#4c6c7a', '#65754a', '#754d7b', '#7f5d51',
+  '#7e7750', '#784b5a', '#466f60', '#6e6088',
+  '#6e5d45', '#456a6e', '#596f46', '#8a8a8a'
 ];
 
 function hashString(str: string): number[] {

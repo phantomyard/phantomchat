@@ -66,7 +66,7 @@ try {
     await identityFingerprint(page, identity);
     await assertOfflineMessage(page, 'channel-fixture-stable', 101);
     await writeOfflineMessage(page, 'channel-fixture-preview', 102);
-    assert.ok(['#456783', '#8aacc8'].includes(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase())), 'Preview must render quiet stock accents on an existing Stable profile');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase()), stableAccent, 'Preview must render the original Stable accent');
     assert.equal(await page.locator('#manifest').getAttribute('href'), '/site.webmanifest');
     assert.equal(await page.evaluate(() => localStorage.getItem('channel-smoke-existing-setting')), 'keep');
     await page.reload();

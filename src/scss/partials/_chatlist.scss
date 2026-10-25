@@ -294,7 +294,7 @@ ul.chatlist {
 
     @include respond-to(not-handhelds) {
       &.active {
-        --background: var(--chatlist-active-fill-color) !important;
+        --background: var(--primary-color) !important;
         //background: var(--light-secondary-text-color);
 
         .row-subtitle,

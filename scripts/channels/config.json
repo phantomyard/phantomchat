@@ -21,30 +21,20 @@
       "preview": "4f715b54e56912e7df4e04cabee45e7a71f790f3fe27e45bc2097c3426b3d091",
       "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. No database access; delegates routing to the shell. Copied to pinned Stable by the builder. Independent desktop installer ring remains accessible."
     },
-    "index.html": {
-      "stable": "918e4efad6f7c9d06b84759a06d0760bf4a8a8eb1df6c527508d669d69788a52",
-      "preview": "237f53e19ed58d9df6e319a140d03dbcbaabca0825e339f62e36762d86fcc514",
-      "reason": "Cosmetic splash/theme colours only; manifest, origin and storage unchanged."
-    },
-    "src/config/state.ts": {
-      "stable": "153d04ba78a391bf2e1053404a245bfca2e80fbd29a67f6c37263aa3a19526c3",
-      "preview": "b2532b5e77f1bf158996efc57184f773e9494df6ff4a93808dc2a1010cb4be5d",
-      "reason": "Default theme palette values only, sourced from render-only palette helper; no state shape, schema, keys or migration changes."
-    },
     "src/helpers/generateDicebearAvatar.ts": {
       "stable": "a0313477f28d25311948e1ea0a952f579d61c6f80c2f86ef4b78250527445e7b",
-      "preview": "3b187ade0f0f344164d2c6a4b05267baec955980bccec1ca80da0726d5a759f3",
+      "preview": "5acf580162ed6c6ffd3011a7b55086503f9ac0e112da5066975106a5cda461da",
       "reason": "Only generated avatar colour palettes and glow styling change; input identity and avatar generation contract unchanged."
     },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
-      "preview": "e8f654751c8218ae0be90df9bfaf2ecf6e96e161baf6e082c0f38e76e613073f",
-      "reason": "Theme tokens/filled-control contrast plus render-only stock-default substitution through getThemeSettings. Existing shared theme preferences are never rewritten; custom accents and wallpapers are preserved. Updated text contrast and blue bubble defaults; previous understated stock preferences also remap without persistence. Revised content requires independent review."
+      "preview": "dcd3c9503ce0809df894a5e441390ebb6d624f6faf286c35b567014d0b4cb195",
+      "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required."
     },
     "src/helpers/understatedTheme.ts": {
       "stable": "absent",
-      "preview": "e026bddac3ec451994feda12e42635e1d1205e52ceba3ed2aee785f850fe5a05",
-      "reason": "Presentation-only stock-default recognition and palette remapping; copies settings for rendering, never persists or mutates input. Shared palette constants feed new defaults. Unit and existing-profile cross-channel checks required. Updated text contrast and blue bubble defaults; previous understated stock preferences also remap without persistence. Revised content requires independent review."
+      "preview": "df03917d332cbbf38e347f6f2e625e6f3e36a96b934bf2c80358d02f3869742d",
+      "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required."
     }
   },
   "stableVersion": "1.0.335"
