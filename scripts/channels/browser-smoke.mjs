@@ -20,15 +20,21 @@ try {
     // Keep the smoke test entirely local; it must never touch live relays.
     await context.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
     const page = await context.newPage();
+    const evaluate = page.evaluate.bind(page);
+    page.evaluate = (...args) => Promise.race([evaluate(...args), new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Page evaluation stalled for 45 seconds')), 45000); timer.unref(); })]);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin + '/');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
+    console.log('Creating disposable identity');
     const identity = await createDisposableIdentity(page);
+    console.log('Disposable identity ready');
     await page.emulateMedia({colorScheme: 'dark'});
     await page.waitForTimeout(350);
     const stableAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase());
+    console.log('Writing Stable offline message');
     await writeOfflineMessage(page, 'channel-fixture-stable', 101);
+    console.log('Stable offline message ready');
     await page.evaluate(async() => {
       localStorage.setItem('channel-smoke-existing-setting', 'keep');
       const request = indexedDB.open('channel-smoke-existing-data', 1);
