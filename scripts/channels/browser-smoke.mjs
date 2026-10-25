@@ -37,7 +37,7 @@ try {
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     await openChannelSettings(page);
     assert.equal(await page.getByRole('combobox').count(), 0);
-    await page.getByRole('radio', {name: 'Preview', exact: true}).locator('..').click();
+    await page.getByRole('radio', {name: 'Preview', exact: true}).locator('../..').click();
     assert.equal(new URL(page.url()).pathname, '/');
     assert.equal(await page.getByRole('radio', {name: 'Stable', exact: true}).isChecked(), true);
     acceptPreview = true;
@@ -51,6 +51,7 @@ try {
     await identityFingerprint(page, identity);
     await assertOfflineMessage(page, 'channel-fixture-stable', 101);
     await writeOfflineMessage(page, 'channel-fixture-preview', 102);
+    assert.ok(['#456783', '#8aacc8'].includes(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase())), 'Preview must render quiet stock accents on an existing Stable profile');
     assert.equal(await page.locator('#manifest').getAttribute('href'), '/site.webmanifest');
     assert.equal(await page.evaluate(() => localStorage.getItem('channel-smoke-existing-setting')), 'keep');
     await page.reload();
@@ -68,13 +69,14 @@ try {
     await page.waitForURL('**/preview/index.html');
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     await openChannelSettings(page);
-    await page.getByRole('radio', {name: 'Stable', exact: true}).locator('..').click();
+    await page.getByRole('radio', {name: 'Stable', exact: true}).locator('../..').click();
     await page.waitForURL(url => url.pathname === '/index.html' && url.searchParams.get('channel') === 'stable');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     assert.equal(new URL(page.url()).searchParams.get('account'), '1');
     await identityFingerprint(page, identity);
     await assertOfflineMessage(page, 'channel-fixture-stable', 101);
     await assertOfflineMessage(page, 'channel-fixture-preview', 102);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase()), '#3080ff', 'Stable must retain its original saved stock palette');
     const stored = await page.evaluate(async() => {
       const request = indexedDB.open('channel-smoke-existing-data', 1);
       const db = await new Promise(resolve => { request.onsuccess = () => resolve(request.result); });

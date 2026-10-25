@@ -4,6 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
+import {renderUnderstatedDefaults} from '@helpers/understatedTheme';
 import type {AppTheme} from '@config/state';
 import type {Theme} from '@layer';
 import type AppBackgroundTab from '@components/sidebarLeft/tabs/background';
@@ -433,7 +434,7 @@ export class ThemeController {
     const themeSettings = Array.isArray(theme.settings) ?
       theme.settings.find((settings) => settings.base_theme._ === (isNight ? 'baseThemeNight' : 'baseThemeClassic')) :
       theme.settings;
-    return themeSettings;
+    return renderUnderstatedDefaults(themeSettings, theme.id);
   }
 
   public applyTheme(theme: Theme | AppTheme, element = document.documentElement, saveToCache?: boolean) {

@@ -28,8 +28,8 @@
     },
     "src/config/state.ts": {
       "stable": "153d04ba78a391bf2e1053404a245bfca2e80fbd29a67f6c37263aa3a19526c3",
-      "preview": "b10a27a892bc83d38b614fb636ae8625beeb511d2153e4117329ab07255da8c9",
-      "reason": "Only default theme colours and wallpapers change; state shape, version, keys and migrations unchanged."
+      "preview": "b2532b5e77f1bf158996efc57184f773e9494df6ff4a93808dc2a1010cb4be5d",
+      "reason": "Default theme palette values only, sourced from render-only palette helper; no state shape, schema, keys or migration changes."
     },
     "src/helpers/generateDicebearAvatar.ts": {
       "stable": "a0313477f28d25311948e1ea0a952f579d61c6f80c2f86ef4b78250527445e7b",
@@ -38,8 +38,13 @@
     },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
-      "preview": "f831e99e41f14f8e3bed6c75c08f67eb984958c198e78431f44fb02beb0ab118",
-      "reason": "Only theme colour tokens and luminance-derived filled-button foreground change; no persistence/schema changes."
+      "preview": "71ef1ea6eec0d6ea9bd9461d7e8021a13330c118064039255abfcf2b73b545bc",
+      "reason": "Theme tokens/filled-control contrast plus render-only stock-default substitution through getThemeSettings. Existing shared theme preferences are never rewritten; custom accents and wallpapers are preserved."
+    },
+    "src/helpers/understatedTheme.ts": {
+      "stable": "absent",
+      "preview": "3d435680f5a26ffb5413640ab5e100a05e50a4aebee8455b9e2002b3e8c394d6",
+      "reason": "Presentation-only stock-default recognition and palette remapping; copies settings for rendering, never persists or mutates input. Shared palette constants feed new defaults. Unit and existing-profile cross-channel checks required."
     }
   },
   "stableVersion": "1.0.335"

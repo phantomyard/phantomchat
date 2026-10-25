@@ -1,3 +1,4 @@
+import {understatedPalette} from '@helpers/understatedTheme';
 /*
  * https://github.com/morethanwords/tweb
  * Copyright (C) 2019-2021 Eduard Kuzmenko
@@ -206,8 +207,8 @@ export const DEFAULT_THEME: Theme = {
     _: 'themeSettings',
     pFlags: {},
     base_theme: {_: 'baseThemeClassic'},
-    accent_color: 0x456783,
-    message_colors: [0x456783],
+    accent_color: understatedPalette.baseThemeClassic.accent,
+    message_colors: [understatedPalette.baseThemeClassic.message],
     wallpaper: {
       _: 'wallPaper',
       pFlags: {
@@ -221,19 +222,19 @@ export const DEFAULT_THEME: Theme = {
       settings: {
         _: 'wallPaperSettings',
         pFlags: {},
-        intensity: 12,
-        background_color: 0xe7edf2,
-        second_background_color: 0xdfe7ee,
-        third_background_color: 0xecf0f4,
-        fourth_background_color: 0xd8e2ea
+        intensity: understatedPalette.baseThemeClassic.intensity,
+        background_color: understatedPalette.baseThemeClassic.colors[0],
+        second_background_color: understatedPalette.baseThemeClassic.colors[1],
+        third_background_color: understatedPalette.baseThemeClassic.colors[2],
+        fourth_background_color: understatedPalette.baseThemeClassic.colors[3]
       }
     }
   }, {
     _: 'themeSettings',
     pFlags: {},
     base_theme: {_: 'baseThemeNight'},
-    accent_color: 0x8aacc8,
-    message_colors: [0x344b60],
+    accent_color: understatedPalette.baseThemeNight.accent,
+    message_colors: [understatedPalette.baseThemeNight.message],
     wallpaper: {
       _: 'wallPaper',
       pFlags: {
@@ -248,11 +249,11 @@ export const DEFAULT_THEME: Theme = {
       settings: {
         _: 'wallPaperSettings',
         pFlags: {},
-        intensity: -12,
-        background_color: 0x171e26,
-        second_background_color: 0x202b36,
-        third_background_color: 0x1c2530,
-        fourth_background_color: 0x263340
+        intensity: understatedPalette.baseThemeNight.intensity,
+        background_color: understatedPalette.baseThemeNight.colors[0],
+        second_background_color: understatedPalette.baseThemeNight.colors[1],
+        third_background_color: understatedPalette.baseThemeNight.colors[2],
+        fourth_background_color: understatedPalette.baseThemeNight.colors[3]
       }
     }
   }],
