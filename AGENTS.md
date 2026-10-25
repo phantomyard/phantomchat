@@ -92,12 +92,11 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    dedup or delivery-tick (✓→✓✓) paths requires a regression test — these have
    bitten us before (duplicate rows, wrong-size `['e']` tags, lingering ticks).
 
-10. **Desktop app (Electron): permissions stay default-deny, binary versions stay in
-   sync with the candidate PWA.** Grant a new Chromium permission only by adding it to
+10. **Desktop app (Electron): permissions stay default-deny, binary versions identify their
+   own manual release.** Grant a new Chromium permission only by adding it to
    `electron/permissions.ts` (app-origin only, with a test). The desktop
-   release version is the PWA deploy run number for the same commit
-   (`app-release.yml` "Resolve version"); never version it from its own
-   `github.run_number`. The embedded Stable frontend retains its pinned release
+   release version is `1.1.<github.run_number>` from its own manual workflow;
+   PWA releases are independent and never required to release Electron. The embedded Stable frontend retains its pinned release
    version; its source promotion is independent of the desktop binary update ring
    (see `docs/RELEASE-CHANNELS.md`).
 

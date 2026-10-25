@@ -17,10 +17,10 @@ available locally. Dependency-lock changes require exact-content compatibility a
 when locks differ, the pinned source receives an independent frozen install
 without package lifecycle scripts. Stable never uses Preview’s dependency graph.
 
-Promotion is a reviewed PR changing stableRef and stableVersion together. Neither
-merging a feature PR nor publishing Preview changes the Stable source pin. The
-normal Pages deployment still publishes the combined site; do not manually deploy
-a feature branch as a substitute for the channel pipeline. Andrew owns deployment.
+PWA promotion uses the manual artifact workflow described below. The source pin
+still controls the independent frontend embedded in new Electron binaries.
+Neither merging a feature PR nor publishing Preview promotes either product.
+Andrew owns publication and promotion.
 
 The build refuses non-presentation changes between Stable and Preview unless an
 explicit compatibility approval records BOTH exact file SHA-256 hashes. This
@@ -97,3 +97,65 @@ substitution in Preview. Custom accents, outgoing colours and wallpapers are
 preserved; no saved preferences are rewritten. Returning to Stable restores its
 original stock palette. The browser/native round trips assert both appearances
 on the same identity, in addition to encrypted-key and message durability.
+
+## Manual publication and promotion (replaces automatic releases)
+
+Pushes and merges trigger no builds or publication. Pull requests run typechecks,
+unit tests and archive/promotion regression tests only. Four Actions buttons own
+publication; use Run workflow's branch picker to select any reviewed branch:
+
+- `deploy.yml`: **PWA — build and publish Preview**. Builds the candidate and a
+  separate promotion-ready candidate with Stable's asset-cache/build-marker
+  namespace. Checks existing-data round trips, desktop/mobile browser switching,
+  and both the original and promotion-ready combinations before Pages publication.
+- `pwa-promote.yml`: **PWA — promote to Stable**. Optional `release` is a
+  `pwa-v1.0.<PWA workflow run_number>` archive identifier. Empty selects the newest
+  successfully published Preview by publication time, across all branches.
+  Downloads and verifies the archive and publishes the prebuilt Stable variant;
+  it never recompiles application code. Current Preview bytes are preserved.
+- `app-release.yml`: **Electron — build and publish Preview**. Builds, verifies,
+  signs/notarizes and publishes installers using the selected branch commit.
+  Desktop versions are independently `1.1.<Electron workflow run_number>`;
+  the minor bump prevents downgrade from the previous shared PWA counter.
+  The candidate embedded frontend shares the binary version. No PWA workflow
+  run is needed. Existing native packaging/signature/feed verification remains.
+- `app-promote.yml`: **Electron — promote to Stable**. Optional `tag` selects a
+  desktop Preview release. Empty selects the newest published, non-draft
+  `phantomchat-v*` Preview across all branches. Existing checksum/artifact gates
+  run before the same release becomes stable/latest; no rebuild or signing.
+
+Each build button always builds **and publishes to Preview**. Promotion is a
+separate explicit action. Merely merging this change does not dispatch anything.
+The workflow files must exist on the default branch before GitHub offers their
+manual buttons; the chosen branch must also contain the workflow implementation.
+Only dispatch trusted, reviewed branches: release jobs have publication/signing
+credentials and intentionally execute the selected branch's code.
+
+PWA archives are durable GitHub **draft releases**, with `bundle.tar.gz` and
+`SHA256SUMS.txt`, not expiring Actions artifacts. They remain drafts permanently:
+normal published PWA releases/tags would pollute Electron's `releases.atom` feed.
+A draft's JSON body records source/version, Stable source/version, Preview release,
+operation and successful Pages publication time. Unpublished/failed candidates
+are excluded from default selection. Never publish these drafts manually.
+The archive includes the full site snapshot plus the already-built Stable
+candidate, so promotion uses exact verified assets without path rewriting.
+Preview publication preserves the last published Stable files byte-for-byte;
+the initial publication bootstraps Stable from the reviewed source pin.
+
+PWA publication and promotion share a non-cancelling concurrency group; desktop
+publication and promotion share a separate one. GitHub may replace an older
+pending dispatch when another is queued; inspect Actions before retrying.
+If Pages succeeds but recording publication fails, the workflow fails visibly:
+reconcile that successful deployment's archive record before another publication.
+There is no automatic recovery deploy and no inference that a failed run shipped.
+
+After a PWA promotion, the next Preview build checks compatibility against the
+**actually deployed Stable source**, loaded from the last successful archive.
+Exact-content compatibility approvals must be refreshed in a reviewed PR when
+that baseline changes; stale approvals fail closed. Explicit older PWA promotion
+also checks the selected Stable source against current Preview using the chosen
+branch's reviewed exact-content approvals, then runs artifact browser round trips.
+It never silently rolls Preview back. Archives with missing/corrupt assets or
+unsafe paths/links fail before Pages publication. The original source pin remains
+Electron's independent embedded Stable frontend baseline; changing PWA Stable
+never changes an installed Electron binary.

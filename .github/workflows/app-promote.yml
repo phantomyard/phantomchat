@@ -1,24 +1,16 @@
-name: app-promote
-
-# The manual half of the desktop release rings — mirrors phantombot's
-# promote.yml. app-release cuts EVERY merge to main as a prerelease (preview
-# channel); this workflow is the button that ships a tested build to stable.
-#
-# Promotion is a human act by definition (a stable ring that CI flipped on a
-# green build would be the same ring as preview), which is why this is
-# workflow_dispatch — pressing the button IS the confirmation. All
-# verification and the metadata-only flip live in scripts/promote-release.sh:
-# every required artifact and checksum is verified BEFORE anything is
-# touched, and nothing is ever rebuilt, re-signed, retagged or re-uploaded.
-# Promoting an older known-good tag by name is the rollback path.
+name: Electron — promote to Stable
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to promote (e.g. phantomchat-v1.0.42). Leave empty to promote the newest release if it is a preview.'
+        description: 'Electron release tag. Empty selects newest published Preview.'
         required: false
         default: ''
+
+concurrency:
+  group: electron-release
+  cancel-in-progress: false
 
 permissions:
   contents: write        # edit the release (flip prerelease -> latest)
@@ -29,39 +21,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: "Resolve tag (default: newest release preview)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Resolve requested or newest Electron Preview
         id: tag
+        run: node scripts/releases/registry.mjs resolve-electron
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG_INPUT: ${{ github.event.inputs.tag }}
-        run: |
-          # Dispatch input is bound through env, never interpolated into
-          # script text — this job holds contents:write. The explicit-tag
-          # path is validated to a safe charset so it can never inject into
-          # the output file or the downstream promote script.
-          if [[ -n "$TAG_INPUT" ]]; then
-            if [[ ! "$TAG_INPUT" =~ ^phantomchat-v[0-9A-Za-z._-]+$ ]]; then
-              echo "::error::Invalid tag '${TAG_INPUT}' — expected phantomchat-v<version>."
-              exit 1
-            fi
-            echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"
-          else
-            # Pick the most recently CREATED release, not the newest release
-            # that still has prerelease=true. Filtering first can silently
-            # select an obsolete preview after newer releases were promoted.
-            LATEST="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq 'sort_by(.created_at) | last | [.tag_name, (.prerelease | tostring)] | @tsv')"
-            IFS=$'\t' read -r NEWEST IS_PRERELEASE <<< "$LATEST"
-            if [[ -z "$NEWEST" || "$NEWEST" == "null" ]]; then
-              echo "::error::No app release found to promote."
-              exit 1
-            fi
-            if [[ "$IS_PRERELEASE" != "true" ]]; then
-              echo "::error::Newest app release ${NEWEST} is already stable; build a new preview before promoting."
-              exit 1
-            fi
-            echo "tag=$NEWEST" >> "$GITHUB_OUTPUT"
-          fi
+          RELEASE_INPUT: ${{ inputs.tag }}
 
       - name: Promote to stable (verify artifacts + checksums, flip metadata)
         env:

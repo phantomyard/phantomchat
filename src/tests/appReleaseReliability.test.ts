@@ -122,12 +122,6 @@ describe('macOS release retry boundary', () => {
     expect(CHECK_UPDATE_ZIP).toMatch(/zip does not contain PhantomChat\.app at its root/);
   });
 
-  it('skips desktop releases for non-payload-only changes', () => {
-    for(const ignored of ['.github/**', 'src/tests/**', 'scripts/**']) {
-      expect(WORKFLOW).toContain(`- '${ignored}'`);
-    }
-  });
-
   it('retries transient Apple operations and produces a re-zipped app', () => {
     const sandbox = setupSandbox(String.raw`
 operation="$1-$2"

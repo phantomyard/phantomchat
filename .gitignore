@@ -98,3 +98,6 @@ release/
 /node_modules
 # Override public/*.js above: this shared shell is versioned source.
 !public/channel-switcher.js
+
+.release-work/
+dist-stable-candidate/

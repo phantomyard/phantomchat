@@ -21,6 +21,9 @@ try {
     await page.goto(origin + '/');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     const identity = await createDisposableIdentity(page);
+    await page.emulateMedia({colorScheme: 'dark'});
+    await page.waitForTimeout(350);
+    const stableAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase());
     await writeOfflineMessage(page, 'channel-fixture-stable', 101);
     await page.evaluate(async() => {
       localStorage.setItem('channel-smoke-existing-setting', 'keep');
@@ -76,7 +79,7 @@ try {
     await identityFingerprint(page, identity);
     await assertOfflineMessage(page, 'channel-fixture-stable', 101);
     await assertOfflineMessage(page, 'channel-fixture-preview', 102);
-    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase()), '#3080ff', 'Stable must retain its original saved stock palette');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase()), stableAccent, 'Stable must retain its palette through the round trip');
     const stored = await page.evaluate(async() => {
       const request = indexedDB.open('channel-smoke-existing-data', 1);
       const db = await new Promise(resolve => { request.onsuccess = () => resolve(request.result); });
