@@ -21,11 +21,6 @@
       "preview": "4f715b54e56912e7df4e04cabee45e7a71f790f3fe27e45bc2097c3426b3d091",
       "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. No database access; delegates routing to the shell. Copied to pinned Stable by the builder. Independent desktop installer ring remains accessible."
     },
-    "src/helpers/generateDicebearAvatar.ts": {
-      "stable": "a0313477f28d25311948e1ea0a952f579d61c6f80c2f86ef4b78250527445e7b",
-      "preview": "5acf580162ed6c6ffd3011a7b55086503f9ac0e112da5066975106a5cda461da",
-      "reason": "Only generated avatar colour palettes and glow styling change; input identity and avatar generation contract unchanged."
-    },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
       "preview": "dcd3c9503ce0809df894a5e441390ebb6d624f6faf286c35b567014d0b4cb195",
