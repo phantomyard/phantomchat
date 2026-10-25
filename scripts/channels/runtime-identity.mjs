@@ -56,7 +56,7 @@ export async function assertOfflineMessage(page, id, mid) {
 }
 
 export async function openChannelSettings(page) {
-  await page.locator('.sidebar-tools-button').first().click();
-  await page.locator('.btn-menu-item').filter({hasText: 'Settings'}).first().click();
+  await page.locator('.sidebar-tools-button:visible').first().click();
+  await page.locator('.btn-menu-item:visible').filter({hasText: 'Settings'}).first().click();
   await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
 }
