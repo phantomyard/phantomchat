@@ -37,7 +37,7 @@ try {
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     await openChannelSettings(page);
     assert.equal(await page.getByRole('combobox').count(), 0);
-    await page.getByRole('radio', {name: 'Preview', exact: true}).check();
+    await page.getByRole('radio', {name: 'Preview', exact: true}).locator('..').click();
     assert.equal(new URL(page.url()).pathname, '/');
     assert.equal(await page.getByRole('radio', {name: 'Stable', exact: true}).isChecked(), true);
     acceptPreview = true;
@@ -68,7 +68,7 @@ try {
     await page.waitForURL('**/preview/index.html');
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     await openChannelSettings(page);
-    await page.getByRole('radio', {name: 'Stable', exact: true}).check();
+    await page.getByRole('radio', {name: 'Stable', exact: true}).locator('..').click();
     await page.waitForURL(url => url.pathname === '/index.html' && url.searchParams.get('channel') === 'stable');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     assert.equal(new URL(page.url()).searchParams.get('account'), '1');
