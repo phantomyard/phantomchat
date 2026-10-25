@@ -35,7 +35,7 @@ The only initial approval is the standalone channel selector: it writes a new
 release-choice localStorage key and does not rewrite existing app state.
 The packaging script applies a deliberately narrow shared infrastructure patch
 to both source trees: independent asset caches, SW unregister filtering and
-channel-local hard reload. Upstream shape changes fail the patch, requiring review.
+channel-local hard reload and Preview’s own version-yield marker. Upstream shape changes fail the patch, requiring review.
 Media CacheStorage and all user databases remain shared. The old cachedAssets
 bucket is left alone (no indiscriminate cache deletion).
 
@@ -47,3 +47,10 @@ root → Preview → Stable, reload and remembered PWA launch. Desktop checks mu
 the packaged app origin/profile on each supported OS; source-level tests alone do
 not establish native runtime readiness. Do not call a release verified while those
 checks remain outstanding.
+
+`node scripts/channels/browser-smoke.mjs` checks desktop/mobile switching against
+the combined output. After `node electron/build.mjs`, run
+`xvfb-run -a node scripts/channels/electron-smoke.mjs` on Linux (omit xvfb on
+native desktop runners). Both use disposable data and block live connections.
+The build also runs real Stable/Preview MessageStore code against the same
+IndexedDB fixture, including writes and cursor changes followed by Stable reopen.

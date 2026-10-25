@@ -14,8 +14,11 @@ try {
     // Keep the smoke test entirely local; it must never touch live relays.
     await context.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
     const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin + '/');
     await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
+    await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     await page.evaluate(async() => {
       localStorage.setItem('channel-smoke-existing-setting', 'keep');
       const request = indexedDB.open('channel-smoke-existing-data', 1);
@@ -30,16 +33,19 @@ try {
     await page.getByRole('combobox', {name: 'Release channel'}).selectOption('preview');
     await page.waitForURL('**/preview/index.html?channel=preview');
     await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
+    await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     assert.equal(await page.locator('#manifest').getAttribute('href'), '/site.webmanifest');
     assert.equal(await page.evaluate(() => localStorage.getItem('channel-smoke-existing-setting')), 'keep');
     await page.reload();
     await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
+    await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     assert.equal(await page.getByRole('combobox', {name: 'Release channel'}).inputValue(), 'preview');
     await page.goto(origin + '/');
     await page.waitForURL('**/preview/index.html');
     await page.getByRole('combobox', {name: 'Release channel'}).selectOption('stable');
     await page.waitForURL('**/index.html?channel=stable');
     await page.getByRole('combobox', {name: 'Release channel'}).waitFor();
+    await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     const stored = await page.evaluate(async() => {
       const request = indexedDB.open('channel-smoke-existing-data', 1);
       const db = await new Promise(resolve => { request.onsuccess = () => resolve(request.result); });
@@ -50,6 +56,7 @@ try {
     });
     assert.equal(stored.content, 'existing data');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    assert.deepEqual(errors, []);
     await context.close();
     console.log(`Browser channel round-trip passed: ${viewport.width}x${viewport.height}`);
   }
