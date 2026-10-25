@@ -7,7 +7,7 @@ app.use(express.static('dist'));
 const server = app.listen(0, '127.0.0.1');
 await new Promise(resolve => server.once('listening', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch({headless: true});
+const browser = await chromium.launch({headless: true, proxy: {server: 'http://127.0.0.1:9', bypass: '127.0.0.1'}});
 try {
   for(const viewport of [{width: 1366, height: 900}, {width: 390, height: 844}]) {
     const context = await browser.newContext({viewport});

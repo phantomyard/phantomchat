@@ -8,6 +8,7 @@ const dir = mkdtempSync(resolve('.channel-build/electron-'));
 const entry = join(dir, 'entry.cjs');
 writeFileSync(entry, `const {app, session} = require('electron');
 app.setPath('userData', ${JSON.stringify(join(dir, 'profile'))});
+app.setPath('sessionData', ${JSON.stringify(join(dir, 'profile'))});
 app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({cancel: /^https?:|^wss?:/.test(details.url)})));
 require(${JSON.stringify(resolve('electron/dist/main.cjs'))});
 `);
