@@ -2,6 +2,7 @@ import {execFileSync} from 'node:child_process';
 import {mkdtempSync, readFileSync, writeFileSync, mkdirSync, cpSync, symlinkSync, rmSync} from 'node:fs';
 import {resolve, join} from 'node:path';
 import {checkCompatibility} from './check.mjs';
+import {stateSmoke} from './state-smoke.mjs';
 
 const root = process.cwd();
 const config = JSON.parse(readFileSync('scripts/channels/config.json', 'utf8'));
@@ -21,7 +22,7 @@ try {
     if(readFileSync(join(tree, 'pnpm-lock.yaml'), 'utf8') !== readFileSync('pnpm-lock.yaml', 'utf8')) {
       throw new Error('Stable and Preview dependency locks differ; supply independently installed build environments before releasing.');
     }
-    symlinkSync(resolve('node_modules'), join(tree, 'node_modules'), 'dir');
+    symlinkSync(resolve('node_modules'), join(tree, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     // Infrastructure-only patch shared by BOTH pinned sources. Fail if upstream
     // changes its shape: never silently lose cache isolation.
     const patch = (file, from, to) => {
@@ -35,15 +36,18 @@ try {
     patch('src/lib/serviceWorker/cache.ts', "'cachedAssets'", JSON.stringify(bucket));
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'regs.map((r)', "regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')).map((r)");
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'keys.map((k)', `keys.filter(k => k === '${bucket}').map((k)`);
+    patch('src/lib/apiManagerProxy.ts', 'registration.active && !navigator.serviceWorker.controller', "registration.active && (!navigator.serviceWorker.controller || new URL(navigator.serviceWorker.controller.scriptURL).pathname.startsWith('/preview/') !== location.pathname.startsWith('/preview/'))");
+    patch('src/lib/apiManagerProxy.ts', 'const controller = navigator.serviceWorker.controller || registration.installing || registration.waiting || registration.active;', "const current = navigator.serviceWorker.controller; const controller = current && new URL(current.scriptURL).pathname.startsWith('/preview/') === location.pathname.startsWith('/preview/') ? current : registration.installing || registration.waiting || registration.active;");
     // Keep noServiceWorker debugging from unregistering the other channel.
     patch('src/lib/apiManagerProxy.ts', 'for(const reg of regs)', "for(const reg of regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')))");
     run('node', ['src/scripts/generate_changelog.js'], tree);
-    run('pnpm', ['exec', 'vite', 'build', '--mode', 'production'], tree, {NODE_ENV: 'production', APP_VERSION: channel === 'stable' ? (config.stableVersion) : process.env.APP_VERSION || '1.0.0'});
+    run(process.execPath, [process.env.npm_execpath, 'exec', 'vite', 'build', '--mode', 'production'], tree, {NODE_ENV: 'production', APP_VERSION: channel === 'stable' ? (config.stableVersion) : process.env.APP_VERSION || '1.0.0'});
     const out = join(tree, 'dist');
     cpSync('public/channel-switcher.js', join(out, 'channel-switcher.js'));
     const html = join(out, 'index.html');
-    writeFileSync(html, readFileSync(html, 'utf8').replace('<head>', '<head>\n<script src="/channel-switcher.js"></script>'));
+    writeFileSync(html, readFileSync(html, 'utf8').replace('<head>', '<head>\n<script defer src="/channel-switcher.js"></script>'));
   }
+  await stateSmoke(join(scratch, 'stable'), join(scratch, 'preview'));
   rmSync('dist', {recursive: true, force: true});
   cpSync(join(scratch, 'stable/dist'), 'dist', {recursive: true});
   cpSync(join(scratch, 'preview/dist'), 'dist/preview', {recursive: true});
