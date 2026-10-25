@@ -42,9 +42,9 @@ jobs:
           RELEASE_INPUT: ${{ inputs.release }}
       - run: pnpm exec playwright install --with-deps chromium
       - name: Verify promoted artifact channel round trip
-        run: |
-          cp -a .release-work/payload/site dist
-          node scripts/channels/browser-smoke.mjs
+        run: node scripts/channels/browser-smoke.mjs
+        env:
+          CHANNEL_SMOKE_DIST: .release-work/payload/site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .release-work/payload/site

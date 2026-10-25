@@ -58,6 +58,9 @@ jobs:
           cache: pnpm
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck:electron
+      - run: node --test scripts/releases/registry.node-test.mjs
+      - run: pnpm exec vitest run
 
       # Independent counter; minor bump avoids regression from the old PWA counter.
       # The candidate frontend and binary share this desktop release version.

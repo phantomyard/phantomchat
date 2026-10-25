@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage, openChannelSettings} from './runtime-identity.mjs';
 
 const app = express();
-app.use(express.static('dist'));
+app.use(express.static(process.env.CHANNEL_SMOKE_DIST || 'dist'));
 const server = app.listen(0, '127.0.0.1');
 await new Promise(resolve => server.once('listening', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;

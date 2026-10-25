@@ -29,7 +29,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: node --test scripts/releases/registry.node-test.mjs
+      - run: pnpm exec vitest run
       - name: Load the published Stable baseline
         id: baseline
         run: node scripts/releases/registry.mjs baseline
@@ -46,12 +48,9 @@ jobs:
         run: node scripts/channels/browser-smoke.mjs
       - name: Verify the prebuilt promotion variant
         run: |
-          mv dist dist-preview-check
-          cp -a dist-stable-candidate dist
-          cp -a dist-preview-check/preview dist/preview
-          node scripts/channels/browser-smoke.mjs
-          rm -rf dist
-          mv dist-preview-check dist
+          cp -a dist-stable-candidate .channel-build/promotion-check
+          cp -a dist/preview .channel-build/promotion-check/preview
+          CHANNEL_SMOKE_DIST=.channel-build/promotion-check node scripts/channels/browser-smoke.mjs
       - name: Archive verified release and preserve published Stable bytes
         id: release
         run: node scripts/releases/registry.mjs prepare-preview
@@ -59,10 +58,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CHANNEL_BASELINE: ${{ steps.baseline.outputs.baseline }}
       - name: Verify the exact assembled publication
-        run: |
-          rm -rf dist
-          cp -a .release-work/payload/site dist
-          node scripts/channels/browser-smoke.mjs
+        run: node scripts/channels/browser-smoke.mjs
+        env:
+          CHANNEL_SMOKE_DIST: .release-work/payload/site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .release-work/payload/site
