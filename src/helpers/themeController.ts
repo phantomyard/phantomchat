@@ -94,8 +94,8 @@ const colorMap: {
     'message-background-color': '#ffffff',
     'surface-color': '#ffffff',
     'danger-color': '#df3f40',
-    'primary-text-color': '#202b36',
-    'secondary-text-color': '#626f7c',
+    'primary-text-color': '#111820',
+    'secondary-text-color': '#4b5865',
     'saved-color': '#456783',
     'green-color': '#38784f'
   },
@@ -106,8 +106,8 @@ const colorMap: {
     'message-background-color': '#202832',
     'surface-color': '#202832',
     'danger-color': '#ff595a',
-    'primary-text-color': '#e6edf3',
-    'secondary-text-color': '#a5b1bd',
+    'primary-text-color': '#f5f7fa',
+    'secondary-text-color': '#bec8d2',
     'saved-color': '#8aacc8',
     'green-color': '#83bc98'
   }

@@ -38,13 +38,13 @@
     },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
-      "preview": "71ef1ea6eec0d6ea9bd9461d7e8021a13330c118064039255abfcf2b73b545bc",
-      "reason": "Theme tokens/filled-control contrast plus render-only stock-default substitution through getThemeSettings. Existing shared theme preferences are never rewritten; custom accents and wallpapers are preserved."
+      "preview": "e8f654751c8218ae0be90df9bfaf2ecf6e96e161baf6e082c0f38e76e613073f",
+      "reason": "Theme tokens/filled-control contrast plus render-only stock-default substitution through getThemeSettings. Existing shared theme preferences are never rewritten; custom accents and wallpapers are preserved. Updated text contrast and blue bubble defaults; previous understated stock preferences also remap without persistence. Revised content requires independent review."
     },
     "src/helpers/understatedTheme.ts": {
       "stable": "absent",
-      "preview": "3d435680f5a26ffb5413640ab5e100a05e50a4aebee8455b9e2002b3e8c394d6",
-      "reason": "Presentation-only stock-default recognition and palette remapping; copies settings for rendering, never persists or mutates input. Shared palette constants feed new defaults. Unit and existing-profile cross-channel checks required."
+      "preview": "e026bddac3ec451994feda12e42635e1d1205e52ceba3ed2aee785f850fe5a05",
+      "reason": "Presentation-only stock-default recognition and palette remapping; copies settings for rendering, never persists or mutates input. Shared palette constants feed new defaults. Unit and existing-profile cross-channel checks required. Updated text contrast and blue bubble defaults; previous understated stock preferences also remap without persistence. Revised content requires independent review."
     }
   },
   "stableVersion": "1.0.335"

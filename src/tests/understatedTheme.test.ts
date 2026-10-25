@@ -25,6 +25,16 @@ describe('render-only stock theme refresh', () => {
     expect(JSON.stringify(saved)).toBe(before);
     expect(renderUnderstatedDefaults(saved, '')).toBe(result);
   });
+  for(const night of [false, true]) it(`refreshes saved understated ${night ? 'night' : 'day'} bubbles without rewriting preferences`, () => {
+    const saved = stock(night);
+    saved.accent_color = night ? 0x8aacc8 : 0x456783;
+    saved.message_colors = [night ? 0x344b60 : 0x456783];
+    const before = JSON.stringify(saved);
+    const result = renderUnderstatedDefaults(saved, '');
+    expect(result.message_colors).toEqual([understatedPalette[night ? 'baseThemeNight' : 'baseThemeClassic'].message]);
+    expect(JSON.stringify(saved)).toBe(before);
+    expect(renderUnderstatedDefaults(saved, '')).toBe(result);
+  });
   it('invalidates a stock cache after in-place wallpaper edits in both directions', () => {
     const saved = stock();
     const initial = renderUnderstatedDefaults(saved, '');

@@ -3,8 +3,13 @@ import type {ThemeSettings} from '@layer';
 // Render-only defaults shared with state.ts. Never rewrite saved preferences:
 // Stable must still render its own palette after returning from Preview.
 export const understatedPalette = {
-  baseThemeClassic: {accent: 0x456783, message: 0x456783, intensity: 12, colors: [0xe7edf2, 0xdfe7ee, 0xecf0f4, 0xd8e2ea]},
-  baseThemeNight: {accent: 0x8aacc8, message: 0x344b60, intensity: -12, colors: [0x171e26, 0x202b36, 0x1c2530, 0x263340]}
+  baseThemeClassic: {accent: 0x456783, message: 0x397fc1, intensity: 12, colors: [0xe7edf2, 0xdfe7ee, 0xecf0f4, 0xd8e2ea]},
+  baseThemeNight: {accent: 0x8aacc8, message: 0x28649a, intensity: -12, colors: [0x171e26, 0x202b36, 0x1c2530, 0x263340]}
+};
+
+const previousPalette = {
+  baseThemeClassic: {...understatedPalette.baseThemeClassic, message: 0x456783},
+  baseThemeNight: {...understatedPalette.baseThemeNight, message: 0x344b60}
 };
 
 const legacyPalette = {
@@ -17,7 +22,8 @@ const rendered = new WeakMap<ThemeSettings, ThemeSettings>();
 export function renderUnderstatedDefaults<T extends ThemeSettings>(settings: T, themeId: string | number): T {
   const base = settings?.base_theme?._;
   if(themeId !== '' || !(base in legacyPalette)) return settings;
-  const old = legacyPalette[base as keyof typeof legacyPalette];
+  const key = base as keyof typeof legacyPalette;
+  const old = settings.accent_color === previousPalette[key].accent ? previousPalette[key] : legacyPalette[key];
   const next = understatedPalette[base as keyof typeof understatedPalette];
   // Only untouched stock accents are remapped. Custom themes/accents survive.
   if(settings.accent_color !== old.accent || settings.outbox_accent_color !== undefined ||
