@@ -14,7 +14,7 @@ const browser = await chromium.launch({headless: true, proxy: {server: 'http://1
 try {
   for(const viewport of [{width: 1366, height: 900}, {width: 390, height: 844}]) {
     console.log(`Starting browser round trip: ${viewport.width}`);
-    const context = await browser.newContext({viewport});
+    const context = await browser.newContext({viewport, colorScheme: 'dark'});
     context.setDefaultTimeout(45000);
     context.setDefaultNavigationTimeout(45000);
     // Keep the smoke test entirely local; it must never touch live relays.
@@ -29,7 +29,7 @@ try {
     console.log('Creating disposable identity');
     const identity = await createDisposableIdentity(page);
     console.log('Disposable identity ready');
-    await page.emulateMedia({colorScheme: 'dark'});
+    await page.locator('.sidebar-tools-button:visible').first().waitFor();
     await page.waitForTimeout(350);
     const stableAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase());
     console.log('Writing Stable offline message');
