@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {selectRelease, digest, verifyArchive} from './registry.mjs';
 
 const pwa = (id, operation = 'preview') => ({id, draft: true, tag_name: `pwa-v1.0.${id}`,
-  record: {schema: 1, publishedAt: `2026-10-${id}T12:00:00Z`, operation}});
+  record: {schema: 1, source: 'a'.repeat(40), stableRef: 'b'.repeat(40), version: `1.0.${id}`, stableVersion: '1.0.1', previewRelease: `pwa-v1.0.${id}`, publishedAt: `2026-10-${id}T12:00:00Z`, operation}});
 test('default selection isolates products, excludes drafts/unpublished candidates, and orders by publication', () => {
   const releases = [pwa(21), pwa(22, 'stable'), {...pwa(23), record: {schema: 1}},
     {id: 24, draft: false, prerelease: true, tag_name: 'phantomchat-v1.0.24', published_at: '2026-10-24T12:00:00Z'},

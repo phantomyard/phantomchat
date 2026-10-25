@@ -9,11 +9,18 @@ import {checkCompatibility} from '../channels/check.mjs';
 
 const gh = (...args) => execFileSync('gh', args, {encoding: 'utf8'}).trim();
 const repo = () => process.env.GITHUB_REPOSITORY || 'phantomyard/phantomchat';
+function validPwaRecord(record) {
+  return record?.schema === 1 && ['preview', 'stable'].includes(record.operation) &&
+    /^[a-f0-9]{40}$/.test(record.source) && /^[a-f0-9]{40}$/.test(record.stableRef) &&
+    /^\d+\.\d+\.\d+$/.test(record.version) && /^\d+\.\d+\.\d+$/.test(record.stableVersion) &&
+    /^pwa-v\d+\.\d+\.\d+$/.test(record.previewRelease) &&
+    typeof record.publishedAt === 'string' && Number.isFinite(Date.parse(record.publishedAt));
+}
 export function selectRelease(releases, kind, input = '') {
   const eligible = releases.filter(r => {
     if(kind === 'electron') return !r.draft && r.prerelease && /^phantomchat-v\d+\.\d+\.\d+$/.test(r.tag_name);
     return r.draft && /^pwa-v\d+\.\d+\.\d+(?:-stable-\d+)?$/.test(r.tag_name) &&
-      r.record?.schema === 1 && r.record.publishedAt && (kind === 'site' || r.record.operation === 'preview');
+      validPwaRecord(r.record) && (kind === 'site' || r.record.operation === 'preview');
   });
   if(input) {
     const found = eligible.find(r => r.tag_name === input);

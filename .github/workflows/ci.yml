@@ -53,5 +53,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # `run` mode (not watch). The vitest config already excludes the
       # browser/Tor e2e suites and runs unit tests under jsdom.
-      - run: node --test scripts/releases/registry.test.mjs
+      - run: node --test scripts/releases/registry.node-test.mjs
       - run: pnpm exec vitest run
