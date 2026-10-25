@@ -92,3 +92,5 @@ docs/explorer-reports/allowlist.ts
 docs/explorer-reports/triage-rejected.jsonl
 chat-session-*.md
 release/
+
+.channel-build/

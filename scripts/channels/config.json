@@ -1,0 +1,10 @@
+{
+  "stableRef": "b40bf8042ed338136848091da3c77241374d1acf",
+  "compatibilityApprovals": {
+    "public/channel-switcher.js": {
+      "stable": "absent",
+      "preview": "ddf2b9cc505a975ac2473b61e705132a4e78531d092e92e47b8d1ba3f063b206"
+    }
+  },
+  "stableVersion": "1.0.335"
+}
