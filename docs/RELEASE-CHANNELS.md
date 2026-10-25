@@ -106,8 +106,10 @@ publication. PWA Preview accepts any reviewed branch; Electron Preview requires 
 
 - `deploy.yml`: **PWA — build and publish Preview**. Builds the candidate and a
   separate promotion-ready candidate with Stable's asset-cache/build-marker
-  namespace. Checks existing-data round trips, desktop/mobile browser switching,
-  and both the original and promotion-ready combinations before Pages publication.
+  namespace. Reuses the published Stable files instead of rebuilding them. Keeps
+  compatibility and cross-version storage fixtures plus a fast entry-asset check.
+  Unit tests stay in PR CI; Preview installs no browser and repeats no browser
+  round trips. Full artifact browser verification remains on Stable promotion.
 - `pwa-promote.yml`: **PWA — promote to Stable**. Optional `release` is a
   `pwa-v1.0.<PWA workflow run_number>` archive identifier. Empty selects the newest
   successfully published Preview by publication time, across all branches.

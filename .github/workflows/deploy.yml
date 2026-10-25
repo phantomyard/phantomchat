@@ -16,6 +16,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -30,8 +31,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
-      - run: node --test scripts/releases/registry.node-test.mjs
-      - run: pnpm exec vitest run
       - name: Load the published Stable baseline
         id: baseline
         run: node scripts/releases/registry.mjs baseline
@@ -43,24 +42,15 @@ jobs:
           APP_VERSION: 1.0.${{ github.run_number }}
           PWA_RELEASE: '1'
           CHANNEL_BASELINE: ${{ steps.baseline.outputs.baseline }}
-      - run: pnpm exec playwright install --with-deps chromium
-      - name: Verify existing Stable and new Preview
-        run: node scripts/channels/browser-smoke.mjs
-      - name: Verify the prebuilt promotion variant
-        run: |
-          cp -a dist-stable-candidate .channel-build/promotion-check
-          cp -a dist/preview .channel-build/promotion-check/preview
-          CHANNEL_SMOKE_DIST=.channel-build/promotion-check node scripts/channels/browser-smoke.mjs
+          PWA_STABLE_DIST: .release-work/current/unpacked/site
       - name: Archive verified release and preserve published Stable bytes
         id: release
         run: node scripts/releases/registry.mjs prepare-preview
         env:
           GH_TOKEN: ${{ github.token }}
           CHANNEL_BASELINE: ${{ steps.baseline.outputs.baseline }}
-      - name: Verify the exact assembled publication
-        run: node scripts/channels/browser-smoke.mjs
-        env:
-          CHANNEL_SMOKE_DIST: .release-work/payload/site
+      - name: Check publication files
+        run: node scripts/releases/check-site.mjs .release-work/payload/site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .release-work/payload/site
