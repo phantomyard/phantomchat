@@ -13,7 +13,7 @@ function shell(href = 'https://chat.test/index.html?account=2&swfix=1&pc_cb=2#pe
     window, URL,
     location: {href, pathname: url.pathname, search: url.search, hash: url.hash, assign: (value: string) => assigned.push(value), replace: (value: string) => replaced.push(value)},
     localStorage: {getItem: (key: string) => storage.get(key), setItem: (key: string, value: string) => storage.set(key, value)},
-    document: {querySelector: () => null},
+    document: {querySelector: (): null => null},
     confirm: () => { prompts++; return accept; }
   });
   return {api: window.phantomchatChannels, assigned, replaced, storage, prompts: () => prompts};
