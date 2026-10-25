@@ -52,7 +52,8 @@ try {
     // Share the channel UI with pinned Stable without promoting its app code.
     const updatesTab = 'src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts';
     writeFileSync(join(tree, updatesTab), execFileSync('git', ['show', `${candidate}:${updatesTab}`]));
-    patch('src/components/sidebarLeft/tabs/settings.ts', 'if(hasDesktopUpdateApi()) {', 'if(true) {');
+    patch('src/components/sidebarLeft/tabs/settings.ts', "import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';", '');
+    patch('src/components/sidebarLeft/tabs/settings.ts', 'if(hasDesktopUpdateApi()) {', 'if(window.phantomchatChannels) {');
     patch('src/components/sidebarLeft/tabs/settings.ts', "await import('@components/sidebarLeft/tabs/phantomchatDesktopUpdates')", "await import('@components/sidebarLeft/tabs/phantomchatApplicationUpdates')");
     const bucket = channel === 'stable' ? 'cachedAssets-stable' : 'cachedAssets-preview';
     patch('src/lib/serviceWorker/cache.ts', "'cachedAssets'", "'" + bucket + "'");
