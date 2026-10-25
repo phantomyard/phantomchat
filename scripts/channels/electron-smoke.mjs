@@ -24,7 +24,7 @@ try {
   page.on('dialog', dialog => dialog.accept());
   await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
   await openChannelSettings(page);
-  await page.getByRole('combobox', {name: 'Release channel'}).selectOption('preview');
+  await page.getByRole('radio', {name: 'Preview', exact: true}).check();
   await page.waitForURL(url => url.pathname === '/preview/index.html' && url.searchParams.get('channel') === 'preview');
   assert.equal(new URL(page.url()).searchParams.get('account'), '1');
   await identityFingerprint(page, identity);
@@ -33,7 +33,7 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem('channel-native-fixture')), 'preserved');
   await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
   await openChannelSettings(page);
-  await page.getByRole('combobox', {name: 'Release channel'}).selectOption('stable');
+  await page.getByRole('radio', {name: 'Stable', exact: true}).check();
   await page.waitForURL(url => url.pathname === '/index.html' && url.searchParams.get('channel') === 'stable');
   assert.equal(new URL(page.url()).searchParams.get('account'), '1');
   await identityFingerprint(page, identity);

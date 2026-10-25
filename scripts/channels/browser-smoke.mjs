@@ -34,7 +34,7 @@ try {
     page.on('dialog', dialog => dialog.accept());
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     await openChannelSettings(page);
-    await page.getByRole('combobox', {name: 'Release channel'}).selectOption('preview');
+    await page.getByRole('radio', {name: 'Preview', exact: true}).check();
     await page.waitForURL(url => url.pathname === '/preview/index.html' && url.searchParams.get('channel') === 'preview');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL.includes('/preview/'));
@@ -48,12 +48,12 @@ try {
     await page.reload();
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     await openChannelSettings(page);
-    assert.equal(await page.getByRole('combobox', {name: 'Release channel'}).inputValue(), 'preview');
+    assert.equal(await page.getByRole('radio', {name: 'Preview', exact: true}).isChecked(), true);
     await page.goto(origin + '/');
     await page.waitForURL('**/preview/index.html');
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     await openChannelSettings(page);
-    await page.getByRole('combobox', {name: 'Release channel'}).selectOption('stable');
+    await page.getByRole('radio', {name: 'Stable', exact: true}).check();
     await page.waitForURL(url => url.pathname === '/index.html' && url.searchParams.get('channel') === 'stable');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     assert.equal(new URL(page.url()).searchParams.get('account'), '1');
