@@ -67,3 +67,10 @@ PhantomChat does **not** ship a trust-minimized / signed self-update channel. Up
 - Branch protection on `main` wires `typecheck` and `test` as required status checks.
 - Pages source: **GitHub Actions** (set under Settings → Pages).
 - The `deploy` job needs `pages: write` + `id-token: write` only. `deploy.yml` grants **no** `contents: write` — it must not be able to push a tag.
+
+## Same-origin Stable and Preview frontends
+
+The build now contains both frontend channels; a main merge advances Preview
+while the Stable source SHA/version remain pinned. Both share user identity and
+local databases, including in Electron. Source promotion, compatibility approvals
+and rollback verification are documented in [RELEASE-CHANNELS.md](RELEASE-CHANNELS.md).

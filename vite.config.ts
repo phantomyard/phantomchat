@@ -161,6 +161,7 @@ export default defineConfig({
     // include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'],
     exclude: [
       '**/node_modules/**',
+      '**/.channel-build/**',
       '**/dist/**',
       '**/cypress/**',
       '**/.{idea,git,cache,output,temp}/**',

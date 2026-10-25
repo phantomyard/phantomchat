@@ -29,6 +29,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -38,6 +40,7 @@ jobs:
       # generates from the example. Seed it so the typecheck has it.
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:channels
       - run: npx tsc --noEmit
 
   test:
@@ -47,6 +50,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -69,6 +74,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -78,7 +85,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck:electron
       - run: pnpm run build
+        env:
+          APP_VERSION: 0.0.0-ci.${{ github.run_number }}
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/channels/browser-smoke.mjs
       - run: node electron/build.mjs
+      - run: xvfb-run -a node scripts/channels/electron-smoke.mjs
       # fpm needs rpmbuild to produce the .rpm target.
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
       - run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version=0.0.0-ci.${{ github.run_number }}
@@ -127,6 +139,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -136,7 +150,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck:electron
       - run: pnpm run build
+        env:
+          APP_VERSION: 0.0.0-ci.${{ github.run_number }}
       - run: node electron/build.mjs
+      - run: node scripts/channels/electron-smoke.mjs
       # Same two targets the release builds (issue #169), so a packaging
       # change that breaks the update zip or the feed fails on the PR rather
       # than on a user's Mac. Signing is not exercised here — electron-builder
@@ -180,6 +197,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -192,6 +211,7 @@ jobs:
         env:
           APP_VERSION: 0.0.0-ci.${{ github.run_number }}
       - run: node electron/build.mjs
+      - run: node scripts/channels/electron-smoke.mjs
       - name: Package unsigned Windows installer
         shell: pwsh
         run: pnpm exec electron-builder --win nsis "--$env:ARCH" --publish never "-c.extraMetadata.version=$env:VERSION"

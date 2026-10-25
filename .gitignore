@@ -92,3 +92,9 @@ docs/explorer-reports/allowlist.ts
 docs/explorer-reports/triage-rejected.jsonl
 chat-session-*.md
 release/
+
+.channel-build/
+
+/node_modules
+# Override public/*.js above: this shared shell is versioned source.
+!public/channel-switcher.js
