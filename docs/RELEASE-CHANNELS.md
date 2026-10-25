@@ -91,3 +91,9 @@ Preview app styling. The shell exposes routing only; it no longer injects a sele
 control into the main Settings page. Cosmetic compatibility entries cover only
 colours/wallpapers, generated avatar palettes and filled-control contrast; no
 schema, state version or stored-row format changes are approved by those entries.
+
+Existing saved stock themes are rendered through a presentation-only palette
+substitution in Preview. Custom accents, outgoing colours and wallpapers are
+preserved; no saved preferences are rewritten. Returning to Stable restores its
+original stock palette. The browser/native round trips assert both appearances
+on the same identity, in addition to encrypted-key and message durability.

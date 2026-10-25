@@ -25,6 +25,19 @@ describe('render-only stock theme refresh', () => {
     expect(JSON.stringify(saved)).toBe(before);
     expect(renderUnderstatedDefaults(saved, '')).toBe(result);
   });
+  it('invalidates a stock cache after in-place wallpaper edits in both directions', () => {
+    const saved = stock();
+    const initial = renderUnderstatedDefaults(saved, '');
+    expect(initial.wallpaper).not.toBe(saved.wallpaper);
+    saved.wallpaper.settings.background_color = 0x123456;
+    const custom = renderUnderstatedDefaults(saved, '');
+    expect(custom.wallpaper).toBe(saved.wallpaper);
+    expect(custom.wallpaper.settings.background_color).toBe(0x123456);
+    saved.wallpaper.settings.background_color = 0xdbddbb;
+    const restored = renderUnderstatedDefaults(saved, '');
+    expect(restored.wallpaper).not.toBe(saved.wallpaper);
+    expect(restored.wallpaper.settings.background_color).toBe(understatedPalette.baseThemeClassic.colors[0]);
+  });
   it('preserves custom themes, accents, and outgoing colours', () => {
     const saved = stock();
     expect(renderUnderstatedDefaults(saved, 'custom')).toBe(saved);

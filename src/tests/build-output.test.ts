@@ -30,13 +30,19 @@ describe.skipIf(!distExists)('Build output — dist/index.html', () => {
     expect(html).not.toContain('href="https://web.telegram.org');
   });
 
-  test('JS and CSS asset paths start with ./ (relative)', () => {
+  test('app assets are relative; only the shared channel shell is root-scoped', () => {
     const scriptSrcMatches = html.match(/<script[^>]+src="([^"]+)"/g) || [];
     const linkHrefMatches = html.match(/<link[^>]+(?:rel="stylesheet"|rel="modulepreload")[^>]*href="([^"]+)"/g) || [];
     const allAssetTags = [...scriptSrcMatches, ...linkHrefMatches];
 
     for(const tag of allAssetTags) {
       const value = tag.match(/(?:src|href)="([^"]+)"/)?.[1] ?? '';
+      // The shared shell is intentionally identical for / and /preview/.
+      // This exact deferred script is the sole origin-root asset exception.
+      if(value === '/channel-switcher.js') {
+        expect(tag).toMatch(/^<script\s+defer\s+src=/);
+        continue;
+      }
       if(value && !value.startsWith('http')) {
         expect(value).toMatch(/^\.\//);
       }
