@@ -12,7 +12,7 @@ afterEach(() => {
   process.chdir(original);
   if(dir) rmSync(dir, {recursive: true, force: true});
 });
-function fixture() {
+function fixture(): {stableRef: string; compatibilityApprovals: Record<string, {stable: string; preview: string}>} {
   mkdirSync('.channel-build', {recursive: true});
   dir = mkdtempSync(resolve('.channel-build/gate-'));
   process.chdir(dir);

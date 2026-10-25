@@ -5,14 +5,18 @@ import {checkCompatibility} from './check.mjs';
 import {stateSmoke} from './state-smoke.mjs';
 
 const root = process.cwd();
+const candidate = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim();
 const config = JSON.parse(readFileSync('scripts/channels/config.json', 'utf8'));
-checkCompatibility(config);
+if(!/^[a-f0-9]{40}$/.test(config.stableRef) || !/^\d+\.\d+\.\d+$/.test(config.stableVersion)) {
+  throw new Error('Stable requires an immutable commit SHA and release version');
+}
+checkCompatibility(config, candidate);
 const run = (cmd, args, cwd = root, env = {}) => execFileSync(cmd, args, {cwd, stdio: 'inherit', env: {...process.env, ...env}});
 // Scratch is inside this checkout, never a shared /tmp or live profile.
 mkdirSync('.channel-build', {recursive: true});
 const scratch = mkdtempSync(resolve('.channel-build/run-'));
 try {
-  for(const [channel, ref] of [['stable', config.stableRef], ['preview', 'HEAD']]) {
+  for(const [channel, ref] of [['stable', config.stableRef], ['preview', candidate]]) {
     const tree = join(scratch, channel);
     mkdirSync(tree);
     const archive = join(scratch, `${channel}.tar`);
@@ -51,7 +55,7 @@ try {
     run('node', ['src/scripts/generate_changelog.js'], tree);
     run(process.execPath, [process.env.npm_execpath, 'exec', 'vite', 'build', '--mode', 'production'], tree, {NODE_ENV: 'production', APP_VERSION: channel === 'stable' ? (config.stableVersion) : process.env.APP_VERSION || '1.0.0'});
     const out = join(tree, 'dist');
-    cpSync('public/channel-switcher.js', join(out, 'channel-switcher.js'));
+    writeFileSync(join(out, 'channel-switcher.js'), execFileSync('git', ['show', `${candidate}:public/channel-switcher.js`]));
     const html = join(out, 'index.html');
     writeFileSync(html, readFileSync(html, 'utf8').replace('<head>', '<head>\n<script defer src="/channel-switcher.js"></script>'));
   }
@@ -59,7 +63,7 @@ try {
   rmSync('dist', {recursive: true, force: true});
   cpSync(join(scratch, 'stable/dist'), 'dist', {recursive: true});
   cpSync(join(scratch, 'preview/dist'), 'dist/preview', {recursive: true});
-  writeFileSync('dist/channels.json', JSON.stringify({stable: config.stableRef, preview: execFileSync('git', ['rev-parse', 'HEAD']).toString().trim()}) + '\n');
+  writeFileSync('dist/channels.json', JSON.stringify({stable: config.stableRef, preview: candidate}) + '\n');
 } finally {
   rmSync(scratch, {recursive: true, force: true});
 }

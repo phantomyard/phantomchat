@@ -40,6 +40,7 @@ jobs:
       # generates from the example. Seed it so the typecheck has it.
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:channels
       - run: npx tsc --noEmit
 
   test:
@@ -84,6 +85,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck:electron
       - run: pnpm run build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/channels/browser-smoke.mjs
       - run: node electron/build.mjs
       # fpm needs rpmbuild to produce the .rpm target.
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
