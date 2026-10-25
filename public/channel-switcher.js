@@ -39,6 +39,9 @@
         return;
       }
       const target = new URL(select.value === 'preview' ? '/preview/index.html' : '/index.html', location.href);
+      target.search = location.search;
+      target.searchParams.delete('swfix');
+      target.searchParams.delete('pc_cb');
       target.searchParams.set('channel', select.value);
       target.hash = location.hash;
       location.assign(target.href);
