@@ -32,6 +32,14 @@ try {
       writeFileSync(target, text.replace(from, to));
     };
     patch('src/lib/serviceWorker/index.service.ts', "event.request.url.indexOf(location.origin + '/') === 0 &&", "event.request.url.indexOf(location.origin + '/') === 0 && new URL(event.request.url).pathname.startsWith('/preview/') === location.pathname.startsWith('/preview/') &&");
+    if(channel === 'preview') {
+      for(const file of ['src/lib/sessionStorage.ts', 'src/lib/singleInstance.ts', 'src/lib/appManagers/utils/state/loadState.ts', 'src/lib/appManagers/apiManager.ts']) {
+        const target = join(tree, file);
+        const text = readFileSync(target, 'utf8');
+        if(!text.includes('k_build')) throw new Error(`Missing build-marker patch: ${file}`);
+        writeFileSync(target, text.replaceAll('k_build', 'k_build_preview'));
+      }
+    }
     const bucket = channel === 'stable' ? 'cachedAssets-stable' : 'cachedAssets-preview';
     patch('src/lib/serviceWorker/cache.ts', "'cachedAssets'", JSON.stringify(bucket));
     patch('src/lib/phantomchat/phantomchat-update-checker.ts', 'regs.map((r)', "regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')).map((r)");
