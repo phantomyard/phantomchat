@@ -100,7 +100,7 @@ on the same identity, in addition to encrypted-key and message durability.
 
 ## Publication and manual promotion
 
-Every push or merge to main automatically builds and publishes PWA Preview. Stable
+Every push or merge to main automatically builds and publishes PWA and Electron Preview. Stable
 promotion remains manual. Pull requests run typechecks, unit tests and
 archive/promotion regression tests only. Four Actions buttons also allow manual
 publication. PWA Preview accepts any reviewed branch; Electron Preview requires main:
@@ -121,7 +121,7 @@ publication. PWA Preview accepts any reviewed branch; Electron Preview requires 
   switching, encrypted identity recovery and offline message preservation. A
   failure blocks Pages deployment. Current Preview bytes are preserved.
 - `app-release.yml`: **Electron — build and publish Preview**. Builds, verifies,
-  signs/notarizes and publishes installers using the dispatched main commit.
+  signs/notarizes and publishes installers using the triggering main commit.
   Every job requires `refs/heads/main`; dispatching another branch skips all jobs,
   including signing and publication.
   Desktop versions are independently `1.1.<Electron workflow run_number>`;
@@ -134,8 +134,8 @@ publication. PWA Preview accepts any reviewed branch; Electron Preview requires 
   run before the same release becomes stable/latest; no rebuild or signing.
 
 Each build button always builds **and publishes to Preview**. Promotion is a
-separate explicit action. Merging to main publishes PWA Preview automatically;
-Stable and Electron publication remain manual.
+separate explicit action. Merging to main publishes PWA and Electron Preview automatically;
+Stable promotion remains manual for both products.
 The workflow files must exist on the default branch before GitHub offers their
 manual buttons; the chosen branch must also contain the workflow implementation.
 Only dispatch trusted, reviewed branches for PWA publication: these jobs execute

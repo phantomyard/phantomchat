@@ -1,6 +1,6 @@
 name: ci
 
-# PRs run typechecks and unit tests only. All builds/publication are manual.
+# PRs run typechecks and unit tests only. Preview builds/publication run on main; Stable promotion is manual.
 on:
   pull_request:
     branches: [main]

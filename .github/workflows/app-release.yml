@@ -1,7 +1,9 @@
 name: Electron — build and publish Preview
 
-# Manual only, main branch only. Independent of PWA releases.
+# Automatic on main pushes/merges, with manual main-only dispatch. Independent of PWA releases.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -25,7 +27,7 @@ jobs:
       - name: Checkout selected commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # Pin every job to the selected branch commit at dispatch time.
+          # Pin every job to the triggering commit for both push and manual dispatch.
           ref: ${{ github.sha }}
           fetch-depth: 0
 
@@ -503,8 +505,8 @@ jobs:
       # document-sealing "eSeal" credential which is marked DEFAULT, so an
       # omitted id would silently sign with the wrong one.
       #
-      # This workflow runs only on an explicit manual dispatch, so secrets are
-      # available and a fork PR can never reach this job.
+      # Main-only push/manual jobs can access signing secrets; fork PR events
+      # never trigger this workflow.
       - name: Assert signing credentials are present
         env:
           ES_USERNAME: ${{ secrets.ES_USERNAME }}
