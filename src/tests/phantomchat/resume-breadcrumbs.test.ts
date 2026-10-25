@@ -232,6 +232,9 @@ describe('resume breadcrumbs (wake-latency timing)', () => {
   });
 
   it('does not log "delivered" when the onMessage callback throws; next success logs the true total', async() => {
+    // The async delivery pump may cross a real millisecond boundary. Keep the
+    // elapsed-time source fixed so the exact 1500 ms assertion is deterministic.
+    vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
     const pool = await makePool((msg: Msg) => {
       if(msg.id === 'bad') throw new Error('delivery failed');
     });
