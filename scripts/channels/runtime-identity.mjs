@@ -8,7 +8,7 @@ export async function createDisposableIdentity(page) {
 }
 
 export async function identityFingerprint(page, expected) {
-  await page.waitForFunction(() => !!window.__phantomchatChatAPI, {timeout: 60000});
+  await page.waitForFunction(() => !!window.__phantomchatChatAPI, undefined, {timeout: 60000});
   const actual = await page.evaluate(async() => {
     const request = indexedDB.open('PhantomChat.chat');
     const db = await new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
