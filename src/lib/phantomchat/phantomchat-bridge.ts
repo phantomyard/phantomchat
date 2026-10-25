@@ -104,8 +104,14 @@ export class PhantomChatBridge {
   /**
    * Initialize the bridge with the current user's pubkey.
    * Opens IndexedDB, pre-loads existing mappings, and initializes the relay transport.
+   *
+   * @param userPubkey - The user's public key (hex).
+   * @param privateKeyHex - Optional 64-char hex private key. When provided it
+   *   rides to the shared transport's acquire so its one identity load skips
+   *   the redundant PBKDF2 (#262 — ChatAPI's own preloadedIdentity is ignored
+   *   in this boot order because the bridge acquires the pool first).
    */
-  async init(userPubkey: string): Promise<void> {
+  async init(userPubkey: string, privateKeyHex?: string): Promise<void> {
     this._userPubkey = userPubkey;
     await initVirtualPeersDB();
 
@@ -121,7 +127,10 @@ export class PhantomChatBridge {
     const canonical = await loadCanonicalRelays();
 
     // Bootstrap relay pool
-    this.initTransport(canonical ?? undefined);
+    const preloadedIdentity = privateKeyHex && privateKeyHex.length === 64 ?
+      {publicKey: userPubkey, privateKeyHex} :
+      undefined;
+    this.initTransport(canonical ?? undefined, preloadedIdentity);
 
     this._initialized = true;
   }
@@ -140,8 +149,14 @@ export class PhantomChatBridge {
    * never releases its handle: keeping the transport alive across ChatAPI
    * re-creations (account switch) is exactly what the shared pool is for.
    */
-  private initTransport(relays?: RelayConfig[]): void {
-    const {pool} = acquireSharedRelayPool({relays: [...(relays ?? DEFAULT_RELAYS)]});
+  private initTransport(
+    relays?: RelayConfig[],
+    preloadedIdentity?: {publicKey: string; privateKeyHex: string}
+  ): void {
+    const {pool} = acquireSharedRelayPool({
+      relays: [...(relays ?? DEFAULT_RELAYS)],
+      ...(preloadedIdentity ? {preloadedIdentity} : {})
+    });
 
     const queue = new OfflineQueue(pool);
 
