@@ -23,7 +23,7 @@
 ```bash
 pnpm install
 pnpm start          # Dev server on :8080
-pnpm build          # Production build → dist/
+pnpm build          # Combined pinned Stable + candidate Preview → dist/
 pnpm test           # Run tests (Vitest)
 pnpm test:phantomchat:quick  # Critical P2P tests only (~160 tests in <2s)
 pnpm test:phantomchat        # Full P2P test suite
@@ -36,7 +36,7 @@ pnpm lint           # ESLint on src/**/*.{ts,tsx}
 
 **Build/test gotchas:**
 - `pnpm test run <file>` (NOT `pnpm test <file>`) for one-shot vitest — `pnpm test` opens watch mode that hangs subagents and CI.
-- Build script forces `NODE_ENV=production && vite build --mode production` — without these, `import.meta.env.PROD` evaluates to `false` in main bundle and entire prod-only blocks (banners, listeners) silently disappear from output. Don't strip these flags from `package.json` `build` script.
+- The channel builder runs each source tree with `NODE_ENV=production` and `vite build --mode production` — without these, `import.meta.env.PROD` evaluates to `false` in main bundle and entire prod-only blocks (banners, listeners) silently disappear from output. Don't strip these flags from `package.json` `build` script.
 - `pnpm preview` rebuilds and serves on `:8080`. Vite preview's SPA fallback returns `index.html` for any unmatched URL — including URL-encoded paths to existing files (e.g. `%23` not decoded). This hides production bugs; test URL-sensitive behavior against a real static server (Cloudflare Pages preview), not `vite preview`.
 
 **Dev-mode gotchas (`pnpm start` only, do NOT fight them):**
@@ -173,6 +173,8 @@ solid-js/store  → src/vendor/solid/store
 - Do NOT narrow the `lint` / `lint-staged` globs back to `src/**/*.ts` — must be `src/**/*.{ts,tsx}`. Solid components live in `.tsx` files; the narrow glob lets indent/formatting errors reach CI where `vite-plugin-checker` catches them, blocking release.
 
 ## Release & Deployment
+
+- **Web application channels:** `pnpm build` packages the pinned Stable source at `/` and the committed candidate at `/preview/index.html`. Main merges update Preview; Stable source promotion requires a reviewed SHA/version pin change in `scripts/channels/config.json`. Both share live identity/storage. Read [`docs/RELEASE-CHANNELS.md`](docs/RELEASE-CHANNELS.md) before changing release routing, storage contracts, dependencies or promotion. The same combined output is packaged by Electron.
 
 Full reference: [`docs/RELEASE.md`](docs/RELEASE.md). Day-to-day rules:
 

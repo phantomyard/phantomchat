@@ -45,7 +45,8 @@ await build({
 // Defaults cover what the PWA bundle actually uses: blob workers, wss relays,
 // https APIs, data/blob media and Telegram-web style inline styles. Inline
 // *scripts* are pinned by hash instead of being allowed wholesale.
-const indexHtml = readFileSync(join(here, '../dist/index.html'), 'utf8');
+const indexHtml = ['../dist/index.html', '../dist/preview/index.html']
+  .map(file => readFileSync(join(here, file), 'utf8')).join('\n');
 const inlineScripts = [...indexHtml.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)]
   .map((m) => m[1])
   .filter((body) => body.trim().length > 0);
