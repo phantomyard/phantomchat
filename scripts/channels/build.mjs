@@ -22,11 +22,13 @@ try {
     const archive = join(scratch, `${channel}.tar`);
     execFileSync('git', ['archive', '--format=tar', '-o', archive, ref]);
     run('tar', ['-xf', archive, '-C', tree]);
-    // A different dependency graph cannot silently reuse the other build's dependencies.
+    // Reviewed dependency changes get an independent install. Never compile
+    // pinned Stable against Preview's newer dependency graph.
     if(readFileSync(join(tree, 'pnpm-lock.yaml'), 'utf8') !== readFileSync('pnpm-lock.yaml', 'utf8')) {
-      throw new Error('Stable and Preview dependency locks differ; supply independently installed build environments before releasing.');
+      run(process.execPath, [process.env.npm_execpath, 'install', '--frozen-lockfile', '--ignore-scripts'], tree);
+    } else {
+      symlinkSync(resolve('node_modules'), join(tree, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     }
-    symlinkSync(resolve('node_modules'), join(tree, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     // Infrastructure-only patch shared by BOTH pinned sources. Fail if upstream
     // changes its shape: never silently lose cache isolation.
     const patch = (file, from, to) => {

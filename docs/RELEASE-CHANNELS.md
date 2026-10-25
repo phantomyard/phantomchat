@@ -13,8 +13,9 @@ remains independent of this frontend selector.
 `scripts/channels/config.json` pins Stable to an immutable commit and its original
 PWA version. Preview is the committed candidate HEAD. Every packaging/deploy path
 uses `pnpm build`, including desktop CI. Checkout full history: Stable must be
-available locally. Stable and Preview must currently use the same dependency lock;
-a mismatch fails rather than building Stable with unverified dependencies.
+available locally. Dependency-lock changes require exact-content compatibility approval too;
+when locks differ, the pinned source receives an independent frozen install
+without package lifecycle scripts. Stable never uses Preview’s dependency graph.
 
 Promotion is a reviewed PR changing stableRef and stableVersion together. Neither
 merging a feature PR nor publishing Preview changes the Stable source pin. The
