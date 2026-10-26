@@ -407,6 +407,12 @@ verification.
 
 ## Signing
 
+All signing and notarization CI secrets live in the `release-signing` GitHub
+Environment, whose deployment branch policy restricts deployments to `main`.
+Repository-scope copies must not exist: a repository-level secret is readable
+by a workflow run from any branch, which is exactly the gap issue #272 closes.
+The `if: github.ref == 'refs/heads/main'` guards stay as defense in depth.
+
 ### Windows — done
 
 The two published NSIS installers are Authenticode signed with the SSL.com

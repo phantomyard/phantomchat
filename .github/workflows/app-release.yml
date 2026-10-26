@@ -128,6 +128,7 @@ jobs:
 
   macos-package:
     if: github.ref == 'refs/heads/main'
+    environment: release-signing  # signing secrets at env scope, main-only deployment policy (#272)
     needs: linux
     strategy:
       fail-fast: false
@@ -219,6 +220,7 @@ jobs:
 
   macos-notarize:
     if: github.ref == 'refs/heads/main'
+    environment: release-signing  # notarization secrets at env scope, main-only deployment policy (#272)
     needs: [linux, macos-package]
     strategy:
       fail-fast: false
@@ -426,6 +428,7 @@ jobs:
 
   publish:
     if: github.ref == 'refs/heads/main'
+    environment: release-signing  # eSigner secrets at env scope, main-only deployment policy (#272)
     needs: [linux, macos-notarize, windows]
     runs-on: ubuntu-latest
     steps:
