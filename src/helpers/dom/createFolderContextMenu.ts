@@ -6,6 +6,9 @@ import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
+import {appSettings, setAppSettings} from '@stores/appSettings';
+import {DEFAULT_CHAT_FOLDER_SETTING_KEY} from '@lib/folders-default';
+import {toastNew} from '@components/toast';
 
 export default function createFolderContextMenu({
   appSidebarLeft,
@@ -37,6 +40,12 @@ export default function createFolderContextMenu({
   }
 
   let clickFilterId: number;
+  const setDefaultFolder = (filterId: number) => {
+    // All Chats is the natural fallback — picking it just clears the preference.
+    setAppSettings(DEFAULT_CHAT_FOLDER_SETTING_KEY, filterId === FOLDER_ID_ALL ? undefined : filterId);
+    toastNew({langPackKey: filterId === FOLDER_ID_ALL ? 'ChatList.Filter.RemoveDefaultToast' : 'ChatList.Filter.SetDefaultToast'});
+  };
+
   const {destroy} = createContextMenu({
     buttons: [{
       icon: 'edit',
@@ -45,6 +54,20 @@ export default function createFolderContextMenu({
         openSettingsForFilter(clickFilterId);
       },
       verify: () => clickFilterId !== FOLDER_ID_ALL
+    }, {
+      icon: 'star',
+      text: 'ChatList.Filter.SetDefault',
+      onClick: () => {
+        setDefaultFolder(clickFilterId);
+      },
+      verify: () => appSettings[DEFAULT_CHAT_FOLDER_SETTING_KEY] !== clickFilterId
+    }, {
+      icon: 'close',
+      text: 'ChatList.Filter.RemoveDefault',
+      onClick: () => {
+        setDefaultFolder(FOLDER_ID_ALL);
+      },
+      verify: () => appSettings[DEFAULT_CHAT_FOLDER_SETTING_KEY] === clickFilterId && clickFilterId !== FOLDER_ID_ALL
     }, {
       icon: 'edit',
       text: 'FilterEditAll',

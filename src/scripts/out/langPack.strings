@@ -96,6 +96,7 @@
 "ConnectionStatus.ReconnectIn" = "Reconnect in %ds, %s";
 "ConnectionStatus.Reconnect" = "reconnect";
 "ConnectionStatus.Reconnecting" = "Reconnecting...";
+"ConnectionStatus.Syncing" = "Syncing...";
 "ConnectionStatus.TimedOut" = "Request timed out, %s";
 "ConnectionStatus.Waiting" = "Waiting for network...";
 "Contacts.Count_one" = "%d contact";
@@ -2910,6 +2911,13 @@
 "ChatList.Filter.Archive" = "Archived";
 "ChatList.Filter.Confirm.Remove.Header" = "Remove Folder";
 "ChatList.Filter.Confirm.Remove.Text" = "Are you sure you want to remove this folder? Your chats will not be deleted.";
+"ChatList.Filter.SetDefault" = "Set as Default";
+"ChatList.Filter.RemoveDefault" = "Remove Default";
+"ChatList.Filter.SetDefaultToast" = "This folder will open on launch";
+"ChatList.Filter.RemoveDefaultToast" = "All Chats will open on launch";
+"EditFolder.Icon" = "Folder Icon";
+"EditFolder.IconNone" = "Default";
+"EditFolder.IconTip" = "Pick an icon for this folder. Its name and chats stay unchanged; without an icon the folder gets an automatic one.";
 "ChatList.Mute.1Hour" = "For 1 Hour";
 "ChatList.Mute.4Hours" = "For 4 Hours";
 "ChatList.Mute.8Hours" = "For 8 Hours";

@@ -20,7 +20,7 @@ import Scrollable from '@components/scrollable2';
 import extractEmojiFromFilterTitle, {ExtractEmojiFromFilterTitleResult} from '@components/sidebarLeft/foldersSidebarContent/extractEmojiFromFilterTitle';
 import FolderItem from '@components/sidebarLeft/foldersSidebarContent/folderItem';
 import type {FolderItemPayload} from '@components/sidebarLeft/foldersSidebarContent/types';
-import {getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter} from '@components/sidebarLeft/foldersSidebarContent/utils';
+import {getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter, folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
 
 keepMe(ripple);
 
@@ -107,7 +107,9 @@ export function FoldersSidebarContent(props: {
 
     const iconRest: Pick<FolderItemPayload, 'iconDocId' | 'emojiIcon'> = {
       iconDocId: cleanTitle?.docId,
-      emojiIcon: cleanTitle?.emoji
+      // #266: title emoji wins (existing behaviour), the picked folder icon
+      // is the fallback, and the derived flag icon stays the last resort.
+      emojiIcon: cleanTitle?.emoji ?? folderEmoticonFallback(filter)
     };
 
     return {

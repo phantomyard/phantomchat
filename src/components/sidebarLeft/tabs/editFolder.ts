@@ -39,6 +39,18 @@ import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 
 const MAX_FOLDER_NAME_LENGTH = 12;
 
+/**
+ * #266: emoji choices offered for a custom folder's icon. Plain emoji only —
+ * they render in both themes and on every platform without fetching
+ * anything. Stored on `filter.emoticon`, so it follows the folder through
+ * the Nostr folders-sync snapshot like every other folder field.
+ */
+export const FOLDER_ICON_EMOJIS: readonly string[] = [
+  '⭐', '🔥', '❤️', '🏠', '💼', '🎓', '🎮', '💻', '📈', '🎨',
+  '✈️', '🌍', '🎵', '🎬', '📚', '⚽', '🐾', '🌱', '🍔', '☕',
+  '🛒', '⚙️', '🤖', '💬'
+];
+
 type EditFolderButton = {
   icon: Icon,
   name?: keyof DialogFilter.dialogFilter['pFlags'],
@@ -66,6 +78,9 @@ export default class AppEditFolderTab extends SliderSuperTab {
 
   private type: 'edit' | 'create';
   private loadAnimationPromise: ReturnType<LottieLoader['waitForFirstFrame']>;
+
+  private iconPickerRow: HTMLElement;
+  private iconPickerButtons: Map<string, HTMLElement>;
 
   private tempId: number;
 
@@ -161,6 +176,35 @@ export default class AppEditFolderTab extends SliderSuperTab {
 
     inputSection.content.append(this.nameInputField);
 
+    // #266: folder icon picker — a chosen emoji (`filter.emoticon`) is shown
+    // in the folders sidebar / chat list tabs instead of the automatic icon.
+    const iconSection = new SettingSection({
+      name: 'EditFolder.Icon',
+      caption: 'EditFolder.IconTip'
+    });
+    this.iconPickerRow = document.createElement('div');
+    this.iconPickerRow.classList.add('folder-icon-picker');
+    this.iconPickerRow.setAttribute('role', 'radiogroup');
+    this.iconPickerButtons = new Map();
+
+    const appendIconButton = (label: string | HTMLElement, value: string | undefined) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.classList.add('folder-icon-picker-button');
+      button.setAttribute('role', 'radio');
+      button.setAttribute('aria-checked', 'false');
+      button.append(label);
+      attachClickEvent(button, () => {
+        this.selectFolderIcon(value);
+      }, {listenerSetter: this.listenerSetter});
+      this.iconPickerRow.append(button);
+      this.iconPickerButtons.set(value ?? '', button);
+    };
+
+    appendIconButton(i18n('EditFolder.IconNone'), undefined);
+    FOLDER_ICON_EMOJIS.forEach((emoji) => appendIconButton(emoji, emoji));
+    iconSection.content.append(this.iconPickerRow);
+
     const generateList = (
       className: string,
       h2Text: LangPackKey,
@@ -244,6 +288,7 @@ export default class AppEditFolderTab extends SliderSuperTab {
       this.stickerContainer,
       this.caption,
       inputSection.container,
+      iconSection.container,
       this.includePeerIds.container,
       this.excludePeerIds.container
     );
@@ -378,6 +423,7 @@ export default class AppEditFolderTab extends SliderSuperTab {
     this.setTitle('FilterNew');
     this.menuBtn.classList.add('hide');
     this.confirmBtn.classList.remove('hide');
+    this.syncFolderIconSelection();
 
     for(const flag in this.flags) {
       // @ts-ignore
@@ -399,6 +445,8 @@ export default class AppEditFolderTab extends SliderSuperTab {
     this.nameInputField.feedProps<false>({
       value: filter.title
     });
+
+    this.syncFolderIconSelection();
 
     const pFlags = (filter as DialogFilter.dialogFilter).pFlags;
     for(const flag in this.flags) {
@@ -506,6 +554,31 @@ export default class AppEditFolderTab extends SliderSuperTab {
       }
 
       callbacks.forEach((callback) => callback?.());
+    });
+  }
+
+  /** #266: store the chosen folder icon on the filter. `undefined` = automatic icon. */
+  private selectFolderIcon(emoticon: string | undefined) {
+    if(!this.filter) {
+      return;
+    }
+
+    if(emoticon) {
+      this.filter.emoticon = emoticon;
+    } else {
+      delete this.filter.emoticon;
+    }
+
+    this.syncFolderIconSelection();
+    this.editCheckForChange();
+  }
+
+  private syncFolderIconSelection() {
+    const current = this.filter?.emoticon || '';
+    this.iconPickerButtons.forEach((button, key) => {
+      const selected = key === current;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-checked', selected ? 'true' : 'false');
     });
   }
 
