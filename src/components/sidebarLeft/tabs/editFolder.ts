@@ -557,17 +557,17 @@ export default class AppEditFolderTab extends SliderSuperTab {
     });
   }
 
-  /** #266: store the chosen folder icon on the filter. `undefined` = automatic icon. */
+  /** #266: store the chosen folder icon on the filter. `''` = automatic icon.
+   *  The clearing case MUST assign an explicit empty string, not `delete` the
+   *  property: the save path (saveDialogFilter) merges the edited copy into
+   *  the stored filter with Object.assign, so a deleted property would leave
+   *  the previous icon on the saved folder. */
   private selectFolderIcon(emoticon: string | undefined) {
     if(!this.filter) {
       return;
     }
 
-    if(emoticon) {
-      this.filter.emoticon = emoticon;
-    } else {
-      delete this.filter.emoticon;
-    }
+    this.filter.emoticon = emoticon || '';
 
     this.syncFolderIconSelection();
     this.editCheckForChange();

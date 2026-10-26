@@ -12,16 +12,18 @@
  *     so a silent unwiring of any call site fails loudly.
  */
 
-import {describe, it, expect} from 'vitest';
+import {describe, it, expect, vi} from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import {folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
 import {buildSnapshotFromFilters, applySnapshotToFilters} from '@lib/phantomchat/folders-sync-snapshot';
 import {buildLocalFilter} from '@lib/storages/filtersLocal';
+import FiltersStorage from '@lib/storages/filters';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_GROUPS
+  FOLDER_ID_GROUPS,
+  START_LOCAL_ID
 } from '@appManagers/constants';
 import type {MyDialogFilter} from '@lib/storages/filters';
 
@@ -91,6 +93,45 @@ describe('icon follows the folder sync contract', () => {
   });
 });
 
+describe('icon clear survives the real save path', () => {
+  // Kai review P2: the edit tab's "Default" action must CLEAR the stored
+  // icon, not just delete the property off the edited copy. saveDialogFilter
+  // merges the copy into the stored filter with Object.assign(oldFilter,
+  // filter), so a deleted property leaves the previous icon on the saved
+  // folder and filter_update still emits it. The clearing representation is
+  // an explicit empty string, which folderEmoticonFallback treats as
+  // "not chosen". Drives the REAL saveDialogFilter merge.
+  function makeStorage(work: MyDialogFilter) {
+    const storage = new FiltersStorage();
+    (storage as any).filters = {[work.id]: work};
+    (storage as any).filtersArr = [work];
+    (storage as any).localId = START_LOCAL_ID;
+    (storage as any).rootScope = {dispatchEvent: vi.fn()};
+    (storage as any).appStateManager = {pushToState: vi.fn()};
+    return storage;
+  }
+
+  it('choose → save → clear → save → reopen ends with no icon', () => {
+    const stored = mkCustom(START_LOCAL_ID, 'Work');
+    stored.pinnedPeerIds = [];
+    const storage = makeStorage(stored);
+
+    // choose 💼 → save
+    const chosen = {...stored, emoticon: '💼'} as MyDialogFilter;
+    storage.saveDialogFilter(chosen as any);
+    expect((storage as any).filters[START_LOCAL_ID].emoticon).toBe('💼');
+
+    // clear (empty-string sentinel) → save
+    const cleared = {...(storage as any).filters[START_LOCAL_ID], emoticon: ''} as MyDialogFilter;
+    storage.saveDialogFilter(cleared as any);
+
+    // reopen: the old icon must NOT have survived the merge
+    const reopened = (storage as any).filters[START_LOCAL_ID];
+    expect(reopened.emoticon).toBe('');
+    expect(folderEmoticonFallback(reopened)).toBeUndefined();
+  });
+});
+
 describe('wiring pins', () => {
   it('sidebar payload consults the emoticon fallback (title emoji still wins)', () => {
     const src = readFile('components/sidebarLeft/foldersSidebarContent/index.tsx');
@@ -103,7 +144,7 @@ describe('wiring pins', () => {
     const src = readFile('components/sidebarLeft/tabs/editFolder.ts');
     expect(src).toContain('FOLDER_ICON_EMOJIS');
     expect(src).toContain('this.filter.emoticon = emoticon');
-    expect(src).toContain('delete this.filter.emoticon');
+    expect(src).toContain('this.filter.emoticon = emoticon || \'\'');
     expect(src).toContain('this.syncFolderIconSelection()');
   });
 
