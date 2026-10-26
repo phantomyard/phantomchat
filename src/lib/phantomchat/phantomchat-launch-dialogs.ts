@@ -207,7 +207,10 @@ export async function onChatOpenedCatchUp(payload: unknown, deps: ChatOpenCatchU
   }
 }
 
-/** True when the launch URL targets a specific chat (#@user, #<peerId>, tgaddr). */
+/** True when the launch URL carries a non-trivial hash — a chat deep link
+ *  (#@user, #<peerId>, tgaddr) but also any other routed view (#/settings,
+ *  #/addstickers/…). Consumers only use it to mean "a deep link decides the
+ *  initial view", so every hash launch counts. */
 export function isChatDeepLink(hash: string | undefined | null): boolean {
   if(!hash) return false;
   const h = hash.trim();

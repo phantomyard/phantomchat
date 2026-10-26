@@ -133,11 +133,20 @@ describe('icon clear survives the real save path', () => {
 });
 
 describe('wiring pins', () => {
-  it('sidebar payload consults the emoticon fallback (title emoji still wins)', () => {
+  it('sidebar payload: an explicit pick wins over the title emoji', () => {
     const src = readFile('components/sidebarLeft/foldersSidebarContent/index.tsx');
     expect(src).toContain('folderEmoticonFallback(filter)');
-    // title emoji keeps precedence, picked icon is the fallback
-    expect(src).toContain('cleanTitle?.emoji ?? folderEmoticonFallback(filter)');
+    // picked icon first, title emoji only as fallback; docId suppressed when
+    // a pick exists so the custom-emoji title doesn't win in FolderAnimatedIcon
+    expect(src).toContain('folderEmoticonFallback(filter) ?? cleanTitle?.emoji');
+    expect(src).toContain('iconDocId: folderEmoticonFallback(filter) ? undefined : cleanTitle?.docId');
+  });
+
+  it('add-to-folder menu consults the picked icon first', () => {
+    const src = readFile('components/addToFolderDropdownMenu/hooks.tsx');
+    expect(src).toContain('folderEmoticonFallback(filter)');
+    expect(src).toContain('docId: pickedIcon ? undefined : extractedTitle.docId');
+    expect(src).toContain('emoji: pickedIcon ?? extractedTitle.emoji');
   });
 
   it('edit folder tab has the icon picker and stores it on filter.emoticon', () => {
