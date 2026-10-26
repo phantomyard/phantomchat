@@ -20,7 +20,7 @@ import Scrollable from '@components/scrollable2';
 import extractEmojiFromFilterTitle, {ExtractEmojiFromFilterTitleResult} from '@components/sidebarLeft/foldersSidebarContent/extractEmojiFromFilterTitle';
 import FolderItem from '@components/sidebarLeft/foldersSidebarContent/folderItem';
 import type {FolderItemPayload} from '@components/sidebarLeft/foldersSidebarContent/types';
-import {getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter} from '@components/sidebarLeft/foldersSidebarContent/utils';
+import {getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter, folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
 
 keepMe(ripple);
 
@@ -106,8 +106,14 @@ export function FoldersSidebarContent(props: {
     };
 
     const iconRest: Pick<FolderItemPayload, 'iconDocId' | 'emojiIcon'> = {
-      iconDocId: cleanTitle?.docId,
-      emojiIcon: cleanTitle?.emoji
+      // #266 (Kai review): an explicit pick WINS over the title emoji — for a
+      // folder titled "🔥 Work" the title emoji must not mask the chosen icon.
+      // When a pick exists, leave iconDocId unset so the title's
+      // custom-emoji docId doesn't win inside FolderItem's FolderAnimatedIcon.
+      // Unpicked folders keep today's behaviour exactly (title emoji/docId,
+      // derived flag icon as last resort).
+      iconDocId: folderEmoticonFallback(filter) ? undefined : cleanTitle?.docId,
+      emojiIcon: folderEmoticonFallback(filter) ?? cleanTitle?.emoji
     };
 
     return {

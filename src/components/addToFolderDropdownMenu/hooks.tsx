@@ -14,7 +14,7 @@ import {ButtonMenuItem, ButtonMenuItemOptions} from '@components/buttonMenu';
 import {IconTsx} from '@components/iconTsx';
 import extractEmojiFromFilterTitle from '@components/sidebarLeft/foldersSidebarContent/extractEmojiFromFilterTitle';
 import FolderAnimatedIcon from '@components/sidebarLeft/foldersSidebarContent/folderAnimatedIcon';
-import {getIconForFilter} from '@components/sidebarLeft/foldersSidebarContent/utils';
+import {getIconForFilter, folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
 import showTooltip from '@components/tooltip';
 import kindaFuzzyFinder from '@components/addToFolderDropdownMenu/kindaFuzzyFinder';
 import styles from '@components/addToFolderDropdownMenu/styles.module.scss';
@@ -106,8 +106,17 @@ export const createFolderItems = ({filters, isInFilter, isSelected, onToggle, cu
     const {span, charSpansGroups} = wrapFolderTitleInSpan(extractedTitle.text, middleware.get());
     span.classList.add(styles.ItemLabelText);
 
+    // #266 (Kai review): the chosen icon must be the folder's icon on every
+    // surface that draws one — pick → title emoji/docId → built-in fallback.
+    const pickedIcon = folderEmoticonFallback(filter);
+
     const options: ButtonMenuItemOptions = {
-      iconElement: createButtonMenuIcon({filter, isChecked: () => isInFilter(filter), docId: extractedTitle.docId, emoji: extractedTitle.emoji}),
+      iconElement: createButtonMenuIcon({
+        filter,
+        isChecked: () => isInFilter(filter),
+        docId: pickedIcon ? undefined : extractedTitle.docId,
+        emoji: pickedIcon ?? extractedTitle.emoji
+      }),
       textElement: createButtonMenuLabel({label: span, isSelected: () => isSelected(filter.id)}),
       onClick: noop
     };

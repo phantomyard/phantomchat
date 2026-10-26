@@ -1016,6 +1016,45 @@
   }
 }
 
+.folder-icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 1.125rem;
+
+  .folder-icon-picker-button {
+    --b: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border: var(--b) solid transparent;
+    border-radius: 50%;
+    background-color: transparent;
+    color: var(--primary-text-color);
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    user-select: none;
+
+    &:hover, &:focus-visible {
+      background-color: var(--light-secondary-text-color);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--primary-color);
+    }
+
+    &.is-selected {
+      border-color: var(--primary-color);
+      background-color: var(--light-secondary-text-color);
+    }
+  }
+}
+
 .folder-categories {
   .checkbox-field {
     position: absolute;

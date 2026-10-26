@@ -30,6 +30,61 @@
       "stable": "absent",
       "preview": "df03917d332cbbf38e347f6f2e625e6f3e36a96b934bf2c80358d02f3869742d",
       "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required."
+    },
+    "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
+      "preview": "81c001baa4eab84034f21cf13fb30d239656551ea1a520b746fcfea0fe74b30e",
+      "reason": "Display-only: folder sidebar icon fallback chain (picked emoticon > title emoji > derived icon); explicit pick also leaves title docId unset. Reads an optional filter field; no storage format change. Same folder data renders on both channels.",
+      "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0"
+    },
+    "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
+      "preview": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
+      "reason": "Pure display helper: optional filter.emoticon fallback for the folder icon; All Chats never uses it. No storage writes.",
+      "stable": "cbf463686cb43b4be66abc538ae3d7c4ddb79e82d6580e95ba6bb76c4f9f7743"
+    },
+    "src/components/sidebarLeft/tabs/editFolder.ts": {
+      "preview": "6b946ba8911704e579b7afa4827e91408a94d5ff7175b8a3c17a75a6ac29592a",
+      "reason": "Edit-folder UI gains an icon picker stored on the existing dialogFilter.emoticon schema field; icon clear assigns empty string instead of deleting the property. Optional field on the FiltersStorage/FoldersSync JSON blob, which old channels copy through opaquely; no migration, no schema change.",
+      "stable": "592c79a324b12b0bf2fef9c5e3a9e4c73cea25eb5bde74c9616a2d21f37e7531"
+    },
+    "src/config/state.ts": {
+      "preview": "f43b53ed7d4e021678e835280d7ee51b34005b2d9752c12f855be71f7ccd556a",
+      "reason": "Adds optional StateSettings.defaultChatFolderId. Optional key in the settings object: old channels preserve unknown keys opaquely and ignore them; no reset or migration on load.",
+      "stable": "153d04ba78a391bf2e1053404a245bfca2e80fbd29a67f6c37263aa3a19526c3"
+    },
+    "src/helpers/dom/createFolderContextMenu.ts": {
+      "preview": "dad9b7e353487f086bd76b832cbb4f261dc873a8968a03ecc17e46abeb3b3595",
+      "reason": "Context-menu actions that write the optional defaultChatFolderId settings key and toast. No storage format change.",
+      "stable": "05d22c4e94705c17cf358c86a74f17e3c7f8e3ed30a4a56ff35db99c4480e688"
+    },
+    "src/lang.ts": {
+      "preview": "7f8aa9fdae36caab79f17a256c6706dddb3ec8abdfd5ab17938785457017d8f9",
+      "reason": "String additions only (folder icon picker + default-folder menu/toast labels); localVersion bump reloads the local lang pack. No schema or stored-format impact.",
+      "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd"
+    },
+    "src/lib/appDialogsManager.ts": {
+      "preview": "afb5aae8ebd0af2e2f0ac9277904d7b76609d37d57b3029be3859681b5466324",
+      "reason": "Startup tab selection reads the optional defaultChatFolderId settings key (falls back to All Chats when absent) and clears it on filter_delete. No dialog storage or storage format change.",
+      "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4"
+    },
+    "src/lib/folders-default.ts": {
+      "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
+      "reason": "New pure module: startup-folder decision helpers and launch-hash capture. No I/O, no storage access.",
+      "stable": "absent"
+    },
+    "src/scripts/out/langPack.strings": {
+      "preview": "8b68a87878c765140ef8a8aebbb4c23fbe89fbfedbc1d13d2dded24283d39530",
+      "reason": "Regenerated mirror of src/lang.ts string additions; no schema or stored-format impact.",
+      "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3"
+    },
+    "src/components/addToFolderDropdownMenu/hooks.tsx": {
+      "stable": "cc10ea262b1bc9bcaca4f91fc39ca7f99449a5889c648a6395141d5f9c97b48c",
+      "preview": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
+      "reason": "Display-only: add-to-folder menu icon now consults the picked folder emoticon first (pick > title emoji/docId > built-in). Reads an optional filter field; no storage format change."
+    },
+    "src/lib/phantomchat/phantomchat-launch-dialogs.ts": {
+      "stable": "1ca936e947cd50e70eacd9173debea103fa3372b7e3f9bec806541a9a2b389d5",
+      "preview": "219f2fab97185af63c835cdac780f4fcbeb7be8767200daa927f045778cabfab",
+      "reason": "Doc-only tweak to isChatDeepLink JSDoc (returns true for any non-trivial launch hash, not only chat deep links). No code or storage change."
     }
   },
   "stableVersion": "1.0.335"

@@ -35,6 +35,18 @@ export function getIconForFilter(filter: MyDialogFilter): Icon {
   return 'limit_folders';
 }
 
+/**
+ * #266: fallback icon emoji for a folder whose title carries no emoji.
+ * Custom folders (and renamable system folders like Groups) may set
+ * `filter.emoticon` via the edit-folder icon picker; All Chats keeps its
+ * built-in icon, so it never falls back to an emoticon.
+ */
+export function folderEmoticonFallback(filter: MyDialogFilter): string | undefined {
+  if(filter.id === FOLDER_ID_ALL) return undefined;
+  assumeType<DialogFilter.dialogFilter>(filter);
+  return filter.emoticon || undefined;
+}
+
 export async function getFolderItemsInOrder(folderItems: FolderItemPayload[], managers: AppManagers) {
   const filters = new Map<number, MyDialogFilter>();
 

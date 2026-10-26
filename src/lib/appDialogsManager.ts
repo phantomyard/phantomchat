@@ -97,6 +97,12 @@ import IS_LIVE_STREAM_SUPPORTED from '@environment/liveStreamSupport';
 import {WrapRichTextOptions} from '@richTextProcessor/wrapRichText';
 import createFolderContextMenu from '@helpers/dom/createFolderContextMenu';
 import {useAppSettings} from '@stores/appSettings';
+import {appSettings as appSettingsStore, setAppSettings} from '@stores/appSettings';
+import {
+  DEFAULT_CHAT_FOLDER_SETTING_KEY,
+  startupFolderId,
+  wasLaunchedWithChatDeepLink
+} from '@lib/folders-default';
 import wrapFolderTitle from '@components/wrappers/folderTitle';
 import {unwrap} from 'solid-js/store';
 import wrapMediaSpoiler from '@components/wrappers/mediaSpoiler';
@@ -792,6 +798,28 @@ export class AppDialogsManager {
     this.filterId = filterId;
   }
 
+  /**
+   * #267: pick the tab the chat list opens on after (re)loading state — the
+   * user's preferred folder when it exists and the launch wasn't a deep
+   * link, All Chats otherwise. Equivalent to the user clicking that tab,
+   * so the folders sidebar and navigation state follow along.
+   */
+  private selectStartupFolderTab(animate: boolean) {
+    const availableFilterIds = Object.keys(this.filtersRendered).map(Number);
+    const targetFolderId = startupFolderId({
+      preferred: appSettingsStore[DEFAULT_CHAT_FOLDER_SETTING_KEY],
+      availableFilterIds,
+      launchedWithDeepLink: wasLaunchedWithChatDeepLink()
+    });
+
+    const menu = targetFolderId !== FOLDER_ID_ALL && this.filtersRendered[targetFolderId]?.menu;
+    if(menu) {
+      this.selectTab(whichChild(menu), animate);
+    } else {
+      this.selectTab(0, animate);
+    }
+  }
+
   public async setFilterIdAndChangeTab(filterId: number) {
     this.setFilterId(filterId);
     return this.onTabChange();
@@ -879,6 +907,12 @@ export class AppDialogsManager {
     });
 
     rootScope.addEventListener('filter_delete', (filter) => {
+      // #267: dropping the preferred startup folder clears the stale
+      // preference — All Chats becomes the fallback automatically.
+      if(appSettingsStore[DEFAULT_CHAT_FOLDER_SETTING_KEY] === filter.id) {
+        setAppSettings(DEFAULT_CHAT_FOLDER_SETTING_KEY, undefined);
+      }
+
       const elements = this.filtersRendered[filter.id];
       if(!elements) return;
 
@@ -1027,7 +1061,7 @@ export class AppDialogsManager {
     this.doNotRenderChatList = undefined;
 
     this.filterId = -1;
-    this.selectTab(0, false);
+    this.selectStartupFolderTab(false);
 
     if(!this.initedListeners) {
       this.initListeners();
