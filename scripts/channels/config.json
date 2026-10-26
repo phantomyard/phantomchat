@@ -32,8 +32,8 @@
       "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required."
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
-      "preview": "47d0f335e7cf0029d7cc68841e1ec48b55425cfbf5575851d28760fe12105a2b",
-      "reason": "Display-only: folder sidebar icon fallback chain (title emoji > picked emoticon > derived icon). Reads an optional filter field; no storage format change. Same folder data renders on both channels.",
+      "preview": "81c001baa4eab84034f21cf13fb30d239656551ea1a520b746fcfea0fe74b30e",
+      "reason": "Display-only: folder sidebar icon fallback chain (picked emoticon > title emoji > derived icon); explicit pick also leaves title docId unset. Reads an optional filter field; no storage format change. Same folder data renders on both channels.",
       "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0"
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
@@ -42,8 +42,8 @@
       "stable": "cbf463686cb43b4be66abc538ae3d7c4ddb79e82d6580e95ba6bb76c4f9f7743"
     },
     "src/components/sidebarLeft/tabs/editFolder.ts": {
-      "preview": "7b30183cc10342514379c1abf85517717c2c7be7f8877287b7af1302659acaea",
-      "reason": "Edit-folder UI gains an icon picker stored on the existing dialogFilter.emoticon schema field. Optional field on the FiltersStorage/FoldersSync JSON blob, which old channels copy through opaquely; no migration, no schema change.",
+      "preview": "6b946ba8911704e579b7afa4827e91408a94d5ff7175b8a3c17a75a6ac29592a",
+      "reason": "Edit-folder UI gains an icon picker stored on the existing dialogFilter.emoticon schema field; icon clear assigns empty string instead of deleting the property. Optional field on the FiltersStorage/FoldersSync JSON blob, which old channels copy through opaquely; no migration, no schema change.",
       "stable": "592c79a324b12b0bf2fef9c5e3a9e4c73cea25eb5bde74c9616a2d21f37e7531"
     },
     "src/config/state.ts": {
@@ -75,6 +75,16 @@
       "preview": "8b68a87878c765140ef8a8aebbb4c23fbe89fbfedbc1d13d2dded24283d39530",
       "reason": "Regenerated mirror of src/lang.ts string additions; no schema or stored-format impact.",
       "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3"
+    },
+    "src/components/addToFolderDropdownMenu/hooks.tsx": {
+      "stable": "cc10ea262b1bc9bcaca4f91fc39ca7f99449a5889c648a6395141d5f9c97b48c",
+      "preview": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
+      "reason": "Display-only: add-to-folder menu icon now consults the picked folder emoticon first (pick > title emoji/docId > built-in). Reads an optional filter field; no storage format change."
+    },
+    "src/lib/phantomchat/phantomchat-launch-dialogs.ts": {
+      "stable": "1ca936e947cd50e70eacd9173debea103fa3372b7e3f9bec806541a9a2b389d5",
+      "preview": "219f2fab97185af63c835cdac780f4fcbeb7be8767200daa927f045778cabfab",
+      "reason": "Doc-only tweak to isChatDeepLink JSDoc (returns true for any non-trivial launch hash, not only chat deep links). No code or storage change."
     }
   },
   "stableVersion": "1.0.335"
