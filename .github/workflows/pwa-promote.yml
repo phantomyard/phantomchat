@@ -20,6 +20,7 @@ concurrency:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -32,7 +33,7 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      # Test dependencies only; no app compilation or signing during promotion.
+      # Dependencies support the browser smoke; application assets are never rebuilt.
       - run: pnpm install --frozen-lockfile
       - name: Verify archives and assemble prebuilt Stable with current Preview
         id: release
@@ -40,8 +41,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_INPUT: ${{ inputs.release }}
-      - run: pnpm exec playwright install --with-deps chromium
-      - name: Verify promoted artifact channel round trip
+      - name: Verify assembled entry assets
+        run: node scripts/releases/check-site.mjs .release-work/payload/site
+      - name: Install Chromium for Stable verification
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Boot promoted payload and verify channel switching
         run: node scripts/channels/browser-smoke.mjs
         env:
           CHANNEL_SMOKE_DIST: .release-work/payload/site

@@ -35,7 +35,7 @@ try {
   await identityFingerprint(page, identity);
   await assertOfflineMessage(page, 'channel-fixture-stable', 101);
   await writeOfflineMessage(page, 'channel-fixture-preview', 102);
-  assert.ok(['#456783', '#8aacc8'].includes(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase())), 'Preview must render quiet stock accents on an existing Stable profile');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase()), '#3080ff', 'Preview must render the original Stable accent');
   assert.equal(await page.evaluate(() => localStorage.getItem('channel-native-fixture')), 'preserved');
   await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
   await openChannelSettings(page);

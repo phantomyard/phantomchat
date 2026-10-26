@@ -69,6 +69,15 @@ try {
     patch('src/lib/apiManagerProxy.ts', 'const controller = navigator.serviceWorker.controller || registration.installing || registration.waiting || registration.active;', "const current = navigator.serviceWorker.controller; const controller = current && new URL(current.scriptURL).pathname.startsWith('/preview/') === location.pathname.startsWith('/preview/') ? current : registration.installing || registration.waiting || registration.active;");
     // Keep noServiceWorker debugging from unregistering the other channel.
     patch('src/lib/apiManagerProxy.ts', 'for(const reg of regs)', "for(const reg of regs.filter(r => new URL(r.scope).pathname === (location.pathname.startsWith('/preview/') ? '/preview/' : '/')))");
+    // Preview publication preserves the verified live Stable bytes. Its source
+    // tree is still available below for the cross-version storage fixture.
+    if(channel === 'stable' && process.env.PWA_RELEASE === '1' && process.env.CHANNEL_BASELINE) {
+      if(!process.env.PWA_STABLE_DIST) throw new Error('Published Stable directory is required');
+      cpSync(resolve(process.env.PWA_STABLE_DIST), join(tree, 'dist'), {
+        recursive: true, filter: source => source !== resolve(process.env.PWA_STABLE_DIST, 'preview')
+      });
+      continue;
+    }
     run('node', ['src/scripts/generate_changelog.js'], tree);
     run(process.execPath, [process.env.npm_execpath, 'exec', 'vite', 'build', '--mode', 'production'], tree, {NODE_ENV: 'production', APP_VERSION: channel === 'stable' ? (config.stableVersion) : process.env.APP_VERSION || `${config.stableVersion}-preview-local`});
     const out = join(tree, 'dist');

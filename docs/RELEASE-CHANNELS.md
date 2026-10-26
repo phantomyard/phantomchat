@@ -98,23 +98,30 @@ preserved; no saved preferences are rewritten. Returning to Stable restores its
 original stock palette. The browser/native round trips assert both appearances
 on the same identity, in addition to encrypted-key and message durability.
 
-## Manual publication and promotion (replaces automatic releases)
+## Publication and manual promotion
 
-Pushes and merges trigger no builds or publication. Pull requests run typechecks,
-unit tests and archive/promotion regression tests only. Four Actions buttons own
+Every push or merge to main automatically builds and publishes PWA and Electron Preview. Stable
+promotion remains manual. Pull requests run typechecks, unit tests and
+archive/promotion regression tests only. Four Actions buttons also allow manual
 publication. PWA Preview accepts any reviewed branch; Electron Preview requires main:
 
 - `deploy.yml`: **PWA — build and publish Preview**. Builds the candidate and a
   separate promotion-ready candidate with Stable's asset-cache/build-marker
-  namespace. Checks existing-data round trips, desktop/mobile browser switching,
-  and both the original and promotion-ready combinations before Pages publication.
+  namespace. Reuses the published Stable files instead of rebuilding them. Keeps
+  compatibility and cross-version storage fixtures plus a fast entry-asset check.
+  Unit tests stay in PR CI; Preview installs no browser and repeats no browser
+  round trips. Stable promotion boots the exact assembled payload before deployment.
 - `pwa-promote.yml`: **PWA — promote to Stable**. Optional `release` is a
   `pwa-v1.0.<PWA workflow run_number>` archive identifier. Empty selects the newest
   successfully published Preview by publication time, across all branches.
   Downloads and verifies the archive and publishes the prebuilt Stable variant;
-  it never recompiles application code. Current Preview bytes are preserved.
+  it never recompiles application code. Archive/compatibility validation and a fast
+  entry-asset check run first. Test dependencies and Chromium are installed for one
+  browser smoke on the exact assembled payload: desktop/mobile boot, channel
+  switching, encrypted identity recovery and offline message preservation. A
+  failure blocks Pages deployment. Current Preview bytes are preserved.
 - `app-release.yml`: **Electron — build and publish Preview**. Builds, verifies,
-  signs/notarizes and publishes installers using the dispatched main commit.
+  signs/notarizes and publishes installers using the triggering main commit.
   Every job requires `refs/heads/main`; dispatching another branch skips all jobs,
   including signing and publication.
   Desktop versions are independently `1.1.<Electron workflow run_number>`;
@@ -127,7 +134,8 @@ publication. PWA Preview accepts any reviewed branch; Electron Preview requires 
   run before the same release becomes stable/latest; no rebuild or signing.
 
 Each build button always builds **and publishes to Preview**. Promotion is a
-separate explicit action. Merely merging this change does not dispatch anything.
+separate explicit action. Merging to main publishes PWA and Electron Preview automatically;
+Stable promotion remains manual for both products.
 The workflow files must exist on the default branch before GitHub offers their
 manual buttons; the chosen branch must also contain the workflow implementation.
 Only dispatch trusted, reviewed branches for PWA publication: these jobs execute
@@ -157,7 +165,7 @@ After a PWA promotion, the next Preview build checks compatibility against the
 Exact-content compatibility approvals must be refreshed in a reviewed PR when
 that baseline changes; stale approvals fail closed. Explicit older PWA promotion
 also checks the selected Stable source against current Preview using the chosen
-branch's reviewed exact-content approvals, then runs artifact browser round trips.
+branch's reviewed exact-content approvals, then verifies assembled entry assets.
 It never silently rolls Preview back. Archives with missing/corrupt assets or
 unsafe paths/links fail before Pages publication. The original source pin remains
 Electron's independent embedded Stable frontend baseline; changing PWA Stable

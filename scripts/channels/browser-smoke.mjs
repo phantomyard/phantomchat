@@ -9,22 +9,32 @@ app.use(express.static(process.env.CHANNEL_SMOKE_DIST || 'dist'));
 const server = app.listen(0, '127.0.0.1');
 await new Promise(resolve => server.once('listening', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
+const watchdog = setTimeout(() => { console.error('Browser smoke exceeded 4 minutes'); process.exit(1); }, 240000);
 const browser = await chromium.launch({headless: true, proxy: {server: 'http://127.0.0.1:9', bypass: '127.0.0.1'}});
 try {
   for(const viewport of [{width: 1366, height: 900}, {width: 390, height: 844}]) {
-    const context = await browser.newContext({viewport});
+    console.log(`Starting browser round trip: ${viewport.width}`);
+    const context = await browser.newContext({viewport, colorScheme: 'dark'});
+    context.setDefaultTimeout(45000);
+    context.setDefaultNavigationTimeout(45000);
     // Keep the smoke test entirely local; it must never touch live relays.
     await context.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
     const page = await context.newPage();
+    const evaluate = page.evaluate.bind(page);
+    page.evaluate = (...args) => Promise.race([evaluate(...args), new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Page evaluation stalled for 45 seconds')), 45000); timer.unref(); })]);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin + '/');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
+    console.log('Creating disposable identity');
     const identity = await createDisposableIdentity(page);
-    await page.emulateMedia({colorScheme: 'dark'});
+    console.log('Disposable identity ready');
+    await page.locator('.sidebar-tools-button:visible').first().waitFor();
     await page.waitForTimeout(350);
     const stableAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase());
+    console.log('Writing Stable offline message');
     await writeOfflineMessage(page, 'channel-fixture-stable', 101);
+    console.log('Stable offline message ready');
     await page.evaluate(async() => {
       localStorage.setItem('channel-smoke-existing-setting', 'keep');
       const request = indexedDB.open('channel-smoke-existing-data', 1);
@@ -38,6 +48,7 @@ try {
     let acceptPreview = false;
     page.on('dialog', dialog => acceptPreview ? dialog.accept() : dialog.dismiss());
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
+    console.log(`Opening channel settings: ${viewport.width}, ${page.url()}`);
     await openChannelSettings(page);
     assert.equal(await page.getByRole('combobox').count(), 0);
     await page.getByRole('radio', {name: 'Preview', exact: true}).locator('../..').click();
@@ -51,14 +62,16 @@ try {
     await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL.includes('/preview/'));
     assert.equal(await page.evaluate(async() => new URL((await navigator.serviceWorker.ready).scope).pathname), '/preview/');
     assert.equal(new URL(page.url()).searchParams.get('account'), '1');
+    console.log(`Checking identity: ${viewport.width}, ${page.url()}`);
     await identityFingerprint(page, identity);
     await assertOfflineMessage(page, 'channel-fixture-stable', 101);
     await writeOfflineMessage(page, 'channel-fixture-preview', 102);
-    assert.ok(['#456783', '#8aacc8'].includes(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase())), 'Preview must render quiet stock accents on an existing Stable profile');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim().toLowerCase()), stableAccent, 'Preview must render the original Stable accent');
     assert.equal(await page.locator('#manifest').getAttribute('href'), '/site.webmanifest');
     assert.equal(await page.evaluate(() => localStorage.getItem('channel-smoke-existing-setting')), 'keep');
     await page.reload();
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
+    console.log(`Opening channel settings: ${viewport.width}, ${page.url()}`);
     await openChannelSettings(page);
     assert.equal(await page.getByRole('radio', {name: 'Preview', exact: true}).isChecked(), true);
     for(const colorScheme of ['light', 'dark']) {
@@ -71,11 +84,13 @@ try {
     await page.goto(origin + '/');
     await page.waitForURL('**/preview/index.html');
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
+    console.log(`Opening channel settings: ${viewport.width}, ${page.url()}`);
     await openChannelSettings(page);
     await page.getByRole('radio', {name: 'Stable', exact: true}).locator('../..').click();
     await page.waitForURL(url => url.pathname === '/index.html' && url.searchParams.get('channel') === 'stable');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     assert.equal(new URL(page.url()).searchParams.get('account'), '1');
+    console.log(`Checking identity: ${viewport.width}, ${page.url()}`);
     await identityFingerprint(page, identity);
     await assertOfflineMessage(page, 'channel-fixture-stable', 101);
     await assertOfflineMessage(page, 'channel-fixture-preview', 102);
@@ -94,7 +109,12 @@ try {
     await context.close();
     console.log(`Browser channel round-trip passed: ${viewport.width}x${viewport.height}`);
   }
+} catch(error) {
+  console.error(error);
+  throw error;
 } finally {
+  clearTimeout(watchdog);
   await browser.close();
+  server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
 }
