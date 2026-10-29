@@ -88,7 +88,7 @@
     },
     "src/components/phantomchat/codeInbox.tsx": {
       "stable": "absent",
-      "preview": "85b5dc996325c403723cc930d4cf65b6d99c67aa85f08ab883849e66af81c85a",
+      "preview": "a3574680e2f16888f672ccc3e70cd3e1831a5e4b02293301141a95f355b3cdd0",
       "reason": "Presentation only: the custom search pill, New-session button and fake pane are deleted in favour of the app's own search field and the real chat pane. No storage keys, no persisted shape, no protocol change."
     },
     "src/components/phantomchat/codePhantomOpsPanel.tsx": {
@@ -133,7 +133,7 @@
     },
     "src/lib/phantomchat/code-session-runtime.ts": {
       "stable": "absent",
-      "preview": "682a0c126c9cc4bf3398e4abf824da34b452e9806df3cf072f23539c744f3b2e",
+      "preview": "8f5e5ae71f7b5fc80f0acb8aca6264fd68e0f636746297875f952da1fc955cbe",
       "reason": "Adds a peer→groupId lookup on the in-memory turn tracker. Device-local, never persisted."
     },
     "src/lib/phantomchat/code-session-service.ts": {
@@ -148,7 +148,7 @@
     },
     "src/lib/phantomchat/code-sessions-sync-adapter.ts": {
       "stable": "absent",
-      "preview": "8850da276c5b2171c3337137c61331beeb1329d9b3f9e83b7dc2e83e7b2303fd",
+      "preview": "75471099542c22dd5e0c7d2bb43e838f308de9a933e5abf0e07df468a46fe4b3",
       "reason": "Carries `hasPrompt` inside the existing phantomchat.chat/code-sessions blob; peers that predate it ignore the extra key, so the merge stays compatible."
     },
     "src/lib/phantomchat/group-api.ts": {
