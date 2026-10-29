@@ -88,8 +88,9 @@
     },
     "src/components/phantomchat/codeInbox.tsx": {
       "stable": "absent",
-      "preview": "8d77652f21643c9f26c729bc37db2e0feafe924b454c27bcd1ccb9ea0c14a24b",
-      "reason": "Code Mode rail rows render the shared fixed sigil avatar (presentation-only <img> on an existing flex row); dead PhantomOps i18n/state code paths gone with the deleted panel/client."
+      "preview": "2121572b1e181154b2c5612a5dadc9a40f25e8502239fff793ac7ad4bbfb2db2",
+      "reason": "Code Mode round 2 (Andrew 2026-10-30): session context-menu closer contained (menu unmounted itself before the first click could land), archive/delete clear the right pane, activation parks a stale non-session chat, empty rail uses the folder empty-state sticker."
+
     },
     "src/lib/code-mode.ts": {
       "stable": "absent",
@@ -113,8 +114,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "55390e85a6074359c7d51dce7480c1090ace91a9a2e24f206ff6daf61c5732b9",
-      "reason": "Code Mode: menu entry text rename New Coding Session \u2192 New Code Session and comment-only fixes around the pencil (reposition is presentation CSS); creation flow unchanged."
+      "preview": "8c973c02fb225d7b640c20dd8ed8a3b8ebd65bc01f95699372799803a3608b01",
+      "reason": "Code Mode round 2: the pencil (#new-menu) is re-parented into the left icon rail while Code Mode is on (MutationObserver on the body class; narrow screens keep the ordinary home)."
     },
     "src/index.ts": {
       "stable": "32681612805b18d825a38b767a820d42f7c3653c338ebf25bebd0be0eb6d99e0",
