@@ -33,8 +33,8 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0",
-      "preview": "5ff614f087784da989aed7a504ae7f5bd09483307afa0835174ebb25b073dbd9",
-      "reason": "Adds one rootScope listener so the pencil's 'New Coding Session' can select Code Mode. Device-local UI state only; nothing persisted."
+      "preview": "766bf4efa019a78d6942a001ebf7de85165774accd604528e1a3c8989384ba3f",
+      "reason": "Comment-only: stale PhantomOps mention removed from the lazy-import doc block. No code change."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "preview": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
@@ -58,8 +58,8 @@
     },
     "src/lang.ts": {
       "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd",
-      "preview": "3b4b0642242d9d5576de2cef5cf2d0414882eb13802aaba8f523d35c199d6639",
-      "reason": "String table only."
+      "preview": "80f0571a23105fca91af2955e88cda56df1c2feac3df9a81ff5f7bd6d5a6ab11",
+      "reason": "Code Mode: dead PhantomOps/connect-UI strings deleted, NewCodingSession string renamed to New Code Session. Keys removed were only reachable from the deleted panel."
     },
     "src/lib/appDialogsManager.ts": {
       "preview": "afb5aae8ebd0af2e2f0ac9277904d7b76609d37d57b3029be3859681b5466324",
@@ -73,8 +73,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3",
-      "preview": "e1979e95e98c6c3ef94d128eeb79b998fb91b4792825f687f64e0a4941dcd598",
-      "reason": "Generated string table mirroring lang.ts."
+      "preview": "4df824ff74a3fe7b650c19183c252e6ee6f40c8cbd16e207539f92643548cd47",
+      "reason": "Mirror of the src/lang.ts string cleanup (same keys)."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "cc10ea262b1bc9bcaca4f91fc39ca7f99449a5889c648a6395141d5f9c97b48c",
@@ -88,28 +88,18 @@
     },
     "src/components/phantomchat/codeInbox.tsx": {
       "stable": "absent",
-      "preview": "a3574680e2f16888f672ccc3e70cd3e1831a5e4b02293301141a95f355b3cdd0",
-      "reason": "Presentation only: the custom search pill, New-session button and fake pane are deleted in favour of the app's own search field and the real chat pane. No storage keys, no persisted shape, no protocol change."
-    },
-    "src/components/phantomchat/codePhantomOpsPanel.tsx": {
-      "stable": "absent",
-      "preview": "e42475e3cb97dda4aec6104fdf7c0974f928748dd4e41704a4dd0f488260e383",
-      "reason": "New PhantomOps panel. Persists one namespaced localStorage key (the PhantomOps API key) and talks to /api/chat/*; it never touches IndexedDB, StateSettings or any channel-owned store."
+      "preview": "8d77652f21643c9f26c729bc37db2e0feafe924b454c27bcd1ccb9ea0c14a24b",
+      "reason": "Code Mode rail rows render the shared fixed sigil avatar (presentation-only <img> on an existing flex row); dead PhantomOps i18n/state code paths gone with the deleted panel/client."
     },
     "src/lib/code-mode.ts": {
       "stable": "absent",
-      "preview": "5dd89fc9f082fb2745f6743ef42622167f6a291ff59f1feb937f34c994c70db7",
-      "reason": "Pure grouping/naming helpers: a pending session now stays in Active flagged `pending` instead of being dropped. No storage access."
-    },
-    "src/lib/phantomchat/code-mode-phantomops.ts": {
-      "stable": "absent",
-      "preview": "1a6cff5d59fbb09fb3162d3606471e76691fa074461fda509f8effcffb8dafc4",
-      "reason": "New file: the PhantomOps HTTP client. Persists exactly one namespaced localStorage key (the API key); no IndexedDB, no channel storage, no wire format change."
+      "preview": "9ee1f367806ff8a172a4ae171e4921584165148350b888e6e4c1a78643a6f00f",
+      "reason": "Comment-only refresh (menu label rename to New Code Session) plus the pre-existing pending-session grouping helpers; no runtime behaviour change."
     },
     "src/lib/rootScope.ts": {
       "stable": "2358db5bb5b8c367361dfb5cef90cd60d72e99023ed9f8a880b65c9d628cf754",
-      "preview": "26cc5e17192cb3af35736ccd1ede52c5d08f3e3e0e525791ffa45f7b6edf2bc6",
-      "reason": "Two new broadcast event names (code_mode_enter_requested, code_sessions_changed). Type declarations only, no storage."
+      "preview": "0d5da4cfca9c088d6e921f0999f72b33a6546a4dcc3e74592a76068a62eb3efa",
+      "reason": "Comment-only sync of the broadcast event names doc block; declarations unchanged (code_mode_enter_requested, code_sessions_changed)."
     },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
       "stable": "b688eae2335aa5aa803605db436f720f87229d2f60956c0cd9b76a8a9d081b13",
@@ -123,8 +113,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "16e09ae7d84c4525eeb13f12d1bc214f54739a40b13910664d0ddabfd1d9fc81",
-      "reason": "Adds the 'New Coding Session' item to the existing new-chat menu and its bot-filtered picker, minting the session through the existing group API; the search field's focus handler now skips initSearch while Code Mode owns it. No new storage."
+      "preview": "55390e85a6074359c7d51dce7480c1090ace91a9a2e24f206ff6daf61c5732b9",
+      "reason": "Code Mode: menu entry text rename New Coding Session \u2192 New Code Session and comment-only fixes around the pencil (reposition is presentation CSS); creation flow unchanged."
     },
     "src/index.ts": {
       "stable": "32681612805b18d825a38b767a820d42f7c3653c338ebf25bebd0be0eb6d99e0",
@@ -134,12 +124,12 @@
     "src/lib/phantomchat/code-session-runtime.ts": {
       "stable": "absent",
       "preview": "8f5e5ae71f7b5fc80f0acb8aca6264fd68e0f636746297875f952da1fc955cbe",
-      "reason": "Adds a peer→groupId lookup on the in-memory turn tracker. Device-local, never persisted."
+      "reason": "Adds a peer\u2192groupId lookup on the in-memory turn tracker. Device-local, never persisted."
     },
     "src/lib/phantomchat/code-session-service.ts": {
       "stable": "absent",
-      "preview": "8e60dba55042370b1b60fb617b1ab51f3f4b27c1ce750ef1b4f3e10b2ac4a18f",
-      "reason": "Splits creation into createPendingSession + applyFirstPromptTitle over the existing group API. Adds the optional `hasPrompt` field: absent means prompted, so records written by older clients read identically."
+      "preview": "5c9340957b15e4310184a840397dd5b33ed5635741fec69a8320079b78d149d9",
+      "reason": "Comment-only: the create doc block now says sessions are minted only from the pencil entry named New Code Session; createPendingSession code unchanged."
     },
     "src/lib/phantomchat/code-sessions-db.ts": {
       "stable": "absent",
@@ -153,8 +143,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "bb78a69b01f693e38954b9212527bddb4108a08194e493db25a83f40942aee9e",
-      "preview": "59f6448f556f7de8594446292ef4ffaf8bbe63e5e54eb3a0b082b67f6539abc0",
-      "reason": "Adds an optional sessionGroup flag to createGroup and the create payload. Absent means unchanged behaviour; no member or admin semantics touched."
+      "preview": "c2bf4112ca26bfafc79f278dec44d26abad343282eac3b1cc20acfecb4c6da52",
+      "reason": "Code Mode session member gate: addMember throws + handleAddMember drops the control for a non-bot member of a sessionGroup record. No storage-shape change; the gate reads the record it already loaded."
     },
     "src/lib/phantomchat/group-types.ts": {
       "stable": "8e1db65ee2a54edf87ba16dae2e254c0e65209748de4af0ed4e14f68b067d90d",
@@ -163,8 +153,8 @@
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "a46baa8ccc438e8d353f242f3e9ca204b66f6343223dc33c418737b957e76965",
-      "preview": "fb8f68c00c965c097f9f6ddcccd4ab63975adecd69e5a03d3dde04c7c3d1ea84",
-      "reason": "Session groups skip the chat-list dialog row. Chat/peer injection still happens, so transcripts render; ordinary groups unchanged."
+      "preview": "8158c3e09e41130175cb3d4d2dceeaaa25a136a498477f305a0d77c8a33bdece",
+      "reason": "Code Mode (#277 fix-up): rx/tx message paths no longer materialise dialogs for sessionGroup records (chat-list leak backdoor). Ordinary-group dialog creation byte-identical \u2014 dispatched from an if(!sessionGroup) block only."
     },
     "src/lib/phantomchat/phantomchat-sync-triggers.ts": {
       "stable": "7b0b46be4c77d8fd0e7e4de5c45a8cd9836f83cfd9c6205ab4b2a42d37be250a",
@@ -183,8 +173,23 @@
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "59eb420187dc41693cb3b48d0256b86747763fc64fd5ee390b4ba210094f65a2",
-      "preview": "d3336b530c7744c7f7f4c543bf17a6e39fc8faff1d30a7c7ae8c8dd503464450",
-      "reason": "Contact rows now carry the bot flag read from the cached kind-0, so a bot-tagged peer is a bot in the picker before its full user is fetched. Read-only flag on a derived list; no storage keys, no persisted shape, no protocol change."
+      "preview": "f5ebc978d31054c59531162718eff312bab8cb9fd3f37680bdb2599fb9b26c1e",
+      "reason": "Comment-only: menu label reference renamed to New Code Session; the code-mode peer filter logic untouched."
+    },
+    "src/lib/phantomchat/peer-profile-cache.ts": {
+      "stable": "ef00917580799583ab81bc947d431b07b982c27b0b0d4896409065af07617064",
+      "preview": "20ee8ad56b8bac43debaaf83567e402351795de32d17a031613f9b2be047c1ae",
+      "reason": "Code Mode helper addition: pure read-only isPhantomPubkey() over the existing cache (localStorage kind-0), no new storage key, no write."
+    },
+    "src/helpers/generateDicebearAvatar.ts": {
+      "stable": "a0313477f28d25311948e1ea0a952f579d61c6f80c2f86ef4b78250527445e7b",
+      "preview": "e1d0412b0a5dbbdfc5719b7cc68aebc9d4d99af959ae08b8eb7787c514fdea43",
+      "reason": "Code Mode fixed session sigil: new export generateCodeSessionAvatarSvg (pure, seedless) + cached URL accessor with a data-URL fallback when Blob URLs are unavailable. Nothing else changes."
+    },
+    "src/components/avatarNew.tsx": {
+      "stable": "06a5a2a61f5e6b06bb9cf145483849d56075894ccf0936406d4e52ac36911d61",
+      "preview": "350188f99811c968ce3e46b84d76867e6912a70c1cecb17fcbb99b6efc8a4856",
+      "reason": "Code Mode: the custom-avatar lookup for groups now also carries a session flag; sessionGroup records render the fixed code sigil BEFORE the Blossom avatar URL, identical render path otherwise."
     }
   },
   "stableVersion": "1.0.335"
