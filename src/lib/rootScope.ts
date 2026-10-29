@@ -71,6 +71,10 @@ export type BroadcastEvents = {
   'changing_folder_from_chatlist': number,
   'changing_folder_from_sidebar': {id: number, dontAnimate?: boolean},
 
+  /** Code Mode entered/left from the folders rail (`lib/code-mode`). The rail owns
+   *  the state; the inbox only listens. */
+  'code_mode_changed': boolean,
+
   /** Fired whenever the active left-bar list's rendered row count changes (live add/drop) or the active folder is switched. Consumers must re-read the current count. */
   'chatlist_length_change': void,
 

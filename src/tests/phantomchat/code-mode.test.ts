@@ -109,6 +109,15 @@ describe('code mode rail wiring', () => {
     expect(listener).toContain('enterCodeMode(false)');
   });
 
+  it('only leaves Code Mode on a USER folder choice, not on a boot-time one', () => {
+    // `changing_folder_from_chatlist` also fires when the app restores its
+    // initial filter at startup; treating that as a user choice silently
+    // cancelled a Code Mode the user had left on across reloads.
+    expect(railSrc).toContain('sawUserGesture');
+    expect(railSrc).toMatch(/if\(sawUserGesture\) enterCodeMode\(false\);/);
+    expect(railSrc).toContain("document.addEventListener('pointerdown', onUserGesture");
+  });
+
   it('parks the chat list on All Chats when Code Mode is entered', () => {
     const enter = railSrc.slice(railSrc.indexOf('async function selectCodeMode'));
     expect(enter).toContain('await setSelectedFolder(FOLDER_ID_ALL)');

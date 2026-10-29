@@ -16,6 +16,7 @@ import {MyDialogFilter} from '@lib/storages/filters';
 import {appSettings, setAppSettings} from '@stores/appSettings';
 import {
   CODE_MODE_EMOJI_ICON,
+  CODE_MODE_EVENT,
   CODE_MODE_LANG_KEY,
   CODE_MODE_SETTING_KEY,
   applyCodeModeClass,
@@ -61,8 +62,12 @@ export function FoldersSidebarContent(props: {
   /**
    * Code Mode is a rail selection, not a dialogFilter: it owns no filter id and
    * therefore never reaches filter_order / FoldersSync. See lib/code-mode.
+   *
+   * Read straight out of the settings store (never snapshotted into a signal)
+   * so the mode comes back after a reload: StateSettings hydrates from IndexedDB
+   * asynchronously, and a snapshot taken at init would always be "off".
    */
-  const [codeMode, setCodeMode] = createSignal<boolean>(isCodeModeEnabled(appSettings[CODE_MODE_SETTING_KEY]));
+  const codeMode = () => isCodeModeEnabled(appSettings[CODE_MODE_SETTING_KEY]);
   const [folderItems, setFolderItems] = createStore<FolderItemPayload[]>([]);
   const [addFoldersOffset, setAddFoldersOffset] = createSignal(0);
   const [canShowAddFolders, setCanShowAddFolders] = createSignal(false);
@@ -207,12 +212,31 @@ export function FoldersSidebarContent(props: {
 
   /**
    * Persist the Code Mode rail selection. Device-local (StateSettings), so it
-   * survives a reload on this device only and is never published.
+   * survives a reload on this device only and is never published. The event is
+   * how the inbox learns the mode moved — the rail owns the state, nothing
+   * else does.
    */
   function enterCodeMode(enabled: boolean) {
     if(codeMode() === enabled) return;
-    setCodeMode(enabled);
-    setAppSettings(CODE_MODE_SETTING_KEY, enabled);
+    void setAppSettings(CODE_MODE_SETTING_KEY, enabled);
+    rootScope.dispatchEvent(CODE_MODE_EVENT, enabled);
+  }
+
+  /**
+   * Load and mount the Code inbox once, on demand. Dynamic import keeps the
+   * inbox (and the PhantomOps client inside it) out of the boot path, so Code
+   * Mode costs nothing until it is used.
+   */
+  let codeInboxMounted = false;
+  function ensureCodeInboxMounted() {
+    if(codeInboxMounted) return;
+    codeInboxMounted = true;
+    void import('@components/phantomchat/codeInbox')
+    .then((module) => module.mountCodeMode())
+    .catch((err) => {
+      codeInboxMounted = false;
+      console.error('[CodeMode] mount failed', err);
+    });
   }
 
   /**
@@ -227,11 +251,12 @@ export function FoldersSidebarContent(props: {
   }
 
   /**
-   * v1 Code list is the un-filtered chat list, so entering the mode parks the
-   * chat list on All Chats. Membership narrowing lands in a later phase — it
-   * must not need new storage here.
+   * The Code list is derived from the phantom mappings (who is a phantom) plus
+   * the cached dialogs (unread + recency), so entering the mode only has to
+   * park the chat list and mount the inbox. No filter, no storage, no migration.
    */
   async function selectCodeMode() {
+    ensureCodeInboxMounted();
     await setSelectedFolder(FOLDER_ID_ALL);
     enterCodeMode(true);
   }
@@ -281,10 +306,21 @@ export function FoldersSidebarContent(props: {
       updateItemsOrder(order);
     });
 
+    /**
+     * `changing_folder_from_chatlist` also fires when the app RESTORES its
+     * initial filter on boot, which would silently cancel a Code Mode the user
+     * left on. Only a gesture can be a choice, so the first pointerdown arms
+     * this listener and everything before it is ignored.
+     */
+    let sawUserGesture = false;
+    const onUserGesture = (): void => { sawUserGesture = true; };
+    document.addEventListener('pointerdown', onUserGesture, {once: true, passive: true});
+    onCleanup(() => document.removeEventListener('pointerdown', onUserGesture));
+
     listenerSetter.add(rootScope)('changing_folder_from_chatlist', (id) => {
       setSelectedFolderId(id);
       // A tab click is an explicit choice of chat list, so it also leaves Code Mode.
-      enterCodeMode(false);
+      if(sawUserGesture) enterCodeMode(false);
     });
 
     onCleanup(() => {
@@ -324,6 +360,14 @@ export function FoldersSidebarContent(props: {
 
   createEffect(() => {
     applyCodeModeClass(document.body, codeMode());
+  });
+
+  /**
+   * Code Mode is persisted per device, so a reload with the mode on must land
+   * back in the inbox — mount it on boot as well as on click.
+   */
+  createEffect(() => {
+    if(codeMode()) ensureCodeInboxMounted();
   });
 
   createEffect(updateCanShowAddFolders);

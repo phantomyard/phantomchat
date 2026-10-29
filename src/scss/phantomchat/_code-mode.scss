@@ -1,0 +1,402 @@
+/*
+ * Code Mode skin — every rule is scoped under `body.code-mode`.
+ *
+ * Nothing here can touch the normal chat list, because the whole block hangs
+ * off the body class the rail entry toggles (`lib/code-mode`). Removing the
+ * class (or reverting the rail entry) restores the stock PhantomChat look
+ * exactly.
+ *
+ * Layout follows the OpenCode inbox Andrew sketched: a roomy session list with
+ * the title on the left and the age on the right, and a single primary action
+ * to add another phantom.
+ */
+
+.code-mode-root {
+  display: none;
+  height: 100%;
+  overflow: hidden;
+}
+
+body.code-mode {
+  /* Code Mode is inbox-only: the folder tabs, the dialog lists and the
+     new-message FAB step aside while the inbox owns the chat list column.
+     tweb RE-PARENTS #folders-container at runtime (it ends up inside
+     .connection-status-bottom), so this keys on what is there rather than on
+     one particular parent. */
+  #chatlist-container > :not(.code-mode-root),
+  #folders-container,
+  #folders-tabs {
+    display: none !important;
+  }
+
+  /* The inbox brings its own "add phantom" action. */
+  #column-left .btn-corner {
+    display: none !important;
+  }
+
+  .code-mode-root {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+.code-inbox {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.code-inbox__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 8px;
+  flex: 0 0 auto;
+}
+
+.code-inbox__title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--primary-text-color);
+}
+
+.code-inbox__add {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--primary-text-color);
+  background: var(--secondary-color, rgba(127, 127, 127, 0.15));
+
+  &:hover {
+    filter: brightness(1.1);
+  }
+}
+
+.code-inbox__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.code-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  border-radius: 10px;
+
+  &:hover {
+    background: var(--message-highlight-background, rgba(127, 127, 127, 0.08));
+  }
+}
+
+.code-row--ops .code-row__avatar--ops {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--primary-text-color);
+  background: var(--secondary-color, rgba(127, 127, 127, 0.15));
+}
+
+.code-row__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.code-row__title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--primary-text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.code-row__subtitle {
+  margin-top: 2px;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--secondary-text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.code-row__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.code-row__age {
+  font-size: 12px;
+  color: var(--secondary-text-color);
+}
+
+.code-row__unread {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+  color: #fff;
+  background: var(--primary-color, #3390ec);
+}
+
+.code-inbox__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.code-inbox__empty-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--primary-text-color);
+}
+
+.code-inbox__empty-hint {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--secondary-text-color);
+}
+
+.code-inbox__empty-btn {
+  margin-top: 8px;
+  padding: 8px 16px;
+  border-radius: 18px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #fff;
+  background: var(--primary-color, #3390ec);
+}
+
+/* ------------------------------------------------------------ PhantomOps */
+
+.code-ops {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-color);
+  color: var(--primary-text-color);
+}
+
+.code-ops__topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.code-ops__back,
+.code-ops__signout {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--secondary-text-color);
+}
+
+.code-ops__back {
+  font-size: 18px;
+}
+
+.code-ops__title {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.code-ops__name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.code-ops__status {
+  font-size: 12px;
+  color: var(--secondary-text-color);
+}
+
+.code-ops__error {
+  margin: 8px 12px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: rgba(229, 57, 53, 0.12);
+  color: #e53935;
+}
+
+.code-ops__signin {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+
+.code-ops__signin-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.code-ops__signin-hint {
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--secondary-text-color);
+}
+
+.code-ops__signin-btn {
+  margin-top: 6px;
+  padding: 9px 18px;
+  border-radius: 18px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #fff;
+  background: var(--primary-color, #3390ec);
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+.code-ops__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.code-ops__bubble {
+  max-width: 76%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.code-ops__bubble--user {
+  align-self: flex-end;
+  color: #fff;
+  background: var(--primary-color, #3390ec);
+}
+
+.code-ops__bubble--assistant {
+  align-self: flex-start;
+  background: var(--secondary-color, rgba(127, 127, 127, 0.12));
+}
+
+.code-ops__gate {
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  background: rgba(255, 193, 7, 0.14);
+}
+
+.code-ops__gate-title {
+  font-weight: 600;
+}
+
+.code-ops__gate-summary {
+  margin-top: 4px;
+  color: var(--secondary-text-color);
+}
+
+.code-ops__gate-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+
+  button {
+    padding: 6px 14px;
+    border-radius: 14px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--primary-text-color);
+    cursor: pointer;
+    font-size: 13px;
+  }
+}
+
+.code-ops__composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border-color);
+}
+
+.code-ops__input {
+  flex: 1 1 auto;
+  resize: none;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--primary-text-color);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.4;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color, #3390ec);
+  }
+}
+
+.code-ops__send {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: #fff;
+  background: var(--primary-color, #3390ec);
+}
+
+.code-ops__send--stop {
+  width: auto;
+  padding: 0 14px;
+  border-radius: 18px;
+  font-size: 13px;
+  background: var(--secondary-color, rgba(127, 127, 127, 0.3));
+  color: var(--primary-text-color);
+}
