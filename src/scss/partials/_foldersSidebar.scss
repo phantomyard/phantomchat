@@ -92,9 +92,11 @@
         width: var(--size);
         height: var(--size);
 
-        /* Optical parity with the 1.5rem icomoon glyphs: a `#` has a much
-           smaller ink area than a filled icon, so it needs the extra size. */
-        font-size: 1.75rem;
+        /* Same 30px box as the icomoon icons. This rule loses the cascade to
+           `&__menu-button .folders-sidebar__folder-item-icon` (1.5rem) on the
+           Code entry, so `_code-mode.scss` re-states it with higher
+           specificity — keep the two in sync. */
+        font-size: 1.875rem;
         font-weight: 700;
         line-height: 1;
       }
