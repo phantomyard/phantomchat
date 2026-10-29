@@ -94,7 +94,11 @@ body.code-mode {
 }
 
 .code-inbox__new {
+  /* The search field takes the slack; this button must never be squeezed into
+     a clipped label ("New" instead of "New session") on a narrow column. */
   flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
   height: 34px;
   padding: 0 14px;
   border: none;
