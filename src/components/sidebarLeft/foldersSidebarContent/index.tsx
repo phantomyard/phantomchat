@@ -3,11 +3,9 @@ import {createStore, reconcile} from 'solid-js/store';
 import {render} from 'solid-js/web';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import createFolderContextMenu from '@helpers/dom/createFolderContextMenu';
-import {keepMe} from '@helpers/keepMe';
 import ListenerSetter from '@helpers/listenerSetter';
 import {Middleware} from '@helpers/middleware';
 import pause from '@helpers/schedulers/pause';
-import Animated from '@helpers/solid/animations';
 import {logger, LogTypes} from '@lib/logger';
 import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS} from '@appManagers/constants';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
@@ -23,15 +21,11 @@ import {
   isCodeModeEnabled
 } from '@lib/code-mode';
 import useHasFoldersSidebar from '@stores/foldersSidebar';
-import {IconTsx} from '@components/iconTsx';
-import ripple from '@components/ripple';
 import Scrollable from '@components/scrollable2';
 import extractEmojiFromFilterTitle, {ExtractEmojiFromFilterTitleResult} from '@components/sidebarLeft/foldersSidebarContent/extractEmojiFromFilterTitle';
 import FolderItem from '@components/sidebarLeft/foldersSidebarContent/folderItem';
 import type {FolderItemPayload} from '@components/sidebarLeft/foldersSidebarContent/types';
 import {getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter, folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
-
-keepMe(ripple);
 
 
 const log = logger('FoldersSidebarContent', LogTypes.Debug);
@@ -75,14 +69,7 @@ export function FoldersSidebarContent(props: {
    */
   const codeMode = () => isCodeModeEnabled(appSettings[CODE_MODE_SETTING_KEY]);
   const [folderItems, setFolderItems] = createStore<FolderItemPayload[]>([]);
-  const [addFoldersOffset, setAddFoldersOffset] = createSignal(0);
-  const [canShowAddFolders, setCanShowAddFolders] = createSignal(false);
   const [menuTarget, setMenuTarget] = createSignal<HTMLDivElement>();
-
-  const showAddFolders = () => canShowAddFolders() &&
-    selectedFolderId() &&
-    !REAL_FOLDERS.has(selectedFolderId()) &&
-    folderItems.find((item) => item.id === selectedFolderId())?.chatsCount === 0;
 
   const [folderItemRefs, setFolderItemRefs] = createStore<Record<number, HTMLDivElement>>({});
 
@@ -342,7 +329,11 @@ export function FoldersSidebarContent(props: {
   createEffect(() => {
     if(!props.isFiltersInited) return;
 
-    const folderFilters = props.filters.filter((filter) => filter.id !== FOLDER_ID_ARCHIVE);
+    // Andrew (2026-10-29): the rail shows exactly All Chats, Groups and Code.
+    // Custom folders and the archive entry are hidden, not deleted — nothing
+    // migrates or wipes, they simply have no rail row any more (and with New
+    // Folder and the folders settings page gone, they are no longer editable).
+    const folderFilters = props.filters.filter((filter) => REAL_FOLDERS.has(filter.id) && filter.id !== FOLDER_ID_ARCHIVE);
 
     let cleaned = false;
     onCleanup(() => void (cleaned = true));
@@ -356,18 +347,6 @@ export function FoldersSidebarContent(props: {
   });
 
 
-  const updateCanShowAddFolders = () => {
-    const selectedItem = folderItemRefs[selectedFolderId()];
-
-    if(!selectedItem) return;
-    const containerRect = folderItemsContainer.getBoundingClientRect();
-    const itemRect = selectedItem.getBoundingClientRect();
-    const offset = itemRect.top + itemRect.height / 2 - containerRect.top;
-    const MARGIN_PX = 50;
-    setCanShowAddFolders(offset > MARGIN_PX && offset < containerRect.height - MARGIN_PX);
-    setAddFoldersOffset(offset);
-  };
-
   createEffect(() => {
     applyCodeModeClass(document.body, codeMode());
   });
@@ -380,9 +359,6 @@ export function FoldersSidebarContent(props: {
     if(codeMode()) ensureCodeInboxMounted();
   });
 
-  createEffect(updateCanShowAddFolders);
-
-  let openingChatFolders = false;
   return (
     <>
       <FolderItem ref={setMenuTarget} class="folders-sidebar__menu-button" icon="menu" />
@@ -391,7 +367,6 @@ export function FoldersSidebarContent(props: {
         <Scrollable
           ref={folderItemsContainer}
           class="folders-sidebar__scrollable"
-          onScroll={updateCanShowAddFolders}
           withBorders="both"
         >
           <For each={folderItems}>{(folderItem) => {
@@ -425,38 +400,7 @@ export function FoldersSidebarContent(props: {
             onClick={() => selectCodeMode()}
           />
         </Scrollable>
-
-        <Animated type="cross-fade" mode="add-remove">
-          {showAddFolders() && <div
-            use:ripple
-            class="folders-sidebar__add-folders-button"
-            onClick={() => contextMenu.openSettingsForFilter(selectedFolderId())}
-            style={{
-              '--offset': addFoldersOffset()
-            }}
-          >
-            <IconTsx icon="plus" class="folders-sidebar__add-folders-button-icon" />
-            <div class="folders-sidebar__add-folders-button-name">
-              {i18n('ChatList.Filter.Include.AddChat')}
-            </div>
-          </div>}
-        </Animated>
       </div>
-
-      <FolderItem
-        class="folders-sidebar__menu-button"
-        icon="equalizer"
-        onClick={() => {
-          if(openingChatFolders || appSidebarLeft.getTab(AppChatFoldersTab)) return;
-          openingChatFolders = true;
-          appSidebarLeft.closeTabsBefore(() => {
-            const tab = appSidebarLeft.createTab(AppChatFoldersTab);
-            tab.open().finally(() => {
-              openingChatFolders = false;
-            });
-          });
-        }}
-      />
     </>
   );
 }

@@ -306,6 +306,23 @@ export async function injectGroupCreateDialog(
 
   await ensureGroupChatInjected(groupId, groupPeerId);
 
+  /**
+   * Code Mode (#279): a session group is a private 2-member group used as a
+   * coding thread, NOT a chat. It exists so every session owns its own
+   * `group:<groupId>` conversation on the phantom side, and it is rendered
+   * only by the Code rail — so it must never get a chat-list row. Bail AFTER
+   * the chat injection (the right pane still needs the Chat/peer entries when
+   * the session is opened) and BEFORE the dialog row that puts it in All
+   * Chats / Groups.
+   */
+  try {
+    const rec = await getGroupStore().get(groupId);
+    if(rec?.sessionGroup) {
+      console.debug(LOG_PREFIX, 'create-dialog: session group, keeping it out of the chat list', groupId);
+      return;
+    }
+  } catch{ /* store read failed — fall through to the ordinary dialog path */ }
+
   const mapper = getMapper();
   const dialog = mapper.createTwebDialog({
     peerId: groupPeerId,

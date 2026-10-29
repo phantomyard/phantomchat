@@ -89,12 +89,14 @@ describe('sidebar search is stripped to basics', () => {
   });
 });
 
-describe('sidebar add-menu has an Add Folder option', () => {
+describe('sidebar add-menu has no Add Folder option', () => {
   const sidebarSrc = readFile('components/sidebarLeft/index.ts');
 
-  it('wires a New Folder item to the edit-folder tab', () => {
-    expect(sidebarSrc).toContain("text: 'FilterNew'");
-    expect(sidebarSrc).toContain('this.createTab(AppEditFolderTab).open()');
+  it('drops the New Folder item (folders are stripped, #279)', () => {
+    // Andrew (2026-10-29): "remove the New Folder from the edit pencil". A
+    // follder you cannot create or manage in-app needs no entry point.
+    expect(sidebarSrc).not.toContain("text: 'FilterNew'");
+    expect(sidebarSrc).not.toContain('onNewFolderClick');
   });
 });
 

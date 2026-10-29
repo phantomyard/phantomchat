@@ -47,6 +47,13 @@ export interface GroupControlPayload {
   memberPubkeys?: string[];
   targetPubkey?: string;
   adminPubkey?: string;
+  /**
+   * Code Mode (#279): a 2-member session group. Broadcast on `group_create`
+   * so every device agrees the group is a coding session and never renders it
+   * as an ordinary chat. Optional/absent on every pre-Code-Mode group, so no
+   * migration is needed and old clients simply ignore it.
+   */
+  sessionGroup?: boolean;
   // Rebind migration (#188 remainder): a bound-id group_create that
   // SUPERSEDES a legacy (pre-#188, 32-hex) group id. Receivers that hold a
   // live record for the legacy id verify the sender against THAT record's
@@ -77,6 +84,16 @@ export interface GroupRecord {
   peerId: number;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Code Mode (#279): this group is a coding session — a 2-member private
+   * group (you + one phantom) that exists to give every session its own
+   * `group:<groupId>` conversation on the phantom side. A session group is
+   * NEVER injected into the ordinary chat list; only the Code rail renders it.
+   *
+   * It rides the groups CRDT snapshot for free (the record IS the payload),
+   * so "this is a session" is a fact every signed-in device agrees on.
+   */
+  sessionGroup?: boolean;
   /**
    * Unix-millis timestamp of the USER-INITIATED create (#180) — the proof
    * that may clear a durable delete in the groups CRDT merge. Stamped ONLY

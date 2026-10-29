@@ -34,6 +34,8 @@ import {CrdtSync} from '@lib/phantomchat/crdt-sync';
 import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTACTS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/contacts-sync-adapter';
 import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
+import {createCodeSessionsAdapter, CODE_SESSIONS_SYNC_D_TAG, CODE_SESSIONS_SYNC_VERSION, CODE_SESSIONS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/code-sessions-sync-adapter';
+import {getAllSessions as listCodeSessions, listSessionTombstones, saveSession as saveCodeSession, deleteSession as deleteCodeSession, recordSessionDeleted, deleteSessionRuntime} from '@lib/phantomchat/code-sessions-db';
 import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
 import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
 import {getAllMappings, getMapping, setMappingDisplayName, setMappingUpdatedAt, setDeliberateAddAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
@@ -671,6 +673,24 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             },
             logPrefix: '[read-state-sync]'
           });
+          // --- Code Mode sessions (#279): the rail's titles, auto-name flag
+          // and archive state, so a session started on the phone is the same
+          // row on the desktop. Turn state and Done badges are device-local and
+          // deliberately NOT here (see code-session-runtime). ---
+          const codeSessionsAdapter = createCodeSessionsAdapter({
+            listSessions: () => listCodeSessions(),
+            listTombstones: () => listSessionTombstones(),
+            saveSession: (record) => saveCodeSession(record),
+            deleteSession: (groupId) => deleteCodeSession(groupId),
+            recordDeleted: (groupId, sec) => recordSessionDeleted(groupId, sec),
+            forgetRuntime: (groupId) => deleteSessionRuntime(groupId)
+          });
+          const codeSessionsSync = new CrdtSync({
+            dTag: CODE_SESSIONS_SYNC_D_TAG, version: CODE_SESSIONS_SYNC_VERSION,
+            acceptedVersions: CODE_SESSIONS_SYNC_ACCEPTED_VERSIONS,
+            chatAPI: crdtChatAPI, adapter: codeSessionsAdapter, ...crdtCrypto
+          });
+
           const readStateSync = new CrdtSync({
             dTag: READ_STATE_SYNC_D_TAG, version: READ_STATE_SYNC_VERSION,
             acceptedVersions: READ_STATE_SYNC_ACCEPTED_VERSIONS,
@@ -695,6 +715,12 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               groupsSync.reconcile().catch((e) => { console.warn('[groups-sync] reconcile failed', e); return 'failed'; }),
               readStateSync.reconcile().catch((e) => { console.warn('[read-state-sync] reconcile failed', e); return 'failed'; })
             ]);
+            // Code Mode sessions ride along (passenger, like read-state): their
+            // outcome must never hold the ready gate or the retry loop.
+            await codeSessionsSync.reconcile().catch((e) => {
+              console.warn('[code-sessions-sync] reconcile failed', e);
+              return 'failed';
+            });
             console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g, 'read-state:', r);
             // Read state has had its first settle (#217): badges are
             // account-true (or the relay said nothing — the ready gate's own
@@ -795,6 +821,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           // Read cursors advance constantly (every readHistory) — the debounce
           // collapses a scrolling session into one publish.
           registerSyncPublisher('read-state', mkDebounced(() => readStateSync.publishWithRetry(), '[read-state-sync]'));
+          registerSyncPublisher('code-sessions', mkDebounced(() => codeSessionsSync.publishWithRetry(), '[code-sessions-sync]'));
 
           // PERIODIC reconcile — reconcile is not only a boot concern. A
           // device that stays open for days must still see deletes and adds

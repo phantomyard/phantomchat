@@ -6,9 +6,10 @@
  * class (or reverting the rail entry) restores the stock PhantomChat look
  * exactly.
  *
- * Layout follows the OpenCode inbox Andrew sketched: a roomy session list with
- * the title on the left and the age on the right, and a single primary action
- * to add another phantom.
+ * Layout follows the session-first spec (#279): a roomy session list — search,
+ * a primary "New session" action, then Active / Archived and the Working group
+ * pinned to the bottom — while the right pane is the ordinary chat of the open
+ * session's group.
  */
 
 .code-mode-root {
@@ -18,18 +19,18 @@
 }
 
 body.code-mode {
-  /* Code Mode is inbox-only: the folder tabs, the dialog lists and the
-     new-message FAB step aside while the inbox owns the chat list column.
-     tweb RE-PARENTS #folders-container at runtime (it ends up inside
+  /* Code Mode is inbox-only: the dialog lists and the new-message FAB step
+     aside while the inbox owns the chat list column. tweb RE-PARENTS
+     #folders-container at runtime (it ends up inside
      .connection-status-bottom), so this keys on what is there rather than on
-     one particular parent. */
+     one particular parent. The RAIL itself (the folders sidebar with All
+     Chats / Groups / Code) stays — it is how you leave the mode. */
   #chatlist-container > :not(.code-mode-root),
-  #folders-container,
   #folders-tabs {
     display: none !important;
   }
 
-  /* The inbox brings its own "add phantom" action. */
+  /* The inbox brings its own "new session" action. */
   #column-left .btn-corner {
     display: none !important;
   }
@@ -47,74 +48,102 @@ body.code-mode {
   min-height: 0;
 }
 
-.code-inbox__header {
+.code-inbox__top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px 8px;
+  gap: 8px;
+  padding: 10px 12px;
   flex: 0 0 auto;
 }
 
-.code-inbox__title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--primary-text-color);
-}
-
-.code-inbox__add {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
+.code-inbox__search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
   border: none;
-  cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
+  outline: none;
+  border-radius: 17px;
+  font-size: 14px;
   color: var(--primary-text-color);
   background: var(--secondary-color, rgba(127, 127, 127, 0.15));
 
-  &:hover {
-    filter: brightness(1.1);
+  &::placeholder {
+    color: var(--secondary-text-color);
   }
 }
 
-.code-inbox__list {
+.code-inbox__new {
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 17px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--primary-color, #3390ec);
+
+  &:hover {
+    filter: brightness(1.05);
+  }
+}
+
+.code-inbox__scroll {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  padding: 0 6px 8px;
 }
 
-.code-row {
+/* Pushes the Working group to the bottom of the column. */
+.code-inbox__spacer {
+  flex: 1 1 auto;
+  min-height: 8px;
+}
+
+.code-inbox__group-title {
+  padding: 14px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--secondary-text-color);
+}
+
+.code-inbox__group-title--working {
+  padding-top: 8px;
+}
+
+/* --------------------------------------------------------------- session */
+
+.code-session {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  cursor: pointer;
+  gap: 10px;
+  padding: 9px 10px;
   border-radius: 10px;
+  cursor: pointer;
 
   &:hover {
     background: var(--message-highlight-background, rgba(127, 127, 127, 0.08));
   }
+
+  &--selected {
+    background: var(--message-highlight-background, rgba(127, 127, 127, 0.12));
+  }
 }
 
-.code-row--ops .code-row__avatar--ops {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-  color: var(--primary-text-color);
-  background: var(--secondary-color, rgba(127, 127, 127, 0.15));
-}
-
-.code-row__body {
+.code-session__body {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.code-row__title {
-  font-size: 15px;
+.code-session__title {
+  font-size: 14px;
   font-weight: 500;
   color: var(--primary-text-color);
   white-space: nowrap;
@@ -122,39 +151,56 @@ body.code-mode {
   text-overflow: ellipsis;
 }
 
-.code-row__subtitle {
-  margin-top: 2px;
-  font-family: var(--font-monospace);
-  font-size: 12px;
-  color: var(--secondary-text-color);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.code-row__meta {
+.code-session__meta {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
   flex: 0 0 auto;
 }
 
-.code-row__age {
+.code-session__age {
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--secondary-text-color);
 }
 
-.code-row__unread {
-  min-width: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  font-size: 12px;
-  line-height: 20px;
-  text-align: center;
-  color: #fff;
-  background: var(--primary-color, #3390ec);
+.code-session--working .code-session__age {
+  /* The elapsed counter is the live signal: accent it. */
+  color: var(--primary-color, #3390ec);
 }
+
+.code-session__badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+
+  &--done {
+    background: #4fae4e;
+  }
+
+  &--interrupted {
+    background: #e0a33e;
+  }
+}
+
+.code-session--renaming {
+  padding: 4px 10px;
+}
+
+.code-session__rename-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--primary-color, #3390ec);
+  outline: none;
+  font-size: 14px;
+  color: var(--primary-text-color);
+  background: var(--surface-color);
+}
+
+/* ------------------------------------------------------------ empty state */
 
 .code-inbox__empty {
   display: flex;
@@ -162,8 +208,7 @@ body.code-mode {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: 100%;
-  padding: 32px 24px;
+  padding: 40px 24px;
   text-align: center;
 }
 
@@ -188,10 +233,157 @@ body.code-mode {
   font-size: 14px;
   color: #fff;
   background: var(--primary-color, #3390ec);
+
+  &--ghost {
+    margin-top: 0;
+    color: var(--primary-color, #3390ec);
+    background: transparent;
+  }
 }
 
-/* ------------------------------------------------------------ PhantomOps */
+/* ------------------------------------------------------- context menu */
 
+.code-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--surface-color);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.24);
+}
+
+.code-menu__item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+  color: var(--primary-text-color);
+  background: transparent;
+
+  &:hover {
+    background: var(--message-highlight-background, rgba(127, 127, 127, 0.12));
+  }
+
+  &--danger {
+    color: #e05a4f;
+  }
+}
+
+.code-menu__label {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--secondary-text-color);
+}
+
+/* ------------------------------------------------------- new session pane */
+
+.code-new {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--left-column-width, 420px);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--surface-color);
+}
+
+.code-new__card {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.code-new__prompt {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  outline: none;
+  resize: none;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--primary-text-color);
+  background: var(--surface-color);
+
+  &:focus {
+    border-color: var(--primary-color, #3390ec);
+  }
+}
+
+.code-new__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.code-new__peer,
+.code-inbox__peer-select {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  font-size: 14px;
+  color: var(--primary-text-color);
+  background: var(--surface-color);
+}
+
+.code-new__buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.code-new__cancel,
+.code-new__send {
+  height: 34px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 17px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.code-new__cancel {
+  color: var(--secondary-text-color);
+  background: transparent;
+}
+
+.code-new__send {
+  color: #fff;
+  background: var(--primary-color, #3390ec);
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+.code-new__error {
+  font-size: 13px;
+  color: #e05a4f;
+}
+
+.code-inbox__peer-switch {
+  flex: 0 0 auto;
+  padding: 6px 12px 10px;
+}
+
+/* ------------------------------------------------- PhantomOps (deferred)
+ * The panel is NOT reachable in v1 (#279): PhantomOps needs a pinned-chat
+ * adapter before it can be a Code session. Styles are kept so re-enabling it
+ * is a one-line change in codeInbox.tsx. */
 .code-ops {
   position: fixed;
   inset: 0;

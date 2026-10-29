@@ -730,14 +730,6 @@ export class AppSidebarLeft extends SidebarSlider {
         });
       }
     }, {
-      icon: 'folder',
-      text: 'Filters',
-      onClick: () => {
-        closeTabsBefore(() => {
-          this.createTab(AppChatFoldersTab).open();
-        });
-      }
-    }, {
       id: 'settings',
       icon: 'settings',
       text: 'Settings',
@@ -1075,12 +1067,6 @@ export class AppSidebarLeft extends SidebarSlider {
       });
     };
 
-    const onNewFolderClick = () => {
-      closeTabsBefore(() => {
-        this.createTab(AppEditFolderTab).open();
-      });
-    };
-
     return [{
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
@@ -1093,10 +1079,6 @@ export class AppSidebarLeft extends SidebarSlider {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',
       onClick: onContactsClick
-    }, {
-      icon: 'folder',
-      text: 'FilterNew',
-      onClick: onNewFolderClick
     }];
   }
 

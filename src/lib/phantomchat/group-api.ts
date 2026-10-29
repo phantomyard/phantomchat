@@ -211,7 +211,12 @@ export class GroupAPI {
    * 4. Broadcast group_create control to all members + self
    * 5. Return groupId
    */
-  async createGroup(name: string, memberPubkeys: string[], description?: string): Promise<string> {
+  async createGroup(
+    name: string,
+    memberPubkeys: string[],
+    description?: string,
+    options?: {sessionGroup?: boolean}
+  ): Promise<string> {
     // Validate member pubkeys BEFORE we touch the local store. Earlier the
     // store was written first and the broadcast wrap exploded on the first
     // malformed pubkey (`pointFromBytes: bad point`), leaving an orphan
@@ -234,6 +239,10 @@ export class GroupAPI {
       peerId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      // Code Mode (#279): a session group never appears as a chat (see
+      // injectGroupCreateDialog). It rides the groups CRDT record, so the flag
+      // reaches every device with the rest of the group.
+      ...(options?.sessionGroup ? {sessionGroup: true} : {}),
       // The user's own create gesture (#180): only this stamp lets the group
       // clear a durable delete in the groups CRDT merge. The receive path
       // (handleGroupCreate) deliberately does NOT stamp — a relay-replayed
@@ -253,7 +262,8 @@ export class GroupAPI {
       groupName: name,
       groupDescription: description,
       memberPubkeys: record.members,
-      adminPubkey: this.ownPubkey
+      adminPubkey: this.ownPubkey,
+      ...(options?.sessionGroup ? {sessionGroup: true} : {})
     };
 
     let controlWraps;
@@ -1349,7 +1359,8 @@ export class GroupAPI {
       members: payload.memberPubkeys || [],
       peerId,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      ...(payload.sessionGroup ? {sessionGroup: true} : {})
     };
 
     // A delete can arrive before its create because control handlers run

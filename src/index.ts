@@ -548,7 +548,10 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   console.timeLog(TIME_LABEL, 'sent all states (2)');
 
   const [, setHasFoldersSidebar] = useHasFoldersSidebar();
-  setHasFoldersSidebar(!!rootScope.settings.tabsInSidebar);
+  // Andrew (2026-10-29): the rail is ALWAYS there — All Chats / Groups / Code.
+  // Folders are no longer editable in-app, so the "folders live in the sidebar"
+  // preference has nothing left to toggle and is forced on.
+  setHasFoldersSidebar(true);
 
   rootScope.managers.rootScope.getPremium().then((isPremium) => {
     rootScope.premium = isPremium;

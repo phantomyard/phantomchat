@@ -5,7 +5,7 @@
  * engine: the phantoms run their own harnesses, PhantomChat stays a thin
  * client with no filesystem access. See `lib/code-mode.ts`.
  *
- * Two things are worth pinning here:
+ * Worth pinning here:
  *
  *  1. The mode owns NO dialogFilter. If a future change registers it as a
  *     folder it silently enters `filter_order` and the FoldersSync snapshot,
@@ -14,6 +14,9 @@
  *  2. Picking a real folder (rail or chat-list tab) must leave the mode, and
  *     picking a folder that fails to select must NOT — otherwise the rail
  *     shows Code highlighted while the chat list shows a folder.
+ *  3. Folders are stripped (Andrew, 2026-10-29): no New Folder in the pencil
+ *     menu, no Folders entry in the hamburger, no folders management button in
+ *     the rail, and the rail is always on showing All Chats / Groups / Code.
  */
 import {describe, it, expect, vi} from 'vitest';
 import {readFileSync} from 'fs';
@@ -29,9 +32,11 @@ import {
 
 const SRC = join(__dirname, '../..');
 const railSrc = readFileSync(join(SRC, 'components/sidebarLeft/foldersSidebarContent/index.tsx'), 'utf8');
+const sidebarSrc = readFileSync(join(SRC, 'components/sidebarLeft/index.ts'), 'utf8');
 const stateSrc = readFileSync(join(SRC, 'config/state.ts'), 'utf8');
 const langSrc = readFileSync(join(SRC, 'lang.ts'), 'utf8');
 const inboxSrc = readFileSync(join(SRC, 'components/phantomchat/codeInbox.tsx'), 'utf8');
+const indexSrc = readFileSync(join(SRC, 'index.ts'), 'utf8');
 
 describe('code-mode module', () => {
   it('treats only a literal true as enabled', () => {
@@ -63,21 +68,20 @@ describe('code-mode module', () => {
 });
 
 describe('code mode rail wiring', () => {
-  it('renders a Code rail item between the folder list and the settings button', () => {
+  it('renders the Code rail item under the chat lists', () => {
     expect(railSrc).toContain('folders-sidebar__code-button');
-    expect(railSrc).toContain(`iconText={CODE_MODE_RAIL_GLYPH}`);
-    expect(railSrc).toContain(`name={i18n(CODE_MODE_LANG_KEY)}`);
+    expect(railSrc).toContain('iconText={CODE_MODE_RAIL_GLYPH}');
+    expect(railSrc).toContain('name={i18n(CODE_MODE_LANG_KEY)}');
 
     const codeButton = railSrc.indexOf('folders-sidebar__code-button');
-    const settingsButton = railSrc.lastIndexOf('icon="equalizer"');
-    expect(codeButton).toBeGreaterThan(-1);
-    expect(settingsButton).toBeGreaterThan(codeButton);
+    const chatsList = railSrc.indexOf('<For each={folderItems}>');
+    expect(codeButton).toBeGreaterThan(chatsList);
   });
 
   it('keeps the mode out of folder storage (no filter id on the rail item)', () => {
     const item = railSrc.slice(
       railSrc.indexOf('folders-sidebar__code-button'),
-      railSrc.indexOf('icon="equalizer"')
+      railSrc.indexOf('</Scrollable>')
     );
 
     expect(item).not.toMatch(/\bid[=:]/);
@@ -132,17 +136,48 @@ describe('code mode rail wiring', () => {
   });
 });
 
-describe('code mode inbox polling', () => {
-  it('does not poll for a list nobody is looking at', () => {
-    // The inbox never unmounts, so an unconditional interval would keep
-    // re-reading the mapping store + dialog cache for the rest of the session
-    // even with the mode off.
-    expect(inboxSrc).toMatch(/const refresh = async\(\) => \{\s*if\(!isActive\(\)\) return;/);
-    expect(inboxSrc).toContain('const startPolling');
-    expect(inboxSrc).toContain('const stopPolling');
-    // started and stopped by the mode event, not at mount time
-    expect(inboxSrc).toMatch(/if\(!isActive\(\)\) \{\s*stopPolling\(\);\s*return;/);
-    expect(inboxSrc).not.toMatch(/const interval = setInterval/);
+describe('folders are stripped from the UI (#279)', () => {
+  it('shows only All Chats and Groups in the rail', () => {
+    expect(railSrc).toMatch(/props\.filters\.filter\(\(filter\) => REAL_FOLDERS\.has\(filter\.id\) && filter\.id !== FOLDER_ID_ARCHIVE\)/);
+  });
+
+  it('has no New Folder entry in the pencil menu', () => {
+    expect(sidebarSrc).not.toContain("text: 'FilterNew'");
+    expect(sidebarSrc).not.toContain('onNewFolderClick');
+  });
+
+  it('has no Filters entry in the hamburger menu', () => {
+    const hamburger = sidebarSrc.slice(sidebarSrc.indexOf('const menuButtons'), sidebarSrc.indexOf("id: 'settings'"));
+    expect(hamburger).not.toContain("text: 'Filters'");
+  });
+
+  it('has no folders-management button and no add-folders pill in the rail', () => {
+    expect(railSrc).not.toContain('icon="equalizer"');
+    expect(railSrc).not.toContain('folders-sidebar__add-folders-button');
+  });
+
+  it('forces the folders sidebar on (no user toggle)', () => {
+    // Andrew: "default to folders on left".
+    expect(indexSrc).toMatch(/setHasFoldersSidebar\(true\);/);
+  });
+});
+
+describe('code mode inbox lifecycle', () => {
+  it('re-reads the session list on the session-changed event and a backstop timer', () => {
+    expect(inboxSrc).toContain('CODE_SESSIONS_CHANGED_EVENT');
+    expect(inboxSrc).toContain('REFRESH_INTERVAL_MS');
+    expect(inboxSrc).toMatch(/if\(isActive\(\)\) void refresh\(\);/);
+  });
+
+  it('tears every listener and timer down on cleanup', () => {
+    const cleanup = inboxSrc.slice(inboxSrc.indexOf('onCleanup(() => {'));
+    expect(cleanup).toContain('detach()');
+    expect(cleanup).toContain('clearInterval(clock)');
+    expect(cleanup).toContain('clearInterval(backstop)');
+
+    const runtimeSrc = readFileSync(join(SRC, 'lib/phantomchat/code-session-runtime.ts'), 'utf8');
+    expect(runtimeSrc).toContain("removeEventListener('peer_typings'");
+    expect(runtimeSrc).toContain('clearInterval(timer)');
   });
 });
 

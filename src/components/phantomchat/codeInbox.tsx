@@ -1,26 +1,30 @@
 /*
- * Code Mode inbox.
+ * Code Mode — the session-first coding inbox (#279).
  *
- * The Code rail entry parks the chat list here: an OpenCode-style inbox of
- * phantoms. Nothing about the chat path changes — a phantom is a contact, so
- * clicking a row opens the ordinary PhantomChat view (`setInnerPeer`), with the
- * ordinary composer, streaming and delivery state.
+ * Left column = SESSIONS (not phantoms):
  *
- * The list itself is derived, never stored:
+ *   [ Search sessions ]      [ New session ]
+ *   Active      — idle sessions, newest first
+ *   Archived    — manual archive, newest first
+ *   Working     — live turns with the typing indicator, stacked bottom-up
  *
- *   peer mappings (who is a phantom)  ×  cached dialogs (unread, last activity)
+ * A session is a 2-member private group (you + one phantom), so two sessions
+ * with the SAME phantom are genuinely independent threads — each one is its own
+ * `group:<groupId>` conversation on the phantom side. Opening a session points
+ * the ordinary chat pane at that group, which gives the full real transcript
+ * with the real composer; nothing about the chat path changes.
  *
- * so adding an npub from the existing Add Contact popup IS "installing a
- * model", and removing the contact removes the row. `buildCodeModeInbox` in
- * `lib/code-mode` does that merge; this file only renders it.
+ * The rail is the only thing that renders sessions: session groups are kept out
+ * of the chat list (see injectGroupCreateDialog), so All Chats and Groups stay
+ * clean.
  *
- * PhantomOps is the one row that is not a Nostr peer, and it renders in its own
- * panel (see codePhantomOpsPanel.tsx).
+ * Andrew's spec of record: phantomchat issue #279.
  */
-import {createSignal, For, onCleanup, onMount, Show} from 'solid-js';
+import {createEffect, createMemo, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
 import {render} from 'solid-js/web';
 import {i18n} from '@lib/langPack';
-import {AvatarNewTsx} from '@components/avatarNew';
+import I18n from '@lib/langPack';
+import type {LangPackKey} from '@lib/langPack';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
@@ -28,214 +32,570 @@ import {showAddContactPopup} from '@components/popups/addContact';
 import {
   CODE_MODE_BODY_CLASS,
   CODE_MODE_EVENT,
-  CodeModeEntry,
-  buildCodeModeInbox,
-  formatCodeModeAge
+  CODE_SESSIONS_CHANGED_EVENT,
+  type CodeSessionInput,
+  type CodeSessionRow,
+  type CodeTurnEnd,
+  filterSessionsByQuery,
+  formatSessionAge,
+  groupSessionRows,
+  isCodeModeEnabled,
+  sessionBadge,
+  sessionElapsedLabel
 } from '@lib/code-mode';
-import CodePhantomOpsPanel from './codePhantomOpsPanel';
+import {appSettings} from '@stores/appSettings';
+import {ensureGroupChatInjected} from '@lib/phantomchat/phantomchat-groups-sync';
+import {
+  createSession,
+  deleteSessionEverywhere,
+  listSessions,
+  renameSession,
+  sessionPeerId,
+  setSessionArchived,
+  switchSessionPeer
+} from '@lib/phantomchat/code-session-service';
+import {codeSessionRuntime, attachRuntimeEvents} from '@lib/phantomchat/code-session-runtime';
 
-/** Re-read the mapping store + dialog cache while the inbox is on screen. */
-const REFRESH_INTERVAL_MS = 10_000;
+/** Backstop re-read for anything that changes sessions without an event. */
+const REFRESH_INTERVAL_MS = 15_000;
 
-/** Coalesce the chat-list fan-out into one re-read. */
-const REFRESH_DEBOUNCE_MS = 400;
+/** How often the Working counter ticks. */
+const CLOCK_INTERVAL_MS = 1000;
 
-interface CodeRow extends CodeModeEntry {
+interface PhantomOption {
+  pubkey: string;
+  peerId: number;
   title: string;
 }
+
+type MenuKind = 'active' | 'archived';
+
+interface MenuState {
+  groupId: string;
+  kind: MenuKind;
+  x: number;
+  y: number;
+}
+
+/** Attribute-safe string form: the `i18n()` helper builds a DOM node. */
+const t = (key: LangPackKey): string => I18n.format(key, true);
 
 function CodeInbox() {
   const {rootScope, appImManager} = useHotReloadGuard();
   const managers = rootScope.managers;
 
-  const [rows, setRows] = createSignal<CodeRow[]>([]);
-  const [loaded, setLoaded] = createSignal(false);
-  const [opsOpen, setOpsOpen] = createSignal(false);
+  const [sessions, setSessions] = createSignal<CodeSessionInput[]>([]);
+  const [runtimeTick, setRuntimeTick] = createSignal(0);
+  const [query, setQuery] = createSignal('');
+  const [openGroupId, setOpenGroupId] = createSignal<string | null>(null);
+  const [newSessionOpen, setNewSessionOpen] = createSignal(false);
+  const [newPrompt, setNewPrompt] = createSignal('');
+  const [newPeer, setNewPeer] = createSignal('');
+  const [phantoms, setPhantoms] = createSignal<PhantomOption[]>([]);
+  const [menu, setMenu] = createSignal<MenuState | null>(null);
+  const [renaming, setRenaming] = createSignal<string | null>(null);
+  const [renameValue, setRenameValue] = createSignal('');
+  const [confirmDelete, setConfirmDelete] = createSignal<string | null>(null);
+  const [now, setNow] = createSignal(Date.now());
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  /** Phantom of the open session, so the switcher can show it. */
+  const [openPeerPubkey, setOpenPeerPubkey] = createSignal('');
 
-  const openAddContact = () => {
-    showAddContactPopup({
-      managers,
-      onContactAdded: () => void refresh()
-    });
-  };
+  createEffect(() => {
+    const groupId = openGroupId();
+    if(!groupId) {
+      setOpenPeerPubkey('');
+      return;
+    }
+    void import('@lib/phantomchat/group-store').then(async({getGroupStore}) => {
+      const group = await getGroupStore().get(groupId);
+      const own = (window as any).__phantomchatOwnPubkey || '';
+      setOpenPeerPubkey((group?.members || []).find((member) => member !== own) || '');
+    }).catch(() => setOpenPeerPubkey(''));
+  });
 
-  /**
-   * Is the mode actually on screen? The body class IS the mode (nothing else
-   * reads it), so it is the cheapest honest answer. A mounted inbox that keeps
-   * re-reading the mapping store and the dialog cache for a list nobody is
-   * looking at is a poll that outlives its purpose.
-   */
-  // The body class is the mode, but it is applied by an effect that can land a
-  // tick after CODE_MODE_EVENT, so the event's own payload is the earlier
-  // truth. Either one saying "on" is enough to keep the list live.
-  let active = document.body.classList.contains(CODE_MODE_BODY_CLASS);
+  // The body class IS the mode; the event payload lands a tick earlier.
+  let active = document.body.classList.contains(CODE_MODE_BODY_CLASS) ||
+    isCodeModeEnabled(appSettings['codeModeEnabled']);
   const isActive = (): boolean => active || document.body.classList.contains(CODE_MODE_BODY_CLASS);
 
+  const runtime = () => {
+    // Re-read the tracker on every tick so rows re-derive from live turn state.
+    runtimeTick();
+    return codeSessionRuntime.snapshot();
+  };
+
   const refresh = async() => {
-    if(!isActive()) return;
     try {
-      const [mappings, dialogs] = await Promise.all([
-        getAllMappings(),
-        managers.dialogsStorage.getCachedDialogs(true) as Promise<any[]>
-      ]);
+      const records = await listSessions();
+      setSessions(records.map((record) => ({
+        groupId: record.groupId,
+        title: record.title,
+        archived: record.archived,
+        createdAt: record.createdAt,
+        // A session exists in the rail only once its first prompt landed. The
+        // record is created by that send, so a record IS a prompted session.
+        hasPrompt: true
+      })));
 
-      const entries = buildCodeModeInbox(
-        mappings.map((m) => ({pubkey: m.pubkey, peerId: m.peerId, displayName: m.displayName, addedAt: m.addedAt})),
-        dialogs.map((d) => ({
-          peerId: +(d.peerId as unknown as number),
-          sortIndex: d['index_0'],
-          unread: d.unread_count
-        })),
-        {excludePubkeys: [(window as any).__phantomchatOwnPubkey].filter(Boolean)}
-      );
+      codeSessionRuntime.setSessionPeers(await Promise.all(records.map(async(record) => ({
+        groupId: record.groupId,
+        peerId: await sessionPeerId(record.groupId)
+      }))));
 
-      // The live tweb user record is authoritative for the display name (kind 0
-      // upgrades, manual renames) — the mapping only carries what it last saw.
-      const titled: CodeRow[] = await Promise.all(entries.map(async(entry) => {
-        const user = await managers.appUsersManager.getUser(entry.peerId);
-        const fullName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : '';
-        return {...entry, title: fullName || entry.title};
-      }));
-
-      setRows(titled);
-    } catch{
-      setRows([]);
-    } finally {
-      setLoaded(true);
+      setRuntimeTick((n) => n + 1);
+    } catch(err) {
+      console.warn('[CodeMode] refresh failed', err);
+      setSessions([]);
     }
   };
 
-  const openPeer = (peerId: number) => {
-    setOpsOpen(false);
-    void appImManager.setInnerPeer({peerId: peerId.toPeerId(false)});
+  /** Phantom contacts available as a session peer. */
+  const loadPhantoms = async() => {
+    try {
+      const own = (window as any).__phantomchatOwnPubkey || '';
+      const mappings = await getAllMappings();
+      const options = await Promise.all(mappings
+      .filter((m) => m.pubkey && m.pubkey !== own)
+      .map(async(mapping): Promise<PhantomOption> => {
+        let title = mapping.displayName || '';
+        try {
+          const user = await managers.appUsersManager.getUser(mapping.peerId);
+          const fullName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : '';
+          title = fullName || title;
+        } catch{ /* fall back to the stored display name */ }
+        return {pubkey: mapping.pubkey, peerId: mapping.peerId, title: title || mapping.pubkey.slice(0, 8)};
+      }));
+
+      options.sort((a, b) => a.title.localeCompare(b.title));
+      setPhantoms(options);
+    } catch(err) {
+      console.warn('[CodeMode] loadPhantoms failed', err);
+      setPhantoms([]);
+    }
   };
 
+  const grouped = createMemo(() => groupSessionRows(sessions(), runtime(), now()));
+
+  const filtered = createMemo(() => {
+    const q = query();
+    return {
+      active: filterSessionsByQuery(grouped().active, q),
+      archived: filterSessionsByQuery(grouped().archived, q),
+      working: filterSessionsByQuery(grouped().working, q)
+    };
+  });
+
+  // ─── actions ────────────────────────────────────────────────────
+
+  const openSession = async(row: {groupId: string}) => {
+    setNewSessionOpen(false);
+    setMenu(null);
+    setOpenGroupId(row.groupId);
+    codeSessionRuntime.markRead(row.groupId);
+    setRuntimeTick((n) => n + 1);
+
+    try {
+      const peerId = await sessionPeerId(row.groupId);
+      // The chat/peer entries are normally injected by injectGroupCreateDialog,
+      // which deliberately skips session groups. Opening a session is the one
+      // place that must materialise them.
+      await ensureGroupChatInjected(row.groupId, peerId);
+      await appImManager.setInnerPeer({peerId: peerId.toPeerId(true)});
+    } catch(err) {
+      console.warn('[CodeMode] openSession failed', err);
+      setError('Could not open this session.');
+    }
+  };
+
+  const startNewSession = () => {
+    setMenu(null);
+    setRenaming(null);
+    setConfirmDelete(null);
+    setError(null);
+    setOpenGroupId(null);
+    setNewSessionOpen(true);
+    setNewPrompt('');
+    void loadPhantoms().then(() => {
+      const first = phantoms()[0];
+      if(first && !newPeer()) setNewPeer(first.pubkey);
+    });
+  };
+
+  const submitNewSession = async() => {
+    const text = newPrompt().trim();
+    const pubkey = newPeer();
+    if(!text || !pubkey || busy()) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await createSession(pubkey, text);
+      codeSessionRuntime.markSent(created.groupId);
+      setRuntimeTick((n) => n + 1);
+      setNewSessionOpen(false);
+      setNewPrompt('');
+      setOpenGroupId(created.groupId);
+
+      await appImManager.setInnerPeer({peerId: created.peerId.toPeerId(true)});
+      // Send the first prompt through the ordinary send path so the phantom
+      // sees exactly what any other chat send produces.
+      await managers.appMessagesManager.sendText({peerId: created.peerId.toPeerId(true), text});
+      void refresh();
+    } catch(err) {
+      console.warn('[CodeMode] create session failed', err);
+      setError('Could not start the session.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doRename = async(groupId: string) => {
+    const value = renameValue().trim();
+    setRenaming(null);
+    setMenu(null);
+    if(!value) return;
+    await renameSession(groupId, value);
+    void refresh();
+  };
+
+  const doArchive = async(groupId: string, archived: boolean) => {
+    setMenu(null);
+    await setSessionArchived(groupId, archived);
+    if(archived && openGroupId() === groupId) setOpenGroupId(null);
+    void refresh();
+  };
+
+  const doDelete = async(groupId: string) => {
+    setMenu(null);
+    setConfirmDelete(null);
+    await deleteSessionEverywhere(groupId);
+    codeSessionRuntime.forget(groupId);
+    if(openGroupId() === groupId) setOpenGroupId(null);
+    void refresh();
+  };
+
+  const openMenu = (event: MouseEvent, row: CodeSessionRow, kind: MenuKind) => {
+    event.preventDefault();
+    setConfirmDelete(null);
+    setMenu({groupId: row.groupId, kind, x: event.clientX, y: event.clientY});
+  };
+
+  // ─── lifecycle ──────────────────────────────────────────────────
+
   onMount(() => {
-    /**
-     * A freshly added phantom has to show up immediately, so the list also
-     * reacts to the chat-list fan-out (`dialogs_multiupdate`) — coalesced,
-     * because it fires per message. The interval is the backstop for anything
-     * that changes the mapping store without a dialog update, and it only runs
-     * while the mode is on.
-     */
-    let pending: ReturnType<typeof setTimeout> | undefined;
-    let interval: ReturnType<typeof setInterval> | undefined;
+    void codeSessionRuntime.hydrate().then(refresh);
+    const detach = attachRuntimeEvents(rootScope);
+    const unsubscribe = codeSessionRuntime.subscribe(() => setRuntimeTick((n) => n + 1));
 
-    const scheduleRefresh = (): void => {
-      if(pending || !isActive()) return;
-      pending = setTimeout(() => {
-        pending = undefined;
-        void refresh();
-      }, REFRESH_DEBOUNCE_MS);
-    };
-
-    const stopPolling = (): void => {
-      if(!interval) return;
-      clearInterval(interval);
-      interval = undefined;
-      if(pending) clearTimeout(pending);
-      pending = undefined;
-    };
-
-    const startPolling = (): void => {
-      if(interval) return;
-      interval = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
-    };
-
-    const onMode = (enabled?: boolean): void => {
+    const onMode = (enabled?: boolean) => {
       if(typeof enabled === 'boolean') active = enabled;
-      if(!isActive()) {
-        stopPolling();
-        return;
-      }
-
-      startPolling();
+      if(!isActive()) return;
       void refresh();
     };
 
+    const onSessionsChanged = (): void => { void refresh(); };
+
     rootScope.addEventListener(CODE_MODE_EVENT, onMode);
-    rootScope.addEventListener('dialogs_multiupdate', scheduleRefresh);
-    // The mount is triggered by entering the mode, but the module import may
-    // resolve after the switch, so cover both orders.
+    rootScope.addEventListener(CODE_SESSIONS_CHANGED_EVENT as any, onSessionsChanged);
+    // A new phantom contact must land in the picker without a reload.
+    rootScope.addEventListener('dialogs_multiupdate', onSessionsChanged);
+
+    const clock = setInterval(() => setNow(Date.now()), CLOCK_INTERVAL_MS);
+    const backstop = setInterval(() => {
+      if(isActive()) void refresh();
+    }, REFRESH_INTERVAL_MS);
+
+    const closeMenu = () => setMenu(null);
+    document.addEventListener('pointerdown', closeMenu);
+
     onMode();
+    void loadPhantoms();
 
     onCleanup(() => {
+      detach();
+      unsubscribe();
       rootScope.removeEventListener(CODE_MODE_EVENT, onMode);
-      rootScope.removeEventListener('dialogs_multiupdate', scheduleRefresh);
-      stopPolling();
+      rootScope.removeEventListener(CODE_SESSIONS_CHANGED_EVENT as any, onSessionsChanged);
+      rootScope.removeEventListener('dialogs_multiupdate', onSessionsChanged);
+      clearInterval(clock);
+      clearInterval(backstop);
+      document.removeEventListener('pointerdown', closeMenu);
     });
   });
 
-  const age = (row: CodeRow) => formatCodeModeAge(row.lastActivity, Math.floor(Date.now() / 1000));
+  // ─── rendering ──────────────────────────────────────────────────
 
-  return (
-    <div class="code-inbox">
-      <div class="code-inbox__header">
-        <span class="code-inbox__title">{i18n('CodeMode')}</span>
-        <button
-          class="code-inbox__add"
-          type="button"
-          onClick={openAddContact}
-        >
-          +
-        </button>
-      </div>
+  const badgeOf = (groupId: string): CodeTurnEnd | null =>
+    sessionBadge(codeSessionRuntime.get(groupId), now());
 
-      <div class="code-inbox__list">
-        <div
-          class="code-row code-row--ops"
-          onClick={() => setOpsOpen(true)}
-        >
-          <div class="code-row__avatar code-row__avatar--ops">◈</div>
-          <div class="code-row__body">
-            <div class="code-row__title">{i18n('CodeModePhantomOps')}</div>
-            <div class="code-row__subtitle">{i18n('CodeModePhantomOpsHint')}</div>
-          </div>
-        </div>
+  const metaOf = (row: CodeSessionRow) => {
+    const rt = codeSessionRuntime.get(row.groupId);
+    const elapsed = sessionElapsedLabel(rt, now());
+    if(elapsed) return elapsed;
+    return formatSessionAge(row.lastActiveAt, now());
+  };
 
-        <For each={rows()}>{(row) => (
-          <div class="code-row" onClick={() => openPeer(row.peerId)}>
-            <AvatarNewTsx peerId={row.peerId.toPeerId(false)} size={48} />
-            <div class="code-row__body">
-              <div class="code-row__title">{row.title}</div>
-              <div class="code-row__subtitle">{row.pubkey.slice(0, 12)}…</div>
+  const SessionRow = (props: {
+    row: CodeSessionRow;
+    kind: MenuKind;
+    working?: boolean;
+  }) => {
+    const badge = () => props.working ? null : badgeOf(props.row.groupId);
+    return (
+      <Show
+        when={renaming() === props.row.groupId}
+        fallback={
+          <div
+            class="code-session"
+            classList={{
+              'code-session--selected': openGroupId() === props.row.groupId,
+              'code-session--working': !!props.working
+            }}
+            onContextMenu={(event) => openMenu(event, props.row, props.kind)}
+            onClick={() => void openSession(props.row)}
+          >
+            <div class="code-session__body">
+              <div class="code-session__title">{props.row.title}</div>
             </div>
-            <div class="code-row__meta">
-              <span class="code-row__age">{age(row)}</span>
-              <Show when={row.unread > 0}>
-                <span class="code-row__unread">{row.unread}</span>
+            <div class="code-session__meta">
+              <span class="code-session__age">{metaOf(props.row)}</span>
+              <Show when={badge() === 'done'}>
+                <span class="code-session__badge code-session__badge--done" title={t('CodeModeDone')} />
+              </Show>
+              <Show when={badge() === 'interrupted'}>
+                <span class="code-session__badge code-session__badge--interrupted" title={t('CodeModeInterrupted')} />
               </Show>
             </div>
           </div>
-        )}</For>
+        }
+      >
+        <div class="code-session code-session--renaming">
+          <input
+            class="code-session__rename-input"
+            value={renameValue()}
+            autofocus
+            onInput={(event) => setRenameValue(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if(event.key === 'Enter') void doRename(props.row.groupId);
+              if(event.key === 'Escape') setRenaming(null);
+            }}
+            onBlur={() => void doRename(props.row.groupId)}
+          />
+        </div>
+      </Show>
+    );
+  };
 
-        <Show when={loaded() && !rows().length}>
+  const menuRow = createMemo(() => {
+    const state = menu();
+    if(!state) return null;
+    const all = [...grouped().active, ...grouped().archived, ...grouped().working];
+    return {state, row: all.find((row) => row.groupId === state.groupId)};
+  });
+
+  return (
+    <div class="code-inbox">
+      <div class="code-inbox__top">
+        <input
+          class="code-inbox__search"
+          type="search"
+          placeholder={t('CodeModeSearchSessions')}
+          value={query()}
+          onInput={(event) => setQuery(event.currentTarget.value)}
+        />
+        <button class="code-inbox__new" type="button" onClick={startNewSession}>
+          {i18n('CodeModeNewSession')}
+        </button>
+      </div>
+
+      <div class="code-inbox__scroll">
+        <For each={filtered().active}>{(row) => <SessionRow row={row} kind="active" />}</For>
+
+        <Show when={filtered().archived.length}>
+          <div class="code-inbox__group-title">{i18n('CodeModeArchived')}</div>
+          <For each={filtered().archived}>{(row) => <SessionRow row={row} kind="archived" />}</For>
+        </Show>
+
+        <Show when={!sessions().length}>
           <div class="code-inbox__empty">
-            <div class="code-inbox__empty-title">{i18n('CodeModeEmptyTitle')}</div>
-            <div class="code-inbox__empty-hint">{i18n('CodeModeEmptyHint')}</div>
-            <button class="code-inbox__empty-btn" type="button" onClick={openAddContact}>
+            <div class="code-inbox__empty-title">{i18n('CodeModeEmptySessionsTitle')}</div>
+            <div class="code-inbox__empty-hint">{i18n('CodeModeEmptySessionsHint')}</div>
+            <button class="code-inbox__empty-btn" type="button" onClick={startNewSession}>
+              {i18n('CodeModeNewSession')}
+            </button>
+            <button
+              class="code-inbox__empty-btn code-inbox__empty-btn--ghost"
+              type="button"
+              onClick={() => showAddContactPopup({managers, onContactAdded: () => void loadPhantoms()})}
+            >
               {i18n('CodeModeAddPhantom')}
             </button>
           </div>
         </Show>
+
+        <div class="code-inbox__spacer" />
+
+        <Show when={filtered().working.length}>
+          <div class="code-inbox__group-title code-inbox__group-title--working">
+            {i18n('CodeModeWorking')}
+          </div>
+          <For each={filtered().working}>{(row) => <SessionRow row={row} kind="active" working />}</For>
+        </Show>
       </div>
 
-      <Show when={opsOpen()}>
-        <CodePhantomOpsPanel onClose={() => setOpsOpen(false)} />
+      <Show when={menuRow()}>
+        {(resolved) => (
+          <div
+            class="code-menu"
+            style={{left: resolved().state.x + 'px', top: resolved().state.y + 'px'}}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <Show when={confirmDelete() === resolved().state.groupId} fallback={
+              <>
+                <button
+                  class="code-menu__item"
+                  type="button"
+                  onClick={() => {
+                    setRenameValue(resolved().row?.title || '');
+                    setRenaming(resolved().state.groupId);
+                    setMenu(null);
+                  }}
+                >
+                  {i18n('CodeModeRename')}
+                </button>
+                <Show when={resolved().state.kind === 'archived'} fallback={
+                  <button
+                    class="code-menu__item"
+                    type="button"
+                    onClick={() => void doArchive(resolved().state.groupId, true)}
+                  >
+                    {i18n('CodeModeArchive')}
+                  </button>
+                }>
+                  <button
+                    class="code-menu__item"
+                    type="button"
+                    onClick={() => void doArchive(resolved().state.groupId, false)}
+                  >
+                    {i18n('CodeModeUnarchive')}
+                  </button>
+                </Show>
+                <button
+                  class="code-menu__item code-menu__item--danger"
+                  type="button"
+                  onClick={() => setConfirmDelete(resolved().state.groupId)}
+                >
+                  {i18n('CodeModeDelete')}
+                </button>
+              </>
+            }>
+              <div class="code-menu__label">{i18n('CodeModeDeleteConfirm')}</div>
+              <button
+                class="code-menu__item code-menu__item--danger"
+                type="button"
+                onClick={() => void doDelete(resolved().state.groupId)}
+              >
+                {i18n('CodeModeDelete')}
+              </button>
+            </Show>
+          </div>
+        )}
+      </Show>
+
+      <Show when={newSessionOpen()}>
+        <div class="code-new">
+          <div class="code-new__card">
+            <textarea
+              class="code-new__prompt"
+              placeholder={t('CodeModeComposerHint')}
+              value={newPrompt()}
+              rows={4}
+              onInput={(event) => setNewPrompt(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if(event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void submitNewSession();
+                }
+              }}
+            />
+            <div class="code-new__actions">
+              <select
+                class="code-new__peer"
+                value={newPeer()}
+                onChange={(event) => setNewPeer(event.currentTarget.value)}
+              >
+                <Show when={!phantoms().length}>
+                  <option value="">{i18n('CodeModeNoPhantoms')}</option>
+                </Show>
+                <For each={phantoms()}>{(phantom) => (
+                  <option value={phantom.pubkey}>{phantom.title}</option>
+                )}</For>
+              </select>
+              <div class="code-new__buttons">
+                <button
+                  class="code-new__cancel"
+                  type="button"
+                  onClick={() => setNewSessionOpen(false)}
+                >
+                  {i18n('CodeModeCancel')}
+                </button>
+                <button
+                  class="code-new__send"
+                  type="button"
+                  disabled={busy() || !newPrompt().trim() || !newPeer()}
+                  onClick={() => void submitNewSession()}
+                >
+                  {i18n('CodeModeSend')}
+                </button>
+              </div>
+            </div>
+            <Show when={error()}>
+              <div class="code-new__error">{error()}</div>
+            </Show>
+          </div>
+        </div>
+      </Show>
+
+      {/*
+        * Switching the phantom of an OPEN session (Andrew: "switchable mid
+        * session"). Kept next to the composer of a live session rather than in
+        * the context menu, because it only makes sense while one is open.
+        */}
+      <Show when={openGroupId() && phantoms().length > 1}>
+        <div class="code-inbox__peer-switch">
+          <select
+            class="code-inbox__peer-select"
+            value={phantoms().find((p) => p.pubkey === openPeerPubkey())?.pubkey || ''}
+            onChange={(event) => {
+              const groupId = openGroupId();
+              const pubkey = event.currentTarget.value;
+              if(!groupId || !pubkey) return;
+              void switchSessionPeer(groupId, pubkey).then(() => {
+                void refresh();
+                void openSession({groupId});
+              });
+            }}
+          >
+            <option value="">{i18n('CodeModeSwitchPhantom')}</option>
+            <For each={phantoms()}>{(phantom) => (
+              <option value={phantom.pubkey}>{phantom.title}</option>
+            )}</For>
+          </select>
+        </div>
       </Show>
     </div>
   );
 }
-
-export default CodeInbox;
-
-let mounted = false;
 
 /**
  * Mount the inbox into the chat list column. Called once, lazily, from the
  * folders sidebar — the CSS keeps it hidden (`body:not(.code-mode)`) so the
  * normal chat list is completely untouched when Code Mode is off.
  */
+let mounted = false;
+
 export function mountCodeMode(): void {
   if(mounted) return;
   const container = document.getElementById('chatlist-container');
