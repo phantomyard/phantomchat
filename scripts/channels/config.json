@@ -88,7 +88,7 @@
     },
     "src/components/phantomchat/codeInbox.tsx": {
       "stable": "absent",
-      "preview": "68f38687d8ec4475d1130244c87ea5b8b26e287240169858129055b81f3fd2d1",
+      "preview": "85b5dc996325c403723cc930d4cf65b6d99c67aa85f08ab883849e66af81c85a",
       "reason": "Presentation only: the custom search pill, New-session button and fake pane are deleted in favour of the app's own search field and the real chat pane. No storage keys, no persisted shape, no protocol change."
     },
     "src/components/phantomchat/codePhantomOpsPanel.tsx": {
@@ -123,7 +123,7 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "6d7b6dbb48a52cfff57057d1d4e94c62819e92dced7b9e843b0a2c34227c9f00",
+      "preview": "16e09ae7d84c4525eeb13f12d1bc214f54739a40b13910664d0ddabfd1d9fc81",
       "reason": "Adds the 'New Coding Session' item to the existing new-chat menu and its bot-filtered picker, minting the session through the existing group API; the search field's focus handler now skips initSearch while Code Mode owns it. No new storage."
     },
     "src/index.ts": {
@@ -133,7 +133,7 @@
     },
     "src/lib/phantomchat/code-session-runtime.ts": {
       "stable": "absent",
-      "preview": "59af791874ea8215377aef1570961c121b07c5ccb282e43c62791de9ea1df53f",
+      "preview": "682a0c126c9cc4bf3398e4abf824da34b452e9806df3cf072f23539c744f3b2e",
       "reason": "Adds a peer→groupId lookup on the in-memory turn tracker. Device-local, never persisted."
     },
     "src/lib/phantomchat/code-session-service.ts": {
@@ -180,6 +180,11 @@
       "stable": "4a21f00a55eed60a06260cf4a96f3251c1dd2c2920296240b45c9c9decaf574b",
       "preview": "6756df1327cf9e97168b083b88db5c0d6afbaef00a2e3bda0d59294b6b9acca2",
       "reason": "Optional filterPeerTypeBy/onSelect options on the existing picker; undefined defaults keep every current caller byte-identical in behaviour."
+    },
+    "src/lib/phantomchat/virtual-mtproto-server.ts": {
+      "stable": "59eb420187dc41693cb3b48d0256b86747763fc64fd5ee390b4ba210094f65a2",
+      "preview": "d3336b530c7744c7f7f4c543bf17a6e39fc8faff1d30a7c7ae8c8dd503464450",
+      "reason": "Contact rows now carry the bot flag read from the cached kind-0, so a bot-tagged peer is a bot in the picker before its full user is fetched. Read-only flag on a derived list; no storage keys, no persisted shape, no protocol change."
     }
   },
   "stableVersion": "1.0.335"
