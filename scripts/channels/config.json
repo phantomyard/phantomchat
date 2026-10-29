@@ -33,8 +33,8 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0",
-      "preview": "b71d4e2c1f08c7bc82520a762b6a53fe805dc7b245463247eef00822c71fb86e",
-      "reason": "Rail shows only All Chats / Groups / Code: custom folders and the add-chats pill removed from the render. No filter writes, no ordering change, nothing migrated or deleted."
+      "preview": "5ff614f087784da989aed7a504ae7f5bd09483307afa0835174ebb25b073dbd9",
+      "reason": "Adds one rootScope listener so the pencil's 'New Coding Session' can select Code Mode. Device-local UI state only; nothing persisted."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "preview": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
@@ -58,8 +58,8 @@
     },
     "src/lang.ts": {
       "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd",
-      "preview": "51b10890f0ebb040c0f3ae8667b2e151105a9e14cc33363a7c2bb3d0d3f92034",
-      "reason": "Adds Code Mode session lang keys and the generated strings bundle. No stored data."
+      "preview": "3b4b0642242d9d5576de2cef5cf2d0414882eb13802aaba8f523d35c199d6639",
+      "reason": "String table only."
     },
     "src/lib/appDialogsManager.ts": {
       "preview": "afb5aae8ebd0af2e2f0ac9277904d7b76609d37d57b3029be3859681b5466324",
@@ -73,8 +73,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3",
-      "preview": "c5d89cd28843315ff07aa7a7411a3af3cb68b02dde07df4b26ffc07511f47874",
-      "reason": "Generated from lang.ts (new Code Mode session keys). Localisation strings only."
+      "preview": "e1979e95e98c6c3ef94d128eeb79b998fb91b4792825f687f64e0a4941dcd598",
+      "reason": "Generated string table mirroring lang.ts."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "cc10ea262b1bc9bcaca4f91fc39ca7f99449a5889c648a6395141d5f9c97b48c",
@@ -88,8 +88,8 @@
     },
     "src/components/phantomchat/codeInbox.tsx": {
       "stable": "absent",
-      "preview": "c403512b8934b99cbd611820bb0ea32e4f0dd592a3b512174da569363cdffa2d",
-      "reason": "Code Mode rail rebuilt as a session list (search, new session, active/archived/working, rename/archive/delete menus, new-session composer). Renders only session records; chat storage untouched."
+      "preview": "68f38687d8ec4475d1130244c87ea5b8b26e287240169858129055b81f3fd2d1",
+      "reason": "Presentation only: the custom search pill, New-session button and fake pane are deleted in favour of the app's own search field and the real chat pane. No storage keys, no persisted shape, no protocol change."
     },
     "src/components/phantomchat/codePhantomOpsPanel.tsx": {
       "stable": "absent",
@@ -98,8 +98,8 @@
     },
     "src/lib/code-mode.ts": {
       "stable": "absent",
-      "preview": "c302b6757bb9ac7c680f2183b7f4587ad023cae84a83974c70f4cc5466088b50",
-      "reason": "Pure session logic (auto title, grouping, badges, elapsed). No storage access; the mode flag stays device-local."
+      "preview": "5dd89fc9f082fb2745f6743ef42622167f6a291ff59f1feb937f34c994c70db7",
+      "reason": "Pure grouping/naming helpers: a pending session now stays in Active flagged `pending` instead of being dropped. No storage access."
     },
     "src/lib/phantomchat/code-mode-phantomops.ts": {
       "stable": "absent",
@@ -108,8 +108,8 @@
     },
     "src/lib/rootScope.ts": {
       "stable": "2358db5bb5b8c367361dfb5cef90cd60d72e99023ed9f8a880b65c9d628cf754",
-      "preview": "988cd208bb0fd8ef343c7f2de54a0e20335f233899f30d2ca1bd535f13023f55",
-      "reason": "Adds one BroadcastEvents entry (code_mode_changed: boolean) to the typed event map. Event plumbing only; no runtime or storage behaviour change."
+      "preview": "26cc5e17192cb3af35736ccd1ede52c5d08f3e3e0e525791ffa45f7b6edf2bc6",
+      "reason": "Two new broadcast event names (code_mode_enter_requested, code_sessions_changed). Type declarations only, no storage."
     },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
       "stable": "b688eae2335aa5aa803605db436f720f87229d2f60956c0cd9b76a8a9d081b13",
@@ -123,8 +123,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "b3a6fc78892f05c5961501a58d58b53b6f8cc272bd58438464685e8ac285c244",
-      "reason": "Removes the New Folder entry from the add menu and the Folders entry from the hamburger. No storage or sync behaviour changes."
+      "preview": "6d7b6dbb48a52cfff57057d1d4e94c62819e92dced7b9e843b0a2c34227c9f00",
+      "reason": "Adds the 'New Coding Session' item to the existing new-chat menu and its bot-filtered picker, minting the session through the existing group API; the search field's focus handler now skips initSearch while Code Mode owns it. No new storage."
     },
     "src/index.ts": {
       "stable": "32681612805b18d825a38b767a820d42f7c3653c338ebf25bebd0be0eb6d99e0",
@@ -133,23 +133,23 @@
     },
     "src/lib/phantomchat/code-session-runtime.ts": {
       "stable": "absent",
-      "preview": "6b9a930e00c06d9d4484d94d5c6b43961d69ab65c183fcd85ea6381746cee4b7",
-      "reason": "Device-local turn state for session rows, persisted to its own IndexedDB store. Never published to a relay."
+      "preview": "59af791874ea8215377aef1570961c121b07c5ccb282e43c62791de9ea1df53f",
+      "reason": "Adds a peer→groupId lookup on the in-memory turn tracker. Device-local, never persisted."
     },
     "src/lib/phantomchat/code-session-service.ts": {
       "stable": "absent",
-      "preview": "7127b2bfaeb2139a4a01bbee7051ce7ba78d0aadc96de24c6c1eabbb51c5a765",
-      "reason": "Session lifecycle (create/rename/archive/delete/switch phantom) built on the existing group API. Delete tombstones the session only; no history is deleted."
+      "preview": "8e60dba55042370b1b60fb617b1ab51f3f4b27c1ce750ef1b4f3e10b2ac4a18f",
+      "reason": "Splits creation into createPendingSession + applyFirstPromptTitle over the existing group API. Adds the optional `hasPrompt` field: absent means prompted, so records written by older clients read identically."
     },
     "src/lib/phantomchat/code-sessions-db.ts": {
       "stable": "absent",
-      "preview": "2530526f711e6f1c38f98c101f96b6c9ffcaa215785a83c463083088a5f4a50f",
-      "reason": "New IndexedDB database phantomchat-code-sessions (sessions/tombstones/local runtime). New store only; existing stores untouched."
+      "preview": "3fe1444c27e53e65f49e1bdc0d03dce3515376d242c9760cf98bb38d88abf3fe",
+      "reason": "Additive optional `hasPrompt` on the existing IDB record; older records read as prompted."
     },
     "src/lib/phantomchat/code-sessions-sync-adapter.ts": {
       "stable": "absent",
-      "preview": "441c7fccba80ec8a16ed9d9a9204b7fc9067982069d5ac1f2dbe61e31b09eaee",
-      "reason": "New CRDT domain phantomchat.chat/code-sessions, encrypted like contacts/groups, additive: unknown d-tags are ignored by older clients."
+      "preview": "8850da276c5b2171c3337137c61331beeb1329d9b3f9e83b7dc2e83e7b2303fd",
+      "reason": "Carries `hasPrompt` inside the existing phantomchat.chat/code-sessions blob; peers that predate it ignore the extra key, so the merge stays compatible."
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "bb78a69b01f693e38954b9212527bddb4108a08194e493db25a83f40942aee9e",
@@ -175,6 +175,11 @@
       "stable": "fce5f5d9aa6b0689d0073ca1edd6253dd1806e9ceb26701b09f5e8d1abb3ab05",
       "preview": "f4be21aaa8afe4e473364e1e25aed29580c5918ac4f2192f54c45e8edbf540e2",
       "reason": "Wires the code-sessions CRDT engine at boot. Passenger reconcile, retry loop and ready gate semantics unchanged for the existing domains."
+    },
+    "src/components/sidebarLeft/tabs/addMembers.ts": {
+      "stable": "4a21f00a55eed60a06260cf4a96f3251c1dd2c2920296240b45c9c9decaf574b",
+      "preview": "6756df1327cf9e97168b083b88db5c0d6afbaef00a2e3bda0d59294b6b9acca2",
+      "reason": "Optional filterPeerTypeBy/onSelect options on the existing picker; undefined defaults keep every current caller byte-identical in behaviour."
     }
   },
   "stableVersion": "1.0.335"

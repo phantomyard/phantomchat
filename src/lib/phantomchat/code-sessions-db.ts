@@ -33,6 +33,12 @@ export interface CodeSessionRecord {
   title: string;
   /** True while the title is still auto-derived; a rename clears it forever. */
   autoNamed: boolean;
+  /**
+   * False until the first message lands. A pending session (created from the
+   * ✏️ menu, no message yet) is listed as `New session`; `title` is empty.
+   * Absent on records written before the pencil flow → treated as true.
+   */
+  hasPrompt?: boolean;
   archived: boolean;
   /** The phantom this session talks to — the group's non-self member. */
   peerPubkey: string;

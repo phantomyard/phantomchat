@@ -13,6 +13,7 @@ import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvi
 import {MyDialogFilter} from '@lib/storages/filters';
 import {appSettings, setAppSettings} from '@stores/appSettings';
 import {
+  CODE_MODE_ENTER_EVENT,
   CODE_MODE_EVENT,
   CODE_MODE_LANG_KEY,
   CODE_MODE_RAIL_GLYPH,
@@ -280,6 +281,12 @@ export function FoldersSidebarContent(props: {
     listenerSetter.add(rootScope)('dialog_flush', ({dialog}) => {
       if(!dialog) return;
       updateAllFolderNotifications();
+    });
+
+    // `New Coding Session` lives in the global pencil, outside this rail, so it
+    // asks for the mode instead of setting the flag itself.
+    listenerSetter.add(rootScope)(CODE_MODE_ENTER_EVENT, () => {
+      void selectCodeMode();
     });
 
     listenerSetter.add(rootScope)('folder_unread', (filter) => {

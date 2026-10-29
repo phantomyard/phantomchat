@@ -3,7 +3,7 @@
  *
  * Left column = SESSIONS (not phantoms):
  *
- *   [ Search sessions ]      [ New session ]
+ *   [ the app's own Search field ]     ← the sticky one All Chats/Groups use
  *   Active      — idle sessions, newest first
  *   Archived    — manual archive, newest first
  *   Working     — live turns with the typing indicator, stacked bottom-up
@@ -14,21 +14,24 @@
  * the ordinary chat pane at that group, which gives the full real transcript
  * with the real composer; nothing about the chat path changes.
  *
+ * CREATION IS NOT IN HERE. `New Coding Session` lives in the global ✏️ menu
+ * (see sidebarLeft.startCodingSession): it opens the bot-filtered contact
+ * picker, mints the group, selects Code Mode and opens the pane. This inbox
+ * only lists, renames, archives and deletes.
+ *
  * The rail is the only thing that renders sessions: session groups are kept out
  * of the chat list (see injectGroupCreateDialog), so All Chats and Groups stay
  * clean.
  *
  * Andrew's spec of record: phantomchat issue #279.
  */
-import {createEffect, createMemo, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
+import {createMemo, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
 import {render} from 'solid-js/web';
 import {i18n} from '@lib/langPack';
 import I18n from '@lib/langPack';
 import type {LangPackKey} from '@lib/langPack';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
-import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
-import {showAddContactPopup} from '@components/popups/addContact';
 import {
   CODE_MODE_BODY_CLASS,
   CODE_MODE_EVENT,
@@ -46,15 +49,15 @@ import {
 import {appSettings} from '@stores/appSettings';
 import {ensureGroupChatInjected} from '@lib/phantomchat/phantomchat-groups-sync';
 import {
-  createSession,
+  applyFirstPromptTitle,
   deleteSessionEverywhere,
   listSessions,
   renameSession,
   sessionPeerId,
-  setSessionArchived,
-  switchSessionPeer
+  setSessionArchived
 } from '@lib/phantomchat/code-session-service';
 import {codeSessionRuntime, attachRuntimeEvents} from '@lib/phantomchat/code-session-runtime';
+import type {BroadcastEvents} from '@lib/rootScope';
 
 /** Backstop re-read for anything that changes sessions without an event. */
 const REFRESH_INTERVAL_MS = 15_000;
@@ -62,11 +65,8 @@ const REFRESH_INTERVAL_MS = 15_000;
 /** How often the Working counter ticks. */
 const CLOCK_INTERVAL_MS = 1000;
 
-interface PhantomOption {
-  pubkey: string;
-  peerId: number;
-  title: string;
-}
+/** The sticky search field the rest of the app uses (see sidebarLeft.construct). */
+const SEARCH_HEADER_SELECTOR = '#column-left .sidebar-header.main-search-sidebar-header';
 
 type MenuKind = 'active' | 'archived';
 
@@ -82,38 +82,17 @@ const t = (key: LangPackKey): string => I18n.format(key, true);
 
 function CodeInbox() {
   const {rootScope, appImManager} = useHotReloadGuard();
-  const managers = rootScope.managers;
 
   const [sessions, setSessions] = createSignal<CodeSessionInput[]>([]);
   const [runtimeTick, setRuntimeTick] = createSignal(0);
   const [query, setQuery] = createSignal('');
   const [openGroupId, setOpenGroupId] = createSignal<string | null>(null);
-  const [newSessionOpen, setNewSessionOpen] = createSignal(false);
-  const [newPrompt, setNewPrompt] = createSignal('');
-  const [newPeer, setNewPeer] = createSignal('');
-  const [phantoms, setPhantoms] = createSignal<PhantomOption[]>([]);
   const [menu, setMenu] = createSignal<MenuState | null>(null);
   const [renaming, setRenaming] = createSignal<string | null>(null);
   const [renameValue, setRenameValue] = createSignal('');
   const [confirmDelete, setConfirmDelete] = createSignal<string | null>(null);
   const [now, setNow] = createSignal(Date.now());
-  const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  /** Phantom of the open session, so the switcher can show it. */
-  const [openPeerPubkey, setOpenPeerPubkey] = createSignal('');
-
-  createEffect(() => {
-    const groupId = openGroupId();
-    if(!groupId) {
-      setOpenPeerPubkey('');
-      return;
-    }
-    void import('@lib/phantomchat/group-store').then(async({getGroupStore}) => {
-      const group = await getGroupStore().get(groupId);
-      const own = (window as any).__phantomchatOwnPubkey || '';
-      setOpenPeerPubkey((group?.members || []).find((member) => member !== own) || '');
-    }).catch(() => setOpenPeerPubkey(''));
-  });
 
   // The body class IS the mode; the event payload lands a tick earlier.
   let active = document.body.classList.contains(CODE_MODE_BODY_CLASS) ||
@@ -131,18 +110,30 @@ function CodeInbox() {
       const records = await listSessions();
       setSessions(records.map((record) => ({
         groupId: record.groupId,
+        // Empty until the first message names it — the row falls back to the
+        // `New session` label (Andrew: "Use New Session until the first
+        // message — then <10 chars>…").
         title: record.title,
         archived: record.archived,
         createdAt: record.createdAt,
-        // A session exists in the rail only once its first prompt landed. The
-        // record is created by that send, so a record IS a prompted session.
-        hasPrompt: true
+        hasPrompt: record.hasPrompt !== false
       })));
 
-      codeSessionRuntime.setSessionPeers(await Promise.all(records.map(async(record) => ({
+      const peers = await Promise.all(records.map(async(record) => ({
         groupId: record.groupId,
         peerId: await sessionPeerId(record.groupId)
-      }))));
+      })));
+      codeSessionRuntime.setSessionPeers(peers);
+
+      // Whatever is open in the real pane decides which row is selected and
+      // read — this is how a session opened from the ✏️ menu (which never
+      // goes through this component) still lands highlighted.
+      const currentPeerId = openChatPeerId();
+      const openRow = currentPeerId ? peers.find((entry) => entry.peerId === currentPeerId) : undefined;
+      if(openRow) {
+        if(openGroupId() !== openRow.groupId) setOpenGroupId(openRow.groupId);
+        codeSessionRuntime.markRead(openRow.groupId);
+      }
 
       setRuntimeTick((n) => n + 1);
     } catch(err) {
@@ -151,28 +142,13 @@ function CodeInbox() {
     }
   };
 
-  /** Phantom contacts available as a session peer. */
-  const loadPhantoms = async() => {
+  /** Peer id of the chat currently open in the right pane, 0 when none. */
+  const openChatPeerId = (): number => {
     try {
-      const own = (window as any).__phantomchatOwnPubkey || '';
-      const mappings = await getAllMappings();
-      const options = await Promise.all(mappings
-      .filter((m) => m.pubkey && m.pubkey !== own)
-      .map(async(mapping): Promise<PhantomOption> => {
-        let title = mapping.displayName || '';
-        try {
-          const user = await managers.appUsersManager.getUser(mapping.peerId);
-          const fullName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : '';
-          title = fullName || title;
-        } catch{ /* fall back to the stored display name */ }
-        return {pubkey: mapping.pubkey, peerId: mapping.peerId, title: title || mapping.pubkey.slice(0, 8)};
-      }));
-
-      options.sort((a, b) => a.title.localeCompare(b.title));
-      setPhantoms(options);
-    } catch(err) {
-      console.warn('[CodeMode] loadPhantoms failed', err);
-      setPhantoms([]);
+      const peerId = (appImManager.chat as {peerId?: PeerId})?.peerId;
+      return peerId ? +peerId : 0;
+    } catch{
+      return 0;
     }
   };
 
@@ -190,7 +166,6 @@ function CodeInbox() {
   // ─── actions ────────────────────────────────────────────────────
 
   const openSession = async(row: {groupId: string}) => {
-    setNewSessionOpen(false);
     setMenu(null);
     setOpenGroupId(row.groupId);
     codeSessionRuntime.markRead(row.groupId);
@@ -198,6 +173,7 @@ function CodeInbox() {
 
     try {
       const peerId = await sessionPeerId(row.groupId);
+
       // The chat/peer entries are normally injected by injectGroupCreateDialog,
       // which deliberately skips session groups. Opening a session is the one
       // place that must materialise them.
@@ -206,48 +182,6 @@ function CodeInbox() {
     } catch(err) {
       console.warn('[CodeMode] openSession failed', err);
       setError('Could not open this session.');
-    }
-  };
-
-  const startNewSession = () => {
-    setMenu(null);
-    setRenaming(null);
-    setConfirmDelete(null);
-    setError(null);
-    setOpenGroupId(null);
-    setNewSessionOpen(true);
-    setNewPrompt('');
-    void loadPhantoms().then(() => {
-      const first = phantoms()[0];
-      if(first && !newPeer()) setNewPeer(first.pubkey);
-    });
-  };
-
-  const submitNewSession = async() => {
-    const text = newPrompt().trim();
-    const pubkey = newPeer();
-    if(!text || !pubkey || busy()) return;
-
-    setBusy(true);
-    setError(null);
-    try {
-      const created = await createSession(pubkey, text);
-      codeSessionRuntime.markSent(created.groupId);
-      setRuntimeTick((n) => n + 1);
-      setNewSessionOpen(false);
-      setNewPrompt('');
-      setOpenGroupId(created.groupId);
-
-      await appImManager.setInnerPeer({peerId: created.peerId.toPeerId(true)});
-      // Send the first prompt through the ordinary send path so the phantom
-      // sees exactly what any other chat send produces.
-      await managers.appMessagesManager.sendText({peerId: created.peerId.toPeerId(true), text});
-      void refresh();
-    } catch(err) {
-      console.warn('[CodeMode] create session failed', err);
-      setError('Could not start the session.');
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -282,23 +216,103 @@ function CodeInbox() {
     setMenu({groupId: row.groupId, kind, x: event.clientX, y: event.clientY});
   };
 
+  // ─── the app's own search field ─────────────────────────────────
+  //
+  // The inbox no longer carries a search box of its own: the sticky
+  // `.main-search-sidebar-header` field that All Chats and Groups use is shown
+  // in Code Mode too, and while the mode is on its value filters SESSION NAMES
+  // instead of opening the global search overlay.
+
+  let detachSearch: (() => void) | undefined;
+
+  const attachSearchWidget = () => {
+    const header = document.querySelector<HTMLElement>(SEARCH_HEADER_SELECTOR);
+    const input = header?.querySelector<HTMLInputElement>('input.input-search-input');
+    if(!header || !input || detachSearch) return;
+
+    const previousPlaceholder = input.placeholder;
+
+    // The overlay is NOT blocked here: sidebarLeft's own `focus` listener skips
+    // `initSearch()` while Code Mode is on, so the field is a plain text input
+    // owned by this component. Blocking mousedown/focus here would stop the
+    // user from typing at all.
+    const onInput = () => {
+      if(!isActive()) return;
+      setQuery(input.value);
+    };
+
+    const clearBtn = header.querySelector<HTMLElement>('.input-search-clear');
+    const onClear = () => {
+      if(!isActive()) return;
+      setQuery('');
+    };
+
+    input.addEventListener('input', onInput);
+    clearBtn?.addEventListener('click', onClear);
+
+    detachSearch = () => {
+      input.removeEventListener('input', onInput);
+      clearBtn?.removeEventListener('click', onClear);
+      input.placeholder = previousPlaceholder;
+      detachSearch = undefined;
+    };
+  };
+
+  /** Code Mode is the only place that search field filters sessions. */
+  const syncSearchPlaceholder = (enabled: boolean) => {
+    const input = document.querySelector<HTMLInputElement>(SEARCH_HEADER_SELECTOR + ' input.input-search-input');
+    if(!input) return;
+    input.placeholder = enabled ? t('CodeModeSearchHint') : ' ';
+  };
+
   // ─── lifecycle ──────────────────────────────────────────────────
 
   onMount(() => {
     void codeSessionRuntime.hydrate().then(refresh);
     const detach = attachRuntimeEvents(rootScope);
-    const unsubscribe = codeSessionRuntime.subscribe(() => setRuntimeTick((n) => n + 1));
+    const unsubscribe = codeSessionRuntime.subscribe((groupId) => {
+      // A turn that ends while the session is on screen is already read.
+      if(groupId === openGroupId()) codeSessionRuntime.markRead(groupId);
+      setRuntimeTick((n) => n + 1);
+    });
 
     const onMode = (enabled?: boolean) => {
       if(typeof enabled === 'boolean') active = enabled;
-      if(!isActive()) return;
+      syncSearchPlaceholder(isActive());
+      if(!isActive()) {
+        // Leaving Code Mode must not leave a stale session filter behind in a
+        // field the rest of the app then uses for real search.
+        setQuery('');
+        const input = document.querySelector<HTMLInputElement>(SEARCH_HEADER_SELECTOR + ' input.input-search-input');
+        if(input) input.value = '';
+        return;
+      }
       void refresh();
     };
 
     const onSessionsChanged = (): void => { void refresh(); };
 
+    // The first message NAMES the session (`<10 chars>…`). The composer is the
+    // app's own, so the send path is observed rather than called.
+    const onMessageSent = ({message}: BroadcastEvents['message_sent']) => {
+      // Only outgoing plain messages: a service message never carries a prompt.
+      if(!('message' in message) || !message.pFlags.out) return;
+      const groupId = codeSessionRuntime.groupIdForPeer(+message.peerId);
+      if(!groupId) return;
+
+      codeSessionRuntime.markSent(groupId);
+      const text = typeof message.message === 'string' ? message.message : '';
+      if(text.trim()) {
+        void applyFirstPromptTitle(groupId, text).then((title) => {
+          if(title) void refresh();
+        });
+      }
+      setRuntimeTick((n) => n + 1);
+    };
+
     rootScope.addEventListener(CODE_MODE_EVENT, onMode);
-    rootScope.addEventListener(CODE_SESSIONS_CHANGED_EVENT as any, onSessionsChanged);
+    rootScope.addEventListener(CODE_SESSIONS_CHANGED_EVENT, onSessionsChanged);
+    rootScope.addEventListener('message_sent', onMessageSent);
     // A new phantom contact must land in the picker without a reload.
     rootScope.addEventListener('dialogs_multiupdate', onSessionsChanged);
 
@@ -310,14 +324,16 @@ function CodeInbox() {
     const closeMenu = () => setMenu(null);
     document.addEventListener('pointerdown', closeMenu);
 
+    attachSearchWidget();
     onMode();
-    void loadPhantoms();
 
     onCleanup(() => {
       detach();
       unsubscribe();
+      detachSearch?.();
       rootScope.removeEventListener(CODE_MODE_EVENT, onMode);
-      rootScope.removeEventListener(CODE_SESSIONS_CHANGED_EVENT as any, onSessionsChanged);
+      rootScope.removeEventListener(CODE_SESSIONS_CHANGED_EVENT, onSessionsChanged);
+      rootScope.removeEventListener('message_sent', onMessageSent);
       rootScope.removeEventListener('dialogs_multiupdate', onSessionsChanged);
       clearInterval(clock);
       clearInterval(backstop);
@@ -337,6 +353,9 @@ function CodeInbox() {
     return formatSessionAge(row.lastActiveAt, now());
   };
 
+  /** A session with no message yet is labelled, not titled. */
+  const titleOf = (row: CodeSessionRow): string => row.title || t('CodeModeNewSession');
+
   const SessionRow = (props: {
     row: CodeSessionRow;
     kind: MenuKind;
@@ -351,13 +370,14 @@ function CodeInbox() {
             class="code-session"
             classList={{
               'code-session--selected': openGroupId() === props.row.groupId,
-              'code-session--working': !!props.working
+              'code-session--working': !!props.working,
+              'code-session--pending': props.row.pending
             }}
             onContextMenu={(event) => openMenu(event, props.row, props.kind)}
             onClick={() => void openSession(props.row)}
           >
             <div class="code-session__body">
-              <div class="code-session__title">{props.row.title}</div>
+              <div class="code-session__title">{titleOf(props.row)}</div>
             </div>
             <div class="code-session__meta">
               <span class="code-session__age">{metaOf(props.row)}</span>
@@ -397,19 +417,6 @@ function CodeInbox() {
 
   return (
     <div class="code-inbox">
-      <div class="code-inbox__top">
-        <input
-          class="code-inbox__search"
-          type="search"
-          placeholder={t('CodeModeSearchSessions')}
-          value={query()}
-          onInput={(event) => setQuery(event.currentTarget.value)}
-        />
-        <button class="code-inbox__new" type="button" onClick={startNewSession}>
-          {i18n('CodeModeNewSession')}
-        </button>
-      </div>
-
       <div class="code-inbox__scroll">
         <For each={filtered().active}>{(row) => <SessionRow row={row} kind="active" />}</For>
 
@@ -419,19 +426,11 @@ function CodeInbox() {
         </Show>
 
         <Show when={!sessions().length}>
-          <div class="code-inbox__empty">
-            <div class="code-inbox__empty-title">{i18n('CodeModeEmptySessionsTitle')}</div>
-            <div class="code-inbox__empty-hint">{i18n('CodeModeEmptySessionsHint')}</div>
-            <button class="code-inbox__empty-btn" type="button" onClick={startNewSession}>
-              {i18n('CodeModeNewSession')}
-            </button>
-            <button
-              class="code-inbox__empty-btn code-inbox__empty-btn--ghost"
-              type="button"
-              onClick={() => showAddContactPopup({managers, onContactAdded: () => void loadPhantoms()})}
-            >
-              {i18n('CodeModeAddPhantom')}
-            </button>
+          {/* Same placeholder component the empty chat list uses. */}
+          <div class="empty-placeholder empty-placeholder-dialogs visible code-inbox__empty">
+            <img class="empty-placeholder-dialogs-icon" src="assets/img/EmptyChats.svg" alt="" />
+            <div class="empty-placeholder-header">{i18n('CodeModeEmptySessionsTitle')}</div>
+            <div class="empty-placeholder-subtitle">{i18n('CodeModeEmptySessionsHint')}</div>
           </div>
         </Show>
 
@@ -504,86 +503,8 @@ function CodeInbox() {
         )}
       </Show>
 
-      <Show when={newSessionOpen()}>
-        <div class="code-new">
-          <div class="code-new__card">
-            <textarea
-              class="code-new__prompt"
-              placeholder={t('CodeModeComposerHint')}
-              value={newPrompt()}
-              rows={4}
-              onInput={(event) => setNewPrompt(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if(event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  void submitNewSession();
-                }
-              }}
-            />
-            <div class="code-new__actions">
-              <select
-                class="code-new__peer"
-                value={newPeer()}
-                onChange={(event) => setNewPeer(event.currentTarget.value)}
-              >
-                <Show when={!phantoms().length}>
-                  <option value="">{i18n('CodeModeNoPhantoms')}</option>
-                </Show>
-                <For each={phantoms()}>{(phantom) => (
-                  <option value={phantom.pubkey}>{phantom.title}</option>
-                )}</For>
-              </select>
-              <div class="code-new__buttons">
-                <button
-                  class="code-new__cancel"
-                  type="button"
-                  onClick={() => setNewSessionOpen(false)}
-                >
-                  {i18n('CodeModeCancel')}
-                </button>
-                <button
-                  class="code-new__send"
-                  type="button"
-                  disabled={busy() || !newPrompt().trim() || !newPeer()}
-                  onClick={() => void submitNewSession()}
-                >
-                  {i18n('CodeModeSend')}
-                </button>
-              </div>
-            </div>
-            <Show when={error()}>
-              <div class="code-new__error">{error()}</div>
-            </Show>
-          </div>
-        </div>
-      </Show>
-
-      {/*
-        * Switching the phantom of an OPEN session (Andrew: "switchable mid
-        * session"). Kept next to the composer of a live session rather than in
-        * the context menu, because it only makes sense while one is open.
-        */}
-      <Show when={openGroupId() && phantoms().length > 1}>
-        <div class="code-inbox__peer-switch">
-          <select
-            class="code-inbox__peer-select"
-            value={phantoms().find((p) => p.pubkey === openPeerPubkey())?.pubkey || ''}
-            onChange={(event) => {
-              const groupId = openGroupId();
-              const pubkey = event.currentTarget.value;
-              if(!groupId || !pubkey) return;
-              void switchSessionPeer(groupId, pubkey).then(() => {
-                void refresh();
-                void openSession({groupId});
-              });
-            }}
-          >
-            <option value="">{i18n('CodeModeSwitchPhantom')}</option>
-            <For each={phantoms()}>{(phantom) => (
-              <option value={phantom.pubkey}>{phantom.title}</option>
-            )}</For>
-          </select>
-        </div>
+      <Show when={error()}>
+        <div class="code-inbox__error">{error()}</div>
       </Show>
     </div>
   );

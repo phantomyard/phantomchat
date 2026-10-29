@@ -75,6 +75,13 @@ export type BroadcastEvents = {
    *  the state; the inbox only listens. */
   'code_mode_changed': boolean,
 
+  /** The ✏️ menu's `New Coding Session` asking the rail to select Code Mode
+   *  (`lib/code-mode`). The rail owns the mode, so the menu only asks. */
+  'code_mode_enter_requested': void,
+
+  /** The Code session store changed (create/rename/archive/delete/sync). */
+  'code_sessions_changed': void,
+
   /** Fired whenever the active left-bar list's rendered row count changes (live add/drop) or the active folder is switched. Consumers must re-read the current count. */
   'chatlist_length_change': void,
 

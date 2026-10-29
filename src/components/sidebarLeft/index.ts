@@ -49,6 +49,7 @@ import {doubleRaf, fastRaf} from '@helpers/schedulers';
 import {getInstallPrompt} from '@helpers/dom/installPrompt';
 import IS_STANDALONE from '@environment/standalone';
 import {isDesktopApp} from '@lib/phantomchat/desktop-api';
+import {CODE_MODE_BODY_CLASS} from '@lib/code-mode';
 import liteMode from '@helpers/liteMode';
 import AppPowerSavingTab from '@components/sidebarLeft/tabs/powerSaving';
 import Icon from '@components/icon';
@@ -213,7 +214,14 @@ export class AppSidebarLeft extends SidebarSlider {
 
     sidebarHeader.nextElementSibling.append(this.updateBtn);
 
-    this.inputSearch.input.addEventListener('focus', () => this.initSearch(), {once: true});
+    // Code Mode repurposes this field to filter session names, so focusing it
+    // must not collapse the sidebar into the global search overlay. Keep the
+    // listener permanent (initSearch is idempotent) so the gate cannot eat the
+    // one focus that used to arm search in normal mode.
+    this.inputSearch.input.addEventListener('focus', () => {
+      if(document.body.classList.contains(CODE_MODE_BODY_CLASS)) return;
+      this.initSearch();
+    });
 
     this.archivedCount = createBadge('span', 24, 'gray');
     this.archivedCount.classList.add('archived-count');
@@ -1067,6 +1075,28 @@ export class AppSidebarLeft extends SidebarSlider {
       });
     };
 
+    /**
+     * `New Coding Session` — same picker as `New Group`, but filtered to
+     * contacts carrying the bot flag (that IS a phantom), single-tap, and the
+     * answer mints a Code Mode session instead of a group chat.
+     */
+    const onNewCodingSessionClick = () => {
+      closeTabsBefore(async() => {
+        const tab = this.createTab(AppAddMembersTab);
+        tab.open({
+          type: 'chat',
+          skippable: false,
+          title: 'NewCodingSession',
+          placeholder: 'SendMessageTo',
+          filterPeerTypeBy: ['isBot'],
+          onSelect: (peerId) => {
+            tab.close();
+            void this.startCodingSession(peerId);
+          }
+        });
+      });
+    };
+
     return [{
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
@@ -1079,7 +1109,53 @@ export class AppSidebarLeft extends SidebarSlider {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',
       onClick: onContactsClick
+    }, {
+      icon: 'newchat_filled',
+      text: 'NewCodingSession',
+      onClick: onNewCodingSessionClick
     }];
+  }
+
+  /**
+   * Mint a Code Mode session for `peerId` and land the user in it: Code Mode
+   * selected on the rail, the session's group open in the ordinary chat pane.
+   *
+   * The row stays labelled `New session` until the first message names it
+   * (see code-session-service.applyFirstPromptTitle), so nothing here needs a
+   * title.
+   */
+  private async startCodingSession(peerId: PeerId) {
+    if(!peerId || !peerId.isUser?.()) return;
+
+    try {
+      const [{getPubkey}, {createPendingSession}, {CODE_MODE_ENTER_EVENT}] = await Promise.all([
+        import('@lib/phantomchat/virtual-peers-db'),
+        import('@lib/phantomchat/code-session-service'),
+        import('@lib/code-mode')
+      ]);
+
+      const pubkey = await getPubkey(Number(peerId.toUserId()));
+      if(!pubkey) {
+        console.warn('[CodeMode] New Coding Session: peer is not a phantom mapping', peerId);
+        return;
+      }
+
+      const session = await createPendingSession(pubkey);
+
+      // The rail owns the mode; ask it rather than setting the flag here, so
+      // the chat list is parked and the inbox mounted exactly as a rail click
+      // would do it. Its handler is async (it parks the chat list first), so
+      // wait for the body class instead of guessing a delay.
+      rootScope.dispatchEvent(CODE_MODE_ENTER_EVENT);
+      for(let i = 0; i < 40; i++) {
+        if(document.body.classList.contains(CODE_MODE_BODY_CLASS)) break;
+        await pause(50);
+      }
+
+      await appImManager.setInnerPeer({peerId: session.peerId.toPeerId(true)});
+    } catch(err) {
+      console.error('[CodeMode] New Coding Session failed', err);
+    }
   }
 
   private createNewChatsMenuButton() {

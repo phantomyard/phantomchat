@@ -13,13 +13,18 @@
  * Code rail is the only place they are rendered.
  *
  * Lifecycle:
- *   create   — mint the group on the first prompt, title = first 10 chars + …
+ *   create   — mint the group from the ✏️ menu (`New Coding Session`), title
+ *              EMPTY and `hasPrompt: false`: the rail shows `New session`
+ *   first    — the first outgoing message names it: first 10 chars + …
  *   rename   — group name + session title; kills auto-naming forever
  *   archive  — local intent, synced through the code-sessions CRDT domain
  *   delete   — TOMBSTONE the session (every device drops the row). The group
  *              record and the phantom's `group:<id>` history are deliberately
  *              left alone: Andrew's rule is "do not delete any history from the
  *              server side or phantom turn history".
+ *
+ * There is NO mid-session phantom switch: the phantom chosen when the session
+ * is created is the one it talks to for life (Andrew, 2026-10-29).
  */
 
 import {autoSessionTitle, CODE_SESSIONS_CHANGED_EVENT} from '@lib/code-mode';
@@ -91,19 +96,18 @@ export interface CreateSessionResult {
 }
 
 /**
- * Create a session and give it its auto-derived title.
+ * Create an EMPTY session for one phantom: the group is minted, the record is
+ * saved with no title, and the rail shows `New session` until the first
+ * message names it.
  *
- * Called with the FIRST prompt: a session with no prompt never appears in the
- * rail (Andrew's spec), so there is nothing to persist before this point.
+ * This is what `New Coding Session` in the ✏️ menu calls — the picker is the
+ * thing that chooses the phantom, so creation cannot wait for a prompt.
  */
-export async function createSession(
-  peerPubkey: string,
-  firstPrompt: string
-): Promise<CreateSessionResult> {
-  const title = autoSessionTitle(firstPrompt);
-  // A prompt could be whitespace-only in principle; the group still needs a
-  // name, and the row is not rendered until a real message exists anyway.
-  const groupName = title || 'New session';
+export async function createPendingSession(peerPubkey: string): Promise<CreateSessionResult> {
+  // The group needs *a* name for the control messages; the rail never shows it
+  // (session groups are kept out of the chat list) and the real title lands
+  // with the first message.
+  const groupName = 'New session';
 
   const groupId = await groupAPI().createGroup(groupName, [peerPubkey], undefined, {sessionGroup: true});
   const peerId = await sessionPeerId(groupId);
@@ -111,14 +115,13 @@ export async function createSession(
 
   await saveSession({
     groupId,
-    title: groupName,
-    // The title came from the prompt, so a later rename is the first thing
-    // that must stop re-naming.
-    autoNamed: true,
+    title: '',
+    autoNamed: false,
     archived: false,
     peerPubkey,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    hasPrompt: false
   });
 
   // Not in the chat list (session group), but the chat/peer entries must
@@ -126,11 +129,48 @@ export async function createSession(
   try {
     await ensureGroupChatInjected(groupId, peerId);
   } catch(err) {
-    console.warn(LOG_PREFIX, 'createSession: chat injection failed', err);
+    console.warn(LOG_PREFIX, 'createPendingSession: chat injection failed', err);
   }
 
   notifyChanged('created');
-  return {groupId, peerId, title: groupName};
+  return {groupId, peerId, title: ''};
+}
+
+/**
+ * The first message of a session names it `<first 10 chars>…`.
+ *
+ * Idempotent and a no-op for every later message (and for a session that was
+ * already renamed), so it is safe to call from the send path on every send.
+ * Returns the title it applied, or null when nothing changed.
+ */
+export async function applyFirstPromptTitle(groupId: string, prompt: string): Promise<string | null> {
+  const record = await getSession(groupId);
+  if(!record) return null;
+  if(record.hasPrompt !== false) return null;
+  // A rename while pending wins over the auto-title, permanently.
+  if(record.autoNamed === false && record.title) return null;
+
+  const title = autoSessionTitle(prompt);
+  if(!title) return null;
+
+  try {
+    await groupAPI().renameGroup(groupId, title);
+  } catch(err) {
+    // The rail title is what the user sees; a failed group rename must not
+    // leave the session un-named.
+    console.warn(LOG_PREFIX, 'applyFirstPromptTitle: group rename failed', err);
+  }
+
+  await saveSession({
+    ...record,
+    title,
+    autoNamed: true,
+    hasPrompt: true,
+    updatedAt: Date.now()
+  });
+
+  notifyChanged('named');
+  return title;
 }
 
 /** Sessions, newest first, with the local activity map applied by the caller. */
@@ -184,39 +224,4 @@ export async function deleteSessionEverywhere(groupId: string): Promise<void> {
   await deleteSessionRecord(groupId);
   await deleteSessionRuntime(groupId);
   notifyChanged('deleted');
-}
-
-/**
- * Switch the phantom a session talks to (Andrew: "switchable mid-session").
- * Adds the new member, then removes the old one, so the group never drops to a
- * single member mid-flight. The session id and its rail row are unchanged; the
- * new phantom starts a fresh context because it is a new conversation on its
- * side.
- */
-export async function switchSessionPeer(groupId: string, nextPubkey: string): Promise<void> {
-  const own = ownPubkeySafe();
-  const group = await getGroupStore().get(groupId);
-  if(!group || !nextPubkey || nextPubkey === own) return;
-
-  const current = sessionPeerPubkey(group, own);
-  if(current === nextPubkey) return;
-
-  const api = groupAPI();
-  await api.addMember(groupId, nextPubkey);
-  if(current) {
-    try {
-      await api.removeMember(groupId, current);
-    } catch(err) {
-      console.warn(LOG_PREFIX, 'switchSessionPeer: removeMember failed', err);
-    }
-  }
-
-  const record = await getSession(groupId);
-  if(record) await saveSession({...record, peerPubkey: nextPubkey, updatedAt: Date.now()});
-
-  try {
-    await ensureGroupChatInjected(groupId, await sessionPeerId(groupId));
-  } catch{ /* non-critical */ }
-
-  notifyChanged('switched-peer');
 }

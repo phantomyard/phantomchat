@@ -1455,9 +1455,6 @@
 "FilterContacts" = "Contacts";
 "FilterGroups" = "Groups";
 "CodeMode" = "Code";
-"CodeModeAddPhantom" = "Add phantom";
-"CodeModeEmptyTitle" = "No phantoms yet";
-"CodeModeEmptyHint" = "Add a phantom by its npub — every phantombot persona is one contact.";
 "CodeModePhantomOps" = "PhantomOps";
 "CodeModePhantomOpsHint" = "Your organisation’s phantom";
 "CodeModePhantomOpsSignInHint" = "Paste a PhantomOps API key to work with your organisation’s phantom. Mint one in PhantomOps under Account settings → API keys; it stays on this device until you disconnect.";
@@ -1472,8 +1469,9 @@
 "CodeModeSubmit" = "Submit";
 "CodeModeSecretNeeded" = "Secret needed:";
 "CodeModeComposerHint" = "Ask the phantom…";
-"CodeModeSearchSessions" = "Search sessions";
 "CodeModeNewSession" = "New session";
+"CodeModeSearchHint" = "Search sessions";
+"NewCodingSession" = "New Coding Session";
 "CodeModeWorking" = "Working";
 "CodeModeArchived" = "Archived";
 "CodeModeRename" = "Rename";
@@ -1483,12 +1481,8 @@
 "CodeModeDeleteConfirm" = "Delete this session?";
 "CodeModeDone" = "Done";
 "CodeModeInterrupted" = "Interrupted";
-"CodeModeCancel" = "Cancel";
-"CodeModeSend" = "Send";
-"CodeModeSwitchPhantom" = "Switch phantom";
-"CodeModeNoPhantoms" = "No phantoms";
-"CodeModeEmptySessionsTitle" = "No sessions yet";
-"CodeModeEmptySessionsHint" = "Start a session and pick the phantom to work with — each session is its own thread.";
+"CodeModeEmptySessionsTitle" = "No coding sessions yet";
+"CodeModeEmptySessionsHint" = "Your coding sessions will appear here. Tap the pencil, then New Coding Session, to start one.";
 "FoldersSyncOverwritten" = "Folders updated from another device. Your local changes were overwritten.";
 "Call" = "Call";
 "VideoCall" = "Video Call";

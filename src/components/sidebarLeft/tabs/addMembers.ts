@@ -6,7 +6,8 @@
 
 import type SidebarSlider from '@components/slider';
 import {SliderSuperTab} from '@components/slider';
-import AppSelectPeers from '@components/appSelectPeers';
+import AppSelectPeers, {FilterPeerTypeByFunc} from '@components/appSelectPeers';
+import type {IsPeerType} from '@appManagers/appPeersManager';
 import {setButtonLoader} from '@components/putPreloader';
 import {LangPackKey, _i18n} from '@lib/langPack';
 import ButtonCorner from '@components/buttonCorner';
@@ -30,7 +31,14 @@ export default class AppAddMembersTab extends SliderSuperTab {
     skippable: boolean,
     selectedPeerIds?: PeerId[],
     /** Back arrow also applies the selection (takeOut) instead of discarding. */
-    takeOutOnClose?: boolean
+    takeOutOnClose?: boolean,
+    /**
+     * Restrict the list, e.g. `['isBot']` for the coding-session picker. The
+     * peer list is filtered BEFORE it renders, so a non-phantom never appears.
+     */
+    filterPeerTypeBy?: IsPeerType[] | FilterPeerTypeByFunc,
+    /** Single-tap flow: clicking a peer answers immediately, no Next button. */
+    onSelect?: (peerId: PeerId) => void
   }) {
     this.container.classList.add('add-members-container');
     this.nextBtn = ButtonCorner({icon: 'arrow_next'});
@@ -57,6 +65,7 @@ export default class AppAddMembersTab extends SliderSuperTab {
     this.skippable = options.skippable;
 
     const isPrivacy = this.peerType === 'privacy';
+    const singlePick = !!options.onSelect;
     this.selector = new AppSelectPeers({
       middleware: this.middlewareHelper.get(),
       appendTo: this.content,
@@ -66,10 +75,18 @@ export default class AppAddMembersTab extends SliderSuperTab {
       peerType: [isPrivacy ? 'dialogs' : 'contacts'],
       placeholder: options.placeholder,
       exceptSelf: isPrivacy,
-      filterPeerTypeBy: isPrivacy ? ['isAnyGroup', 'isUser'] : undefined,
+      filterPeerTypeBy: options.filterPeerTypeBy ?? (isPrivacy ? ['isAnyGroup', 'isUser'] : undefined),
+      // A single-tap picker must not leave a selected-peer tray behind.
+      multiSelect: !singlePick,
+      onSelect: options.onSelect,
       managers: this.managers,
       design: 'square'
     });
+
+    if(singlePick) {
+      // No Next button in a single-tap flow; the click IS the answer.
+      this.nextBtn.remove();
+    }
 
     if(options.selectedPeerIds) {
       this.selector.addInitial(options.selectedPeerIds);

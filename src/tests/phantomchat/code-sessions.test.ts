@@ -3,7 +3,8 @@
  *
  * Andrew's spec, pinned here:
  *  - the title is the first 10 characters of the first prompt + "…";
- *  - a session with no prompt never appears in any group;
+ *  - a session created from the ✏️ menu but not yet used is listed in Active as
+ *    `New session` until its first message names it;
  *  - Active and Archived are newest-activity first;
  *  - Working is the live typing indicator, stacked BOTTOM-UP (newest lowest)
  *    and marked Interrupted after the hard cap;
@@ -185,9 +186,7 @@ describe('groupSessionRows', () => {
   const sessions: CodeSessionInput[] = [
     session({groupId: 'a', title: 'Alpha', createdAt: NOW - 10_000}),
     session({groupId: 'b', title: 'Bravo', createdAt: NOW - 20_000}),
-    session({groupId: 'c', title: 'Charlie', createdAt: NOW - 30_000, archived: true}),
-    // A session with no prompt is never listed.
-    session({groupId: 'd', title: 'Draft', hasPrompt: false})
+    session({groupId: 'c', title: 'Charlie', createdAt: NOW - 30_000, archived: true})
   ];
 
   const runtime: Record<string, CodeSessionRuntime | undefined> = {
@@ -196,11 +195,23 @@ describe('groupSessionRows', () => {
     c: {lastActiveAt: NOW - 60_000}
   };
 
-  it('splits into active / archived / working and drops prompt-less sessions', () => {
+  it('splits into active / archived / working', () => {
     const grouped = groupSessionRows(sessions, runtime, NOW);
     expect(grouped.active.map((row) => row.groupId)).toEqual(['a', 'b']);
     expect(grouped.archived.map((row) => row.groupId)).toEqual(['c']);
     expect(grouped.working).toEqual([]);
+  });
+
+  it('keeps a pending session in Active, flagged and untitled, until its first message', () => {
+    const pending = session({groupId: 'd', title: '', createdAt: NOW - 40_000, hasPrompt: false});
+    const grouped = groupSessionRows([...sessions, pending], runtime, NOW);
+
+    // Listed in Active (Andrew: "Use New Session until the first message"),
+    // so the user can come back to a session they created but did not use.
+    const row = grouped.active.find((entry) => entry.groupId === 'd');
+    expect(row).toMatchObject({groupId: 'd', title: '', pending: true});
+    // A prompted session is never flagged pending.
+    expect(grouped.active.find((entry) => entry.groupId === 'a')?.pending).toBe(false);
   });
 
   it('orders Active and Archived by newest activity first', () => {

@@ -78,6 +78,11 @@ export class CodeSessionRuntimeTracker {
     return this.state[groupId];
   }
 
+  /** Which session owns a group peer id (0/unknown → undefined). */
+  groupIdForPeer(peerId: number): string | undefined {
+    return this.peerToGroup.get(peerId);
+  }
+
   snapshot(): Record<string, CodeSessionRuntime> {
     return {...this.state};
   }

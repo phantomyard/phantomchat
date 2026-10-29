@@ -35,6 +35,8 @@ export type CodeSessionSyncData = {
   archived: boolean;
   peerPubkey: string;
   createdAt: number;
+  /** False while the session is still waiting for its first message. */
+  hasPrompt?: boolean;
 };
 
 export type CodeSessionsAdapterDeps = {
@@ -55,7 +57,8 @@ function toSyncData(record: CodeSessionRecord): CodeSessionSyncData {
     autoNamed: !!record.autoNamed,
     archived: !!record.archived,
     peerPubkey: record.peerPubkey,
-    createdAt: record.createdAt
+    createdAt: record.createdAt,
+    hasPrompt: record.hasPrompt !== false
   };
 }
 
@@ -126,6 +129,9 @@ export function createCodeSessionsAdapter(deps: CodeSessionsAdapterDeps): LocalA
           archived: data.archived,
           peerPubkey: data.peerPubkey,
           createdAt: data.createdAt,
+          // A pending session must stay pending after a round trip, or another
+          // device renames it `New session`→title from an empty title.
+          hasPrompt: data.hasPrompt !== false,
           // Pin to the merged clock (millis) so read() derives the same
           // seconds back and the maps converge.
           updatedAt: entry.updatedAt * 1000

@@ -25,35 +25,25 @@
 }
 
 body.code-mode {
-  /* Code Mode is inbox-only: the dialog lists and the new-message FAB step
-     aside while the inbox owns the chat list column. tweb RE-PARENTS
-     #folders-container at runtime (it ends up inside
-     .connection-status-bottom), so this keys on what is there rather than on
-     one particular parent. The RAIL itself (the folders sidebar with All
-     Chats / Groups / Code) stays — it is how you leave the mode. */
+  /* Code Mode is inbox-only: the dialog lists step aside while the inbox owns
+     the chat list column. tweb RE-PARENTS #folders-container at runtime (it
+     ends up inside .connection-status-bottom), so this keys on what is there
+     rather than on one particular parent. The RAIL itself (the folders sidebar
+     with All Chats / Groups / Code) stays — it is how you leave the mode. */
   #chatlist-container > :not(.code-mode-root),
   #folders-tabs {
     display: none !important;
   }
 
-  /* The inbox brings its own "new session" action. */
-  #column-left .btn-corner {
-    display: none !important;
-  }
+  /* The ✏️ menu is NOT hidden: `New Coding Session` is one of its items and it
+     is the only way to create a session (see sidebarLeft.startCodingSession). */
 
-  /* The chat list's own top bar steps aside: Code Mode has its own "Search
-     sessions" field, so the stock search box / stories row above it would be a
-     second, dead search bar. */
-  #column-left .sidebar-header.main-search-sidebar-header,
+  /* The stock search field stays visible — in Code Mode it filters session
+     names (see codeInbox.attachSearchWidget). Only the stories row goes: a
+     coding view has no stories, and it would sit between search and the list. */
   #column-left .stories-list {
     display: none !important;
   }
-
-  /* The Code rail entry is a menu-button too, so the 1.5rem menu-button icon
-   rule wins over the base `--text` rule; this restores the 30px box. */
-.folders-sidebar__code-button .folders-sidebar__folder-item-icon--text {
-  font-size: 1.875rem;
-}
 
 .code-mode-root {
     display: flex;
@@ -66,52 +56,6 @@ body.code-mode {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-}
-
-.code-inbox__top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  flex: 0 0 auto;
-}
-
-.code-inbox__search {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 34px;
-  padding: 0 12px;
-  border: none;
-  outline: none;
-  border-radius: 17px;
-  font-size: 14px;
-  color: var(--primary-text-color);
-  background: var(--secondary-color, rgba(127, 127, 127, 0.15));
-
-  &::placeholder {
-    color: var(--secondary-text-color);
-  }
-}
-
-.code-inbox__new {
-  /* The search field takes the slack; this button must never be squeezed into
-     a clipped label ("New" instead of "New session") on a narrow column. */
-  flex: 0 0 auto;
-  min-width: max-content;
-  white-space: nowrap;
-  height: 34px;
-  padding: 0 14px;
-  border: none;
-  border-radius: 17px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  color: #fff;
-  background: var(--primary-color, #3390ec);
-
-  &:hover {
-    filter: brightness(1.05);
-  }
 }
 
 .code-inbox__scroll {
@@ -175,6 +119,13 @@ body.code-mode {
   text-overflow: ellipsis;
 }
 
+/* Created from the ✏️ menu, no message yet: the row reads `New session` rather
+   than a title, so it must not look like a named session. */
+.code-session--pending .code-session__title {
+  color: var(--secondary-text-color);
+  font-weight: 400;
+}
+
 .code-session__meta {
   display: flex;
   align-items: center;
@@ -226,43 +177,22 @@ body.code-mode {
 
 /* ------------------------------------------------------------ empty state */
 
+/* The placeholder IS the app's own `.empty-placeholder` component (same markup
+   the chat list uses), so only its placement in this column is owned here. */
 .code-inbox__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 40px 24px;
-  text-align: center;
+  top: 0;
+  transform: none;
+  margin: auto 0;
+  padding-top: 24px;
 }
 
-.code-inbox__empty-title {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--primary-text-color);
-}
+/* ------------------------------------------------------------- error line */
 
-.code-inbox__empty-hint {
+.code-inbox__error {
+  flex: 0 0 auto;
+  padding: 8px 12px;
   font-size: 13px;
-  line-height: 1.5;
-  color: var(--secondary-text-color);
-}
-
-.code-inbox__empty-btn {
-  margin-top: 8px;
-  padding: 8px 16px;
-  border-radius: 18px;
-  border: none;
-  cursor: pointer;
-  font-size: 14px;
-  color: #fff;
-  background: var(--primary-color, #3390ec);
-
-  &--ghost {
-    margin-top: 0;
-    color: var(--primary-color, #3390ec);
-    background: transparent;
-  }
+  color: #e05a4f;
 }
 
 /* ------------------------------------------------------- context menu */
@@ -302,106 +232,6 @@ body.code-mode {
   padding: 8px 12px;
   font-size: 13px;
   color: var(--secondary-text-color);
-}
-
-/* ------------------------------------------------------- new session pane */
-
-.code-new {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: var(--left-column-width, 420px);
-  z-index: 500;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: var(--surface-color);
-}
-
-.code-new__card {
-  width: 100%;
-  max-width: 640px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.code-new__prompt {
-  width: 100%;
-  padding: 14px 16px;
-  border-radius: 14px;
-  border: 1px solid var(--border-color);
-  outline: none;
-  resize: none;
-  font-size: 15px;
-  line-height: 1.5;
-  color: var(--primary-text-color);
-  background: var(--surface-color);
-
-  &:focus {
-    border-color: var(--primary-color, #3390ec);
-  }
-}
-
-.code-new__actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.code-new__peer,
-.code-inbox__peer-select {
-  height: 34px;
-  padding: 0 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border-color);
-  font-size: 14px;
-  color: var(--primary-text-color);
-  background: var(--surface-color);
-}
-
-.code-new__buttons {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.code-new__cancel,
-.code-new__send {
-  height: 34px;
-  padding: 0 16px;
-  border: none;
-  border-radius: 17px;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.code-new__cancel {
-  color: var(--secondary-text-color);
-  background: transparent;
-}
-
-.code-new__send {
-  color: #fff;
-  background: var(--primary-color, #3390ec);
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-}
-
-.code-new__error {
-  font-size: 13px;
-  color: #e05a4f;
-}
-
-.code-inbox__peer-switch {
-  flex: 0 0 auto;
-  padding: 6px 12px 10px;
 }
 
 /* ------------------------------------------------- PhantomOps (deferred)

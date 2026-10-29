@@ -9,8 +9,7 @@
  * SESSION-FIRST (#279, superseding the contact-derived inbox of #277).
  * The left column is a list of SESSIONS, not of phantoms:
  *
- *   Search sessions
- *   New session
+ *   [ the app's own Search field ]
  *   Active      — idle sessions, newest first
  *   Archived    — manual archive, newest first
  *   Working     — sessions with a live typing indicator, stacked bottom-up
@@ -18,8 +17,13 @@
  * A session is a 2-member private group (you + one phantom, see
  * `code-session-service`), which is what makes two independent threads with
  * the SAME phantom possible: each one gets its own `group:<groupId>`
- * conversation on the phantom side, with no protocol change. The contact is
- * chosen inside the session and can be switched mid-session.
+ * conversation on the phantom side, with no protocol change.
+ *
+ * Creation lives in the ordinary ✏️ menu (`New Coding Session`), not in this
+ * inbox: it opens the bot-filtered contact picker, mints the session group and
+ * drops the user into the real chat pane. Until the first message the row is
+ * labelled `New session`; the first send renames it `<first 10 chars>…`. The
+ * phantom is fixed at creation — there is no mid-session switch.
  *
  * This module holds the PURE plumbing — the mode flag, the rail glyph, the
  * auto-naming rule and the group/sort/badge logic — so all of it is testable
@@ -53,6 +57,14 @@ export const CODE_MODE_EVENT = 'code_mode_changed' as const;
 
 /** rootScope event fired whenever the session list or a runtime state changed. */
 export const CODE_SESSIONS_CHANGED_EVENT = 'code_sessions_changed' as const;
+
+/**
+ * rootScope event asking the folders rail to select Code Mode. The pencil menu
+ * lives outside the rail (it is the global ✏️ button) and "New Coding Session"
+ * has to land the user in Code Mode, so it asks rather than reaching into the
+ * rail's state.
+ */
+export const CODE_MODE_ENTER_EVENT = 'code_mode_enter_requested' as const;
 
 /**
  * Characters of the first prompt that become the session title before the
@@ -171,6 +183,8 @@ export interface CodeSessionRow {
   archived: boolean;
   createdAt: number;
   lastActiveAt: number;
+  /** No message sent yet: the row shows the `New session` label, not a title. */
+  pending: boolean;
 }
 
 /** Everything `groupSessionRows` needs from one session. */
@@ -179,7 +193,11 @@ export interface CodeSessionInput {
   title: string;
   archived: boolean;
   createdAt: number;
-  /** Absent until the first prompt lands (a session with no prompt is never listed). */
+  /**
+   * False until the first message names the session. Pending sessions ARE
+   * listed (labelled `New session`), because the user has to be able to come
+   * back to a session they created and did not use yet.
+   */
   hasPrompt?: boolean;
 }
 
@@ -233,8 +251,8 @@ export function sessionBadge(
  * Ordering rules from Andrew's spec:
  *  - Working: bottom-up, newest lowest → returned OLDEST FIRST.
  *  - Active / Archived: newest activity first.
- *  - A session with no prompt yet is in NO group (it only appears once the
- *    first prompt lands).
+ *  - A session with no prompt yet sits in Active, labelled `New session`;
+ *    the first message turns it into `<first 10 chars>…`.
  */
 export function groupSessionRows(
   sessions: CodeSessionInput[],
@@ -247,7 +265,6 @@ export function groupSessionRows(
 
   for(const session of sessions) {
     if(!session || !session.groupId) continue;
-    if(!session.hasPrompt) continue;
 
     const rt = runtime[session.groupId];
     const row: CodeSessionRow = {
@@ -255,7 +272,8 @@ export function groupSessionRows(
       title: session.title,
       archived: !!session.archived,
       createdAt: session.createdAt,
-      lastActiveAt: (rt?.lastActiveAt || 0) || session.createdAt
+      lastActiveAt: (rt?.lastActiveAt || 0) || session.createdAt,
+      pending: session.hasPrompt === false
     };
 
     if(session.archived) archived.push(row);
