@@ -44,6 +44,7 @@ export class CodeSessionRuntimeTracker {
 
   /** group peer id → groupId, rebuilt from the session records by the caller. */
   private peerToGroup = new Map<number, string>();
+  private openGroup?: string;
 
   /** groupIds with a persisted write in flight (coalesces activity churn). */
   private writing = new Set<string>();
@@ -157,6 +158,15 @@ export class CodeSessionRuntimeTracker {
    * `peer_typings` for a group peer. Non-empty = the phantom is working;
    * empty = the turn ended (tweb expired the entry or a STOP marker arrived).
    */
+  /**
+   * Which session the user is LOOKING AT. A turn that ends while its row is
+   * open is read by definition, so it must not paint a Done badge the user
+   * then has to clear by re-opening the row they never left.
+   */
+  setOpenGroup(groupId: string | null | undefined): void {
+    this.openGroup = groupId || undefined;
+  }
+
   handleTypings(peerId: number, typingCount: number): void {
     const groupId = this.peerToGroup.get(peerId);
     if(!groupId) return;
@@ -172,7 +182,7 @@ export class CodeSessionRuntimeTracker {
     // Only a turn that was actually running can END; a stray empty tick for an
     // idle session must not paint a Done badge.
     if(!runtime?.workingSince || !isSessionWorking(runtime, now)) return;
-    this.commit(groupId, endTurn(runtime, 'done', now));
+    this.commit(groupId, endTurn(runtime, 'done', now, {unread: groupId !== this.openGroup}));
   }
 
   /** Reading a session clears its Done/Interrupted badge. */

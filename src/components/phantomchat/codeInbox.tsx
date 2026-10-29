@@ -25,7 +25,7 @@
  *
  * Andrew's spec of record: phantomchat issue #279.
  */
-import {createMemo, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
+import {createEffect, createMemo, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
 import {render} from 'solid-js/web';
 import {i18n} from '@lib/langPack';
 import I18n from '@lib/langPack';
@@ -87,6 +87,9 @@ function CodeInbox() {
   const [runtimeTick, setRuntimeTick] = createSignal(0);
   const [query, setQuery] = createSignal('');
   const [openGroupId, setOpenGroupId] = createSignal<string | null>(null);
+  // Mirror the selection into the turn tracker: a turn that finishes on the row
+  // the user is looking at is already read, so it must not paint a Done badge.
+  createEffect(() => codeSessionRuntime.setOpenGroup(openGroupId()));
   const [menu, setMenu] = createSignal<MenuState | null>(null);
   const [renaming, setRenaming] = createSignal<string | null>(null);
   const [renameValue, setRenameValue] = createSignal('');

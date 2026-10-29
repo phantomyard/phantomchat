@@ -79,6 +79,8 @@ export function createCodeSessionsAdapter(deps: CodeSessionsAdapterDeps): LocalA
 
     // Tombstones are terminal (see the header). A deleted entry REPLACES any
     // live record in the published map, so a stale blob can never win back.
+    // The live rows are read once, not once per tombstone.
+    let liveGroups: Set<string> | undefined;
     for(const tombstone of await deps.listTombstones()) {
       if(!tombstone?.groupId || !(tombstone.deletedAt > 0)) continue;
       map[tombstone.groupId] = {id: tombstone.groupId, updatedAt: tombstone.deletedAt, deleted: true};
@@ -86,7 +88,9 @@ export function createCodeSessionsAdapter(deps: CodeSessionsAdapterDeps): LocalA
       // A live record that survived a delete learned elsewhere is a
       // resurrection: apply() is skipped when the merge is a no-op, so the
       // teardown has to happen here or the row sits in the rail forever.
-      if(map[tombstone.groupId] && await deps.listSessions().then((sessions) => sessions.some((s) => s.groupId === tombstone.groupId))) {
+      // (The map write above is unconditional, so the test is the record.)
+      liveGroups ??= await deps.listSessions().then((sessions) => new Set(sessions.map((s) => s.groupId)));
+      if(liveGroups.has(tombstone.groupId)) {
         try {
           await deps.deleteSession(tombstone.groupId);
           await deps.forgetRuntime?.(tombstone.groupId);
