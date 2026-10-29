@@ -33,8 +33,8 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0",
-      "preview": "a2130cddb1b3a0ac9b6274899a9582d6be74c19bba2a08a42865679787a7ebe1",
-      "reason": "Adds the Code rail entry plus a boot restore of an OPTIONAL StateSettings flag (absence reads as off) and mounts the inbox on demand. The folder rail, filter ids and folder storage are unchanged."
+      "preview": "b71d4e2c1f08c7bc82520a762b6a53fe805dc7b245463247eef00822c71fb86e",
+      "reason": "Rail shows only All Chats / Groups / Code: custom folders and the add-chats pill removed from the render. No filter writes, no ordering change, nothing migrated or deleted."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "preview": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
@@ -58,8 +58,8 @@
     },
     "src/lang.ts": {
       "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd",
-      "preview": "91168cc133e1a8db874ff77d264b2ef3060f410d5001cac5581d86be3fe053d4",
-      "reason": "New UI strings only; no behaviour change."
+      "preview": "51b10890f0ebb040c0f3ae8667b2e151105a9e14cc33363a7c2bb3d0d3f92034",
+      "reason": "Adds Code Mode session lang keys and the generated strings bundle. No stored data."
     },
     "src/lib/appDialogsManager.ts": {
       "preview": "afb5aae8ebd0af2e2f0ac9277904d7b76609d37d57b3029be3859681b5466324",
@@ -73,8 +73,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3",
-      "preview": "192b36e73a2a3c9f777c8f3be84119920931a93f32ba4c0e5fe5e1d0906cbd60",
-      "reason": "Generated from lang.ts by src/scripts/format_lang.js; strings only."
+      "preview": "c5d89cd28843315ff07aa7a7411a3af3cb68b02dde07df4b26ffc07511f47874",
+      "reason": "Generated from lang.ts (new Code Mode session keys). Localisation strings only."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "cc10ea262b1bc9bcaca4f91fc39ca7f99449a5889c648a6395141d5f9c97b48c",
@@ -88,8 +88,8 @@
     },
     "src/components/phantomchat/codeInbox.tsx": {
       "stable": "absent",
-      "preview": "c091f51feb8c888f4384fef74de32fd39a1e394289f8fbdf873854baf379e9a4",
-      "reason": "New code-mode inbox view. It READS the existing phantom mapping store and the cached dialogs and writes nothing at all; no stored format, key or migration changes."
+      "preview": "c403512b8934b99cbd611820bb0ea32e4f0dd592a3b512174da569363cdffa2d",
+      "reason": "Code Mode rail rebuilt as a session list (search, new session, active/archived/working, rename/archive/delete menus, new-session composer). Renders only session records; chat storage untouched."
     },
     "src/components/phantomchat/codePhantomOpsPanel.tsx": {
       "stable": "absent",
@@ -98,8 +98,8 @@
     },
     "src/lib/code-mode.ts": {
       "stable": "absent",
-      "preview": "ac7cb147b56f71890fb74b9b5a6e8c915d908a3401a4825bc6c531f131b97435",
-      "reason": "New file: device-local mode plumbing (one optional StateSettings flag + a body class) and the pure inbox list builder. No filter/folder storage and no Nostr sync."
+      "preview": "c302b6757bb9ac7c680f2183b7f4587ad023cae84a83974c70f4cc5466088b50",
+      "reason": "Pure session logic (auto title, grouping, badges, elapsed). No storage access; the mode flag stays device-local."
     },
     "src/lib/phantomchat/code-mode-phantomops.ts": {
       "stable": "absent",
@@ -120,6 +120,61 @@
       "stable": "82e9c49c24207aea0e7c112c60f80e2032a21d1bf7391b15fefaf4a8742c6e70",
       "preview": "5cf2ba67e7498dc1b05596681a4562640d3db62716a472484c928dda6e2998d0",
       "reason": "Type-only change: adds the optional iconText field to FolderItemPayload. No runtime code and no stored shape change."
+    },
+    "src/components/sidebarLeft/index.ts": {
+      "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
+      "preview": "b3a6fc78892f05c5961501a58d58b53b6f8cc272bd58438464685e8ac285c244",
+      "reason": "Removes the New Folder entry from the add menu and the Folders entry from the hamburger. No storage or sync behaviour changes."
+    },
+    "src/index.ts": {
+      "stable": "32681612805b18d825a38b767a820d42f7c3653c338ebf25bebd0be0eb6d99e0",
+      "preview": "9dd4383f1f46fbaf54ce90abaf1c65dcd2ca5c3b80c2ddb794e745f28750f31e",
+      "reason": "Forces the folders sidebar on (the setting no longer has an in-app toggle). Preference value is left untouched; only the boot-time projection changes."
+    },
+    "src/lib/phantomchat/code-session-runtime.ts": {
+      "stable": "absent",
+      "preview": "6b9a930e00c06d9d4484d94d5c6b43961d69ab65c183fcd85ea6381746cee4b7",
+      "reason": "Device-local turn state for session rows, persisted to its own IndexedDB store. Never published to a relay."
+    },
+    "src/lib/phantomchat/code-session-service.ts": {
+      "stable": "absent",
+      "preview": "7127b2bfaeb2139a4a01bbee7051ce7ba78d0aadc96de24c6c1eabbb51c5a765",
+      "reason": "Session lifecycle (create/rename/archive/delete/switch phantom) built on the existing group API. Delete tombstones the session only; no history is deleted."
+    },
+    "src/lib/phantomchat/code-sessions-db.ts": {
+      "stable": "absent",
+      "preview": "2530526f711e6f1c38f98c101f96b6c9ffcaa215785a83c463083088a5f4a50f",
+      "reason": "New IndexedDB database phantomchat-code-sessions (sessions/tombstones/local runtime). New store only; existing stores untouched."
+    },
+    "src/lib/phantomchat/code-sessions-sync-adapter.ts": {
+      "stable": "absent",
+      "preview": "441c7fccba80ec8a16ed9d9a9204b7fc9067982069d5ac1f2dbe61e31b09eaee",
+      "reason": "New CRDT domain phantomchat.chat/code-sessions, encrypted like contacts/groups, additive: unknown d-tags are ignored by older clients."
+    },
+    "src/lib/phantomchat/group-api.ts": {
+      "stable": "bb78a69b01f693e38954b9212527bddb4108a08194e493db25a83f40942aee9e",
+      "preview": "59f6448f556f7de8594446292ef4ffaf8bbe63e5e54eb3a0b082b67f6539abc0",
+      "reason": "Adds an optional sessionGroup flag to createGroup and the create payload. Absent means unchanged behaviour; no member or admin semantics touched."
+    },
+    "src/lib/phantomchat/group-types.ts": {
+      "stable": "8e1db65ee2a54edf87ba16dae2e254c0e65209748de4af0ed4e14f68b067d90d",
+      "preview": "499dcd8effd5f4b2344217d27ea22f8124db0215abad00042f03565ce8a18bce",
+      "reason": "Optional sessionGroup field on GroupRecord/GroupControlPayload. No required field, no migration."
+    },
+    "src/lib/phantomchat/phantomchat-groups-sync.ts": {
+      "stable": "a46baa8ccc438e8d353f242f3e9ca204b66f6343223dc33c418737b957e76965",
+      "preview": "fb8f68c00c965c097f9f6ddcccd4ab63975adecd69e5a03d3dde04c7c3d1ea84",
+      "reason": "Session groups skip the chat-list dialog row. Chat/peer injection still happens, so transcripts render; ordinary groups unchanged."
+    },
+    "src/lib/phantomchat/phantomchat-sync-triggers.ts": {
+      "stable": "7b0b46be4c77d8fd0e7e4de5c45a8cd9836f83cfd9c6205ab4b2a42d37be250a",
+      "preview": "db737113b29f2f0ccf0e562c5a8025438d337e00ab3491443c8ec4eb34e04f3a",
+      "reason": "Registers the code-sessions publish domain alongside contacts/groups/read-state. No change to the existing domains."
+    },
+    "src/pages/phantomchat-onboarding-integration.ts": {
+      "stable": "fce5f5d9aa6b0689d0073ca1edd6253dd1806e9ceb26701b09f5e8d1abb3ab05",
+      "preview": "f4be21aaa8afe4e473364e1e25aed29580c5918ac4f2192f54c45e8edbf540e2",
+      "reason": "Wires the code-sessions CRDT engine at boot. Passenger reconcile, retry loop and ready gate semantics unchanged for the existing domains."
     }
   },
   "stableVersion": "1.0.335"
