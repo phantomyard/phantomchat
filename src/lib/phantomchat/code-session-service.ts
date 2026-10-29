@@ -13,7 +13,7 @@
  * Code rail is the only place they are rendered.
  *
  * Lifecycle:
- *   create   — mint the group from the ✏️ menu (`New Coding Session`), title
+ *   create   — mint the group from the ✏️ menu (`New Code Session`), title
  *              EMPTY and `hasPrompt: false`: the rail shows `New session`
  *   first    — the first outgoing message names it: first 10 chars + …
  *   rename   — group name + session title; kills auto-naming forever
@@ -100,7 +100,7 @@ export interface CreateSessionResult {
  * saved with no title, and the rail shows `New session` until the first
  * message names it.
  *
- * This is what `New Coding Session` in the ✏️ menu calls — the picker is the
+ * This is what `New Code Session` in the ✏️ menu calls — the picker is the
  * thing that chooses the phantom, so creation cannot wait for a prompt.
  */
 export async function createPendingSession(peerPubkey: string): Promise<CreateSessionResult> {

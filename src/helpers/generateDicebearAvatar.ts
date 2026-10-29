@@ -270,6 +270,78 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
 }
 
 /**
+ * Code Mode (#279): the FIXED avatar for every coding session group — no seed,
+ * so every session wears the same code sigil regardless of which phantom it
+ * talks to. Same viewBox + circle-clip language as the phantom avatars.
+ */
+export function generateCodeSessionAvatarSvg(): string {
+  const id = 'codesession';
+  // Same Electric Cyan family as bgGradients entry 0 — the Code rail's `#` is
+  // drawn in the rail's own colour, this stays in that family.
+  const bgStart = '#032030';
+  const bgEnd = '#00f2fe';
+  const stroke = '#38bdf888';
+  const ink = '#0b0e14';
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg-${id}" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${bgStart}"/>
+      <stop offset="100%" stop-color="${bgEnd}"/>
+    </linearGradient>
+    <filter id="glow-${id}" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="clip-${id}">
+      <circle cx="64" cy="64" r="64"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#clip-${id})">
+    <circle cx="64" cy="64" r="64" fill="url(#bg-${id})"/>
+    <circle cx="64" cy="64" r="62" fill="none" stroke="${stroke}" stroke-width="2" opacity="0.5"/>
+    <!-- The code mark: </> -->
+    <g fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow-${id})">
+      <path d="M 30 38 L 52 64 L 30 90"/>
+      <path d="M 74 30 L 54 98" opacity="0.9"/>
+      <path d="M 98 38 L 76 64 L 98 90"/>
+    </g>
+  </g>
+</svg>`;
+}
+
+let codeSessionAvatarUrl: string | undefined;
+
+function svgToUrl(svg: string): string {
+  // jsdom/local harnesses lack URL.createObjectURL — a data URL renders the
+  // same image and keeps the helper usable outside the browser too.
+  try {
+    return URL.createObjectURL(new Blob([svg], {type: 'image/svg+xml'}));
+  } catch{
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+  }
+}
+
+/** Cached URL wrapper — the fixed session avatar never changes. */
+export function generateCodeSessionAvatar(): string {
+  if(!codeSessionAvatarUrl) {
+    codeSessionAvatarUrl = svgToUrl(generateCodeSessionAvatarSvg());
+  }
+  return codeSessionAvatarUrl;
+}
+
+/** Test helper: drop the module-level cache. */
+export function clearCodeSessionAvatar(): void {
+  try {
+    if(codeSessionAvatarUrl && codeSessionAvatarUrl.startsWith('blob:')) URL.revokeObjectURL(codeSessionAvatarUrl);
+  } catch{/* jsdom may lack revokeObjectURL — drop the cache either way */}
+  codeSessionAvatarUrl = undefined;
+}
+
+/**
  * Generate a deterministic Phantom avatar blob URL from a hex pubkey or seed.
  * Results are cached in memory — same seed + isGroup flag always returns same blob URL.
  */

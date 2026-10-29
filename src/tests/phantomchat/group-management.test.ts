@@ -1747,4 +1747,69 @@ describe('Group Management', () => {
       expect(store().save).toHaveBeenCalledWith(expect.objectContaining({groupId: boundId}));
     });
   });
+
+  // ─── Code Mode (#279): session groups only accept bot-tagged members ──
+
+  function saveBotProfile(pubkey: string, isBot: boolean) {
+    (globalThis as any).localStorage.setItem(
+      'phantomchat-peer-profile-cache:' + pubkey,
+      JSON.stringify({profile: {bot: isBot}, created_at: 1700000000})
+    );
+  }
+
+  describe('session member gate (bot-tagged only, #279)', () => {
+    const NON_BOT = 'e'.repeat(64);
+
+    it('addMember rejects a non-bot pubkey for a session group', async() => {
+      store().get.mockResolvedValueOnce(makeGroup({sessionGroup: true}));
+      saveBotProfile(NON_BOT, false);
+
+      await expect(api.addMember(GROUP_ID, NON_BOT)).rejects.toThrow('no bot tag');
+      expect(store().updateMembers).not.toHaveBeenCalled();
+    });
+
+    it('addMember accepts a bot-tagged pubkey for a session group', async() => {
+      store().get.mockResolvedValueOnce(makeGroup({sessionGroup: true}));
+      saveBotProfile(NEW_MEMBER, true);
+
+      await expect(api.addMember(GROUP_ID, NEW_MEMBER)).resolves.not.toThrow();
+      expect(store().updateMembers).toHaveBeenCalled();
+    });
+
+    it('addMember does not gate ordinary groups (no sessionGroup flag)', async() => {
+      store().get.mockResolvedValueOnce(makeGroup());
+      saveBotProfile(NON_BOT, false);
+
+      await expect(api.addMember(GROUP_ID, NON_BOT)).resolves.not.toThrow();
+      expect(store().updateMembers).toHaveBeenCalled();
+    });
+
+    it('handleAddMember drops the control for a non-bot target on a session group', async() => {
+      saveBotProfile(NON_BOT, false);
+      store().get.mockResolvedValueOnce(makeGroup({sessionGroup: true}));
+      const payload: GroupControlPayload = {
+        type: 'group_add_member',
+        groupId: GROUP_ID,
+        targetPubkey: NON_BOT,
+        memberPubkeys: [MEMBER_A, MEMBER_B, OWN_PUBKEY, NON_BOT]
+      };
+
+      await expect((api as any).handleAddMember(payload)).resolves.toBe(false);
+      expect(store().updateMembers).not.toHaveBeenCalled();
+    });
+
+    it('handleAddMember still applies bot-tagged targets on a session group', async() => {
+      saveBotProfile(NEW_MEMBER, true);
+      store().get.mockResolvedValueOnce(makeGroup({sessionGroup: true}));
+      const payload: GroupControlPayload = {
+        type: 'group_add_member',
+        groupId: GROUP_ID,
+        targetPubkey: NEW_MEMBER,
+        memberPubkeys: [MEMBER_A, MEMBER_B, OWN_PUBKEY, NEW_MEMBER]
+      };
+
+      await expect((api as any).handleAddMember(payload)).resolves.toBe(true);
+      expect(store().updateMembers).toHaveBeenCalled();
+    });
+  });
 });

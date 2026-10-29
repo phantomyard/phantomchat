@@ -174,6 +174,22 @@ function dispatchGroupHistoryAppend(groupPeerId: number, msg: any): void {
   }
 }
 
+/**
+ * Code Mode (#279): a session group is a coding thread, not a chat — its dialog
+ * must NEVER reach the chat list (Andrew: "sessions invisible in Groups Folder
+ * and All Chats — only visible in the Code rail"). The transcript itself flows
+ * through mirrors.messages + history_append and does not depend on the dialog
+ * record, so the message paths simply skip the dialog write for session groups.
+ */
+async function isSessionGroupPeer(groupId: string): Promise<boolean> {
+  try {
+    const rec = await getGroupStore().get(groupId);
+    return !!rec?.sessionGroup;
+  } catch{
+    return false;
+  }
+}
+
 function dispatchGroupDialogUpdate(groupPeerId: number, dialog: any): void {
   const toPeerId = (Number.prototype as any).toPeerId;
   const asPeerId = toPeerId ? (groupPeerId as any).toPeerId(true) : groupPeerId;
@@ -532,27 +548,34 @@ export async function handleGroupIncoming(
   await invalidateGroupHistoryCache(groupPeerId);
   dispatchGroupHistoryAppend(groupPeerId, msg);
 
-  const dialog = mapper.createTwebDialog({
-    peerId: groupPeerId,
-    topMessage: mid,
-    topMessageDate: timestampSec,
-    // #207: an own echo (cross-device send, or a self-wrap that wasn't
-    // deduped) is never unread. Only a genuinely new *incoming* message may
-    // bump the badge. Same-device echoes are dropped earlier by the persistent
-    // replay dedup in GroupAPI.handleIncomingGroupMessage, but a message sent
-    // from another device of ours legitimately reaches this path.
-    unreadCount: isOutgoing ? 0 : 1,
-    // Outbox cursor (= our own read state on members' messages) is consistent
-    // with unreadCount: for an incoming message we have not read yet, leave
-    // read_inbox_max_id at mid - 1 to model "all prior messages read, this one
-    // pending"; for our own echo everything up to mid is read. (After the user
-    // opens the chat, unread → 0 and the readInboxMaxId is bumped to mid by
-    // other paths.)
-    readInboxMaxId: isOutgoing || mid <= 0 ? mid : mid - 1,
-    readOutboxMaxId: mid
-  });
-  (dialog as any).topMessage = msg;
-  dispatchGroupDialogUpdate(groupPeerId, dialog);
+  // Session groups render only in the Code rail — never materialise a dialog
+  // row, or the phantom's first reply would push the session into All Chats.
+  // EVERYTHING else (transcript, mirrors, the new-message dispatch) still runs.
+  const sessionGroup = await isSessionGroupPeer(groupId);
+
+  if(!sessionGroup) {
+    const dialog = mapper.createTwebDialog({
+      peerId: groupPeerId,
+      topMessage: mid,
+      topMessageDate: timestampSec,
+      // #207: an own echo (cross-device send, or a self-wrap that wasn't
+      // deduped) is never unread. Only a genuinely new *incoming* message may
+      // bump the badge. Same-device echoes are dropped earlier by the persistent
+      // replay dedup in GroupAPI.handleIncomingGroupMessage, but a message sent
+      // from another device of ours legitimately reaches this path.
+      unreadCount: isOutgoing ? 0 : 1,
+      // Outbox cursor (= our own read state on members' messages) is consistent
+      // with unreadCount: for an incoming message we have not read yet, leave
+      // read_inbox_max_id at mid - 1 to model "all prior messages read, this one
+      // pending"; for our own echo everything up to mid is read. (After the user
+      // opens the chat, unread → 0 and the readInboxMaxId is bumped to mid by
+      // other paths.)
+      readInboxMaxId: isOutgoing || mid <= 0 ? mid : mid - 1,
+      readOutboxMaxId: mid
+    });
+    (dialog as any).topMessage = msg;
+    dispatchGroupDialogUpdate(groupPeerId, dialog);
+  }
 
   console.log(LOG_PREFIX, 'rx rendered', {groupPeerId, mid, groupId: groupId.slice(0, 8)});
   dispatch('phantomchat_new_message', {
@@ -804,18 +827,24 @@ export async function handleGroupOutgoing(
   await invalidateGroupHistoryCache(groupPeerId);
   dispatchGroupHistoryAppend(groupPeerId, msg);
 
-  const dialog = mapper.createTwebDialog({
-    peerId: groupPeerId,
-    topMessage: mid,
-    topMessageDate: timestampSec,
-    unreadCount: 0,
-    // Outgoing send: nothing unread. Without read markers tweb spams
-    // reloadConversation for this dialog every getDialogs pass.
-    readInboxMaxId: mid,
-    readOutboxMaxId: mid
-  });
-  (dialog as any).topMessage = msg;
-  dispatchGroupDialogUpdate(groupPeerId, dialog);
+  // Same Code-Mode gate as the receive path: the session stays out of the
+  // chat list even when it is this device that sends.
+  const sessionGroup = await isSessionGroupPeer(groupId);
+
+  if(!sessionGroup) {
+    const dialog = mapper.createTwebDialog({
+      peerId: groupPeerId,
+      topMessage: mid,
+      topMessageDate: timestampSec,
+      unreadCount: 0,
+      // Outgoing send: nothing unread. Without read markers tweb spams
+      // reloadConversation for this dialog every getDialogs pass.
+      readInboxMaxId: mid,
+      readOutboxMaxId: mid
+    });
+    (dialog as any).topMessage = msg;
+    dispatchGroupDialogUpdate(groupPeerId, dialog);
+  }
 
   console.log(LOG_PREFIX, 'tx rendered', {groupPeerId, mid, groupId: groupId.slice(0, 8)});
   dispatch('phantomchat_new_message', {

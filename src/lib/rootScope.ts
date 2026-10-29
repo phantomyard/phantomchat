@@ -75,7 +75,7 @@ export type BroadcastEvents = {
    *  the state; the inbox only listens. */
   'code_mode_changed': boolean,
 
-  /** The ✏️ menu's `New Coding Session` asking the rail to select Code Mode
+  /** The ✏️ menu's `New Code Session` asking the rail to select Code Mode
    *  (`lib/code-mode`). The rail owns the mode, so the menu only asks. */
   'code_mode_enter_requested': void,
 

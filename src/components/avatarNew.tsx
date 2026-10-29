@@ -48,7 +48,7 @@ import currencyStarIcon from '@components/currencyStarIcon';
 import type {ActiveAccountNumber} from '@lib/accounts/types';
 import {getCurrentAccount} from '@lib/accounts/getCurrentAccount';
 import {appSettings} from '@stores/appSettings';
-import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
+import {generateDicebearAvatar, generateCodeSessionAvatar} from '@helpers/generateDicebearAvatar';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import {getPubkey} from '@lib/phantomchat/virtual-peers-db';
 import {isSafeGroupAvatarUrl} from '@lib/phantomchat/blossom-servers';
@@ -65,7 +65,7 @@ const TEST_SWAPPING = 0;
 // round-trip. Cache the URL briefly — a stale hit only delays a changed
 // avatar until the next render cycle (group info updates re-render peers).
 const GROUP_AVATAR_TTL = 30_000;
-const groupAvatarCache = new Map<number, {url: string | undefined, at: number}>();
+const groupAvatarCache = new Map<number, {url: string | undefined, session?: boolean, at: number}>();
 
 /** Drop the memoised custom-avatar URL for a group after an info update, so
  *  a changed avatar renders on the next cycle instead of lagging up to
@@ -721,8 +721,18 @@ export const AvatarNew = (props: {
           if(!cached || Date.now() - cached.at > GROUP_AVATAR_TTL) {
             const {getGroupStore} = await import('@lib/phantomchat/group-store');
             const rec = await getGroupStore().getByPeerId(peerIdNum);
-            cached = {url: rec?.avatar, at: Date.now()};
+            cached = {url: rec?.avatar, session: !!rec?.sessionGroup, at: Date.now()};
             groupAvatarCache.set(peerIdNum, cached);
+          }
+          // Code Mode (#279): a session group wears the FIXED code sigil —
+          // deterministic, never the admin-set avatar, whatever the phantom.
+          if(cached.session && middleware()) {
+            const img = document.createElement('img');
+            img.className = 'avatar-photo';
+            await renderImageFromUrlPromise(img, generateCodeSessionAvatar(), props.useCache);
+            if(!middleware()) return;
+            _setMedia(img);
+            return {loadThumbPromise: Promise.resolve()} as any;
           }
           // Render-time defense in depth alongside the receive-path gate in
           // handleInfoUpdate: never dereference a URL that isn't a Blossom

@@ -1077,7 +1077,7 @@ export class AppSidebarLeft extends SidebarSlider {
     };
 
     /**
-     * `New Coding Session` — same picker as `New Group`, but the list is
+     * `New Code Session` — same picker as `New Group`, but the list is
      * restricted to PHANTOMS (bot-tagged contacts), single-tap, and the answer
      * mints a Code Mode session instead of a group chat.
      *
@@ -1151,7 +1151,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
       const pubkey = await getPubkey(Number(peerId.toUserId()));
       if(!pubkey) {
-        console.warn('[CodeMode] New Coding Session: peer is not a phantom mapping', peerId);
+        console.warn('[CodeMode] New Code Session: peer is not a phantom mapping', peerId);
         return;
       }
 
@@ -1169,7 +1169,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
       await appImManager.setInnerPeer({peerId: session.peerId.toPeerId(true)});
     } catch(err) {
-      console.error('[CodeMode] New Coding Session failed', err);
+      console.error('[CodeMode] New Code Session failed', err);
     }
   }
 

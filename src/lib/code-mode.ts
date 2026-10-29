@@ -19,7 +19,7 @@
  * the SAME phantom possible: each one gets its own `group:<groupId>`
  * conversation on the phantom side, with no protocol change.
  *
- * Creation lives in the ordinary ✏️ menu (`New Coding Session`), not in this
+ * Creation lives in the ordinary ✏️ menu (`New Code Session`), not in this
  * inbox: it opens the bot-filtered contact picker, mints the session group and
  * drops the user into the real chat pane. Until the first message the row is
  * labelled `New session`; the first send renames it `<first 10 chars>…`. The
@@ -60,7 +60,7 @@ export const CODE_SESSIONS_CHANGED_EVENT = 'code_sessions_changed' as const;
 
 /**
  * rootScope event asking the folders rail to select Code Mode. The pencil menu
- * lives outside the rail (it is the global ✏️ button) and "New Coding Session"
+ * lives outside the rail (it is the global ✏️ button) and "New Code Session"
  * has to land the user in Code Mode, so it asks rather than reaching into the
  * rail's state.
  */

@@ -21,6 +21,7 @@ import {GroupDeliveryTracker} from './group-delivery-tracker';
 import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {getMessageStore} from './message-store';
 import {isSafeGroupAvatarUrl} from './blossom-servers';
+import {isPhantomPubkey} from './peer-profile-cache';
 import type {GroupStore} from './group-store';
 import type {GroupRecord, GroupControlPayload} from './group-types';
 import type {NTNostrEvent} from './nostr-crypto';
@@ -596,6 +597,12 @@ export class GroupAPI {
       // a duplicate-broadcast that confuses peers' membership state.
       this.log('[GroupAPI] addMember: pubkey already a member, skipping:', newMemberPubkey.slice(0, 8));
       return;
+    }
+
+    // Code Mode (#279, Andrew 2026-10-29): a session's members "can only be
+    // contacts with the bot tag" — reject anything else before any mutation.
+    if(group.sessionGroup && !isPhantomPubkey(newMemberPubkey)) {
+      throw new Error(`addMember: ${newMemberPubkey.slice(0, 8)}… has no bot tag — coding sessions only accept phantoms`);
     }
 
     const updatedMembers = [...group.members, newMemberPubkey];
@@ -2022,6 +2029,18 @@ export class GroupAPI {
     if(!payload.memberPubkeys || payload.memberPubkeys.length === 0) {
       return false;
     }
+
+    // Code Mode bot-tag gate on the receive path too: an admin whose device
+    // predates the gate (or a stranger forging tool) must not put a non-phantom
+    // into a session group. Dropping the control keeps the session 2-member.
+    try {
+      const peerGroup = await this.store.get(payload.groupId);
+      if(peerGroup?.sessionGroup && payload.targetPubkey && !isPhantomPubkey(payload.targetPubkey)) {
+        this.log.warn('[GroupAPI] group_add_member: ignoring non-bot member for session group', payload.groupId.slice(0, 8));
+        return false;
+      }
+    } catch{ /* store unreadable — fall through to the ordinary apply */ }
+
     await this.store.updateMembers(payload.groupId, payload.memberPubkeys);
     this.log('[GroupAPI] group_add_member:', payload.targetPubkey?.slice(0, 8));
     return true;

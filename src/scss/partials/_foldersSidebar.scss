@@ -2,6 +2,18 @@
   --folders-sidebar-item-color: #717579;
 }
 
+/* Andrew, 2026-10-29: the pencil (new-chat menu) sat bottom-RIGHT and was always
+   in the way — it lives bottom-LEFT of the sidebar now. #new-menu (single id)
+   outranks the `.item-main .sidebar-content .btn-corner` corner placement. */
+#new-menu {
+  inset-inline-end: auto !important;
+  inset-inline-start: 1.25rem;
+
+  @include respond-to(handhelds) {
+    inset-inline-start: 14px;
+  }
+}
+
 .folders-sidebar {
   position: relative;
   flex: 5rem 0 0;

@@ -218,8 +218,7 @@ export function FoldersSidebarContent(props: {
 
   /**
    * Load and mount the Code inbox once, on demand. Dynamic import keeps the
-   * inbox (and the PhantomOps client inside it) out of the boot path, so Code
-   * Mode costs nothing until it is used.
+   * inbox out of the boot path, so Code Mode costs nothing until it is used.
    */
   let codeInboxMounted = false;
   function ensureCodeInboxMounted() {
@@ -283,7 +282,7 @@ export function FoldersSidebarContent(props: {
       updateAllFolderNotifications();
     });
 
-    // `New Coding Session` lives in the global pencil, outside this rail, so it
+    // `New Code Session` lives in the global pencil, outside this rail, so it
     // asks for the mode instead of setting the flag itself.
     listenerSetter.add(rootScope)(CODE_MODE_ENTER_EVENT, () => {
       void selectCodeMode();

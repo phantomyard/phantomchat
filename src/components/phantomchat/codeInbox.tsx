@@ -14,7 +14,7 @@
  * the ordinary chat pane at that group, which gives the full real transcript
  * with the real composer; nothing about the chat path changes.
  *
- * CREATION IS NOT IN HERE. `New Coding Session` lives in the global ✏️ menu
+ * CREATION IS NOT IN HERE. `New Code Session` lives in the global ✏️ menu
  * (see sidebarLeft.startCodingSession): it opens the bot-filtered contact
  * picker, mints the group, selects Code Mode and opens the pane. This inbox
  * only lists, renames, archives and deletes.
@@ -58,6 +58,7 @@ import {
 } from '@lib/phantomchat/code-session-service';
 import {codeSessionRuntime, attachRuntimeEvents} from '@lib/phantomchat/code-session-runtime';
 import type {BroadcastEvents} from '@lib/rootScope';
+import {generateCodeSessionAvatar} from '@helpers/generateDicebearAvatar';
 
 /** Backstop re-read for anything that changes sessions without an event. */
 const REFRESH_INTERVAL_MS = 15_000;
@@ -380,6 +381,12 @@ function CodeInbox() {
             onContextMenu={(event) => openMenu(event, props.row, props.kind)}
             onClick={() => void openSession(props.row)}
           >
+            <img
+              class="code-session__avatar"
+              src={generateCodeSessionAvatar()}
+              alt=""
+              draggable={false}
+            />
             <div class="code-session__body">
               <div class="code-session__title">{titleOf(props.row)}</div>
             </div>

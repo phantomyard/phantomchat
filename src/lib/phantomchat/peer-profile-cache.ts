@@ -55,6 +55,17 @@ export function loadCachedPeerProfile(pubkey: string): CachedPeerProfile | null 
   }
 }
 
+/**
+ * Code Mode (#279, Andrew 2026-10-29): a session's members "can only be
+ * contacts with the bot tag". Kind-0 cached profiles carry `profile.bot` for
+ * phantoms; non-phantom contacts typically don't. Used as the member gate on
+ * session groups (the creator's picker is bot-filtered too, so the kind-0 is
+ * cached by the time members can change).
+ */
+export function isPhantomPubkey(pubkey: string): boolean {
+  return !!loadCachedPeerProfile(pubkey)?.profile?.bot;
+}
+
 export function saveCachedPeerProfile(pubkey: string, cached: CachedPeerProfile): void {
   try {
     localStorage.setItem(PEER_PROFILE_CACHE_PREFIX + pubkey, JSON.stringify(cached));
