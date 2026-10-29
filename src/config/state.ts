@@ -119,7 +119,9 @@ export type StateSettings = {
   cacheSize: number,
   showArchiveInChatList: boolean,
   /** Preferred chat folder opened on fresh startup (#267). Device-local, never synced. */
-  defaultChatFolderId?: number
+  defaultChatFolderId?: number,
+  /** Code Mode rail selection. Device-local, never synced (see lib/code-mode). */
+  codeModeEnabled?: boolean
 };
 
 type CacheSomething<T> = {

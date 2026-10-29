@@ -1656,6 +1656,7 @@ const lang = {
   'FilterAllChatsShort': 'All',
   'FilterContacts': 'Contacts',
   'FilterGroups': 'Groups',
+  'CodeMode': 'Code',
   'FoldersSyncOverwritten': 'Folders updated from another device. Your local changes were overwritten.',
   'Call': 'Call',
   'VideoCall': 'Video Call',

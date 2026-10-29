@@ -13,6 +13,14 @@ import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS} from '@appManagers/const
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {MyDialogFilter} from '@lib/storages/filters';
+import {appSettings, setAppSettings} from '@stores/appSettings';
+import {
+  CODE_MODE_EMOJI_ICON,
+  CODE_MODE_LANG_KEY,
+  CODE_MODE_SETTING_KEY,
+  applyCodeModeClass,
+  isCodeModeEnabled
+} from '@lib/code-mode';
 import useHasFoldersSidebar from '@stores/foldersSidebar';
 import {IconTsx} from '@components/iconTsx';
 import ripple from '@components/ripple';
@@ -50,6 +58,11 @@ export function FoldersSidebarContent(props: {
   } = useHotReloadGuard();
 
   const [selectedFolderId, setSelectedFolderId] = createSignal<number>(FOLDER_ID_ALL);
+  /**
+   * Code Mode is a rail selection, not a dialogFilter: it owns no filter id and
+   * therefore never reaches filter_order / FoldersSync. See lib/code-mode.
+   */
+  const [codeMode, setCodeMode] = createSignal<boolean>(isCodeModeEnabled(appSettings[CODE_MODE_SETTING_KEY]));
   const [folderItems, setFolderItems] = createStore<FolderItemPayload[]>([]);
   const [addFoldersOffset, setAddFoldersOffset] = createSignal(0);
   const [canShowAddFolders, setCanShowAddFolders] = createSignal(false);
@@ -189,6 +202,38 @@ export function FoldersSidebarContent(props: {
 
     hasSomethingOpen && await pause(300);
     rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: folderId});
+    return true;
+  }
+
+  /**
+   * Persist the Code Mode rail selection. Device-local (StateSettings), so it
+   * survives a reload on this device only and is never published.
+   */
+  function enterCodeMode(enabled: boolean) {
+    if(codeMode() === enabled) return;
+    setCodeMode(enabled);
+    setAppSettings(CODE_MODE_SETTING_KEY, enabled);
+  }
+
+  /**
+   * Picking a real folder leaves Code Mode. If the folder cannot be selected
+   * (folder limit popup already shown) the mode is left alone, so the rail
+   * never lies about where the chat list is pointing.
+   */
+  async function selectFolderFromRail(folderId: number) {
+    if(await setSelectedFolder(folderId)) {
+      enterCodeMode(false);
+    }
+  }
+
+  /**
+   * v1 Code list is the un-filtered chat list, so entering the mode parks the
+   * chat list on All Chats. Membership narrowing lands in a later phase — it
+   * must not need new storage here.
+   */
+  async function selectCodeMode() {
+    await setSelectedFolder(FOLDER_ID_ALL);
+    enterCodeMode(true);
   }
 
   createEffect(() => {
@@ -238,6 +283,8 @@ export function FoldersSidebarContent(props: {
 
     listenerSetter.add(rootScope)('changing_folder_from_chatlist', (id) => {
       setSelectedFolderId(id);
+      // A tab click is an explicit choice of chat list, so it also leaves Code Mode.
+      enterCodeMode(false);
     });
 
     onCleanup(() => {
@@ -275,6 +322,10 @@ export function FoldersSidebarContent(props: {
     setAddFoldersOffset(offset);
   };
 
+  createEffect(() => {
+    applyCodeModeClass(document.body, codeMode());
+  });
+
   createEffect(updateCanShowAddFolders);
 
   let openingChatFolders = false;
@@ -300,11 +351,25 @@ export function FoldersSidebarContent(props: {
               <FolderItem
                 {...folderItem}
                 ref={(el) => setFolderItemRefs({[id]: el})}
-                selected={isSelected(id)}
-                onClick={() => setSelectedFolder(id)}
+                selected={isSelected(id) && !codeMode()}
+                onClick={() => selectFolderFromRail(id)}
               />
             );
           }}</For>
+
+          {/*
+            * Code Mode sits directly under the folder list, where Andrew sketched
+            * it. It is deliberately NOT a `dialogFilter`: no filter id, no
+            * filter_order entry, no FoldersSync snapshot row — see lib/code-mode.
+            */}
+          <FolderItem
+            class="folders-sidebar__menu-button folders-sidebar__code-button"
+            icon="limit_folders"
+            emojiIcon={CODE_MODE_EMOJI_ICON}
+            name={i18n(CODE_MODE_LANG_KEY)}
+            selected={codeMode()}
+            onClick={() => selectCodeMode()}
+          />
         </Scrollable>
 
         <Animated type="cross-fade" mode="add-remove">
