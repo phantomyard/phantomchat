@@ -33,7 +33,7 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0",
-      "preview": "db461b364c00eb78bb270d6d72cf87068e6ad363229a752fae5a8d9fdc62abdb",
+      "preview": "a2130cddb1b3a0ac9b6274899a9582d6be74c19bba2a08a42865679787a7ebe1",
       "reason": "Adds the Code rail entry plus a boot restore of an OPTIONAL StateSettings flag (absence reads as off) and mounts the inbox on demand. The folder rail, filter ids and folder storage are unchanged."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
@@ -98,7 +98,7 @@
     },
     "src/lib/code-mode.ts": {
       "stable": "absent",
-      "preview": "41783bf5e3c2aeb83b887e85ea198c0a195f6f869642c2166d4d0c08feaa219c",
+      "preview": "ac7cb147b56f71890fb74b9b5a6e8c915d908a3401a4825bc6c531f131b97435",
       "reason": "New file: device-local mode plumbing (one optional StateSettings flag + a body class) and the pure inbox list builder. No filter/folder storage and no Nostr sync."
     },
     "src/lib/phantomchat/code-mode-phantomops.ts": {
@@ -110,6 +110,16 @@
       "stable": "2358db5bb5b8c367361dfb5cef90cd60d72e99023ed9f8a880b65c9d628cf754",
       "preview": "988cd208bb0fd8ef343c7f2de54a0e20335f233899f30d2ca1bd535f13023f55",
       "reason": "Adds one BroadcastEvents entry (code_mode_changed: boolean) to the typed event map. Event plumbing only; no runtime or storage behaviour change."
+    },
+    "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
+      "stable": "b688eae2335aa5aa803605db436f720f87229d2f60956c0cd9b76a8a9d081b13",
+      "preview": "86e7d931b12b6af0b42e2a35d2016d5b7ac687319d3eb7630213f92694940794",
+      "reason": "Additive only: an optional iconText slot renders a text glyph in place of the icomoon icon for rail entries that are not folders (the Code Mode hash). No storage, no persistence, no chat-path behaviour change; folder rows keep the exact existing render."
+    },
+    "src/components/sidebarLeft/foldersSidebarContent/types.ts": {
+      "stable": "82e9c49c24207aea0e7c112c60f80e2032a21d1bf7391b15fefaf4a8742c6e70",
+      "preview": "5cf2ba67e7498dc1b05596681a4562640d3db62716a472484c928dda6e2998d0",
+      "reason": "Type-only change: adds the optional iconText field to FolderItemPayload. No runtime code and no stored shape change."
     }
   },
   "stableVersion": "1.0.335"
