@@ -1,25 +1,24 @@
 /**
  * Code Mode ↔ PhantomOps client.
  *
- * The protocol is newline-delimited JSON over `/api/chat/message`, and the
- * token arrives through a `postMessage` hand-off from a login popup. Both of
- * those are easy to get subtly wrong and impossible to notice in a browser
- * until a phantom answers in the wrong place, so they are pinned here with a
- * fake fetch, a fake window and a fake sessionStorage — no network, no DOM.
+ * The protocol is newline-delimited JSON over `/api/chat/*`, authenticated with
+ * a PhantomOps API key (`pok_…`) sent as a Bearer header. Both of those are easy
+ * to get subtly wrong and impossible to notice in a browser until a phantom
+ * answers in the wrong place, so they are pinned here with a fake fetch and a
+ * fake local storage — no network, no DOM.
  */
 import {describe, it, expect} from 'vitest';
 import PhantomOpsClient, {
   PHANTOMOPS_BASE_URL,
-  PHANTOMOPS_PWA_ORIGIN,
-  PHANTOMOPS_TOKEN_MESSAGE,
   PHANTOMOPS_TOKEN_STORAGE_KEY,
   applyPhantomOpsEvent,
-  isPhantomOpsTokenMessage,
-  phantomOpsConnectUrl,
-  phantomOpsRequestOrigin,
+  isPhantomOpsApiToken,
+  maskPhantomOpsApiToken,
   readPhantomOpsEvents,
   type PhantomOpsState
 } from '@lib/phantomchat/code-mode-phantomops';
+
+const API_KEY = 'pok_0123456789ab_' + 'k'.repeat(48);
 
 const streamFrom = (chunks: string[]): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
@@ -43,27 +42,28 @@ const collect = async(chunks: string[]) => {
 
 describe('readPhantomOpsEvents', () => {
   it('reads one event per line', async() => {
-    const events = await collect(['{"status":"thinking"}\n{"status":"working","description":"Reading"}\n']);
-    expect(events.map((e) => e.status)).toEqual(['thinking', 'working']);
+    const events = await collect([
+      '{"status":"thinking"}\n{"status":"streaming","content":"hi"}\n'
+    ]);
+    expect(events).toEqual([
+      {status: 'thinking'},
+      {status: 'streaming', content: 'hi'}
+    ]);
   });
 
   it('reassembles a line split across chunks', async() => {
-    const events = await collect(['{"status":"stre', 'aming","content":"hel', 'lo"}\n']);
-    expect(events).toEqual([{status: 'streaming', content: 'hello'}]);
+    const events = await collect(['{"status":"thin', 'king"}\n']);
+    expect(events).toEqual([{status: 'thinking'}]);
   });
 
   it('flushes a trailing line with no newline', async() => {
-    const events = await collect(['{"status":"complete","response":"done"}']);
-    expect(events).toEqual([{status: 'complete', response: 'done'}]);
+    const events = await collect(['{"status":"complete","response":"ok"}']);
+    expect(events).toEqual([{status: 'complete', response: 'ok'}]);
   });
 
   it('skips malformed lines instead of killing the stream', async() => {
-    const events = await collect([
-      'not json\n',
-      '{"no_status":true}\n',
-      '{"status":"thinking"}\n'
-    ]);
-    expect(events).toEqual([{status: 'thinking'}]);
+    const events = await collect(['{"status":"thinking"}\nnot json\n{"status":"complete"}\n']);
+    expect(events.map((e) => e.status)).toEqual(['thinking', 'complete']);
   });
 
   it('ignores blank keepalive lines', async() => {
@@ -72,73 +72,37 @@ describe('readPhantomOpsEvents', () => {
   });
 });
 
-describe('phantomOpsRequestOrigin', () => {
-  it('lets an http(s) page declare itself', () => {
-    expect(phantomOpsRequestOrigin('https://phantomchat.app')).toBe('https://phantomchat.app');
-    expect(phantomOpsRequestOrigin('http://localhost:8080')).toBe('http://localhost:8080');
+describe('isPhantomOpsApiToken', () => {
+  it('accepts a minted key', () => {
+    expect(isPhantomOpsApiToken(API_KEY)).toBe(true);
+    expect(isPhantomOpsApiToken(`  ${API_KEY}  `)).toBe(true);
   });
 
-  it('maps the packaged desktop scheme to the PWA origin it stands for', () => {
-    // phantomops refuses a non-http(s) origin outright, and the claim is only
-    // ever used for the tenant site policy (which it re-checks per request).
-    expect(phantomOpsRequestOrigin('app://localhost')).toBe(PHANTOMOPS_PWA_ORIGIN);
-    expect(phantomOpsRequestOrigin('')).toBe(PHANTOMOPS_PWA_ORIGIN);
-    expect(phantomOpsRequestOrigin(undefined)).toBe(PHANTOMOPS_PWA_ORIGIN);
-  });
-});
-
-describe('phantomOpsConnectUrl', () => {
-  it('points at the widget connect page with the encoded origin', () => {
-    expect(phantomOpsConnectUrl(PHANTOMOPS_BASE_URL, 'https://phantomchat.app'))
-    .toBe(`${PHANTOMOPS_BASE_URL}/widget/connect?origin=https%3A%2F%2Fphantomchat.app`);
-  });
-
-  it('tolerates a trailing slash on the base url', () => {
-    expect(phantomOpsConnectUrl(`${PHANTOMOPS_BASE_URL}/`, 'https://phantomchat.app'))
-    .toContain('/widget/connect?origin=');
+  it('rejects anything that is not a pok_ key', () => {
+    expect(isPhantomOpsApiToken('')).toBe(false);
+    expect(isPhantomOpsApiToken(null)).toBe(false);
+    expect(isPhantomOpsApiToken(undefined)).toBe(false);
+    expect(isPhantomOpsApiToken('jwt.header.payload')).toBe(false);
+    expect(isPhantomOpsApiToken('pok_short')).toBe(false);
   });
 });
 
-describe('isPhantomOpsTokenMessage', () => {
-  const base = 'https://phantomops.app';
-  const page = 'https://phantomchat.app';
-  const tokenMessage = {type: PHANTOMOPS_TOKEN_MESSAGE, token: 'jwt', expiresIn: 3600, origin: page};
-
-  it('accepts the genuine hand-off', () => {
-    expect(isPhantomOpsTokenMessage(tokenMessage, base, base, page)).toBe(true);
+describe('maskPhantomOpsApiToken', () => {
+  it('keeps the key prefix and never the body', () => {
+    expect(maskPhantomOpsApiToken(API_KEY)).toBe('pok_0123456789ab_…');
+    expect(maskPhantomOpsApiToken(API_KEY)).not.toContain('kkkk');
   });
 
-  it('rejects a message from any other origin', () => {
-    expect(isPhantomOpsTokenMessage(tokenMessage, 'https://evil.example', base, page)).toBe(false);
-  });
-
-  it('rejects another message type', () => {
-    expect(isPhantomOpsTokenMessage({...tokenMessage, type: 'other'}, base, base, page)).toBe(false);
-  });
-
-  it('rejects an empty or missing token', () => {
-    expect(isPhantomOpsTokenMessage({...tokenMessage, token: ''}, base, base, page)).toBe(false);
-    expect(isPhantomOpsTokenMessage({type: PHANTOMOPS_TOKEN_MESSAGE}, base, base, page)).toBe(false);
-    expect(isPhantomOpsTokenMessage(null, base, base, page)).toBe(false);
-  });
-
-  it('rejects a token minted for a different origin', () => {
-    expect(isPhantomOpsTokenMessage({...tokenMessage, origin: 'https://someone-else.example'}, base, base, page))
-    .toBe(false);
-  });
-
-  it('accepts the PWA origin on the packaged desktop build', () => {
-    // The popup mints for the declared origin, which on app:// is the PWA one.
-    const declaration = {type: PHANTOMOPS_TOKEN_MESSAGE, token: 'jwt', origin: PHANTOMOPS_PWA_ORIGIN};
-    expect(isPhantomOpsTokenMessage(declaration, base, base, 'app://localhost')).toBe(true);
+  it('is empty without a key', () => {
+    expect(maskPhantomOpsApiToken(null)).toBe('');
   });
 });
 
 describe('applyPhantomOpsEvent', () => {
   const base: PhantomOpsState = {
     signedIn: true,
-    busy: false,
-    activity: null,
+    busy: true,
+    activity: 'Thinking…',
     error: null,
     messages: [],
     gate: null,
@@ -146,8 +110,8 @@ describe('applyPhantomOpsEvent', () => {
   };
 
   it('records the pinned session id', () => {
-    expect(applyPhantomOpsEvent(base, {status: 'session_open', session_id: 42}).sessionId).toBe(42);
-    expect(applyPhantomOpsEvent(base, {status: 'session_open', session_id: '42'}).sessionId).toBe(null);
+    const next = applyPhantomOpsEvent(base, {status: 'session_open', session_id: 42});
+    expect(next.sessionId).toBe(42);
   });
 
   it('surfaces a tool gate so the user can approve or deny it', () => {
@@ -155,57 +119,22 @@ describe('applyPhantomOpsEvent', () => {
       status: 'confirmation_required',
       gate_id: 'g1',
       tool: 'deploy',
-      args_summary: 'deploy live',
-      rationale: 'because'
+      args_summary: 'ship it',
+      rationale: 'you asked'
     });
-    expect(next.gate).toEqual({gateId: 'g1', tool: 'deploy', summary: 'deploy live', rationale: 'because'});
+    expect(next.gate).toEqual({gateId: 'g1', tool: 'deploy', summary: 'ship it', rationale: 'you asked'});
   });
 
   it('shows work-in-progress activity and clears it when a tool finishes', () => {
-    const working = applyPhantomOpsEvent(base, {status: 'working', description: 'Running tests'});
-    expect(working.activity).toBe('Running tests');
+    const working = applyPhantomOpsEvent(base, {status: 'working', description: 'Reading Plane'});
+    expect(working.activity).toBe('Reading Plane');
     expect(applyPhantomOpsEvent(working, {status: 'tool_complete'}).activity).toBe('Thinking…');
   });
 
   it('ignores unknown statuses without touching state', () => {
-    expect(applyPhantomOpsEvent(base, {status: 'host_context_held'})).toBe(base);
-    expect(applyPhantomOpsEvent(base, {status: 'something_new'})).toBe(base);
+    expect(applyPhantomOpsEvent(base, {status: 'brand_new_thing'})).toBe(base);
   });
 });
-
-interface FakeWindow {
-  location: {origin: string};
-  open: (url: string, target: string, features: string) => any;
-  addEventListener: (type: string, listener: (e: any) => void) => void;
-  removeEventListener: (type: string, listener: (e: any) => void) => void;
-}
-
-const fakeWindow = (origin = 'https://phantomchat.app') => {
-  const listeners = new Set<(e: any) => void>();
-  const wins: {url?: string; closed: boolean} = {closed: false};
-  const win: FakeWindow = {
-    location: {origin},
-    open(url) {
-      wins.url = url;
-      return wins as any;
-    },
-    addEventListener(type, listener) {
-      if(type === 'message') listeners.add(listener);
-    },
-    removeEventListener(type, listener) {
-      if(type === 'message') listeners.delete(listener);
-    }
-  };
-
-  return {
-    win,
-    popup: wins,
-    emit(data: any, messageOrigin = 'https://phantomops.app') {
-      for(const listener of listeners) listener({data, origin: messageOrigin});
-    },
-    listeners
-  };
-};
 
 const fakeStorage = () => {
   const map = new Map<string, string>();
@@ -224,102 +153,114 @@ const jsonResponse = (body: any, init: {status?: number, stream?: ReadableStream
   });
 };
 
-describe('PhantomOpsClient', () => {
-  it('resolves login from the popup hand-off and pins the token in sessionStorage', async() => {
-    const {win, emit} = fakeWindow();
+/** A client that already holds `API_KEY`, the shape a restored launch has. */
+const signedInClient = (fetchImpl: typeof fetch, storage = fakeStorage()) => {
+  storage.setItem(PHANTOMOPS_TOKEN_STORAGE_KEY, API_KEY);
+  const ops = new PhantomOpsClient({storage, fetch: fetchImpl});
+  return {ops, storage};
+};
+
+describe('PhantomOpsClient — connect', () => {
+  it('adopts the key, loads the chat and pins both', async() => {
     const storage = fakeStorage();
-    const requests: string[] = [];
-    const fetchImpl = (async(url: string) => {
-      requests.push(String(url));
-      if(String(url).endsWith('/api/widget/session')) return jsonResponse({session_id: 7});
-      return jsonResponse(null, {status: 404});
+    const requests: {url: string; auth?: string}[] = [];
+    const fetchImpl = (async(url: string, init: RequestInit) => {
+      requests.push({url: String(url), auth: (init?.headers as any)?.Authorization});
+      return jsonResponse({
+        session_id: 7,
+        messages: [{role: 'user', content: 'hi'}, {role: 'assistant', content: 'hello'}]
+      });
     }) as unknown as typeof fetch;
 
-    const ops = new PhantomOpsClient({window: win as any, storage, fetch: fetchImpl});
-    const login = ops.login();
-
-    emit({type: PHANTOMOPS_TOKEN_MESSAGE, token: 'jwt-1', expiresIn: 3600, origin: 'https://phantomchat.app'});
-    await login;
+    const ops = new PhantomOpsClient({storage, fetch: fetchImpl});
+    await ops.connect(`  ${API_KEY}  `);
 
     expect(ops.isSignedIn()).toBe(true);
-    expect(storage.map.get(PHANTOMOPS_TOKEN_STORAGE_KEY)).toContain('jwt-1');
-    // It also opens this site's chat, so history is scoped from the first turn.
-    expect(requests.some((r) => r.endsWith('/api/widget/session'))).toBe(true);
+    // the header reads the hint off the SAME state it renders, so a connect
+    // that emits before adopting the key would show a blank one
+    expect(ops.tokenHint()).toBe('pok_0123456789ab_…');
+    expect(ops.state.sessionId).toBe(7);
+    expect(ops.state.messages.map((m) => [m.role, m.text])).toEqual([['user', 'hi'], ['assistant', 'hello']]);
+    expect(storage.map.get(PHANTOMOPS_TOKEN_STORAGE_KEY)).toBe(API_KEY);
+    // history is the proof the key works: one authenticated GET, no popup
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(`${PHANTOMOPS_BASE_URL}/api/chat/history`);
+    expect(requests[0].auth).toBe(`Bearer ${API_KEY}`);
   });
 
-  it('ignores a token posted for another origin', async() => {
-    const {win, emit} = fakeWindow();
-    const ops = new PhantomOpsClient({window: win as any, storage: null, fetch: (async() => jsonResponse({})) as any});
-    const login = ops.login();
+  it('refuses an obvious paste error without touching the network', async() => {
+    let calls = 0;
+    const fetchImpl = (async() => {
+      calls++;
+      return jsonResponse({});
+    }) as unknown as typeof fetch;
 
-    emit({type: PHANTOMOPS_TOKEN_MESSAGE, token: 'jwt', origin: 'https://evil.example'});
+    const ops = new PhantomOpsClient({storage: fakeStorage(), fetch: fetchImpl});
+    await expect(ops.connect('jwt.header.payload')).rejects.toThrow(/pok_/);
+
+    expect(calls).toBe(0);
     expect(ops.isSignedIn()).toBe(false);
-
-    emit({type: PHANTOMOPS_TOKEN_MESSAGE, token: 'jwt', origin: 'https://phantomchat.app'});
-    await login;
-    expect(ops.isSignedIn()).toBe(true);
+    expect(ops.state.error).toMatch(/pok_/);
   });
 
-  it('reports a blocked popup instead of hanging', async() => {
-    const {win} = fakeWindow();
-    (win as any).open = (..._args: any[]): null => null;
-    const ops = new PhantomOpsClient({window: win as any, storage: null, fetch: (async() => jsonResponse({})) as any});
-
-    await expect(ops.login()).rejects.toThrow(/blocked/);
-    expect(ops.state.error).toMatch(/blocked/);
+  it('refuses an empty key', async() => {
+    const ops = new PhantomOpsClient({storage: fakeStorage(), fetch: (async() => jsonResponse({})) as any});
+    await expect(ops.connect('   ')).rejects.toThrow(/API key/);
+    expect(ops.isSignedIn()).toBe(false);
   });
 
-  it('reports a closed popup instead of hanging', async() => {
-    const {win, popup} = fakeWindow();
-    const ops = new PhantomOpsClient({
-      window: win as any,
-      storage: null,
-      fetch: (async() => jsonResponse({})) as any,
-      popupPollMs: 1
-    });
-
-    const login = ops.login();
-    popup.closed = true;
-    await expect(login).rejects.toThrow(/closed/);
-  });
-
-  it('restores a still-valid token but drops an expired one', () => {
+  it('drops a rejected key and says why', async() => {
     const storage = fakeStorage();
-    const later = Date.now() + 3_600_000;
-    storage.setItem(PHANTOMOPS_TOKEN_STORAGE_KEY, JSON.stringify({token: 'jwt', exp: later, session: 9}));
+    const fetchImpl = (async() => jsonResponse({detail: 'Invalid API key'}, {status: 401})) as unknown as typeof fetch;
 
-    const fresh = new PhantomOpsClient({window: fakeWindow().win as any, storage, fetch: (async() => jsonResponse({})) as any});
-    expect(fresh.isSignedIn()).toBe(true);
-    expect(fresh.state.sessionId).toBe(9);
+    const ops = new PhantomOpsClient({storage, fetch: fetchImpl});
+    await expect(ops.connect(API_KEY)).rejects.toThrow(/rejected/);
 
-    storage.setItem(PHANTOMOPS_TOKEN_STORAGE_KEY, JSON.stringify({token: 'jwt', exp: Date.now() - 1}));
-    const stale = new PhantomOpsClient({window: fakeWindow().win as any, storage, fetch: (async() => jsonResponse({})) as any});
-    expect(stale.isSignedIn()).toBe(false);
+    expect(ops.isSignedIn()).toBe(false);
     expect(storage.map.has(PHANTOMOPS_TOKEN_STORAGE_KEY)).toBe(false);
   });
 
-  it('streams a turn into the transcript', async() => {
-    const {win} = fakeWindow();
+  it('restores the key across a launch and forgets garbage', () => {
     const storage = fakeStorage();
-    const fetchImpl = (async(url: string) => {
-      if(String(url).endsWith('/api/chat/message')) {
-        return jsonResponse(null, {
-          stream: streamFrom([
-            '{"status":"thinking"}\n',
-            '{"status":"streaming","content":"Hel"}\n',
-            '{"status":"streaming","content":"lo"}\n',
-            '{"status":"complete","response":"Hello there"}\n'
-          ])
-        });
-      }
-      return jsonResponse(null, {status: 404});
+    storage.setItem(PHANTOMOPS_TOKEN_STORAGE_KEY, API_KEY);
+    expect(new PhantomOpsClient({storage, fetch: (async() => jsonResponse({})) as any}).isSignedIn()).toBe(true);
+
+    storage.setItem(PHANTOMOPS_TOKEN_STORAGE_KEY, 'not-a-key');
+    expect(new PhantomOpsClient({storage, fetch: (async() => jsonResponse({})) as any}).isSignedIn()).toBe(false);
+    expect(storage.map.has(PHANTOMOPS_TOKEN_STORAGE_KEY)).toBe(false);
+  });
+
+  it('clears the key and the thread on disconnect', async() => {
+    const {ops, storage} = signedInClient((async() => jsonResponse({session_id: 3, messages: []})) as any);
+    await ops.loadHistory();
+    expect(ops.state.sessionId).toBe(3);
+
+    await ops.logout();
+
+    expect(ops.isSignedIn()).toBe(false);
+    expect(ops.state.messages).toEqual([]);
+    expect(storage.map.has(PHANTOMOPS_TOKEN_STORAGE_KEY)).toBe(false);
+  });
+});
+
+describe('PhantomOpsClient — turns', () => {
+  it('streams a turn into the transcript, keyed to the adopted session', async() => {
+    const calls: {url: string; body?: any}[] = [];
+    const fetchImpl = (async(url: string, init: RequestInit) => {
+      calls.push({url: String(url), body: init?.body ? JSON.parse(init.body as string) : undefined});
+      if(String(url).endsWith('/api/chat/history')) return jsonResponse({session_id: 11, messages: []});
+      return jsonResponse(null, {
+        stream: streamFrom([
+          '{"status":"thinking"}\n',
+          '{"status":"streaming","content":"Hel"}\n',
+          '{"status":"streaming","content":"lo"}\n',
+          '{"status":"complete","response":"Hello there"}\n'
+        ])
+      });
     }) as unknown as typeof fetch;
 
-    const ops = new PhantomOpsClient({window: win as any, storage, fetch: fetchImpl});
-    // Signed in: reuse the login path so the token is real for the call.
-    (ops as any).token = 'jwt';
-    (ops as any).expiresAt = Date.now() + 3_600_000;
-
+    const {ops} = signedInClient(fetchImpl);
+    await ops.loadHistory();
     await ops.send('hi');
 
     expect(ops.state.messages.map((m) => [m.role, m.text])).toEqual([
@@ -328,15 +269,11 @@ describe('PhantomOpsClient', () => {
     ]);
     expect(ops.state.busy).toBe(false);
     expect(ops.state.activity).toBe(null);
+    expect(calls.at(-1)!.body).toMatchObject({content: 'hi', session_id: 11});
   });
 
   it('surfaces a server error instead of throwing', async() => {
-    const {win} = fakeWindow();
-    const fetchImpl = (async() => jsonResponse({detail: 'Phantom is busy'}, {status: 503})) as unknown as typeof fetch;
-
-    const ops = new PhantomOpsClient({window: win as any, storage: null, fetch: fetchImpl});
-    (ops as any).token = 'jwt';
-    (ops as any).expiresAt = Date.now() + 3_600_000;
+    const {ops} = signedInClient((async() => jsonResponse({detail: 'Phantom is busy'}, {status: 503})) as any);
 
     await ops.send('hi');
 
@@ -344,14 +281,8 @@ describe('PhantomOpsClient', () => {
     expect(ops.state.busy).toBe(false);
   });
 
-  it('signs out when the server says the token is gone', async() => {
-    const {win} = fakeWindow();
-    const fetchImpl = (async() => jsonResponse({detail: 'nope'}, {status: 401})) as unknown as typeof fetch;
-
-    const ops = new PhantomOpsClient({window: win as any, storage: null, fetch: fetchImpl});
-    (ops as any).token = 'jwt';
-    (ops as any).expiresAt = Date.now() + 3_600_000;
-    ops.state = {...ops.state, signedIn: true};
+  it('signs out when the server says the key is gone', async() => {
+    const {ops} = signedInClient((async() => jsonResponse({detail: 'nope'}, {status: 401})) as any);
 
     await ops.send('hi');
 
@@ -360,16 +291,11 @@ describe('PhantomOpsClient', () => {
   });
 
   it('does not send while a turn is already running', async() => {
-    const {win} = fakeWindow();
     let calls = 0;
-    const fetchImpl = (async() => {
+    const {ops} = signedInClient((async() => {
       calls++;
       return jsonResponse(null, {stream: streamFrom(['{"status":"complete","response":"x"}\n'])});
-    }) as unknown as typeof fetch;
-
-    const ops = new PhantomOpsClient({window: win as any, storage: null, fetch: fetchImpl});
-    (ops as any).token = 'jwt';
-    (ops as any).expiresAt = Date.now() + 3_600_000;
+    }) as any);
     ops.state = {...ops.state, busy: true};
 
     await ops.send('hi');
@@ -377,32 +303,23 @@ describe('PhantomOpsClient', () => {
   });
 
   it('ignores an empty draft', async() => {
-    const {win} = fakeWindow();
-    const ops = new PhantomOpsClient({window: win as any, storage: null, fetch: (async() => jsonResponse({})) as any});
-    (ops as any).token = 'jwt';
-    (ops as any).expiresAt = Date.now() + 3_600_000;
-
+    const {ops} = signedInClient((async() => jsonResponse({})) as any);
     await ops.send('   ');
     expect(ops.state.messages).toEqual([]);
   });
 
   it('answers a gate through /api/chat/confirm', async() => {
-    const {win} = fakeWindow();
     const calls: {url: string; body?: string}[] = [];
-    const fetchImpl = (async(url: string, init: RequestInit) => {
+    const {ops} = signedInClient((async(url: string, init: RequestInit) => {
       calls.push({url: String(url), body: init?.body as string});
       return jsonResponse({ok: true});
-    }) as unknown as typeof fetch;
-
-    const ops = new PhantomOpsClient({window: win as any, storage: null, fetch: fetchImpl});
-    (ops as any).token = 'jwt';
-    (ops as any).expiresAt = Date.now() + 3_600_000;
+    }) as any);
     ops.state = {...ops.state, gate: {gateId: 'g1', tool: 'deploy', summary: '', rationale: ''}};
 
     await ops.confirmGate('deny');
 
     expect(ops.state.gate).toBe(null);
     expect(calls[0].url).toContain('/api/chat/confirm');
-    expect(JSON.parse(calls[0].body!)).toEqual({gate_id: 'g1', action: 'deny'});
+    expect(JSON.parse(calls[0].body!)).toEqual({gate_id: 'g1', action: 'cancel'});
   });
 });

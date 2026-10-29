@@ -273,6 +273,28 @@ body.code-mode {
   color: var(--secondary-text-color);
 }
 
+.code-ops__keyinput {
+  width: 240px;
+  max-width: 100%;
+  padding: 9px 12px;
+  border-radius: 18px;
+  border: 1px solid var(--input-border-color, rgba(0, 0, 0, 0.12));
+  background: var(--surface-color, #fff);
+  color: inherit;
+  font-size: 14px;
+  font-family: var(--font-monospace, monospace);
+
+  &::placeholder {
+    color: var(--secondary-text-color);
+  }
+}
+
+.code-ops__key {
+  font-family: var(--font-monospace, monospace);
+  font-size: 11px;
+  color: var(--secondary-text-color);
+}
+
 .code-ops__signin-btn {
   margin-top: 6px;
   padding: 9px 18px;

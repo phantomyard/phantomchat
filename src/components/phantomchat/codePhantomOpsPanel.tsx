@@ -2,7 +2,7 @@
  * Code Mode → PhantomOps thread.
  *
  * PhantomOps is the one Code entry that is not a Nostr peer, so it gets its own
- * panel instead of the chat view: connect (widget login popup), then a plain
+ * panel instead of the chat view: paste a PhantomOps API key, then a plain
  * streaming thread against `/api/chat/*`.
  *
  * This is still a THIN client — no local engine, no tools, no filesystem. The
@@ -26,6 +26,7 @@ function CodePhantomOpsPanel(props: {onClose: () => void}) {
   const ops = getPhantomOpsClient();
   const [state, setState] = createSignal<PhantomOpsState>(ops.state);
   const [draft, setDraft] = createSignal('');
+  const [apiToken, setApiToken] = createSignal('');
   const [connecting, setConnecting] = createSignal(false);
 
   let listEl: HTMLDivElement | undefined;
@@ -37,12 +38,15 @@ function CodePhantomOpsPanel(props: {onClose: () => void}) {
   };
 
   const connect = async() => {
+    const token = apiToken().trim();
+    if(!token) return;
     setConnecting(true);
     try {
-      await ops.login();
-      await ops.loadHistory();
+      await ops.connect(token);
+      // the key is a secret: never keep it in component state after it works
+      setApiToken('');
     } catch{
-      // `login` already put a readable reason in state.error
+      // `connect` already put a readable reason in state.error
     } finally {
       setConnecting(false);
     }
@@ -61,7 +65,7 @@ function CodePhantomOpsPanel(props: {onClose: () => void}) {
       queueMicrotask(scrollToEnd);
     });
 
-    if(ops.isSignedIn()) void ops.loadHistory();
+    if(ops.isSignedIn()) void ops.loadHistory().catch(() => {});
     queueMicrotask(scrollToEnd);
     inputEl?.focus();
 
@@ -79,6 +83,7 @@ function CodePhantomOpsPanel(props: {onClose: () => void}) {
             <span class="code-ops__name">{i18n('CodeModePhantomOps')}</span>
             <Show when={state().signedIn}>
               <span class="code-ops__status">{state().activity || i18n('CodeModeConnected')}</span>
+              <span class="code-ops__key" title={i18n('CodeModePhantomOps').textContent}>{ops.tokenHint()}</span>
             </Show>
           </div>
           <Show when={state().signedIn}>
@@ -102,10 +107,25 @@ function CodePhantomOpsPanel(props: {onClose: () => void}) {
             <div class="code-ops__signin">
               <div class="code-ops__signin-title">{i18n('CodeModePhantomOps')}</div>
               <div class="code-ops__signin-hint">{i18n('CodeModePhantomOpsSignInHint')}</div>
+              <input
+                class="code-ops__keyinput"
+                type="password"
+                autocomplete="off"
+                spellcheck={false}
+                placeholder="pok_…"
+                value={apiToken()}
+                onInput={(e) => setApiToken(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if(e.key === 'Enter') {
+                    e.preventDefault();
+                    void connect();
+                  }
+                }}
+              />
               <button
                 class="code-ops__signin-btn"
                 type="button"
-                disabled={connecting()}
+                disabled={connecting() || !apiToken().trim()}
                 onClick={() => void connect()}
               >
                 {connecting() ? i18n('CodeModeConnecting') : i18n('CodeModeConnect')}

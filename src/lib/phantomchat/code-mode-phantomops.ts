@@ -6,51 +6,48 @@
  * wire — PhantomOps is the one Code entry that is NOT a Nostr peer, and this
  * module is its whole client.
  *
- * The flow is the same one the PhantomOps PWA and its embeddable widget use,
- * so there is nothing bespoke to keep in sync server-side:
+ * AUTH IS A PHANTOMOPS API KEY (`pok_…`), not a widget login.
  *
- *   login popup  →  POST /api/widget/token   (needs a FULL session)
- *                →  chat-scoped JWT, ~12h, pinned to (tenant, origin, user)
- *   then         →  POST /api/widget/session  (opens/finds this site's chat)
- *                   GET  /api/chat/history
- *                   POST /api/chat/message   (newline-delimited JSON stream)
- *                   POST /api/chat/stop
- *                   POST /api/chat/confirm   (tool/permission gate)
+ *   Account settings → API keys  →  paste the key here
+ *   then  →  GET  /api/chat/history          (the key's own chat, id echoed back)
+ *            POST /api/chat/message          (newline-delimited JSON stream)
+ *            POST /api/chat/stop
+ *            POST /api/chat/confirm          (tool/permission gate)
  *
- * Two things this module is deliberately careful about:
+ * `pok_` is a full-privilege credential for its owner: `get_chat_user` resolves
+ * it to the owner's user, so every `/api/chat/*` route accepts it directly —
+ * the same phantom, history, memory and skills the PWA gets. It is NOT a
+ * widget token, so no site-origin pinning and no host-input policy apply, and
+ * no login popup, `postMessage` hand-off or origin claim is involved at all.
+ * The key is the credential the phantomops gateway (`/api/v1`) uses too; this
+ * client just talks to the PWA chat routes because they stream status events
+ * and resolve gates, which the OpenAI-shaped gateway cannot express.
  *
- *  1. The ORIGIN CLAIM. `/api/widget/token` only accepts an http(s) origin, and
- *     the claim it mints is what the tenant's site policy is re-checked
- *     against on every request. The packaged desktop build runs on
- *     `app://localhost`, which the server refuses — so a non-http origin is
- *     reported as the PWA origin it actually is (`https://phantomchat.app`).
- *     Nothing trusts the client for this: the server pins the token to that
- *     origin and re-checks policy per request.
- *  2. The TOKEN IS NEVER IN localStorage. It lives in memory and in
- *     sessionStorage (tab-lifetime, same as PhantomOps' own widget), is
- *     chat-scoped, expires in ~12h and is revoked server-side on logout.
+ * Two consequences worth stating:
  *
- * Everything with a clock, a window, storage or fetch is injectable, so the
- * protocol is unit-testable without a browser or a live tenant.
+ *  1. The KEY IS A SECRET. It is a long-lived credential, so it is kept in
+ *     localStorage (a launch-scoped store would mean pasting it every start),
+ *     never rendered back in full, and cleared by Disconnect. Revoking it in
+ *     PhantomOps is what actually kills it — there is no session to expire.
+ *  2. HISTORY IS SERVER-SIDE. `/api/chat/history` resolves the key owner's
+ *     most recent chat and echoes its id back; the client adopts that id so
+ *     the next turn continues the thread instead of opening a new one.
+ *
+ * Everything with a clock, storage or fetch is injectable, so the protocol is
+ * unit-testable without a browser or a live tenant.
  */
 
 /** Canonical PhantomOps base URL (same one the PWA and opencode config use). */
 export const PHANTOMOPS_BASE_URL = 'https://phantomops.app';
 
-/** The origin a packaged desktop build reports: it IS this app. */
-export const PHANTOMOPS_PWA_ORIGIN = 'https://phantomchat.app';
+/** Prefix of every PhantomOps user API key. */
+export const PHANTOMOPS_API_TOKEN_PREFIX = 'pok_';
 
-/** Message type the login popup posts the token back with. */
-export const PHANTOMOPS_TOKEN_MESSAGE = 'phantomops:widget-token';
+/** Key the API token lives under in local storage. */
+export const PHANTOMOPS_TOKEN_STORAGE_KEY = 'phantomops.code-mode.api-token';
 
-/** Key the token blob lives under in sessionStorage. */
-export const PHANTOMOPS_TOKEN_STORAGE_KEY = 'phantomops.code-mode.token';
-
-/** Refresh the token this long before it actually expires. */
-export const PHANTOMOPS_TOKEN_REFRESH_MARGIN_MS = 60_000;
-
-/** Fallback TTL when the server does not send `expiresIn`. */
-export const PHANTOMOPS_TOKEN_FALLBACK_TTL_MS = 12 * 60 * 60 * 1000;
+/** Shortest plausible key body, so an obvious paste error is caught locally. */
+const API_TOKEN_MIN_LENGTH = 20;
 
 export type PhantomOpsRole = 'user' | 'assistant';
 
@@ -75,7 +72,7 @@ export interface PhantomOpsState {
   error: string | null;
   messages: PhantomOpsMessage[];
   gate: PhantomOpsGate | null;
-  /** Server-side chat id this site is pinned to, once known. */
+  /** Server-side chat id this key's thread lives in, once known. */
   sessionId: number | null;
 }
 
@@ -85,34 +82,30 @@ export interface PhantomOpsDeps {
   baseUrl?: string;
   /** Browser fetch. */
   fetch?: typeof fetch;
-  /** The window the popup + postMessage listener live on. */
-  window?: {
-    location: {origin: string};
-    open: (url: string, target: string, features: string) => any;
-    addEventListener: (type: string, listener: (e: any) => void) => void;
-    removeEventListener: (type: string, listener: (e: any) => void) => void;
-  };
-  /** sessionStorage-shaped store. `null` = memory only. */
+  /** localStorage-shaped store. `null` = memory only. */
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
-  now?: () => number;
-  /** How often to poll the popup for `closed`. */
-  popupPollMs?: number;
 }
 
 /**
- * The origin to declare to PhantomOps. An http(s) page declares itself; the
- * packaged desktop build (and anything else on a custom scheme) declares the
- * PWA origin, because `/api/widget/token` deliberately refuses anything else.
+ * Is this a PhantomOps API key?
+ *
+ * Deliberately loose: the prefix plus a sane minimum length. The server owns
+ * the real format (`pok_<12 hex>_<body>`) and answers 401 for anything it does
+ * not mint, so a stricter client-side pattern would only risk refusing a key
+ * minted after this shipped.
  */
-export function phantomOpsRequestOrigin(origin: string | undefined | null): string {
-  if(!origin) return PHANTOMOPS_PWA_ORIGIN;
-  return /^https?:\/\//i.test(origin) ? origin : PHANTOMOPS_PWA_ORIGIN;
+export function isPhantomOpsApiToken(value: string | null | undefined): boolean {
+  if(typeof value !== 'string') return false;
+  const token = value.trim();
+  return token.startsWith(PHANTOMOPS_API_TOKEN_PREFIX) && token.length >= API_TOKEN_MIN_LENGTH;
 }
 
-/** URL of the login popup for a given declared origin. */
-export function phantomOpsConnectUrl(baseUrl: string, origin: string): string {
-  const base = baseUrl.replace(/\/+$/, '');
-  return `${base}/widget/connect?origin=${encodeURIComponent(phantomOpsRequestOrigin(origin))}`;
+/** `pok_ab12cd34ef56_…` → `pok_ab12cd34ef56_……  ····` for display. Never the body. */
+export function maskPhantomOpsApiToken(token: string | null | undefined): string {
+  if(!token) return '';
+  const parts = token.trim().split('_');
+  if(parts.length >= 2) return `${parts[0]}_${parts[1]}_…`;
+  return `${token.slice(0, 4)}…`;
 }
 
 /**
@@ -163,27 +156,6 @@ export async function* readPhantomOpsEvents(
   }
 }
 
-/**
- * Is this `postMessage` payload the token hand-off for THIS page?
- *
- * Three gates: the message must come from the PhantomOps origin (never a
- * window that merely looks like it), carry our message type, and be minted for
- * the origin this page declares — which on the packaged desktop build is the
- * PWA origin, not `app://localhost`.
- */
-export function isPhantomOpsTokenMessage(
-  payload: any,
-  messageOrigin: string,
-  baseOrigin: string,
-  pageOrigin: string
-): boolean {
-  if(messageOrigin !== baseOrigin) return false;
-  if(!payload || payload.type !== PHANTOMOPS_TOKEN_MESSAGE) return false;
-  if(typeof payload.token !== 'string' || !payload.token) return false;
-  const declared = phantomOpsRequestOrigin(typeof payload.origin === 'string' ? payload.origin : pageOrigin);
-  return declared === phantomOpsRequestOrigin(pageOrigin);
-}
-
 /** Largest stream event → state change, isolated so it is easy to test. */
 export function applyPhantomOpsEvent(
   state: PhantomOpsState,
@@ -223,21 +195,27 @@ export function applyPhantomOpsEvent(
   }
 }
 
+/** A readable reason out of a failed response body, whatever shape it is. */
+async function errorDetail(response: Response): Promise<string | null> {
+  try {
+    const body = await response.clone().json() as any;
+    const detail = body?.detail;
+    if(typeof detail === 'string' && detail) return detail;
+    if(detail && typeof detail.message === 'string' && detail.message) return detail.message;
+  } catch{}
+  return null;
+}
+
 /**
- * Thin PhantomOps chat client. Owns the token, the pinned session id and the
- * streaming turn; the UI just renders `state`.
+ * Thin PhantomOps chat client. Owns the API key, the chat id and the streaming
+ * turn; the UI just renders `state`.
  */
 export default class PhantomOpsClient {
   private baseUrl: string;
-  private baseOrigin: string;
   private fetchImpl: typeof fetch;
-  private win: PhantomOpsDeps['window'];
   private storage: PhantomOpsDeps['storage'];
-  private now: () => number;
-  private popupPollMs: number;
 
   private token: string | null = null;
-  private expiresAt = 0;
   private epoch = 0;
   private nextMessageId = 1;
   private listeners = new Set<(state: PhantomOpsState) => void>();
@@ -246,12 +224,8 @@ export default class PhantomOpsClient {
 
   constructor(deps: PhantomOpsDeps = {}) {
     this.baseUrl = (deps.baseUrl || PHANTOMOPS_BASE_URL).replace(/\/+$/, '');
-    this.baseOrigin = new URL(this.baseUrl).origin;
     this.fetchImpl = deps.fetch || (fetch.bind(globalThis) as typeof fetch);
-    this.win = deps.window || (typeof window !== 'undefined' ? window as any : undefined);
     this.storage = deps.storage === undefined ? PhantomOpsClient.defaultStorage() : deps.storage;
-    this.now = deps.now || (() => Date.now());
-    this.popupPollMs = deps.popupPollMs ?? 500;
     this.restore();
   }
 
@@ -261,7 +235,7 @@ export default class PhantomOpsClient {
 
   private static defaultStorage(): PhantomOpsDeps['storage'] {
     try {
-      return typeof sessionStorage !== 'undefined' ? sessionStorage : null;
+      return typeof localStorage !== 'undefined' ? localStorage : null;
     } catch{
       return null;
     }
@@ -282,21 +256,19 @@ export default class PhantomOpsClient {
     for(const listener of this.listeners) listener(this.state);
   }
 
-  // ------------------------------------------------------------- token
-  /** Restore a still-valid token from the tab-scoped store. */
+  // ------------------------------------------------------------- api key
+  /** Restore the stored key. A key outlives the launch; it has no local expiry. */
   private restore(): void {
     if(!this.storage) return;
     try {
       const raw = this.storage.getItem(PHANTOMOPS_TOKEN_STORAGE_KEY);
       if(!raw) return;
-      const parsed = JSON.parse(raw) as {token?: string; exp?: number; session?: number};
-      if(!parsed.token || typeof parsed.exp !== 'number' || parsed.exp <= this.now() + PHANTOMOPS_TOKEN_REFRESH_MARGIN_MS) {
+      if(!isPhantomOpsApiToken(raw)) {
         this.storage.removeItem(PHANTOMOPS_TOKEN_STORAGE_KEY);
         return;
       }
-      this.token = parsed.token;
-      this.expiresAt = parsed.exp;
-      this.state = {...this.state, signedIn: true, sessionId: typeof parsed.session === 'number' ? parsed.session : null};
+      this.token = raw.trim();
+      this.state = {...this.state, signedIn: true};
     } catch{
       this.storage.removeItem(PHANTOMOPS_TOKEN_STORAGE_KEY);
     }
@@ -305,11 +277,7 @@ export default class PhantomOpsClient {
   private persist(): void {
     if(!this.storage || !this.token) return;
     try {
-      this.storage.setItem(PHANTOMOPS_TOKEN_STORAGE_KEY, JSON.stringify({
-        token: this.token,
-        exp: this.expiresAt,
-        session: this.state.sessionId
-      }));
+      this.storage.setItem(PHANTOMOPS_TOKEN_STORAGE_KEY, this.token);
     } catch{}
   }
 
@@ -321,7 +289,6 @@ export default class PhantomOpsClient {
 
   private signOutLocal(error: string | null = null): void {
     this.token = null;
-    this.expiresAt = 0;
     try {
       this.storage?.removeItem(PHANTOMOPS_TOKEN_STORAGE_KEY);
     } catch{}
@@ -329,85 +296,60 @@ export default class PhantomOpsClient {
   }
 
   isSignedIn(): boolean {
-    return !!this.token && this.expiresAt > this.now();
+    return !!this.token;
   }
 
-  // ------------------------------------------------------------- login
-  /**
-   * Open the PhantomOps login popup and resolve once the token arrives.
-   * Rejects with a readable reason when the popup is blocked or closed — the
-   * caller surfaces it, it never fails silently.
-   */
-  async login(): Promise<void> {
-    const win = this.win;
-    if(!win) throw new Error('PhantomOps login needs a browser window');
+  /** Masked form of the key in use, for the connected header. */
+  tokenHint(): string {
+    return maskPhantomOpsApiToken(this.token);
+  }
 
-    const pageOrigin = win.location.origin;
-    const url = phantomOpsConnectUrl(this.baseUrl, pageOrigin);
-    const popup = win.open(url, 'phantomops-login', 'popup,width=460,height=640');
-    if(!popup) {
-      const error = 'The PhantomOps login window was blocked. Allow pop-ups and try again.';
+  // ------------------------------------------------------------- connect
+  /**
+   * Adopt an API key and open the owner's chat. The history read is the proof
+   * the key works: 401 means the key is wrong or revoked, and nothing is
+   * persisted — the caller shows the reason, it never fails silently.
+   */
+  async connect(token: string): Promise<void> {
+    const candidate = (token || '').trim();
+    if(!candidate) {
+      const error = 'Paste your PhantomOps API key first.';
+      this.set({error});
+      throw new Error(error);
+    }
+    if(!isPhantomOpsApiToken(candidate)) {
+      const error = `That does not look like a PhantomOps API key — they start with ${PHANTOMOPS_API_TOKEN_PREFIX}.`;
       this.set({error});
       throw new Error(error);
     }
 
+    // token BEFORE the reset: the reset emits, and the UI reads the key hint
+    // from the same state it renders, so an emit with no token shows a blank.
+    this.token = candidate;
+    this.resetAccount({signedIn: true});
+
+    try {
+      await this.loadHistory();
+    } catch(error) {
+      const message = (error as Error)?.message;
+      if(message === 'unauthorized') {
+        throw new Error('PhantomOps rejected that API key. Check it, or mint a new one.');
+      }
+      this.signOutLocal(message || 'PhantomOps could not be reached.');
+      throw new Error(message || 'PhantomOps could not be reached.');
+    }
+
+    this.persist();
     this.set({error: null});
-
-    return new Promise<void>((resolve, reject) => {
-      // The interval id lives on an object so `finish` can clear it without
-      // the declaration-order dance (`poll` is created after the listener).
-      const guard: {poll?: ReturnType<typeof setInterval>} = {};
-      let settled = false;
-
-      const finish = (fn: () => void) => {
-        if(settled) return;
-        settled = true;
-        win.removeEventListener('message', onMessage);
-        if(guard.poll) clearInterval(guard.poll);
-        fn();
-      };
-
-      const onMessage = (event: any) => {
-        if(!isPhantomOpsTokenMessage(event?.data, event?.origin, this.baseOrigin, pageOrigin)) return;
-
-        const expiresIn = typeof event.data.expiresIn === 'number' ?
-          event.data.expiresIn * 1000 :
-          PHANTOMOPS_TOKEN_FALLBACK_TTL_MS;
-
-        finish(() => {
-          this.resetAccount();
-          this.token = event.data.token;
-          this.expiresAt = this.now() + expiresIn;
-          this.state = {...this.state, signedIn: true, error: null};
-          this.emit();
-          this.persist();
-          // Open (or find) this site's chat so history is scoped to us.
-          void this.openSiteChat();
-          resolve();
-        });
-      };
-
-      win.addEventListener('message', onMessage);
-      guard.poll = setInterval(() => {
-        if(popup.closed) {
-          finish(() => reject(new Error('The PhantomOps login window was closed before it finished.')));
-        }
-      }, this.popupPollMs);
-    });
   }
 
+  /**
+   * Forget the key locally. There is no session to revoke: the key is the
+   * credential, so "disconnect" is this browser forgetting it — the key itself
+   * stays valid until it is revoked in PhantomOps.
+   */
   async logout(): Promise<void> {
-    const token = this.token;
     this.signOutLocal();
-    if(!token) return;
-    try {
-      await this.fetchImpl(`${this.baseUrl}/api/widget/logout`, {
-        method: 'POST',
-        headers: {Authorization: `Bearer ${token}`}
-      });
-    } catch{
-      // best effort: the token expires on its own
-    }
   }
 
   // ------------------------------------------------------------- http
@@ -424,65 +366,41 @@ export default class PhantomOpsClient {
     if(epoch !== this.epoch) throw new Error('stale');
 
     if(response.status === 401) {
-      this.signOutLocal('Your PhantomOps session ended. Log in again.');
+      this.signOutLocal('PhantomOps rejected the API key. Paste a valid one, or mint a new one.');
       throw new Error('unauthorized');
-    }
-
-    if(response.status === 403) {
-      const detail = await response.clone().json().catch((): null => null);
-      if(detail?.detail?.code === 'widget_site_refused') {
-        this.signOutLocal(detail.detail.message || 'Your organisation does not allow PhantomOps here.');
-        throw new Error('unauthorized');
-      }
     }
 
     return response;
   }
 
-  /** Open (or find) this site's chat. Idempotent server-side. */
-  async openSiteChat(): Promise<void> {
-    const epoch = this.epoch;
-    try {
-      const response = await this.call('/api/widget/session', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({app_name: 'PhantomChat Code'})
-      });
-      if(!response.ok) return;
-
-      const body = await response.json() as {session_id?: number};
-      if(epoch !== this.epoch || this.state.busy) return;
-      if(typeof body.session_id === 'number' && body.session_id !== this.state.sessionId) {
-        this.set({sessionId: body.session_id});
-        this.persist();
-      }
-    } catch{
-      // history still works without it; the next send opens the session anyway
-    }
-  }
-
-  /** Load the thread's history (once per sign-in). */
+  /**
+   * Load the owner's most recent chat and adopt its id.
+   *
+   * `/api/chat/history` resolves the newest session when none is named and
+   * echoes it back (its own doc says the client MUST adopt it, or the next turn
+   * opens a new session and strands the conversation). Throws on 401 so
+   * `connect` can report a bad key; a plain transport failure is surfaced to
+   * the caller too, but does not leave a half-connected client behind.
+   */
   async loadHistory(): Promise<void> {
     const epoch = this.epoch;
-    try {
-      const query = this.state.sessionId ? `?session_id=${this.state.sessionId}` : '';
-      const response = await this.call(`/api/chat/history${query}`);
-      if(!response.ok) return;
+    const response = await this.call('/api/chat/history');
+    if(!response.ok) {
+      throw new Error(await errorDetail(response) || `PhantomOps could not answer (${response.status}).`);
+    }
 
-      const body = await response.json() as {messages?: any[]; session_id?: number};
-      if(epoch !== this.epoch || this.state.busy) return;
+    const body = await response.json() as {messages?: any[]; session_id?: number};
+    if(epoch !== this.epoch || this.state.busy) return;
 
-      const messages: PhantomOpsMessage[] = (body.messages || [])
-      .filter((m) => (m?.role === 'user' || m?.role === 'assistant') && typeof m.content === 'string' &&
-        m.content && m.content !== '__interrupted__')
-      .map((m) => ({id: this.nextMessageId++, role: m.role, text: m.content}));
+    const messages: PhantomOpsMessage[] = (body.messages || [])
+    .filter((m) => (m?.role === 'user' || m?.role === 'assistant') && typeof m.content === 'string' &&
+      m.content && m.content !== '__interrupted__')
+    .map((m) => ({id: this.nextMessageId++, role: m.role, text: m.content}));
 
-      this.set({
-        messages,
-        sessionId: typeof body.session_id === 'number' ? body.session_id : this.state.sessionId
-      });
-      this.persist();
-    } catch{}
+    this.set({
+      messages,
+      sessionId: typeof body.session_id === 'number' ? body.session_id : this.state.sessionId
+    });
   }
 
   // ------------------------------------------------------------- turn
@@ -522,8 +440,8 @@ export default class PhantomOpsClient {
       });
 
       if(!response.ok || !response.body) {
-        const detail = await response.json().catch(() => ({}));
-        throw new Error(typeof detail.detail === 'string' ? detail.detail : `PhantomOps could not answer (${response.status}).`);
+        const detail = await errorDetail(response);
+        throw new Error(detail || `PhantomOps could not answer (${response.status}).`);
       }
 
       for await (const event of readPhantomOpsEvents(response.body)) {
@@ -574,7 +492,7 @@ export default class PhantomOpsClient {
       await this.call('/api/chat/confirm', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({gate_id: gate.gateId, action})
+        body: JSON.stringify({gate_id: gate.gateId, action: action === 'approve' ? 'approve' : 'cancel'})
       });
     } catch{}
   }

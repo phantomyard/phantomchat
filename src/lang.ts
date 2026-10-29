@@ -1662,7 +1662,7 @@ const lang = {
   'CodeModeEmptyHint': 'Add a phantom by its npub — every phantombot persona is one contact.',
   'CodeModePhantomOps': 'PhantomOps',
   'CodeModePhantomOpsHint': 'Your organisation’s phantom',
-  'CodeModePhantomOpsSignInHint': 'Sign in to PhantomOps to work with your organisation’s phantom. A browser window opens and PhantomChat keeps only a chat-scoped session token.',
+  'CodeModePhantomOpsSignInHint': 'Paste a PhantomOps API key to work with your organisation’s phantom. Mint one in PhantomOps under Account settings → API keys; it stays on this device until you disconnect.',
   'CodeModeConnect': 'Connect',
   'CodeModeConnecting': 'Connecting…',
   'CodeModeConnected': 'Connected',
