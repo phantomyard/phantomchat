@@ -181,6 +181,57 @@ describe('code mode inbox lifecycle', () => {
   });
 });
 
+describe('session context menu works (Andrew 2026-10-30)', () => {
+  it('the outside-click closer must not fire for pointerdowns inside the menu', () => {
+    // The old closer (`setMenu(null)` on any pointerdown) unmounted the menu
+    // before its first click could land — the delegated Solid handler and the
+    // document closer both sit on `document`, so `stopPropagation` on the
+    // menu cannot keep the closer from firing. The fix is a containment
+    // check: menu ref + `menuEl.contains(target)`.
+    expect(inboxSrc).toMatch(/const closeMenu = \(event: PointerEvent\) => \{/);
+    expect(inboxSrc).toContain('if(menuEl && target && menuEl.contains(target)) return;');
+    expect(inboxSrc).toMatch(/ref=\{\(el\) => menuEl = el\}/);
+  });
+
+  it('archiving or deleting the open session clears the right pane', () => {
+    expect(inboxSrc).toMatch(/openGroupId\(\) === groupId\) \{\s*setOpenGroupId\(null\);\s*clearRightPane\(\);/);
+  });
+
+  it('on activation an open NON-session chat is parked, a session chat is not', () => {
+    expect(inboxSrc).toMatch(/hydrate\(\)\.then\(refresh\)\.then\(assertEmptyRightPane\)/);
+    expect(inboxSrc).toMatch(/if\(codeSessionRuntime\.groupIdForPeer\(peerId\)\) return;/);
+  });
+});
+
+describe('pencil lives in the rail in Code Mode (Andrew 2026-10-30)', () => {
+  it('sidebarLeft re-parents #new-menu on mode + breakpoint change', () => {
+    expect(sidebarSrc).toContain('placeNewMenuButton');
+    expect(sidebarSrc).toContain("document.getElementById('folders-sidebar')");
+    expect(sidebarSrc).toMatch(/new MutationObserver\(placeNewMenuButton\)/);
+    expect(sidebarSrc).toMatch(/matchMedia\('\(max-width: 925px\)'\)/);
+  });
+
+  it('the skin shows the pencil inside the rail', () => {
+    const scss = readFileSync(join(SRC, 'scss/phantomchat/_code-mode.scss'), 'utf8');
+    expect(scss).toMatch(/body\.code-mode \.folders-sidebar \.btn-new-menu \{/);
+    expect(scss).toContain('display: flex;');
+    expect(scss).toContain('inset-inline-start: 50% !important;');
+  });
+});
+
+describe('empty rail looks like an empty folder (Andrew 2026-10-30)', () => {
+  it('uses the folder 📂 sticker, not the chat-list EmptyChats.svg', () => {
+    expect(inboxSrc).toContain("wrapStickerEmoji({div: el, emoji: '📂', width: 128, height: 128})");
+    expect(inboxSrc).not.toMatch(/src=\"?\.?\/?assets\/img\/EmptyChats\.svg/);
+    expect(inboxSrc).toContain('empty-placeholder-folder');
+  });
+
+  it('keeps the folder-empty shape: header + subtitle', () => {
+    expect(inboxSrc).toContain('CodeModeEmptySessionsTitle');
+    expect(inboxSrc).toContain('CodeModeEmptySessionsHint');
+  });
+});
+
 describe('code mode skin hook', () => {
   it('uses a single body class, not inline styles', () => {
     expect(CODE_MODE_BODY_CLASS).toBe('code-mode');

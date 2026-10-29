@@ -57,6 +57,7 @@ import {
   setSessionArchived
 } from '@lib/phantomchat/code-session-service';
 import {codeSessionRuntime, attachRuntimeEvents} from '@lib/phantomchat/code-session-runtime';
+import wrapStickerEmoji from '@components/wrappers/stickerEmoji';
 import type {BroadcastEvents} from '@lib/rootScope';
 import {generateCodeSessionAvatar} from '@helpers/generateDicebearAvatar';
 
@@ -92,6 +93,12 @@ function CodeInbox() {
   // the user is looking at is already read, so it must not paint a Done badge.
   createEffect(() => codeSessionRuntime.setOpenGroup(openGroupId()));
   const [menu, setMenu] = createSignal<MenuState | null>(null);
+  // Andrew, 2026-10-30: the menu was unmounting itself before its first click
+  // could land — the global `pointerdown` closer and the button's own handler
+  // both sit on `document`, and `stopPropagation` cannot stop a later listener
+  // on the SAME node. The fix is containment: the closer must not fire for
+  // pointerdowns that happened inside the menu. This is the element.
+  let menuEl: HTMLElement | undefined;
   const [renaming, setRenaming] = createSignal<string | null>(null);
   const [renameValue, setRenameValue] = createSignal('');
   const [confirmDelete, setConfirmDelete] = createSignal<string | null>(null);
@@ -202,8 +209,29 @@ function CodeInbox() {
   const doArchive = async(groupId: string, archived: boolean) => {
     setMenu(null);
     await setSessionArchived(groupId, archived);
-    if(archived && openGroupId() === groupId) setOpenGroupId(null);
+    if(archived && openGroupId() === groupId) {
+      setOpenGroupId(null);
+      clearRightPane();
+    }
     void refresh();
+  };
+
+  /** The session just closed — the pane falls back to its empty background. */
+  const clearRightPane = () => {
+    if(appImManager.chat?.peerId) void appImManager.setPeer({});
+  };
+
+  /**
+   * After an activation with nothing open, the pane must be the theme's empty
+   * background (Andrew 2026-10-30), not a stale chat that leaked through a
+   * reload. Only runs on activation — a refresh loop would race the user's
+   * own opening clicks.
+   */
+  const assertEmptyRightPane = async() => {
+    const peerId = openChatPeerId();
+    if(!peerId) return;
+    if(codeSessionRuntime.groupIdForPeer(peerId)) return;
+    void appImManager.setPeer({});
   };
 
   const doDelete = async(groupId: string) => {
@@ -211,7 +239,10 @@ function CodeInbox() {
     setConfirmDelete(null);
     await deleteSessionEverywhere(groupId);
     codeSessionRuntime.forget(groupId);
-    if(openGroupId() === groupId) setOpenGroupId(null);
+    if(openGroupId() === groupId) {
+      setOpenGroupId(null);
+      clearRightPane();
+    }
     void refresh();
   };
 
@@ -292,7 +323,7 @@ function CodeInbox() {
         if(input) input.value = '';
         return;
       }
-      void refresh();
+      void codeSessionRuntime.hydrate().then(refresh).then(assertEmptyRightPane);
     };
 
     const onSessionsChanged = (): void => { void refresh(); };
@@ -326,7 +357,11 @@ function CodeInbox() {
       if(isActive()) void refresh();
     }, REFRESH_INTERVAL_MS);
 
-    const closeMenu = () => setMenu(null);
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if(menuEl && target && menuEl.contains(target)) return;
+      setMenu(null);
+    };
     document.addEventListener('pointerdown', closeMenu);
 
     attachSearchWidget();
@@ -437,9 +472,14 @@ function CodeInbox() {
         </Show>
 
         <Show when={!sessions().length}>
-          {/* Same placeholder component the empty chat list uses. */}
-          <div class="empty-placeholder empty-placeholder-dialogs visible code-inbox__empty">
-            <img class="empty-placeholder-dialogs-icon" src="assets/img/EmptyChats.svg" alt="" />
+          {/* Andrew, 2026-10-30: the empty rail must look like the empty
+              GROUP FOLDER — same 📂 sticker graphic, same shape of message —
+              not the chat list's EmptyChats.svg. */}
+          <div class="empty-placeholder empty-placeholder-folder visible code-inbox__empty">
+            <div
+              class="code-inbox__empty-emoji"
+              ref={(el) => void wrapStickerEmoji({div: el, emoji: '📂', width: 128, height: 128})}
+            />
             <div class="empty-placeholder-header">{i18n('CodeModeEmptySessionsTitle')}</div>
             <div class="empty-placeholder-subtitle">{i18n('CodeModeEmptySessionsHint')}</div>
           </div>
@@ -458,6 +498,7 @@ function CodeInbox() {
       <Show when={menuRow()}>
         {(resolved) => (
           <div
+            ref={(el) => menuEl = el}
             class="code-menu"
             style={{left: resolved().state.x + 'px', top: resolved().state.y + 'px'}}
             onPointerDown={(event) => event.stopPropagation()}

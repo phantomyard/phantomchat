@@ -198,6 +198,32 @@ export class AppSidebarLeft extends SidebarSlider {
     this.newBtnMenu = this.createNewChatsMenuButton();
     sidebarHeader.nextElementSibling.append(this.newBtnMenu);
 
+    // Andrew, 2026-10-30: in Code Mode the pencil lives IN the left icon rail,
+    // bottom corner — floating over the session list overlaps the rows and
+    // their right-click menu. The node is re-parented (listeners survive
+    // appendChild); on narrow screens the rail does not render at all, so the
+    // button stays in its ordinary home there. The body class is applied once
+    // the settings store hydrates — later than this line runs — so re-placing
+    // is driven by a MutationObserver on the class instead of assuming boot
+    // order. 925px mirrors the SCSS `$floating-left-sidebar` breakpoint.
+    const newMenuButtonHome = sidebarHeader.nextElementSibling as HTMLElement;
+    const placeNewMenuButton = () => {
+      const codeModeOn = document.body.classList.contains(CODE_MODE_BODY_CLASS);
+      const railRendered = !matchMedia('(max-width: 925px)').matches;
+      const rail = document.getElementById('folders-sidebar');
+      if(codeModeOn && railRendered && rail) {
+        rail.append(this.newBtnMenu);
+      } else if(this.newBtnMenu.parentElement === rail) {
+        newMenuButtonHome.append(this.newBtnMenu);
+      }
+    };
+    placeNewMenuButton();
+    new MutationObserver(placeNewMenuButton).observe(document.body, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+    matchMedia('(max-width: 925px)').addEventListener('change', placeNewMenuButton);
+
     this.updateBtn = document.createElement('div');
     this.updateBtn.className = 'btn-circle rp btn-corner z-depth-1 btn-update is-hidden';
     this.updateBtn.tabIndex = -1;
