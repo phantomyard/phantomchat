@@ -73,7 +73,11 @@ export default function FolderItem(props: FolderItemProps) {
     >
       <Show
         when={showCustomIcon()}
-        fallback={<IconTsx icon={props.icon} class="folders-sidebar__folder-item-icon" />}
+        fallback={props.iconText ?
+          <span class="folders-sidebar__folder-item-icon folders-sidebar__folder-item-icon--text">{
+            props.iconText
+          }</span> :
+          <IconTsx icon={props.icon} class="folders-sidebar__folder-item-icon" />}
       >
         <FolderAnimatedIcon
           docId={props.iconDocId}

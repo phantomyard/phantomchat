@@ -15,9 +15,9 @@ import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvi
 import {MyDialogFilter} from '@lib/storages/filters';
 import {appSettings, setAppSettings} from '@stores/appSettings';
 import {
-  CODE_MODE_EMOJI_ICON,
   CODE_MODE_EVENT,
   CODE_MODE_LANG_KEY,
+  CODE_MODE_RAIL_GLYPH,
   CODE_MODE_SETTING_KEY,
   applyCodeModeClass,
   isCodeModeEnabled
@@ -419,7 +419,7 @@ export function FoldersSidebarContent(props: {
           <FolderItem
             class="folders-sidebar__menu-button folders-sidebar__code-button"
             icon="limit_folders"
-            emojiIcon={CODE_MODE_EMOJI_ICON}
+            iconText={CODE_MODE_RAIL_GLYPH}
             name={i18n(CODE_MODE_LANG_KEY)}
             selected={codeMode()}
             onClick={() => selectCodeMode()}

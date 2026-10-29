@@ -31,8 +31,13 @@ export const CODE_MODE_SETTING_KEY = 'codeModeEnabled' as const;
 /** Class added to `<body>`, and nothing else, so the whole skin is css-scoped. */
 export const CODE_MODE_BODY_CLASS = 'code-mode' as const;
 
-/** Rail glyph. An emoji keeps us off the icomoon font (no asset regen). */
-export const CODE_MODE_EMOJI_ICON = '💻';
+/**
+ * Rail glyph. Andrew (2026-10-29): a `#` badge, in the same icon style as the
+ * other rail entries — so it is rendered as TEXT inside the folder-item icon
+ * slot (`iconText`), not as an emoji. An emoji renders as a colour sticker and
+ * breaks the monochrome rail; text inherits the icon size, weight and colour.
+ */
+export const CODE_MODE_RAIL_GLYPH = '#';
 
 /** LangPack key for the rail label. */
 export const CODE_MODE_LANG_KEY = 'CodeMode' as const;

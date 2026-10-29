@@ -20,8 +20,8 @@ import {readFileSync} from 'fs';
 import {join} from 'path';
 import {
   CODE_MODE_BODY_CLASS,
-  CODE_MODE_EMOJI_ICON,
   CODE_MODE_LANG_KEY,
+  CODE_MODE_RAIL_GLYPH,
   CODE_MODE_SETTING_KEY,
   applyCodeModeClass,
   isCodeModeEnabled
@@ -65,7 +65,7 @@ describe('code-mode module', () => {
 describe('code mode rail wiring', () => {
   it('renders a Code rail item between the folder list and the settings button', () => {
     expect(railSrc).toContain('folders-sidebar__code-button');
-    expect(railSrc).toContain(`emojiIcon={CODE_MODE_EMOJI_ICON}`);
+    expect(railSrc).toContain(`iconText={CODE_MODE_RAIL_GLYPH}`);
     expect(railSrc).toContain(`name={i18n(CODE_MODE_LANG_KEY)}`);
 
     const codeButton = railSrc.indexOf('folders-sidebar__code-button');
@@ -149,6 +149,20 @@ describe('code mode inbox polling', () => {
 describe('code mode skin hook', () => {
   it('uses a single body class, not inline styles', () => {
     expect(CODE_MODE_BODY_CLASS).toBe('code-mode');
-    expect(CODE_MODE_EMOJI_ICON).toBeTruthy();
+  });
+
+  it('draws the rail glyph as a `#` in the icon style, not an emoji', () => {
+    // Andrew (2026-10-29): a `#` badge in the same style as the other rail
+    // icons. An emoji renders as a colour sticker and breaks the monochrome
+    // rail, so the glyph rides the text-icon slot instead.
+    expect(CODE_MODE_RAIL_GLYPH).toBe('#');
+    expect(railSrc).not.toContain('emojiIcon={CODE_MODE');
+
+    const folderItemSrc = readFileSync(
+      join(SRC, 'components/sidebarLeft/foldersSidebarContent/folderItem.tsx'),
+      'utf8'
+    );
+    expect(folderItemSrc).toContain('folders-sidebar__folder-item-icon--text');
+    expect(folderItemSrc).toContain('props.iconText');
   });
 });
