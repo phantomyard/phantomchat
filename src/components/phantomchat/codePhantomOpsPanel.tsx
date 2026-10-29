@@ -27,6 +27,7 @@ function CodePhantomOpsPanel(props: {onClose: () => void}) {
   const [state, setState] = createSignal<PhantomOpsState>(ops.state);
   const [draft, setDraft] = createSignal('');
   const [apiToken, setApiToken] = createSignal('');
+  const [secretValue, setSecretValue] = createSignal('');
   const [connecting, setConnecting] = createSignal(false);
 
   let listEl: HTMLDivElement | undefined;
@@ -147,12 +148,53 @@ function CodePhantomOpsPanel(props: {onClose: () => void}) {
           <Show when={state().gate}>
             {(gate) => (
               <div class="code-ops__gate">
-                <div class="code-ops__gate-title">{gate().tool}</div>
-                <div class="code-ops__gate-summary">{gate().summary || gate().rationale}</div>
-                <div class="code-ops__gate-actions">
-                  <button type="button" onClick={() => void ops.confirmGate('approve')}>{i18n('CodeModeApprove')}</button>
-                  <button type="button" onClick={() => void ops.confirmGate('deny')}>{i18n('CodeModeDeny')}</button>
-                </div>
+                <Show
+                  when={gate().kind === 'secret'}
+                  fallback={(
+                    <>
+                      <div class="code-ops__gate-title">{gate().tool}</div>
+                      <div class="code-ops__gate-summary">{gate().summary || gate().rationale}</div>
+                      <div class="code-ops__gate-actions">
+                        <button type="button" onClick={() => void ops.confirmGate('approve')}>{i18n('CodeModeApprove')}</button>
+                        <button type="button" onClick={() => void ops.confirmGate('deny')}>{i18n('CodeModeDeny')}</button>
+                      </div>
+                    </>
+                  )}
+                >
+                  <div class="code-ops__gate-title">{i18n('CodeModeSecretNeeded')} {gate().name}</div>
+                  <Show when={gate().rationale}>
+                    <div class="code-ops__gate-summary">{gate().rationale}</div>
+                  </Show>
+                  <input
+                    class="code-ops__keyinput"
+                    type="password"
+                    autocomplete="off"
+                    value={secretValue()}
+                    onInput={(e) => setSecretValue(e.currentTarget.value)}
+                  />
+                  <div class="code-ops__gate-actions">
+                    <button
+                      type="button"
+                      disabled={!secretValue().trim()}
+                      onClick={() => {
+                        const value = secretValue();
+                        setSecretValue('');
+                        void ops.answerSecret(value);
+                      }}
+                    >
+                      {i18n('CodeModeSubmit')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSecretValue('');
+                        void ops.answerSecret(null);
+                      }}
+                    >
+                      {i18n('CodeModeDeny')}
+                    </button>
+                  </div>
+                </Show>
               </div>
             )}
           </Show>

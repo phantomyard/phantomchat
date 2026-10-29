@@ -59,7 +59,11 @@ export interface PhantomOpsMessage {
 
 export interface PhantomOpsGate {
   gateId: string;
+  /** `confirm` = approve/deny an action; `secret` = supply (or refuse) a value. */
+  kind: 'confirm' | 'secret';
   tool: string;
+  /** For a secret gate: which secret the phantom asked for. */
+  name: string;
   summary: string;
   rationale: string;
 }
@@ -181,10 +185,44 @@ export function applyPhantomOpsEvent(
         ...state,
         gate: {
           gateId: String(event.gate_id ?? ''),
+          kind: 'confirm',
           tool: String(event.tool ?? ''),
+          name: '',
           summary: String(event.args_summary ?? ''),
           rationale: String(event.rationale ?? '')
         }
+      };
+
+    /**
+     * A secret request parks the turn exactly like a confirmation does, so it
+     * gets a gate rather than falling through to `default` and leaving the turn
+     * parked behind a spinner with no way to answer it.
+     */
+    case 'secret_required':
+      return {
+        ...state,
+        gate: {
+          gateId: String(event.gate_id ?? ''),
+          kind: 'secret',
+          tool: '',
+          name: String(event.name ?? ''),
+          summary: '',
+          rationale: String(event.rationale ?? '')
+        }
+      };
+
+    /**
+     * A LOCAL tool call parks the turn until the client runs it. This is a
+     * thin client: it publishes no tools, so this status should be
+     * unreachable — if the server ever sends it anyway, say so out loud
+     * instead of spinning forever on a turn nobody can finish.
+     */
+    case 'client_tool_required':
+      return {
+        ...state,
+        error: 'That turn needs a local tool ({name}), which PhantomChat does not run.'.replace(
+          '{name}', String(event.name ?? 'a tool')
+        )
       };
 
     case 'host_context_held':
@@ -483,18 +521,55 @@ export default class PhantomOpsClient {
     return id;
   }
 
-  /** Answer a tool/permission gate. */
+  /**
+   * Answer a confirmation gate.
+   *
+   * The gate STAYS on screen until the server confirms it: clearing it first
+   * means a failed POST leaves the user with no gate, no error and a turn that
+   * never resumes. `deny` posts `cancel`, the action the route actually knows.
+   */
   async confirmGate(action: 'approve' | 'deny'): Promise<void> {
     const gate = this.state.gate;
-    if(!gate) return;
-    this.set({gate: null});
+    if(!gate || gate.kind !== 'confirm') return;
     try {
-      await this.call('/api/chat/confirm', {
+      const response = await this.call('/api/chat/confirm', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({gate_id: gate.gateId, action: action === 'approve' ? 'approve' : 'cancel'})
       });
-    } catch{}
+      if(!response.ok) throw new Error(`PhantomOps could not take that answer (${response.status}).`);
+      if(this.state.gate?.gateId === gate.gateId) this.set({gate: null, error: null});
+    } catch(error) {
+      const message = (error as Error)?.message;
+      if(message === 'unauthorized' || message === 'stale') return;
+      this.set({error: message || 'PhantomOps could not take that answer.'});
+    }
+  }
+
+  /**
+   * Answer a secret gate. `null` cancels it (the route treats an empty value as
+   * a cancel too, and the phantom is told no value was provided). Same rule as
+   * a confirmation: the gate stays until the server takes the answer.
+   */
+  async answerSecret(value: string | null): Promise<void> {
+    const gate = this.state.gate;
+    if(!gate || gate.kind !== 'secret') return;
+    const trimmed = (value || '').trim();
+    const body = trimmed ? {gate_id: gate.gateId, action: 'submit', value: trimmed} :
+      {gate_id: gate.gateId, action: 'cancel'};
+    try {
+      const response = await this.call('/api/chat/secret', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      if(!response.ok) throw new Error(`PhantomOps could not take that value (${response.status}).`);
+      if(this.state.gate?.gateId === gate.gateId) this.set({gate: null, error: null});
+    } catch(error) {
+      const message = (error as Error)?.message;
+      if(message === 'unauthorized' || message === 'stale') return;
+      this.set({error: message || 'PhantomOps could not take that value.'});
+    }
   }
 
   /** Ask the server to stop the running turn. */

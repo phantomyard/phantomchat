@@ -31,6 +31,7 @@ const SRC = join(__dirname, '../..');
 const railSrc = readFileSync(join(SRC, 'components/sidebarLeft/foldersSidebarContent/index.tsx'), 'utf8');
 const stateSrc = readFileSync(join(SRC, 'config/state.ts'), 'utf8');
 const langSrc = readFileSync(join(SRC, 'lang.ts'), 'utf8');
+const inboxSrc = readFileSync(join(SRC, 'components/phantomchat/codeInbox.tsx'), 'utf8');
 
 describe('code-mode module', () => {
   it('treats only a literal true as enabled', () => {
@@ -109,18 +110,39 @@ describe('code mode rail wiring', () => {
     expect(listener).toContain('enterCodeMode(false)');
   });
 
-  it('only leaves Code Mode on a USER folder choice, not on a boot-time one', () => {
+  it('only leaves Code Mode on a RECENT user folder choice', () => {
     // `changing_folder_from_chatlist` also fires when the app restores its
-    // initial filter at startup; treating that as a user choice silently
-    // cancelled a Code Mode the user had left on across reloads.
-    expect(railSrc).toContain('sawUserGesture');
-    expect(railSrc).toMatch(/if\(sawUserGesture\) enterCodeMode\(false\);/);
+    // initial filter at startup (which must not cancel a Code Mode left on
+    // across a reload) and when a folder syncs in from another device (which
+    // must not either). A recency window gets both: a click is a choice, a
+    // background update is not — and unlike a once-only latch it re-arms.
+    expect(railSrc).toContain('lastGestureAt');
+    expect(railSrc).toMatch(/if\(Date\.now\(\) - lastGestureAt < GESTURE_WINDOW_MS\) enterCodeMode\(false\);/);
     expect(railSrc).toContain("document.addEventListener('pointerdown', onUserGesture");
+    expect(railSrc).not.toContain('{once: true}');
   });
 
-  it('parks the chat list on All Chats when Code Mode is entered', () => {
-    const enter = railSrc.slice(railSrc.indexOf('async function selectCodeMode'));
-    expect(enter).toContain('await setSelectedFolder(FOLDER_ID_ALL)');
+  it('parks the chat list on All Chats when Code Mode is entered — and only then', () => {
+    const enter = railSrc.slice(
+      railSrc.indexOf('async function selectCodeMode'),
+      railSrc.indexOf('createEffect(() => {\n    const _menuTarget')
+    );
+    // A failed park (folder limit popup) must not leave the rail claiming Code.
+    expect(enter).toMatch(/if\(await setSelectedFolder\(FOLDER_ID_ALL\)\) enterCodeMode\(true\);/);
+  });
+});
+
+describe('code mode inbox polling', () => {
+  it('does not poll for a list nobody is looking at', () => {
+    // The inbox never unmounts, so an unconditional interval would keep
+    // re-reading the mapping store + dialog cache for the rest of the session
+    // even with the mode off.
+    expect(inboxSrc).toMatch(/const refresh = async\(\) => \{\s*if\(!isActive\(\)\) return;/);
+    expect(inboxSrc).toContain('const startPolling');
+    expect(inboxSrc).toContain('const stopPolling');
+    // started and stopped by the mode event, not at mount time
+    expect(inboxSrc).toMatch(/if\(!isActive\(\)\) \{\s*stopPolling\(\);\s*return;/);
+    expect(inboxSrc).not.toMatch(/const interval = setInterval/);
   });
 });
 

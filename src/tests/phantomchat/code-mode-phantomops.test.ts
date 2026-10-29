@@ -122,7 +122,37 @@ describe('applyPhantomOpsEvent', () => {
       args_summary: 'ship it',
       rationale: 'you asked'
     });
-    expect(next.gate).toEqual({gateId: 'g1', tool: 'deploy', summary: 'ship it', rationale: 'you asked'});
+    expect(next.gate).toEqual({
+      gateId: 'g1',
+      kind: 'confirm',
+      tool: 'deploy',
+      name: '',
+      summary: 'ship it',
+      rationale: 'you asked'
+    });
+  });
+
+  it('surfaces a secret request as a gate instead of parking the turn', () => {
+    const next = applyPhantomOpsEvent(base, {
+      status: 'secret_required',
+      gate_id: 'g2',
+      name: 'PLANE_API_KEY',
+      rationale: 'Plane needs it'
+    });
+    expect(next.gate).toEqual({
+      gateId: 'g2',
+      kind: 'secret',
+      tool: '',
+      name: 'PLANE_API_KEY',
+      summary: '',
+      rationale: 'Plane needs it'
+    });
+  });
+
+  it('says so when a turn wants a local tool this client cannot run', () => {
+    const next = applyPhantomOpsEvent(base, {status: 'client_tool_required', name: 'read_file'});
+    expect(next.error).toContain('read_file');
+    expect(next.gate).toBe(null);
   });
 
   it('shows work-in-progress activity and clears it when a tool finishes', () => {
@@ -308,18 +338,72 @@ describe('PhantomOpsClient — turns', () => {
     expect(ops.state.messages).toEqual([]);
   });
 
-  it('answers a gate through /api/chat/confirm', async() => {
+  const confirmGate = {gateId: 'g1', kind: 'confirm' as const, tool: 'deploy', name: '', summary: '', rationale: ''};
+
+  it('answers a confirmation gate through /api/chat/confirm', async() => {
     const calls: {url: string; body?: string}[] = [];
     const {ops} = signedInClient((async(url: string, init: RequestInit) => {
       calls.push({url: String(url), body: init?.body as string});
-      return jsonResponse({ok: true});
+      return jsonResponse({status: 'ok'});
     }) as any);
-    ops.state = {...ops.state, gate: {gateId: 'g1', tool: 'deploy', summary: '', rationale: ''}};
+    ops.state = {...ops.state, gate: {...confirmGate}};
 
     await ops.confirmGate('deny');
 
     expect(ops.state.gate).toBe(null);
     expect(calls[0].url).toContain('/api/chat/confirm');
     expect(JSON.parse(calls[0].body!)).toEqual({gate_id: 'g1', action: 'cancel'});
+  });
+
+  it('keeps the gate and reports it when the answer does not land', async() => {
+    const {ops} = signedInClient((async() => jsonResponse({detail: 'nope'}, {status: 500})) as any);
+    ops.state = {...ops.state, gate: {...confirmGate}};
+
+    await ops.confirmGate('approve');
+
+    // a cleared gate here is a silent dead end: no gate, no error, no resume
+    expect(ops.state.gate).toEqual(confirmGate);
+    expect(ops.state.error).toMatch(/500/);
+  });
+
+  it('submits a secret through /api/chat/secret and clears the gate', async() => {
+    const calls: {url: string; body?: string}[] = [];
+    const {ops} = signedInClient((async(url: string, init: RequestInit) => {
+      calls.push({url: String(url), body: init?.body as string});
+      return jsonResponse({status: 'ok'});
+    }) as any);
+    ops.state = {...ops.state, gate: {...confirmGate, kind: 'secret', gateId: 'g2', name: 'PLANE_API_KEY'}};
+
+    await ops.answerSecret('  s3cret  ');
+
+    expect(ops.state.gate).toBe(null);
+    expect(calls[0].url).toContain('/api/chat/secret');
+    expect(JSON.parse(calls[0].body!)).toEqual({gate_id: 'g2', action: 'submit', value: 's3cret'});
+  });
+
+  it('cancels a secret gate instead of submitting a blank value', async() => {
+    const calls: {body?: string}[] = [];
+    const {ops} = signedInClient((async(_url: string, init: RequestInit) => {
+      calls.push({body: init?.body as string});
+      return jsonResponse({status: 'ok'});
+    }) as any);
+    ops.state = {...ops.state, gate: {...confirmGate, kind: 'secret', gateId: 'g2'}};
+
+    await ops.answerSecret('   ');
+
+    expect(JSON.parse(calls[0].body!)).toEqual({gate_id: 'g2', action: 'cancel'});
+    expect(ops.state.gate).toBe(null);
+  });
+
+  it('ignores a confirmation answer when the gate is a secret one', async() => {
+    let calls = 0;
+    const {ops} = signedInClient((async() => {
+      calls++;
+      return jsonResponse({});
+    }) as any);
+    ops.state = {...ops.state, gate: {...confirmGate, kind: 'secret', gateId: 'g2'}};
+
+    await ops.confirmGate('approve');
+    expect(calls).toBe(0);
   });
 });

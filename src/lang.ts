@@ -1671,6 +1671,8 @@ const lang = {
   'CodeModeApprove': 'Approve',
   'CodeModeDeny': 'Deny',
   'CodeModeStop': 'Stop',
+  'CodeModeSubmit': 'Submit',
+  'CodeModeSecretNeeded': 'Secret needed:',
   'CodeModeComposerHint': 'Ask the phantom…',
   'FoldersSyncOverwritten': 'Folders updated from another device. Your local changes were overwritten.',
   'Call': 'Call',

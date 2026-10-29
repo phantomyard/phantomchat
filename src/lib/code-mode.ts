@@ -23,6 +23,8 @@
  * snapshot, and it needs no migration.
  */
 
+import {P2P_PEER_ID_MIN, isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
+
 /** StateSettings key under `settings.` where the Code Mode flag lives. */
 export const CODE_MODE_SETTING_KEY = 'codeModeEnabled' as const;
 
@@ -48,9 +50,13 @@ export const CODE_MODE_PHANTOMOPS_KEY = 'phantomops' as const;
 /** `index_<n>` sort indices are `timestampSec * 0x10000` (see peer mapper). */
 const SORT_INDEX_SCALE = 0x10000;
 
-/** P2P (phantom) peer ids start here. Mirrors VIRTUAL_PEER_BASE; a plain
- *  number so this module stays Worker-safe and unit-testable. */
-export const CODE_MODE_PEER_ID_FLOOR = 1e15;
+/**
+ * P2P (phantom) peer ids start here. Re-exported from `bridge-invariants`,
+ * which is the single source of truth for the synthetic range (the first copy
+ * of this constant predates it and the two must not drift), so callers still
+ * have one name for it.
+ */
+export const CODE_MODE_PEER_ID_FLOOR = P2P_PEER_ID_MIN;
 
 /**
  * A settings value read back from IndexedDB is untrusted shape: anything that
@@ -82,7 +88,7 @@ export function applyCodeModeClass(element: {classList: Pick<DOMTokenList, 'add'
  */
 export function isCodeModePeerId(peerId: number | string): boolean {
   const id = typeof peerId === 'string' ? parseInt(peerId, 10) : peerId;
-  return Number.isFinite(id) && id >= CODE_MODE_PEER_ID_FLOOR;
+  return Number.isFinite(id) && isP2PPeerId(id);
 }
 
 /** `index_0` → seconds since epoch (dialogs store `sec * 0x10000`). */

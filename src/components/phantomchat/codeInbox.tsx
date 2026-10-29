@@ -26,6 +26,7 @@ import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
 import {showAddContactPopup} from '@components/popups/addContact';
 import {
+  CODE_MODE_BODY_CLASS,
   CODE_MODE_EVENT,
   CodeModeEntry,
   buildCodeModeInbox,
@@ -58,7 +59,20 @@ function CodeInbox() {
     });
   };
 
+  /**
+   * Is the mode actually on screen? The body class IS the mode (nothing else
+   * reads it), so it is the cheapest honest answer. A mounted inbox that keeps
+   * re-reading the mapping store and the dialog cache for a list nobody is
+   * looking at is a poll that outlives its purpose.
+   */
+  // The body class is the mode, but it is applied by an effect that can land a
+  // tick after CODE_MODE_EVENT, so the event's own payload is the earlier
+  // truth. Either one saying "on" is enough to keep the list live.
+  let active = document.body.classList.contains(CODE_MODE_BODY_CLASS);
+  const isActive = (): boolean => active || document.body.classList.contains(CODE_MODE_BODY_CLASS);
+
   const refresh = async() => {
+    if(!isActive()) return;
     try {
       const [mappings, dialogs] = await Promise.all([
         getAllMappings(),
@@ -97,34 +111,58 @@ function CodeInbox() {
   };
 
   onMount(() => {
-    void refresh();
-
-    const onMode = (): void => void refresh();
-
     /**
      * A freshly added phantom has to show up immediately, so the list also
      * reacts to the chat-list fan-out (`dialogs_multiupdate`) — coalesced,
      * because it fires per message. The interval is the backstop for anything
-     * that changes the mapping store without a dialog update.
+     * that changes the mapping store without a dialog update, and it only runs
+     * while the mode is on.
      */
     let pending: ReturnType<typeof setTimeout> | undefined;
+    let interval: ReturnType<typeof setInterval> | undefined;
+
     const scheduleRefresh = (): void => {
-      if(pending) return;
+      if(pending || !isActive()) return;
       pending = setTimeout(() => {
         pending = undefined;
         void refresh();
       }, REFRESH_DEBOUNCE_MS);
     };
 
+    const stopPolling = (): void => {
+      if(!interval) return;
+      clearInterval(interval);
+      interval = undefined;
+      if(pending) clearTimeout(pending);
+      pending = undefined;
+    };
+
+    const startPolling = (): void => {
+      if(interval) return;
+      interval = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    };
+
+    const onMode = (enabled?: boolean): void => {
+      if(typeof enabled === 'boolean') active = enabled;
+      if(!isActive()) {
+        stopPolling();
+        return;
+      }
+
+      startPolling();
+      void refresh();
+    };
+
     rootScope.addEventListener(CODE_MODE_EVENT, onMode);
     rootScope.addEventListener('dialogs_multiupdate', scheduleRefresh);
-    const interval = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    // The mount is triggered by entering the mode, but the module import may
+    // resolve after the switch, so cover both orders.
+    onMode();
 
     onCleanup(() => {
       rootScope.removeEventListener(CODE_MODE_EVENT, onMode);
       rootScope.removeEventListener('dialogs_multiupdate', scheduleRefresh);
-      clearInterval(interval);
-      if(pending) clearTimeout(pending);
+      stopPolling();
     });
   });
 

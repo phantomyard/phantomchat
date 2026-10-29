@@ -36,6 +36,12 @@ keepMe(ripple);
 
 const log = logger('FoldersSidebarContent', LogTypes.Debug);
 
+/**
+ * How long after a pointerdown a `changing_folder_from_chatlist` counts as the
+ * user choosing a chat list rather than the app restoring or syncing one.
+ */
+const GESTURE_WINDOW_MS = 1000;
+
 
 export type FoldersSidebarControls = {
   hydrateFilters: (filters: MyDialogFilter[]) => void;
@@ -257,8 +263,9 @@ export function FoldersSidebarContent(props: {
    */
   async function selectCodeMode() {
     ensureCodeInboxMounted();
-    await setSelectedFolder(FOLDER_ID_ALL);
-    enterCodeMode(true);
+    // Same guard as selectFolderFromRail: if the chat list cannot be parked
+    // (folder limit popup already shown) the rail must not claim the mode.
+    if(await setSelectedFolder(FOLDER_ID_ALL)) enterCodeMode(true);
   }
 
   createEffect(() => {
@@ -309,18 +316,21 @@ export function FoldersSidebarContent(props: {
     /**
      * `changing_folder_from_chatlist` also fires when the app RESTORES its
      * initial filter on boot, which would silently cancel a Code Mode the user
-     * left on. Only a gesture can be a choice, so the first pointerdown arms
-     * this listener and everything before it is ignored.
+     * left on. Only a gesture can be a choice — but the same event is also
+     * fired later by `selectStartupFolderTab` and by a folder synced in from
+     * another device, so a once-only latch is wrong in the other direction: it
+     * would leave a stale "the user chose" forever. A short recency window gets
+     * both: a click is a choice, a background folder update is not.
      */
-    let sawUserGesture = false;
-    const onUserGesture = (): void => { sawUserGesture = true; };
-    document.addEventListener('pointerdown', onUserGesture, {once: true, passive: true});
+    let lastGestureAt = 0;
+    const onUserGesture = (): void => { lastGestureAt = Date.now(); };
+    document.addEventListener('pointerdown', onUserGesture, {passive: true});
     onCleanup(() => document.removeEventListener('pointerdown', onUserGesture));
 
     listenerSetter.add(rootScope)('changing_folder_from_chatlist', (id) => {
       setSelectedFolderId(id);
       // A tab click is an explicit choice of chat list, so it also leaves Code Mode.
-      if(sawUserGesture) enterCodeMode(false);
+      if(Date.now() - lastGestureAt < GESTURE_WINDOW_MS) enterCodeMode(false);
     });
 
     onCleanup(() => {
