@@ -92,8 +92,10 @@
         width: var(--size);
         height: var(--size);
 
-        font-size: 1.5rem;
-        font-weight: 600;
+        /* Optical parity with the 1.5rem icomoon glyphs: a `#` has a much
+           smaller ink area than a filled icon, so it needs the extra size. */
+        font-size: 1.75rem;
+        font-weight: 700;
         line-height: 1;
       }
     }

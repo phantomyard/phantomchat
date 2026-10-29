@@ -35,6 +35,14 @@ body.code-mode {
     display: none !important;
   }
 
+  /* The chat list's own top bar steps aside: Code Mode has its own "Search
+     sessions" field, so the stock search box / stories row above it would be a
+     second, dead search bar. */
+  #column-left .sidebar-header.main-search-sidebar-header,
+  #column-left .stories-list {
+    display: none !important;
+  }
+
   .code-mode-root {
     display: flex;
     flex-direction: column;
