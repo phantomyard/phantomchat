@@ -50,6 +50,7 @@ import {getInstallPrompt} from '@helpers/dom/installPrompt';
 import IS_STANDALONE from '@environment/standalone';
 import {isDesktopApp} from '@lib/phantomchat/desktop-api';
 import {CODE_MODE_BODY_CLASS} from '@lib/code-mode';
+import {loadCachedPeerProfile} from '@lib/phantomchat/peer-profile-cache';
 import liteMode from '@helpers/liteMode';
 import AppPowerSavingTab from '@components/sidebarLeft/tabs/powerSaving';
 import Icon from '@components/icon';
@@ -1076,10 +1077,24 @@ export class AppSidebarLeft extends SidebarSlider {
     };
 
     /**
-     * `New Coding Session` — same picker as `New Group`, but filtered to
-     * contacts carrying the bot flag (that IS a phantom), single-tap, and the
-     * answer mints a Code Mode session instead of a group chat.
+     * `New Coding Session` — same picker as `New Group`, but the list is
+     * restricted to PHANTOMS (bot-tagged contacts), single-tap, and the answer
+     * mints a Code Mode session instead of a group chat.
+     *
+     * The bot tag is read from two places on purpose: `pFlags.bot` on the user
+     * (set when its full user came back from a kind-0) and the peer's cached
+     * kind-0 itself. The contacts list is DERIVED and cached, so a contact
+     * added before its kind-0 was ever fetched still carries no `pFlags.bot`
+     * until something refreshes it — and a picker that silently shows an empty
+     * list is indistinguishable from "you have no phantoms".
      */
+    const isPhantomContact = (peer: {pFlags?: object, p2pPubkey?: string} | undefined) => {
+      if(!peer) return false;
+      if((peer.pFlags as {bot?: boolean} | undefined)?.bot) return true;
+      const pubkey = peer.p2pPubkey;
+      return !!pubkey && !!loadCachedPeerProfile(pubkey)?.profile?.bot;
+    };
+
     const onNewCodingSessionClick = () => {
       closeTabsBefore(async() => {
         const tab = this.createTab(AppAddMembersTab);
@@ -1088,7 +1103,7 @@ export class AppSidebarLeft extends SidebarSlider {
           skippable: false,
           title: 'NewCodingSession',
           placeholder: 'SendMessageTo',
-          filterPeerTypeBy: ['isBot'],
+          filterPeerTypeBy: isPhantomContact,
           onSelect: (peerId) => {
             tab.close();
             void this.startCodingSession(peerId);

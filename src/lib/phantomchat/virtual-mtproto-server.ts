@@ -1434,7 +1434,19 @@ export class PhantomChatMTProtoServer {
 
           const peerId = await this.mapper.mapPubkey(peerPubkey);
           const peerMapping = await getMapping(peerPubkey);
-          const user = this.mapper.createTwebUser({peerId, firstName: peerMapping?.displayName, pubkey: peerPubkey});
+          // The bot flag has to ride the CONTACT row too: `isBot` is what marks a
+          // phantom as a phantom, and this list is the only place a picker
+          // (e.g. Code Mode's `New Coding Session`, filtered to bots) ever sees
+          // the peer. `getFullUser` sets the same flag for dialogs; without it
+          // here a bot-tagged contact counted as a plain user until its full
+          // user was fetched, which a picker never does.
+          const peerProfile = loadCachedPeerProfile(peerPubkey)?.profile;
+          const user = this.mapper.createTwebUser({
+            peerId,
+            firstName: peerMapping?.displayName,
+            pubkey: peerPubkey,
+            bot: !!peerProfile?.bot
+          });
 
           contacts.push({
             _: 'contact',

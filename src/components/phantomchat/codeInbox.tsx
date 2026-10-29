@@ -127,12 +127,13 @@ function CodeInbox() {
 
       // Whatever is open in the real pane decides which row is selected and
       // read — this is how a session opened from the ✏️ menu (which never
-      // goes through this component) still lands highlighted.
-      const currentPeerId = openChatPeerId();
-      const openRow = currentPeerId ? peers.find((entry) => entry.peerId === currentPeerId) : undefined;
-      if(openRow) {
-        if(openGroupId() !== openRow.groupId) setOpenGroupId(openRow.groupId);
-        codeSessionRuntime.markRead(openRow.groupId);
+      // goes through this component) still lands highlighted. The key is
+      // resolved through the tracker because the pane reports the group's
+      // CHAT peer id while the records carry the user one.
+      const openGroup = codeSessionRuntime.groupIdForPeer(openChatPeerId());
+      if(openGroup) {
+        if(openGroupId() !== openGroup) setOpenGroupId(openGroup);
+        codeSessionRuntime.markRead(openGroup);
       }
 
       setRuntimeTick((n) => n + 1);

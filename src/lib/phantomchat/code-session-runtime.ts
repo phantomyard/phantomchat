@@ -65,12 +65,22 @@ export class CodeSessionRuntimeTracker {
     }
   }
 
-  /** Register the sessions' group peer ids so typing ticks can be attributed. */
+  /**
+   * Register the sessions' group peer ids so typing ticks can be attributed.
+   *
+   * Callers pass the group's USER peer id (what `createGroup` hands back), but
+   * the app reports activity — `peer_typings`, `message_sent` — against the
+   * group's CHAT peer id (the negative form). Both are registered so either
+   * spelling resolves to the session.
+   */
   setSessionPeers(entries: Iterable<{groupId: string, peerId: number}>): void {
     this.peerToGroup.clear();
     for(const {groupId, peerId} of entries) {
       if(!groupId || !Number.isFinite(peerId)) continue;
       this.peerToGroup.set(peerId, groupId);
+
+      const asChat = +(peerId as unknown as {toPeerId?: (chat: boolean) => number}).toPeerId?.(true);
+      if(Number.isFinite(asChat) && asChat !== peerId) this.peerToGroup.set(asChat, groupId);
     }
   }
 
