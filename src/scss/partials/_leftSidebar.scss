@@ -1828,3 +1828,18 @@
     background: rgba(var(--primary-color-rgb), 0.15);
   }
 }
+
+// Owner batch 2 (2026-10-30): smaller floating "new" button, and enough bottom
+// room in the chat list that the last row can scroll clear of it.
+#new-menu {
+  --size: 40px;
+
+  .animated-button-icon-icon {
+    height: 1.25rem;
+    line-height: 1.25rem;
+  }
+}
+
+#chatlist-container .scrollable-y {
+  padding-bottom: 4.5rem;
+}

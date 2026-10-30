@@ -43,7 +43,7 @@ import contextMenuController from '@helpers/contextMenuController';
 import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG} from '@lib/appDialogsManager';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import SettingSection, {SettingSectionOptions} from '@components/settingSection';
-import {FOLDER_ID_ARCHIVE} from '@appManagers/constants';
+import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS} from '@appManagers/constants';
 import mediaSizes from '@helpers/mediaSizes';
 import {doubleRaf, fastRaf} from '@helpers/schedulers';
 import {getInstallPrompt} from '@helpers/dom/installPrompt';
@@ -713,6 +713,16 @@ export class AppSidebarLeft extends SidebarSlider {
       text: 'Contacts',
       onClick: onContactsClick
     }, {
+      // Owner batch 2 (2026-10-30): adding a contact lives only here now.
+      icon: 'adduser',
+      text: 'AddContact',
+      onClick: async() => {
+        closeTabsBefore(async() => {
+          const {showAddContactPopup} = await import('@components/popups/addContact');
+          showAddContactPopup({managers: this.managers});
+        });
+      }
+    }, {
       icon: 'card',
       regularText: 'My QR Code',
       onClick: () => {
@@ -1038,7 +1048,10 @@ export class AppSidebarLeft extends SidebarSlider {
     return wrap;
   }
 
-  private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean): ButtonMenuItemOptionsVerifiable[]  {
+  // [PhantomChat.chat] `folderScoped` is used by the floating new-menu button: on the
+  // Groups folder it offers only "New group", everywhere else only "New private chat".
+  // "Add contact" lives solely in the main tools (hamburger) menu.
+  private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean, folderScoped?: boolean): ButtonMenuItemOptionsVerifiable[]  {
     const closeTabsBefore = async(clb: () => void) => {
       if(closeBefore) {
         this.closeEverythingInside() && await pause(200);
@@ -1075,25 +1088,37 @@ export class AppSidebarLeft extends SidebarSlider {
       });
     };
 
-    return [{
+    const isGroupsFolder = () => appDialogsManager.filterId === FOLDER_ID_GROUPS;
+
+    const options: ButtonMenuItemOptionsVerifiable[] = [{
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
       onClick: onNewGroupClick
-    }, {
-      icon: 'adduser',
-      text: 'AddContact',
-      onClick: onAddContactClick
     }, {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',
       onClick: onContactsClick
     }];
+
+    if(folderScoped) {
+      options[0].verify = isGroupsFolder;
+      options[1].verify = () => !isGroupsFolder();
+      return options;
+    }
+
+    options.splice(1, 0, {
+      icon: 'adduser',
+      text: 'AddContact',
+      onClick: onAddContactClick
+    });
+
+    return options;
   }
 
   private createNewChatsMenuButton() {
     const btnMenu = ButtonMenuToggle({
       direction: 'top-left',
-      buttons: this.createNewChatsMenuOptions(false),
+      buttons: this.createNewChatsMenuOptions(false, undefined, true),
       noIcon: true
     });
     btnMenu.className = 'btn-new-menu btn-circle rp btn-corner z-depth-1 btn-menu-toggle animated-button-icon';

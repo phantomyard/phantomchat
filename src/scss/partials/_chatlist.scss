@@ -745,3 +745,17 @@ ul.chatlist {
     margin-inline-start: .125rem;
   }
 }
+
+// Owner batch 2 (2026-10-30): half-size dialog avatars. Rows keep their 72px
+// virtual-list item height, so only the media and the text offset change.
+#chatlist-container .chatlist-chat {
+  &.row-with-padding {
+    padding-inline-start: 2.75rem !important;
+  }
+
+  .dialog-avatar.row-media-bigger {
+    width: 1.6875rem !important;
+    height: 1.6875rem !important;
+    inset-inline-start: .75rem !important;
+  }
+}
