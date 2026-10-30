@@ -9,12 +9,9 @@ import type {DialogFilter, DialogFilterSuggested} from '@layer';
 import type _rootScope from '@lib/rootScope';
 import {SliderSuperTab} from '@components/slider';
 import lottieLoader, {LottieLoader} from '@lib/rlottie/lottieLoader';
-import Button from '@components/button';
 import rootScope from '@lib/rootScope';
-import AppEditFolderTab from '@components/sidebarLeft/tabs/editFolder';
 import Row from '@components/row';
 import {i18n, i18n_, LangPackKey, join} from '@lib/langPack';
-import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
@@ -22,9 +19,6 @@ import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import replaceContent from '@helpers/dom/replaceContent';
 import SettingSection from '@components/settingSection';
-import Sortable from '@helpers/dom/sortable';
-import whichChild from '@helpers/dom/whichChild';
-import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {joinDeepPath} from '@helpers/object/setDeepProperty';
 import RadioField from '@components/radioField';
 import appImManager from '@lib/appImManager';
@@ -34,9 +28,7 @@ import useHasFoldersSidebar from '@stores/foldersSidebar';
 import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 
 export default class AppChatFoldersTab extends SliderSuperTab {
-  private createFolderBtn: HTMLElement;
   private foldersSection: SettingSection;
-  private suggestedSection: SettingSection;
   private viewSection: SettingSection;
   private stickerContainer: HTMLElement;
   private animation: RLottiePlayer;
@@ -118,20 +110,9 @@ export default class AppChatFoldersTab extends SliderSuperTab {
       }
 
       if(!isSuggested) {
-        const filterId = filter.id;
-        if(!this.filtersRendered[filter.id] && filter.id !== FOLDER_ID_ALL) {
-          const initArgs = AppEditFolderTab.getInitArgs();
-          attachClickEvent(row.container, async() => {
-            const filter = await this.managers.filtersStorage.getFilter(filterId);
-            const tab = this.slider.createTab(AppEditFolderTab);
-            tab.setInitFilter(filter);
-            tab.open(initArgs);
-          }, {listenerSetter: this.listenerSetter});
-        }
-
+        // Folders are code-defined (folders-default / filtersLocal): the list is
+        // display-only, so rows are not clickable and cannot be reordered.
         this.filtersRendered[filter.id] = row;
-
-        row.makeSortable();
       }
     } else {
       if(filter.id !== FOLDER_ID_ALL) {
@@ -171,11 +152,6 @@ export default class AppChatFoldersTab extends SliderSuperTab {
     caption.classList.add('caption');
     i18n_({element: caption, key: 'ChatList.Filter.Header'});
 
-    this.createFolderBtn = Button('btn-primary btn-color-primary btn-control', {
-      text: 'ChatList.Filter.NewTitle',
-      icon: 'add'
-    });
-
     this.foldersSection = new SettingSection({
       name: 'Filters'
     });
@@ -183,11 +159,6 @@ export default class AppChatFoldersTab extends SliderSuperTab {
 
     this.list = document.createElement('div');
     this.foldersSection.content.append(this.list);
-
-    this.suggestedSection = new SettingSection({
-      name: 'FilterRecommended'
-    });
-    this.suggestedSection.container.classList.add('hide');
 
     this.viewSection = new SettingSection({
       name: 'FiltersView'
@@ -233,15 +204,9 @@ export default class AppChatFoldersTab extends SliderSuperTab {
     this.scrollable.append(
       this.stickerContainer,
       caption,
-      this.createFolderBtn,
       this.foldersSection.container,
-      this.suggestedSection.container,
       this.viewSection.container
     );
-
-    attachClickEvent(this.createFolderBtn, () => {
-      this.slider.createTab(AppEditFolderTab).open();
-    }, {listenerSetter: this.listenerSetter});
 
     const onFiltersContainerUpdate = () => {
       this.foldersSection.container.classList.toggle('hide', !Object.keys(this.filtersRendered).length);
@@ -273,20 +238,11 @@ export default class AppChatFoldersTab extends SliderSuperTab {
       }
 
       onFiltersContainerUpdate();
-
-      this.getSuggestedFilters();
     });
 
     this.listenerSetter.add(rootScope)('filter_delete', (filter) => {
       const filterRendered = this.filtersRendered[filter.id];
       if(filterRendered) {
-        /* for(const suggested of this.suggestedFilters) {
-          if(deepEqual(suggested.filter, filter)) {
-
-          }
-        } */
-        this.getSuggestedFilters();
-
         filterRendered.container.remove();
         delete this.filtersRendered[filter.id];
       }
@@ -322,30 +278,6 @@ export default class AppChatFoldersTab extends SliderSuperTab {
 
     loadPromises.push(this.loadAnimationPromise);
 
-    new Sortable({
-      list: this.list,
-      middleware: this.middlewareHelper.get(),
-      onSort: (prevIdx, newIdx) => {
-        let order: number[] = [];
-        for(const filterId in this.filtersRendered) {
-          const row = this.filtersRendered[filterId];
-          const idx = whichChild(row.container);
-          order[idx] = +filterId;
-        }
-
-        order = order.filter((filterId) => filterId !== undefined);
-        if(!rootScope.premium) {
-          indexOfAndSplice(order, FOLDER_ID_ALL);
-          // order.unshift(FOLDER_ID_ALL);
-        }
-
-        this.managers.filtersStorage.updateDialogFiltersOrder(order);
-      },
-      scrollable: this.scrollable
-    });
-
-    this.getSuggestedFilters();
-
     /* return Promise.all([
       this.loadAnimationPromise
     ]); */
@@ -364,36 +296,5 @@ export default class AppChatFoldersTab extends SliderSuperTab {
   private toggleAllChats() {
     const filterRendered = this.filtersRendered[FOLDER_ID_ALL];
     filterRendered.container.classList.toggle('hide', !rootScope.premium);
-  }
-
-  private getSuggestedFilters() {
-    return this.managers.filtersStorage.getSuggestedDialogsFilters().then(async(suggestedFilters) => {
-      this.suggestedSection.container.classList.toggle('hide', !suggestedFilters.length);
-      Array.from(this.suggestedSection.content.children).slice(1).forEach((el) => el.remove());
-
-      for(const filter of suggestedFilters) {
-        const row = await this.renderFolder(filter);
-        this.suggestedSection.content.append(row.container);
-
-        const button = row.buttonRight;
-        attachClickEvent(button, async(e) => {
-          cancelEvent(e);
-
-          button.setAttribute('disabled', 'true');
-
-          const f = filter.filter as DialogFilter.dialogFilter;
-          f.includePeerIds = [];
-          f.excludePeerIds = [];
-          f.pinnedPeerIds = [];
-
-          this.managers.filtersStorage.createDialogFilter(f, true).then(() => {
-            row.container.remove();
-            this.suggestedSection.container.classList.toggle('hide', this.suggestedSection.content.childElementCount === 1);
-          }).finally(() => {
-            button.removeAttribute('disabled');
-          });
-        }, {listenerSetter: this.listenerSetter});
-      }
-    });
   }
 }

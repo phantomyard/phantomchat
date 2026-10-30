@@ -447,7 +447,15 @@ export default class DialogsStorage extends AppManager {
       return folder.dialogs;
     }
 
-    return skipMigrated ? folder.dialogs.filter((dialog) => (dialog as Dialog).migratedTo === undefined) : folder.dialogs;
+    const dialogs = skipMigrated ? folder.dialogs.filter((dialog) => (dialog as Dialog).migratedTo === undefined) : folder.dialogs;
+
+    // "Chats" (folder 0) excludes group chats: groups have their own built-in
+    // folder, so a group must never appear in both lists.
+    if(id === FOLDER_ID_ALL) {
+      return dialogs.filter((dialog) => !this.appPeersManager.isAnyGroup((dialog as Dialog).peerId));
+    }
+
+    return dialogs;
   }
 
   public getNextDialog(currentPeerId: PeerId, next: boolean, filterId: number) {
@@ -485,6 +493,18 @@ export default class DialogsStorage extends AppManager {
 
   public getFolderUnreadCount(filterId: number) {
     const folder = this.getFolder(filterId);
+
+    // Chats (0) no longer contains groups (see getFolderDialogs), so its badge
+    // must not count them either — they are counted by the Groups folder.
+    if(filterId === FOLDER_ID_ALL) {
+      const isNotGroup = (peerId: PeerId) => !this.appPeersManager.isAnyGroup(peerId);
+      return {
+        unreadUnmutedCount: [...folder.unreadUnmutedPeerIds].filter(isNotGroup).length,
+        unreadCount: [...folder.unreadPeerIds].filter(isNotGroup).length,
+        unreadMentionsCount: [...folder.unreadMentionsPeerIds].filter(isNotGroup).length
+      };
+    }
+
     return {
       unreadUnmutedCount: folder.unreadUnmutedPeerIds.size,
       unreadCount: folder.unreadPeerIds.size,
@@ -1724,12 +1744,13 @@ export default class DialogsStorage extends AppManager {
       // subset. Using result.count for these makes the virtual list allocate
       // skeleton ("ghost") rows for non-existent dialogs (issue #42). Their
       // authoritative count is the locally-filtered dialog list length.
-      // FOLDER_ID_ALL (0) and FOLDER_ID_ARCHIVE (1) are real server folders
-      // whose result.count is correct, and virtual filters (forum/saved)
-      // carry their own counts, so both are excluded.
+      // FOLDER_ID_ALL (0) also builds its list locally now (it drops group
+      // chats, which live in the Groups folder instead), so its count must come
+      // from that list too. FOLDER_ID_ARCHIVE (1) is a real server folder whose
+      // result.count is correct, and virtual filters (forum/saved) carry their
+      // own counts, so both are excluded.
       const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS;
       const isLocallyFilteredFolder = !isVirtualFilter &&
-        filterId !== FOLDER_ID_ALL &&
         filterId !== FOLDER_ID_ARCHIVE;
 
       if(skipMigrated) {

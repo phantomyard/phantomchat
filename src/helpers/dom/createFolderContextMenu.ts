@@ -1,11 +1,9 @@
 import type {AppManagers} from '@lib/managers';
 import type AppChatFoldersTab from '@components/sidebarLeft/tabs/chatFolders';
-import type AppEditFolderTab from '@components/sidebarLeft/tabs/editFolder';
 import type {AppSidebarLeft} from '@components/sidebarLeft';
 import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpClassName from '@helpers/dom/findUpClassName';
-import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 import {appSettings, setAppSettings} from '@stores/appSettings';
 import {DEFAULT_CHAT_FOLDER_SETTING_KEY} from '@lib/folders-default';
 import {toastNew} from '@components/toast';
@@ -13,32 +11,16 @@ import {toastNew} from '@components/toast';
 export default function createFolderContextMenu({
   appSidebarLeft,
   AppChatFoldersTab: _AppChatFoldersTab,
-  AppEditFolderTab: _AppEditFolderTab,
   managers,
   className,
   listenTo
 }: {
   appSidebarLeft: AppSidebarLeft,
   AppChatFoldersTab: typeof AppChatFoldersTab,
-  AppEditFolderTab: typeof AppEditFolderTab,
   managers: AppManagers,
   className: string,
   listenTo: HTMLElement
 }) {
-  async function openSettingsForFilter(filterId: number) {
-    // All Chats is handled by FilterEditAll; Archive has no editable UI.
-    // Protected system folders (Persons/Groups) ARE editable — users can
-    // rename them. Deletion is still blocked via the Delete button's verify.
-    if(filterId === FOLDER_ID_ALL || filterId === FOLDER_ID_ARCHIVE) return;
-    const filter = await managers.filtersStorage.getFilter(filterId);
-
-    appSidebarLeft.closeTabsBefore(() => {
-      const tab = appSidebarLeft.createTab(_AppEditFolderTab);
-      tab.setInitFilter(filter);
-      tab.open();
-    });
-  }
-
   let clickFilterId: number;
   const setDefaultFolder = (filterId: number) => {
     // All Chats is the natural fallback — picking it just clears the preference.
@@ -48,13 +30,6 @@ export default function createFolderContextMenu({
 
   const {destroy} = createContextMenu({
     buttons: [{
-      icon: 'edit',
-      text: 'FilterEdit',
-      onClick: () => {
-        openSettingsForFilter(clickFilterId);
-      },
-      verify: () => clickFilterId !== FOLDER_ID_ALL
-    }, {
       icon: 'star',
       text: 'ChatList.Filter.SetDefault',
       onClick: () => {
@@ -84,14 +59,6 @@ export default function createFolderContextMenu({
         managers.dialogsStorage.markFolderAsRead(clickFilterId);
       },
       verify: async() => !!(await managers.dialogsStorage.getFolderUnreadCount(clickFilterId)).unreadCount
-    }, {
-      icon: 'delete',
-      className: 'danger',
-      text: 'Delete',
-      onClick: () => {
-        _AppEditFolderTab.deleteFolder(clickFilterId);
-      },
-      verify: () => !isProtectedFolder(clickFilterId)
     }],
     listenTo,
     findElement: (e) => findUpClassName(e.target, className),
@@ -100,5 +67,5 @@ export default function createFolderContextMenu({
     }
   });
 
-  return {destroy, openSettingsForFilter};
+  return {destroy};
 }

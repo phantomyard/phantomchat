@@ -1075,12 +1075,6 @@ export class AppSidebarLeft extends SidebarSlider {
       });
     };
 
-    const onNewFolderClick = () => {
-      closeTabsBefore(() => {
-        this.createTab(AppEditFolderTab).open();
-      });
-    };
-
     return [{
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
@@ -1093,10 +1087,6 @@ export class AppSidebarLeft extends SidebarSlider {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',
       onClick: onContactsClick
-    }, {
-      icon: 'folder',
-      text: 'FilterNew',
-      onClick: onNewFolderClick
     }];
   }
 

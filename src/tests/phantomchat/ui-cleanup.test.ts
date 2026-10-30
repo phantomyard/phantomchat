@@ -89,12 +89,14 @@ describe('sidebar search is stripped to basics', () => {
   });
 });
 
-describe('sidebar add-menu has an Add Folder option', () => {
+describe('sidebar add-menu has no Add Folder option', () => {
   const sidebarSrc = readFile('components/sidebarLeft/index.ts');
 
-  it('wires a New Folder item to the edit-folder tab', () => {
-    expect(sidebarSrc).toContain("text: 'FilterNew'");
-    expect(sidebarSrc).toContain('this.createTab(AppEditFolderTab).open()');
+  it('does not offer folder creation', () => {
+    // Folders are code-defined: there is no UI to create or edit one, so the
+    // add-menu must not link to the edit-folder tab.
+    expect(sidebarSrc).not.toContain("text: 'FilterNew'");
+    expect(sidebarSrc).not.toContain('onNewFolderClick');
   });
 });
 

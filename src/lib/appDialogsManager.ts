@@ -21,7 +21,6 @@ import {IS_MOBILE_SAFARI} from '@environment/userAgent';
 import {logger, LogTypes} from '@lib/logger';
 import rootScope from '@lib/rootScope';
 import appImManager, {AppImManager, APP_TABS} from '@lib/appImManager';
-import Button from '@components/button';
 import SetTransition from '@components/singleTransition';
 import {MyDraftMessage} from '@appManagers/appDraftsManager';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -30,9 +29,8 @@ import I18n, {FormatterArguments, i18n, LangPackKey, _i18n} from '@lib/langPack'
 import findUpTag from '@helpers/dom/findUpTag';
 import lottieLoader from '@rlottie/lottieLoader';
 import wrapPhoto from '@components/wrappers/photo';
-import AppEditFolderTab from '@components/sidebarLeft/tabs/editFolder';
 import appSidebarLeft from '@components/sidebarLeft';
-import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import {simulateClickEvent} from '@helpers/dom/clickEvent';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import replaceContent from '@helpers/dom/replaceContent';
 import ConnectionStatusComponent from '@components/connectionStatus';
@@ -729,7 +727,6 @@ export class AppDialogsManager {
     createFolderContextMenu({
       appSidebarLeft,
       AppChatFoldersTab,
-      AppEditFolderTab,
       managers: this.managers,
       className: 'menu-horizontal-div-item',
       listenTo: this.folders.menu
@@ -1484,19 +1481,6 @@ export class AppDialogsManager {
       });
 
       placeholderContainer.prepend(div);
-
-      const button = Button('btn-primary btn-color-primary btn-control', {
-        text: 'FilterHeaderEdit',
-        icon: 'settings'
-      });
-
-      attachClickEvent(button, async() => {
-        const tab = appSidebarLeft.createTab(AppEditFolderTab);
-        tab.setInitFilter(await this.managers.filtersStorage.getFilter(this.filterId));
-        tab.open();
-      });
-
-      placeholderContainer.append(button);
     }
 
     part.append(placeholderContainer);
