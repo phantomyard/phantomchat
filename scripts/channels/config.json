@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "94ddd39cccda80a4eb746cb04fdbd49a16bbcfba471f7186bee3dbb8f85cb775",
-      "reason": "Removes the New Folder entry from the create-chat menu. No storage access; folder data is untouched."
+      "preview": "caaf101ff3eb68bd8a8ef882eb60c2607768eea627361c598388f8b8fbaf48e2",
+      "reason": "New-menu becomes folder-scoped (Groups offers New group only, elsewhere New private chat) and drops Add contact, which moves to the tools menu. Reads appDialogsManager.filterId only; no storage access, folder and contact data untouched."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "a628032df6cd0c5cfaac5289977508ad1a4dbc7d33994beeee1f992e167d78d5",
