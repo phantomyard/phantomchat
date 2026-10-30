@@ -298,6 +298,35 @@ describe('PhantomChatPeerMapper', () => {
 
       expect((dialog.peer as any)._).toBe('peerChat');
     });
+
+    // Regression: the built-in Groups folder reads `index_3` for both
+    // membership and sort position. `createTwebDialog` only set `index_0`, so
+    // a freshly created group had no `index_3` and the chat-list row gate
+    // reported it as excluded — the group only appeared after a reload.
+    it('stamps the Groups folder index (index_3) on group dialogs', () => {
+      mapper = getMapper();
+      const GROUP_PEER_ID = -2000000000000300;
+      const dialog = mapper.createTwebDialog({
+        peerId: GROUP_PEER_ID,
+        topMessage: 7,
+        topMessageDate: 1712345678
+      });
+
+      expect((dialog as any).index_3).toBe(1712345678 * 0x10000);
+      expect((dialog as any).index_0).toBe(1712345678 * 0x10000);
+    });
+
+    it('does not stamp the Groups folder index on a private dialog', () => {
+      mapper = getMapper();
+      const dialog = mapper.createTwebDialog({
+        peerId: SAMPLE_PEER_ID,
+        topMessage: 7,
+        topMessageDate: 1712345678
+      });
+
+      expect((dialog as any).index_0).toBe(1712345678 * 0x10000);
+      expect((dialog as any).index_3).toBeUndefined();
+    });
   });
 
   // ─── createTwebChat ──────────────────────────────────────────────

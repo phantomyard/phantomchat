@@ -8,6 +8,8 @@
 
 import type {User, Chat, Dialog, Message, MessageEntity, Peer, PeerNotifySettings} from '@layer';
 import {PhantomChatBridge} from './phantomchat-bridge';
+import {FOLDER_ID_GROUPS} from '@appManagers/constants';
+import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
 import {renderMarkdownTables} from '@lib/phantomchat/markdown-tables';
@@ -295,6 +297,18 @@ export class PhantomChatPeerMapper {
     } as Dialog.dialog;
 
     (dialog as any)['index_0'] = sortIndex;
+
+    // A group also belongs to the built-in Groups folder, and that list reads
+    // its own `index_3` key to decide membership + sort position. Setting only
+    // `index_0` left `index_3` undefined, so `AutonomousDialogList`'s
+    // testDialogForFilter reported a freshly created group as excluded and the
+    // row never appeared until a reload recomputed the index — the "group only
+    // shows up after refresh" bug. Both keys share the same timestamp-derived
+    // sort index, exactly like DialogsStorage.setDialogIndexInFilter builds it
+    // for a REAL_FOLDER.
+    if(isGroup) {
+      (dialog as any)[getDialogIndexKey(FOLDER_ID_GROUPS as any)] = sortIndex;
+    }
 
     return dialog;
   }
