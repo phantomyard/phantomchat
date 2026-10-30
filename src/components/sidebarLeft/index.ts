@@ -469,7 +469,10 @@ export class AppSidebarLeft extends SidebarSlider {
     if(wasFloating === isFloating) return;
 
 
-    const WIDTH_WHEN_COLLAPSED = 80;
+    // Must match --sidebar-collapsed-width in _leftSidebar.scss: the collapse
+    // animation writes this width inline and removes it on end, so a stale
+    // value makes the column animate to the old width and then snap.
+    const WIDTH_WHEN_COLLAPSED = 56;
     const FULL_WIDTH = 420;
     const ANIMATION_TIME = 200;
     // Need to wait until the sliding animation is finished, this one needs to be faster to avoid random layout shifting
