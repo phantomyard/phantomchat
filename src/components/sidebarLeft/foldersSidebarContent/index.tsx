@@ -275,9 +275,12 @@ export function FoldersSidebarContent(props: {
         </Scrollable>
       </div>
 
+      {/* Owner batch 8 (2026-10-30): same glyph as the hamburger's "Disable
+          Sidebar" entry — the two are the same toggle, so they must not look
+          like different actions. */}
       <FolderItem
         class="folders-sidebar__menu-button"
-        icon="equalizer"
+        icon="rightpanel"
         onClick={() => {
           // Owner batch 6 (2026-10-30): this button used to open the Chat Folders
           // settings page (the only place the left/top layout could be changed).

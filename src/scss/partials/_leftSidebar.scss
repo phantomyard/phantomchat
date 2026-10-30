@@ -368,6 +368,31 @@
     }
   }
 
+  /* Owner batch 8 (2026-10-30): [sidebar toggle][Chats/Groups tabs] on one row.
+     The toggle is the hamburger's "Disable Sidebar" mirrored to where the
+     folders ended up, so it is only shown in folders-on-top mode — that is
+     exactly when body carries .has-horizontal-folders and not
+     .has-folders-sidebar. */
+  .chatlist-folders-row {
+    display: none;
+    align-items: center;
+    flex: 0 0 auto;
+
+    body.has-horizontal-folders:not(.has-folders-sidebar) & {
+      display: flex;
+    }
+
+    .chatlist-sidebar-toggle {
+      flex: 0 0 auto;
+      width: 3.5rem;
+      height: 3.5rem;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
+
   /* .folders-tabs-scrollable {
     .menu-horizontal-div-item:first-child {
       margin-inline-start: .6875rem;

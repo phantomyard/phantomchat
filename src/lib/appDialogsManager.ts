@@ -117,6 +117,8 @@ import LazyLoadQueue from '@components/lazyLoadQueue';
 import {fastSmoothScrollToStart} from '@helpers/fastSmoothScroll';
 import ArchiveDialog, {archiveDialogTagName} from '@components/archiveDialog';
 import {createArchiveDialogContextMenu} from '@components/archiveDialogContextMenu';
+import ButtonIcon from '@components/buttonIcon';
+import {attachClickEvent as attachButtonClickEvent} from '@helpers/dom/clickEvent';
 
 
 export const DIALOG_LIST_ELEMENT_TAG = 'A';
@@ -667,7 +669,23 @@ export class AppDialogsManager {
     });
 
     const foldersScrollable = new ScrollableX(this.folders.menuScrollContainer);
-    bottomPart.prepend(this.folders.menuScrollContainer);
+
+    // Owner batch 8 (2026-10-30): with the rail gone the only way back is the
+    // hamburger's "Disable Sidebar" entry, which is out of sight right where the
+    // folders used to be. Mirror that same toggle at the head of the horizontal
+    // tabs strip. CSS shows it only in folders-on-top mode (body is both
+    // .has-horizontal-folders and NOT .has-folders-sidebar), so it can never
+    // appear next to a rail it would be toggling away.
+    const foldersRow = document.createElement('div');
+    foldersRow.classList.add('chatlist-folders-row');
+    const foldersSidebarToggle = ButtonIcon('rightpanel chatlist-sidebar-toggle');
+    // Loaded lazily: folders-sidebar-layout pulls appImManager, which pulls this
+    // module back — resolving it on click keeps the import graph acyclic.
+    attachButtonClickEvent(foldersSidebarToggle, () => {
+      import('@lib/folders-sidebar-layout').then(({toggleFoldersSidebar}) => toggleFoldersSidebar());
+    });
+    foldersRow.append(foldersSidebarToggle, this.folders.menuScrollContainer);
+    bottomPart.prepend(foldersRow);
     const selectTab = this.selectTab = horizontalMenuObjArgs({
       tabs: this.folders.menu,
       content: this.folders.container,
