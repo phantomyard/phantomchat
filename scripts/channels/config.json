@@ -63,8 +63,8 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4",
-      "preview": "482a85c626da8a79b2d1a44ad01fd05e893d353bbd87f726d25db5c86de3a673",
-      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. Batch 8 adds a presentation-only sidebar toggle button at the head of the folder tabs row; it is built from a CSS-gated wrapper div and, on click, lazily imports lib/folders-sidebar-layout and calls toggleFoldersSidebar(). No storage change, no new state key. Drops the AppChatFoldersTab import, now unused after the folder context menu stopped taking its params."
+      "preview": "3fe972d1aa8dca02f895090e1af2c98a66fe27175a733e6827252f55c80de437",
+      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. Batch 8 adds a presentation-only sidebar toggle button at the head of the folder tabs row; it is built from a CSS-gated wrapper div and, on click, lazily imports lib/folders-sidebar-layout and calls toggleFoldersSidebar(). No storage change, no new state key. Drops the AppChatFoldersTab import, now unused after the folder context menu stopped taking its params. Preview hash refreshed at 44502ae for a comment-only change: the gating note above the row now states that the row is gated on .has-horizontal-folders alone and only the toggle button is hidden under .has-folders-sidebar. No code change."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -109,7 +109,7 @@
     "src/lib/storages/filters.ts": {
       "stable": "8b2d3bf7a32b1761f7b21baf81db8740677df7978bb1f27b6b1a23bdb3057879",
       "preview": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged \u2014 no new fields, no migration; both channels still read and write the same blob."
+      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged — no new fields, no migration; both channels still read and write the same blob."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "c335ae669367fae529b745801414655f0a7ac096428d0f2ec94738797e0a69c5",
