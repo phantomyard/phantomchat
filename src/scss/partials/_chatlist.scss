@@ -763,3 +763,38 @@ ul.chatlist {
     inset-inline-start: .75rem !important;
   }
 }
+
+// Owner batch 3 (2026-10-30): compact chat list. The row height is owned by the
+// virtual list (itemSize in autonomousDialogList/dialogs.ts) so the two numbers
+// must match or rows overlap.
+#chatlist-container .chatlist-chat {
+  &.row-big {
+    height: 3.5rem !important;
+    min-height: 3.5rem !important;
+  }
+
+  .row-title {
+    font-size: .875rem !important;
+    line-height: 1.125rem;
+
+    &-right-secondary {
+      font-size: .6875rem !important;
+    }
+  }
+
+  .row-subtitle {
+    font-size: .75rem !important;
+    line-height: 1rem;
+
+    &-row {
+      margin-top: .125rem;
+    }
+  }
+
+  // The media box is absolutely positioned and otherwise sits at the top of a
+  // taller row, so it has to be centred explicitly.
+  .dialog-avatar.row-media-bigger {
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}

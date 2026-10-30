@@ -39,6 +39,22 @@
     }
   }
 
+  &.size56 {
+    height: 56px;
+    padding: 8px;
+    padding-left: 12px;
+
+    .Avatar {
+      width: 32px;
+      height: 32px;
+      margin-right: 10px;
+    }
+
+    .Content {
+      gap: 10px;
+    }
+  }
+
   &.noAvatar {
     .Avatar {
       display: none;
