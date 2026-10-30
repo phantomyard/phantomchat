@@ -33,8 +33,8 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0",
-      "preview": "689aa215e41e433f1b04b134843f1c89a026d0badee45db386ff5626dfeb1ff1",
-      "reason": "Presentation-only: the rail's bottom button flips the layout preference through lib/folders-sidebar-layout instead of opening the Chat Folders tab. Reads existing folder data; no storage writes."
+      "preview": "913aaaffc0fa4ba479a027b17f1bb549fecc12e7d8219b5500970fa813761787",
+      "reason": "Presentation-only: the rail's bottom button flips the layout preference through lib/folders-sidebar-layout instead of opening the Chat Folders tab. Batch 8 swaps its glyph from 'equalizer' to 'rightpanel' so it matches the hamburger's Disable Sidebar entry - same toggle, same icon. Reads existing folder data; no storage writes."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "preview": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
@@ -63,8 +63,8 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4",
-      "preview": "7d868656a5aa54b61a5459d8fdc9d1effd5c29813e1e4744d75c0c3b1ca37117",
-      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. No storage change."
+      "preview": "0a6c208afc595e5f6bb0db18b20a5f7651338b7c86c540429fb0e64490647945",
+      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. Batch 8 adds a presentation-only sidebar toggle button at the head of the folder tabs row; it is built from a CSS-gated wrapper div and, on click, lazily imports lib/folders-sidebar-layout and calls toggleFoldersSidebar(). No storage change, no new state key."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
