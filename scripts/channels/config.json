@@ -32,9 +32,9 @@
       "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required."
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
-      "preview": "773a7339798b155c5eeaac6dd79dade62ecffc16f01c8780fd8e4cc48cc1a7d9",
-      "reason": "Display-only: removes the rail's add-chats empty-state button (folders are code-defined) and the edit-folder context-menu wiring. Reads existing folder data; no storage writes or format change.",
-      "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0"
+      "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0",
+      "preview": "689aa215e41e433f1b04b134843f1c89a026d0badee45db386ff5626dfeb1ff1",
+      "reason": "Presentation-only: the rail's bottom button flips the layout preference through lib/folders-sidebar-layout instead of opening the Chat Folders tab. Reads existing folder data; no storage writes."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "preview": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
@@ -52,19 +52,19 @@
       "stable": "153d04ba78a391bf2e1053404a245bfca2e80fbd29a67f6c37263aa3a19526c3"
     },
     "src/helpers/dom/createFolderContextMenu.ts": {
-      "preview": "5470a4646fac3a1761173a67a3c1e3fe086dc23fe79cd02b300fec356a645376",
-      "reason": "Rail context menu drops Edit and Delete. Remaining entries are default-folder preference (existing optional settings key), mark-as-read and open-folders-page. No storage format change.",
-      "stable": "05d22c4e94705c17cf358c86a74f17e3c7f8e3ed30a4a56ff35db99c4480e688"
+      "stable": "05d22c4e94705c17cf358c86a74f17e3c7f8e3ed30a4a56ff35db99c4480e688",
+      "preview": "8a1793c4094835af951f643136c10ffcba83d0667c7c5a1c895ec3ae4e52e2b1",
+      "reason": "Menu only: drops the 'Edit folders' entry (folders are code-defined). Set/Remove default and Mark all as read untouched."
     },
     "src/lang.ts": {
-      "preview": "d1fe78d2bc0125d85a1cd5e9679f652f0eaece01075af839f6b68c794cbd4f1f",
-      "reason": "String value changes only: FilterAllChats/FilterAllChatsShort/AllChats now read \"Chats\". No keys added or removed; localVersion bump reloads the local lang pack.",
-      "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd"
+      "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd",
+      "preview": "9ce8a8a239e5ffe2663da99feced7b856aa42b4f3d0996c8c6536f510f2675e9",
+      "reason": "Two new display strings: 'Disable Sidebar' and 'Enable Sidebar'. No storage or behaviour change."
     },
     "src/lib/appDialogsManager.ts": {
-      "preview": "598a3a20bc15e3cb8b133563edb8c76450d7231d1db671d0493f8e75267cb307",
-      "reason": "Drops the empty-folder placeholder's edit-folder button and the edit-folder tab param. Startup folder selection is unchanged; no dialog storage change.",
-      "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4"
+      "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4",
+      "preview": "7d868656a5aa54b61a5459d8fdc9d1effd5c29813e1e4744d75c0c3b1ca37117",
+      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. No storage change."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -72,9 +72,9 @@
       "stable": "absent"
     },
     "src/scripts/out/langPack.strings": {
-      "preview": "ecd30febb52a4812d00508c9694cd5982b21c3784083497efd8ede3b8bdeeb02",
-      "reason": "Regenerated mirror of the src/lang.ts value changes; no schema or stored-format impact.",
-      "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3"
+      "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3",
+      "preview": "5578ea14a8a8f2854f3aac006c2ab927d24355aceeb9a224dc5cd22a9baffe24",
+      "reason": "Generated lang-pack mirror of the two new label keys. Text only."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "cc10ea262b1bc9bcaca4f91fc39ca7f99449a5889c648a6395141d5f9c97b48c",
@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "26c0c925efaa726065ac0c4d23faf9e220ceef96ecfa34cfef46c68078f9caab",
-      "reason": "Floating new-menu button is a plain one-click '+' instead of a menu toggle (Groups folder opens the multi-select member picker, elsewhere the contact picker), and the 'Create a new' submenu offers only group and private chat since adding a contact lives in the tools menu. Reads appDialogsManager.filterId only; no storage access, folder and contact data untouched."
+      "preview": "20b2de02180bb95ec801a22349de07e6458ed0c7be3d3b62b44ada7e70f38884",
+      "reason": "Menu only: removes the redundant 'Folders' entry and adds a 'Disable Sidebar' toggle under 'Disable Animations'. Both write the existing settings.tabsInSidebar key."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "a628032df6cd0c5cfaac5289977508ad1a4dbc7d33994beeee1f992e167d78d5",
@@ -103,13 +103,13 @@
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
-      "preview": "372d21df632452f192c5c78e78c7a96035643b7391cdf05c9246b4d9f845c17c",
-      "reason": "Chat-list virtual item height 72 -> 56 (owner batch 4 compact list). Layout constant only - must stay in step with the row height in _chatlist.scss; no storage, IPC or schema surface."
+      "preview": "5bb0c60f7cc6e73aa1fb27e9b053c244c441e1f63ab8500e533c48bd1446a6b2",
+      "reason": "Presentation-only: setOnlineStatus now toggles a class on the inline title-row dot (dom.onlineDot) instead of fading the avatar's ::after. No storage change."
     },
     "src/lib/storages/filters.ts": {
       "stable": "8b2d3bf7a32b1761f7b21baf81db8740677df7978bb1f27b6b1a23bdb3057879",
       "preview": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged — no new fields, no migration; both channels still read and write the same blob."
+      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged \u2014 no new fields, no migration; both channels still read and write the same blob."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "c335ae669367fae529b745801414655f0a7ac096428d0f2ec94738797e0a69c5",
@@ -138,8 +138,13 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "e8a1c8254d6dea729adfd0984e707d4c23e37b7886f68eb6a1d95be3f639c950",
-      "preview": "50ad06188e0f762b5be14a2c1ced0e5762025c2e1e5a65cb1136000b9d8c1ecd",
-      "reason": "Lang-pack revision constant 12 -> 13 so value-only string edits (\"All Chats\" -> \"Chats\") invalidate a client's cached pack. Integer constant only; no runtime behaviour, storage or IPC change."
+      "preview": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
+      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow."
+    },
+    "src/lib/folders-sidebar-layout.ts": {
+      "stable": "absent",
+      "preview": "ad0edd7115c7eca7329a67a458fb56673817e7bfd0de14b575a1041e8ccae23c",
+      "reason": "New module: one writer for the existing settings.tabsInSidebar preference, shared by the hamburger toggle and the rail button. Writes the same key the Chat Folders radio already wrote."
     }
   },
   "stableVersion": "1.0.335"
