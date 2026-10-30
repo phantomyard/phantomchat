@@ -224,7 +224,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       requestItemForIdx: this.requestItemForIdx,
       onListShrinked: this.onListShrinked,
       // Keep in sync with the row height in _chatlist.scss (owner batch 3).
-      itemSize: 56,
+      itemSize: 60,
       onListLengthChange: () => {
         scrollable.onSizeChange();
         this.appDialogsManager.onListLengthChange?.();

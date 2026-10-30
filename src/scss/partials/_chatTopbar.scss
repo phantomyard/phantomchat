@@ -466,7 +466,8 @@ body.is-right-column-shown {
   }
 }
 
-// Owner batch 3 (2026-10-30): smaller top-bar avatar and type.
+// Owner batch 3 (2026-10-30): smaller top-bar avatar. Type sizes stay at their
+// inherited values.
 .topbar {
   &.has-avatar {
     // Keeps the search field aligned with the narrower avatar.
@@ -476,14 +477,5 @@ body.is-right-column-shown {
   .person-avatar {
     --size: 2rem !important;
     --multiplier: 1.6875;
-  }
-
-  .user-title {
-    font-size: .875rem;
-    line-height: 1.25rem;
-  }
-
-  .person .bottom {
-    font-size: .75rem;
   }
 }
