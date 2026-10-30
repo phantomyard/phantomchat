@@ -10,7 +10,7 @@ function pseudoRandomRange(seed: number, min: number, max: number) {
   return min + rand * (max - min);
 }
 
-export type LoadingDialogSkeletonSize = 72 | 64 | 60;
+export type LoadingDialogSkeletonSize = 72 | 64 | 56;
 
 const LoadingDialogSkeleton: Component<{
   class?: string;

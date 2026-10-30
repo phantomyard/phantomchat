@@ -764,14 +764,19 @@ ul.chatlist {
   }
 }
 
-// Owner batch 3 (2026-10-30): compact chat list. The row height is owned by the
+// Owner batch 4 (2026-10-30): compact chat list. The row height is owned by the
 // virtual list (itemSize in autonomousDialogList/dialogs.ts) so the two numbers
-// must match or rows overlap. Type sizes stay at their inherited values, so 60px
-// is the smallest row that still fits a 16px title over a 16px subtitle.
+// must match or rows overlap. Type: title 16px (inherited), subtitle 14px,
+// timestamp 12px (inherited).
 #chatlist-container .chatlist-chat {
   &.row-big {
-    height: 3.75rem !important;
-    min-height: 3.75rem !important;
+    height: 3.5rem !important;
+    min-height: 3.5rem !important;
+  }
+
+  .row-subtitle {
+    font-size: .875rem !important;
+    line-height: 1.25rem;
   }
 
   // The media box is absolutely positioned and otherwise sits at the top of a
