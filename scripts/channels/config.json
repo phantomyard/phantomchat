@@ -18,8 +18,8 @@
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "absent",
-      "preview": "e4ea31d7a4279a72c95986590e5584dbb879143528736dd9786dcab5e65cd8bc",
-      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. One Release channel radio now drives both surfaces: it calls the routing-only shell (window.phantomchatChannels) and the Electron update bridge (setUpdateChannel). No database access, no storage format change; the tab only reads and writes the two existing channel preferences. Copied to pinned Stable by the builder."
+      "preview": "0de2379034721703301f97334bd359384b21aab17cad80643ab88fd4b9933130",
+      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. One Release channel radio now drives both surfaces: it calls the routing-only shell (window.phantomchatChannels) and the Electron update bridge (setUpdateChannel). The two channel-choice helpers it uses moved to lib/phantomchat/update-channel-choice.ts so the copy also resolves in pinned Stable. No database access, no storage format change; the tab only reads and writes the two existing channel preferences. Copied to pinned Stable by the builder."
     },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
@@ -63,8 +63,8 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4",
-      "preview": "0a6c208afc595e5f6bb0db18b20a5f7651338b7c86c540429fb0e64490647945",
-      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. Batch 8 adds a presentation-only sidebar toggle button at the head of the folder tabs row; it is built from a CSS-gated wrapper div and, on click, lazily imports lib/folders-sidebar-layout and calls toggleFoldersSidebar(). No storage change, no new state key."
+      "preview": "482a85c626da8a79b2d1a44ad01fd05e893d353bbd87f726d25db5c86de3a673",
+      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. Batch 8 adds a presentation-only sidebar toggle button at the head of the folder tabs row; it is built from a CSS-gated wrapper div and, on click, lazily imports lib/folders-sidebar-layout and calls toggleFoldersSidebar(). No storage change, no new state key. Drops the AppChatFoldersTab import, now unused after the folder context menu stopped taking its params."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -143,7 +143,7 @@
     },
     "src/lib/folders-sidebar-layout.ts": {
       "stable": "absent",
-      "preview": "ad0edd7115c7eca7329a67a458fb56673817e7bfd0de14b575a1041e8ccae23c",
+      "preview": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
       "reason": "New module: one writer for the existing settings.tabsInSidebar preference, shared by the hamburger toggle and the rail button. Writes the same key the Chat Folders radio already wrote."
     },
     "src/components/sidebarLeft/tabs/phantomchatDesktopUpdates.ts": {
@@ -153,8 +153,13 @@
     },
     "src/lib/phantomchat/desktop-update-view.ts": {
       "stable": "7307fcd6f7d4089aeddce63fd5999ba0a36374720e1c7fd10fda7d0437fd42fa",
-      "preview": "412656a2b38c516b4ab5f22db321371ea487dd0b1bc14aa3b3a3bc95de2c2dd7",
-      "reason": "Dependency-free presentation strings, plus two pure helpers: which channel a single radio shows and how a choice is pushed to whichever surfaces exist. No DOM, no Electron, no app singletons, no storage; the ring/window wiring still lives in the tab and the main process."
+      "preview": "f5c41987244d0c42538a9a151fe05d833b54029a91e2266d698a68cbedbea3c9",
+      "reason": "Dependency-free presentation strings only: status line, last-checked line, action button. The two channel-choice helpers moved out to lib/phantomchat/update-channel-choice.ts, which does not exist at stableRef, so the builder can copy them into pinned Stable. No DOM, no Electron, no app singletons, no storage."
+    },
+    "src/lib/phantomchat/update-channel-choice.ts": {
+      "stable": "absent",
+      "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
+      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
     }
   },
   "stableVersion": "1.0.335"
