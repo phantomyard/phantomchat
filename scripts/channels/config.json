@@ -18,8 +18,8 @@
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "absent",
-      "preview": "4f715b54e56912e7df4e04cabee45e7a71f790f3fe27e45bc2097c3426b3d091",
-      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. No database access; delegates routing to the shell. Copied to pinned Stable by the builder. Independent desktop installer ring remains accessible."
+      "preview": "e4ea31d7a4279a72c95986590e5584dbb879143528736dd9786dcab5e65cd8bc",
+      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. One Release channel radio now drives both surfaces: it calls the routing-only shell (window.phantomchatChannels) and the Electron update bridge (setUpdateChannel). No database access, no storage format change; the tab only reads and writes the two existing channel preferences. Copied to pinned Stable by the builder."
     },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
@@ -145,6 +145,16 @@
       "stable": "absent",
       "preview": "ad0edd7115c7eca7329a67a458fb56673817e7bfd0de14b575a1041e8ccae23c",
       "reason": "New module: one writer for the existing settings.tabsInSidebar preference, shared by the hamburger toggle and the rail button. Writes the same key the Chat Folders radio already wrote."
+    },
+    "src/components/sidebarLeft/tabs/phantomchatDesktopUpdates.ts": {
+      "stable": "230784dc8d7562a47552d19149dbd3d7a45407d7b0dacd57a3a17a900eea042e",
+      "preview": "996722dc08d480a07f8b298c2b4a762c209166476840c606a78fbaa279ded5df",
+      "reason": "Desktop entry point for the Updates tab is now a re-export of the application tab, so one screen (and one channel control) serves both builds instead of two that could drift. The screen it resolves to is covered by the phantomchatApplicationUpdates.ts approval; this file itself holds no logic and no storage."
+    },
+    "src/lib/phantomchat/desktop-update-view.ts": {
+      "stable": "7307fcd6f7d4089aeddce63fd5999ba0a36374720e1c7fd10fda7d0437fd42fa",
+      "preview": "412656a2b38c516b4ab5f22db321371ea487dd0b1bc14aa3b3a3bc95de2c2dd7",
+      "reason": "Dependency-free presentation strings, plus two pure helpers: which channel a single radio shows and how a choice is pushed to whichever surfaces exist. No DOM, no Electron, no app singletons, no storage; the ring/window wiring still lives in the tab and the main process."
     }
   },
   "stableVersion": "1.0.335"
