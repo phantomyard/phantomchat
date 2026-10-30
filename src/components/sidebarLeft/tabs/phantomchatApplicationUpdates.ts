@@ -94,6 +94,10 @@ export default class AppPhantomChatUpdatesTab extends SliderSuperTab {
       name: 'phantomchat-update-channel',
       value: 'preview'
     });
+    // Row adds a subtitle inside an outer label. Keep the radio's accessible
+    // name independent of that descriptive text (including in pinned Stable).
+    stableRadio.input.setAttribute('aria-label', 'Stable');
+    previewRadio.input.setAttribute('aria-label', 'Preview');
     this.radios = {stable: stableRadio, preview: previewRadio};
     this.radios[choice.selected].input.checked = true;
     if(!choice.interactive) {

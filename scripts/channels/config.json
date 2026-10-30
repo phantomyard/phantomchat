@@ -18,8 +18,8 @@
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "absent",
-      "preview": "0de2379034721703301f97334bd359384b21aab17cad80643ab88fd4b9933130",
-      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. One Release channel radio now drives both surfaces: it calls the routing-only shell (window.phantomchatChannels) and the Electron update bridge (setUpdateChannel). The two channel-choice helpers it uses moved to lib/phantomchat/update-channel-choice.ts so the copy also resolves in pinned Stable. No database access, no storage format change; the tab only reads and writes the two existing channel preferences. Copied to pinned Stable by the builder."
+      "preview": "a13ac7cdd379e1ef4df399029f88a2fe6311966d3b02e05f3d439c77c7f49bc4",
+      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. One Release channel radio now drives both surfaces: it calls the routing-only shell (window.phantomchatChannels) and the Electron update bridge (setUpdateChannel). The two channel-choice helpers it uses moved to lib/phantomchat/update-channel-choice.ts so the copy also resolves in pinned Stable. No database access, no storage format change; the tab only reads and writes the two existing channel preferences. Copied to pinned Stable by the builder. Explicit Stable/Preview accessible names exclude the enclosing Row subtitle; no channel or persistence semantics change."
     },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
