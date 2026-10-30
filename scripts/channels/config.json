@@ -88,7 +88,7 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "20b2de02180bb95ec801a22349de07e6458ed0c7be3d3b62b44ada7e70f38884",
+      "preview": "0e81112c5b8cda34ff98017408d908d327bf24b536f097e55a5b16c9b00e7290",
       "reason": "Menu only: removes the redundant 'Folders' entry and adds a 'Disable Sidebar' toggle under 'Disable Animations'. Both write the existing settings.tabsInSidebar key."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
