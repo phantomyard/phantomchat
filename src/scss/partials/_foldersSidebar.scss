@@ -4,7 +4,9 @@
 
 .folders-sidebar {
   position: relative;
-  flex: 5rem 0 0;
+  // Owner batch 6 (2026-10-30): the rail is as wide as the top bar is tall
+  // (--topbar-height: 3.5rem), so the two edges read as one grid.
+  flex: 3.5rem 0 0;
 
   display: flex;
   flex-direction: column;
@@ -106,7 +108,9 @@
     &-badge {
       position: absolute;
       top: 6px;
-      right: 19px;
+      // Keeps the badge hanging off the 30px folder icon's top-right corner in
+      // the narrower 3.5rem rail (icon spans 13px..43px).
+      right: 7px;
 
       font-size: 12px;
       line-height: 18px !important;
@@ -148,7 +152,7 @@
     }
 
     .btn-menu {
-      inset-inline: 3rem auto;
+      inset-inline: 3.5rem auto;
     }
   }
 

@@ -346,6 +346,7 @@ ul.chatlist {
         }
 
         .dialog-avatar.is-online:after,
+        .dialog-online-dot,
         .dialog-group-call-icon {
           background-color: #fff;
           border-color: var(--primary-color);
@@ -600,16 +601,26 @@ ul.chatlist {
       z-index: 1;
 
       &.avatar-badge {
-        // --padding: .375rem;
-        --size: 1.625rem;
+        // Owner batch 7 (2026-10-30): this badge is only mounted while the
+        // sidebar is collapsed and the row shows nothing but the avatar. Its
+        // geometry was tuned for the old 80px column and 54px avatar (26px
+        // circle pinned 65px from the start, 39px from the top), so in the
+        // 56px column with the 32px avatar it spilled past both edges and got
+        // clipped. Now: 16px circle whose box sits on the avatar's
+        // bottom-right corner (avatar spans 12px..44px in a 56px row), 8px
+        // clear of the row and column edges.
+        --size: 1rem;
+        --padding: .125rem;
+        font-size: .625rem;
         margin: 0;
         position: absolute;
-        right: calc(100% - 4.0625rem);
-        top: 2.4375rem;
+        right: calc(100% - 3rem);
+        top: 2rem;
         // border: 2px solid var(--surface-color);
         border: 2px solid var(--background, var(--surface-color));
         pointer-events: none;
-        line-height: 23px !important;
+        // 16px box minus the 2px border on each side.
+        line-height: 12px !important;
 
         @include animation-level(2) {
            transition: opacity 0.2s;
@@ -784,5 +795,34 @@ ul.chatlist {
   .dialog-avatar.row-media-bigger {
     top: 50%;
     transform: translateY(-50%);
+  }
+}
+
+// Owner batch 6 (2026-10-30): presence moved off the avatar. Its :after was
+// pinned at a fixed 2.4375rem offset (sized for the old 54px avatar), so with
+// the 32px list avatar it spilled past the row edge and was clipped. It now
+// renders inline in the title row, immediately before the P2P chip.
+#chatlist-container .chatlist-chat {
+  .dialog-avatar.is-online:after {
+    display: none;
+  }
+}
+
+// NB: no `#chatlist-container` here. The dot's default is the primary colour,
+// which is exactly the active row's own background, and the white-on-active
+// rule (`.chatlist-chat.active .dialog-online-dot`, three classes) has to keep
+// winning. An id in this selector outranked it and the dot vanished on the
+// selected row.
+.chatlist-chat .dialog-online-dot {
+  display: none;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-inline-start: .375rem;
+  background-color: var(--avatar-online-color);
+
+  &.is-online {
+    display: inline-block;
   }
 }

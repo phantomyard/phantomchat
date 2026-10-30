@@ -18,8 +18,8 @@
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "absent",
-      "preview": "4f715b54e56912e7df4e04cabee45e7a71f790f3fe27e45bc2097c3426b3d091",
-      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. No database access; delegates routing to the shell. Copied to pinned Stable by the builder. Independent desktop installer ring remains accessible."
+      "preview": "0de2379034721703301f97334bd359384b21aab17cad80643ab88fd4b9933130",
+      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. One Release channel radio now drives both surfaces: it calls the routing-only shell (window.phantomchatChannels) and the Electron update bridge (setUpdateChannel). The two channel-choice helpers it uses moved to lib/phantomchat/update-channel-choice.ts so the copy also resolves in pinned Stable. No database access, no storage format change; the tab only reads and writes the two existing channel preferences. Copied to pinned Stable by the builder."
     },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",
@@ -32,9 +32,9 @@
       "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required."
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
-      "preview": "773a7339798b155c5eeaac6dd79dade62ecffc16f01c8780fd8e4cc48cc1a7d9",
-      "reason": "Display-only: removes the rail's add-chats empty-state button (folders are code-defined) and the edit-folder context-menu wiring. Reads existing folder data; no storage writes or format change.",
-      "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0"
+      "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0",
+      "preview": "913aaaffc0fa4ba479a027b17f1bb549fecc12e7d8219b5500970fa813761787",
+      "reason": "Presentation-only: the rail's bottom button flips the layout preference through lib/folders-sidebar-layout instead of opening the Chat Folders tab. Batch 8 swaps its glyph from 'equalizer' to 'rightpanel' so it matches the hamburger's Disable Sidebar entry - same toggle, same icon. Reads existing folder data; no storage writes."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "preview": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
@@ -52,19 +52,19 @@
       "stable": "153d04ba78a391bf2e1053404a245bfca2e80fbd29a67f6c37263aa3a19526c3"
     },
     "src/helpers/dom/createFolderContextMenu.ts": {
-      "preview": "5470a4646fac3a1761173a67a3c1e3fe086dc23fe79cd02b300fec356a645376",
-      "reason": "Rail context menu drops Edit and Delete. Remaining entries are default-folder preference (existing optional settings key), mark-as-read and open-folders-page. No storage format change.",
-      "stable": "05d22c4e94705c17cf358c86a74f17e3c7f8e3ed30a4a56ff35db99c4480e688"
+      "stable": "05d22c4e94705c17cf358c86a74f17e3c7f8e3ed30a4a56ff35db99c4480e688",
+      "preview": "8a1793c4094835af951f643136c10ffcba83d0667c7c5a1c895ec3ae4e52e2b1",
+      "reason": "Menu only: drops the 'Edit folders' entry (folders are code-defined). Set/Remove default and Mark all as read untouched."
     },
     "src/lang.ts": {
-      "preview": "d1fe78d2bc0125d85a1cd5e9679f652f0eaece01075af839f6b68c794cbd4f1f",
-      "reason": "String value changes only: FilterAllChats/FilterAllChatsShort/AllChats now read \"Chats\". No keys added or removed; localVersion bump reloads the local lang pack.",
-      "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd"
+      "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd",
+      "preview": "9ce8a8a239e5ffe2663da99feced7b856aa42b4f3d0996c8c6536f510f2675e9",
+      "reason": "Two new display strings: 'Disable Sidebar' and 'Enable Sidebar'. No storage or behaviour change."
     },
     "src/lib/appDialogsManager.ts": {
-      "preview": "598a3a20bc15e3cb8b133563edb8c76450d7231d1db671d0493f8e75267cb307",
-      "reason": "Drops the empty-folder placeholder's edit-folder button and the edit-folder tab param. Startup folder selection is unchanged; no dialog storage change.",
-      "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4"
+      "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4",
+      "preview": "3fe972d1aa8dca02f895090e1af2c98a66fe27175a733e6827252f55c80de437",
+      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. Batch 8 adds a presentation-only sidebar toggle button at the head of the folder tabs row; it is built from a CSS-gated wrapper div and, on click, lazily imports lib/folders-sidebar-layout and calls toggleFoldersSidebar(). No storage change, no new state key. Drops the AppChatFoldersTab import, now unused after the folder context menu stopped taking its params. Preview hash refreshed at 44502ae for a comment-only change: the gating note above the row now states that the row is gated on .has-horizontal-folders alone and only the toggle button is hidden under .has-folders-sidebar. No code change."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -72,9 +72,9 @@
       "stable": "absent"
     },
     "src/scripts/out/langPack.strings": {
-      "preview": "ecd30febb52a4812d00508c9694cd5982b21c3784083497efd8ede3b8bdeeb02",
-      "reason": "Regenerated mirror of the src/lang.ts value changes; no schema or stored-format impact.",
-      "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3"
+      "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3",
+      "preview": "5578ea14a8a8f2854f3aac006c2ab927d24355aceeb9a224dc5cd22a9baffe24",
+      "reason": "Generated lang-pack mirror of the two new label keys. Text only."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "cc10ea262b1bc9bcaca4f91fc39ca7f99449a5889c648a6395141d5f9c97b48c",
@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "26c0c925efaa726065ac0c4d23faf9e220ceef96ecfa34cfef46c68078f9caab",
-      "reason": "Floating new-menu button is a plain one-click '+' instead of a menu toggle (Groups folder opens the multi-select member picker, elsewhere the contact picker), and the 'Create a new' submenu offers only group and private chat since adding a contact lives in the tools menu. Reads appDialogsManager.filterId only; no storage access, folder and contact data untouched."
+      "preview": "305b1d29a1ab0fcfd63667937240ab0e1f16534b12e946d52889c05234e2c247",
+      "reason": "Menu only: removes the redundant 'Folders' entry and adds a 'Disable Sidebar' toggle under 'Disable Animations'; both write the existing settings.tabsInSidebar key. Also collapses a stale presentation constant: WIDTH_WHEN_COLLAPSED 80 -> 56 so the collapse animation matches --sidebar-collapsed-width in _leftSidebar.scss. Layout only, no storage or state change."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "a628032df6cd0c5cfaac5289977508ad1a4dbc7d33994beeee1f992e167d78d5",
@@ -103,8 +103,8 @@
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
-      "preview": "372d21df632452f192c5c78e78c7a96035643b7391cdf05c9246b4d9f845c17c",
-      "reason": "Chat-list virtual item height 72 -> 56 (owner batch 4 compact list). Layout constant only - must stay in step with the row height in _chatlist.scss; no storage, IPC or schema surface."
+      "preview": "5bb0c60f7cc6e73aa1fb27e9b053c244c441e1f63ab8500e533c48bd1446a6b2",
+      "reason": "Presentation-only: setOnlineStatus now toggles a class on the inline title-row dot (dom.onlineDot) instead of fading the avatar's ::after. No storage change."
     },
     "src/lib/storages/filters.ts": {
       "stable": "8b2d3bf7a32b1761f7b21baf81db8740677df7978bb1f27b6b1a23bdb3057879",
@@ -138,8 +138,28 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "e8a1c8254d6dea729adfd0984e707d4c23e37b7886f68eb6a1d95be3f639c950",
-      "preview": "50ad06188e0f762b5be14a2c1ced0e5762025c2e1e5a65cb1136000b9d8c1ecd",
-      "reason": "Lang-pack revision constant 12 -> 13 so value-only string edits (\"All Chats\" -> \"Chats\") invalidate a client's cached pack. Integer constant only; no runtime behaviour, storage or IPC change."
+      "preview": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
+      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow."
+    },
+    "src/lib/folders-sidebar-layout.ts": {
+      "stable": "absent",
+      "preview": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
+      "reason": "New module: one writer for the existing settings.tabsInSidebar preference, shared by the hamburger toggle and the rail button. Writes the same key the Chat Folders radio already wrote."
+    },
+    "src/components/sidebarLeft/tabs/phantomchatDesktopUpdates.ts": {
+      "stable": "230784dc8d7562a47552d19149dbd3d7a45407d7b0dacd57a3a17a900eea042e",
+      "preview": "996722dc08d480a07f8b298c2b4a762c209166476840c606a78fbaa279ded5df",
+      "reason": "Desktop entry point for the Updates tab is now a re-export of the application tab, so one screen (and one channel control) serves both builds instead of two that could drift. The screen it resolves to is covered by the phantomchatApplicationUpdates.ts approval; this file itself holds no logic and no storage."
+    },
+    "src/lib/phantomchat/desktop-update-view.ts": {
+      "stable": "7307fcd6f7d4089aeddce63fd5999ba0a36374720e1c7fd10fda7d0437fd42fa",
+      "preview": "f5c41987244d0c42538a9a151fe05d833b54029a91e2266d698a68cbedbea3c9",
+      "reason": "Dependency-free presentation strings only: status line, last-checked line, action button. The two channel-choice helpers moved out to lib/phantomchat/update-channel-choice.ts, which does not exist at stableRef, so the builder can copy them into pinned Stable. No DOM, no Electron, no app singletons, no storage."
+    },
+    "src/lib/phantomchat/update-channel-choice.ts": {
+      "stable": "absent",
+      "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
+      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
     }
   },
   "stableVersion": "1.0.335"

@@ -1,6 +1,4 @@
 import type {AppManagers} from '@lib/managers';
-import type AppChatFoldersTab from '@components/sidebarLeft/tabs/chatFolders';
-import type {AppSidebarLeft} from '@components/sidebarLeft';
 import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpClassName from '@helpers/dom/findUpClassName';
@@ -9,14 +7,10 @@ import {DEFAULT_CHAT_FOLDER_SETTING_KEY} from '@lib/folders-default';
 import {toastNew} from '@components/toast';
 
 export default function createFolderContextMenu({
-  appSidebarLeft,
-  AppChatFoldersTab: _AppChatFoldersTab,
   managers,
   className,
   listenTo
 }: {
-  appSidebarLeft: AppSidebarLeft,
-  AppChatFoldersTab: typeof AppChatFoldersTab,
   managers: AppManagers,
   className: string,
   listenTo: HTMLElement
@@ -44,15 +38,9 @@ export default function createFolderContextMenu({
       },
       verify: () => appSettings[DEFAULT_CHAT_FOLDER_SETTING_KEY] === clickFilterId && clickFilterId !== FOLDER_ID_ALL
     }, {
-      icon: 'edit',
-      text: 'FilterEditAll',
-      onClick: () => {
-        appSidebarLeft.closeTabsBefore(() => {
-          appSidebarLeft.createTab(_AppChatFoldersTab).open();
-        });
-      },
-      verify: () => clickFilterId === FOLDER_ID_ALL
-    }, {
+      // Owner batch 6 (2026-10-30): the "Edit folders" entry is gone — folders
+      // are code-defined, so there is no folder-editing surface to send anyone
+      // to. Set/Remove default and Mark all as read stay.
       icon: 'readchats',
       text: 'MarkAllAsRead',
       onClick: () => {

@@ -5,7 +5,9 @@
  */
 
 :root {
-  --sidebar-collapsed-width: 80px;
+  // Owner batch 7 (2026-10-30): the collapsed chat list must match the rail
+  // and the top bar (56px), so all three columns line up.
+  --sidebar-collapsed-width: 56px;
   --sidebar-max-width: #{calc($large-screen / 4)};
 }
 
@@ -64,15 +66,18 @@
         margin: 0 !important;
       }
 
+      // 13px was tuned for the old 80px column and 54px avatar. With a 56px
+      // column and the 32px list avatar, 12px is the exact centre
+      // ((56 - 32) / 2) and keeps the avatar fully inside the narrower bar.
       #chatlist-container .loading-dialog-skeleton {
-        padding-left: 13px;
+        padding-left: 12px;
       }
 
       #chatlist-container .chatlist-chat {
         padding-inline-end: 0;
         border-radius: 0;
         .row-media-bigger {
-          inset-inline-start: 13px !important;
+          inset-inline-start: 12px !important;
         }
         .row-row {
           display: none;
@@ -121,7 +126,11 @@
         .sidebar-header.main-search-sidebar-header .sidebar-header__btn-container:not(.force-static) {
           position: fixed;
           top: 8px;
-          left: calc(max(0px, (100vw - #{$large-screen}) / 2) + 20px) !important;
+          // Owner batch 8 (2026-10-30): 20px was the 80px-column offset. The
+          // collapsed column is 56px and the button container is 40px, so the
+          // exact centre is (56 - 40) / 2 = 8px — otherwise the hamburger
+          // sits 12px right of centre and overhangs the narrow bar.
+          left: calc(max(0px, (100vw - #{$large-screen}) / 2) + 8px) !important;
         }
         .force-static {
           margin-left: 4px;
@@ -360,6 +369,50 @@
 
     .has-horizontal-folders & {
       display: block;
+    }
+  }
+
+  /* Owner batch 8 (2026-10-30): [sidebar toggle][Chats/Groups tabs] on one row.
+     This row is the only parent of the folders strip, so it is gated on
+     .has-horizontal-folders ALONE. That class is true whenever the rail is not
+     usable on screen (rail off, or rail on with the viewport below the
+     floating-sidebar breakpoint), and gating the row on
+     :not(.has-folders-sidebar) additionally hid every folders surface at
+     <= 925px with the rail preference on - which is the default. Only the
+     button is rail-mode specific. */
+  .chatlist-folders-row {
+    display: none;
+    align-items: center;
+    flex: 0 0 auto;
+    min-width: 0;
+
+    body.has-horizontal-folders & {
+      display: flex;
+    }
+
+    /* The strip inherits `flex: 0 0 auto` from .item-main
+       .menu-horizontal-scrollable, which as a flex item sizes it to content:
+       the inner .scrollable-x then never overflows (no horizontal scroll) and
+       the row spills past the column's right edge. Let it take the row. */
+    .folders-tabs-scrollable {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .chatlist-sidebar-toggle {
+      flex: 0 0 auto;
+      width: 3.5rem;
+      height: 3.5rem;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* With the rail on screen the strip is above the chat list but the button
+       would duplicate the rail's own toggle, so only the button goes. */
+    body.has-folders-sidebar & .chatlist-sidebar-toggle {
+      display: none;
     }
   }
 

@@ -5,7 +5,7 @@
  * the strings a user reads to decide whether to restart can be tested
  * directly. The tab imports these; nothing here imports the tab.
  */
-import type {UpdateState} from './desktop-api';
+import type {UpdateChannel, UpdateState} from './desktop-api';
 
 /**
  * Status line shown under the version. Pure so it can be tested without a

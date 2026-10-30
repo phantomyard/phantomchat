@@ -87,7 +87,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
 
       const status = await this.managers.appUsersManager.getUserStatus(userId);
       const online = status?._ === 'userStatusOnline';
-      this.setOnlineStatus(dom.avatarEl.node, online);
+      this.setOnlineStatus(dom, online);
     });
 
     this.listenerSetter.add(rootScope)('chat_update', async(chatId) => {
@@ -185,20 +185,13 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     return this.filterId;
   }
 
-  public setOnlineStatus(element: HTMLElement, online: boolean) {
-    const className = 'is-online';
-    const hasClassName = element.classList.contains(className);
-    !hasClassName && online && element.classList.add(className);
-    SetTransition({
-      element: element,
-      className: 'is-visible',
-      forwards: online,
-      duration: 250,
-      onTransitionEnd: online ? undefined : () => {
-        element.classList.remove(className);
-      },
-      useRafs: online && !hasClassName ? 2 : 0
-    });
+  public setOnlineStatus(dom: DialogDom, online: boolean) {
+    // Owner batch 6 (2026-10-30): presence is an inline dot in the title row now
+    // (stamped by appDialogsManager as `.dialog-online-dot`), not an :after on
+    // the avatar. Those anchors needed a 54px box to hang off; at the compact
+    // 32px list avatar the dot spilled out of the row and was clipped. A plain
+    // class toggle is enough — there is nothing left to fade between.
+    dom.onlineDot?.classList.toggle('is-online', online);
   }
 
   public generateScrollable(filter: Parameters<AppDialogsManager['addFilter']>[0]) {

@@ -78,7 +78,6 @@ import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
 import {dispatchHeavyAnimationEvent} from '@hooks/useHeavyAnimationCheck';
 import shake from '@helpers/dom/shake';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
-import AppChatFoldersTab from '@components/sidebarLeft/tabs/chatFolders';
 import eachTimeout from '@helpers/eachTimeout';
 import PopupSharedFolderInvite from '@components/popups/sharedFolderInvite';
 import showLimitPopup from '@components/popups/limit';
@@ -117,6 +116,8 @@ import LazyLoadQueue from '@components/lazyLoadQueue';
 import {fastSmoothScrollToStart} from '@helpers/fastSmoothScroll';
 import ArchiveDialog, {archiveDialogTagName} from '@components/archiveDialog';
 import {createArchiveDialogContextMenu} from '@components/archiveDialogContextMenu';
+import ButtonIcon from '@components/buttonIcon';
+import {attachClickEvent as attachButtonClickEvent} from '@helpers/dom/clickEvent';
 
 
 export const DIALOG_LIST_ELEMENT_TAG = 'A';
@@ -140,6 +141,9 @@ export type DialogDom = {
   listEl: HTMLElement,
   subtitleEl: HTMLElement,
   mutedIcon?: HTMLElement,
+  // Inline presence dot in the title row (owner batch 6). Optional: only the
+  // dialog list sets it, and only while the row exists.
+  onlineDot?: HTMLElement,
 
   titleWrapOptions?: WrapSomethingOptions;
 
@@ -319,6 +323,15 @@ export class DialogElement extends Row {
     loadPromises?.push(peerTitlePromise);
     titleSpanContainer.append(peerTitle.element);
 
+    // Presence dot (owner batch 6): it used to be an :after on the avatar pinned
+    // at a fixed 54px offset, so on the 32px list avatar it hung outside the
+    // avatar and was clipped by the 56px row. It now sits inline in the title
+    // row, immediately BEFORE the P2P chip, and is toggled by
+    // setOnlineStatus (autonomousDialogList/dialogs.ts).
+    const onlineDot = document.createElement('span');
+    onlineDot.classList.add('dialog-online-dot');
+    titleSpanContainer.append(onlineDot);
+
     // P2P badge (#52): a green "P2P" chip after the contact name, shown only when
     // this peer is reachable over a direct transport. Hidden (display:none) for
     // relay-only / non-1:1 peers, so it costs nothing on those rows. Self-manages
@@ -387,6 +400,7 @@ export class DialogElement extends Row {
       containerEl: li,
       listEl: li,
       subtitleEl: this.subtitleRow,
+      onlineDot,
       titleWrapOptions
     };
 
@@ -654,7 +668,23 @@ export class AppDialogsManager {
     });
 
     const foldersScrollable = new ScrollableX(this.folders.menuScrollContainer);
-    bottomPart.prepend(this.folders.menuScrollContainer);
+
+    // Owner batch 8 (2026-10-30): with the rail gone the only way back is the
+    // hamburger's "Disable Sidebar" entry, which is out of sight right where the
+    // folders used to be. Mirror that same toggle at the head of the horizontal
+    // tabs strip. CSS shows the row on .has-horizontal-folders alone (the rail
+    // is not on screen); only this button is additionally hidden under
+    // .has-folders-sidebar, so it can never sit next to a rail it toggles away.
+    const foldersRow = document.createElement('div');
+    foldersRow.classList.add('chatlist-folders-row');
+    const foldersSidebarToggle = ButtonIcon('rightpanel chatlist-sidebar-toggle');
+    // Loaded lazily: folders-sidebar-layout pulls appImManager, which pulls this
+    // module back — resolving it on click keeps the import graph acyclic.
+    attachButtonClickEvent(foldersSidebarToggle, () => {
+      import('@lib/folders-sidebar-layout').then(({toggleFoldersSidebar}) => toggleFoldersSidebar());
+    });
+    foldersRow.append(foldersSidebarToggle, this.folders.menuScrollContainer);
+    bottomPart.prepend(foldersRow);
     const selectTab = this.selectTab = horizontalMenuObjArgs({
       tabs: this.folders.menu,
       content: this.folders.container,
@@ -725,8 +755,6 @@ export class AppDialogsManager {
     });
 
     createFolderContextMenu({
-      appSidebarLeft,
-      AppChatFoldersTab,
       managers: this.managers,
       className: 'menu-horizontal-div-item',
       listenTo: this.folders.menu
@@ -2515,7 +2543,7 @@ export class AppDialogsManager {
       if(peerId !== rootScope.myId && isUser) {
         promises.push(this.managers.appUsersManager.getUserStatus(peerId.toUserId()).then((status) => {
           if(status?._ === 'userStatusOnline') {
-            this.xd.setOnlineStatus(dialogElement.dom.avatarEl.node, true);
+            this.xd.setOnlineStatus(dialogElement.dom, true);
           }
         }));
       }
