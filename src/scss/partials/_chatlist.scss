@@ -746,20 +746,20 @@ ul.chatlist {
   }
 }
 
-// Owner batch 2 (2026-10-30): half-size dialog avatars. Rows keep their 72px
-// virtual-list item height, so only the media and the text offset change.
+// Owner batch 5 (2026-10-30): dialog avatars match the 32px top-bar avatar.
+// --multiplier is 54 / size (see _avatar.scss) so initials scale with the box.
 #chatlist-container .chatlist-chat {
   &.row-with-padding {
-    padding-inline-start: 2.75rem !important;
+    padding-inline-start: 3.125rem !important;
   }
 
   .dialog-avatar.row-media-bigger {
     // --size drives the photo/gradient/initials inside the avatar, so it must
-    // be overridden too, otherwise the 54px inner image overflows a 27px box.
-    --size: 1.6875rem !important;
-    --multiplier: 2;
-    width: 1.6875rem !important;
-    height: 1.6875rem !important;
+    // be overridden too, otherwise the 54px inner image overflows the box.
+    --size: 2rem !important;
+    --multiplier: 1.6875;
+    width: 2rem !important;
+    height: 2rem !important;
     inset-inline-start: .75rem !important;
   }
 }
