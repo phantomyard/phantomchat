@@ -754,6 +754,10 @@ ul.chatlist {
   }
 
   .dialog-avatar.row-media-bigger {
+    // --size drives the photo/gradient/initials inside the avatar, so it must
+    // be overridden too, otherwise the 54px inner image overflows a 27px box.
+    --size: 1.6875rem !important;
+    --multiplier: 2;
     width: 1.6875rem !important;
     height: 1.6875rem !important;
     inset-inline-start: .75rem !important;
