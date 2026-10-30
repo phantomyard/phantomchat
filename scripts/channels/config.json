@@ -83,8 +83,8 @@
     },
     "src/lib/phantomchat/phantomchat-launch-dialogs.ts": {
       "stable": "1ca936e947cd50e70eacd9173debea103fa3372b7e3f9bec806541a9a2b389d5",
-      "preview": "219f2fab97185af63c835cdac780f4fcbeb7be8767200daa927f045778cabfab",
-      "reason": "Doc-only tweak to isChatDeepLink JSDoc (returns true for any non-trivial launch hash, not only chat deep links). No code or storage change."
+      "preview": "588c9958afbb01a88dc40dab4657cbb13c4cb3250ebb3ffbd2b841fb5bfad4f1",
+      "reason": "Launch preview refresh also reads the Groups (3) folder so group conversations get their cached previews reloaded. Read-only over existing dialog data."
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
@@ -98,8 +98,8 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "5c120acdfea8eb4fea2708c85c9b8679d5429b659a3627b65cda312d06b384e2",
-      "preview": "eb68e8d2988bbc6ddf932e937656e6e75b3f3c1ebf2ab7c814e9a1ef7dfbd222",
-      "reason": "Folder 0 (Chats) excludes group chats from its dialog list, count and unread badge, keyed on the pure isGroupPeer predicate; groups stay in the built-in Groups folder. Read-time exclusion computed from existing peer records \u2014 no stored field, no migration."
+      "preview": "783f5ba106faece2c0387893913772a7fe9438bd2277c720a1786c414ab1d558",
+      "reason": "Adds getAllPersistedDialogs() (complete, index-independent dialog set) for reconciliation sweeps. getFolderDialogs/getFolderUnreadCount behaviour unchanged — Chats still excludes groups."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
@@ -109,7 +109,7 @@
     "src/lib/storages/filters.ts": {
       "stable": "8b2d3bf7a32b1761f7b21baf81db8740677df7978bb1f27b6b1a23bdb3057879",
       "preview": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged \u2014 no new fields, no migration; both channels still read and write the same blob."
+      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged — no new fields, no migration; both channels still read and write the same blob."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "c335ae669367fae529b745801414655f0a7ac096428d0f2ec94738797e0a69c5",
@@ -120,6 +120,21 @@
       "stable": "6e427051059a700fce194eebb3ddcef7733dc481a2480f780d352bb883188e48",
       "preview": "147879b5e88fb8b22af2ac9009f77a74c06073e9be15f50bf1b3ec951f4d354a",
       "reason": "createTwebDialog stamps the built-in Groups folder index (index_3) alongside index_0 on group dialogs. Derived from the same message timestamp, so it only mirrors what DialogsStorage already computes for the Groups REAL_FOLDER on reload; no stored key, format or value changes."
+    },
+    "src/components/appSelectPeers.ts": {
+      "stable": "f1169c62aa216fd9acc831a6c741ac3f1036e8aeea41bea8a6d6fc30be8ebb51",
+      "preview": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
+      "reason": "Groups (3) enumeration stage added after Archive so the recipient picker keeps offering existing groups (Chats still hides them by presentation rule). Read-only dialog enumeration; no storage or format change."
+    },
+    "src/lib/appManagers/appMessagesManager.ts": {
+      "stable": "f80acba4fb890f2e100733a326ab0e34fffa0507c1294fcc9a992e627ef83ad3",
+      "preview": "38d59ba9833ed8968bcff4dca419a2a13f10fed36b133692b6297e8fb8a26d8e",
+      "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change."
+    },
+    "src/lib/phantomchat/group-api.ts": {
+      "stable": "bb78a69b01f693e38954b9212527bddb4108a08194e493db25a83f40942aee9e",
+      "preview": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
+      "reason": "Orphan-group sweep enumerates the complete persisted dialog set instead of the Chats (0) view so legacy group ghosts can actually be dropped. Deletes the same rows as before, only now reaches them."
     }
   },
   "stableVersion": "1.0.335"
