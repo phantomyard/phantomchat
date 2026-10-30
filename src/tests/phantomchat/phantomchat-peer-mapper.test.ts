@@ -16,6 +16,10 @@ if(!(Number.prototype as any).toPeerId) {
 }
 
 import {PhantomChatPeerMapper} from '@lib/phantomchat/phantomchat-peer-mapper';
+import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
+import {FOLDER_ID_GROUPS} from '@appManagers/constants';
+
+const GROUPS_INDEX_KEY = getDialogIndexKey(FOLDER_ID_GROUPS as any);
 
 const SAMPLE_PUBKEY = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
 const SAMPLE_PEER_ID = 1234567890123456;
@@ -312,7 +316,10 @@ describe('PhantomChatPeerMapper', () => {
         topMessageDate: 1712345678
       });
 
-      expect((dialog as any).index_3).toBe(1712345678 * 0x10000);
+      // The key must be exactly what DialogsStorage.getDialogIndexKeyByFilterId
+      // produces for the Groups REAL_FOLDER (index_3) — the Groups list reads it.
+      expect(GROUPS_INDEX_KEY).toBe('index_3');
+      expect((dialog as any)[GROUPS_INDEX_KEY]).toBe(1712345678 * 0x10000);
       expect((dialog as any).index_0).toBe(1712345678 * 0x10000);
     });
 
@@ -325,7 +332,7 @@ describe('PhantomChatPeerMapper', () => {
       });
 
       expect((dialog as any).index_0).toBe(1712345678 * 0x10000);
-      expect((dialog as any).index_3).toBeUndefined();
+      expect((dialog as any)[GROUPS_INDEX_KEY]).toBeUndefined();
     });
   });
 
