@@ -126,7 +126,11 @@
         .sidebar-header.main-search-sidebar-header .sidebar-header__btn-container:not(.force-static) {
           position: fixed;
           top: 8px;
-          left: calc(max(0px, (100vw - #{$large-screen}) / 2) + 20px) !important;
+          // Owner batch 8 (2026-10-30): 20px was the 80px-column offset. The
+          // collapsed column is 56px and the button container is 40px, so the
+          // exact centre is (56 - 40) / 2 = 8px — otherwise the hamburger
+          // sits 12px right of centre and overhangs the narrow bar.
+          left: calc(max(0px, (100vw - #{$large-screen}) / 2) + 8px) !important;
         }
         .force-static {
           margin-left: 4px;
