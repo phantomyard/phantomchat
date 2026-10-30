@@ -18,8 +18,8 @@
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "absent",
-      "preview": "0de2379034721703301f97334bd359384b21aab17cad80643ab88fd4b9933130",
-      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. One Release channel radio now drives both surfaces: it calls the routing-only shell (window.phantomchatChannels) and the Electron update bridge (setUpdateChannel). The two channel-choice helpers it uses moved to lib/phantomchat/update-channel-choice.ts so the copy also resolves in pinned Stable. No database access, no storage format change; the tab only reads and writes the two existing channel preferences. Copied to pinned Stable by the builder."
+      "preview": "378b94f843ad08780c207dbf7560a054bb99df0a541758fbdc428cf6457a33e5",
+      "reason": "Presentation-only Updates tab using Row, RadioField, RadioForm and SettingSection. One Release channel radio now drives both surfaces: it calls the routing-only shell (window.phantomchatChannels) and the Electron update bridge (setUpdateChannel). The two channel-choice helpers it uses moved to lib/phantomchat/update-channel-choice.ts so the copy also resolves in pinned Stable. No database access, no storage format change; the tab only reads and writes the two existing channel preferences. Copied to pinned Stable by the builder. Explicit Stable/Preview accessible names exclude the enclosing Row subtitle; no channel or persistence semantics change. Explicit radio subtitles are attached with aria-describedby (not aria-label) so the accessible name stays exact while the Row explanation is still announced; no behaviour, storage or IPC change. Preview hash refreshed for that presentation-only change."
     },
     "src/helpers/themeController.ts": {
       "stable": "97bc7e9cf713cd154fe26bfce6d7c30cfbbb40a8b0d7abc7bd7cf44fd746fa82",

@@ -138,6 +138,17 @@ describe('the tab carries only one release-channel control', () => {
     expect(names).toEqual(['phantomchat-update-channel', 'phantomchat-update-channel']);
   });
 
+  it('describes each radio by its Row subtitle instead of overriding the name', () => {
+    // aria-label replaces the whole accessible name, so the Row subtitle
+    // stopped being announced once it was set. The subtitle node carries the
+    // explanation and the input points at it: exact name, description kept.
+    expect(tabSrc).toContain("stableRadio.input.setAttribute('aria-label', 'Stable');");
+    expect(tabSrc).toContain("stableRadio.input.setAttribute('aria-describedby', stableRow.subtitle.id);");
+    expect(tabSrc).toContain("previewRadio.input.setAttribute('aria-describedby', previewRow.subtitle.id);");
+    expect(tabSrc).toMatch(/stableRow\.subtitle\.id = '[^']+';/);
+    expect(tabSrc).toMatch(/previewRow\.subtitle\.id = '[^']+';/);
+  });
+
   it('no longer links to a second "Desktop updates" screen', () => {
     // The old second control was a Row titled "Desktop updates" that opened
     // its own ring picker.

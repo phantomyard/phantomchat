@@ -94,6 +94,10 @@ export default class AppPhantomChatUpdatesTab extends SliderSuperTab {
       name: 'phantomchat-update-channel',
       value: 'preview'
     });
+    // Row adds a subtitle inside an outer label. Keep the radio's accessible
+    // name independent of that descriptive text (including in pinned Stable).
+    stableRadio.input.setAttribute('aria-label', 'Stable');
+    previewRadio.input.setAttribute('aria-label', 'Preview');
     this.radios = {stable: stableRadio, preview: previewRadio};
     this.radios[choice.selected].input.checked = true;
     if(!choice.interactive) {
@@ -103,6 +107,15 @@ export default class AppPhantomChatUpdatesTab extends SliderSuperTab {
 
     const stableRow = new Row({radioField: stableRadio, subtitle: 'Tested releases, promoted manually'});
     const previewRow = new Row({radioField: previewRadio, subtitle: 'Every merged change, as soon as it builds'});
+    // aria-label replaces the *whole* accessible name, so the Row subtitle is
+    // announced to nobody once it is set. Describe the input by that subtitle
+    // instead: the control keeps an exact, wrapper-independent name for
+    // assistive tech (and for the channel smoke tests) and the explanation
+    // still reaches the user.
+    stableRow.subtitle.id = 'pc-release-channel-stable-description';
+    previewRow.subtitle.id = 'pc-release-channel-preview-description';
+    stableRadio.input.setAttribute('aria-describedby', stableRow.subtitle.id);
+    previewRadio.input.setAttribute('aria-describedby', previewRow.subtitle.id);
 
     const form = RadioForm([
       {container: stableRow.container, input: stableRadio.input},
