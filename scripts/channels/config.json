@@ -114,7 +114,7 @@
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "c335ae669367fae529b745801414655f0a7ac096428d0f2ec94738797e0a69c5",
       "preview": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
-      "reason": "Skeleton size union 60 -> 56 so the compact chat list can reuse it. Type-only change; no runtime behaviour, storage or IPC change."
+      "reason": "Skeleton size union 72 | 64 -> 72 | 64 | 56 so the compact chat list can reuse it. Type-only plus one variant class; no runtime behaviour, storage or IPC change."
     },
     "src/lib/phantomchat/phantomchat-peer-mapper.ts": {
       "stable": "6e427051059a700fce194eebb3ddcef7733dc481a2480f780d352bb883188e48",

@@ -1068,11 +1068,9 @@ export class AppSidebarLeft extends SidebarSlider {
     this.createTab(AppContactsTab).open();
   }
 
-  private async showAddContactFlow() {
-    const {showAddContactPopup} = await import('@components/popups/addContact');
-    showAddContactPopup({managers: this.managers});
-  }
-
+  // "Create a new": group and private chat only. Adding a contact lives solely in
+  // the main tools menu (see the AddContact entry above), so it is not offered
+  // twice — the submenu would otherwise be a second path to the same popup.
   private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean): ButtonMenuItemOptionsVerifiable[]  {
     const closeTabsBefore = async(clb: () => void) => {
       if(closeBefore) {
@@ -1085,10 +1083,6 @@ export class AppSidebarLeft extends SidebarSlider {
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
       onClick: () => closeTabsBefore(() => void this.openNewGroupFlow())
-    }, {
-      icon: 'adduser',
-      text: 'AddContact',
-      onClick: () => closeTabsBefore(() => void this.showAddContactFlow())
     }, {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',

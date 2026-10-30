@@ -1698,6 +1698,10 @@ export default class DialogsStorage extends AppManager {
           }
         } else for(const peerId of results) {
           const dialog = this.dialogs[peerId];
+          // A query searches for a CHAT, not for a folder listing, so it
+          // deliberately ignores the Chats group exclusion: asking from folder 0
+          // must still find a group. The exclusion in getFolderDialogs is a
+          // list/badge presentation rule only.
           if(dialog && dialog.folder_id === filterId) {
             dialogs.push(dialog);
           }
@@ -1759,9 +1763,20 @@ export default class DialogsStorage extends AppManager {
       // authoritative count is the locally-filtered dialog list length.
       // FOLDER_ID_ALL (0) also builds its list locally now (it drops group
       // chats, which live in the Groups folder instead), so its count must come
-      // from that list too. FOLDER_ID_ARCHIVE (1) is a real server folder whose
-      // result.count is correct, and virtual filters (forum/saved) carry their
-      // own counts, so both are excluded.
+      // from that list too. Same reasoning as Groups: PhantomChat persists the
+      // complete dialog set locally (folder 0 is filled by the dialog backfill,
+      // not by paging), so the local list is the whole population and this count
+      // is exact rather than "as much as has loaded".
+      //
+      // One accepted consequence: appMessagesManager decides `isEnd` with
+      // `dialogsLength >= count`, where dialogsLength comes from this (group-free)
+      // list and count is the server's group-inclusive one. For folder 0 that
+      // comparison can therefore never be satisfied. The pager then ends on the
+      // first empty page, and isEnd latches setDialogsLoaded(folderId, true), so
+      // no request is repeated at the end of the list.
+      // FOLDER_ID_ARCHIVE (1) is a real server folder whose result.count is
+      // correct, and virtual filters (forum/saved) carry their own counts, so
+      // both are excluded.
       const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS;
       const isLocallyFilteredFolder = !isVirtualFilter &&
         filterId !== FOLDER_ID_ARCHIVE;
@@ -1797,7 +1812,11 @@ export default class DialogsStorage extends AppManager {
   public async markFolderAsRead(folderId: number) {
     const folder = this.getFolder(folderId);
     const peerIds = [...folder.unreadPeerIds];
-    for(const peerId of peerIds) {
+    // Chats (0) neither lists a group nor counts one in its badge, so "mark this
+    // folder read" must not reach into Groups either. Groups still carry
+    // folder_id 0 as far as the server is concerned, hence the local exclusion.
+    const targets = folderId === FOLDER_ID_ALL ? peerIds.filter((peerId) => !isGroupPeer(peerId)) : peerIds;
+    for(const peerId of targets) {
       await this.appMessagesManager.markDialogUnread({peerId, read: true});
     }
   }

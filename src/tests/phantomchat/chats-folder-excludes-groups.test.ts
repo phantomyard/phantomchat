@@ -114,4 +114,27 @@ describe('Chats folder excludes groups', () => {
     expect(fs.testDialogForFilterId(user, FOLDER_ID_ALL)).toBe(true);
     expect(fs.testDialogForFilterId(group, FOLDER_ID_GROUPS)).toBe(true);
   });
+
+  it('markFolderAsRead(0) does not touch a group the Chats badge does not count', async() => {
+    const ds = new DialogsStorage();
+    const marked: number[] = [];
+    (ds as any).appMessagesManager = {markDialogUnread: async({peerId}: {peerId: number}) => { marked.push(peerId); }};
+    (ds as any).appPeersManager = {isBotforum: () => false, peerId: USER_PEER_ID};
+    (ds as any).folders = {
+      [FOLDER_ID_ALL]: {
+        id: FOLDER_ID_ALL,
+        dialogs: [mkDialog(GROUP_PEER_ID), mkDialog(USER_PEER_ID)],
+        count: 2,
+        unreadMessagesCount: 0,
+        unreadPeerIds: new Set([GROUP_PEER_ID, USER_PEER_ID]),
+        unreadUnmutedPeerIds: new Set([GROUP_PEER_ID, USER_PEER_ID]),
+        unreadMentionsPeerIds: new Set()
+      }
+    };
+
+    await ds.markFolderAsRead(FOLDER_ID_ALL);
+
+    // The list and the badge both exclude the group, so "mark read" must agree.
+    expect(marked).toEqual([USER_PEER_ID]);
+  });
 });
