@@ -42,8 +42,8 @@
       "stable": "cbf463686cb43b4be66abc538ae3d7c4ddb79e82d6580e95ba6bb76c4f9f7743"
     },
     "src/components/sidebarLeft/tabs/editFolder.ts": {
-      "preview": "6b946ba8911704e579b7afa4827e91408a94d5ff7175b8a3c17a75a6ac29592a",
-      "reason": "Edit-folder UI gains an icon picker stored on the existing dialogFilter.emoticon schema field; icon clear assigns empty string instead of deleting the property. Optional field on the FiltersStorage/FoldersSync JSON blob, which old channels copy through opaquely; no migration, no schema change.",
+      "preview": "fa6b94e9e8608446f352fb0f8c32b5da70a6b8348aa47afe5c71459920cb8609",
+      "reason": "Comment-only: records that this tab is unreachable by decision (folders are code-defined) so the dead delete-folder path is not read as live UI. The icon picker it still carries uses the existing dialogFilter.emoticon schema field, copied through opaquely by old channels; no migration, no schema change.",
       "stable": "592c79a324b12b0bf2fef9c5e3a9e4c73cea25eb5bde74c9616a2d21f37e7531"
     },
     "src/config/state.ts": {
@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "be50455a33cc0284665bf1e89203f9ab7f366211317d313785448d8310cbcb99",
-      "reason": "Floating new-menu button is a plain one-click '+' instead of a menu toggle: the Groups folder opens the multi-select member picker directly, everywhere else the contact picker. Reads appDialogsManager.filterId only; no storage access, folder and contact data untouched."
+      "preview": "26c0c925efaa726065ac0c4d23faf9e220ceef96ecfa34cfef46c68078f9caab",
+      "reason": "Floating new-menu button is a plain one-click '+' instead of a menu toggle (Groups folder opens the multi-select member picker, elsewhere the contact picker), and the 'Create a new' submenu offers only group and private chat since adding a contact lives in the tools menu. Reads appDialogsManager.filterId only; no storage access, folder and contact data untouched."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "a628032df6cd0c5cfaac5289977508ad1a4dbc7d33994beeee1f992e167d78d5",
@@ -98,8 +98,8 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "5c120acdfea8eb4fea2708c85c9b8679d5429b659a3627b65cda312d06b384e2",
-      "preview": "783f5ba106faece2c0387893913772a7fe9438bd2277c720a1786c414ab1d558",
-      "reason": "Adds getAllPersistedDialogs() (complete, index-independent dialog set) for reconciliation sweeps. getFolderDialogs/getFolderUnreadCount behaviour unchanged — Chats still excludes groups."
+      "preview": "2133300d4e587c550f89235ff5eaeb4ba1e728e2b2c588966173aa119640afd6",
+      "reason": "Adds getAllPersistedDialogs() (complete, index-independent dialog set) for reconciliation sweeps, and marks folder 0 read without touching group peers because the Chats list and badge exclude them. Stored dialog rows, folder membership and the on-disk shape are unchanged; getFolderDialogs still excludes groups from Chats."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
@@ -135,6 +135,11 @@
       "stable": "bb78a69b01f693e38954b9212527bddb4108a08194e493db25a83f40942aee9e",
       "preview": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
       "reason": "Orphan-group sweep enumerates the complete persisted dialog set instead of the Chats (0) view so legacy group ghosts can actually be dropped. Deletes the same rows as before, only now reaches them."
+    },
+    "src/langPackLocalVersion.example.ts": {
+      "stable": "e8a1c8254d6dea729adfd0984e707d4c23e37b7886f68eb6a1d95be3f639c950",
+      "preview": "50ad06188e0f762b5be14a2c1ced0e5762025c2e1e5a65cb1136000b9d8c1ecd",
+      "reason": "Lang-pack revision constant 12 -> 13 so value-only string edits (\"All Chats\" -> \"Chats\") invalidate a client's cached pack. Integer constant only; no runtime behaviour, storage or IPC change."
     }
   },
   "stableVersion": "1.0.335"
