@@ -115,6 +115,11 @@
       "stable": "c335ae669367fae529b745801414655f0a7ac096428d0f2ec94738797e0a69c5",
       "preview": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
       "reason": "Skeleton size union 60 -> 56 so the compact chat list can reuse it. Type-only change; no runtime behaviour, storage or IPC change."
+    },
+    "src/lib/phantomchat/phantomchat-peer-mapper.ts": {
+      "stable": "6e427051059a700fce194eebb3ddcef7733dc481a2480f780d352bb883188e48",
+      "preview": "147879b5e88fb8b22af2ac9009f77a74c06073e9be15f50bf1b3ec951f4d354a",
+      "reason": "createTwebDialog stamps the built-in Groups folder index (index_3) alongside index_0 on group dialogs. Derived from the same message timestamp, so it only mirrors what DialogsStorage already computes for the Groups REAL_FOLDER on reload; no stored key, format or value changes."
     }
   },
   "stableVersion": "1.0.335"
