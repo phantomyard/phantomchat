@@ -99,22 +99,22 @@
     "src/lib/storages/dialogs.ts": {
       "stable": "5c120acdfea8eb4fea2708c85c9b8679d5429b659a3627b65cda312d06b384e2",
       "preview": "eb68e8d2988bbc6ddf932e937656e6e75b3f3c1ebf2ab7c814e9a1ef7dfbd222",
-      "reason": "Folder 0 (Chats) excludes group chats from its dialog list, count and unread badge, keyed on the pure isGroupPeer predicate; groups stay in the built-in Groups folder. Read-time exclusion computed from existing peer records — no stored field, no migration."
+      "reason": "Folder 0 (Chats) excludes group chats from its dialog list, count and unread badge, keyed on the pure isGroupPeer predicate; groups stay in the built-in Groups folder. Read-time exclusion computed from existing peer records \u2014 no stored field, no migration."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
-      "preview": "372d21df632452f192c5c78e78c7a96035643b7391cdf05c9246b4d9f845c17c",
-      "reason": "Chat-list virtual item height 72 -> 56 to match the compact row. Layout constant only — no storage, IPC or schema surface."
+      "preview": "a51de6c59a6d7be57caaf7b9559a9c83fdda615ece1aa6fb87ea1d7af399ca83",
+      "reason": "Chat-list virtual item height 72 -> 60, the smallest row that fits the original 16px title over 16px subtitle. Layout constant only - no storage, IPC or schema surface."
     },
     "src/lib/storages/filters.ts": {
       "stable": "8b2d3bf7a32b1761f7b21baf81db8740677df7978bb1f27b6b1a23bdb3057879",
       "preview": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged — no new fields, no migration; both channels still read and write the same blob."
+      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged \u2014 no new fields, no migration; both channels still read and write the same blob."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "c335ae669367fae529b745801414655f0a7ac096428d0f2ec94738797e0a69c5",
-      "preview": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
-      "reason": "Skeleton size union gains 56 so the compact chat list can reuse it. Type-only widening; no runtime behaviour, storage or IPC change."
+      "preview": "078388b8625c6fe7212d08fe5f131b1c391d89600f552e2add32f788c44a1060",
+      "reason": "Skeleton size union gains 60 so the compact chat list can reuse it. Type-only widening; no runtime behaviour, storage or IPC change."
     }
   },
   "stableVersion": "1.0.335"
