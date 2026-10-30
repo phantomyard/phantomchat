@@ -19,6 +19,7 @@ import {AppDialogsManager, DialogDom} from '@lib/appDialogsManager';
 import rootScope from '@lib/rootScope';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {runWithHotReloadGuard} from '@lib/solidjs/runWithHotReloadGuard';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 
 
 type ConstructorArgs = BaseConstructorArgs & {
@@ -256,6 +257,14 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
 
   public testDialogForFilter(dialog: Dialog) {
     if(!this.keysOnStableFolderId ? getDialogIndex(dialog, this.indexKey) === undefined : this.filterId !== dialog.folder_id) {
+      return false;
+    }
+
+    // Chats (0) excludes groups (they belong to the built-in Groups folder).
+    // This is the gate that adds/keeps a row on dialog updates, so the rule has
+    // to live here too — otherwise a group re-enters the list the first time it
+    // emits dialog_flush / dialogs_multiupdate after load.
+    if(this.filterId === FOLDER_ID_ALL && isGroupPeer(dialog.peerId)) {
       return false;
     }
 

@@ -26,6 +26,7 @@ import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArra
 import safeReplaceObject from '@helpers/object/safeReplaceObject';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 import {AppManager} from '@appManagers/manager';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import isObject from '@helpers/object/isObject';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
@@ -452,7 +453,7 @@ export default class DialogsStorage extends AppManager {
     // "Chats" (folder 0) excludes group chats: groups have their own built-in
     // folder, so a group must never appear in both lists.
     if(id === FOLDER_ID_ALL) {
-      return dialogs.filter((dialog) => !this.appPeersManager.isAnyGroup((dialog as Dialog).peerId));
+      return dialogs.filter((dialog) => !isGroupPeer((dialog as Dialog).peerId));
     }
 
     return dialogs;
@@ -497,7 +498,7 @@ export default class DialogsStorage extends AppManager {
     // Chats (0) no longer contains groups (see getFolderDialogs), so its badge
     // must not count them either — they are counted by the Groups folder.
     if(filterId === FOLDER_ID_ALL) {
-      const isNotGroup = (peerId: PeerId) => !this.appPeersManager.isAnyGroup(peerId);
+      const isNotGroup = (peerId: PeerId) => !isGroupPeer(peerId);
       return {
         unreadUnmutedCount: [...folder.unreadUnmutedPeerIds].filter(isNotGroup).length,
         unreadCount: [...folder.unreadPeerIds].filter(isNotGroup).length,

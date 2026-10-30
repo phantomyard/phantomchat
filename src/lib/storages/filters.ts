@@ -25,6 +25,7 @@ import makeError from '@helpers/makeError';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {isDialog} from '@appManagers/utils/dialogs/isDialog';
 import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 
 export type MyDialogFilter = Exclude<DialogFilter, DialogFilter.dialogFilterDefault>;
 
@@ -272,6 +273,11 @@ export default class FiltersStorage extends AppManager {
     // folders whose membership is computed from pFlags below — do NOT
     // short-circuit them here, otherwise they always appear empty.
     if(filter.id === FOLDER_ID_ALL || filter.id === FOLDER_ID_ARCHIVE) {
+      // Chats (0) must never contain a group: groups have their own built-in
+      // folder. Groups still carry folder_id 0 (that is what the server sends),
+      // so folder_id alone would put them in both lists.
+      if(filter.id === FOLDER_ID_ALL && isGroupPeer(peerId)) return false;
+
       return dialog.folder_id === filter.id && this.dialogsStorage.canSaveDialog(peerId, dialog);
     }
 
