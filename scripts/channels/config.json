@@ -98,8 +98,18 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "5c120acdfea8eb4fea2708c85c9b8679d5429b659a3627b65cda312d06b384e2",
-      "preview": "8e36acb0d1a4813cb4cd7de114ea79bfef8bd8c7e80b6b9ad5b961a45ad66a9f",
-      "reason": "Folder 0 (Chats) now excludes group chats from its dialog list, count and unread badge; groups stay in the built-in Groups folder. No stored field changes — the exclusion is computed at read time from existing peer records."
+      "preview": "eb68e8d2988bbc6ddf932e937656e6e75b3f3c1ebf2ab7c814e9a1ef7dfbd222",
+      "reason": "Folder 0 (Chats) excludes group chats from its dialog list, count and unread badge, keyed on the pure isGroupPeer predicate; groups stay in the built-in Groups folder. Read-time exclusion computed from existing peer records \u2014 no stored field, no migration."
+    },
+    "src/components/autonomousDialogList/dialogs.ts": {
+      "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
+      "preview": "3faedf4af7990d5ee90345981e1e9198ad62f3f4f9ef882c2aab0e3000e8c6f4",
+      "reason": "Row-level membership gate: the Chats list (folder 0) refuses to add/keep a group peer, matching the storage rule above. Presentation and list membership only \u2014 no storage writes or format change."
+    },
+    "src/lib/storages/filters.ts": {
+      "stable": "8b2d3bf7a32b1761f7b21baf81db8740677df7978bb1f27b6b1a23bdb3057879",
+      "preview": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
+      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged \u2014 no new fields, no migration; both channels still read and write the same blob."
     }
   },
   "stableVersion": "1.0.335"
