@@ -32,8 +32,8 @@
       "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required."
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
-      "preview": "81c001baa4eab84034f21cf13fb30d239656551ea1a520b746fcfea0fe74b30e",
-      "reason": "Display-only: folder sidebar icon fallback chain (picked emoticon > title emoji > derived icon); explicit pick also leaves title docId unset. Reads an optional filter field; no storage format change. Same folder data renders on both channels.",
+      "preview": "773a7339798b155c5eeaac6dd79dade62ecffc16f01c8780fd8e4cc48cc1a7d9",
+      "reason": "Display-only: removes the rail's add-chats empty-state button (folders are code-defined) and the edit-folder context-menu wiring. Reads existing folder data; no storage writes or format change.",
       "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0"
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
@@ -52,18 +52,18 @@
       "stable": "153d04ba78a391bf2e1053404a245bfca2e80fbd29a67f6c37263aa3a19526c3"
     },
     "src/helpers/dom/createFolderContextMenu.ts": {
-      "preview": "dad9b7e353487f086bd76b832cbb4f261dc873a8968a03ecc17e46abeb3b3595",
-      "reason": "Context-menu actions that write the optional defaultChatFolderId settings key and toast. No storage format change.",
+      "preview": "5470a4646fac3a1761173a67a3c1e3fe086dc23fe79cd02b300fec356a645376",
+      "reason": "Rail context menu drops Edit and Delete. Remaining entries are default-folder preference (existing optional settings key), mark-as-read and open-folders-page. No storage format change.",
       "stable": "05d22c4e94705c17cf358c86a74f17e3c7f8e3ed30a4a56ff35db99c4480e688"
     },
     "src/lang.ts": {
-      "preview": "7f8aa9fdae36caab79f17a256c6706dddb3ec8abdfd5ab17938785457017d8f9",
-      "reason": "String additions only (folder icon picker + default-folder menu/toast labels); localVersion bump reloads the local lang pack. No schema or stored-format impact.",
+      "preview": "d1fe78d2bc0125d85a1cd5e9679f652f0eaece01075af839f6b68c794cbd4f1f",
+      "reason": "String value changes only: FilterAllChats/FilterAllChatsShort/AllChats now read \"Chats\". No keys added or removed; localVersion bump reloads the local lang pack.",
       "stable": "ff234420e1efc174a6d2213963ec10eb06faa4ee61585abf575c20206edd07dd"
     },
     "src/lib/appDialogsManager.ts": {
-      "preview": "afb5aae8ebd0af2e2f0ac9277904d7b76609d37d57b3029be3859681b5466324",
-      "reason": "Startup tab selection reads the optional defaultChatFolderId settings key (falls back to All Chats when absent) and clears it on filter_delete. No dialog storage or storage format change.",
+      "preview": "598a3a20bc15e3cb8b133563edb8c76450d7231d1db671d0493f8e75267cb307",
+      "reason": "Drops the empty-folder placeholder's edit-folder button and the edit-folder tab param. Startup folder selection is unchanged; no dialog storage change.",
       "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4"
     },
     "src/lib/folders-default.ts": {
@@ -72,8 +72,8 @@
       "stable": "absent"
     },
     "src/scripts/out/langPack.strings": {
-      "preview": "8b68a87878c765140ef8a8aebbb4c23fbe89fbfedbc1d13d2dded24283d39530",
-      "reason": "Regenerated mirror of src/lang.ts string additions; no schema or stored-format impact.",
+      "preview": "ecd30febb52a4812d00508c9694cd5982b21c3784083497efd8ede3b8bdeeb02",
+      "reason": "Regenerated mirror of the src/lang.ts value changes; no schema or stored-format impact.",
       "stable": "f541d6ad3431b78b728d3d2eca6ea94d267152aa3ccf3bda275c64bfc14e3be3"
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
@@ -85,6 +85,21 @@
       "stable": "1ca936e947cd50e70eacd9173debea103fa3372b7e3f9bec806541a9a2b389d5",
       "preview": "219f2fab97185af63c835cdac780f4fcbeb7be8767200daa927f045778cabfab",
       "reason": "Doc-only tweak to isChatDeepLink JSDoc (returns true for any non-trivial launch hash, not only chat deep links). No code or storage change."
+    },
+    "src/components/sidebarLeft/index.ts": {
+      "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
+      "preview": "94ddd39cccda80a4eb746cb04fdbd49a16bbcfba471f7186bee3dbb8f85cb775",
+      "reason": "Removes the New Folder entry from the create-chat menu. No storage access; folder data is untouched."
+    },
+    "src/components/sidebarLeft/tabs/chatFolders.ts": {
+      "stable": "a628032df6cd0c5cfaac5289977508ad1a4dbc7d33994beeee1f992e167d78d5",
+      "preview": "960a33e99f9ad3d342e5279f3e204eb86471c8a4904a19a07a1615616e1c0fb4",
+      "reason": "Settings > Folders becomes display-only: no create button, no row click-through to the edit-folder tab, no drag reordering, no suggested-folder creation. The FiltersOnLeft/Top toggle is unchanged. No storage format change."
+    },
+    "src/lib/storages/dialogs.ts": {
+      "stable": "5c120acdfea8eb4fea2708c85c9b8679d5429b659a3627b65cda312d06b384e2",
+      "preview": "8e36acb0d1a4813cb4cd7de114ea79bfef8bd8c7e80b6b9ad5b961a45ad66a9f",
+      "reason": "Folder 0 (Chats) now excludes group chats from its dialog list, count and unread badge; groups stay in the built-in Groups folder. No stored field changes — the exclusion is computed at read time from existing peer records."
     }
   },
   "stableVersion": "1.0.335"
