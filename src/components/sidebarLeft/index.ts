@@ -685,13 +685,12 @@ export class AppSidebarLeft extends SidebarSlider {
     const sidebarText = document.createElement('span');
     const sidebarBtn: ButtonMenuItemOptionsVerifiable = {
       id: 'folders-sidebar-toggle',
-      icon: 'menu',
+      icon: 'rightpanel',
       regularText: sidebarText,
       onClick: () => {
         toggleFoldersSidebar();
         updateSidebarToggleButton(isFoldersSidebarEnabled());
-      },
-      verify: () => !liteMode.isEnabled()
+      }
     };
     const updateSidebarToggleButton = (enabled: boolean) => {
       const el = sidebarBtn.element;
