@@ -56,6 +56,19 @@ describe('Chats folder excludes groups', () => {
     expect((ds as any).folders[FOLDER_ID_ALL].dialogs).toContain(group);
   });
 
+  it('getAllPersistedDialogs still sees the group Chats hides', () => {
+    const ds = new DialogsStorage();
+    const group = mkDialog(GROUP_PEER_ID);
+    const user = mkDialog(USER_PEER_ID);
+    (ds as any).dialogs = {[GROUP_PEER_ID]: group, [USER_PEER_ID]: user};
+
+    // Reconciliation sweeps enumerate the complete set on purpose: Chats (0)
+    // hides groups by presentation rule, and a sweep that inherited that rule
+    // could never see a group row (see GroupAPI.dropOrphanGroupDialogs).
+    expect(ds.getAllPersistedDialogs().map((d) => d.peerId).sort()).toEqual([GROUP_PEER_ID, USER_PEER_ID].sort());
+    expect(ds.getAllPersistedDialogs(true)).toHaveLength(2);
+  });
+
   it('getFolderUnreadCount(0) does not count a group’s unread state', () => {
     const ds = new DialogsStorage();
     (ds as any).appPeersManager = {isBotforum: () => false, peerId: USER_PEER_ID};

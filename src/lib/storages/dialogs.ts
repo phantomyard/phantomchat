@@ -518,6 +518,18 @@ export default class DialogsStorage extends AppManager {
     return [].concat(...arrays) as Dialog[];
   }
 
+  /**
+   * EVERY persisted dialog, independent of any folder index and of the Chats (0)
+   * group exclusion. Reconciliation sweeps must see the complete population:
+   * folder lists are index-driven views, and Chats (0) deliberately hides
+   * groups, so enumerating either would let persisted group ghosts survive.
+   * Not for presentation — use getDialogs for that.
+   */
+  public getAllPersistedDialogs(skipMigrated = false): Dialog[] {
+    const dialogs = Object.values(this.dialogs);
+    return skipMigrated ? dialogs.filter((dialog) => dialog.migratedTo === undefined) : dialogs;
+  }
+
   private setDialogIndexInFilter(
     dialog: AnyDialog,
     indexKey: ReturnType<typeof getDialogIndexKey>,

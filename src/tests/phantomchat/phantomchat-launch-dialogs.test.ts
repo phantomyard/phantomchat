@@ -181,6 +181,9 @@ describe('installLaunchDialogs wiring', () => {
     await vi.waitFor(() => expect(reloadConversation).toHaveBeenCalledWith(77));
     await vi.waitFor(() => expect(appImManager.setInnerPeer).toHaveBeenCalledWith({peerId: 77}));
     expect(rootScope.managers.dialogsStorage.getFolderDialogs).toHaveBeenCalledWith(0);
+    // Groups (3) too — Chats (0) excludes group chats, so folder 0 alone would
+    // leave every group's preview unrefreshed.
+    expect(rootScope.managers.dialogsStorage.getFolderDialogs).toHaveBeenCalledWith(3);
     expect(listeners.peer_changed).toBeTypeOf('function');
   });
 
