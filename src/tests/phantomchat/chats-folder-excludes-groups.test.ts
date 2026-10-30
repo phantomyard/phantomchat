@@ -137,4 +137,38 @@ describe('Chats folder excludes groups', () => {
     // The list and the badge both exclude the group, so "mark read" must agree.
     expect(marked).toEqual([USER_PEER_ID]);
   });
+
+  it('a group pinned in folder 0 still has its stale pin cleared by the pin-order sweep', () => {
+    // handleDialogsPinned walks getFolderDialogs(folderId), and folder 0 no
+    // longer lists groups, so before the sweep gained a group pass a group
+    // dropped from the server's pin order kept pFlags.pinned forever: invisible
+    // in Chats, stale on the Groups row.
+    const ds = new DialogsStorage();
+    const group = mkDialog(GROUP_PEER_ID, {pFlags: {pinned: true}});
+    const user = mkDialog(USER_PEER_ID, {pFlags: {pinned: true}});
+    (ds as any).dialogs = {[GROUP_PEER_ID]: group, [USER_PEER_ID]: user};
+    (ds as any).appPeersManager = {isBotforum: () => false, peerId: USER_PEER_ID};
+    (ds as any).folders = {
+      [FOLDER_ID_ALL]: {
+        id: FOLDER_ID_ALL,
+        dialogs: [user],
+        count: 1,
+        unreadMessagesCount: 0,
+        unreadPeerIds: new Set(),
+        unreadUnmutedPeerIds: new Set(),
+        unreadMentionsPeerIds: new Set()
+      }
+    };
+    (ds as any).pinnedOrders = {[FOLDER_ID_ALL]: []};
+    (ds as any).savePinnedOrders = () => {};
+    (ds as any).generateIndexForDialog = () => {};
+    (ds as any).appMessagesManager = {scheduleHandleNewDialogs: () => {}};
+    (ds as any).getAnyDialog = (peerId: number) => (ds as any).dialogs[peerId];
+
+    // The server's new order pins only the user, so the group's pin is stale.
+    (ds as any).handleDialogsPinned(FOLDER_ID_ALL, [USER_PEER_ID]);
+
+    expect(user.pFlags.pinned).toBe(true);
+    expect(group.pFlags.pinned).toBeUndefined();
+  });
 });

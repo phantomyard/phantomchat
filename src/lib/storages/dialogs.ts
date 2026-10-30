@@ -452,6 +452,12 @@ export default class DialogsStorage extends AppManager {
 
     // "Chats" (folder 0) excludes group chats: groups have their own built-in
     // folder, so a group must never appear in both lists.
+    // NOTE: this is a presentation rule living in an accessor every other caller
+    // reads as "folder membership". The display gates (AutonomousDialogList's
+    // testDialogForFilter, FiltersStorage.testDialogForFilter, the local
+    // getFolderUnreadCount) are what actually keep groups out of the Chats UI; the
+    // non-display readers that need the complete population are audited to ask for
+    // it explicitly (getAllPersistedDialogs, FOLDER_ID_GROUPS, 0+1+3).
     if(id === FOLDER_ID_ALL) {
       return dialogs.filter((dialog) => !isGroupPeer((dialog as Dialog).peerId));
     }
@@ -2158,6 +2164,24 @@ export default class DialogsStorage extends AppManager {
         delete dialog.pFlags.pinned;
         this.generateIndexForDialog(dialog);
         this.appMessagesManager.scheduleHandleNewDialogs(dialog.peerId, dialog);
+      }
+    }
+
+    // Chats (0) excludes group chats from its list by presentation rule (see
+    // getFolderDialogs), but the server still pins groups in folder 0. The loop
+    // above only ever visits dialogs that list returns, so a group dropped from
+    // the server's pin order would keep a stale pin nobody can see or clear.
+    // Sweep groups separately, off the complete local index.
+    if(folderId === FOLDER_ID_ALL) {
+      const groupDialogs = this.getAllPersistedDialogs().filter((dialog) =>
+        dialog.folder_id === FOLDER_ID_ALL && (dialog as Dialog).pFlags?.pinned);
+      for(const dialog of groupDialogs) {
+        if(!isGroupPeer(dialog.peerId)) continue;
+        if(!newPinned[getDialogKey(dialog)]) {
+          delete (dialog as Dialog).pFlags.pinned;
+          this.generateIndexForDialog(dialog);
+          this.appMessagesManager.scheduleHandleNewDialogs(dialog.peerId, dialog);
+        }
       }
     }
   }

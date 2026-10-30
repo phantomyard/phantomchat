@@ -16,7 +16,7 @@ import {attachClickEvent} from '@helpers/dom/clickEvent';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS} from '@appManagers/constants';
 import replaceContent from '@helpers/dom/replaceContent';
 import SettingSection from '@components/settingSection';
 import {joinDeepPath} from '@helpers/object/setDeepProperty';
@@ -79,7 +79,12 @@ export default class AppChatFoldersTab extends SliderSuperTab {
       }
 
       if(!d.length) {
-        const folder = await this.managers.dialogsStorage.getFolderDialogs(filter.id);
+        // Chats (0) is group-free by presentation rule (see
+        // DialogsStorage.getFolderDialogs), so the group bucket has to be read from
+        // the built-in Groups folder or this subtitle can never show one.
+        const folder = (await this.managers.dialogsStorage.getFolderDialogs(filter.id)).concat(
+          filter.id === FOLDER_ID_ALL ? await this.managers.dialogsStorage.getFolderDialogs(FOLDER_ID_GROUPS) : []
+        );
         let chats = 0, channels = 0, groups = 0;
         await Promise.all(folder.map(async(dialog) => {
           if(await this.managers.appPeersManager.isAnyGroup(dialog.peerId)) ++groups;
