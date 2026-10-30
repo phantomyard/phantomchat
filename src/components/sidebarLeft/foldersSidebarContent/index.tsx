@@ -7,7 +7,7 @@ import ListenerSetter from '@helpers/listenerSetter';
 import {Middleware} from '@helpers/middleware';
 import pause from '@helpers/schedulers/pause';
 import {logger, LogTypes} from '@lib/logger';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_CODE, REAL_FOLDERS} from '@appManagers/constants';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {MyDialogFilter} from '@lib/storages/filters';
@@ -105,6 +105,9 @@ export function FoldersSidebarContent(props: {
     return {
       id: filter.id,
       icon: getIconForFilter(filter),
+      // Code draws its `#` as text (the icon font has no hashtag glyph); every
+      // other folder keeps the font icon / custom emoji path untouched.
+      ...(filter.id === FOLDER_ID_CODE ? {glyph: '#'} : {}),
       notifications: notifications,
       chatsCount: folder?.dialogs?.length || 0,
       dontAnimate: filter.pFlags?.title_noanimate,

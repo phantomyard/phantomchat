@@ -63,6 +63,14 @@ export interface GroupControlPayload {
   emoji?: string;
   reactionEventId?: string;
   createdAt?: number;
+  /**
+   * Group tags (2026-10-30). Carried by `group_create` (the creator's tags, so
+   * a member's very first view is correct) and by `group_info_update` (a later
+   * tag change). Unknown tags are dropped on receipt — see group-tags
+   * .sanitizeGroupTags. Absent means "unchanged", never "clear": an older
+   * client republishing the group must not strip a tag it does not know.
+   */
+  groupTags?: string[];
 }
 
 // ─── Group Record ───────────────────────────────────────────────────
@@ -96,6 +104,13 @@ export interface GroupRecord {
    * deterministic winner tuple (reboundAt, groupId) settles competing
    * rebinds from two of the admin's devices without a coordinator. */
   reboundAt?: number;
+  /**
+   * Group tags (2026-10-30). `['session']` marks a group created from the Code
+   * folder's + button: it is listed in Code and in no other folder (see
+   * lib/phantomchat/group-tags). The whole record is the groups-CRDT payload,
+   * so this field syncs to every device with no schema version bump.
+   */
+  tags?: string[];
 }
 
 // ─── Group Delivery Info ────────────────────────────────────────────

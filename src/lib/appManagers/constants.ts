@@ -13,7 +13,7 @@ export type UserAuth = {dcID: number | string, date: number, id: PeerId};
 export type REAL_FOLDER_ID = 0 | 1;
 
 // Represents locally-seeded system folder IDs (not Telegram dialog.folder_id)
-export type SYSTEM_FOLDER_ID = 0 | 1 | 2 | 3;
+export type SYSTEM_FOLDER_ID = 0 | 1 | 2 | 3 | 4;
 
 export const NULL_PEER_ID: PeerId = 0;
 export const REPLIES_PEER_ID: PeerId = 1271266957;
@@ -46,15 +46,26 @@ export const PEER_FULL_TTL = 3 * 60e3;
 export const FOLDER_ID_ALL: REAL_FOLDER_ID = 0;
 export const FOLDER_ID_ARCHIVE: REAL_FOLDER_ID = 1;
 export const FOLDER_ID_GROUPS: SYSTEM_FOLDER_ID = 3;
+/**
+ * Code (2026-10-30): the folder that owns session groups — groups tagged
+ * `session` at creation, created from this folder's + button. Membership is
+ * tag-driven (see lib/phantomchat/group-tags), not folder_id driven: session
+ * groups still carry the server's `dialog.folder_id === 0`, exactly like every
+ * other group, so Chats and Groups have to EXCLUDE them by the same rule that
+ * puts them in here.
+ */
+export const FOLDER_ID_CODE: SYSTEM_FOLDER_ID = 4;
 export const REAL_FOLDERS: Set<number> = new Set([
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_GROUPS
+  FOLDER_ID_GROUPS,
+  FOLDER_ID_CODE
 ]);
 export const PROTECTED_FOLDERS: Set<number> = new Set([
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_GROUPS
+  FOLDER_ID_GROUPS,
+  FOLDER_ID_CODE
 ]);
 export const START_LOCAL_ID = Math.max(...Array.from(REAL_FOLDERS)) + 1 as MyDialogFilter['localId'];
 

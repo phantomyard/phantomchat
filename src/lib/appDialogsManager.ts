@@ -12,6 +12,7 @@ import type {AnyDialog} from '@lib/storages/dialogs';
 import type {CustomEmojiRendererElement} from '@customEmoji/renderer';
 import PopupElement from '@components/popups';
 import {createP2PBadge} from '@components/phantomchat/p2pBadge';
+import {createSessionBadge} from '@components/phantomchat/sessionBadge';
 import DialogsContextMenu from '@components/dialogsContextMenu';
 import {horizontalMenu, horizontalMenuObjArgs} from '@components/horizontalMenu';
 import ripple from '@components/ripple';
@@ -337,6 +338,12 @@ export class DialogElement extends Row {
     // relay-only / non-1:1 peers, so it costs nothing on those rows. Self-manages
     // its own state and reaps itself when the row is torn down.
     titleSpanContainer.append(createP2PBadge(peerId, 'p2p-badge--row'));
+
+    // Code session chip (2026-10-30): a `#` marker on rows that belong to the
+    // Code folder. Static — the session index is synchronous (group-tags) and
+    // the tag does not change under a mounted row's feet. Hidden for every
+    // other peer, so it costs nothing outside Code.
+    titleSpanContainer.append(createSessionBadge(peerId, 'session-badge--row'));
 
     // const titleIconsPromise = generateTitleIcons(peerId).then((elements) => {
     //   titleSpanContainer.append(...elements);

@@ -72,19 +72,26 @@ export default function FolderItem(props: FolderItemProps) {
       onClick={props.onClick}
     >
       <Show
-        when={showCustomIcon()}
-        fallback={<IconTsx icon={props.icon} class="folders-sidebar__folder-item-icon" />}
+        when={props.glyph}
+        fallback={
+          <Show
+            when={showCustomIcon()}
+            fallback={<IconTsx icon={props.icon} class="folders-sidebar__folder-item-icon" />}
+          >
+            <FolderAnimatedIcon
+              docId={props.iconDocId}
+              emoji={props.emojiIcon}
+              color={props.selected ? 'primary-color' : 'folders-sidebar-item-color'}
+              managers={rootScope.managers}
+              size={ICON_SIZE}
+              class="folders-sidebar__folder-item-animated-icon"
+              onFail={() => setFailedToFetchIconDoc(true)}
+              dontAnimate={props.dontAnimate}
+            />
+          </Show>
+        }
       >
-        <FolderAnimatedIcon
-          docId={props.iconDocId}
-          emoji={props.emojiIcon}
-          color={props.selected ? 'primary-color' : 'folders-sidebar-item-color'}
-          managers={rootScope.managers}
-          size={ICON_SIZE}
-          class="folders-sidebar__folder-item-animated-icon"
-          onFail={() => setFailedToFetchIconDoc(true)}
-          dontAnimate={props.dontAnimate}
-        />
+        <span class="folders-sidebar__folder-item-glyph">{props.glyph}</span>
       </Show>
       <Show when={title()}>
         <div class="folders-sidebar__folder-item-name">{title()}</div>

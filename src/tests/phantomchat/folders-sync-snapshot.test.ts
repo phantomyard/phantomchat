@@ -4,6 +4,7 @@ import {buildLocalFilter} from '@lib/storages/filtersLocal';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
+  FOLDER_ID_CODE,
   FOLDER_ID_GROUPS
 } from '@appManagers/constants';
 import {FOLDERS_SYNC_VERSION} from '@lib/phantomchat/folders-sync-types';
@@ -23,13 +24,13 @@ describe('buildSnapshotFromFilters', () => {
       buildLocalFilter(FOLDER_ID_ALL),
       buildLocalFilter(FOLDER_ID_GROUPS),
       buildLocalFilter(FOLDER_ID_ARCHIVE),
-      mkCustom(4, 'Work')
+      mkCustom(5, 'Work')
     ];
     const snap = buildSnapshotFromFilters(filters);
     expect(snap.version).toBe(FOLDERS_SYNC_VERSION);
-    expect(snap.order).toEqual([0, 3, 1, 4]);
+    expect(snap.order).toEqual([0, 3, 1, 5]);
     expect(snap.customFolders).toHaveLength(1);
-    expect(snap.customFolders[0].id).toBe(4);
+    expect(snap.customFolders[0].id).toBe(5);
     expect((snap.customFolders[0] as any).title.text).toBe('Work');
   });
 
@@ -63,7 +64,7 @@ describe('applySnapshotToFilters', () => {
       buildLocalFilter(FOLDER_ID_ALL),
       buildLocalFilter(FOLDER_ID_GROUPS),
       buildLocalFilter(FOLDER_ID_ARCHIVE),
-      mkCustom(4, 'Old Custom')
+      mkCustom(5, 'Old Custom')
     ];
     const remote = {
       version: 1,
@@ -74,7 +75,9 @@ describe('applySnapshotToFilters', () => {
     const result = applySnapshotToFilters(local, remote);
     expect(result.map((f) => f.id)).toEqual([0, 3, 1, 5]);
     expect((result.find((f) => f.id === 5) as any)?.title.text).toBe('New Custom');
-    expect(result.find((f) => f.id === 4)).toBeUndefined();
+    // The old local copy is replaced wholesale, not merged.
+    expect(result.filter((f) => f.id === 5)).toHaveLength(1);
+    expect(result.find((f) => f.id === FOLDER_ID_CODE)).toBeUndefined();
   });
 
   it('applies protectedTitles to the seeded folders via overlay', () => {

@@ -33,8 +33,16 @@ export default class AppContactsTab extends SliderSuperTab {
   private middlewareHelperLoad: ReturnType<typeof getMiddleware>;
   private sortedUserList: SortedUserList;
   private listsContainer: HTMLElement;
+  /**
+   * Code-folder sessions (2026-10-30): when set, a click on a contact hands
+   * the peer here instead of opening a DM. Owned by the caller (sidebarLeft
+   * .openNewSessionFlow), which creates the session group and navigates. A
+   * `false` return from the row listener suppresses the default open-chat.
+   */
+  private onPickPeer?: (peerId: PeerId) => void;
 
-  public init() {
+  public init(params?: {onPickPeer?: (peerId: PeerId) => void}) {
+    this.onPickPeer = params?.onPickPeer;
     this.container.id = 'contacts-container';
 
     // this.list = appDialogsManager.createChatList(/* {avatarSize: 48, handheldsSize: 66} */);
@@ -88,7 +96,15 @@ export default class AppContactsTab extends SliderSuperTab {
     list.classList.add('contacts-container');
     appDialogsManager.setListClickListener({
       list,
-      onFound: () => {
+      onFound: (elem) => {
+        // Pick mode: the caller decides what a contact means (a session), and
+        // the normal open-chat path is suppressed.
+        if(this.onPickPeer) {
+          const raw = elem.dataset.peerId;
+          if(raw) this.onPickPeer(+raw as PeerId);
+          return false;
+        }
+
         this.close();
       },
       withContext: undefined,

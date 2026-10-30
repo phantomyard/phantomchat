@@ -84,6 +84,19 @@
       font-size: var(--size);
     }
 
+    /* Code (2026-10-30): the `#` is drawn as text because the icon font has
+       no hashtag glyph. Same 30px slot, same baseline, same colour rules as
+       `-icon` — `--selected` recolours the item, and the glyph inherits it. */
+    &-glyph {
+      width: var(--size);
+      height: var(--size);
+      font-size: 1.5rem;
+      line-height: var(--size);
+      font-weight: var(--font-weight-bold);
+      text-align: center;
+      pointer-events: none;
+    }
+
     &-animated-icon {
       position: relative;
       width: var(--size);

@@ -4,6 +4,7 @@ import copy from '@helpers/object/copy';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
+  FOLDER_ID_CODE,
   FOLDER_ID_GROUPS
 } from '@appManagers/constants';
 
@@ -40,6 +41,12 @@ export function buildLocalFilter(id: number): MyDialogFilter {
     filter.pFlags.groups = true;
     filter.pFlags.exclude_archived = true;
     filter.title = literalTitle('Groups');
+  } else if(id === FOLDER_ID_CODE) {
+    // No pFlags: Code membership is the `session` GROUP TAG, not a peer class
+    // (see lib/phantomchat/group-tags). FiltersStorage.testDialogForFilter
+    // short-circuits this id before the pFlags walk below.
+    filter.pFlags.exclude_archived = true;
+    filter.title = literalTitle('Code');
   }
 
   return filter;

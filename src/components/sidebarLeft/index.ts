@@ -43,7 +43,7 @@ import contextMenuController from '@helpers/contextMenuController';
 import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG} from '@lib/appDialogsManager';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import SettingSection, {SettingSectionOptions} from '@components/settingSection';
-import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS} from '@appManagers/constants';
+import {FOLDER_ID_ARCHIVE, FOLDER_ID_CODE, FOLDER_ID_GROUPS} from '@appManagers/constants';
 import mediaSizes from '@helpers/mediaSizes';
 import {doubleRaf, fastRaf} from '@helpers/schedulers';
 import {getInstallPrompt} from '@helpers/dom/installPrompt';
@@ -1093,6 +1093,47 @@ export class AppSidebarLeft extends SidebarSlider {
     this.createTab(AppContactsTab).open();
   }
 
+  /**
+   * Code folder + button (2026-10-30): the single-contact picker, then a
+   * session group. No name prompt, no multi-select — the group is created as
+   * 'New session' with the picked contact and renamed from the first prompt
+   * (GroupAPI.sendMessage). The picker's own click handler is replaced by the
+   * `onPickPeer` hook, so picking a row creates the session instead of opening
+   * a DM.
+   */
+  private openNewSessionFlow() {
+    this.createTab(AppContactsTab).open({
+      onPickPeer: async(peerId: PeerId) => {
+        try {
+          const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
+          const pubkey = await getPubkey(+peerId);
+          if(!pubkey) return;
+
+          const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+          const {DEFAULT_SESSION_GROUP_NAME, SESSION_TAG} = await import('@lib/phantomchat/group-tags');
+          const {getGroupStore} = await import('@lib/phantomchat/group-store');
+
+          const groupId = await getGroupAPI().createGroup(
+            DEFAULT_SESSION_GROUP_NAME,
+            [pubkey],
+            undefined,
+            {tags: [SESSION_TAG]}
+          );
+
+          const group = await getGroupStore().get(groupId);
+          if(!group) return;
+
+          this.closeEverythingInside();
+          appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
+        } catch(err) {
+          console.error('[PhantomChat.chat] failed to create session group:', err);
+          const {toast} = await import('@components/toast');
+          toast('Could not create the session');
+        }
+      }
+    });
+  }
+
   // "Create a new": group and private chat only. Adding a contact lives solely in
   // the main tools menu (see the AddContact entry above), so it is not offered
   // twice — the submenu would otherwise be a second path to the same popup.
@@ -1116,7 +1157,9 @@ export class AppSidebarLeft extends SidebarSlider {
   }
 
   // [PhantomChat.chat] One click, no menu: the Groups folder opens the multi-select
-  // member picker directly, everywhere else the contact picker directly.
+  // member picker directly, the Code folder opens the single-contact picker and
+  // creates a session group from the pick, everywhere else the contact picker
+  // directly.
   private createNewChatsMenuButton() {
     const btn = document.createElement('div');
     btn.className = 'btn-new-menu btn-circle btn-corner z-depth-1';
@@ -1128,6 +1171,8 @@ export class AppSidebarLeft extends SidebarSlider {
     attachClickEvent(btn, () => {
       if(appDialogsManager.filterId === FOLDER_ID_GROUPS) {
         void this.openNewGroupFlow();
+      } else if(appDialogsManager.filterId === FOLDER_ID_CODE) {
+        void this.openNewSessionFlow();
       } else {
         this.openNewPrivateChatFlow();
       }

@@ -17,6 +17,12 @@ import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
 import {writeGroupCreateServiceMessage, writeGroupRebindNoticeMessage} from './group-service-messages';
+import {
+  DEFAULT_SESSION_GROUP_NAME,
+  hasSessionTag,
+  sanitizeGroupTags,
+  sessionTitleFromPrompt
+} from './group-tags';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
 import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {getMessageStore} from './message-store';
@@ -210,8 +216,17 @@ export class GroupAPI {
    * 3. Store GroupRecord with adminPubkey = ownPubkey
    * 4. Broadcast group_create control to all members + self
    * 5. Return groupId
+   *
+   * `options.tags` marks the group on every device (Code-folder sessions pass
+   * `['session']`). Tags travel in `group_create.groupTags` so a member's first
+   * view already has them — there is no follow-up group_info_update to race.
    */
-  async createGroup(name: string, memberPubkeys: string[], description?: string): Promise<string> {
+  async createGroup(
+    name: string,
+    memberPubkeys: string[],
+    description?: string,
+    options?: {tags?: string[]}
+  ): Promise<string> {
     // Validate member pubkeys BEFORE we touch the local store. Earlier the
     // store was written first and the broadcast wrap exploded on the first
     // malformed pubkey (`pointFromBytes: bad point`), leaving an orphan
@@ -225,6 +240,8 @@ export class GroupAPI {
     const groupId = mintBoundGroupId(this.ownPubkey);
     const peerId = await groupIdToPeerId(groupId);
 
+    const tags = sanitizeGroupTags(options?.tags);
+
     const record: GroupRecord = {
       groupId,
       name,
@@ -234,6 +251,7 @@ export class GroupAPI {
       peerId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      ...(tags ? {tags} : {}),
       // The user's own create gesture (#180): only this stamp lets the group
       // clear a durable delete in the groups CRDT merge. The receive path
       // (handleGroupCreate) deliberately does NOT stamp — a relay-replayed
@@ -253,7 +271,8 @@ export class GroupAPI {
       groupName: name,
       groupDescription: description,
       memberPubkeys: record.members,
-      adminPubkey: this.ownPubkey
+      adminPubkey: this.ownPubkey,
+      ...(tags ? {groupTags: tags} : {})
     };
 
     let controlWraps;
@@ -351,6 +370,19 @@ export class GroupAPI {
       (typeOrOptions || {});
     const msgType = opts.type || 'text';
     const replyToRumorId = opts.replyToRumorId;
+
+    // Code-folder sessions take their name from the FIRST prompt (first 10
+    // characters + ellipsis). Fire-and-forget: the rename is a control-message
+    // broadcast, and the user's send must never wait on it. The guard is
+    // `name === 'New session'`, so it fires exactly once and is a no-op for
+    // every later message, every other group, and every file/voice send.
+    if(msgType === 'text' && hasSessionTag(group.tags) && group.name === DEFAULT_SESSION_GROUP_NAME) {
+      const nextName = sessionTitleFromPrompt(content);
+      if(nextName) {
+        this.renameGroup(groupId, nextName)
+        .catch((err) => this.log.warn('[GroupAPI] session auto-name failed (non-critical):', err));
+      }
+    }
 
     // Pin a single timestamp for the whole send so the payload, handler and
     // any downstream mid derivation all agree. Anchoring via `Date.now()`
@@ -679,7 +711,7 @@ export class GroupAPI {
    */
   async updateGroupInfo(
     groupId: string,
-    info: {name?: string; description?: string; avatar?: string}
+    info: {name?: string; description?: string; avatar?: string; tags?: string[]}
   ): Promise<void> {
     const group = await this.store.get(groupId);
     if(!group) throw new Error(`Group not found: ${groupId}`);
@@ -694,7 +726,8 @@ export class GroupAPI {
       groupId,
       groupName: info.name,
       groupDescription: info.description,
-      groupAvatar: info.avatar
+      groupAvatar: info.avatar,
+      ...(info.tags !== undefined ? {groupTags: info.tags} : {})
     };
 
     // Build wraps before mutating local store so any crypto-shape rejection
@@ -709,8 +742,12 @@ export class GroupAPI {
     }
 
     // Apply locally first so admin's UI updates immediately even before
-    // the publish completes.
-    await this.store.updateInfo(groupId, info);
+    // the publish completes. Tags are sanitized to the known vocabulary, and
+    // an explicit empty list clears them.
+    await this.store.updateInfo(groupId, {
+      ...info,
+      ...(info.tags !== undefined ? {tags: info.tags.length ? (sanitizeGroupTags(info.tags) ?? []) : []} : {})
+    });
 
     // Refresh main-thread mirror so subscribers (chat-list, topbar) see the
     // new title on the next render pass — same path ensureGroupChatInjected
@@ -1339,6 +1376,11 @@ export class GroupAPI {
       return;
     }
 
+    // Code-folder sessions: the creator's tags arrive with the create, so this
+    // member's very first render already puts the group in Code instead of
+    // Chats. Unknown tags are dropped (group-tags.sanitizeGroupTags).
+    const tags = sanitizeGroupTags(payload.groupTags);
+
     const record: GroupRecord = {
       groupId: payload.groupId,
       name: payload.groupName || 'Group',
@@ -1349,7 +1391,8 @@ export class GroupAPI {
       members: payload.memberPubkeys || [],
       peerId,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      ...(tags ? {tags} : {})
     };
 
     // A delete can arrive before its create because control handlers run
@@ -1539,7 +1582,10 @@ export class GroupAPI {
       createdAt: nowMs,
       updatedAt: nowMs,
       supersededGroupIds: [payload.supersedesGroupId],
-      reboundAt: createdAt
+      reboundAt: createdAt,
+      // Carry the tag across the rebind: the group is the same conversation
+      // under a new id, so a session must stay a session.
+      ...(sanitizeGroupTags(payload.groupTags) ? {tags: sanitizeGroupTags(payload.groupTags)} : {})
     };
 
     await this.commitLegacyMigration(record, {deliberate: false, teardownLegacy: !!legacyRecord});
@@ -2221,7 +2267,10 @@ export class GroupAPI {
     await this.store.updateInfo(payload.groupId, {
       name: payload.groupName,
       description: payload.groupDescription,
-      avatar: payload.groupAvatar
+      avatar: payload.groupAvatar,
+      // Absent `groupTags` means unchanged — a plain rename must not strip the
+      // tag (see group-tags.mergeRecordTags).
+      ...(payload.groupTags !== undefined ? {tags: sanitizeGroupTags(payload.groupTags)} : {})
     });
 
     // Drop the avatarNew memo so a changed avatar renders on the next

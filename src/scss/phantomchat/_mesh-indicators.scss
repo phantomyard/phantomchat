@@ -93,3 +93,41 @@
     top: -1px;
   }
 }
+
+/*
+ * Session chip (2026-10-30) — the chat-list marker for a Code-folder session
+ * group. Same chip geometry as the P2P badge, but STATIC: `.is-session` is set
+ * once at build time from the synchronous session index (group-tags), so there
+ * is no polling engine behind it. Hidden unless the peer is a session, exactly
+ * like `.p2p-badge` hides itself for relay-only peers.
+ */
+.session-badge {
+  display: none;
+  box-sizing: border-box;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: var(--primary-color);
+  border: 1px solid var(--primary-color);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+  flex-shrink: 0;
+  user-select: none;
+
+  &.is-session {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  // On a dialog row the chip sits after the peer name, next to the P2P chip.
+  &.session-badge--row {
+    margin-inline-start: 6px;
+    position: relative;
+    top: -1px;
+  }
+}
