@@ -346,6 +346,7 @@ ul.chatlist {
         }
 
         .dialog-avatar.is-online:after,
+        .dialog-online-dot,
         .dialog-group-call-icon {
           background-color: #fff;
           border-color: var(--primary-color);
@@ -784,5 +785,29 @@ ul.chatlist {
   .dialog-avatar.row-media-bigger {
     top: 50%;
     transform: translateY(-50%);
+  }
+}
+
+// Owner batch 6 (2026-10-30): presence moved off the avatar. Its :after was
+// pinned at a fixed 2.4375rem offset (sized for the old 54px avatar), so with
+// the 32px list avatar it spilled past the row edge and was clipped. It now
+// renders inline in the title row, immediately before the P2P chip.
+#chatlist-container .chatlist-chat {
+  .dialog-avatar.is-online:after {
+    display: none;
+  }
+
+  .dialog-online-dot {
+    display: none;
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-inline-start: .375rem;
+    background-color: var(--avatar-online-color);
+
+    &.is-online {
+      display: inline-block;
+    }
   }
 }

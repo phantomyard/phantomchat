@@ -96,6 +96,7 @@ import {RequestHistoryOptions} from '@appManagers/appMessagesManager';
 import useHasFoldersSidebar, {useIsSidebarCollapsed} from '@stores/foldersSidebar';
 import isObject from '@helpers/object/isObject';
 import {useAppSettings} from '@stores/appSettings';
+import {isFoldersSidebarEnabled, toggleFoldersSidebar} from '@lib/folders-sidebar-layout';
 import {openEmojiStatusPicker} from '@components/sidebarLeft/emojiStatusPicker';
 import {animateValue} from '@helpers/animateValue';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
@@ -678,6 +679,32 @@ export class AppSidebarLeft extends SidebarSlider {
       animationsText.replaceChildren(i18n(enabled ? 'DisableAnimations' : 'EnableAnimations'));
     };
 
+    // Owner batch 6 (2026-10-30): sits directly under Disable Animations and
+    // flips folders between the left rail and a strip above the chat list. The
+    // rail's own bottom button drives the same preference (folders-sidebar-layout).
+    const sidebarText = document.createElement('span');
+    const sidebarBtn: ButtonMenuItemOptionsVerifiable = {
+      id: 'folders-sidebar-toggle',
+      icon: 'menu',
+      regularText: sidebarText,
+      onClick: () => {
+        toggleFoldersSidebar();
+        updateSidebarToggleButton(isFoldersSidebarEnabled());
+      },
+      verify: () => !liteMode.isEnabled()
+    };
+    const updateSidebarToggleButton = (enabled: boolean) => {
+      const el = sidebarBtn.element;
+      if(el) {
+        const icon = el.querySelector('.tgico');
+        enabled ?
+          icon?.classList.remove('animations-icon-off') :
+          icon?.classList.add('animations-icon-off');
+      }
+
+      sidebarText.replaceChildren(i18n(enabled ? 'DisableSidebar' : 'EnableSidebar'));
+    };
+
     const newSubmenu = createSubmenuTrigger({
       options: {
         text: 'CreateANew',
@@ -740,14 +767,9 @@ export class AppSidebarLeft extends SidebarSlider {
         });
       }
     }, {
-      icon: 'folder',
-      text: 'Filters',
-      onClick: () => {
-        closeTabsBefore(() => {
-          this.createTab(AppChatFoldersTab).open();
-        });
-      }
-    }, {
+      // Owner batch 6 (2026-10-30): the "Folders" entry is gone — folder
+      // management is code-defined, and the rail's own bottom button (plus the
+      // Disable Sidebar toggle below) is the remaining entry point.
       id: 'settings',
       icon: 'settings',
       text: 'Settings',
@@ -759,7 +781,7 @@ export class AppSidebarLeft extends SidebarSlider {
           });
         }, 0);
       }
-    }, darkModeBtn, animationsBtn, {
+    }, darkModeBtn, animationsBtn, sidebarBtn, {
       icon: 'animations',
       text: 'LiteMode.Title',
       onClick: () => {
@@ -927,6 +949,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
         darkModeText.replaceChildren(i18n(themeController.isNight() ? 'DisableDarkMode' : 'EnableDarkMode'));
         updateAnimationsToggleButton(hasAnimations());
+        updateSidebarToggleButton(isFoldersSidebarEnabled());
 
         const darkModeEl = darkModeBtn.element;
         if(darkModeEl) {

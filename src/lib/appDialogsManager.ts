@@ -140,6 +140,9 @@ export type DialogDom = {
   listEl: HTMLElement,
   subtitleEl: HTMLElement,
   mutedIcon?: HTMLElement,
+  // Inline presence dot in the title row (owner batch 6). Optional: only the
+  // dialog list sets it, and only while the row exists.
+  onlineDot?: HTMLElement,
 
   titleWrapOptions?: WrapSomethingOptions;
 
@@ -319,6 +322,15 @@ export class DialogElement extends Row {
     loadPromises?.push(peerTitlePromise);
     titleSpanContainer.append(peerTitle.element);
 
+    // Presence dot (owner batch 6): it used to be an :after on the avatar pinned
+    // at a fixed 54px offset, so on the 32px list avatar it hung outside the
+    // avatar and was clipped by the 56px row. It now sits inline in the title
+    // row, immediately BEFORE the P2P chip, and is toggled by
+    // setOnlineStatus (autonomousDialogList/dialogs.ts).
+    const onlineDot = document.createElement('span');
+    onlineDot.classList.add('dialog-online-dot');
+    titleSpanContainer.append(onlineDot);
+
     // P2P badge (#52): a green "P2P" chip after the contact name, shown only when
     // this peer is reachable over a direct transport. Hidden (display:none) for
     // relay-only / non-1:1 peers, so it costs nothing on those rows. Self-manages
@@ -387,6 +399,7 @@ export class DialogElement extends Row {
       containerEl: li,
       listEl: li,
       subtitleEl: this.subtitleRow,
+      onlineDot,
       titleWrapOptions
     };
 
@@ -725,8 +738,6 @@ export class AppDialogsManager {
     });
 
     createFolderContextMenu({
-      appSidebarLeft,
-      AppChatFoldersTab,
       managers: this.managers,
       className: 'menu-horizontal-div-item',
       listenTo: this.folders.menu
@@ -2515,7 +2526,7 @@ export class AppDialogsManager {
       if(peerId !== rootScope.myId && isUser) {
         promises.push(this.managers.appUsersManager.getUserStatus(peerId.toUserId()).then((status) => {
           if(status?._ === 'userStatusOnline') {
-            this.xd.setOnlineStatus(dialogElement.dom.avatarEl.node, true);
+            this.xd.setOnlineStatus(dialogElement.dom, true);
           }
         }));
       }

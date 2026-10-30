@@ -17,6 +17,7 @@ import extractEmojiFromFilterTitle, {ExtractEmojiFromFilterTitleResult} from '@c
 import FolderItem from '@components/sidebarLeft/foldersSidebarContent/folderItem';
 import type {FolderItemPayload} from '@components/sidebarLeft/foldersSidebarContent/types';
 import {getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter, folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
+import {toggleFoldersSidebar} from '@lib/folders-sidebar-layout';
 
 
 const log = logger('FoldersSidebarContent', LogTypes.Debug);
@@ -37,7 +38,6 @@ export function FoldersSidebarContent(props: {
   const {
     rootScope,
     appSidebarLeft,
-    AppChatFoldersTab,
     showLimitPopup,
     i18n
   } = useHotReloadGuard();
@@ -191,8 +191,6 @@ export function FoldersSidebarContent(props: {
     const listenerSetter = new ListenerSetter();
 
     contextMenu = createFolderContextMenu({
-      appSidebarLeft,
-      AppChatFoldersTab,
       managers: rootScope.managers,
       className: 'folders-sidebar__folder-item',
       listenTo: folderItemsContainer
@@ -248,7 +246,6 @@ export function FoldersSidebarContent(props: {
   });
 
 
-  let openingChatFolders = false;
   return (
     <>
       <FolderItem ref={setMenuTarget} class="folders-sidebar__menu-button" icon="menu" />
@@ -282,14 +279,12 @@ export function FoldersSidebarContent(props: {
         class="folders-sidebar__menu-button"
         icon="equalizer"
         onClick={() => {
-          if(openingChatFolders || appSidebarLeft.getTab(AppChatFoldersTab)) return;
-          openingChatFolders = true;
-          appSidebarLeft.closeTabsBefore(() => {
-            const tab = appSidebarLeft.createTab(AppChatFoldersTab);
-            tab.open().finally(() => {
-              openingChatFolders = false;
-            });
-          });
+          // Owner batch 6 (2026-10-30): this button used to open the Chat Folders
+          // settings page (the only place the left/top layout could be changed).
+          // With folder management gone there is nothing left to edit, so it is
+          // the layout toggle itself — the same preference the hamburger's
+          // "Disable Sidebar" flips.
+          toggleFoldersSidebar();
         }}
       />
     </>
