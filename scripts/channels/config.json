@@ -33,13 +33,13 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "f18906f802846b8648f4141d9e208cee1421a8bf3e512cd8ffbcad433d16e1e0",
-      "preview": "913aaaffc0fa4ba479a027b17f1bb549fecc12e7d8219b5500970fa813761787",
-      "reason": "Presentation-only: the rail's bottom button flips the layout preference through lib/folders-sidebar-layout instead of opening the Chat Folders tab. Batch 8 swaps its glyph from 'equalizer' to 'rightpanel' so it matches the hamburger's Disable Sidebar entry - same toggle, same icon. Reads existing folder data; no storage writes."
+      "preview": "fd20fd02d8cad96c1de91d6a0765fc98f8bb10e03f237af176f7daf6386a52f8",
+      "reason": "Sets glyph \"#\" for Code in the rail payload. Presentation only."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
-      "preview": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
-      "reason": "Pure display helper: optional filter.emoticon fallback for the folder icon; All Chats never uses it. No storage writes.",
-      "stable": "cbf463686cb43b4be66abc538ae3d7c4ddb79e82d6580e95ba6bb76c4f9f7743"
+      "stable": "cbf463686cb43b4be66abc538ae3d7c4ddb79e82d6580e95ba6bb76c4f9f7743",
+      "preview": "5573c9fc3f85223282abce8a79afcb41b3c0bd5c0f30863e1c8159989d321f8d",
+      "reason": "getIconForFilter returns a placeholder icon key for Code because the glyph overrides it. Presentation only."
     },
     "src/components/sidebarLeft/tabs/editFolder.ts": {
       "preview": "fa6b94e9e8608446f352fb0f8c32b5da70a6b8348aa47afe5c71459920cb8609",
@@ -63,8 +63,8 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "813f6f5b21c81a849799e4e09d478268e5cd5e931d23e9d09e7577cc8fd2f4c4",
-      "preview": "3fe972d1aa8dca02f895090e1af2c98a66fe27175a733e6827252f55c80de437",
-      "reason": "Stamps an inline presence dot into the dialog title row and changes presence to source from dom instead of the avatar element. Also drops the now-unused appSidebarLeft/AppChatFoldersTab params of createFolderContextMenu. Batch 8 adds a presentation-only sidebar toggle button at the head of the folder tabs row; it is built from a CSS-gated wrapper div and, on click, lazily imports lib/folders-sidebar-layout and calls toggleFoldersSidebar(). No storage change, no new state key. Drops the AppChatFoldersTab import, now unused after the folder context menu stopped taking its params. Preview hash refreshed at 44502ae for a comment-only change: the gating note above the row now states that the row is gated on .has-horizontal-folders alone and only the toggle button is hidden under .has-folders-sidebar. No code change."
+      "preview": "ad4b4d6fcb7dd146992bf1f90c0685a516431fd69006833cc949554e161c5fa6",
+      "reason": "Session chip on dialog rows only: appends the `#` badge element beside the existing P2P badge. No data, storage or protocol touch; the chip hides itself for every non-session peer."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "305b1d29a1ab0fcfd63667937240ab0e1f16534b12e946d52889c05234e2c247",
-      "reason": "Menu only: removes the redundant 'Folders' entry and adds a 'Disable Sidebar' toggle under 'Disable Animations'; both write the existing settings.tabsInSidebar key. Also collapses a stale presentation constant: WIDTH_WHEN_COLLAPSED 80 -> 56 so the collapse animation matches --sidebar-collapsed-width in _leftSidebar.scss. Layout only, no storage or state change."
+      "preview": "47fbf804ad850a54dc132515032c6ba663707da160f7e1a8db48e41815eb7b1e",
+      "reason": "The chat-list + button opens the single-contact picker (and creates a session group from the pick) when the active folder is Code; Groups and every other folder behave as before. UI routing only."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "a628032df6cd0c5cfaac5289977508ad1a4dbc7d33994beeee1f992e167d78d5",
@@ -98,18 +98,18 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "5c120acdfea8eb4fea2708c85c9b8679d5429b659a3627b65cda312d06b384e2",
-      "preview": "4451fea74901e056111ac4c532c6db083747cdab34de56e05efad8370912c378",
-      "reason": "Folder-0 pin-order sweep also clears stale pFlags.pinned on group dialogs read from getAllPersistedDialogs(), because Chats (0) is group-free by presentation rule and the ordered walk can no longer reach them. Pin bookkeeping only: stored dialog rows, folder membership and the on-disk shape are unchanged; getFolderDialogs still excludes groups from Chats."
+      "preview": "c1833352495726bb22b942fa25d50eda9261e4904d2b8c108362c0b9120c70a7",
+      "reason": "getFolderDialogs / getFolderUnreadCount / markFolderAsRead apply the same session exclusion the filter predicate does, so the list, the badge and \"mark as read\" cannot disagree with the folder tabs. Presentation only."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
-      "preview": "5bb0c60f7cc6e73aa1fb27e9b053c244c441e1f63ab8500e533c48bd1446a6b2",
-      "reason": "Presentation-only: setOnlineStatus now toggles a class on the inline title-row dot (dom.onlineDot) instead of fading the avatar's ::after. No storage change."
+      "preview": "efc6db78262051f2f315367adb308988d2f63ba0b794b4963f1d45d409003c85",
+      "reason": "The incremental row gate excludes a session peer from Chats and Archive, mirroring the group exclusion that already lives there — without it a session re-enters Chats on the first dialog_flush after load. Display gate only."
     },
     "src/lib/storages/filters.ts": {
       "stable": "8b2d3bf7a32b1761f7b21baf81db8740677df7978bb1f27b6b1a23bdb3057879",
-      "preview": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "reason": "Chats (folder 0) membership test excludes group peers (isGroupPeer, pure function on the existing peer id). FiltersStorage/folders-sync JSON shape is unchanged — no new fields, no migration; both channels still read and write the same blob."
+      "preview": "864fbdca44f91540c28a6ef6e91b3d8a2b9c83270f5dadce55b256c15e172727",
+      "reason": "Seeds Code between Groups and Archive and makes the session rule live in the same membership predicate as the existing group rule: Chats/Groups/Archive/custom folders exclude a session peer, Code admits only session peers. Presentation membership only — storage, folder arrays keyed by dialog.folder_id and the on-disk shape are unchanged."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "c335ae669367fae529b745801414655f0a7ac096428d0f2ec94738797e0a69c5",
@@ -133,8 +133,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "bb78a69b01f693e38954b9212527bddb4108a08194e493db25a83f40942aee9e",
-      "preview": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
-      "reason": "Orphan-group sweep enumerates the complete persisted dialog set instead of the Chats (0) view so legacy group ghosts can actually be dropped. Deletes the same rows as before, only now reaches them."
+      "preview": "41053af9a29bfb65216f01c29bcf0ebc7de3fabd7c9b8c8e9d5f9b77419aef7f",
+      "reason": "createGroup takes an optional {tags} and sends them as groupTags on group_create; group_info_update carries groupTags and applies them (absent = unchanged); sendMessage fire-and-forget renames a still-default session group from its first prompt. Wire and storage are additive optional fields — a peer that ignores them behaves exactly as before."
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "e8a1c8254d6dea729adfd0984e707d4c23e37b7886f68eb6a1d95be3f639c950",
@@ -160,6 +160,56 @@
       "stable": "absent",
       "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
       "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
+    },
+    "src/components/phantomchat/sessionBadge.ts": {
+      "stable": "absent",
+      "preview": "32a16ec58b28a0f65ce815ed41e2c62dde97dd2ddb6cb4ce73af842d5dac0eab",
+      "reason": "New presentation component: a static `#` chip whose visibility comes from the synchronous session index. No storage, network or state mutation."
+    },
+    "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
+      "stable": "b688eae2335aa5aa803605db436f720f87229d2f60956c0cd9b76a8a9d081b13",
+      "preview": "e1a1cc6436f6533390ca9ae6a55b7872de4372d41d58da9c306eda800eec221e",
+      "reason": "Renders the literal `#` glyph in the icon slot when the payload carries one; every other folder keeps the existing icon/emoji path untouched. Presentation only."
+    },
+    "src/components/sidebarLeft/foldersSidebarContent/types.ts": {
+      "stable": "82e9c49c24207aea0e7c112c60f80e2032a21d1bf7391b15fefaf4a8742c6e70",
+      "preview": "1731ccc0fe9b0ef25bf10785de943b050f5461b9dc28ed02e513693e819eeffb",
+      "reason": "Adds an optional `glyph` field to the folder-item payload so Code can draw a literal `#` (the icon font has no hashtag). Presentation type only."
+    },
+    "src/components/sidebarLeft/tabs/contacts.ts": {
+      "stable": "2237559b8a038447e7296a6c8e4b599fc206b8fc550104b41756ee6560c0b202",
+      "preview": "df2e01f488a450e9e71bdcfb18835f5328ac89c2ba6c1d214b8014ea706f82e8",
+      "reason": "Optional init param onPickPeer: when set, a contact click hands the peer to the caller instead of opening a DM. Default behaviour (no param) is unchanged."
+    },
+    "src/lib/appManagers/constants.ts": {
+      "stable": "b7add6caa33a3125c26fc6c22cbbaa26f12c25bcd5e197ad460e47f30e434431",
+      "preview": "e82c4e1e2ae638288019d57ad5a50a5fc63e48c0f60ad350bd66efe09457dcb0",
+      "reason": "Adds FOLDER_ID_CODE = 4 to the locally-seeded system folders (REAL_FOLDERS + PROTECTED_FOLDERS), so it is re-seeded on every boot like Groups and cannot be deleted. START_LOCAL_ID moves 4 -> 5; persisted custom folders have their localId reassigned at boot (prependFilters strips it), so no index collides."
+    },
+    "src/lib/phantomchat/group-store.ts": {
+      "stable": "2e30c94c1ab3eae2c306e0180a938156330bd99e98d6978e64910702c4fd6fad",
+      "preview": "728d245033091f5cf2f0ce6926af323935eee170f6db75f25864ebad345cde9d",
+      "reason": "save/delete/getAll now mirror each record's session tag into the in-memory index (group-tags). No schema, store name, key path or index change: the IDB layout is byte-identical, updateInfo just accepts an optional `tags` field."
+    },
+    "src/lib/phantomchat/group-tags.ts": {
+      "stable": "absent",
+      "preview": "47e396bb66056ddf3ea8176f3eaa2aac35a8cbe5a12181229b12802c8d64fc89",
+      "reason": "New module: the session-tag vocabulary and the synchronous session-peer index the folder-membership predicates read. Pure in-memory state; the persisted form is GroupRecord.tags in the group store (unchanged on-disk shape, no new DB/keys)."
+    },
+    "src/lib/phantomchat/group-types.ts": {
+      "stable": "8e1db65ee2a54edf87ba16dae2e254c0e65209748de4af0ed4e14f68b067d90d",
+      "preview": "fd77d3809c5c2f07bdacba67386919899f8fc1e37b0317d363eabdf6d81b62f9",
+      "reason": "Adds optional `tags?: string[]` to GroupRecord and `groupTags?: string[]` to GroupControlPayload. Optional fields only: existing records/payloads parse and merge exactly as before, and the groups CRDT entry IS the record so no version bump is needed."
+    },
+    "src/lib/phantomchat/groups-sync-adapter.ts": {
+      "stable": "f89fb6752a44234ec955fa08b9cf01e8611074115f31cdf0edcee0b039e1b8d0",
+      "preview": "5673587c51a355ebaa638956c71826de1bc25825cb675c830a7348d7016d06ed",
+      "reason": "CRDT apply keeps local tags when the winning remote record has none, so an older client that renames a session cannot strip the tag for everyone. Merge behaviour for every other field is untouched."
+    },
+    "src/lib/storages/filtersLocal.ts": {
+      "stable": "27fdd28d97a60363a981960c2a944a83dadaf7b7640cb801586e1327dc8fa1d9",
+      "preview": "846153d877127221ccd499cfab7315200b649ba66f12834751fcb19d5c939e8c",
+      "reason": "buildLocalFilter(FOLDER_ID_CODE) seeds a literal \"Code\" title with exclude_archived and no peer-class pFlags — membership is the session tag, not a pFlag, so no dialog changes class."
     }
   },
   "stableVersion": "1.0.335"
