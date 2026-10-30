@@ -1831,13 +1831,11 @@
 
 // Owner batch 2 (2026-10-30): smaller floating "new" button, and enough bottom
 // room in the chat list that the last row can scroll clear of it.
+// Owner batch 4: the button is a plain one-click "+" (no menu / no toggle icons);
+// the glyph centres itself through .btn-circle's line-height + .btn-corner's
+// text-align.
 #new-menu {
   --size: 40px;
-
-  .animated-button-icon-icon {
-    height: 1.25rem;
-    line-height: 1.25rem;
-  }
 }
 
 #chatlist-container .scrollable-y {

@@ -1048,10 +1048,32 @@ export class AppSidebarLeft extends SidebarSlider {
     return wrap;
   }
 
-  // [PhantomChat.chat] `folderScoped` is used by the floating new-menu button: on the
-  // Groups folder it offers only "New group", everywhere else only "New private chat".
-  // "Add contact" lives solely in the main tools (hamburger) menu.
-  private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean, folderScoped?: boolean): ButtonMenuItemOptionsVerifiable[]  {
+  // [PhantomChat.chat] Shared by the floating "+" button and the hamburger
+  // "Create a new" submenu. "Add contact" lives solely in the main tools menu.
+  private async openNewGroupFlow() {
+    const {default: AppPhantomChatNewGroupTab} = await import('@components/sidebarLeft/tabs/phantomchatNewGroup');
+    const tab = this.createTab(AppAddMembersTab);
+    tab.open({
+      type: 'chat',
+      skippable: false,
+      title: 'GroupAddMembers',
+      placeholder: 'SendMessageTo',
+      takeOut: (peerIds) => {
+        return this.createTab(AppPhantomChatNewGroupTab).open({peerIds});
+      }
+    });
+  }
+
+  private openNewPrivateChatFlow() {
+    this.createTab(AppContactsTab).open();
+  }
+
+  private async showAddContactFlow() {
+    const {showAddContactPopup} = await import('@components/popups/addContact');
+    showAddContactPopup({managers: this.managers});
+  }
+
+  private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean): ButtonMenuItemOptionsVerifiable[]  {
     const closeTabsBefore = async(clb: () => void) => {
       if(closeBefore) {
         this.closeEverythingInside() && await pause(200);
@@ -1059,75 +1081,40 @@ export class AppSidebarLeft extends SidebarSlider {
       clb();
     }
 
-    const onNewGroupClick = () => {
-      closeTabsBefore(async() => {
-        const {default: AppPhantomChatNewGroupTab} = await import('@components/sidebarLeft/tabs/phantomchatNewGroup');
-        const tab = this.createTab(AppAddMembersTab);
-        tab.open({
-          type: 'chat',
-          skippable: false,
-          title: 'GroupAddMembers',
-          placeholder: 'SendMessageTo',
-          takeOut: (peerIds) => {
-            return this.createTab(AppPhantomChatNewGroupTab).open({peerIds});
-          }
-        });
-      });
-    };
-
-    const onContactsClick = () => {
-      closeTabsBefore(() => {
-        this.createTab(AppContactsTab).open();
-      });
-    };
-
-    const onAddContactClick = () => {
-      closeTabsBefore(async() => {
-        const {showAddContactPopup} = await import('@components/popups/addContact');
-        showAddContactPopup({managers: this.managers});
-      });
-    };
-
-    const isGroupsFolder = () => appDialogsManager.filterId === FOLDER_ID_GROUPS;
-
-    const options: ButtonMenuItemOptionsVerifiable[] = [{
+    return [{
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
-      onClick: onNewGroupClick
+      onClick: () => closeTabsBefore(() => void this.openNewGroupFlow())
+    }, {
+      icon: 'adduser',
+      text: 'AddContact',
+      onClick: () => closeTabsBefore(() => void this.showAddContactFlow())
     }, {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',
-      onClick: onContactsClick
+      onClick: () => closeTabsBefore(() => this.openNewPrivateChatFlow())
     }];
-
-    if(folderScoped) {
-      options[0].verify = isGroupsFolder;
-      options[1].verify = () => !isGroupsFolder();
-      return options;
-    }
-
-    options.splice(1, 0, {
-      icon: 'adduser',
-      text: 'AddContact',
-      onClick: onAddContactClick
-    });
-
-    return options;
   }
 
+  // [PhantomChat.chat] One click, no menu: the Groups folder opens the multi-select
+  // member picker directly, everywhere else the contact picker directly.
   private createNewChatsMenuButton() {
-    const btnMenu = ButtonMenuToggle({
-      direction: 'top-left',
-      buttons: this.createNewChatsMenuOptions(false, undefined, true),
-      noIcon: true
-    });
-    btnMenu.className = 'btn-new-menu btn-circle rp btn-corner z-depth-1 btn-menu-toggle animated-button-icon';
-    btnMenu.tabIndex = -1;
-    const icons: Icon[] = ['newchat_filled', 'close'];
-    btnMenu.prepend(...icons.map((icon, idx) => Icon(icon, 'animated-button-icon-icon', 'animated-button-icon-icon-' + (idx === 0 ? 'first' : 'last'))));
-    btnMenu.id = 'new-menu';
+    const btn = document.createElement('div');
+    btn.className = 'btn-new-menu btn-circle btn-corner z-depth-1';
+    btn.id = 'new-menu';
+    btn.tabIndex = -1;
+    ripple(btn);
+    btn.append(Icon('plus', 'new-menu-icon'));
 
-    return btnMenu;
+    attachClickEvent(btn, () => {
+      if(appDialogsManager.filterId === FOLDER_ID_GROUPS) {
+        void this.openNewGroupFlow();
+      } else {
+        this.openNewPrivateChatFlow();
+      }
+    });
+
+    return btn;
   }
 
   private createNewChatsSubmenu() {

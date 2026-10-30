@@ -33,15 +33,20 @@ const RELOAD_SETTLE_MS = 12000;
 const log = (m: string) => console.log(`[e2e-groups-ui] ${m}`);
 
 async function clickNewGroupViaUI(page: any): Promise<void> {
+  // Owner batch 4: the floating "+" is a one-click action — on the Groups folder it
+  // opens the multi-select member picker directly, so select that folder first
+  // (on the Chats folder the same button opens the contact picker).
+  const groupsFolder = page.locator('.folders-sidebar__folder-item').filter({hasText: 'Groups'}).first();
+  if(await groupsFolder.count()) {
+    await groupsFolder.click();
+    await page.waitForTimeout(600);
+  }
+
   const fab = page.locator('.btn-new-menu, .sidebar-tools-button').first();
   await fab.waitFor({state: 'visible', timeout: STEP_TIMEOUT_MS});
   await fab.click();
   await page.waitForTimeout(400);
-
-  const newGroup = page.getByText('New Group', {exact: true}).first();
-  await newGroup.waitFor({state: 'visible', timeout: STEP_TIMEOUT_MS});
-  await newGroup.click();
-  log('clicked New Group menu item');
+  log('clicked the "+" on the Groups folder');
 }
 
 async function selectMemberAndContinue(page: any, memberDisplayName: string): Promise<void> {
