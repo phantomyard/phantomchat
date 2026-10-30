@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "ea0aad4cba9543e390801944b389341a303acc67f96be1f70ed011a97fc19791",
-      "preview": "0e81112c5b8cda34ff98017408d908d327bf24b536f097e55a5b16c9b00e7290",
-      "reason": "Menu only: removes the redundant 'Folders' entry and adds a 'Disable Sidebar' toggle under 'Disable Animations'. Both write the existing settings.tabsInSidebar key."
+      "preview": "305b1d29a1ab0fcfd63667937240ab0e1f16534b12e946d52889c05234e2c247",
+      "reason": "Menu only: removes the redundant 'Folders' entry and adds a 'Disable Sidebar' toggle under 'Disable Animations'; both write the existing settings.tabsInSidebar key. Also collapses a stale presentation constant: WIDTH_WHEN_COLLAPSED 80 -> 56 so the collapse animation matches --sidebar-collapsed-width in _leftSidebar.scss. Layout only, no storage or state change."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "a628032df6cd0c5cfaac5289977508ad1a4dbc7d33994beeee1f992e167d78d5",
