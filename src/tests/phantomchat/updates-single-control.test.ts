@@ -13,7 +13,7 @@
 import {describe, it, expect, vi} from 'vitest';
 import {readFileSync} from 'fs';
 import {resolve} from 'path';
-import {getChannelChoiceState, applyChannelChoice} from '../../lib/phantomchat/desktop-update-view';
+import {getChannelChoiceState, applyChannelChoice} from '../../lib/phantomchat/update-channel-choice';
 import type {UpdateChannel} from '../../lib/phantomchat/desktop-api';
 
 function desktopTarget(current: UpdateChannel | null, impl?: (c: UpdateChannel) => Promise<UpdateChannel>) {
@@ -88,6 +88,22 @@ describe('applyChannelChoice', () => {
 
     expect(set.mock.calls).toEqual([['preview'], ['stable']]);
     expect(result).toMatchObject({application: 'stable', desktop: 'stable', outcome: 'cancelled'});
+  });
+
+  it('never rolls the installer ring back to a channel it does not know', async () => {
+    // Before the first getUpdateState() resolves the tab has no last-known
+    // channel. Rolling back then would call setUpdateChannel(null), which
+    // electron/updater.ts rejects outright — silently leaving the ring on the
+    // new channel while the radio snapped back to the old one.
+    const {target, set} = desktopTarget(null);
+    const result = await applyChannelChoice({
+      application: {current: 'stable', choose: () => false},
+      desktop: target
+    }, 'preview');
+
+    expect(set.mock.calls).toEqual([['preview']]);
+    expect(set.mock.calls.flat()).not.toContain(null);
+    expect(result).toMatchObject({application: 'stable', desktop: 'preview', outcome: 'cancelled'});
   });
 
   it('works with a desktop surface alone (no channel shell)', async () => {

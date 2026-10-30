@@ -373,17 +373,30 @@
   }
 
   /* Owner batch 8 (2026-10-30): [sidebar toggle][Chats/Groups tabs] on one row.
-     The toggle is the hamburger's "Disable Sidebar" mirrored to where the
-     folders ended up, so it is only shown in folders-on-top mode — that is
-     exactly when body carries .has-horizontal-folders and not
-     .has-folders-sidebar. */
+     This row is the only parent of the folders strip, so it is gated on
+     .has-horizontal-folders ALONE. That class is true whenever the rail is not
+     usable on screen (rail off, or rail on with the viewport below the
+     floating-sidebar breakpoint), and gating the row on
+     :not(.has-folders-sidebar) additionally hid every folders surface at
+     <= 925px with the rail preference on - which is the default. Only the
+     button is rail-mode specific. */
   .chatlist-folders-row {
     display: none;
     align-items: center;
     flex: 0 0 auto;
+    min-width: 0;
 
-    body.has-horizontal-folders:not(.has-folders-sidebar) & {
+    body.has-horizontal-folders & {
       display: flex;
+    }
+
+    /* The strip inherits `flex: 0 0 auto` from .item-main
+       .menu-horizontal-scrollable, which as a flex item sizes it to content:
+       the inner .scrollable-x then never overflows (no horizontal scroll) and
+       the row spills past the column's right edge. Let it take the row. */
+    .folders-tabs-scrollable {
+      flex: 1 1 auto;
+      min-width: 0;
     }
 
     .chatlist-sidebar-toggle {
@@ -394,6 +407,12 @@
       display: flex;
       align-items: center;
       justify-content: center;
+    }
+
+    /* With the rail on screen the strip is above the chat list but the button
+       would duplicate the rail's own toggle, so only the button goes. */
+    body.has-folders-sidebar & .chatlist-sidebar-toggle {
+      display: none;
     }
   }
 

@@ -806,18 +806,23 @@ ul.chatlist {
   .dialog-avatar.is-online:after {
     display: none;
   }
+}
 
-  .dialog-online-dot {
-    display: none;
-    flex: 0 0 auto;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-inline-start: .375rem;
-    background-color: var(--avatar-online-color);
+// NB: no `#chatlist-container` here. The dot's default is the primary colour,
+// which is exactly the active row's own background, and the white-on-active
+// rule (`.chatlist-chat.active .dialog-online-dot`, three classes) has to keep
+// winning. An id in this selector outranked it and the dot vanished on the
+// selected row.
+.chatlist-chat .dialog-online-dot {
+  display: none;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-inline-start: .375rem;
+  background-color: var(--avatar-online-color);
 
-    &.is-online {
-      display: inline-block;
-    }
+  &.is-online {
+    display: inline-block;
   }
 }

@@ -47,11 +47,22 @@ describe('batch 8: chat-list header carries the same toggle', () => {
     expect(managerSrc).toContain('toggleFoldersSidebar()');
   });
 
-  it('it is shown only when the rail is gone', () => {
+  it('it is gated on folders being horizontal, never on the rail preference', () => {
     expect(scss).toContain('.chatlist-folders-row {');
-    expect(scss).toContain('body.has-horizontal-folders:not(.has-folders-sidebar) & {');
+    // The row is the only parent of the strip: gating it on the rail
+    // preference hid every folders surface at <= 925px with the rail on.
+    expect(scss).toContain('body.has-horizontal-folders & {');
+    expect(scss).not.toContain('body.has-horizontal-folders:not(.has-folders-sidebar) & {');
+    // only the button is rail-mode specific
+    expect(scss).toContain('body.has-folders-sidebar & .chatlist-sidebar-toggle {');
     expect(scss).toContain('.chatlist-sidebar-toggle {');
     // matches the rail/top bar width
     expect(scss).toContain('width: 3.5rem;');
+  });
+
+  it('the strip is allowed to fill and shrink inside the row', () => {
+    // Computed behaviour is checked in ui-batch8-cascade; this pins where.
+    expect(scss).toContain('flex: 1 1 auto;');
+    expect(scss).toContain('min-width: 0;');
   });
 });

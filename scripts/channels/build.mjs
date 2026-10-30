@@ -56,8 +56,18 @@ try {
       }
     }
     // Share the channel UI with pinned Stable without promoting its app code.
-    const updatesTab = 'src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts';
-    writeFileSync(join(tree, updatesTab), execFileSync('git', ['show', `${candidate}:${updatesTab}`]));
+    // Every file listed here must be ABSENT at stableRef (or explicitly
+    // approved for this exact pair), because the copy replaces whatever the
+    // pinned tree has; a file Stable does not have yet is how the shared tab's
+    // imports resolve there at all.
+    const sharedChannelFiles = [
+      'src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts',
+      'src/lib/phantomchat/update-channel-choice.ts'
+    ];
+    for(const file of sharedChannelFiles) {
+      mkdirSync(join(tree, file, '..'), {recursive: true});
+      writeFileSync(join(tree, file), execFileSync('git', ['show', `${candidate}:${file}`]));
+    }
     patch('src/components/sidebarLeft/tabs/settings.ts', "import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';", '');
     patch('src/components/sidebarLeft/tabs/settings.ts', 'if(hasDesktopUpdateApi()) {', 'if(window.phantomchatChannels) {');
     patch('src/components/sidebarLeft/tabs/settings.ts', "await import('@components/sidebarLeft/tabs/phantomchatDesktopUpdates')", "await import('@components/sidebarLeft/tabs/phantomchatApplicationUpdates')");

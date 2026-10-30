@@ -16,10 +16,9 @@ import {
 import {
   describeUpdateStatus,
   describeLastChecked,
-  describeActionButton,
-  getChannelChoiceState,
-  applyChannelChoice
+  describeActionButton
 } from '@lib/phantomchat/desktop-update-view';
+import {getChannelChoiceState, applyChannelChoice} from '@lib/phantomchat/update-channel-choice';
 
 declare global {
   interface Window {

@@ -11,6 +11,13 @@
  * RadioField), so anything else that toggled it had to remember to also sync the
  * `hasFoldersSidebar` signal and re-render the chat pattern background. The
  * sidebar toggle and the rail's own bottom button both go through here now.
+ *
+ * The one other writer of the key is the `RadioField`s inside
+ * `components/sidebarLeft/tabs/chatFolders.ts` (stateKey
+ * `settings.tabsInSidebar`). That tab is unreachable by decision - it was
+ * dropped from the folder context menu and from the hamburger - so those radios
+ * are dead code rather than a live second writer, and they stay for the same
+ * reason `editFolder.ts` does. Anything reachable goes through here.
  */
 
 import {appSettings, setAppSettings} from '@stores/appSettings';
@@ -24,16 +31,25 @@ export function isFoldersSidebarEnabled() {
 
 /**
  * Move folders between the left rail and a strip above the chat list.
- * Idempotent: calling it with the value already in effect is a no-op.
+ * Idempotent: calling it with the value already in effect changes nothing - the
+ * signal is only written when it has actually drifted, and the background
+ * remeasure and Ctrl+F tip are skipped entirely.
  */
 export function setFoldersSidebarEnabled(enabled: boolean) {
-  const [, setHasFoldersSidebar] = useHasFoldersSidebar();
+  const [hasFoldersSidebar, setHasFoldersSidebar] = useHasFoldersSidebar();
+  const current = isFoldersSidebarEnabled();
+
+  if(current === enabled) {
+    // Still reconcile the signal if something else moved the stored value
+    // without it: the signal drives `body.has-folders-sidebar`, which is what
+    // the CSS keys off. A write here is a no-op when they already agree.
+    if(hasFoldersSidebar() !== enabled) setHasFoldersSidebar(enabled);
+    return;
+  }
+
   // The signal drives `body.has-folders-sidebar` (stores/foldersSidebar), which
   // is what the CSS actually keys off — so it has to move with the setting.
   setHasFoldersSidebar(enabled);
-
-  if(isFoldersSidebarEnabled() === enabled) return;
-
   setAppSettings('tabsInSidebar', enabled);
 
   // The chat background pattern is sized from the column it sits in, so it has
