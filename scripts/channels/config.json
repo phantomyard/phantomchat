@@ -93,13 +93,13 @@
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "a628032df6cd0c5cfaac5289977508ad1a4dbc7d33994beeee1f992e167d78d5",
-      "preview": "960a33e99f9ad3d342e5279f3e204eb86471c8a4904a19a07a1615616e1c0fb4",
-      "reason": "Settings > Folders becomes display-only: no create button, no row click-through to the edit-folder tab, no drag reordering, no suggested-folder creation. The FiltersOnLeft/Top toggle is unchanged. No storage format change."
+      "preview": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
+      "reason": "Built-in folder subtitle reads FOLDER_ID_GROUPS alongside the folder's own dialogs for folder 0, since Chats excludes groups and the Groups bucket would otherwise always be 0. Display string counts only - no storage, IPC or shape change."
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "5c120acdfea8eb4fea2708c85c9b8679d5429b659a3627b65cda312d06b384e2",
-      "preview": "2133300d4e587c550f89235ff5eaeb4ba1e728e2b2c588966173aa119640afd6",
-      "reason": "Adds getAllPersistedDialogs() (complete, index-independent dialog set) for reconciliation sweeps, and marks folder 0 read without touching group peers because the Chats list and badge exclude them. Stored dialog rows, folder membership and the on-disk shape are unchanged; getFolderDialogs still excludes groups from Chats."
+      "preview": "4451fea74901e056111ac4c532c6db083747cdab34de56e05efad8370912c378",
+      "reason": "Folder-0 pin-order sweep also clears stale pFlags.pinned on group dialogs read from getAllPersistedDialogs(), because Chats (0) is group-free by presentation rule and the ordered walk can no longer reach them. Pin bookkeeping only: stored dialog rows, folder membership and the on-disk shape are unchanged; getFolderDialogs still excludes groups from Chats."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
