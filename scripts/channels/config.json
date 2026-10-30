@@ -103,8 +103,8 @@
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "48401b90e9be65329819c798425eca7472a238568205a2bb124428436e6e22a5",
-      "preview": "a51de6c59a6d7be57caaf7b9559a9c83fdda615ece1aa6fb87ea1d7af399ca83",
-      "reason": "Chat-list virtual item height 72 -> 60, the smallest row that fits the original 16px title over 16px subtitle. Layout constant only - no storage, IPC or schema surface."
+      "preview": "372d21df632452f192c5c78e78c7a96035643b7391cdf05c9246b4d9f845c17c",
+      "reason": "Chat-list virtual item height 72 -> 56 (owner batch 4 compact list). Layout constant only - must stay in step with the row height in _chatlist.scss; no storage, IPC or schema surface."
     },
     "src/lib/storages/filters.ts": {
       "stable": "8b2d3bf7a32b1761f7b21baf81db8740677df7978bb1f27b6b1a23bdb3057879",
@@ -113,8 +113,8 @@
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "c335ae669367fae529b745801414655f0a7ac096428d0f2ec94738797e0a69c5",
-      "preview": "078388b8625c6fe7212d08fe5f131b1c391d89600f552e2add32f788c44a1060",
-      "reason": "Skeleton size union gains 60 so the compact chat list can reuse it. Type-only widening; no runtime behaviour, storage or IPC change."
+      "preview": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
+      "reason": "Skeleton size union 60 -> 56 so the compact chat list can reuse it. Type-only change; no runtime behaviour, storage or IPC change."
     }
   },
   "stableVersion": "1.0.335"
