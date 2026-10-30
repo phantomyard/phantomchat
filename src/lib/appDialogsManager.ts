@@ -672,9 +672,9 @@ export class AppDialogsManager {
     // Owner batch 8 (2026-10-30): with the rail gone the only way back is the
     // hamburger's "Disable Sidebar" entry, which is out of sight right where the
     // folders used to be. Mirror that same toggle at the head of the horizontal
-    // tabs strip. CSS shows it only in folders-on-top mode (body is both
-    // .has-horizontal-folders and NOT .has-folders-sidebar), so it can never
-    // appear next to a rail it would be toggling away.
+    // tabs strip. CSS shows the row on .has-horizontal-folders alone (the rail
+    // is not on screen); only this button is additionally hidden under
+    // .has-folders-sidebar, so it can never sit next to a rail it toggles away.
     const foldersRow = document.createElement('div');
     foldersRow.classList.add('chatlist-folders-row');
     const foldersSidebarToggle = ButtonIcon('rightpanel chatlist-sidebar-toggle');
