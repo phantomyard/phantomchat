@@ -1,4 +1,15 @@
 /*
+ * NOTE (decided 2026-10-30): this tab is NOT reachable from any surface. All
+ * folder create / rename / reorder / delete UI was removed on purpose — folders
+ * are code-defined (Chats, Archive, Groups) and user-defined folders are off the
+ * roadmap, so the filter storage is left untouched and every entry point into
+ * this tab is gone. It is kept only because `includedChats.ts` and the Solid
+ * hot-reload guard still reference the class name; the delete-folder path below
+ * (AppEditFolderTab.deleteFolder) is therefore dead code by decision, not by
+ * accident. Do not treat its presence as live UI.
+ */
+
+/*
  * https://github.com/morethanwords/tweb
  * Copyright (C) 2019-2021 Eduard Kuzmenko
  * https://github.com/morethanwords/tweb/blob/master/LICENSE

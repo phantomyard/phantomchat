@@ -1981,8 +1981,10 @@ export class GroupAPI {
 
     let dialogs: any[];
     try {
-      const result = await rootScope.managers.dialogsStorage.getDialogs({limit: 1000, forceLocal: true});
-      dialogs = (result?.dialogs || []) as any[];
+      // Complete enumeration on purpose: the sweep must see EVERY persisted row.
+      // `getDialogs()` defaults to Chats (0), which by presentation rule hides
+      // groups — enumerating it made this sweep a no-op for group peers.
+      dialogs = (await rootScope.managers.dialogsStorage.getAllPersistedDialogs() || []) as any[];
     } catch{
       // dialogs storage not ready yet — nothing to sweep this boot; the next
       // post-sync reconcile retries idempotently.

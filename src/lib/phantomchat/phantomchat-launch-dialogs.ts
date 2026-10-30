@@ -36,6 +36,7 @@
  * converges without waiting for user activity.
  */
 
+import {FOLDER_ID_GROUPS} from '@appManagers/constants';
 import type {ChatCatchUpOutcome} from './chat-api';
 
 const LOG_PREFIX = '[PhantomChatLaunchDialogs]';
@@ -231,8 +232,13 @@ export function installLaunchDialogs(opts: {
 }): {previewsReady: Promise<number>} {
   const {rootScope, appImManager, chatAPI} = opts;
   const getDialogs = async(): Promise<DialogRef[]> => {
-    const dialogs = await rootScope.managers.dialogsStorage.getFolderDialogs(0);
-    return (dialogs || []) as DialogRef[];
+    // Groups (3) as well: Chats (0) excludes group chats by presentation rule,
+    // so reading folder 0 alone would skip every group conversation's previews.
+    const [chats, groups] = await Promise.all([
+      rootScope.managers.dialogsStorage.getFolderDialogs(0),
+      rootScope.managers.dialogsStorage.getFolderDialogs(FOLDER_ID_GROUPS)
+    ]);
+    return ((chats || []) as DialogRef[]).concat((groups || []) as DialogRef[]);
   };
 
   if(appImManager?.addEventListener) {

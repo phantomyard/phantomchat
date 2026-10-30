@@ -26,6 +26,7 @@ import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArra
 import safeReplaceObject from '@helpers/object/safeReplaceObject';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 import {AppManager} from '@appManagers/manager';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import isObject from '@helpers/object/isObject';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
@@ -447,7 +448,21 @@ export default class DialogsStorage extends AppManager {
       return folder.dialogs;
     }
 
-    return skipMigrated ? folder.dialogs.filter((dialog) => (dialog as Dialog).migratedTo === undefined) : folder.dialogs;
+    const dialogs = skipMigrated ? folder.dialogs.filter((dialog) => (dialog as Dialog).migratedTo === undefined) : folder.dialogs;
+
+    // "Chats" (folder 0) excludes group chats: groups have their own built-in
+    // folder, so a group must never appear in both lists.
+    // NOTE: this is a presentation rule living in an accessor every other caller
+    // reads as "folder membership". The display gates (AutonomousDialogList's
+    // testDialogForFilter, FiltersStorage.testDialogForFilter, the local
+    // getFolderUnreadCount) are what actually keep groups out of the Chats UI; the
+    // non-display readers that need the complete population are audited to ask for
+    // it explicitly (getAllPersistedDialogs, FOLDER_ID_GROUPS, 0+1+3).
+    if(id === FOLDER_ID_ALL) {
+      return dialogs.filter((dialog) => !isGroupPeer((dialog as Dialog).peerId));
+    }
+
+    return dialogs;
   }
 
   public getNextDialog(currentPeerId: PeerId, next: boolean, filterId: number) {
@@ -485,6 +500,18 @@ export default class DialogsStorage extends AppManager {
 
   public getFolderUnreadCount(filterId: number) {
     const folder = this.getFolder(filterId);
+
+    // Chats (0) no longer contains groups (see getFolderDialogs), so its badge
+    // must not count them either — they are counted by the Groups folder.
+    if(filterId === FOLDER_ID_ALL) {
+      const isNotGroup = (peerId: PeerId) => !isGroupPeer(peerId);
+      return {
+        unreadUnmutedCount: [...folder.unreadUnmutedPeerIds].filter(isNotGroup).length,
+        unreadCount: [...folder.unreadPeerIds].filter(isNotGroup).length,
+        unreadMentionsCount: [...folder.unreadMentionsPeerIds].filter(isNotGroup).length
+      };
+    }
+
     return {
       unreadUnmutedCount: folder.unreadUnmutedPeerIds.size,
       unreadCount: folder.unreadPeerIds.size,
@@ -495,6 +522,18 @@ export default class DialogsStorage extends AppManager {
   public getCachedDialogs(skipMigrated?: boolean) {
     const arrays = Array.from(REAL_FOLDERS).map((folderId) => this.getFolderDialogs(folderId, skipMigrated));
     return [].concat(...arrays) as Dialog[];
+  }
+
+  /**
+   * EVERY persisted dialog, independent of any folder index and of the Chats (0)
+   * group exclusion. Reconciliation sweeps must see the complete population:
+   * folder lists are index-driven views, and Chats (0) deliberately hides
+   * groups, so enumerating either would let persisted group ghosts survive.
+   * Not for presentation — use getDialogs for that.
+   */
+  public getAllPersistedDialogs(skipMigrated = false): Dialog[] {
+    const dialogs = Object.values(this.dialogs);
+    return skipMigrated ? dialogs.filter((dialog) => dialog.migratedTo === undefined) : dialogs;
   }
 
   private setDialogIndexInFilter(
@@ -1665,6 +1704,10 @@ export default class DialogsStorage extends AppManager {
           }
         } else for(const peerId of results) {
           const dialog = this.dialogs[peerId];
+          // A query searches for a CHAT, not for a folder listing, so it
+          // deliberately ignores the Chats group exclusion: asking from folder 0
+          // must still find a group. The exclusion in getFolderDialogs is a
+          // list/badge presentation rule only.
           if(dialog && dialog.folder_id === filterId) {
             dialogs.push(dialog);
           }
@@ -1724,12 +1767,24 @@ export default class DialogsStorage extends AppManager {
       // subset. Using result.count for these makes the virtual list allocate
       // skeleton ("ghost") rows for non-existent dialogs (issue #42). Their
       // authoritative count is the locally-filtered dialog list length.
-      // FOLDER_ID_ALL (0) and FOLDER_ID_ARCHIVE (1) are real server folders
-      // whose result.count is correct, and virtual filters (forum/saved)
-      // carry their own counts, so both are excluded.
+      // FOLDER_ID_ALL (0) also builds its list locally now (it drops group
+      // chats, which live in the Groups folder instead), so its count must come
+      // from that list too. Same reasoning as Groups: PhantomChat persists the
+      // complete dialog set locally (folder 0 is filled by the dialog backfill,
+      // not by paging), so the local list is the whole population and this count
+      // is exact rather than "as much as has loaded".
+      //
+      // One accepted consequence: appMessagesManager decides `isEnd` with
+      // `dialogsLength >= count`, where dialogsLength comes from this (group-free)
+      // list and count is the server's group-inclusive one. For folder 0 that
+      // comparison can therefore never be satisfied. The pager then ends on the
+      // first empty page, and isEnd latches setDialogsLoaded(folderId, true), so
+      // no request is repeated at the end of the list.
+      // FOLDER_ID_ARCHIVE (1) is a real server folder whose result.count is
+      // correct, and virtual filters (forum/saved) carry their own counts, so
+      // both are excluded.
       const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS;
       const isLocallyFilteredFolder = !isVirtualFilter &&
-        filterId !== FOLDER_ID_ALL &&
         filterId !== FOLDER_ID_ARCHIVE;
 
       if(skipMigrated) {
@@ -1763,7 +1818,11 @@ export default class DialogsStorage extends AppManager {
   public async markFolderAsRead(folderId: number) {
     const folder = this.getFolder(folderId);
     const peerIds = [...folder.unreadPeerIds];
-    for(const peerId of peerIds) {
+    // Chats (0) neither lists a group nor counts one in its badge, so "mark this
+    // folder read" must not reach into Groups either. Groups still carry
+    // folder_id 0 as far as the server is concerned, hence the local exclusion.
+    const targets = folderId === FOLDER_ID_ALL ? peerIds.filter((peerId) => !isGroupPeer(peerId)) : peerIds;
+    for(const peerId of targets) {
       await this.appMessagesManager.markDialogUnread({peerId, read: true});
     }
   }
@@ -2105,6 +2164,24 @@ export default class DialogsStorage extends AppManager {
         delete dialog.pFlags.pinned;
         this.generateIndexForDialog(dialog);
         this.appMessagesManager.scheduleHandleNewDialogs(dialog.peerId, dialog);
+      }
+    }
+
+    // Chats (0) excludes group chats from its list by presentation rule (see
+    // getFolderDialogs), but the server still pins groups in folder 0. The loop
+    // above only ever visits dialogs that list returns, so a group dropped from
+    // the server's pin order would keep a stale pin nobody can see or clear.
+    // Sweep groups separately, off the complete local index.
+    if(folderId === FOLDER_ID_ALL) {
+      const groupDialogs = this.getAllPersistedDialogs().filter((dialog) =>
+        dialog.folder_id === FOLDER_ID_ALL && (dialog as Dialog).pFlags?.pinned);
+      for(const dialog of groupDialogs) {
+        if(!isGroupPeer(dialog.peerId)) continue;
+        if(!newPinned[getDialogKey(dialog)]) {
+          delete (dialog as Dialog).pFlags.pinned;
+          this.generateIndexForDialog(dialog);
+          this.appMessagesManager.scheduleHandleNewDialogs(dialog.peerId, dialog);
+        }
       }
     }
   }

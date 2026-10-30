@@ -465,3 +465,17 @@ body.is-right-column-shown {
     }
   }
 }
+
+// Owner batch 3 (2026-10-30): smaller top-bar avatar. Type sizes stay at their
+// inherited values.
+.topbar {
+  &.has-avatar {
+    // Keeps the search field aligned with the narrower avatar.
+    --topbar-avatar-active-size: 2rem;
+  }
+
+  .person-avatar {
+    --size: 2rem !important;
+    --multiplier: 1.6875;
+  }
+}

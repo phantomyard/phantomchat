@@ -28,7 +28,7 @@ import {MyDocument} from '@appManagers/appDocsManager';
 import {MyPhoto} from '@appManagers/appPhotosManager';
 import DEBUG from '@config/debug';
 import SlicedArray, {Slice, SliceEnd} from '@helpers/slicedArray';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, GENERAL_TOPIC_ID, HIDDEN_PEER_ID, MESSAGES_ALBUM_MAX_SIZE, MUTE_UNTIL, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SERVICE_PEER_ID, TEST_NO_SAVED, THUMB_TYPE_FULL, TOPIC_COLORS} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, GENERAL_TOPIC_ID, HIDDEN_PEER_ID, MESSAGES_ALBUM_MAX_SIZE, MUTE_UNTIL, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SERVICE_PEER_ID, TEST_NO_SAVED, THUMB_TYPE_FULL, TOPIC_COLORS} from '@appManagers/constants';
 import {getMiddleware} from '@helpers/middleware';
 import assumeType from '@helpers/assumeType';
 import copy from '@helpers/object/copy';
@@ -668,7 +668,12 @@ export class AppMessagesManager extends AppManager {
 
     // ! Invalidate notify settings, can optimize though
     this.rootScope.addEventListener('notify_peer_type_settings', ({key, settings}) => {
-      const dialogs = this.dialogsStorage.getFolderDialogs(0).concat(this.dialogsStorage.getFolderDialogs(1)) as Dialog[];
+      // Groups (3) too: Chats (0) excludes group chats by presentation rule, so
+      // walking 0 + 1 alone would miss every group dialog here.
+      const dialogs = this.dialogsStorage.getFolderDialogs(0).concat(
+        this.dialogsStorage.getFolderDialogs(1),
+        this.dialogsStorage.getFolderDialogs(FOLDER_ID_GROUPS)
+      ) as Dialog[];
       let filterFunc: (dialog: typeof dialogs[0]) => boolean;
       if(key === 'notifyUsers') filterFunc = (dialog) => dialog.peerId.isUser();
       else if(key === 'notifyBroadcasts') filterFunc = (dialog) => this.appPeersManager.isBroadcast(dialog.peerId);

@@ -3,26 +3,20 @@ import {createStore, reconcile} from 'solid-js/store';
 import {render} from 'solid-js/web';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import createFolderContextMenu from '@helpers/dom/createFolderContextMenu';
-import {keepMe} from '@helpers/keepMe';
 import ListenerSetter from '@helpers/listenerSetter';
 import {Middleware} from '@helpers/middleware';
 import pause from '@helpers/schedulers/pause';
-import Animated from '@helpers/solid/animations';
 import {logger, LogTypes} from '@lib/logger';
 import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS} from '@appManagers/constants';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {MyDialogFilter} from '@lib/storages/filters';
 import useHasFoldersSidebar from '@stores/foldersSidebar';
-import {IconTsx} from '@components/iconTsx';
-import ripple from '@components/ripple';
 import Scrollable from '@components/scrollable2';
 import extractEmojiFromFilterTitle, {ExtractEmojiFromFilterTitleResult} from '@components/sidebarLeft/foldersSidebarContent/extractEmojiFromFilterTitle';
 import FolderItem from '@components/sidebarLeft/foldersSidebarContent/folderItem';
 import type {FolderItemPayload} from '@components/sidebarLeft/foldersSidebarContent/types';
 import {getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter, folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
-
-keepMe(ripple);
 
 
 const log = logger('FoldersSidebarContent', LogTypes.Debug);
@@ -44,21 +38,13 @@ export function FoldersSidebarContent(props: {
     rootScope,
     appSidebarLeft,
     AppChatFoldersTab,
-    AppEditFolderTab,
     showLimitPopup,
     i18n
   } = useHotReloadGuard();
 
   const [selectedFolderId, setSelectedFolderId] = createSignal<number>(FOLDER_ID_ALL);
   const [folderItems, setFolderItems] = createStore<FolderItemPayload[]>([]);
-  const [addFoldersOffset, setAddFoldersOffset] = createSignal(0);
-  const [canShowAddFolders, setCanShowAddFolders] = createSignal(false);
   const [menuTarget, setMenuTarget] = createSignal<HTMLDivElement>();
-
-  const showAddFolders = () => canShowAddFolders() &&
-    selectedFolderId() &&
-    !REAL_FOLDERS.has(selectedFolderId()) &&
-    folderItems.find((item) => item.id === selectedFolderId())?.chatsCount === 0;
 
   const [folderItemRefs, setFolderItemRefs] = createStore<Record<number, HTMLDivElement>>({});
 
@@ -207,7 +193,6 @@ export function FoldersSidebarContent(props: {
     contextMenu = createFolderContextMenu({
       appSidebarLeft,
       AppChatFoldersTab,
-      AppEditFolderTab,
       managers: rootScope.managers,
       className: 'folders-sidebar__folder-item',
       listenTo: folderItemsContainer
@@ -263,20 +248,6 @@ export function FoldersSidebarContent(props: {
   });
 
 
-  const updateCanShowAddFolders = () => {
-    const selectedItem = folderItemRefs[selectedFolderId()];
-
-    if(!selectedItem) return;
-    const containerRect = folderItemsContainer.getBoundingClientRect();
-    const itemRect = selectedItem.getBoundingClientRect();
-    const offset = itemRect.top + itemRect.height / 2 - containerRect.top;
-    const MARGIN_PX = 50;
-    setCanShowAddFolders(offset > MARGIN_PX && offset < containerRect.height - MARGIN_PX);
-    setAddFoldersOffset(offset);
-  };
-
-  createEffect(updateCanShowAddFolders);
-
   let openingChatFolders = false;
   return (
     <>
@@ -286,7 +257,6 @@ export function FoldersSidebarContent(props: {
         <Scrollable
           ref={folderItemsContainer}
           class="folders-sidebar__scrollable"
-          onScroll={updateCanShowAddFolders}
           withBorders="both"
         >
           <For each={folderItems}>{(folderItem) => {
@@ -306,22 +276,6 @@ export function FoldersSidebarContent(props: {
             );
           }}</For>
         </Scrollable>
-
-        <Animated type="cross-fade" mode="add-remove">
-          {showAddFolders() && <div
-            use:ripple
-            class="folders-sidebar__add-folders-button"
-            onClick={() => contextMenu.openSettingsForFilter(selectedFolderId())}
-            style={{
-              '--offset': addFoldersOffset()
-            }}
-          >
-            <IconTsx icon="plus" class="folders-sidebar__add-folders-button-icon" />
-            <div class="folders-sidebar__add-folders-button-name">
-              {i18n('ChatList.Filter.Include.AddChat')}
-            </div>
-          </div>}
-        </Animated>
       </div>
 
       <FolderItem

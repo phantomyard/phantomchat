@@ -43,7 +43,7 @@ import contextMenuController from '@helpers/contextMenuController';
 import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG} from '@lib/appDialogsManager';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import SettingSection, {SettingSectionOptions} from '@components/settingSection';
-import {FOLDER_ID_ARCHIVE} from '@appManagers/constants';
+import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS} from '@appManagers/constants';
 import mediaSizes from '@helpers/mediaSizes';
 import {doubleRaf, fastRaf} from '@helpers/schedulers';
 import {getInstallPrompt} from '@helpers/dom/installPrompt';
@@ -713,6 +713,16 @@ export class AppSidebarLeft extends SidebarSlider {
       text: 'Contacts',
       onClick: onContactsClick
     }, {
+      // Owner batch 2 (2026-10-30): adding a contact lives only here now.
+      icon: 'adduser',
+      text: 'AddContact',
+      onClick: async() => {
+        closeTabsBefore(async() => {
+          const {showAddContactPopup} = await import('@components/popups/addContact');
+          showAddContactPopup({managers: this.managers});
+        });
+      }
+    }, {
       icon: 'card',
       regularText: 'My QR Code',
       onClick: () => {
@@ -1038,6 +1048,29 @@ export class AppSidebarLeft extends SidebarSlider {
     return wrap;
   }
 
+  // [PhantomChat.chat] Shared by the floating "+" button and the hamburger
+  // "Create a new" submenu. "Add contact" lives solely in the main tools menu.
+  private async openNewGroupFlow() {
+    const {default: AppPhantomChatNewGroupTab} = await import('@components/sidebarLeft/tabs/phantomchatNewGroup');
+    const tab = this.createTab(AppAddMembersTab);
+    tab.open({
+      type: 'chat',
+      skippable: false,
+      title: 'GroupAddMembers',
+      placeholder: 'SendMessageTo',
+      takeOut: (peerIds) => {
+        return this.createTab(AppPhantomChatNewGroupTab).open({peerIds});
+      }
+    });
+  }
+
+  private openNewPrivateChatFlow() {
+    this.createTab(AppContactsTab).open();
+  }
+
+  // "Create a new": group and private chat only. Adding a contact lives solely in
+  // the main tools menu (see the AddContact entry above), so it is not offered
+  // twice — the submenu would otherwise be a second path to the same popup.
   private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean): ButtonMenuItemOptionsVerifiable[]  {
     const closeTabsBefore = async(clb: () => void) => {
       if(closeBefore) {
@@ -1046,73 +1079,36 @@ export class AppSidebarLeft extends SidebarSlider {
       clb();
     }
 
-    const onNewGroupClick = () => {
-      closeTabsBefore(async() => {
-        const {default: AppPhantomChatNewGroupTab} = await import('@components/sidebarLeft/tabs/phantomchatNewGroup');
-        const tab = this.createTab(AppAddMembersTab);
-        tab.open({
-          type: 'chat',
-          skippable: false,
-          title: 'GroupAddMembers',
-          placeholder: 'SendMessageTo',
-          takeOut: (peerIds) => {
-            return this.createTab(AppPhantomChatNewGroupTab).open({peerIds});
-          }
-        });
-      });
-    };
-
-    const onContactsClick = () => {
-      closeTabsBefore(() => {
-        this.createTab(AppContactsTab).open();
-      });
-    };
-
-    const onAddContactClick = () => {
-      closeTabsBefore(async() => {
-        const {showAddContactPopup} = await import('@components/popups/addContact');
-        showAddContactPopup({managers: this.managers});
-      });
-    };
-
-    const onNewFolderClick = () => {
-      closeTabsBefore(() => {
-        this.createTab(AppEditFolderTab).open();
-      });
-    };
-
     return [{
       icon: 'newgroup',
       text: singular ? 'Group' : 'NewGroup',
-      onClick: onNewGroupClick
-    }, {
-      icon: 'adduser',
-      text: 'AddContact',
-      onClick: onAddContactClick
+      onClick: () => closeTabsBefore(() => void this.openNewGroupFlow())
     }, {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',
-      onClick: onContactsClick
-    }, {
-      icon: 'folder',
-      text: 'FilterNew',
-      onClick: onNewFolderClick
+      onClick: () => closeTabsBefore(() => this.openNewPrivateChatFlow())
     }];
   }
 
+  // [PhantomChat.chat] One click, no menu: the Groups folder opens the multi-select
+  // member picker directly, everywhere else the contact picker directly.
   private createNewChatsMenuButton() {
-    const btnMenu = ButtonMenuToggle({
-      direction: 'top-left',
-      buttons: this.createNewChatsMenuOptions(false),
-      noIcon: true
-    });
-    btnMenu.className = 'btn-new-menu btn-circle rp btn-corner z-depth-1 btn-menu-toggle animated-button-icon';
-    btnMenu.tabIndex = -1;
-    const icons: Icon[] = ['newchat_filled', 'close'];
-    btnMenu.prepend(...icons.map((icon, idx) => Icon(icon, 'animated-button-icon-icon', 'animated-button-icon-icon-' + (idx === 0 ? 'first' : 'last'))));
-    btnMenu.id = 'new-menu';
+    const btn = document.createElement('div');
+    btn.className = 'btn-new-menu btn-circle btn-corner z-depth-1';
+    btn.id = 'new-menu';
+    btn.tabIndex = -1;
+    ripple(btn);
+    btn.append(Icon('plus', 'new-menu-icon'));
 
-    return btnMenu;
+    attachClickEvent(btn, () => {
+      if(appDialogsManager.filterId === FOLDER_ID_GROUPS) {
+        void this.openNewGroupFlow();
+      } else {
+        this.openNewPrivateChatFlow();
+      }
+    });
+
+    return btn;
   }
 
   private createNewChatsSubmenu() {

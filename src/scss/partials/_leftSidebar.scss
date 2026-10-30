@@ -1828,3 +1828,25 @@
     background: rgba(var(--primary-color-rgb), 0.15);
   }
 }
+
+// Owner batch 2 (2026-10-30): smaller floating "new" button, and enough bottom
+// room in the chat list that the last row can scroll clear of it.
+// Owner batch 4: the button is a plain one-click "+" (no menu / no toggle icons);
+// the glyph centres itself through .btn-circle's line-height + .btn-corner's
+// text-align.
+// Owner batch 5: back to the stock .btn-circle size (54px) so the "+" matches
+// every other round button.
+#new-menu {
+  .new-menu-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+// 54px button + 1.25rem offset = 74px; keep a little clearance past it.
+#chatlist-container .scrollable-y {
+  padding-bottom: 5rem;
+}

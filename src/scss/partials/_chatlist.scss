@@ -745,3 +745,44 @@ ul.chatlist {
     margin-inline-start: .125rem;
   }
 }
+
+// Owner batch 5 (2026-10-30): dialog avatars match the 32px top-bar avatar.
+// --multiplier is 54 / size (see _avatar.scss) so initials scale with the box.
+#chatlist-container .chatlist-chat {
+  &.row-with-padding {
+    padding-inline-start: 3.125rem !important;
+  }
+
+  .dialog-avatar.row-media-bigger {
+    // --size drives the photo/gradient/initials inside the avatar, so it must
+    // be overridden too, otherwise the 54px inner image overflows the box.
+    --size: 2rem !important;
+    --multiplier: 1.6875;
+    width: 2rem !important;
+    height: 2rem !important;
+    inset-inline-start: .75rem !important;
+  }
+}
+
+// Owner batch 4 (2026-10-30): compact chat list. The row height is owned by the
+// virtual list (itemSize in autonomousDialogList/dialogs.ts) so the two numbers
+// must match or rows overlap. Type: title 16px (inherited), subtitle 14px,
+// timestamp 12px (inherited).
+#chatlist-container .chatlist-chat {
+  &.row-big {
+    height: 3.5rem !important;
+    min-height: 3.5rem !important;
+  }
+
+  .row-subtitle {
+    font-size: .875rem !important;
+    line-height: 1.25rem;
+  }
+
+  // The media box is absolutely positioned and otherwise sits at the top of a
+  // taller row, so it has to be centred explicitly.
+  .dialog-avatar.row-media-bigger {
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}

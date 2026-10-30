@@ -67,6 +67,7 @@ const registerP2PDialogMock = vi.fn();
 const saveApiChatMock = vi.fn();
 const dropDialogOnDeletionMock = vi.fn();
 const getDialogsMock = vi.fn().mockResolvedValue({dialogs: [], count: 0, isEnd: true, isTopEnd: true});
+const getAllPersistedDialogsMock = vi.fn().mockReturnValue([]);
 
 vi.mock('@lib/rootScope', () => ({
   default: {
@@ -77,7 +78,8 @@ vi.mock('@lib/rootScope', () => ({
         dropP2PDialog: (...args: any[]) => dropP2PDialogMock(...args),
         registerP2PDialog: (...args: any[]) => registerP2PDialogMock(...args),
         dropDialogOnDeletion: (...args: any[]) => dropDialogOnDeletionMock(...args),
-        getDialogs: (...args: any[]) => getDialogsMock(...args)
+        getDialogs: (...args: any[]) => getDialogsMock(...args),
+        getAllPersistedDialogs: (...args: any[]) => getAllPersistedDialogsMock(...args)
       },
       appChatsManager: {
         saveApiChat: (...args: any[]) => saveApiChatMock(...args)
@@ -217,16 +219,13 @@ describe('Group UI Integration', () => {
       const store = getGroupStore() as any;
       await store.save(makeGroup({groupId: 'live-group', peerId: -2000000000000001}));
 
-      getDialogsMock.mockResolvedValueOnce({
-        dialogs: [
-          {peerId: -2000000000000001}, // live group — keep
-          {peerId: -2000000000000002}, // group range, no record — drop
-          {peerId: -1000000000000001}, // below GROUP_PEER_BASE — keep
-          {peerId: 482710482710},      // p2p user — keep
-          {peerId: undefined}          // malformed — keep (skip)
-        ],
-        count: 5, isEnd: true, isTopEnd: true
-      });
+      getAllPersistedDialogsMock.mockReturnValueOnce([
+        {peerId: -2000000000000001}, // live group — keep
+        {peerId: -2000000000000002}, // group range, no record — drop
+        {peerId: -1000000000000001}, // below GROUP_PEER_BASE — keep
+        {peerId: 482710482710},      // p2p user — keep
+        {peerId: undefined}          // malformed — keep (skip)
+      ]);
 
       await api.dropOrphanGroupDialogs();
 
@@ -234,11 +233,34 @@ describe('Group UI Integration', () => {
       expect(dropDialogOnDeletionMock).toHaveBeenCalledWith(-2000000000000002);
     });
 
+    it('dropOrphanGroupDialogs enumerates the complete dialog set, not the Chats (0) presentation view', async() => {
+      // Regression: the sweep used getDialogs() with no filterId, which defaults
+      // to Chats (0) — and Chats deliberately hides group chats, so the sweep
+      // could never see a group row and silently swept nothing.
+      const store = getGroupStore() as any;
+      const liveGroup = makeGroup({groupId: 'live-group', peerId: -2000000000000001});
+      const ghostPeerId = -2000000000000002;
+      await store.save(liveGroup);
+
+      // Chats (0) yields no group peer at all.
+      getDialogsMock.mockResolvedValueOnce({dialogs: [{peerId: 482710482710}], count: 1, isEnd: true, isTopEnd: true});
+      getAllPersistedDialogsMock.mockReturnValueOnce([
+        {peerId: 482710482710},
+        {peerId: liveGroup.peerId},
+        {peerId: ghostPeerId}
+      ]);
+
+      await api.dropOrphanGroupDialogs();
+
+      expect(dropDialogOnDeletionMock).toHaveBeenCalledTimes(1);
+      expect(dropDialogOnDeletionMock).toHaveBeenCalledWith(ghostPeerId);
+    });
+
     it('dropOrphanGroupDialogs aborts without dropping when the group store is unreadable', async() => {
       const store = getGroupStore() as any;
       const originalGetAll = store.getAll;
       store.getAll = vi.fn().mockRejectedValue(new Error('VersionError'));
-      getDialogsMock.mockResolvedValueOnce({dialogs: [{peerId: -2000000000000002}], count: 1, isEnd: true, isTopEnd: true});
+      getAllPersistedDialogsMock.mockReturnValueOnce([{peerId: -2000000000000002}]);
 
       await api.dropOrphanGroupDialogs();
 
@@ -247,7 +269,7 @@ describe('Group UI Integration', () => {
     });
 
     it('dropOrphanGroupDialogs tolerates dialogs storage failing to enumerate', async() => {
-      getDialogsMock.mockReset().mockRejectedValueOnce(new Error('not ready'));
+      getAllPersistedDialogsMock.mockReset().mockRejectedValueOnce(new Error('not ready'));
       await expect(api.dropOrphanGroupDialogs()).resolves.toBeUndefined();
       expect(dropDialogOnDeletionMock).not.toHaveBeenCalled();
     });

@@ -33,6 +33,7 @@ import getUserStatusString from '@components/wrappers/getUserStatusString';
 import {ChannelParticipant, ChannelParticipantsFilter, ChannelsChannelParticipants, Chat, ChatFull, ChatParticipant, ChatParticipants, User} from '@layer';
 import canSendToUser from '@appManagers/utils/users/canSendToUser';
 import hasRights from '@appManagers/utils/chats/hasRights';
+import {FOLDER_ID_GROUPS} from '@appManagers/constants';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import {generateDelimiter} from '@components/generateDelimiter';
 import SettingSection from '@components/settingSection';
@@ -84,7 +85,7 @@ export default class AppSelectPeers {
   private query = '';
   private cachedContacts: PeerId[];
 
-  private loadedWhat: Partial<{[k in 'dialogs' | 'archived' | 'contacts' | 'channelParticipants' | 'custom']: boolean}> = {};
+  private loadedWhat: Partial<{[k in 'dialogs' | 'archived' | 'groups' | 'contacts' | 'channelParticipants' | 'custom']: boolean}> = {};
 
   private renderedPeerIds: Set<PeerId> = new Set();
 
@@ -617,6 +618,7 @@ export default class AppSelectPeers {
     if(this.peerType.includes('dialogs')) {
       this.loadedWhat.dialogs = false;
       this.loadedWhat.archived = false;
+      this.loadedWhat.groups = false;
       this.loadedWhat.contacts = false;
     }
 
@@ -707,7 +709,7 @@ export default class AppSelectPeers {
   }
 
   private async getMoreDialogs(): Promise<any> {
-    if(this.loadedWhat.dialogs && this.loadedWhat.archived) {
+    if(this.loadedWhat.dialogs && this.loadedWhat.archived && this.loadedWhat.groups) {
       return;
     }
 
@@ -775,12 +777,72 @@ export default class AppSelectPeers {
       } else {
         this.loadedWhat.archived = true;
 
-        if(!this.loadedWhat.contacts/*  && this.peerType.includes('contacts') */) {
-          return this.getMoreContacts();
-        }
+        // Groups are NOT part of Chats (0) — the dialog list deliberately hides
+        // them because they have a built-in folder of their own — so a picker
+        // that only walks 0 -> 1 -> contacts would silently lose every group.
+        return this.getMoreGroups();
       }
     } else if(this.renderedPeerIds.size < pageCount) {
       return this.getMoreDialogs();
+    }
+  }
+
+  /**
+   * Third stage of the dialogs walk: Groups (3). Chats (0) excludes group chats
+   * by presentation rule (see DialogsStorage.getFolderDialogs), so this is the
+   * only foldered enumeration that yields them.
+   */
+  private async getMoreGroups() {
+    if(this.loadedWhat.groups) {
+      return;
+    }
+
+    const {middleware} = this.getTempId('groups');
+
+    let groupDialogs: Dialog[] = [];
+
+    // A queried picker is served by the dialog index over the WHOLE dialog set
+    // (getDialogs replaces the folder list with its search results), so it has
+    // already surfaced matching groups in the Chats pass.
+    if(!this.query) {
+      try {
+        const value = await this.managers.dialogsStorage.getDialogs({
+          limit: 1000,
+          filterId: FOLDER_ID_GROUPS,
+          skipMigrated: true,
+          forceLocal: true
+        });
+        if(!middleware()) {
+          return;
+        }
+
+        groupDialogs = (value?.dialogs || []) as Dialog[];
+      } catch{
+        if(!middleware()) {
+          return;
+        }
+      }
+    }
+
+    let dialogs = groupDialogs.slice();
+    findAndSplice(dialogs, (dialog) => dialog.peerId === rootScope.myId); // no my account
+
+    if(dialogs.length && this.chatRightsActions) {
+      dialogs = await filterAsync(dialogs, (dialog) => this.filterByRights(dialog.peerId));
+      if(!middleware()) {
+        return;
+      }
+    }
+
+    this.loadedWhat.groups = true;
+
+    await this.renderResultsFunc(dialogs.map((dialog) => dialog.peerId));
+    if(!middleware()) {
+      return;
+    }
+
+    if(!this.loadedWhat.contacts) {
+      return this.getMoreContacts();
     }
   }
 
@@ -959,6 +1021,10 @@ export default class AppSelectPeers {
   private _getMoreResults() {
     if((this.peerType.includes('dialogs')/*  || this.loadedWhat.contacts */) && !this.loadedWhat.archived) { // to load non-contacts
       return this.getMoreSomething('dialogs');
+    }
+
+    if(this.peerType.includes('dialogs') && !this.loadedWhat.groups) {
+      return this.getMoreGroups();
     }
 
     if((this.peerType.includes('contacts') || this.peerType.includes('dialogs')) && !this.loadedWhat.contacts) {
