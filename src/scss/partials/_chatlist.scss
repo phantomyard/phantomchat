@@ -346,7 +346,6 @@ ul.chatlist {
         }
 
         .dialog-avatar.is-online:after,
-        .dialog-online-dot,
         .dialog-group-call-icon {
           background-color: #fff;
           border-color: var(--primary-color);
@@ -798,31 +797,16 @@ ul.chatlist {
   }
 }
 
-// Owner batch 6 (2026-10-30): presence moved off the avatar. Its :after was
-// pinned at a fixed 2.4375rem offset (sized for the old 54px avatar), so with
-// the 32px list avatar it spilled past the row edge and was clipped. It now
-// renders inline in the title row, immediately before the P2P chip.
-#chatlist-container .chatlist-chat {
-  .dialog-avatar.is-online:after {
-    display: none;
-  }
+// Presence indicators are omitted from every chat list, including avatar dots.
+.chatlist-chat .dialog-avatar.is-online:after {
+  display: none;
 }
 
-// NB: no `#chatlist-container` here. The dot's default is the primary colour,
-// which is exactly the active row's own background, and the white-on-active
-// rule (`.chatlist-chat.active .dialog-online-dot`, three classes) has to keep
-// winning. An id in this selector outranked it and the dot vanished on the
-// selected row.
-.chatlist-chat .dialog-online-dot {
-  display: none;
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-inline-start: .375rem;
-  background-color: var(--avatar-online-color);
-
-  &.is-online {
-    display: inline-block;
+// Selected conversations are read immediately, including during async badge
+// transitions and in collapsed/archive/custom-folder lists.
+.chatlist-chat.active {
+  .dialog-subtitle-badge-unread,
+  .avatar-badge {
+    display: none;
   }
 }

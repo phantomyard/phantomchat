@@ -1,3 +1,4 @@
+import {isConversationSelected} from '@lib/phantomchat/selected-conversation';
 /*
  * https://github.com/morethanwords/tweb
  * Copyright (C) 2019-2021 Eduard Kuzmenko
@@ -141,9 +142,6 @@ export type DialogDom = {
   listEl: HTMLElement,
   subtitleEl: HTMLElement,
   mutedIcon?: HTMLElement,
-  // Inline presence dot in the title row (owner batch 6). Optional: only the
-  // dialog list sets it, and only while the row exists.
-  onlineDot?: HTMLElement,
 
   titleWrapOptions?: WrapSomethingOptions;
 
@@ -340,15 +338,6 @@ export class DialogElement extends Row {
     loadPromises?.push(peerTitlePromise);
     titleSpanContainer.append(peerTitle.element);
 
-    // Presence dot (owner batch 6): it used to be an :after on the avatar pinned
-    // at a fixed 54px offset, so on the 32px list avatar it hung outside the
-    // avatar and was clipped by the 56px row. It now sits inline in the title
-    // row, immediately BEFORE the P2P chip, and is toggled by
-    // setOnlineStatus (autonomousDialogList/dialogs.ts).
-    const onlineDot = document.createElement('span');
-    onlineDot.classList.add('dialog-online-dot');
-    titleSpanContainer.append(onlineDot);
-
     // P2P badge (#52): a green "P2P" chip after the contact name, shown only when
     // this peer is reachable over a direct transport. Hidden (display:none) for
     // relay-only / non-1:1 peers, so it costs nothing on those rows. Self-manages
@@ -417,7 +406,6 @@ export class DialogElement extends Row {
       containerEl: li,
       listEl: li,
       subtitleEl: this.subtitleRow,
-      onlineDot,
       titleWrapOptions
     };
 
@@ -2352,13 +2340,15 @@ export class AppDialogsManager {
       dialogElement.createPinnedBadge();
     }
 
-    const hasUnreadBadge = isDialogUnread;
+    // Re-check after the async badge work: selection may have changed while
+    // the Worker answered. Stale dialog snapshots cannot re-add an open badge.
+    const hasUnreadBadge = isDialogUnread && !isConversationSelected(+peerId);
     const isUnreadBadgeMounted = !!dom.unreadBadge;
     if(hasUnreadBadge) {
       dialogElement.createUnreadBadge();
     }
 
-    const hasUnreadAvatarBadge = this.xd !== this.xds[FOLDER_ID_ARCHIVE] && !isTopic && !isMonoforumThread && !isAllChats && (!!this.forumTab || appSidebarLeft.isCollapsed()) && isDialogUnread;
+    const hasUnreadAvatarBadge = this.xd !== this.xds[FOLDER_ID_ARCHIVE] && !isTopic && !isMonoforumThread && !isAllChats && (!!this.forumTab || appSidebarLeft.isCollapsed()) && hasUnreadBadge;
 
     const isUnreadAvatarBadgeMounted = !!dom.unreadAvatarBadge;
     if(hasUnreadAvatarBadge) {
@@ -2567,14 +2557,6 @@ export class AppDialogsManager {
         promises.push(this.xd.processDialogForCallStatus(peerId, dialogElement.dom));
       }
 
-      if(peerId !== rootScope.myId && isUser) {
-        promises.push(this.managers.appUsersManager.getUserStatus(peerId.toUserId()).then((status) => {
-          if(status?._ === 'userStatusOnline') {
-            this.xd.setOnlineStatus(dialogElement.dom, true);
-          }
-        }));
-      }
-
       promises.push(this.setLastMessageN({
         dialog,
         dialogElement: dialogElement,
@@ -2585,8 +2567,7 @@ export class AppDialogsManager {
         // off-window rows (deferredSortedVirtualList shrink), so a peer_typings
         // event that fired while this row was unmounted never reached it and
         // setLastMessage just overwrote lastMessageSpan with the last message.
-        // Restore the indicator here — same pattern as the online-status
-        // re-apply above — so typing survives scroll eviction in long lists
+        // Restore the indicator here so typing survives scroll eviction in long lists
         // (notably "All Chats", which holds every dialog).
         const dom = dialogElement.dom;
         if(dom.lastMessageSpan.querySelector('.peer-typing-container')) return;

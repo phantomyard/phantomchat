@@ -15,6 +15,7 @@ import {assertInvariant, validateTwebMessage, validateDialogTopMessage} from '@l
 import {ensureSenderUserInjected} from '@lib/phantomchat/ensure-sender-user-injected';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import {getMessageStore} from '@lib/phantomchat/message-store';
+import {isConversationSelected} from '@lib/phantomchat/selected-conversation';
 
 export interface IncomingMessageData {
   senderPubkey: string;
@@ -200,17 +201,6 @@ if(typeof document !== 'undefined' && typeof document.addEventListener === 'func
   });
 }
 
-function isChatOpenFor(peerId: number): boolean {
-  try {
-    const im = (MOUNT_CLASS_TO as any).appImManager;
-    const current = im?.chat?.peerId;
-    if(current == null) return false;
-    return +current === peerId;
-  } catch{
-    return false;
-  }
-}
-
 export function getUnreadForPeer(peerId: number): number {
   return unreadCounts.get(peerId) ?? 0;
 }
@@ -241,10 +231,20 @@ export async function resetUnreadForPeer(peerId: number): Promise<void> {
     const mirrored = proxy?.mirrors?.dialogs?.[peerId];
     const cached = lastDialogs.get(peerId);
     const had = (unreadCounts.get(peerId) ?? 0) > 0;
+    const mirrorHasUnread = (mirrored?.unread_count ?? 0) > 0;
+    const cachedHasUnread = (cached?.unread_count ?? 0) > 0;
 
     if(had) {
       unreadCounts.set(peerId, 0);
       persistUnreadCounts();
+    }
+
+    // Paint from the main-thread snapshot before any storage/Worker round trip.
+    const wasSelected = isConversationSelected(peerId);
+    if(mirrorHasUnread || cachedHasUnread) {
+      void dispatchDialogWithUnread(peerId, 0, null, null).catch((err) => {
+        logSwallow('MessageHandler.resetUnread.optimistic', err);
+      });
     }
 
     const conv = await resolveConversation(peerId);
@@ -257,19 +257,28 @@ export async function resetUnreadForPeer(peerId: number): Promise<void> {
       } catch{ /* ignore — empty store, IDB closed, etc. */ }
     }
     const idbHasUnread = storeUnread > 0;
-    const mirrorHasUnread = (mirrored?.unread_count ?? 0) > 0;
-    const cachedHasUnread = (cached?.unread_count ?? 0) > 0;
 
-    if(!had && !idbHasUnread && !mirrorHasUnread && !cachedHasUnread) return;
+    if(!had && !idbHasUnread && !mirrorHasUnread && !cachedHasUnread && !wasSelected) return;
 
     if(conv && store) {
       try {
         const recent = await store.getMessages(conv.convId, 1);
         const top = recent[0]?.mid;
-        if(top != null) await store.setReadCursor(conv.convId, top);
+        // A delayed selection reset must not consume messages in a chat left
+        // while IndexedDB was busy. Its new arrivals own their unread count.
+        if(wasSelected && !isConversationSelected(peerId)) return;
+        if(top != null) {
+          // Update tweb's read marker too (including off-screen messages).
+          void rootScope.managers.appMessagesManager.readHistory({peerId: peerId as PeerId, maxId: top, force: true}).catch((err) => {
+            logSwallow('MessageHandler.resetUnread.history', err);
+          });
+          await store.setReadCursor(conv.convId, top);
+        }
       } catch(e: any) { logSwallow('MessageHandler.resetUnread.cursor', e); }
     }
 
+    if(wasSelected && !isConversationSelected(peerId)) return;
+    if(!had && !idbHasUnread && !mirrorHasUnread && !cachedHasUnread) return;
     await dispatchDialogWithUnread(peerId, 0, conv, store);
   } catch(e: any) {
     logSwallow('MessageHandler.resetUnreadForPeer', e);
@@ -354,6 +363,10 @@ async function dispatchDialogWithUnread(peerId: number, unreadCount: number, con
   if(!base) return;
 
   const updated = {...base, unread_count: unreadCount};
+  if(unreadCount === 0) {
+    updated.read_inbox_max_id = Math.max(base.read_inbox_max_id || 0, base.top_message || 0);
+    updated.pFlags = {...base.pFlags, unread_mark: false};
+  }
   if(proxy?.mirrors?.dialogs) {
     proxy.mirrors.dialogs[peerId] = updated;
   }
@@ -458,6 +471,7 @@ export function buildTwebDialog(peerId: number, msg: any, timestamp: number, unr
     peerId,
     topMessage: msg.mid || msg.id,
     topMessageDate: msg.date || timestamp,
+    ...(unreadCount === 0 ? {readInboxMaxId: msg.mid || msg.id} : {}),
     unreadCount
   });
   (dialog as any).topMessage = msg;
@@ -637,7 +651,7 @@ export async function handleIncomingMessage(
 
   const msg = buildTwebMessage(data);
   const peerId = data.peerId;
-  const chatIsOpen = isChatOpenFor(peerId);
+  const chatIsOpen = isConversationSelected(peerId);
 
   // Cross-device read state (#218): a message the read cursor already covers
   // was read on ANOTHER device (or earlier on this one) — the cursor ride-along
@@ -687,8 +701,13 @@ export async function handleIncomingMessage(
   // Otherwise increment the persisted per-peer counter so multi-message
   // bursts count correctly.
   let unread: number;
-  if(chatIsOpen) {
+  if(chatIsOpen || isConversationSelected(peerId)) {
     unread = 0;
+    if(convId && data.mid > 0) {
+      void getMessageStore().setReadCursor(convId, data.mid).catch((err) => {
+        logSwallow('MessageHandler.selected.cursor', err);
+      });
+    }
     unreadCounts.set(peerId, 0);
   } else if(alreadyReadOnSyncedDevice) {
     unread = unreadCounts.get(peerId) ?? 0;

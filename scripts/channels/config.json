@@ -63,8 +63,8 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "12bbc698ae51ba00e2c837422c154d33282c20960943f5c7fa438e12547f08ca",
-      "preview": "12bbc698ae51ba00e2c837422c154d33282c20960943f5c7fa438e12547f08ca",
-      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only."
+      "preview": "04bcd8e209dec1b440c44b78c7a39464edf17360c3495e2c4e81cb196b304d01",
+      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -103,8 +103,8 @@
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "b17ca62b0442182c9684d4f333fe877c1613d805cd7f691953e353d4aab5e6a7",
-      "preview": "b17ca62b0442182c9684d4f333fe877c1613d805cd7f691953e353d4aab5e6a7",
-      "reason": "updateDialog returns the base promise (awaited add). Same membership gates as before; presentation only."
+      "preview": "487adb45dc21fb3625f50d78ceef164694292f10d7f11f57e20ee9d011572ccc",
+      "reason": "updateDialog returns the base promise (awaited add). Same membership gates as before; presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/storages/filters.ts": {
       "stable": "fbf2bd3823bb8924467d5931f45e0cb742bea4aa157a3c5b8a0c2fabb91ff89d",
@@ -208,8 +208,8 @@
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "8a0c48200155358703095ff7eabc994a8988e41084d3396c186eaa045bb449f0",
-      "preview": "536b502e2233a6b2ff12c77d2f4766ae86f8af485cc32a007e991e41d43340f3",
-      "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo."
+      "preview": "acd3d45d3ec3e285a3684266a2c6959872a7a755c83322932970ca6bf2f79228",
+      "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "720794a3fef32fe101599f1a3351500b0c9126288bdcd03334fe256f55e19cae",
@@ -275,6 +275,21 @@
       "stable": "98a3280e490642103687ba373efab539f029f87ccbaafef10d9f62a5c2682f48",
       "preview": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
       "reason": "Group editor UI and save trigger only: removes the description input and unavailable admin Leave Group action; Enter reuses the existing check-button save path. Writes use the unchanged GroupAPI updateGroupInfo({name}) and membership APIs with existing GroupRecord fields. Renames preserve stored descriptions. No schema, identity, CRDT, storage-key or protocol changes. Real Chromium GroupAPI/IndexedDB rename and description-preservation check passed. Requires independent content review of this exact pair."
+    },
+    "src/components/chat/input.ts": {
+      "stable": "8ba48c42bce0bc2fc1361f0ed2c3a82cb9ec863daca5cb6a96aadc2d9c6442e2",
+      "preview": "149dc315e5f9bb6decff24bc856d23f2e4b03ea8fcd9f6b70bedd9b3ffa21470",
+      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+    },
+    "src/lib/phantomchat/phantomchat-message-handler.ts": {
+      "stable": "e1f5fe6123f07e58041b3aa245fadb6a84cf77e61e2b48fe540603db2c04e34a",
+      "preview": "07f8f1e1752898411dd5006e4a332fa02176dea2448fb51d018277e61f33b8d1",
+      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+    },
+    "src/lib/phantomchat/selected-conversation.ts": {
+      "stable": "absent",
+      "preview": "205a3585630108651f23584e5ab95ec576b5954ba56a696d51696e067515bf5b",
+      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     }
   },
   "stableVersion": "1.1.78"

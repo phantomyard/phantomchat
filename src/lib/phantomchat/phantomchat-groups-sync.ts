@@ -43,6 +43,7 @@ import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 import {buildPhantomChatMedia} from './phantomchat-media-shape';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '@lib/rootScope';
+import {isConversationSelected} from '@lib/phantomchat/selected-conversation';
 import {phantomchatReactionsStore} from './phantomchat-reactions-store';
 
 const LOG_PREFIX = '[PhantomChatGroupsSync]';
@@ -757,6 +758,12 @@ export async function handleGroupIncoming(
   await invalidateGroupHistoryCache(groupPeerId);
   dispatchGroupHistoryAppend(groupPeerId, msg);
 
+  const selected = isConversationSelected(groupPeerId);
+  if(selected && mid > 0) {
+    void store.setReadCursor(`group:${groupId}`, mid).catch((err) => {
+      console.warn(LOG_PREFIX, 'selected group read cursor failed:', err);
+    });
+  }
   const dialog = mapper.createTwebDialog({
     peerId: groupPeerId,
     topMessage: mid,
@@ -766,14 +773,14 @@ export async function handleGroupIncoming(
     // bump the badge. Same-device echoes are dropped earlier by the persistent
     // replay dedup in GroupAPI.handleIncomingGroupMessage, but a message sent
     // from another device of ours legitimately reaches this path.
-    unreadCount: isOutgoing ? 0 : 1,
+    unreadCount: isOutgoing || selected ? 0 : 1,
     // Outbox cursor (= our own read state on members' messages) is consistent
     // with unreadCount: for an incoming message we have not read yet, leave
     // read_inbox_max_id at mid - 1 to model "all prior messages read, this one
     // pending"; for our own echo everything up to mid is read. (After the user
     // opens the chat, unread → 0 and the readInboxMaxId is bumped to mid by
     // other paths.)
-    readInboxMaxId: isOutgoing || mid <= 0 ? mid : mid - 1,
+    readInboxMaxId: isOutgoing || selected || mid <= 0 ? mid : mid - 1,
     readOutboxMaxId: mid
   });
   (dialog as any).topMessage = msg;
