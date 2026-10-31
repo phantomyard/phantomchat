@@ -87,6 +87,10 @@ export function FoldersSidebarContent(props: {
 
     const titleRest: Pick<FolderItemPayload, 'name' | 'title'> = filter.id === FOLDER_ID_ALL ? {
       name: i18n('FilterAllChats')
+    } : filter.id === FOLDER_ID_ARCHIVE ? {
+      // The archive filter carries no title of its own — it is defined by a
+      // pFlag, not a name — so the rail supplies the label.
+      name: 'Archived'
     } : {
       title: (cleanTitle = extractEmojiFromFilterTitle(filter.title)).text
     };
@@ -148,7 +152,11 @@ export function FoldersSidebarContent(props: {
 
   async function updateItemsOrder(order: number[]) {
     order = [...order];
+    // Archives is always the last space: it is not reorderable, and the server
+    // order array never carries it. (Dropping it entirely used to sort it to
+    // the TOP, because unknown ids sort first below.)
     indexOfAndSplice(order, FOLDER_ID_ARCHIVE);
+    order.push(FOLDER_ID_ARCHIVE);
 
     const items = [...folderItems];
 
@@ -166,6 +174,15 @@ export function FoldersSidebarContent(props: {
   }
 
   async function setSelectedFolder(folderId: number) {
+    if(folderId === FOLDER_ID_ARCHIVE) {
+      // The archive owns its own tab (stories, its own header) and has no
+      // inline chatlist — `addFilter` skips it, so the generic path below would
+      // dereference a `filtersRendered[1]` that does not exist.
+      setSelectedFolderId(folderId);
+      appSidebarLeft.openArchiveTab();
+      return true;
+    }
+
     const isFilterAvailable = await rootScope.managers.filtersStorage.isFilterIdAvailable(folderId);
     if(!isFilterAvailable) {
       showLimitPopup('folders');
@@ -235,7 +252,8 @@ export function FoldersSidebarContent(props: {
   createEffect(() => {
     if(!props.isFiltersInited) return;
 
-    const folderFilters = props.filters.filter((filter) => filter.id !== FOLDER_ID_ARCHIVE);
+    // Every space renders in the rail now, Archives included.
+    const folderFilters = props.filters;
 
     let cleaned = false;
     onCleanup(() => void (cleaned = true));

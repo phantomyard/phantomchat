@@ -282,11 +282,15 @@ describe('dialog construction', () => {
 });
 
 describe('session naming', () => {
-  it('takes the first 10 characters of the first prompt, plus an ellipsis', () => {
+  it('takes the first 20 characters of the first prompt, with no ellipsis', () => {
     expect(DEFAULT_SESSION_GROUP_NAME).toBe('New session');
-    expect(sessionTitleFromPrompt('Add a retry loop to the poller')).toBe('Add a retr…');
+    expect(sessionTitleFromPrompt('Add a retry loop to the poller')).toBe('Add a retry loop to');
+    expect(sessionTitleFromPrompt('Add a retry loop to the  poller')).toBe('Add a retry loop to');
     expect(sessionTitleFromPrompt('short')).toBe('short');
-    expect(sessionTitleFromPrompt('  multi\n  line   prompt  ')).toBe('multi line…');
+    // exactly 20 characters — kept whole, nothing appended
+    expect(sessionTitleFromPrompt('12345678901234567890')).toBe('12345678901234567890');
+    expect(sessionTitleFromPrompt('123456789012345678901')).toBe('12345678901234567890');
+    expect(sessionTitleFromPrompt('  multi\n  line   prompt  ')).toBe('multi line prompt');
     expect(sessionTitleFromPrompt('')).toBe('');
   });
 });

@@ -99,24 +99,40 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
   /**
    * @returns Returns `true` if a new dialog was just added
    */
-  private addOrDeleteDialogIfNeeded(dialog: T, key: any) {
+  private async addOrDeleteDialogIfNeeded(dialog: T, key: any) {
     if(!this.canUpdateDialog(dialog)) {
       this.deleteDialog(dialog);
       return false;
     }
 
     if(!this.sortedList.has(key)) {
-      this.sortedList.add(key);
+      await this.sortedList.add(key);
+      this.onLiveRowAdded();
       return true;
     }
 
     return false;
   }
 
-  public updateDialog(dialog: T) {
+  /**
+   * A row arrived through a live update (`dialog_flush`, `dialogs_multiupdate`,
+   * a send, an inbound reply) into a space whose own load found nothing.
+   *
+   * The two teardowns that normally clear the loading skeleton and the
+   * "nothing here yet" pane live in the LOAD path (`loadDialogsInner` / the
+   * sorted list's length effect), and neither runs again for a space that has
+   * already loaded empty — so the pane sits on top of the new row forever and
+   * the space looks blank exactly when a session starts replying.
+   */
+  protected onLiveRowAdded() {
+    this.placeholder?.detach(this.sortedList.itemsLength());
+    void this.appDialogsManager.onListLengthChange?.();
+  }
+
+  public async updateDialog(dialog: T) {
     const key = this.getDialogKey(dialog);
 
-    if(this.addOrDeleteDialogIfNeeded(dialog, key)) return;
+    if(await this.addOrDeleteDialogIfNeeded(dialog, key)) return;
 
     const dialogElement = this.getDialogElement(key);
     if(!dialogElement) {

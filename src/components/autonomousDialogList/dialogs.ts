@@ -307,7 +307,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     });
   }
 
-  public updateDialog(dialog: Dialog) {
+  public async updateDialog(dialog: Dialog) {
     if(!this.testDialogForFilter(dialog)) {
       if(this.getDialogElement(dialog.peerId)) {
         // A custom folder tests membership via the per-filter index

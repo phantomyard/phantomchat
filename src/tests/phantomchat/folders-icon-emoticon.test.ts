@@ -15,7 +15,7 @@
 import {describe, it, expect, vi} from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import {folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
+import {folderEmoticonFallback, getIconForFilter} from '@components/sidebarLeft/foldersSidebarContent/utils';
 import {buildSnapshotFromFilters, applySnapshotToFilters} from '@lib/phantomchat/folders-sync-snapshot';
 import {buildLocalFilter} from '@lib/storages/filtersLocal';
 import FiltersStorage from '@lib/storages/filters';
@@ -169,5 +169,30 @@ describe('wiring pins', () => {
     expect(src).toContain('selectStartupFolderTab');
     expect(src).toContain('startupFolderId(');
     expect(src).toContain("setAppSettings(DEFAULT_CHAT_FOLDER_SETTING_KEY, undefined)");
+  });
+});
+
+describe('Archives is a rail space (owner batch 13, 2026-10-31)', () => {
+  it('draws the archive icon instead of the pFlags-derived fallback', () => {
+    // Archive is defined by `pFlags.exclude_unarchived`, so the derived-icon
+    // walk finds no entity kind and would otherwise render 'limit_folders'.
+    expect(getIconForFilter(buildLocalFilter(FOLDER_ID_ARCHIVE))).toBe('archive');
+    expect(getIconForFilter(buildLocalFilter(FOLDER_ID_GROUPS))).toBe('group_filled');
+  });
+
+  it('the archive filter carries no title of its own, so the rail supplies one', () => {
+    expect(buildLocalFilter(FOLDER_ID_ARCHIVE).title?.text ?? '').toBe('');
+    const src = readFile('components/sidebarLeft/foldersSidebarContent/index.tsx');
+    expect(src).toContain('filter.id === FOLDER_ID_ARCHIVE');
+    expect(src).toContain("name: 'Archived'");
+  });
+
+  it('the rail no longer filters Archives out and orders it last', () => {
+    const src = readFile('components/sidebarLeft/foldersSidebarContent/index.tsx');
+    expect(src).not.toContain('props.filters.filter((filter) => filter.id !== FOLDER_ID_ARCHIVE)');
+    expect(src).toContain('order.push(FOLDER_ID_ARCHIVE)');
+    // …and a rail click opens the archive tab: filter 1 has no inline
+    // chatlist (AppDialogsManager.addFilter returns early for it).
+    expect(src).toContain('appSidebarLeft.openArchiveTab()');
   });
 });

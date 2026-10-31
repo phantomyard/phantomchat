@@ -1,5 +1,5 @@
 
-import {FOLDER_ID_ALL, FOLDER_ID_SESSION} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_SESSION} from '@appManagers/constants';
 import type {AppManagers} from '@lib/managers';
 import {MyDialogFilter} from '@lib/storages/filters';
 import {DialogFilter} from '@layer';
@@ -22,6 +22,9 @@ export async function getNotificationCountForFilter(filterId: number, managers: 
 
 export function getIconForFilter(filter: MyDialogFilter): Icon {
   if(filter.id === FOLDER_ID_ALL) return 'round_chats_filled';
+  // Archives renders as a space in the rail (its pFlags carry no entity kind,
+  // so the derived-icon walk below would fall through to 'limit_folders').
+  if(filter.id === FOLDER_ID_ARCHIVE) return 'archive';
   // Sessions never render a font icon — the row draws a literal `#` (see
   // FolderItemPayload.glyph). This fallback only feeds the payload for
   // completeness, so any icon key will do.
