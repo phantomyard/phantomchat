@@ -7,7 +7,7 @@ import ListenerSetter from '@helpers/listenerSetter';
 import {Middleware} from '@helpers/middleware';
 import pause from '@helpers/schedulers/pause';
 import {logger, LogTypes} from '@lib/logger';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_SESSION, FOLDER_ID_SESSION_ARCHIVE, REAL_FOLDERS} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_SESSION, REAL_FOLDERS} from '@appManagers/constants';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {MyDialogFilter} from '@lib/storages/filters';

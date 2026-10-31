@@ -12,7 +12,7 @@
 import {Logger, logger} from '@lib/logger';
 import rootScope from '@lib/rootScope';
 import {getGroupStore} from './group-store';
-import {groupIdToPeerId, isGroupPeer, isSessionPeer} from './group-types';
+import {groupIdToPeerId, isGroupPeer} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
@@ -360,11 +360,11 @@ export class GroupAPI {
       throw new Error(`sendMessage: not a member of group ${groupId.slice(0, 8)}`);
     }
 
-    // Archived sessions are read-only (owner batch 11): the composer is hidden
-    // in the UI, and this is the enforcement behind it — a stale chat pane, a
-    // keyboard shortcut or a retry must not post into an archived session.
+    // Archived groups are read-only (owner batch 12): the composer is hidden in
+    // the UI, and this is the enforcement behind it — a stale chat pane, a
+    // keyboard shortcut or a retry must not post into an archived group.
     if(group.archivedAt) {
-      throw new Error('sendMessage: session is archived (read-only)');
+      throw new Error('sendMessage: group is archived (read-only)');
     }
 
     // Normalize the optional 3rd arg. Older callers pass a plain `type`
@@ -707,30 +707,27 @@ export class GroupAPI {
   }
 
   /**
-   * Archive a SESSION (owner batch 11).
+   * Archive a GROUP or a SESSION (owner batch 12).
    *
    * `archivedAt` lives on the GroupRecord, so the groups CRDT carries it to every
    * device — no separate sync channel, no schema bump. The local dialog mirrors
-   * it as `folder_id === 1`, which is what moves the row from the Session space
-   * to the Session Archive and makes it read-only there.
+   * it as `folder_id === 1`, the same flag a chat uses, which is what moves the
+   * row into Archives and makes it read-only there.
    *
-   * Only sessions archive: archiving a classic group is the chat archive's job
-   * and is not exposed in this UI.
+   * There is ONE archive for every type: a group, a session and a chat archived
+   * in the same place behave identically. The class makes no difference here.
    */
-  async archiveSession(groupId: string): Promise<void> {
-    await this.setSessionArchived(groupId, Date.now());
+  async archiveGroup(groupId: string): Promise<void> {
+    await this.setGroupArchived(groupId, Date.now());
   }
 
-  async unarchiveSession(groupId: string): Promise<void> {
-    await this.setSessionArchived(groupId, null);
+  async unarchiveGroup(groupId: string): Promise<void> {
+    await this.setGroupArchived(groupId, null);
   }
 
-  private async setSessionArchived(groupId: string, archivedAt: number | null): Promise<void> {
+  private async setGroupArchived(groupId: string, archivedAt: number | null): Promise<void> {
     const group = await this.store.get(groupId);
     if(!group) throw new Error(`Group not found: ${groupId}`);
-    if(group.kind !== 'session' || !isSessionPeer(group.peerId)) {
-      throw new Error('setSessionArchived: not a session');
-    }
 
     await this.store.updateInfo(groupId, {archivedAt: archivedAt});
     const updated = await this.store.get(groupId);
@@ -741,7 +738,7 @@ export class GroupAPI {
     try {
       await applyGroupDialogFolder(updated);
     } catch(err) {
-      this.log.warn('[GroupAPI] setSessionArchived: dialog move non-critical:', err);
+      this.log.warn('[GroupAPI] setGroupArchived: dialog move non-critical:', err);
     }
   }
 

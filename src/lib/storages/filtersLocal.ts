@@ -5,8 +5,7 @@ import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
   FOLDER_ID_GROUPS,
-  FOLDER_ID_SESSION,
-  FOLDER_ID_SESSION_ARCHIVE
+  FOLDER_ID_SESSION
 } from '@appManagers/constants';
 
 const LOCAL_FILTER_TEMPLATE: DialogFilter.dialogFilter = {
@@ -43,15 +42,11 @@ export function buildLocalFilter(id: number): MyDialogFilter {
     filter.pFlags.exclude_archived = true;
     filter.title = literalTitle('Groups');
   } else if(id === FOLDER_ID_SESSION) {
-    // No pFlags: Session membership is the SESSION PEER CLASS (isSessionPeer),
-    // which FiltersStorage.testDialogForFilter short-circuits before the pFlags
-    // walk. Archived sessions belong to the Session Archive instead.
+    // No pFlags: membership is the SESSION PEER CLASS (isSessionPeer), which
+    // FiltersStorage.testDialogForFilter short-circuits before the pFlags walk.
+    // Archived sessions leave for the shared archive (id 1).
     filter.pFlags.exclude_archived = true;
-    filter.title = literalTitle('Session');
-  } else if(id === FOLDER_ID_SESSION_ARCHIVE) {
-    // Read-only space for archived sessions; membership is the same peer class
-    // AND `dialog.folder_id === 1`.
-    filter.title = literalTitle('Archive');
+    filter.title = literalTitle('Sessions');
   }
 
   return filter;
@@ -63,9 +58,10 @@ export function buildLocalFilter(id: number): MyDialogFilter {
  * small — only strings that were the ACTUAL default at some prior release.
  */
 const LEGACY_DEFAULT_TITLES: Record<number, readonly string[]> = {
-  // Folder 4 shipped as "Code" for one preview build (owner batch 10). Anyone
-  // who never renamed it gets the new default; an explicit rename still wins.
-  [FOLDER_ID_SESSION]: ['Code']
+  // Folder 4 shipped as "Code" (owner batch 10) and then "Session" (batch 11)
+  // for one preview build each. Anyone who never renamed it gets the new
+  // default; an explicit rename still wins.
+  [FOLDER_ID_SESSION]: ['Code', 'Session']
 };
 
 /**

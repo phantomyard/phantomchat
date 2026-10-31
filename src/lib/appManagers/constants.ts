@@ -47,33 +47,31 @@ export const FOLDER_ID_ALL: REAL_FOLDER_ID = 0;
 export const FOLDER_ID_ARCHIVE: REAL_FOLDER_ID = 1;
 export const FOLDER_ID_GROUPS: SYSTEM_FOLDER_ID = 3;
 /**
- * Session (owner batch 11, 2026-10-31): the space that owns SESSION-class
+ * Sessions (owner batch 11, 2026-10-31): the space that owns SESSION-class
  * peers — their own peerId range (group-types.SESSION_PEER_BASE), one phantom
  * member each, created from this space's + button. Membership is a scalar test
  * on the peer id, so it holds identically on the main thread and in the MTPROTO
- * worker. Archived sessions leave for FOLDER_ID_SESSION_ARCHIVE.
+ * worker.
+ *
+ * A session is otherwise an ordinary group: same menu, same avatar, same
+ * protocol. The ONLY difference is the peerId range (which is what puts it in
+ * this space) and auto-naming from its first prompt.
+ *
+ * Archived groups and sessions both go to FOLDER_ID_ARCHIVE (id 1) — one
+ * archive for every type, exactly like the chat archive (owner batch 12).
  */
 export const FOLDER_ID_SESSION: SYSTEM_FOLDER_ID = 4;
-/**
- * The Session Archive: archived sessions, read-only, Unarchive/Delete only.
- * Its own space rather than reusing the chat archive (id 1) — id-1 membership is
- * `dialog.folder_id === 1`, a server flag, while sessions are a peer class; the
- * two populations must never mix. The CODE is reused, the id is not.
- */
-export const FOLDER_ID_SESSION_ARCHIVE: SYSTEM_FOLDER_ID = 5;
 export const REAL_FOLDERS: Set<number> = new Set([
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
   FOLDER_ID_GROUPS,
-  FOLDER_ID_SESSION,
-  FOLDER_ID_SESSION_ARCHIVE
+  FOLDER_ID_SESSION
 ]);
 export const PROTECTED_FOLDERS: Set<number> = new Set([
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
   FOLDER_ID_GROUPS,
-  FOLDER_ID_SESSION,
-  FOLDER_ID_SESSION_ARCHIVE
+  FOLDER_ID_SESSION
 ]);
 export const START_LOCAL_ID = Math.max(...Array.from(REAL_FOLDERS)) + 1 as MyDialogFilter['localId'];
 

@@ -12,8 +12,6 @@ import type {AnyDialog} from '@lib/storages/dialogs';
 import type {CustomEmojiRendererElement} from '@customEmoji/renderer';
 import PopupElement from '@components/popups';
 import {createP2PBadge} from '@components/phantomchat/p2pBadge';
-import {createSessionBadge} from '@components/phantomchat/sessionBadge';
-import {isSessionPeer} from '@lib/phantomchat/group-types';
 import DialogsContextMenu from '@components/dialogsContextMenu';
 import {horizontalMenu, horizontalMenuObjArgs} from '@components/horizontalMenu';
 import ripple from '@components/ripple';
@@ -44,7 +42,7 @@ import windowSize from '@helpers/windowSize';
 import isInDOM from '@helpers/dom/isInDOM';
 import {setSendingStatus} from '@components/sendingStatus';
 import {SortedElementBase} from '@helpers/sortedList';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION, FOLDER_ID_SESSION_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION, NULL_PEER_ID, REAL_FOLDERS} from '@appManagers/constants';
 import groupCallActiveIcon from '@components/groupCallActiveIcon';
 import {Chat, ChatlistsChatlistUpdates, DialogFilter, Message, MessageMedia, MessageReplyHeader} from '@layer';
 import mediaSizes from '@helpers/mediaSizes';
@@ -200,7 +198,7 @@ export function getEmptySpaceGlyph(filterId: number): {emoji?: string, glyph?: s
     case FOLDER_ID_ALL: return {emoji: '💬'};
     case FOLDER_ID_GROUPS: return {emoji: '👥'};
     case FOLDER_ID_SESSION: return {glyph: '#'};
-    case FOLDER_ID_SESSION_ARCHIVE: return {emoji: '🗄️'};
+    case FOLDER_ID_ARCHIVE: return {emoji: '🗄️'};
     default: return {emoji: '💬'};
   }
 }
@@ -357,12 +355,6 @@ export class DialogElement extends Row {
     // its own state and reaps itself when the row is torn down.
     titleSpanContainer.append(createP2PBadge(peerId, 'p2p-badge--row'));
 
-    // Code session chip (2026-10-30): a `#` marker on rows that belong to the
-    // Code folder. Static — the session index is synchronous (group-tags) and
-    // the tag does not change under a mounted row's feet. Hidden for every
-    // other peer, so it costs nothing outside Code.
-    titleSpanContainer.append(createSessionBadge(peerId, 'session-badge--row'));
-
     // const titleIconsPromise = generateTitleIcons(peerId).then((elements) => {
     //   titleSpanContainer.append(...elements);
     // });
@@ -391,11 +383,6 @@ export class DialogElement extends Row {
     }
 
     li.dataset.peerId = '' + peerId;
-
-    // Session rows have no group avatar (owner batch 11): the slot shows a plain
-    // `#` instead. A class + CSS keeps the geometry (the row expects a media
-    // box) while hiding the generated avatar.
-    if(isSessionPeer(+usePeerId)) li.classList.add('session-row');
 
     if(threadId) li.dataset.threadId = '' + threadId;
     if(monoforumParentPeerId) li.dataset.monoforumParentPeerId = '' + monoforumParentPeerId;

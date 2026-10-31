@@ -1149,6 +1149,7 @@
 "Allow" = "Allow";
 "HistoryCleared" = "History was cleared";
 "Archive" = "Archive";
+"ArchiveActionFailed" = "Could not update this conversation";
 "Unarchive" = "Unarchive";
 "Delete" = "Delete";
 "Reply" = "Reply";
@@ -1631,8 +1632,6 @@
 "PrivacyClearPayment" = "Payment info";
 "Clear" = "Clear";
 "Save" = "Save";
-"SessionName" = "Session name";
-"SessionActionFailed" = "Could not update the session";
 "PaymentCheckoutName" = "Name";
 "ClearRecentStickersAlertTitle" = "Clear recent stickers";
 "ClearRecentStickersAlertMessage" = "Do you want to clear all your recent stickers?";

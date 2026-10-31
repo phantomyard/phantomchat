@@ -8,7 +8,7 @@ import {
 } from '@appManagers/constants';
 
 describe('isProtectedFolder', () => {
-  it('returns true for All/Archive/Groups/Code', () => {
+  it('returns true for All/Archives/Groups/Sessions', () => {
     expect(isProtectedFolder(FOLDER_ID_ALL)).toBe(true);
     expect(isProtectedFolder(FOLDER_ID_ARCHIVE)).toBe(true);
     expect(isProtectedFolder(FOLDER_ID_GROUPS)).toBe(true);
@@ -20,9 +20,9 @@ describe('isProtectedFolder', () => {
   });
 
   it('returns false for user custom folder IDs', () => {
-    // 4 is Session and 5 is the Session Archive now, so the first custom id is
-    // START_LOCAL_ID (6).
-    expect(isProtectedFolder(5)).toBe(true);
+    // 4 is Sessions, so the first custom id is START_LOCAL_ID (5). Id 5 was
+    // the Session Archive for one preview build and is gone (owner batch 12).
+    expect(isProtectedFolder(5)).toBe(false);
     expect(isProtectedFolder(6)).toBe(false);
     expect(isProtectedFolder(42)).toBe(false);
     expect(isProtectedFolder(999)).toBe(false);

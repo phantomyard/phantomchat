@@ -1,5 +1,5 @@
 /**
- * Session peer CLASS (owner batch 11, 2026-10-31).
+ * Session peer CLASS (owner batch 11, refined in batch 12).
  *
  * Replaces the tag-based Code folder. The owner's report on the tag version —
  * "the session appeared in the Code folder AND Groups, and my other groups
@@ -8,16 +8,20 @@
  * populated on the main thread, so the worker answered "not a session" and
  * `pFlags.groups` claimed the row. Scattered gates made it worse.
  *
+ * Batch 12 cut the remaining divergence: a session is an ORDINARY GROUP that
+ * happens to live in its own peerId range. Same menu, same avatar, same
+ * protocol. Archived chats, groups and sessions share ONE archive (folder 1).
+ *
  * The rules that have to hold now:
  *   1. Session-ness is a PURE RANGE TEST on the peer id. No index, no tags, no
  *      per-thread state — the same answer on both threads and after any reload.
  *   2. The peerId is a function of (groupId, kind), so the class travels on
  *      `group_create.groupKind` and survives the groups CRDT.
- *   3. Membership: Session (4) = live sessions, Session Archive (5) = archived
- *      sessions, everything else (Chats 0, Groups 3, chat Archive 1, custom
- *      folders) excludes sessions entirely.
- *   4. Archived sessions are read-only — the composer is hidden AND
- *      GroupAPI.sendMessage refuses.
+ *   3. Membership: Sessions (4) = live sessions; Groups (3) = live classic
+ *      groups; Archives (1) = ANY dialog with `folder_id === 1`, whatever its
+ *      type; Chats (0) excludes group-class peers.
+ *   4. Archived items are read-only — the composer is hidden AND
+ *      GroupAPI.sendMessage refuses for a group-class peer.
  */
 import '../setup';
 import 'fake-indexeddb/auto';
@@ -30,6 +34,11 @@ if(!(Number.prototype as any).toPeerId) {
     return isChat ? -Math.abs(this as number) : Math.abs(this as number);
   };
 }
+if(!(Number.prototype as any).toUserId) {
+  (Number.prototype as any).toUserId = function() {
+    return Math.abs(this as number);
+  };
+}
 import FiltersStorage from '@lib/storages/filters';
 import {buildLocalFilter, isDefaultLocalTitle} from '@lib/storages/filtersLocal';
 import {
@@ -37,7 +46,6 @@ import {
   FOLDER_ID_ARCHIVE,
   FOLDER_ID_GROUPS,
   FOLDER_ID_SESSION,
-  FOLDER_ID_SESSION_ARCHIVE,
   PROTECTED_FOLDERS,
   REAL_FOLDERS,
   START_LOCAL_ID
@@ -69,8 +77,8 @@ function filterStorage() {
     [FOLDER_ID_ARCHIVE]: buildLocalFilter(FOLDER_ID_ARCHIVE),
     [FOLDER_ID_GROUPS]: buildLocalFilter(FOLDER_ID_GROUPS),
     [FOLDER_ID_SESSION]: buildLocalFilter(FOLDER_ID_SESSION),
-    [FOLDER_ID_SESSION_ARCHIVE]: buildLocalFilter(FOLDER_ID_SESSION_ARCHIVE),
-    // A custom folder, to prove the class rule applies there too.
+    // A custom group folder, to prove a session follows the same rule as any
+    // other group there.
     6: {...buildLocalFilter(6), pFlags: {groups: true}}
   };
   (fs as any).rootScope = {dispatchEvent: vi.fn()};
@@ -128,37 +136,50 @@ describe('peer id derivation', () => {
 });
 
 describe('folder definition', () => {
-  it('names folder 4 Session and folder 5 Archive, both protected', () => {
-    expect(buildLocalFilter(FOLDER_ID_SESSION).title.text).toBe('Session');
-    expect(buildLocalFilter(FOLDER_ID_SESSION_ARCHIVE).title.text).toBe('Archive');
+  it('names folder 4 Sessions, protected, with no extra archive folder', () => {
+    expect(buildLocalFilter(FOLDER_ID_SESSION).title.text).toBe('Sessions');
 
     expect(REAL_FOLDERS.has(FOLDER_ID_SESSION)).toBe(true);
-    expect(REAL_FOLDERS.has(FOLDER_ID_SESSION_ARCHIVE)).toBe(true);
     expect(PROTECTED_FOLDERS.has(FOLDER_ID_SESSION)).toBe(true);
-    expect(PROTECTED_FOLDERS.has(FOLDER_ID_SESSION_ARCHIVE)).toBe(true);
+    // One archive for every type (owner batch 12): no second archive id.
+    expect(REAL_FOLDERS.has(5)).toBe(false);
   });
 
-  it('keeps the historical ids stable and moves START_LOCAL_ID past 5', () => {
+  it('keeps the historical ids stable and puts START_LOCAL_ID back at 5', () => {
     expect(FOLDER_ID_ALL).toBe(0);
     expect(FOLDER_ID_ARCHIVE).toBe(1);
     expect(FOLDER_ID_GROUPS).toBe(3);
     expect(FOLDER_ID_SESSION).toBe(4);
-    expect(FOLDER_ID_SESSION_ARCHIVE).toBe(5);
-    expect(START_LOCAL_ID).toBe(6);
+    expect(START_LOCAL_ID).toBe(5);
   });
 
-  it('treats the old "Code" title as a default so it upgrades to Session', () => {
+  it('treats the old "Code" and "Session" titles as defaults so they upgrade', () => {
     expect(isDefaultLocalTitle(FOLDER_ID_SESSION, 'Code')).toBe(true);
+    expect(isDefaultLocalTitle(FOLDER_ID_SESSION, 'Session')).toBe(true);
     expect(isDefaultLocalTitle(FOLDER_ID_SESSION, 'My own name')).toBe(false);
   });
 
   it('gives folder 4 no group pFlag — the class decides membership', () => {
     expect((buildLocalFilter(FOLDER_ID_SESSION) as any).pFlags.groups).toBeUndefined();
   });
+
+  it('strips a persisted folder 5 so a custom folder cannot inherit its localId', () => {
+    const fs = filterStorage();
+    (fs as any).localFilters = {
+      [FOLDER_ID_ALL]: buildLocalFilter(FOLDER_ID_ALL),
+      [FOLDER_ID_ARCHIVE]: buildLocalFilter(FOLDER_ID_ARCHIVE),
+      [FOLDER_ID_GROUPS]: buildLocalFilter(FOLDER_ID_GROUPS),
+      [FOLDER_ID_SESSION]: buildLocalFilter(FOLDER_ID_SESSION)
+    };
+    const persisted = [0, 1, 3, 4, 5].map((id) => ({...buildLocalFilter(id), localId: id}));
+    const seeded = (fs as any).prependFilters(persisted) as Array<{id: number}>;
+    // Rail order is All, Groups, Sessions, Archives — ids stay historical.
+    expect(seeded.map((f) => f.id)).toEqual([0, 3, 4, 1]);
+  });
 });
 
 describe('folder membership', () => {
-  it('puts a live session in Session and in nothing else', () => {
+  it('puts a live session in Sessions and in no live group space', () => {
     const fs = filterStorage();
     const session = mkDialog(SESSION_PEER_ID);
 
@@ -166,28 +187,45 @@ describe('folder membership', () => {
     expect(fs.testDialogForFilterId(session, FOLDER_ID_ALL)).toBe(false);
     expect(fs.testDialogForFilterId(session, FOLDER_ID_GROUPS)).toBe(false);
     expect(fs.testDialogForFilterId(session, FOLDER_ID_ARCHIVE)).toBe(false);
-    expect(fs.testDialogForFilterId(session, FOLDER_ID_SESSION_ARCHIVE)).toBe(false);
-    expect(fs.testDialogForFilterId(session, 6)).toBe(false);
   });
 
-  it('puts an archived session in Session Archive and nowhere else', () => {
+  it('archives a session into the SHARED archive and out of Sessions', () => {
     const fs = filterStorage();
     const archived = mkDialog(SESSION_PEER_ID, {folder_id: FOLDER_ID_ARCHIVE});
 
-    expect(fs.testDialogForFilterId(archived, FOLDER_ID_SESSION_ARCHIVE)).toBe(true);
+    expect(fs.testDialogForFilterId(archived, FOLDER_ID_ARCHIVE)).toBe(true);
     expect(fs.testDialogForFilterId(archived, FOLDER_ID_SESSION)).toBe(false);
-    expect(fs.testDialogForFilterId(archived, FOLDER_ID_ARCHIVE)).toBe(false);
     expect(fs.testDialogForFilterId(archived, FOLDER_ID_ALL)).toBe(false);
     expect(fs.testDialogForFilterId(archived, FOLDER_ID_GROUPS)).toBe(false);
   });
 
-  it('never lets a classic group look like a session, or vice versa', () => {
+  it('archives a group into the same archive and out of Groups', () => {
+    const fs = filterStorage();
+    const live = mkDialog(GROUP_PEER_ID);
+    const archived = mkDialog(GROUP_PEER_ID, {folder_id: FOLDER_ID_ARCHIVE});
+
+    expect(fs.testDialogForFilterId(live, FOLDER_ID_GROUPS)).toBe(true);
+    expect(fs.testDialogForFilterId(live, FOLDER_ID_ARCHIVE)).toBe(false);
+
+    expect(fs.testDialogForFilterId(archived, FOLDER_ID_ARCHIVE)).toBe(true);
+    // Groups runs exclude_archived, so the same flag that reaches Archives
+    // removes the row from Groups — no second membership rule to keep in step.
+    expect(fs.testDialogForFilterId(archived, FOLDER_ID_GROUPS)).toBe(false);
+  });
+
+  it('keeps a session out of Groups while its groups stay visible', () => {
+    // The owner's original bug: the session showed in Groups AND every other
+    // group disappeared. Both halves are asserted here.
+    const fs = filterStorage();
+    expect(fs.testDialogForFilterId(mkDialog(SESSION_PEER_ID), FOLDER_ID_GROUPS)).toBe(false);
+    expect(fs.testDialogForFilterId(mkDialog(GROUP_PEER_ID), FOLDER_ID_GROUPS)).toBe(true);
+  });
+
+  it('never lets a classic group look like a session', () => {
     const fs = filterStorage();
     const group = mkDialog(GROUP_PEER_ID);
 
-    expect(fs.testDialogForFilterId(group, FOLDER_ID_GROUPS)).toBe(true);
     expect(fs.testDialogForFilterId(group, FOLDER_ID_SESSION)).toBe(false);
-    expect(fs.testDialogForFilterId(group, FOLDER_ID_SESSION_ARCHIVE)).toBe(false);
     expect(fs.testDialogForFilterId(group, FOLDER_ID_ALL)).toBe(false);
   });
 
@@ -197,12 +235,18 @@ describe('folder membership', () => {
 
     expect(fs.testDialogForFilterId(chat, FOLDER_ID_ALL)).toBe(true);
     expect(fs.testDialogForFilterId(chat, FOLDER_ID_SESSION)).toBe(false);
-    expect(fs.testDialogForFilterId(chat, FOLDER_ID_SESSION_ARCHIVE)).toBe(false);
+    expect(fs.testDialogForFilterId(chat, FOLDER_ID_GROUPS)).toBe(false);
+  });
+
+  it('treats a session exactly like a group in a custom group folder', () => {
+    const fs = filterStorage();
+    expect(fs.testDialogForFilterId(mkDialog(SESSION_PEER_ID), 6))
+    .toBe(fs.testDialogForFilterId(mkDialog(GROUP_PEER_ID), 6));
   });
 });
 
 describe('dialog construction', () => {
-  it('stamps the Session index key for a session and Groups for a group', () => {
+  it('stamps the Sessions index key for a session and Groups for a group', () => {
     const mapper = new PhantomChatPeerMapper();
 
     const sessionDialog = mapper.createTwebDialog({
@@ -218,16 +262,22 @@ describe('dialog construction', () => {
     expect((groupDialog as any).index_4).toBeUndefined();
   });
 
-  it('mirrors an archived record into the chat archive folder_id', () => {
+  it('puts an archived group or session in the archive and no live space', () => {
     const mapper = new PhantomChatPeerMapper();
 
-    expect(mapper.createTwebDialog({
-      peerId: SESSION_PEER_ID, topMessage: 1, topMessageDate: 1000, archived: true
-    }).folder_id).toBe(1);
+    for(const peerId of [SESSION_PEER_ID, GROUP_PEER_ID]) {
+      const archived = mapper.createTwebDialog({
+        peerId, topMessage: 1, topMessageDate: 1000, archived: true
+      });
+      expect(archived.folder_id).toBe(FOLDER_ID_ARCHIVE);
+      expect((archived as any).index_1).toBeDefined();
+      expect((archived as any).index_4).toBeUndefined();
+      expect((archived as any).index_3).toBeUndefined();
 
-    expect(mapper.createTwebDialog({
-      peerId: SESSION_PEER_ID, topMessage: 1, topMessageDate: 1000
-    }).folder_id).toBe(0);
+      expect(mapper.createTwebDialog({
+        peerId, topMessage: 1, topMessageDate: 1000
+      }).folder_id).toBe(FOLDER_ID_ALL);
+    }
   });
 });
 
@@ -279,5 +329,14 @@ describe('group store: archive state', () => {
 
     await store.updateInfo(record.groupId, {archivedAt: null});
     expect((await store.get(record.groupId)).archivedAt).toBeUndefined();
+  });
+
+  it('archives a classic group the same way — the class makes no difference', async() => {
+    const groupPeerId = await groupIdToPeerId('c'.repeat(64) + 'a'.repeat(32), 'group');
+    const record = await baseRecord({groupId: 'c'.repeat(64) + 'a'.repeat(32), peerId: groupPeerId, kind: 'group'});
+    await store.save(record);
+
+    await store.updateInfo(record.groupId, {archivedAt: 99});
+    expect((await store.get(record.groupId)).archivedAt).toBe(99);
   });
 });

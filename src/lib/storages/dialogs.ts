@@ -26,7 +26,7 @@ import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArra
 import safeReplaceObject from '@helpers/object/safeReplaceObject';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 import {AppManager} from '@appManagers/manager';
-import {isGroupPeer, isSessionPeer} from '@lib/phantomchat/group-types';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import isObject from '@helpers/object/isObject';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
@@ -462,12 +462,6 @@ export default class DialogsStorage extends AppManager {
       return dialogs.filter((dialog) => !isGroupPeer((dialog as Dialog).peerId));
     }
 
-    // A session archives into its own Session Archive space, never into the chat
-    // archive (see FiltersStorage.testDialogForFilter).
-    if(id === FOLDER_ID_ARCHIVE) {
-      return dialogs.filter((dialog) => !isSessionPeer((dialog as Dialog).peerId));
-    }
-
     return dialogs;
   }
 
@@ -504,37 +498,17 @@ export default class DialogsStorage extends AppManager {
     });
   }
 
-  /**
-   * Session verdict for a bare peerId — a pure range test (group-types), so it
-   * is identical on this thread and in the MTPROTO worker and never depends on
-   * whether the dialogs map has been hydrated yet.
-   */
-  private isSessionPeerId(peerId: PeerId) {
-    return isSessionPeer(peerId);
-  }
-
   public getFolderUnreadCount(filterId: number) {
     const folder = this.getFolder(filterId);
 
     // Chats (0) no longer contains groups (see getFolderDialogs), so its badge
-    // must not count them either — they are counted by the Groups folder. The
-    // same goes for sessions, which the Session space counts.
+    // must not count them either — they are counted by the Groups folder.
     if(filterId === FOLDER_ID_ALL) {
-      const isNotGroup = (peerId: PeerId) => !isGroupPeer(peerId) && !this.isSessionPeerId(peerId);
+      const isNotGroup = (peerId: PeerId) => !isGroupPeer(peerId);
       return {
         unreadUnmutedCount: [...folder.unreadUnmutedPeerIds].filter(isNotGroup).length,
         unreadCount: [...folder.unreadPeerIds].filter(isNotGroup).length,
         unreadMentionsCount: [...folder.unreadMentionsPeerIds].filter(isNotGroup).length
-      };
-    }
-
-    // Archive hides sessions, so its badge must not count them.
-    if(filterId === FOLDER_ID_ARCHIVE) {
-      const isNotSession = (peerId: PeerId) => !this.isSessionPeerId(peerId);
-      return {
-        unreadUnmutedCount: [...folder.unreadUnmutedPeerIds].filter(isNotSession).length,
-        unreadCount: [...folder.unreadPeerIds].filter(isNotSession).length,
-        unreadMentionsCount: [...folder.unreadMentionsPeerIds].filter(isNotSession).length
       };
     }
 
@@ -1846,11 +1820,8 @@ export default class DialogsStorage extends AppManager {
     const peerIds = [...folder.unreadPeerIds];
     // Chats (0) neither lists a group nor counts one in its badge, so "mark this
     // folder read" must not reach into Groups either. Groups still carry
-    // folder_id 0 as far as the server is concerned, hence the local exclusion —
-    // same for a session group, which the Code folder owns.
-    const targets = folderId === FOLDER_ID_ALL ?
-      peerIds.filter((peerId) => !isGroupPeer(peerId) && !this.isSessionPeerId(peerId)) :
-      peerIds;
+    // folder_id 0 as far as the server is concerned, hence the local exclusion.
+    const targets = folderId === FOLDER_ID_ALL ? peerIds.filter((peerId) => !isGroupPeer(peerId)) : peerIds;
     for(const peerId of targets) {
       await this.appMessagesManager.markDialogUnread({peerId, read: true});
     }

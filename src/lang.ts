@@ -1864,11 +1864,9 @@ const lang = {
   'PrivacyClearPayment': 'Payment info',
   'Clear': 'Clear',
   'Save': 'Save',
-  // PhantomChat sessions (owner batch 11): the only two strings the session
-  // surface needs — the rename popup's field label and its failure toast.
-  'SessionName': 'Session name',
-  'SessionRename': 'Rename',
-  'SessionActionFailed': 'Could not update the session',
+  // PhantomChat groups/sessions (owner batch 12): the archive toggle's failure
+  // toast. Archiving reuses the existing 'Archive' / 'Unarchive' strings.
+  'ArchiveActionFailed': 'Could not update this conversation',
   'PaymentCheckoutName': 'Name',
   'ClearRecentStickersAlertTitle': 'Clear recent stickers',
   'ClearRecentStickersAlertMessage': 'Do you want to clear all your recent stickers?',

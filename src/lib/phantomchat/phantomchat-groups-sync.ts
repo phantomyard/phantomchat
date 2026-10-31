@@ -361,15 +361,15 @@ export async function injectGroupCreateDialog(
 }
 
 /**
- * Move a group's dialog between the live space and the archive (owner batch 11).
+ * Move a group's dialog between the live space and the archive (owner batch 12).
  *
  * Archive state is the RECORD's `archivedAt` (it syncs over the groups CRDT);
  * the dialog mirrors it as `folder_id` (1 = archived), which is the flag tweb's
- * folder machinery already understands. This function is the live-UI half: it
- * moves the existing dialog and asks dialogs storage to recompute its per-folder
- * indices, so the row leaves the Session space and appears in the Session
- * Archive without a reload. A reload converges too — `getDialogs` rebuilds every
- * group dialog from its record.
+ * folder machinery already understands — the same flag a chat uses. This
+ * function is the live-UI half: it moves the existing dialog and asks dialogs
+ * storage to recompute its per-folder indices, so the row leaves Groups /
+ * Sessions and appears in Archives without a reload. A reload converges too —
+ * `getDialogs` rebuilds every group dialog from its record.
  */
 export async function applyGroupDialogFolder(record: {groupId: string, kind?: GroupKind, archivedAt?: number}): Promise<void> {
   const groupPeerId = await resolveGroupPeerId(record.groupId);
@@ -388,12 +388,17 @@ export async function applyGroupDialogFolder(record: {groupId: string, kind?: Gr
     if(dialog) {
       dialog.folder_id = folderId;
       // pushDialog re-runs processDialogForFilters, which is what clears
-      // index_4 / sets index_5 (and the folder unread counts) for this row.
+      // index_3 / index_4 / index_1 (and the folder unread counts) for this row.
       await dialogsStorage.pushDialog?.({dialog});
     }
   } catch(err: any) {
     console.debug(LOG_PREFIX, 'applyGroupDialogFolder: reindex non-critical:', err?.message);
   }
+
+  // An open chat pane cannot see the dialog move, and the composer must go away
+  // (or come back) with it. Dispatched with a cast: rootScope's event map is
+  // typed for tweb's own events, and this is a PhantomChat-internal one.
+  (rootScope as any).dispatchEvent('dialog_folder_update', {peerId: groupPeerId, folderId});
 
   if(dialog) dispatchGroupDialogUpdate(groupPeerId, dialog);
 }

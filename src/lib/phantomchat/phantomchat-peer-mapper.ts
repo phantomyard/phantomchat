@@ -8,7 +8,7 @@
 
 import type {User, Chat, Dialog, Message, MessageEntity, Peer, PeerNotifySettings} from '@layer';
 import {PhantomChatBridge} from './phantomchat-bridge';
-import {FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManagers/constants';
+import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManagers/constants';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {isSessionPeer} from './group-types';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
@@ -73,10 +73,9 @@ export interface CreateDialogOpts {
   readInboxMaxId?: number;
   readOutboxMaxId?: number;
   /**
-   * True when the group record is archived (a SESSION's `archivedAt`). Mirrors
-   * the chat archive's own representation — `dialog.folder_id === 1` — so tweb's
-   * existing folder_peers / getFolderDialogs machinery does the work and the
-   * Session Archive space is just a peer-class filter on top of it.
+   * True when the group record is archived. Mirrors the chat archive's own
+   * representation — `dialog.folder_id === 1` — so tweb's existing folder_peers
+   * / getFolderDialogs machinery does the work and Archives is just that folder.
    */
   archived?: boolean;
 }
@@ -316,13 +315,14 @@ export class PhantomChatPeerMapper {
     // builds it for a REAL_FOLDER; only WHICH folder claims the row differs.
     //
     // The class is a PURE RANGE TEST on the peer id (owner batch 11): a session
-    // is claimed by the Session space (index_4) and by nothing else, a classic
-    // group by Groups (index_3). No index state, no tags threaded through — the
-    // same answer therefore holds in the MTPROTO worker, which is where these
-    // predicates actually run.
+    // is claimed by Sessions (index_4), a classic group by Groups (index_3).
+    // Neither key is set when the dialog is archived — archives is a plain
+    // folder_id flag, so the row belongs to index_1 and to no live space at all
+    // (owner batch 12: one archive for every type).
     if(isGroup) {
       const isSession = isSessionPeer(peerId);
-      (dialog as any)[getDialogIndexKey((isSession ? FOLDER_ID_SESSION : FOLDER_ID_GROUPS) as any)] = sortIndex;
+      const folderId = opts.archived ? FOLDER_ID_ARCHIVE : (isSession ? FOLDER_ID_SESSION : FOLDER_ID_GROUPS);
+      (dialog as any)[getDialogIndexKey(folderId as any)] = sortIndex;
     }
 
     return dialog;

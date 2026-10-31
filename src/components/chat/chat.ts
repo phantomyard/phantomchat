@@ -17,7 +17,7 @@ import ChatContextMenu from '@components/chat/contextMenu';
 import ChatInput from '@components/chat/input';
 import ChatSelection from '@components/chat/selection';
 import ChatTopbar from '@components/chat/topbar';
-import {HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SERVICE_PEER_ID, VERIFICATION_CODES_BOT_ID} from '@appManagers/constants';
+import {FOLDER_ID_ARCHIVE, HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SERVICE_PEER_ID, VERIFICATION_CODES_BOT_ID} from '@appManagers/constants';
 import SetTransition from '@components/singleTransition';
 import AppPrivateSearchTab from '@components/sidebarRight/tabs/search';
 import renderImageFromUrl from '@helpers/dom/renderImageFromUrl';
@@ -34,7 +34,7 @@ import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
 import noop from '@helpers/noop';
 import middlewarePromise from '@helpers/middlewarePromise';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
-import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity, PaymentsPaymentForm, InputPeer, ChatTheme, UserFull, User, StoriesStealthMode} from '@layer';
+import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity, PaymentsPaymentForm, InputPeer, ChatTheme, UserFull, User, StoriesStealthMode, Dialog} from '@layer';
 import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
 import {getColorsFromWallPaper} from '@helpers/color';
 import apiManagerProxy from '@lib/apiManagerProxy';
@@ -678,6 +678,14 @@ export default class Chat extends EventListenerBase<{
       }
     });
 
+    // Archived = read-only (owner batch 12). The dialog move can happen while
+    // this chat is open (archive from the list), so the composer follows the
+    // folder flag rather than only being set on navigation.
+    this.bubbles.listenerSetter.add(rootScope)('dialog_folder_update' as any, ({peerId, folderId}: {peerId: PeerId, folderId: number}) => {
+      if(+peerId !== +this.peerId) return;
+      this.input?.chatInput?.classList.toggle('archived-readonly', folderId === FOLDER_ID_ARCHIVE);
+    });
+
     this.bubbles.listenerSetter.add(rootScope)('dialog_drop', (dialog) => {
       if(dialog.peerId === this.peerId && (isDialog(dialog) || this.threadId === getDialogKey(dialog))) {
         this.appImManager.setPeer({isDeleting: true});
@@ -1234,23 +1242,15 @@ export default class Chat extends EventListenerBase<{
       callback?.();
     });
 
-    // Archived sessions are read-only (owner batch 11): the composer goes away
-    // so nothing invites a send. This is the UI half — GroupAPI.sendMessage
-    // refuses too, which is what actually protects the session.
-    if(this.input?.chatInput) {
-      const chatInput = this.input.chatInput;
-      const numericPeerId = +peerId;
-      void import('@lib/phantomchat/group-types').then(async({isSessionPeer}) => {
-        if(!isSessionPeer(numericPeerId)) {
-          chatInput.classList.remove('session-archived-readonly');
-          return;
-        }
-
-        const {getGroupStore} = await import('@lib/phantomchat/group-store');
-        const record = await getGroupStore().getByPeerId(numericPeerId).catch((): null => null);
-        chatInput.classList.toggle('session-archived-readonly', !!record?.archivedAt);
-      });
-    }
+    // Archived dialogs are read-only (owner batch 12): the composer goes away so
+    // nothing invites a send. This is the UI half — GroupAPI.sendMessage refuses
+    // too for a group-class peer, and a plain chat is refused at the send path,
+    // which is what actually protects the archived item. One flag
+    // (`folder_id === 1`) covers chats, groups and sessions alike.
+    void this.managers.dialogsStorage.getAnyDialog(this.peerId).then((dialog) => {
+      if(!middleware() || !isDialog(dialog)) return;
+      this.input?.chatInput?.classList.toggle('archived-readonly', (dialog as Dialog).folder_id === FOLDER_ID_ARCHIVE);
+    }).catch(() => {});
 
     // Deferred path: shared media and backgrounds are NOT visible on first
     // paint (shared media is in the right sidebar, backgrounds are cosmetic).
