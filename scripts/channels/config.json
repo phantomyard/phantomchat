@@ -128,8 +128,8 @@
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "38d59ba9833ed8968bcff4dca419a2a13f10fed36b133692b6297e8fb8a26d8e",
-      "preview": "38d59ba9833ed8968bcff4dca419a2a13f10fed36b133692b6297e8fb8a26d8e",
-      "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change."
+      "preview": "dd1a43d1f68ac52172fa23d3bb67e4876d402dc634385098a4e37a20a3ae0093",
+      "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change. PhantomChat file send extracted into sendFileViaBridge() with a sendPhantomChatAttachment() entry point that returns the published message; publish path, kind-15 rumor shape and stored fileMetadata unchanged. Preview hash refreshed for that refactor."
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "10f1ed83d4cd0cd3d7ceb0c4f5062992435f2c611582b7789ef18706b8704bf6",
@@ -275,6 +275,26 @@
       "stable": "98a3280e490642103687ba373efab539f029f87ccbaafef10d9f62a5c2682f48",
       "preview": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
       "reason": "Group editor UI and save trigger only: removes the description input and unavailable admin Leave Group action; Enter reuses the existing check-button save path. Writes use the unchanged GroupAPI updateGroupInfo({name}) and membership APIs with existing GroupRecord fields. Renames preserve stored descriptions. No schema, identity, CRDT, storage-key or protocol changes. Real Chromium GroupAPI/IndexedDB rename and description-preservation check passed. Requires independent content review of this exact pair."
+    },
+    "src/components/chat/attachmentTray.ts": {
+      "stable": "absent",
+      "preview": "7a34d8f3919051bc97e876de4425c34d92649dc240042e15f57987dbcdbf6be2",
+      "reason": "New composer attachment tray for PhantomChat peers: staged-file thumbnails, per-file remove and per-file send state above the message input. Owns no storage, database or IPC access and only mutates its own DOM. Requires independent content review."
+    },
+    "src/components/chat/input.ts": {
+      "stable": "8ba48c42bce0bc2fc1361f0ed2c3a82cb9ec863daca5cb6a96aadc2d9c6442e2",
+      "preview": "e4720079979b13d2a684035e6c8bddc7f6e30a0845cfc86135448189f36eed0b",
+      "reason": "Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
+    },
+    "src/lib/appImManager.ts": {
+      "stable": "c497fe315c7cdbdbd37b6a22b5ef002ec01802057789f6e2ce4e7b75f7d619d5",
+      "preview": "cae087d938afdab9a225bb6a20261b2f390508b881b5cfa4bcee2343ab47c3fc",
+      "reason": "Routes pasted and dropped files into the composer attachment tray when the open chat is a PhantomChat peer, after the existing open-popup check. Every other chat keeps the existing PopupNewMedia handling; no storage format, database or IPC change. Requires independent content review."
+    },
+    "src/lib/phantomchat/composer-attachments.ts": {
+      "stable": "absent",
+      "preview": "c592ffde008835c4fab2e786a78c4b11300690a8b59a0512991eea8c21a2dc44",
+      "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression and sequential dispatch. No storage, database or IPC access. Requires independent content review."
     }
   },
   "stableVersion": "1.1.78"
