@@ -514,6 +514,18 @@ describe('phantomchat-message-handler', () => {
       expect(mockMessageStore.setReadCursor).toHaveBeenCalledWith('conv-aaaa-bbbb', 2000000001);
     });
 
+    it('leaves the arrival unread when mobile Back lands during Worker work', async() => {
+      // The bug this pins: `chatIsOpen` is snapshotted before the awaits, so an
+      // OR with the live predicate let a stale `true` win and wrote a durable
+      // read cursor for a message the user never saw.
+      mockSetDialogTopMessage.mockImplementationOnce(async() => {
+        (MOUNT_CLASS_TO as any).appImManager.isChatVisible = false;
+      });
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+      expect(getUnreadForPeer(PEER_ID)).toBe(1);
+    });
+
     it('counts arrivals after mobile Back retains the peer behind a hidden pane', async() => {
       await handleIncomingMessage(makeData(), OWN_PUBKEY);
       mockMessageStore.setReadCursor.mockClear();
