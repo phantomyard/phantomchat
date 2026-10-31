@@ -443,6 +443,45 @@ export async function applyGroupDialogFolder(record: {groupId: string, kind?: Gr
 }
 
 /**
+ * The dialog state a relocated row has to keep. Everything the user set or has
+ * already seen lives ONLY on the dialog row, so it has to be read off the old
+ * row before it is dropped and re-stamped onto the new one.
+ *
+ * Pure and exported so the read-marker rule is testable without booting the
+ * sync module.
+ */
+export function carriedDialogState(previous: any, topMessage: number): {
+  unreadCount: number,
+  readInboxMaxId: number,
+  readOutboxMaxId: number,
+  pinned: boolean,
+  muteUntil: number,
+  unreadMentionsCount: number,
+  unreadReactionsCount: number
+} {
+  const unreadCount = Number(previous?.unread_count) || 0;
+  // Read markers must equal top_message when unread is 0, or tweb's getDialogs
+  // flags the row as a noIdsDialog and spams reloadConversation. When unread is
+  // NOT 0 the marker is real state and a genuine 0 (nothing read yet) has to
+  // survive: `|| topMessage` would lift it to the top message, so the badge says
+  // N unread while every row compares as read.
+  const carried = (key: 'read_inbox_max_id' | 'read_outbox_max_id'): number => {
+    if(!previous || unreadCount === 0) return topMessage;
+    const value = Number(previous[key]);
+    return Number.isFinite(value) ? value : 0;
+  };
+  return {
+    unreadCount,
+    readInboxMaxId: carried('read_inbox_max_id'),
+    readOutboxMaxId: carried('read_outbox_max_id'),
+    pinned: !!previous?.pFlags?.pinned,
+    muteUntil: Number(previous?.notify_settings?.mute_until) || 0,
+    unreadMentionsCount: Number(previous?.unread_mentions_count) || 0,
+    unreadReactionsCount: Number(previous?.unread_reactions_count) || 0
+  };
+}
+
+/**
  * Move an existing group/session dialog onto a DIFFERENT peer id.
  *
  * Only the class reconcile calls this. Folder membership is a pure range test
@@ -485,8 +524,10 @@ export async function relocateGroupDialog(
   }
 
   // Drop the OLD row for real (persisted row + folder caches + mirror).
+  // Awaited: the proxied manager can reject, and the cleanup below must not
+  // start against a row that is still being deleted.
   try {
-    dialogsStorage?.dropDialogWithEvent?.(fromPeerId);
+    await dialogsStorage?.dropDialogWithEvent?.(fromPeerId);
   } catch(e: any) {
     console.debug(LOG_PREFIX, 'relocateGroupDialog: old dialog drop failed:', e?.message);
   }
@@ -498,19 +539,25 @@ export async function relocateGroupDialog(
 
   const topMessage = Number(previous?.top_message) || 0;
   const sortIndex = Number(previous?.index_0) || 0;
+  const carried = carriedDialogState(previous, topMessage);
   const mapper = getMapper();
   const dialog = mapper.createTwebDialog({
     peerId: toPeerId,
     topMessage,
     // index_0 is the sort index — seconds * 0x10000 (see createTwebDialog).
     topMessageDate: sortIndex ? Math.floor(sortIndex / 0x10000) : Math.floor(Date.now() / 1000),
-    unreadCount: Number(previous?.unread_count) || 0,
-    // Read markers must equal top_message when unread is 0, or tweb's
-    // getDialogs flags the row as a noIdsDialog and spams reloadConversation.
-    readInboxMaxId: Number(previous?.read_inbox_max_id) || topMessage,
-    readOutboxMaxId: Number(previous?.read_outbox_max_id) || topMessage,
+    unreadCount: carried.unreadCount,
+    readInboxMaxId: carried.readInboxMaxId,
+    readOutboxMaxId: carried.readOutboxMaxId,
     archived: !!record?.archivedAt
   });
+  // State createTwebDialog does not take as an option, but which the user set:
+  // without it a pinned session falls out of the pinned list and a muted one
+  // starts notifying again after the repair.
+  if(carried.pinned) (dialog as any).pFlags.pinned = 1;
+  if(carried.muteUntil > 0) (dialog as any).notify_settings.mute_until = carried.muteUntil;
+  if(carried.unreadMentionsCount > 0) (dialog as any).unread_mentions_count = carried.unreadMentionsCount;
+  if(carried.unreadReactionsCount > 0) (dialog as any).unread_reactions_count = carried.unreadReactionsCount;
 
   if(proxy?.mirrors) {
     if(!proxy.mirrors.dialogs) proxy.mirrors.dialogs = {};

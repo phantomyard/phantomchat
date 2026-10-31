@@ -83,6 +83,20 @@ describe('intendedGroupKind', () => {
   it('lets an explicit class beat a stale tag — the field is the newer truth', () => {
     expect(intendedGroupKind({kind: 'group', tags: ['session']})).toBe('group');
   });
+
+  it('falls back to the peerId range before defaulting to classic', async() => {
+    const sessionPeerId = await groupIdToPeerId(GROUP_ID, 'session');
+    const groupPeerId = await groupIdToPeerId(GROUP_ID, 'group');
+    // No class field, no tag — the range is the only evidence, and it is the
+    // same test every folder decision already uses.
+    expect(intendedGroupKind({peerId: sessionPeerId} as any)).toBe('session');
+    expect(intendedGroupKind({peerId: groupPeerId} as any)).toBe('group');
+    // Evidence still wins over the range it disagrees with.
+    expect(intendedGroupKind({kind: 'group', peerId: sessionPeerId} as any)).toBe('group');
+    expect(intendedGroupKind({tags: ['session'], peerId: groupPeerId} as any)).toBe('session');
+    // No peerId at all: the pre-class default.
+    expect(intendedGroupKind({})).toBe('group');
+  });
 });
 
 describe('reconcileGroupPeerClasses', () => {
@@ -192,6 +206,35 @@ describe('reconcileGroupPeerClasses', () => {
     expect(await reconcileGroupPeerClasses(deps)).toEqual([]);
   });
 
+  it('stamps a classless record that is already in the session range — it must not be re-keyed into Groups', async() => {
+    // The trap: "no class field" defaulting to classic would label this session
+    // `group`, and the next boot's range test would then move it into the group
+    // range. Adopting the range it is already in is the only safe reading.
+    const sessionPeerId = await groupIdToPeerId(GROUP_ID, 'session');
+    const record = await legacyRecord({peerId: sessionPeerId});
+    const {deps, saved, rekeyed, relocated} = harness([record]);
+
+    const repairs = await reconcileGroupPeerClasses(deps);
+
+    expect(rekeyed).toEqual([]);
+    expect(relocated).toEqual([]);
+    expect(saved).toHaveLength(1);
+    expect(saved[0].kind).toBe('session');
+    expect(saved[0].peerId).toBe(sessionPeerId);
+    expect(repairs).toEqual<GroupClassRepair[]>([{
+      groupId: GROUP_ID,
+      kind: 'session',
+      fromPeerId: sessionPeerId,
+      toPeerId: sessionPeerId,
+      recordOnly: true
+    }]);
+
+    // And the next boot is a no-op — `kind` is there, the range agrees.
+    const again = harness([saved[0]]);
+    expect(await reconcileGroupPeerClasses(again.deps)).toEqual([]);
+    expect(again.saved).toEqual([]);
+  });
+
   it('does not half-migrate when the dialog move fails', async() => {
     const record = await legacyRecord({tags: ['session']});
     const {deps, saved} = harness([record]);
@@ -204,6 +247,38 @@ describe('reconcileGroupPeerClasses', () => {
     expect(saved).toEqual([]);
     expect((record as any).peerId).toBe(await groupIdToPeerId(GROUP_ID, 'group'));
     expect(deps.log).toHaveBeenCalled();
+  });
+
+  it('puts the history re-stamp back when the dialog move fails', async() => {
+    // The re-key order is history → dialog → record. A dialog failure after the
+    // history moved leaves rows under a peer with no dialog row, so the pass has
+    // to re-stamp them back onto the id the record still claims.
+    const record = await legacyRecord({tags: ['session']});
+    const {deps, rekeyed} = harness([record]);
+    deps.relocateDialog.mockRejectedValueOnce(new Error('dialogsStorage unavailable'));
+
+    await reconcileGroupPeerClasses(deps);
+
+    const sessionPeerId = await groupIdToPeerId(GROUP_ID, 'session');
+    expect(rekeyed).toEqual([
+      {conversationId: `group:${GROUP_ID}`, peerId: sessionPeerId},
+      {conversationId: `group:${GROUP_ID}`, peerId: record.peerId}
+    ]);
+    // The rollback is the LAST storage write of the pass.
+    expect(deps.rekeyConversation.mock.invocationCallOrder[1])
+    .toBeGreaterThan(deps.relocateDialog.mock.invocationCallOrder[0]);
+  });
+
+  it('logs and keeps the record when the rollback itself fails', async() => {
+    const record = await legacyRecord({tags: ['session']});
+    const {deps} = harness([record]);
+    deps.relocateDialog.mockRejectedValueOnce(new Error('boom'));
+    deps.rekeyConversation.mockRejectedValueOnce(new Error('rekey down')).mockRejectedValueOnce(new Error('rollback down'));
+
+    await expect(reconcileGroupPeerClasses(deps)).resolves.toEqual([]);
+    expect(deps.log).toHaveBeenCalledWith(
+      'class re-key rollback failed for', expect.any(String), expect.any(Error)
+    );
   });
 
   it('skips records with an unusable peerId and survives an unreadable store', async() => {

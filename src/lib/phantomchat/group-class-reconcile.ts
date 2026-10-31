@@ -20,15 +20,23 @@
  * the PWA and the desktop build.
  *
  * The repair: adopt the class (explicit `kind`, else the legacy
- * `tags: ['session']` marker), re-derive the peerId, re-stamp the conversation's
+ * `tags: ['session']` marker, else the range the stored peerId is already in),
+ * re-derive the peerId, re-stamp the conversation's
  * rows (`group:<groupId>` keeps its key), move the dialog row onto the new peer
  * id, then save the record. Idempotent — a converged record costs one range test
  * and no writes.
  *
  * NOT a substitute for a real class-change protocol: `kind` is documented as
  * immutable after create, and this only ever repairs a record against its OWN
- * class marker. It never invents a class, and it never downgrades a session that
- * is already in the session range.
+ * class evidence. It never invents a class, and it never downgrades a session
+ * that is already in the session range.
+ *
+ * The last piece of evidence is the range itself: `isSessionPeer()` is the class
+ * test every folder decision in the app already uses, so a record with no
+ * `kind` and no tag whose stored peerId is in the session range IS a session.
+ * Without that fallback the "no class field → classic" default would win, and a
+ * correct-by-range session would have `kind: 'group'` stamped onto it and then be
+ * re-keyed into the group range on the next boot.
  */
 import {groupIdToPeerId, isSessionPeer} from './group-types';
 import type {GroupKind, GroupRecord} from './group-types';
@@ -42,14 +50,22 @@ export const LEGACY_SESSION_TAG = 'session';
 type StoredGroupRecord = GroupRecord & {tags?: unknown};
 
 /**
- * The class a record is SUPPOSED to have. An explicit `kind` wins; a legacy
- * `tags: ['session']` marker is the only other evidence, and everything else is
- * a classic group (the pre-class default).
+ * The class a record is SUPPOSED to have. An explicit `kind` wins; the retired
+ * `tags: ['session']` marker is next; then the range the stored peerId is
+ * already in; and only a record with none of those is a classic group (the
+ * pre-class default).
  */
-export function intendedGroupKind(record: Pick<GroupRecord, 'kind'> & {tags?: unknown}): GroupKind {
+export function intendedGroupKind(
+  record: Pick<GroupRecord, 'kind'> & {tags?: unknown, peerId?: number}
+): GroupKind {
   if(record.kind === 'session' || record.kind === 'group') return record.kind;
   const tags = record.tags;
-  return Array.isArray(tags) && tags.includes(LEGACY_SESSION_TAG) ? 'session' : 'group';
+  if(Array.isArray(tags) && tags.includes(LEGACY_SESSION_TAG)) return 'session';
+  // Range fallback: the class is a pure range test everywhere else in the app,
+  // so a peerId already in the session range must not be defaulted to classic —
+  // that would stamp `kind: 'group'` on a correct session and re-key it into the
+  // group range on the next boot.
+  return typeof record.peerId === 'number' && isSessionPeer(record.peerId) ? 'session' : 'group';
 }
 
 export type GroupClassReconcileDeps = {
@@ -155,9 +171,16 @@ export async function reconcileGroupPeerClasses(
       deps.log?.('re-keyed', record.groupId.slice(-8), record.peerId, '→', canonical, `(${kind})`);
     } catch(err) {
       // A peerId collision (the unique store index) is the realistic failure:
-      // log and leave the record alone — the old id still renders, nothing is
-      // half-migrated.
+      // log and leave the record alone. The one step that can already have
+      // landed is the history re-stamp, so put it back on the id the record
+      // still claims — otherwise the rows render under a peer that has no
+      // dialog row until the next boot converges.
       deps.log?.('class re-key failed for', record.groupId.slice(0, 8), err);
+      try {
+        await deps.rekeyConversation(`group:${record.groupId}`, record.peerId);
+      } catch(rollbackErr) {
+        deps.log?.('class re-key rollback failed for', record.groupId.slice(0, 8), rollbackErr);
+      }
     }
   }
 
