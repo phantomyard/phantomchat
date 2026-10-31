@@ -53,13 +53,13 @@
     },
     "src/helpers/dom/createFolderContextMenu.ts": {
       "stable": "8a1793c4094835af951f643136c10ffcba83d0667c7c5a1c895ec3ae4e52e2b1",
-      "preview": "8a1793c4094835af951f643136c10ffcba83d0667c7c5a1c895ec3ae4e52e2b1",
-      "reason": "Menu only: drops the 'Edit folders' entry (folders are code-defined). Set/Remove default and Mark all as read untouched."
+      "preview": "e5ff20d2a0750f51abecb4450386fe74187868ea79955eb8bef568a84c0e2913",
+      "reason": "Set/Remove default are suppressed on archive folders (chat archive 1 and session archive 5); Mark all as read unchanged. Presentation only."
     },
     "src/lang.ts": {
       "stable": "9ce8a8a239e5ffe2663da99feced7b856aa42b4f3d0996c8c6536f510f2675e9",
-      "preview": "7112d77ab46aa80f6024fefc4592cdf5f3e8f292fc5d2f31de4a2338bef63301",
-      "reason": "Two new display strings: 'Disable Sidebar' and 'Enable Sidebar'. No storage or behaviour change."
+      "preview": "93fdec19b2e00fc6248ed941d85e50abb4607caa7dcae49040fec9a78d386ad0",
+      "reason": "Adds the SessionRename string. Text only."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "3fe972d1aa8dca02f895090e1af2c98a66fe27175a733e6827252f55c80de437",
@@ -227,8 +227,8 @@
     },
     "src/components/dialogsContextMenu.ts": {
       "stable": "de80d11a3065a903d69411dddadf177c4eba2303becc2694ef1d775de4e68f99",
-      "preview": "3c729ea493f0007abc977551a23816b4a9338dcbb5d97b961b499bff08b0da7e",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "abe4350859b080bb4cf6876306249d7a185e22e51e54265a9a73ff199a5b0a3b",
+      "reason": "Session rows get only Rename/Archive (or Unarchive)/Delete: every generic dialog entry is gated off for a session peer, delete stays last and always reads \"Delete\". Presentation only."
     },
     "src/components/peerActionsMenu.ts": {
       "stable": "5998889797746ef749c14c6c30ca3a84723e0f167f10ddc4918ac37fb72a044e",
@@ -237,8 +237,8 @@
     },
     "src/components/popups/renameSession.ts": {
       "stable": "absent",
-      "preview": "f09f8f9def3160173cfcb6df299c7692bf40096b5b5ef14b51a76b686040c403",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "1df521daf7634689966714900d934fe6e62715530afc282d14c8825ecdbc429c",
+      "reason": "Session rename popup title is \"Rename\" instead of \"Edit\". Presentation only."
     },
     "src/lib/phantomchat/group-sessions.ts": {
       "stable": "absent",
