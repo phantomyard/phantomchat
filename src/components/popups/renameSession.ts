@@ -16,7 +16,7 @@ export default class PopupRenameSession extends PopupElement {
     super('popup-create-contact popup-send-photo popup-new-media', {
       closable: true,
       withConfirm: 'Save',
-      title: 'Edit'
+      title: 'SessionRename'
     });
     this.construct(currentTitle);
   }

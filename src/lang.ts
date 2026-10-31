@@ -1867,6 +1867,7 @@ const lang = {
   // PhantomChat sessions (owner batch 11): the only two strings the session
   // surface needs — the rename popup's field label and its failure toast.
   'SessionName': 'Session name',
+  'SessionRename': 'Rename',
   'SessionActionFailed': 'Could not update the session',
   'PaymentCheckoutName': 'Name',
   'ClearRecentStickersAlertTitle': 'Clear recent stickers',

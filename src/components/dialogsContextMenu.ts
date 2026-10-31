@@ -17,7 +17,7 @@ import findUpTag from '@helpers/dom/findUpTag';
 import {toastNew} from '@components/toast';
 import PopupMute from '@components/popups/mute';
 import {AppManagers} from '@lib/managers';
-import {CAN_HIDE_TOPIC, GENERAL_TOPIC_ID, REAL_FOLDERS} from '@appManagers/constants';
+import {CAN_HIDE_TOPIC, FOLDER_ID_ARCHIVE, GENERAL_TOPIC_ID, REAL_FOLDERS} from '@appManagers/constants';
 import showLimitPopup from '@components/popups/limit';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import PopupElement from '@components/popups';
@@ -79,8 +79,9 @@ export default class DialogsContextMenu {
       },
       onOpenBefore: async() => {
         this.buttons?.forEach(button => button?.onOpen?.());
-        // delete button
-        const langPackKey: LangPackKey = this.threadId ? 'Delete' : await this.managers.appPeersManager.getDeleteButtonText(this.peerId);
+        // delete button — a session is never "left", so it always says Delete
+        // rather than the group's Leave Group / DeleteMega verdict.
+        const langPackKey: LangPackKey = this.threadId || isSessionPeer(+this.peerId) ? 'Delete' : await this.managers.appPeersManager.getDeleteButtonText(this.peerId);
         const lastButton = this.buttons[this.buttons.length - 1];
         if(lastButton?.element) {
           lastButton.element.lastChild.replaceWith(i18n(langPackKey));
@@ -111,8 +112,8 @@ export default class DialogsContextMenu {
    * is why the class check lives here rather than at build time.
    */
   private getSessionButtons(): ButtonMenuItemOptionsVerifiable[] {
-    const isLiveSession = () => isSessionPeer(+this.peerId) && !!(this.dialog as Dialog) && (this.dialog as Dialog).folder_id !== 1;
-    const isArchivedSession = () => isSessionPeer(+this.peerId) && !!(this.dialog as Dialog) && (this.dialog as Dialog).folder_id === 1;
+    const isLiveSession = () => isSessionPeer(+this.peerId) && !!(this.dialog as Dialog) && (this.dialog as Dialog).folder_id !== FOLDER_ID_ARCHIVE;
+    const isArchivedSession = () => isSessionPeer(+this.peerId) && !!(this.dialog as Dialog) && (this.dialog as Dialog).folder_id === FOLDER_ID_ARCHIVE;
 
     const sessionGroupId = async(): Promise<string | undefined> => {
       const {getGroupStore} = await import('@lib/phantomchat/group-store');
@@ -122,7 +123,7 @@ export default class DialogsContextMenu {
 
     return [{
       icon: 'edit',
-      text: 'Edit',
+      text: 'SessionRename',
       onClick: async() => {
         const groupId = await sessionGroupId();
         if(!groupId) return;
@@ -167,8 +168,37 @@ export default class DialogsContextMenu {
     }];
   }
 
+  /**
+   * A session is a title, one phantom and its history — nothing the generic
+   * dialog menu offers applies to it (no folders to file it in, no pin/mute
+   * semantics of its own, and "leave" is nonsense for a one-member object), and
+   * the peer class is only known per open. So every generic entry is built as
+   * normal and wrapped here: verified off whenever the row is a session.
+   */
+  private hideForSessions<T extends ButtonMenuItemOptionsVerifiable>(button: T): T {
+    if(!button) return button;
+    const verify = button.verify;
+    return {
+      ...button,
+      verify: async() => {
+        if(isSessionPeer(+this.peerId)) return false;
+        return verify ? !!(await verify()) : true;
+      }
+    };
+  }
+
   private getButtons() {
-    this.buttons ??= [...this.getSessionButtons(), peerEditMenuButton(() => this.peerId, () => !isSessionPeer(+this.peerId)), {
+    // Kept out of the generic list: it is the one entry a session still needs,
+    // and onOpenBefore rewrites the last button's label, so it must stay last.
+    const deleteButton: ButtonMenuItemOptionsVerifiable = {
+      icon: 'delete',
+      className: 'danger',
+      text: 'Delete',
+      onClick: this.onDeleteClick,
+      verify: () => this.canDelete
+    };
+
+    const generic: ButtonMenuItemOptionsVerifiable[] = [peerEditMenuButton(() => this.peerId, () => !isSessionPeer(+this.peerId)), {
       icon: 'newtab',
       text: 'OpenInNewTab',
       onClick: (e) => {
@@ -302,15 +332,13 @@ export default class DialogsContextMenu {
       text: 'PaidMessages.RemoveFee',
       onClick: () => this.onToggleFeeClick(false),
       verify: () => this.verifyToggleFee(false)
-    }, {
-      icon: 'delete',
-      className: 'danger',
-      text: 'Delete',
-      onClick: this.onDeleteClick,
-      verify: () => this.canDelete
     }];
 
-    return this.buttons = this.buttons.filter(Boolean);
+    return this.buttons = [
+      ...this.getSessionButtons(),
+      ...generic.filter(Boolean).map(button => this.hideForSessions(button)),
+      deleteButton
+    ];
   }
 
   private createAddToFolderSubmenu = async({middleware}: CreateSubmenuArgs) => {
