@@ -19,6 +19,7 @@
  */
 
 import {logger} from '@lib/logger';
+import {isGroupPeer} from './group-types';
 
 const log = logger('PhantomChat/bridge-invariants');
 
@@ -69,6 +70,24 @@ export function assertInvariant(rule: string, result: InvariantResult): void {
 /** Returns true if peerId is in the synthetic P2P range (Rule 13). */
 export function isP2PPeerId(peerId: number): boolean {
   return peerId >= P2P_PEER_ID_MIN;
+}
+
+/**
+ * True for every peer whose messages and media travel through the PhantomChat
+ * bridge: 1:1 P2P peers (Rule 13) and group peers.
+ *
+ * The single predicate for this question — the composer tray, the attachment
+ * entry point and `sendFile`'s bridge shortcut all delegate here instead of
+ * writing the range test a fourth time in a slightly different direction.
+ * Accepts the string/bigint forms the managers read from args and payloads.
+ */
+export function isPhantomChatPeerId(peerId: number | string | bigint): boolean {
+  const numeric = Number(peerId);
+  if(!Number.isFinite(numeric)) {
+    return false;
+  }
+
+  return isP2PPeerId(numeric) || isGroupPeer(numeric);
 }
 
 /** Returns true if id matches the `chat-XXX-N` app message format used by

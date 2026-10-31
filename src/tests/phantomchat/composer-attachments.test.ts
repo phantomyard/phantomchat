@@ -12,7 +12,6 @@ import {
   getAttachmentKind,
   getAttachmentMediaType,
   getAttachmentSizeLimit,
-  isPhantomChatPeerId,
   MAX_PENDING_ATTACHMENTS,
   PendingAttachment,
   removePendingAttachment,
@@ -21,6 +20,7 @@ import {
   shouldUseAttachmentTray,
   validateAttachment
 } from '@lib/phantomchat/composer-attachments';
+import {isPhantomChatPeerId} from '@lib/phantomchat/bridge-invariants';
 import {MAX_PHOTO_SIZE, MAX_VIDEO_SIZE} from '@lib/phantomchat/blossom-client';
 
 function makeFile(name: string, type: string, size = 1024): File {

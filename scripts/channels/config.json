@@ -128,8 +128,8 @@
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "38d59ba9833ed8968bcff4dca419a2a13f10fed36b133692b6297e8fb8a26d8e",
-      "preview": "455200888a62f3cb8c0cbcfa3cd002951c602b0d2fe52082327cbef5ff801be3",
-      "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change. PhantomChat file send extracted into sendFileViaBridge() with a sendPhantomChatAttachment() entry point that returns the published message; publish path, kind-15 rumor shape and stored fileMetadata unchanged. Preview hash refreshed for that refactor."
+      "preview": "5cf7c634704e8173c5e8159dc735b50b0e05d2705b5bb6fd437611d9dda312be",
+      "reason": "sendPhantomChatAttachment()'s peer guard and sendFile()'s bridge shortcut now share one isPhantomChatPeerId() predicate instead of two hand-written range tests, so the guard cannot drift from the path it guards. No storage, database or IPC format change."
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "10f1ed83d4cd0cd3d7ceb0c4f5062992435f2c611582b7789ef18706b8704bf6",
@@ -283,8 +283,8 @@
     },
     "src/components/chat/input.ts": {
       "stable": "8ba48c42bce0bc2fc1361f0ed2c3a82cb9ec863daca5cb6a96aadc2d9c6442e2",
-      "preview": "d0c68a2777b64af8364e8c697f48b9bebed68c807ba0a16dd7c9fc617d347600",
-      "reason": "Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text, forwarding the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
+      "preview": "d818f4aea6701a6a680250cf2b08fb695df16fa57ec7ffc08714908afd5c0c78",
+      "reason": "Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text through sendBatchThenText(), which drops the text if the user switched chat mid-upload, and forwards the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
     },
     "src/lib/appImManager.ts": {
       "stable": "c497fe315c7cdbdbd37b6a22b5ef002ec01802057789f6e2ce4e7b75f7d619d5",
@@ -293,8 +293,23 @@
     },
     "src/lib/phantomchat/composer-attachments.ts": {
       "stable": "absent",
-      "preview": "345df2ab00dd770d7808f8ea05606c94ae424b69ef310528fbe085844dbf52d0",
-      "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression, sequential dispatch and an intrinsic-size setter that ignores a broken decode. No storage, database or IPC access. Requires independent content review."
+      "preview": "f6e595a0c978041d14e4d5ebdb2eacddd7a21443c9065826eeae1a0d3ccdf6ec",
+      "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression, sequential dispatch, an intrinsic-size setter that ignores a broken decode, and sendBatchThenText() which drops the typed text when the chat changed while the batch was uploading. Peer detection is delegated to isPhantomChatPeerId() in bridge-invariants. No storage, database or IPC access. Requires independent content review."
+    },
+    "src/lib/phantomchat/bridge-invariants.ts": {
+      "stable": "688d961f6884f278cb92c6f48089d5dc20ef3d8ff85b1830b27547dacffb595f",
+      "preview": "5d85c3945e5e186c10930638d43280049904eb8a2d8f3eea784db97c96b27c0a",
+      "reason": "isPhantomChatPeerId() added here as the single bridge-peer predicate: P2P ids plus group peers, shared by the composer tray, the attachment entry point and sendFile(). Pure boolean, no storage or IPC access. Requires independent content review."
+    },
+    "src/scss/partials/_chatAttachmentTray.scss": {
+      "stable": "absent",
+      "preview": "0755c7b055ab0e771caa62b6082e69cf9849c8b03f8ea0968d887e95a4553061",
+      "reason": "Content reviewed for Stable/Preview compatibility."
+    },
+    "src/scss/style.scss": {
+      "stable": "5b3e6f40706e1ba559751c84ee6a0ce62973845b98eda6ca061879d6f95bd299",
+      "preview": "cf50c788d350be08d9c4eb677d09dbe17867ab9b6fb037d46081359993791ce9",
+      "reason": "Content reviewed for Stable/Preview compatibility."
     }
   },
   "stableVersion": "1.1.78"

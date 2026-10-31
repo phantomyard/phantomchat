@@ -11,7 +11,7 @@
  * stop-on-first-failure) are testable without mounting the chat input.
  */
 
-import {isGroupPeer} from './group-types';
+import {isPhantomChatPeerId} from './bridge-invariants';
 import {MAX_PHOTO_SIZE, MAX_VIDEO_SIZE} from './blossom-client';
 
 /** How many files a single staged batch may hold. */
@@ -51,19 +51,6 @@ export type RejectedAttachment = {
   /** Human-readable, English-only message for the toast. */
   message: string;
 };
-
-/**
- * True for peers whose media flows through the PhantomChat bridge: 1:1 P2P
- * peers (id >= 1e15) and group peers.
- */
-export function isPhantomChatPeerId(peerId: number | string | bigint): boolean {
-  const numeric = Number(peerId);
-  if(!Number.isFinite(numeric)) {
-    return false;
-  }
-
-  return Math.abs(numeric) >= 1e15 || isGroupPeer(numeric);
-}
 
 /**
  * Whether this chat's composer shows the attachment tray. Decided per peer
@@ -284,4 +271,34 @@ export async function sendPendingAttachments(
   }
 
   return {sent, remaining: []};
+}
+
+/**
+ * Runs the staged batch, then the typed text.
+ *
+ * The text belongs to the peer the batch started on: `sendMessageInner` reads
+ * the current chat and the composer after the batch resolves, so a chat switch
+ * mid-upload would publish the newly opened chat's draft as if Send had been
+ * pressed there. In that case the text is dropped and only the files land — a
+ * deliberate trade, because a file that already published cannot be recalled.
+ *
+ * Returns false when the batch failed or the peer changed, so the caller leaves
+ * the composer alone.
+ */
+export async function sendBatchThenText(
+  peerIdBeforeBatch: number,
+  sendBatch: () => Promise<boolean>,
+  sendText: () => unknown,
+  currentPeerId: () => number
+): Promise<boolean> {
+  if(!await sendBatch()) {
+    return false;
+  }
+
+  if(currentPeerId() !== peerIdBeforeBatch) {
+    return false;
+  }
+
+  await sendText();
+  return true;
 }

@@ -68,6 +68,7 @@ import {joinDeepPath} from '@helpers/object/setDeepProperty';
 // P2P send bridge removed from Worker — runs only in main thread
 // import {isVirtualPeer, sendTextViaChatAPI, sendMediaViaChatAPI} from '../phantomchat/phantomchat-send-bridge';
 import {isP2PPeer} from '@lib/phantomchat/phantomchat-bridge';
+import {isPhantomChatPeerId} from '@lib/phantomchat/bridge-invariants';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
 import {LOCAL_ENTITIES} from '@lib/richTextProcessor';
@@ -1721,9 +1722,11 @@ export class AppMessagesManager extends AppManager {
   public async sendPhantomChatAttachment(options: Parameters<AppMessagesManager['sendFile']>[0]): Promise<Message.message | undefined> {
     // Only PhantomChat peers have a bridge: a tray that outlived its peer must
     // fail loudly here instead of leaving the composer stuck on a send that
-    // can never publish.
+    // can never publish. `isPhantomChatPeerId` is the same predicate the tray
+    // and `sendFile`'s bridge shortcut use, so the guard cannot drift from the
+    // path it guards.
     const peerIdNum = Number(options.peerId);
-    if(!(Math.abs(peerIdNum) >= 1e15 || isGroupPeer(peerIdNum))) {
+    if(!isPhantomChatPeerId(peerIdNum)) {
       throw new Error(`sendPhantomChatAttachment: peer ${options.peerId} is not a PhantomChat peer`);
     }
 
@@ -1747,9 +1750,7 @@ export class AppMessagesManager extends AppManager {
     // group branch handles fan-out to all members via wrapGroupMessage
     // (FIND-3786a35f obs B).
     const peerIdNumForFile = Number(peerId);
-    const isPhantomChatDMForFile = peerIdNumForFile >= 1e15;
-    const isPhantomChatGroupForFile = isGroupPeer(peerIdNumForFile);
-    if((isPhantomChatDMForFile || isPhantomChatGroupForFile) && (file instanceof File || file instanceof Blob)) {
+    if(isPhantomChatPeerId(peerIdNumForFile) && (file instanceof File || file instanceof Blob)) {
       await this.sendFileViaBridge(options);
       return;
     }

@@ -64,6 +64,18 @@ describe('attachment tray wiring', () => {
     expect(methodBody(inputTs, 'sendPendingAttachments')).toContain('sendPhantomChatAttachment(');
   });
 
+  it('sends the typed text through the peer-switch guard, after the batch', () => {
+    // `sendMessageInner` re-reads the chat after the batch resolves, so an
+    // inlined batch would publish chat A's text into chat B on a mid-batch
+    // switch. The order matters: the batch is handed to `sendBatchThenText`
+    // together with the peer id captured BEFORE it runs.
+    const start = inputTs.indexOf('public async sendMessage(');
+    expect(start).toBeGreaterThan(-1);
+    const body = inputTs.slice(start, inputTs.indexOf('private async sendMessageInner(', start));
+    expect(body).toContain('sendBatchThenText(');
+    expect(body.indexOf('this.chat.peerId')).toBeLessThan(body.indexOf('this.sendPendingAttachments()'));
+  });
+
   it('forwards the staged image size to the bridge', () => {
     const body = methodBody(inputTs, 'sendPendingAttachments');
     expect(body).toContain('width: item.width');

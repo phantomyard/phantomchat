@@ -129,7 +129,7 @@ import {createStore} from 'solid-js/store';
 import SelectedEffect from '@components/chat/selectedEffect';
 import windowSize from '@helpers/windowSize';
 import AttachmentTray from '@components/chat/attachmentTray';
-import {shouldUseAttachmentTray} from '@lib/phantomchat/composer-attachments';
+import {sendBatchThenText, shouldUseAttachmentTray} from '@lib/phantomchat/composer-attachments';
 import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import accumulate from '@helpers/array/accumulate';
 import splitStringByLength from '@helpers/string/splitStringByLength';
@@ -4077,13 +4077,23 @@ export default class ChatInput {
       // the agent sees the attachments before the instruction that refers to
       // them. A failed file aborts the text send and keeps both staged.
       if(!this.editMsgId && this.attachmentTray?.hasFiles()) {
-        const sentAll = await this.sendPendingAttachments();
+        // The batch keeps the peer it started on, so the typed text has to
+        // follow it: `sendMessageInner` re-reads `this.chat` after the await,
+        // so a chat switch mid-upload would publish the newly opened chat's
+        // draft as if Send had been pressed there. `sendBatchThenText` drops
+        // the text in that case and still lets the files land.
+        const sentAll = await sendBatchThenText(
+          this.chat.peerId,
+          () => this.sendPendingAttachments(),
+          () => this.sendMessageInner(force),
+          () => this.chat.peerId
+        );
         if(!sentAll) {
           return;
         }
+      } else {
+        await this.sendMessageInner(force);
       }
-
-      await this.sendMessageInner(force);
     } finally {
       this.sendingMessage = false;
       if(this.btnSend) {
