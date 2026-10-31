@@ -33,13 +33,13 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "913aaaffc0fa4ba479a027b17f1bb549fecc12e7d8219b5500970fa813761787",
-      "preview": "20b800cc7d49c223e1c2c82de9dfc60a31e042431e9e3e4eea2ca7f86d54f6a8",
-      "reason": "Folders rail payload: Sessions draws a literal \"#\" glyph and the Session Archive folder id is gone. Presentation only."
+      "preview": "d15ab3e9ef5340fafc52a400a2877bb8373ef09c8337d55426825258bc932840",
+      "reason": "Folders rail: Archives (id 1) renders as the last space with its own label, keeps its slot in the order array, and its click opens the existing archive tab. Presentation only."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "stable": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
-      "preview": "43d69bd02bf334a32cd18ae611bb78db808e18fe6ac33ab2d5b4bce4229d4608",
-      "reason": "getIconForFilter returns a placeholder icon key for Sessions (the \"#\" glyph overrides it). Presentation only."
+      "preview": "6dd5214356622da838c217fd68d78586170b435753a7cd3ddf7bfd9f8aa15388",
+      "reason": "Rail icon for the Archives space. Presentation only."
     },
     "src/components/sidebarLeft/tabs/editFolder.ts": {
       "preview": "fa6b94e9e8608446f352fb0f8c32b5da70a6b8348aa47afe5c71459920cb8609",
@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "305b1d29a1ab0fcfd63667937240ab0e1f16534b12e946d52889c05234e2c247",
-      "preview": "420317511a4ac88057d6ead385af63b1ba646867b116f7edb66a6660a8e51a2e",
-      "reason": "The chat-list + button opens the single-contact picker in the Sessions folder; Groups and every other folder behave as before. UI routing only."
+      "preview": "a12f90b57af7c1b82aba1ec19700d31dde83a67ee6deac4fbc58c39cad4fbd9a",
+      "reason": "Comment only (session auto-name length)."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
@@ -103,8 +103,8 @@
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "5bb0c60f7cc6e73aa1fb27e9b053c244c441e1f63ab8500e533c48bd1446a6b2",
-      "preview": "47f371225673caae01924865f9bb7dd87100a80dcd392323bdb3bf5b0df3cc54",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "ccbe47109d70d416507ea341525e68082391e8ec5a92e781f4c2c971e2d2225c",
+      "reason": "updateDialog returns the base promise (awaited add). Same membership gates as before; presentation only."
     },
     "src/lib/storages/filters.ts": {
       "stable": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
@@ -133,8 +133,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
-      "preview": "3239a70bdbcc4a06167335c37a7bd5aa20f1ba08fb8d84f1b6f8f69fdab87d42",
-      "reason": "archiveGroup/unarchiveGroup now accept any group class (previously sessions only) and write the synced archivedAt; sendMessage refuses a group-class send while archived. No stored-format change: archivedAt is an existing optional record field, still LWW-merged by updatedAt."
+      "preview": "ba0695539e1cda423d85e054d95af83bf2ec6e23fabb073ea03b0b24caf0483f",
+      "reason": "Comment only (session auto-name length)."
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
@@ -242,13 +242,23 @@
     },
     "src/lib/phantomchat/group-sessions.ts": {
       "stable": "absent",
-      "preview": "fcabd2394967c93580177372d89ba7ca59f42043e86065ffd26ed9ae90283514",
-      "reason": "Session naming policy only: the default title and the first-prompt truncation (10 chars + ellipsis). No storage, protocol or settings change."
+      "preview": "a33bbfb6a3a2ccb06f612ec07cc1c4204ecb7dc307a90fec361bd7c03d4597d1",
+      "reason": "Session naming policy only: default title and first-prompt truncation (20 characters, no ellipsis, trailing space trimmed). No storage, protocol or settings change."
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "fce5f5d9aa6b0689d0073ca1edd6253dd1806e9ceb26701b09f5e8d1abb3ab05",
       "preview": "d4a2ea129d242ee81818ea8ee04503b258d51f45edb2c038ca140c1d930383a1",
       "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+    },
+    "src/components/autonomousDialogList/base.ts": {
+      "stable": "86f55e73d40856e68138c9fc2346ccd6e257a1a240e78a8af45010e7ebcd1327",
+      "preview": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
+      "reason": "Chatlist row insertion: a dialog added by live traffic now detaches the loading placeholder and notifies the length consumer, so an empty-space pane is torn down. Presentation only; no storage or protocol change."
+    },
+    "src/lib/phantomchat/phantomchat-typing-receive.ts": {
+      "stable": "ae2743fdd383354228d3f1393539bb86de20b9834c1790a430f42687c692cb60",
+      "preview": "fd70c6d6559bc76bf10a959592fc8f52cfd052c7339e65de323c782261d71fdb",
+      "reason": "Group typing ticks resolve the chat peerId from the group record kind (session vs classic) before dispatching. Local UI update only; no storage or protocol change."
     }
   },
   "stableVersion": "1.1.77"
