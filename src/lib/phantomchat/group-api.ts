@@ -22,7 +22,8 @@ import {
   sessionTitleFromPrompt
 } from './group-sessions';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
-import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
+import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
+import {reconcileGroupPeerClasses} from './group-class-reconcile';
 import {getMessageStore} from './message-store';
 import {isSafeGroupAvatarUrl} from './blossom-servers';
 import type {GroupStore} from './group-store';
@@ -2123,6 +2124,37 @@ export class GroupAPI {
     }
   }
 
+  /**
+   * Repair group/session records whose stored peerId was derived from the wrong
+   * CLASS, then converge the live UI (`group-class-reconcile.ts`).
+   *
+   * Runs on every boot and after every definitive groups reconcile: the class is
+   * baked into the peerId at first ingest and no sync path re-derives it, so a
+   * device that ingested a session in the batch-10 `tags` era keeps it in Groups
+   * forever. Idempotent and cheap — a converged store costs one range test per
+   * record and writes nothing.
+   */
+  async repairGroupPeerClasses(): Promise<number> {
+    const repairs = await reconcileGroupPeerClasses({
+      listGroups: () => this.store.getAll(),
+      saveGroup: (record) => this.store.save(record),
+      rekeyConversation: (conversationId, peerId) => getMessageStore().setConversationTwebPeerId(conversationId, peerId),
+      relocateDialog: ({record, fromPeerId, toPeerId}) => relocateGroupDialog(record.groupId, fromPeerId, toPeerId, record),
+      log: (...args) => this.log('[GroupAPI] class reconcile:', ...args)
+    });
+    for(const repair of repairs) {
+      // The message hot path answers `resolveGroupPeerId` from a module cache
+      // primed before this repair ran; without the overwrite, inbound group
+      // traffic keeps resolving the OLD peer id until a reload.
+      primeGroupKindCache(repair.groupId, repair.kind);
+    }
+    if(repairs.length > 0) {
+      schedulePublish('groups');
+      this.log('[GroupAPI] class reconcile: repaired', repairs.length, 'record(s)');
+    }
+    return repairs.length;
+  }
+
   private async handleAddMember(payload: GroupControlPayload): Promise<boolean> {
     if(!payload.memberPubkeys || payload.memberPubkeys.length === 0) {
       return false;
@@ -2471,16 +2503,35 @@ export function initGroupAPI(
   try {
     if(typeof window !== 'undefined') (window as any).__phantomchatGroupAPI = _instance;
   } catch{}
-  // #188 remainder: retire legacy ids as soon as the API exists — rebind
-  // every legacy group this device admins (once per group; a bound record is
-  // never rebound) and reconcile any resurrection corner. Fire-and-forget:
-  // a failed broadcast rolls back (nothing was written) and the next startup
-  // retries. Decision point flagged on #188 — see the rebind design comment.
-  void _instance.reconcileSupersededGroups().catch((err) => {
-    console.warn('[GroupAPI] init reconcileSupersededGroups failed:', err);
-  });
-  void _instance.rebindAllLegacyGroups().catch((err) => {
-    console.warn('[GroupAPI] init rebindAllLegacyGroups failed:', err);
-  });
+  // Boot sweeps, SEQUENCED — all three re-key records, move dialogs and retire
+  // ids, so let each finish before the next starts: a legacy rebind that retired
+  // a record mid-pass would leave the class reconcile re-keying a record that no
+  // longer exists. The chain itself stays fire-and-forget from init's point of
+  // view, so nothing here delays the return.
+  void (async() => {
+    // #188 remainder: retire legacy ids as soon as the API exists. A failed
+    // broadcast rolls back (nothing was written) and the next startup retries.
+    // Decision point flagged on #188 — see the rebind design comment.
+    try {
+      await _instance.reconcileSupersededGroups();
+    } catch(err) {
+      console.warn('[GroupAPI] init reconcileSupersededGroups failed:', err);
+    }
+    try {
+      await _instance.rebindAllLegacyGroups();
+    } catch(err) {
+      console.warn('[GroupAPI] init rebindAllLegacyGroups failed:', err);
+    }
+    // Group/session CLASS reconcile: repair records whose stored peerId was
+    // derived from the wrong class before their dialogs are rebuilt from the
+    // store (a session ingested in the batch-10 tag era otherwise stays in
+    // Groups forever — `group-class-reconcile.ts`). Also re-runs after every
+    // definitive groups sync reconcile, in phantomchat-onboarding-integration.ts.
+    try {
+      await _instance.repairGroupPeerClasses();
+    } catch(err) {
+      console.warn('[GroupAPI] init repairGroupPeerClasses failed:', err);
+    }
+  })();
   return _instance;
 }

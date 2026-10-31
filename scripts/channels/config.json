@@ -133,8 +133,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
-      "preview": "10f1ed83d4cd0cd3d7ceb0c4f5062992435f2c611582b7789ef18706b8704bf6",
-      "reason": "Group archive mutators: archiveGroup/unarchiveGroup write the record archivedAt and publish the groups domain; sendMessage and sendFile both refuse an archived group. No schema change - archivedAt already travels inside the record."
+      "preview": "c55d42f930d4711b235544ea8f41e03ad4bdb72fe60330d02ec27a442eb90d9c",
+      "reason": "Session peer class: a group's class is the input to peerId derivation and travels on group_create.groupKind. New `repairGroupPeerClasses()` runs the local class reconcile at boot and after each definitive groups reconcile - it only ever re-derives a record against evidence the record already carries, never invents one. The three boot sweeps (reconcileSupersededGroups, rebindAllLegacyGroups, repairGroupPeerClasses) now run in sequence rather than in parallel, since each retires or re-keys ids the others touch. No stored-format change: the field already exists on GroupRecord."
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
@@ -208,8 +208,8 @@
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "a46baa8ccc438e8d353f242f3e9ca204b66f6343223dc33c418737b957e76965",
-      "preview": "8a0c48200155358703095ff7eabc994a8988e41084d3396c186eaa045bb449f0",
-      "reason": "applyGroupDialogFolder derives a dialog folder_id from the record archivedAt and dispatches dialog_folder_update for an open pane; resolveGroupPeerId caches the record class instead of an IndexedDB read per message. Derived mirrors and an in-memory cache only - the groups CRDT already carries the record."
+      "preview": "536b502e2233a6b2ff12c77d2f4766ae86f8af485cc32a007e991e41d43340f3",
+      "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "59eb420187dc41693cb3b48d0256b86747763fc64fd5ee390b4ba210094f65a2",
@@ -233,8 +233,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "fce5f5d9aa6b0689d0073ca1edd6253dd1806e9ceb26701b09f5e8d1abb3ab05",
-      "preview": "f4b0f5947235e9e6608c0ad16a92a8a5f61f2251a8d194caac8b9e02721a1bf0",
-      "reason": "Wiring only: a remote archive now re-applies the live dialog move (upsertGroup only re-mirrors title/avatar), and conversationToPeerId passes the record kind so a session read cursor lands on the session peerId. No stored-format change."
+      "preview": "993f9fadfdc0e124e7b0a062882a80591114e9e0f40409f5361592e95f7dba31",
+      "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "86f55e73d40856e68138c9fc2346ccd6e257a1a240e78a8af45010e7ebcd1327",
@@ -260,6 +260,16 @@
       "stable": "absent",
       "preview": "b4cedba5c80e425edfba716cf5d8f9e35dec85d51626569a53652385d89168cc",
       "reason": "Which pick hook is in force for one open() of the Contacts tab: absent params keep the installed hook (open() passes none), present params own it. Pure decision function over UI state - no storage, protocol or settings change."
+    },
+    "src/lib/phantomchat/message-store.ts": {
+      "stable": "715e62bd64c0cfdbedc54128b8ec575dbe5db6fd8f3468856c2fe23f4903ddda",
+      "preview": "eff9081cde19b4e0a7474c08ca44bff9313c6dcd1959ead3635583c7f0729d2c",
+      "reason": "`setConversationTwebPeerId` re-stamps the identity triple's peer id on a conversation's stored rows for the group/session class reconcile. Rows move inside the SAME conversation key (group:<groupId>) and keep their eventId, mid and timestamp (mid derives from the event id, not the peer), so message identity, edits and reaction targets are unchanged. No schema change."
+    },
+    "src/lib/phantomchat/group-class-reconcile.ts": {
+      "stable": "absent",
+      "preview": "52f6b9e69fc592e962476355ad5eee7766dfb3193213d15de3d4cf46d50d91dd",
+      "reason": "Local repair only: adopts a record's class (explicit kind, else the retired batch-10 tags: ['session'] marker, else the range its stored peerId is already in), re-derives the peerId and re-keys that one record with its dialog and stored rows. Nothing new is written to the wire and no record is ever reclassified against evidence it does not already carry; a converged store costs one range test and no writes. A failed dialog move re-stamps the conversation back onto the record's own peer id, so a pass can never leave rows under a peer with no dialog row."
     }
   },
   "stableVersion": "1.1.77"

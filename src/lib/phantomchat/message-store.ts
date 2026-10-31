@@ -996,6 +996,44 @@ export class MessageStore {
   }
 
   /**
+   * Re-stamp every stored row in `conversationId` with a new tweb peer id.
+   *
+   * Used by the group/session CLASS reconcile. The conversation key is the
+   * group id (`group:<groupId>`), so a class change never moves a row — but the
+   * identity triple's `twebPeerId` is the peer the bubble renders under, and
+   * every mount / read marker / mirror key downstream is derived from it. Rows
+   * keep their eventId, `mid` and timestamp (both are derived from the event
+   * id, not the peer), so edits, reactions and replay dedup all survive the
+   * move. Paginates the same way `rekeyConversation` does so a long history is
+   * re-stamped in full.
+   */
+  async setConversationTwebPeerId(conversationId: string, twebPeerId: number, pageSize = 1000): Promise<number> {
+    if(!conversationId || typeof twebPeerId !== 'number') return 0;
+    const seen = new Set<string>();
+    let before: number | undefined;
+    let updated = 0;
+    for(;;) {
+      const rows = await this.getMessages(conversationId, pageSize, before);
+      if(rows.length === 0) break;
+      let newRows = 0;
+      for(const row of rows) {
+        if(seen.has(row.eventId)) continue;
+        seen.add(row.eventId);
+        newRows++;
+        if(row.twebPeerId === twebPeerId) continue;
+        await this.saveMessage({...row, twebPeerId});
+        updated++;
+      }
+      if(rows.length < pageSize) break;
+      // Timestamp ties can straddle a page boundary; if a full page yielded
+      // nothing new, nudge the strict `<` cursor to keep making progress.
+      before = rows[rows.length - 1].timestamp;
+      if(newRows === 0) before--;
+    }
+    return updated;
+  }
+
+  /**
    * Read a persisted one-shot migration marker. Returns false when the marker
    * has never been written.
    */
