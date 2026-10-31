@@ -34,12 +34,24 @@ export default class AppContactsTab extends SliderSuperTab {
   private sortedUserList: SortedUserList;
   private listsContainer: HTMLElement;
   /**
-   * Code-folder sessions (2026-10-30): when set, a click on a contact hands
+   * Session picker mode (2026-10-30): when set, a click on a contact hands
    * the peer here instead of opening a DM. Owned by the caller (sidebarLeft
    * .openNewSessionFlow), which creates the session group and navigates. A
    * `false` return from the row listener suppresses the default open-chat.
+   *
+   * It is PER OPEN, not per instance: `SliderSuperTab.open` runs `init` once
+   * and then nulls it, while `createTab` hands back an existing instance when
+   * one is up (`noSame`). A hook passed to `init` therefore either never
+   * arrives (Contacts already open -> `+` in Sessions silently opened a DM) or
+   * outlives its picker (a later normal open of Contacts created sessions
+   * instead of opening chats). Set it with `setPickPeerHook` right before
+   * `open()`, and let `onClose` drop it.
    */
   private onPickPeer?: (peerId: PeerId) => void;
+
+  public setPickPeerHook(hook?: (peerId: PeerId) => void) {
+    this.onPickPeer = hook;
+  }
 
   public init(params?: {onPickPeer?: (peerId: PeerId) => void}) {
     this.onPickPeer = params?.onPickPeer;
@@ -209,6 +221,8 @@ export default class AppContactsTab extends SliderSuperTab {
   }
 
   protected onClose() {
+    // Pick mode never survives its own open -- see setPickPeerHook.
+    this.onPickPeer = undefined;
     this.middlewareHelperLoad.clean();
     /* // need to clear, and left 1 page for smooth slide
     let pageCount = appPhotosManager.windowH / 56 * 1.25 | 0;

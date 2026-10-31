@@ -1001,6 +1001,43 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result.updates).toEqual([]);
     });
 
+    it('#292 review: an archived chat refuses to send behind the hidden composer', async () => {
+      // The composer being display:none is presentation; this is the refusal.
+      // A retry, a share-to-chat flow or a shortcut never passes that input,
+      // so the gate has to live on the bridge every 1:1 send crosses.
+      const rootScopeMod = await import('@lib/rootScope');
+      const scope = rootScopeMod.default as any;
+      scope.managers = {dialogsStorage: {getAnyDialog: () => ({_: 'dialog', peerId: PEER_ID, folder_id: 1})}};
+      try {
+        const result = await server.handleMethod('messages.sendMessage', {
+          peer: {user_id: PEER_ID},
+          message: 'into the archive'
+        });
+
+        expect(result._).toBe('updates');
+        expect(result.updates).toEqual([]);
+        expect(mockChatAPI.sendText).not.toHaveBeenCalled();
+      } finally {
+        delete scope.managers;
+      }
+    });
+
+    it('#292 review: an unarchived chat still sends', async () => {
+      const rootScopeMod = await import('@lib/rootScope');
+      const scope = rootScopeMod.default as any;
+      scope.managers = {dialogsStorage: {getAnyDialog: () => ({_: 'dialog', peerId: PEER_ID, folder_id: 0})}};
+      try {
+        await server.handleMethod('messages.sendMessage', {
+          peer: {user_id: PEER_ID},
+          message: 'live again'
+        });
+
+        expect(mockChatAPI.sendText).toHaveBeenCalled();
+      } finally {
+        delete scope.managers;
+      }
+    });
+
     it('returns empty updates when ownPubkey is not set', async () => {
       const bareServer = new PhantomChatMTProtoServer();
       bareServer.setChatAPI(mockChatAPI);

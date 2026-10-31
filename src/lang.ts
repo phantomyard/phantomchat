@@ -1867,6 +1867,7 @@ const lang = {
   // PhantomChat groups/sessions (owner batch 12): the archive toggle's failure
   // toast. Archiving reuses the existing 'Archive' / 'Unarchive' strings.
   'ArchiveActionFailed': 'Could not update this conversation',
+  'SessionCreateFailed': 'Could not create the session',
   'PaymentCheckoutName': 'Name',
   'ClearRecentStickersAlertTitle': 'Clear recent stickers',
   'ClearRecentStickersAlertMessage': 'Do you want to clear all your recent stickers?',

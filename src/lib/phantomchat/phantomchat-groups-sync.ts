@@ -288,12 +288,28 @@ export async function ensureGroupChatInjected(
  * are the source of truth for the class; an absent record (teardown in flight)
  * falls back to the classic derivation.
  */
+/**
+ * groupId -> kind, filled on every store read below.
+ *
+ * `resolveGroupPeerId` is on the message hot path — inbound, outgoing, edits,
+ * reactions, typing ticks — and a record's `kind` never changes, so an
+ * IndexedDB transaction per message was pure overhead. The store stays the
+ * fallback on a miss (and is still the source of truth).
+ */
+const kindByGroupId = new Map<string, GroupKind>();
+
 export async function resolveGroupPeerId(groupId: string): Promise<number> {
-  let kind: GroupKind | undefined;
-  try {
-    kind = (await getGroupStore().get(groupId))?.kind;
-  } catch{
-    // store unavailable — use the classic class
+  let kind = kindByGroupId.get(groupId);
+  if(!kind) {
+    try {
+      const record = await getGroupStore().get(groupId);
+      if(record) {
+        kind = record.kind ?? 'group';
+        kindByGroupId.set(groupId, kind);
+      }
+    } catch{
+      // store unavailable — use the classic class
+    }
   }
   return groupIdToPeerId(groupId, kind ?? 'group');
 }
@@ -319,6 +335,10 @@ export async function injectGroupCreateDialog(
 ): Promise<void> {
   let groupPeerId: number;
   try {
+    // The caller holds the record here; seed the hot-path cache from it so the
+    // create path does not pay for the read resolveGroupPeerId would otherwise
+    // fall back to.
+    if(record?.kind) kindByGroupId.set(groupId, record.kind);
     groupPeerId = await resolveGroupPeerId(groupId);
   } catch(err) {
     console.warn(LOG_PREFIX, 'create-dialog: groupIdToPeerId failed; skipping', {groupId, err});
@@ -382,6 +402,13 @@ export async function applyGroupDialogFolder(record: {groupId: string, kind?: Gr
   let dialog = mirrored;
   try {
     const dialogsStorage = (rootScope as any).managers.dialogsStorage;
+    // These are looked up dynamically (`?.`) because this reaches into tweb's
+    // dialogs storage through a cast. If either name changes, the live move
+    // silently no-ops and only a reload converges — say so rather than looking
+    // like "archive needs a restart".
+    if(!dialogsStorage?.getDialog || !dialogsStorage?.pushDialog) {
+      console.warn(LOG_PREFIX, 'applyGroupDialogFolder: dialogsStorage.getDialog/pushDialog missing — live move skipped');
+    }
     const entry = await dialogsStorage.getDialog?.(groupPeerId);
     const live = Array.isArray(entry) ? entry[0] : entry;
     if(live) dialog = live;

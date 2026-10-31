@@ -1102,36 +1102,40 @@ export class AppSidebarLeft extends SidebarSlider {
    * instead of opening a DM.
    */
   private openNewSessionFlow() {
-    this.createTab(AppContactsTab).open({
-      onPickPeer: async(peerId: PeerId) => {
-        try {
-          const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
-          const pubkey = await getPubkey(+peerId);
-          if(!pubkey) return;
+    const tab = this.createTab(AppContactsTab);
+    // The hook rides the OPEN, not `init`: createTab hands back the Contacts tab
+    // that is already up (`noSame`), and that instance's `init` ran long ago and
+    // was nulled — passing the hook inside `open({onPickPeer})` was silently
+    // dropped there, so `+` in Sessions opened a DM instead of creating one.
+    tab.setPickPeerHook(async(peerId: PeerId) => {
+      try {
+        const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
+        const pubkey = await getPubkey(+peerId);
+        if(!pubkey) return;
 
-          const {getGroupAPI} = await import('@lib/phantomchat/group-api');
-          const {DEFAULT_SESSION_GROUP_NAME} = await import('@lib/phantomchat/group-sessions');
-          const {getGroupStore} = await import('@lib/phantomchat/group-store');
+        const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+        const {DEFAULT_SESSION_GROUP_NAME} = await import('@lib/phantomchat/group-sessions');
+        const {getGroupStore} = await import('@lib/phantomchat/group-store');
 
-          const groupId = await getGroupAPI().createGroup(
-            DEFAULT_SESSION_GROUP_NAME,
-            [pubkey],
-            undefined,
-            {kind: 'session'}
-          );
+        const groupId = await getGroupAPI().createGroup(
+          DEFAULT_SESSION_GROUP_NAME,
+          [pubkey],
+          undefined,
+          {kind: 'session'}
+        );
 
-          const group = await getGroupStore().get(groupId);
-          if(!group) return;
+        const group = await getGroupStore().get(groupId);
+        if(!group) return;
 
-          this.closeEverythingInside();
-          appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
-        } catch(err) {
-          console.error('[PhantomChat.chat] failed to create session:', err);
-          const {toast} = await import('@components/toast');
-          toast('Could not create the session');
-        }
+        this.closeEverythingInside();
+        appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
+      } catch(err) {
+        console.error('[PhantomChat.chat] failed to create session:', err);
+        const {toast} = await import('@components/toast');
+        toast(i18n('SessionCreateFailed'));
       }
     });
+    tab.open();
   }
 
   // "Create a new": group and private chat only. Adding a contact lives solely in

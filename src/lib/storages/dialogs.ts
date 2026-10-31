@@ -16,7 +16,7 @@ import tsNow from '@helpers/tsNow';
 import SearchIndex from '@lib/searchIndex';
 import {SliceEnd} from '@helpers/slicedArray';
 import {MyDialogFilter} from '@lib/storages/filters';
-import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '@appManagers/constants';
+import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '@appManagers/constants';
 import {MaybePromise, Modify, NoneToVoidFunction} from '@types';
 import ctx from '@environment/ctx';
 import AppStorage from '@lib/storage';
@@ -1790,7 +1790,11 @@ export default class DialogsStorage extends AppManager {
       // whose membership is decided locally — which is now all of them — must
       // report the locally filtered length; only virtual filters (forum /
       // saved) carry their own counts.
-      const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS;
+      // Sessions (4) is local-only too: its membership is the SESSION peer
+      // class, decided here, never by the server. Without the latch the pager
+      // depends on the virtual server's whole-set `isEnd` for a folder it is
+      // most likely to load EMPTY (you create a session, nothing in it yet).
+      const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS || filterId === FOLDER_ID_SESSION;
       const isLocallyFilteredFolder = !isVirtualFilter;
 
       if(skipMigrated) {

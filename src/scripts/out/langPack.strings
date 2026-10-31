@@ -1150,6 +1150,7 @@
 "HistoryCleared" = "History was cleared";
 "Archive" = "Archive";
 "ArchiveActionFailed" = "Could not update this conversation";
+"SessionCreateFailed" = "Could not create the session";
 "Unarchive" = "Unarchive";
 "Delete" = "Delete";
 "Reply" = "Reply";

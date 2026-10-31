@@ -177,8 +177,13 @@ export class GroupStore {
     if(updates.description !== undefined) existing.description = updates.description;
     if(updates.avatar !== undefined) existing.avatar = updates.avatar;
     if(updates.archivedAt !== undefined) {
-      if(updates.archivedAt === null) delete existing.archivedAt;
-      else existing.archivedAt = updates.archivedAt;
+      // `null` = unarchive, stored as an explicit 0 rather than deleted. An
+      // ABSENT field is what an older client republishes, and the groups CRDT
+      // has to tell "cleared" from "does not know about archive" -- otherwise a
+      // rename from an old build resurrects the stamp, or an unarchive can
+      // never propagate. Truthiness checks (`if(group.archivedAt)`) still read
+      // 0 as unarchived.
+      existing.archivedAt = updates.archivedAt === null ? 0 : updates.archivedAt;
     }
     existing.updatedAt = Date.now();
     await this.save(existing);

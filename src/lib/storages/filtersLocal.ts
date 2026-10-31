@@ -42,10 +42,13 @@ export function buildLocalFilter(id: number): MyDialogFilter {
     filter.pFlags.exclude_archived = true;
     filter.title = literalTitle('Groups');
   } else if(id === FOLDER_ID_SESSION) {
-    // No pFlags: membership is the SESSION PEER CLASS (isSessionPeer), which
-    // FiltersStorage.testDialogForFilter short-circuits before the pFlags walk.
-    // Archived sessions leave for the shared archive (id 1).
-    filter.pFlags.exclude_archived = true;
+    // Membership is the SESSION PEER CLASS (isSessionPeer), which
+    // FiltersStorage.testDialogForFilter short-circuits before the pFlags walk —
+    // so `exclude_archived` below is a no-op today (archived sessions already
+    // leave for the shared archive by folder_id). It is dropped rather than
+    // kept: a second, unreachable membership rule is exactly the "scattered
+    // gates" problem this refactor removes, and it would silently become a real
+    // rule if that short-circuit ever moved.
     filter.title = literalTitle('Sessions');
   }
 

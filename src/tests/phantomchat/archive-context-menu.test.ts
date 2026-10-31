@@ -1,5 +1,10 @@
 /**
- * Group/session archive menu (owner batch 12, 2026-10-31).
+ * Archive menu for group-class dialogs (owner batch 12, 2026-10-31).
+ *
+ * Not a "session menu" test: batch 12 DELETED the session-specific menu, and
+ * what is pinned here is the one generic entry every group-class peer gets.
+ * (Renamed from session-context-menu.test.ts, which promised a session path
+ * that no longer exists.)
  *
  * Batch 11 gave sessions their own menu (Rename / Archive / Delete) and their
  * own badge. Batch 12 drops that whole idea: a session is an ordinary group
@@ -22,6 +27,7 @@
 import {describe, it, expect} from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import {GROUP_PEER_BASE, SESSION_PEER_BASE, isGroupPeer, isSessionPeer} from '@lib/phantomchat/group-types';
 
 const SRC = path.resolve(__dirname, '../..');
 
@@ -42,7 +48,12 @@ describe('dialog context menu: archive entries', () => {
   it('gates on the group CLASS, so every group gets it — not sessions only', () => {
     const archivable = menu.slice(menu.indexOf('private isArchivable'), menu.indexOf('private isArchived'));
     expect(archivable).toContain('isGroupPeer(+this.peerId)');
-    expect(archivable).not.toContain('isSessionPeer');
+    // Pinned as behaviour, not as an absent substring: the gate is correct
+    // precisely because a session IS a group-class peer, so one predicate
+    // covers both and a future reader may legitimately name it here.
+    expect(isSessionPeer(-Number(SESSION_PEER_BASE) - 1)).toBe(true);
+    expect(isGroupPeer(-Number(SESSION_PEER_BASE) - 1)).toBe(true);
+    expect(isGroupPeer(-Number(GROUP_PEER_BASE) - 1)).toBe(true);
     // The archived verdict is the one dialog flag every type shares.
     expect(menu).toContain('(this.dialog as Dialog).folder_id === FOLDER_ID_ARCHIVE');
   });

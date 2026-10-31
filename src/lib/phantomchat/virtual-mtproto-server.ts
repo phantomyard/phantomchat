@@ -18,6 +18,8 @@ import type {HealedFileRow, PhantomChatFileMetadata} from './phantomchat-media-s
 import {getPubkey, getMapping, removeMapping, recordDeletedPeer} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
 import {isGroupPeer} from './group-types';
+import {FOLDER_ID_ARCHIVE} from '@appManagers/constants';
+import rootScope from '@lib/rootScope';
 import {getReadReceiptsEnabled} from './read-receipts-setting';
 import {schedulePublish} from './phantomchat-sync-triggers';
 // Lazy imports for group-store / group-api so test files that never hit the
@@ -1600,6 +1602,22 @@ export class PhantomChatMTProtoServer {
     return users;
   }
 
+  /**
+   * Is this 1:1 peer's dialog sitting in the archive? Archive is the dialog's
+   * `folder_id === 1` — the same flag a chat, a group and a session use — and
+   * an archived dialog is read-only for every class (owner batch 12).
+   * Reads the synced mirror only; a miss (peer not dialogs yet) is not archived.
+   */
+  private isArchivedPeer(peerId: number): boolean {
+    try {
+      const dialogsStorage = (rootScope as any)?.managers?.dialogsStorage;
+      const dialog = dialogsStorage?.getAnyDialog?.(peerId);
+      return !!dialog && dialog.folder_id === FOLDER_ID_ARCHIVE;
+    } catch{
+      return false;
+    }
+  }
+
   private async sendMessage(params: any): Promise<any> {
     const emptyUpdates = {
       _: 'updates',
@@ -1620,6 +1638,16 @@ export class PhantomChatMTProtoServer {
     // silently get `emptyUpdates` back, dropping the message on the floor.
     if(isGroupPeer(peerId)) {
       return this.sendGroupMessage(peerId, params);
+    }
+
+    // Archived chats are read-only too (owner batch 12). GroupAPI refuses a
+    // group-class peer; this is the choke point every 1:1 text send crosses, so
+    // hiding the composer is not the only thing standing between an archived
+    // chat and a new row (a retry, a share-to-chat flow or a shortcut never
+    // goes near that input).
+    if(this.isArchivedPeer(peerId)) {
+      console.warn(LOG_PREFIX, 'sendMessage: chat is archived (read-only)', Math.abs(peerId));
+      return emptyUpdates;
     }
 
     const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));
@@ -2366,6 +2394,14 @@ export class PhantomChatMTProtoServer {
     // that doesn't exist for groups (FIND-3ce67f93 obs (c) carryforward).
     if(isGroupPeer(peerId)) {
       return this.phantomchatSendFileToGroup(peerId, params);
+    }
+
+    // Archived chats are read-only (owner batch 12) — same refusal as the text
+    // path, so a drop / queued upload / attach cannot post media into an
+    // archived chat behind the hidden composer.
+    if(this.isArchivedPeer(peerId)) {
+      console.warn(LOG_PREFIX, 'phantomchatSendFile: chat is archived (read-only)', Math.abs(peerId));
+      return emptyUpdates;
     }
 
     const peerPubkey = await this.cachedGetPubkey(Math.abs(peerId));

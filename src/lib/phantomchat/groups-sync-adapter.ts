@@ -294,6 +294,18 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
           const localKind = storeState?.get(id)?.kind;
           if(localKind === 'session') record.kind = 'session';
           else if(record.kind !== 'session') delete record.kind;
+          // `archivedAt` gets the same keep-local guard as `kind`: a writer
+          // that republishes the record without the field must not unarchive
+          // the group for everyone (its rename would otherwise win on
+          // `updatedAt` and drop the stamp). The clear signal is a NUMBER —
+          // `0` means "explicitly unarchived", minted by updateInfo(null) — so
+          // absent field = "this writer knows nothing about archive", local
+          // stamp wins, and 0 is normalised away.
+          const localArchivedAt = storeState?.get(id)?.archivedAt;
+          if(typeof record.archivedAt !== 'number' && typeof localArchivedAt === 'number') {
+            record.archivedAt = localArchivedAt;
+          }
+          if(record.archivedAt === 0) delete record.archivedAt;
           if(typeof entry.deliberateAddAt === 'number') {
             record.deliberateAddAt = entry.deliberateAddAt * 1000;
           }

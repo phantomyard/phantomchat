@@ -475,6 +475,14 @@ export class GroupAPI {
       throw new Error(`sendFile: not a member of group ${groupId.slice(0, 8)}`);
     }
 
+    // Archived groups are read-only (owner batch 12). sendMessage refuses text;
+    // this is the same invariant for media — a drop onto the chat area, a
+    // queued upload or the attach path all reach the group through here and
+    // never pass the hidden composer. Without it `archivedAt` gated text only.
+    if(group.archivedAt) {
+      throw new Error('sendFile: group is archived (read-only)');
+    }
+
     const timestampMs = Date.now();
     const messageId = `grp-${timestampMs}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -730,6 +738,11 @@ export class GroupAPI {
     if(!group) throw new Error(`Group not found: ${groupId}`);
 
     await this.store.updateInfo(groupId, {archivedAt: archivedAt});
+    // Publish BEFORE touching the UI. Every other mutator in this file ends with
+    // this line and archive is no different: without it `archivedAt` sits in
+    // this device's IndexedDB and only leaks out when some unrelated group
+    // mutation happens to publish, or on the 30-minute periodic reconcile.
+    schedulePublish('groups');
     const updated = await this.store.get(groupId);
     if(!updated) return;
 
