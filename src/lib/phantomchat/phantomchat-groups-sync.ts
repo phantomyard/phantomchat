@@ -37,6 +37,7 @@
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
 import {groupIdToPeerId} from './group-types';
+import {intendedGroupKind} from './group-class-reconcile';
 import type {GroupKind} from './group-types';
 import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
@@ -176,6 +177,20 @@ function dispatchGroupHistoryAppend(groupPeerId: number, msg: any): void {
   }
 }
 
+/**
+ * The delayed half of the two-dispatch rule, per peer. It replays a SNAPSHOT, so
+ * if the row was archived, moved to another peer id or deleted inside the 500ms
+ * window, replaying it puts the old row back into the list it just left.
+ */
+const pendingGroupDialogRepaints = new Map<number, ReturnType<typeof setTimeout>>();
+
+function cancelPendingGroupDialogRepaint(groupPeerId: number): void {
+  const pending = pendingGroupDialogRepaints.get(groupPeerId);
+  if(pending === undefined) return;
+  clearTimeout(pending);
+  pendingGroupDialogRepaints.delete(groupPeerId);
+}
+
 function dispatchGroupDialogUpdate(groupPeerId: number, dialog: any): void {
   const toPeerId = (Number.prototype as any).toPeerId;
   const asPeerId = toPeerId ? (groupPeerId as any).toPeerId(true) : groupPeerId;
@@ -186,6 +201,8 @@ function dispatchGroupDialogUpdate(groupPeerId: number, dialog: any): void {
   // and silently skip the entry (FIND-3f07bfd3 γ — mirror was set but no
   // DOM row ever appeared). Wrap in `{dialog}` so the adapter picks it up.
   const envelope = {dialog};
+  // A newer update for this peer supersedes the delayed repaint of the older one.
+  cancelPendingGroupDialogRepaint(groupPeerId);
   const dispatchOnce = () => {
     try {
       rootScope.dispatchEvent('dialogs_multiupdate' as any, new Map([[asPeerId, envelope]]) as any);
@@ -196,7 +213,10 @@ function dispatchGroupDialogUpdate(groupPeerId: number, dialog: any): void {
   // Two-dispatch rule (see CLAUDE.md): first dispatch adds via sortedList.add,
   // second hits the existing-dialog branch and renders the preview text.
   dispatchOnce();
-  setTimeout(dispatchOnce, 500);
+  pendingGroupDialogRepaints.set(groupPeerId, setTimeout(() => {
+    pendingGroupDialogRepaints.delete(groupPeerId);
+    dispatchOnce();
+  }, 500));
 }
 
 /**
@@ -305,7 +325,7 @@ export async function resolveGroupPeerId(groupId: string): Promise<number> {
     try {
       const record = await getGroupStore().get(groupId);
       if(record) {
-        kind = record.kind ?? 'group';
+        kind = intendedGroupKind(record);
         kindByGroupId.set(groupId, kind);
       }
     } catch{
@@ -520,6 +540,12 @@ export async function relocateGroupDialog(
     const entry = await dialogsStorage?.getAnyDialog?.(fromPeerId);
     const live = Array.isArray(entry) ? entry[0] : entry;
     if(live) previous = live;
+    // A retry after a failed record save (#296): the row already moved, so its
+    // state now lives under the target id.
+    if(!previous) {
+      const moved = await dialogsStorage?.getAnyDialog?.(toPeerId);
+      previous = (Array.isArray(moved) ? moved[0] : moved) ?? proxy?.mirrors?.dialogs?.[toPeerId] ?? null;
+    }
   } catch(e: any) {
     console.debug(LOG_PREFIX, 'relocateGroupDialog: previous dialog read failed:', e?.message);
   }
@@ -577,6 +603,40 @@ export async function relocateGroupDialog(
 }
 
 /**
+ * Move a group onto a new peer id because a SYNCED record changed its class.
+ *
+ * The record is saved by the caller afterwards, in the same order as the boot
+ * repair: history, dialog, record. Without the dialog move the row stays on the
+ * old id, the orphan sweep deletes it, and the session vanishes until a reload.
+ */
+export async function moveSyncedGroupToPeer(
+  record: {groupId: string, peerId: number, kind?: GroupKind, archivedAt?: number},
+  fromPeerId: number
+): Promise<void> {
+  const conversationId = `group:${record.groupId}`;
+  const store = getMessageStore();
+  await store.setConversationTwebPeerId(conversationId, record.peerId);
+  try {
+    await relocateGroupDialog(record.groupId, fromPeerId, record.peerId, record);
+  } catch(err) {
+    await store.setConversationTwebPeerId(conversationId, fromPeerId);
+    throw err;
+  }
+}
+
+/**
+ * True when the record says this group is archived. Every dialog snapshot has to
+ * carry it, because `createTwebDialog` stamps the folder index from `archived`.
+ */
+async function isGroupArchived(groupId: string): Promise<boolean> {
+  try {
+    return !!(await getGroupStore().get(groupId))?.archivedAt;
+  } catch{
+    return false;
+  }
+}
+
+/**
  * Symmetric cleanup for `ensureGroupChatInjected` — invoked when this user
  * leaves or is removed from a group. Without this, `GroupAPI.leaveGroup` /
  * `handleRemoveMember` delete the group record from `group-store` but leave
@@ -593,6 +653,7 @@ export async function relocateGroupDialog(
  * Idempotent — safe to call even when no injection was ever performed.
  */
 export async function cleanupGroupChatInjection(groupPeerId: number): Promise<void> {
+  cancelPendingGroupDialogRepaint(groupPeerId);
   const chatId = Math.abs(groupPeerId);
   const proxy = MOUNT_CLASS_TO.apiManagerProxy as any;
   if(proxy?.mirrors?.peers) delete proxy.mirrors.peers[groupPeerId];
@@ -687,6 +748,7 @@ export async function handleGroupIncoming(
     await ensureSenderUserInjected({
       senderPubkey,
       peerId: senderPeerId,
+      asContact: false,
       logPrefix: LOG_PREFIX + ' rx'
     });
   } catch(err) {
@@ -774,6 +836,8 @@ export async function handleGroupIncoming(
     // replay dedup in GroupAPI.handleIncomingGroupMessage, but a message sent
     // from another device of ours legitimately reaches this path.
     unreadCount: isOutgoing || selected ? 0 : 1,
+    // Without this, every message in an archived session puts it back in Sessions.
+    archived: await isGroupArchived(groupId),
     // Outbox cursor (= our own read state on members' messages) is consistent
     // with unreadCount: for an incoming message we have not read yet, leave
     // read_inbox_max_id at mid - 1 to model "all prior messages read, this one
@@ -1014,6 +1078,7 @@ export async function handleGroupOutgoing(
   try {
     ownPeerId = await mapper.mapPubkey(ownPubkey);
     await ensureSenderUserInjected({
+      asContact: false,
       senderPubkey: ownPubkey,
       peerId: ownPeerId,
       logPrefix: LOG_PREFIX + ' tx-self'
@@ -1041,6 +1106,7 @@ export async function handleGroupOutgoing(
     topMessage: mid,
     topMessageDate: timestampSec,
     unreadCount: 0,
+    archived: await isGroupArchived(groupId),
     // Outgoing send: nothing unread. Without read markers tweb spams
     // reloadConversation for this dialog every getDialogs pass.
     readInboxMaxId: mid,

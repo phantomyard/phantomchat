@@ -50,22 +50,25 @@ export const LEGACY_SESSION_TAG = 'session';
 type StoredGroupRecord = GroupRecord & {tags?: unknown};
 
 /**
- * The class a record is SUPPOSED to have. An explicit `kind` wins; the retired
- * `tags: ['session']` marker is next; then the range the stored peerId is
- * already in; and only a record with none of those is a classic group (the
- * pre-class default).
+ * The class a record is SUPPOSED to have, and the ONLY place that decides it.
+ * Session evidence is a one-way ratchet: `kind: 'session'` or a session-range
+ * peerId always wins. Then an explicit `kind: 'group'`, then the retired
+ * `tags: ['session']` marker, and only a record with none of those is a classic
+ * group (the pre-class default).
  */
 export function intendedGroupKind(
   record: Pick<GroupRecord, 'kind'> & {tags?: unknown, peerId?: number}
 ): GroupKind {
-  if(record.kind === 'session' || record.kind === 'group') return record.kind;
+  if(record.kind === 'session') return 'session';
+  // A peerId in the session range can only have been derived FROM a session, so
+  // no later `kind: 'group'` (an older writer, a default stamp) can demote it.
+  // Without this ratchet a stale writer moves the row back into Groups, the next
+  // writer moves it to Sessions again, and the row visibly flips between them.
+  if(typeof record.peerId === 'number' && isSessionPeer(record.peerId)) return 'session';
+  if(record.kind === 'group') return 'group';
   const tags = record.tags;
   if(Array.isArray(tags) && tags.includes(LEGACY_SESSION_TAG)) return 'session';
-  // Range fallback: the class is a pure range test everywhere else in the app,
-  // so a peerId already in the session range must not be defaulted to classic —
-  // that would stamp `kind: 'group'` on a correct session and re-key it into the
-  // group range on the next boot.
-  return typeof record.peerId === 'number' && isSessionPeer(record.peerId) ? 'session' : 'group';
+  return 'group';
 }
 
 export type GroupClassReconcileDeps = {
@@ -122,8 +125,7 @@ export async function reconcileGroupPeerClasses(
     const hasLegacyTags = Array.isArray(record.tags) && record.tags.length > 0;
     // Cheap self-contradiction test: an explicit class that disagrees with the
     // peerId's range, or a tag-era session with no class field at all.
-    const classDisagrees = record.kind === 'session' ? !isSessionPeer(record.peerId) :
-      record.kind === 'group' ? isSessionPeer(record.peerId) : false;
+    const classDisagrees = record.kind === 'session' && !isSessionPeer(record.peerId);
     const legacyTagged = !record.kind && kind === 'session';
 
     if(!classDisagrees && !legacyTagged) {

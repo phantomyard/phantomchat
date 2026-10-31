@@ -91,8 +91,8 @@ describe('intendedGroupKind', () => {
     // same test every folder decision already uses.
     expect(intendedGroupKind({peerId: sessionPeerId} as any)).toBe('session');
     expect(intendedGroupKind({peerId: groupPeerId} as any)).toBe('group');
-    // Evidence still wins over the range it disagrees with.
-    expect(intendedGroupKind({kind: 'group', peerId: sessionPeerId} as any)).toBe('group');
+    // Session evidence is a ratchet: the range cannot be demoted by a stale field.
+    expect(intendedGroupKind({kind: 'group', peerId: sessionPeerId} as any)).toBe('session');
     expect(intendedGroupKind({tags: ['session'], peerId: groupPeerId} as any)).toBe('session');
     // No peerId at all: the pre-class default.
     expect(intendedGroupKind({})).toBe('group');
@@ -149,6 +149,19 @@ describe('reconcileGroupPeerClasses', () => {
     const repairs = await reconcileGroupPeerClasses(deps);
     expect(repairs).toHaveLength(1);
     expect(repairs[0].toPeerId).toBe(await groupIdToPeerId(OTHER_GROUP_ID, 'session'));
+  });
+
+  it('never re-keys a session-range record down into Groups, whatever kind it claims', async() => {
+    const peerId = await groupIdToPeerId(GROUP_ID, 'session');
+    const record = await legacyRecord({kind: 'group', peerId});
+    const {deps, saved, rekeyed, relocated} = harness([record]);
+
+    await reconcileGroupPeerClasses(deps);
+
+    expect(rekeyed).toEqual([]);
+    expect(relocated).toEqual([]);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({kind: 'session', peerId});
   });
 
   it('writes nothing for a converged classic group', async() => {

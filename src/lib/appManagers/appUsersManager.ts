@@ -66,6 +66,7 @@ export class AppUsersManager extends AppManager {
   private requirementsToContactProcessing: boolean;
 
   private p2pSyntheticUsers = new Map<number, User>();
+  private p2pNonContactUsers = new Set<number>();
 
   protected after() {
     this.clear(true);
@@ -384,6 +385,12 @@ export class AppUsersManager extends AppManager {
   }
 
   private pushContact(id: UserId) {
+    // A contact is always a user. Negative ids are groups and sessions.
+    if((id as number) <= 0) {
+      console.warn('[PhantomChat.chat] refused non-user contact id:', id);
+      return;
+    }
+
     this.contactsList.add(id);
     this.contactsIndex.indexObject(id, this.getUserSearchText(id));
     this.peersStorage.requestPeer(id.toPeerId(), 'contact');
@@ -769,8 +776,13 @@ export class AppUsersManager extends AppManager {
    * Inject a synthetic P2P user into the users cache.
    * Used by PhantomChat.chat display bridge to make P2P peers visible to tweb.
    */
-  public injectP2PUser(pubkey: string, peerId: number, displayName: string, avatar: string): void {
+  public injectP2PUser(pubkey: string, peerId: number, displayName: string, avatar: string, opts?: {asContact?: boolean}): void {
+    const asContact = opts?.asContact !== false;
     if(this.p2pSyntheticUsers.has(peerId)) {
+      // Seen first as a group member, now added for real.
+      if(asContact && this.p2pNonContactUsers.delete(peerId)) {
+        this.pushContact(peerId as UserId);
+      }
       return;
     }
 
@@ -792,8 +804,11 @@ export class AppUsersManager extends AppManager {
     // Mirror to main thread so apiManagerProxy.getPeer() finds the user
     this.mirrorUser(user);
 
-    // Add to contacts list and search index so contact picker finds P2P peers
-    this.pushContact(peerId as UserId);
+    // Add to contacts list and search index so contact picker finds P2P peers.
+    // A sender known only through a group or a typing tick is not a contact: the
+    // list is rebuilt from 1:1 conversations on reload, so it would drop out again.
+    if(asContact) this.pushContact(peerId as UserId);
+    else this.p2pNonContactUsers.add(peerId);
 
     console.log('[PhantomChat.chat] injectP2PUser:', {peerId, displayName});
   }

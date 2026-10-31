@@ -114,15 +114,18 @@ export default class DialogsStorage extends AppManager {
   protected after() {
     this.clear(true);
 
+    // Both rebuilds read every persisted row. The folder lists are index-driven
+    // views and Chats hides groups, so a group missing from Groups/Sessions at this
+    // moment would never be re-indexed and would stay out of its folder.
     const onFilterUpdate = (filter: MyDialogFilter) => {
-      const dialogs = this.getCachedDialogs(false);
+      const dialogs = this.getAllPersistedDialogs();
       for(let i = 0; i < dialogs.length; ++i) {
         this.processDialogForFilter(dialogs[i], filter);
       }
     };
 
     this.rootScope.addEventListener('filter_order', () => {
-      const dialogs = this.getCachedDialogs(false);
+      const dialogs = this.getAllPersistedDialogs();
       // const indexKeys: ReturnType<DialogsStorage['getDialogIndexKey']>[] = [];
       for(const filterId in this.folders) {
         if(!this.isVirtualFilter(+filterId)) {

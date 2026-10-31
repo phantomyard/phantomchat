@@ -921,13 +921,14 @@ export class GroupAPI {
   private async teardownGroupLocally(groupId: string): Promise<void> {
     // Peer id is class-dependent (a session lives in its own range), so read the
     // record BEFORE deleting it — after the delete there is nothing left to ask.
-    let kind: GroupKind | undefined;
+    let stored: GroupRecord | null = null;
     try {
-      kind = (await this.store.get(groupId))?.kind;
+      stored = await this.store.get(groupId);
     } catch{
       // store read failed: fall back to the classic derivation below
     }
-    const peerId = await groupIdToPeerId(groupId, kind ?? 'group');
+    // The stored id is where the row actually sits, even on an unrepaired record.
+    const peerId = stored?.peerId ?? await groupIdToPeerId(groupId, 'group');
     // Durable positive delete fact (PR #179 round 5): recorded BEFORE the
     // destructive teardown and as a STRICT precondition — if the durable write
     // fails, we abort and the live record stays (Kai's round-9 review of
@@ -2111,6 +2112,13 @@ export class GroupAPI {
       const peerId = dialog?.peerId;
       if(typeof peerId !== 'number' || !isGroupPeer(peerId)) continue;
       if(livePeerIds.has(peerId)) continue;
+      // `livePeerIds` is a snapshot taken before the awaits above. Ask again right
+      // before the destructive step: a group that arrived in between is not an orphan.
+      try {
+        if(await this.store.getByPeerId(peerId)) continue;
+      } catch{
+        return;
+      }
       try {
         rootScope.managers.dialogsStorage.dropDialogOnDeletion(peerId);
         dropped++;
