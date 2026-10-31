@@ -33,12 +33,12 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "913aaaffc0fa4ba479a027b17f1bb549fecc12e7d8219b5500970fa813761787",
-      "preview": "fd20fd02d8cad96c1de91d6a0765fc98f8bb10e03f237af176f7daf6386a52f8",
+      "preview": "94c63d52d098eb6faa9e936f83b8fbbe7b4571219cacb7ae88a8969acbba1985",
       "reason": "Sets glyph \"#\" for Code in the rail payload. Presentation only."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "stable": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
-      "preview": "5573c9fc3f85223282abce8a79afcb41b3c0bd5c0f30863e1c8159989d321f8d",
+      "preview": "e8922d4302674428038e17af6c2a1c7df90a2128a4c5b46efd05edcdb44869e2",
       "reason": "getIconForFilter returns a placeholder icon key for Code because the glyph overrides it. Presentation only."
     },
     "src/components/sidebarLeft/tabs/editFolder.ts": {
@@ -58,12 +58,12 @@
     },
     "src/lang.ts": {
       "stable": "9ce8a8a239e5ffe2663da99feced7b856aa42b4f3d0996c8c6536f510f2675e9",
-      "preview": "9ce8a8a239e5ffe2663da99feced7b856aa42b4f3d0996c8c6536f510f2675e9",
+      "preview": "7112d77ab46aa80f6024fefc4592cdf5f3e8f292fc5d2f31de4a2338bef63301",
       "reason": "Two new display strings: 'Disable Sidebar' and 'Enable Sidebar'. No storage or behaviour change."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "3fe972d1aa8dca02f895090e1af2c98a66fe27175a733e6827252f55c80de437",
-      "preview": "ad4b4d6fcb7dd146992bf1f90c0685a516431fd69006833cc949554e161c5fa6",
+      "preview": "d33c5aadc26cb9fffcf73717ef5f705bac1c7d5123f5ee9f85049a5c8476a9c6",
       "reason": "Session chip on dialog rows only: appends the `#` badge element beside the existing P2P badge. No data, storage or protocol touch; the chip hides itself for every non-session peer."
     },
     "src/lib/folders-default.ts": {
@@ -73,7 +73,7 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "5578ea14a8a8f2854f3aac006c2ab927d24355aceeb9a224dc5cd22a9baffe24",
-      "preview": "5578ea14a8a8f2854f3aac006c2ab927d24355aceeb9a224dc5cd22a9baffe24",
+      "preview": "b9d7a69b9c8bd3c428ca4449bc6bcdf41b23184df48d8d1ce2276a3a3c7cd6bc",
       "reason": "Generated lang-pack mirror of the two new label keys. Text only."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
@@ -88,7 +88,7 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "305b1d29a1ab0fcfd63667937240ab0e1f16534b12e946d52889c05234e2c247",
-      "preview": "47fbf804ad850a54dc132515032c6ba663707da160f7e1a8db48e41815eb7b1e",
+      "preview": "2ea4e07e587486db2a5e3a1d4b7c736c76c172af2ed279ddb9228af8128ef29d",
       "reason": "The chat-list + button opens the single-contact picker (and creates a session group from the pick) when the active folder is Code; Groups and every other folder behave as before. UI routing only."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
@@ -98,15 +98,18 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "4451fea74901e056111ac4c532c6db083747cdab34de56e05efad8370912c378",
-      "preview": "064876b3be04dc12063506984e0545102fad5fed9f6258a59c6022bbb3199afa"
+      "preview": "8e554c8f3c75e4fd5f4605ab3a54fee1d082660f2ac65eeb95a12dcc5ce42fd2",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "5bb0c60f7cc6e73aa1fb27e9b053c244c441e1f63ab8500e533c48bd1446a6b2",
-      "preview": "c6501cf0dee36bbbd0dc1111aa3be723090d31002dfa999614de3c26298dab5a"
+      "preview": "47f371225673caae01924865f9bb7dd87100a80dcd392323bdb3bf5b0df3cc54",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
     "src/lib/storages/filters.ts": {
       "stable": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "preview": "9af701b3bf10f0b0971548d87da919803e5b730134bd4b165e3e98a608f9f291"
+      "preview": "674994d5852e5696b20d20a05c76cef22713d1e349eea707c73c3c9265e8a2a5",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
@@ -115,7 +118,8 @@
     },
     "src/lib/phantomchat/phantomchat-peer-mapper.ts": {
       "stable": "147879b5e88fb8b22af2ac9009f77a74c06073e9be15f50bf1b3ec951f4d354a",
-      "preview": "bf04b42b7de414b40bccce292856444b328c65cf2bbc195c9da42bed9e152540"
+      "preview": "d927e86b57741171a2b46a70acbecefb120eabb6b9c676947fa716c21254816b",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
     "src/components/appSelectPeers.ts": {
       "stable": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
@@ -129,7 +133,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
-      "preview": "06b24360b471116dd1b78f757cd7438e58b7e44a53b56905e7eaed3fcf423f66"
+      "preview": "c9dfdaa775a54b4d3482786425fa22c0c4b2d013c218a2314a9e0d18d9a046e3",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
@@ -158,7 +163,7 @@
     },
     "src/components/phantomchat/sessionBadge.ts": {
       "stable": "absent",
-      "preview": "32a16ec58b28a0f65ce815ed41e2c62dde97dd2ddb6cb4ce73af842d5dac0eab",
+      "preview": "4eab2e39f732787d11d8b748c9d4f05a1bd3c19613825b1ca29d8861078fb7f5",
       "reason": "New presentation component: a static `#` chip whose visibility comes from the synchronous session index. No storage, network or state mutation."
     },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
@@ -178,12 +183,12 @@
     },
     "src/lib/appManagers/constants.ts": {
       "stable": "b7add6caa33a3125c26fc6c22cbbaa26f12c25bcd5e197ad460e47f30e434431",
-      "preview": "e82c4e1e2ae638288019d57ad5a50a5fc63e48c0f60ad350bd66efe09457dcb0",
+      "preview": "2eab1b186e488f6118250e394ffcbd8b63c06f2598cd87bb19d118b97fc7f7fd",
       "reason": "Adds FOLDER_ID_CODE = 4 to the locally-seeded system folders (REAL_FOLDERS + PROTECTED_FOLDERS), so it is re-seeded on every boot like Groups and cannot be deleted. START_LOCAL_ID moves 4 -> 5; persisted custom folders have their localId reassigned at boot (prependFilters strips it), so no index collides."
     },
     "src/lib/phantomchat/group-store.ts": {
       "stable": "2e30c94c1ab3eae2c306e0180a938156330bd99e98d6978e64910702c4fd6fad",
-      "preview": "728d245033091f5cf2f0ce6926af323935eee170f6db75f25864ebad345cde9d",
+      "preview": "f878c3d7d82790b1f19e3d1a4baeeef3dbd5318aa02eb88741f333aa15c3b0c6",
       "reason": "save/delete/getAll now mirror each record's session tag into the in-memory index (group-tags). No schema, store name, key path or index change: the IDB layout is byte-identical, updateInfo just accepts an optional `tags` field."
     },
     "src/lib/phantomchat/group-tags.ts": {
@@ -192,30 +197,58 @@
     },
     "src/lib/phantomchat/group-types.ts": {
       "stable": "8e1db65ee2a54edf87ba16dae2e254c0e65209748de4af0ed4e14f68b067d90d",
-      "preview": "fd77d3809c5c2f07bdacba67386919899f8fc1e37b0317d363eabdf6d81b62f9",
+      "preview": "639b9046bc1e8c12ac01ed32483fae9d1d3b3527ee35e0bdc9eadce7665fe044",
       "reason": "Adds optional `tags?: string[]` to GroupRecord and `groupTags?: string[]` to GroupControlPayload. Optional fields only: existing records/payloads parse and merge exactly as before, and the groups CRDT entry IS the record so no version bump is needed."
     },
     "src/lib/phantomchat/groups-sync-adapter.ts": {
       "stable": "f89fb6752a44234ec955fa08b9cf01e8611074115f31cdf0edcee0b039e1b8d0",
-      "preview": "5673587c51a355ebaa638956c71826de1bc25825cb675c830a7348d7016d06ed",
+      "preview": "c71c7dfd02430862e7aeb6285a76dd3ab22fc0c8694a578262e63b58b37ba062",
       "reason": "CRDT apply keeps local tags when the winning remote record has none, so an older client that renames a session cannot strip the tag for everyone. Merge behaviour for every other field is untouched."
     },
     "src/lib/storages/filtersLocal.ts": {
       "stable": "27fdd28d97a60363a981960c2a944a83dadaf7b7640cb801586e1327dc8fa1d9",
-      "preview": "846153d877127221ccd499cfab7315200b649ba66f12834751fcb19d5c939e8c",
+      "preview": "44eadcd89fafdf7fe619f45b482957ee755f5691e2eb2fbf319dbaf946c69803",
       "reason": "buildLocalFilter(FOLDER_ID_CODE) seeds a literal \"Code\" title with exclude_archived and no peer-class pFlags — membership is the session tag, not a pFlag, so no dialog changes class."
     },
     "src/components/chat/chat.ts": {
       "stable": "a6a577321e55625e050550185eb57f392aa82f4369f047bb8910b35228a57708",
-      "preview": "9d6617b329b28c9a35c5d5dad102a645f4bf47637067fb917f39aec87349dc26"
+      "preview": "8fff9086f54c77b5de31fba5ecc617b45649ffb021f40ed73df412d0a4460541",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "a46baa8ccc438e8d353f242f3e9ca204b66f6343223dc33c418737b957e76965",
-      "preview": "420f61ffad3f824b30d007835cf589afd8ff0c3d0f4e358dc9e3dbc7fb5c6e79"
+      "preview": "ebfbe8ba30233a717caa06daed7316600954a219e922630bca7e9952e19037a3",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "59eb420187dc41693cb3b48d0256b86747763fc64fd5ee390b4ba210094f65a2",
-      "preview": "f105a4699e50127b74cb76b80b4cfa3f82e74113501119b1ff707889876b9466"
+      "preview": "0240b64b9ad571f6e64334a0e38996985b1ec26ad5194ed60a0dfc14becb81c8",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+    },
+    "src/components/dialogsContextMenu.ts": {
+      "stable": "de80d11a3065a903d69411dddadf177c4eba2303becc2694ef1d775de4e68f99",
+      "preview": "3c729ea493f0007abc977551a23816b4a9338dcbb5d97b961b499bff08b0da7e",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+    },
+    "src/components/peerActionsMenu.ts": {
+      "stable": "5998889797746ef749c14c6c30ca3a84723e0f167f10ddc4918ac37fb72a044e",
+      "preview": "e86c7a0f3273d6917da1e02788b77f0604aed1bb7bfc57e209f3cd88f4b11db8",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+    },
+    "src/components/popups/renameSession.ts": {
+      "stable": "absent",
+      "preview": "f09f8f9def3160173cfcb6df299c7692bf40096b5b5ef14b51a76b686040c403",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+    },
+    "src/lib/phantomchat/group-sessions.ts": {
+      "stable": "absent",
+      "preview": "fcabd2394967c93580177372d89ba7ca59f42043e86065ffd26ed9ae90283514",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+    },
+    "src/pages/phantomchat-onboarding-integration.ts": {
+      "stable": "fce5f5d9aa6b0689d0073ca1edd6253dd1806e9ceb26701b09f5e8d1abb3ab05",
+      "preview": "d4a2ea129d242ee81818ea8ee04503b258d51f45edb2c038ca140c1d930383a1",
+      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     }
   },
   "stableVersion": "1.1.77"
