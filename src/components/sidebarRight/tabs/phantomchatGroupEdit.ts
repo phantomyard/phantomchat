@@ -135,7 +135,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
 
     this.scrollable.append(avatarSection.container);
 
-    // Admin-only: edit group name + description. This replaces the native
+    // Admin-only: edit group name. This replaces the native
     // Telegram AppEditChatTab for P2P groups (which is Telegram-backed — its
     // Administrators/Members/Permissions sub-tabs query a server that doesn't
     // exist and render the empty "No Results" state). updateGroupInfo broadcasts
@@ -148,16 +148,13 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       const nameInput = new InputField({label: 'CreateGroup.NameHolder', maxLength: 128});
       nameInput.setOriginalValue(group.name);
 
-      const descInput = new InputField({label: 'DescriptionPlaceholder', maxLength: 255});
-      if(group.description) descInput.setOriginalValue(group.description);
-
-      inputWrapper.append(nameInput.container, descInput.container);
+      inputWrapper.append(nameInput.container);
       editSection.content.append(inputWrapper);
 
       const saveBtn = ButtonCorner({icon: 'check'});
       this.content.append(saveBtn);
 
-      // Save only appears when something actually changed (name, description
+      // Save only appears when something actually changed (name
       // or a staged member removal via the per-row X) AND the name is
       // non-empty — a visible button that silently does nothing on click is
       // worse than a hidden one. The picker's arrow commits immediately, so
@@ -166,25 +163,24 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
         const dirty = !!nameInput.value.trim() &&
           (nameInput.value.trim() !== group.name ||
-          (descInput.value.trim() || undefined) !== group.description ||
           added.length > 0 || removed.length > 0);
         saveBtn.classList.toggle('is-visible', dirty);
       };
       this.listenerSetter.add(nameInput.input)('input', refreshSave);
-      this.listenerSetter.add(descInput.input)('input', refreshSave);
 
-      attachClickEvent(saveBtn, async() => {
+      let saving = false;
+      const save = async() => {
         const name = nameInput.value.trim();
-        if(!name) return;
+        const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
+        if(saving || !name || (name === group.name && !added.length && !removed.length)) return;
+        saving = true;
         const toggle = toggleDisability([saveBtn], true);
         try {
           await applyMemberChanges();
-          const description = descInput.value.trim() || undefined;
-          if(name !== group.name || description !== group.description) {
-            await getGroupAPI().updateGroupInfo(this.groupId, {name, description});
+          if(name !== group.name) {
+            await getGroupAPI().updateGroupInfo(this.groupId, {name});
           }
           group.name = name;
-          group.description = description;
           group.members = [...draftMembers];
 
           // Close the editor on save: an empty screen where the pane was
@@ -195,10 +191,18 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
           console.error('[PhantomChatGroupEdit] save failed:', err);
           toastNew({langPackKey: 'Error.AnError'});
         } finally {
+          saving = false;
           toggle();
           refreshSave();
         }
-      }, {listenerSetter: this.listenerSetter});
+      };
+      attachClickEvent(saveBtn, save, {listenerSetter: this.listenerSetter});
+      this.listenerSetter.add(nameInput.input)('keydown', (event: KeyboardEvent) => {
+        if(event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if(!event.repeat) void save();
+      });
 
       this.scrollable.append(editSection.container);
     }
@@ -344,39 +348,35 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
     // design language (Row has no danger styling of its own).
     const leaveSection = new SettingSection({noDelimiter: true});
 
-    const btnLeave = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'ChatList.Context.LeaveGroup'});
+    // Admins must transfer ownership before leaving; unavailable actions stay hidden.
+    if(!isAdmin) {
+      const btnLeave = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'ChatList.Context.LeaveGroup'});
 
-    // Admins can't leave: they must transfer admin (or delete the group).
-    // Grey the button out and explain why on hover.
-    if(isAdmin) {
-      btnLeave.disabled = true;
-      btnLeave.title = i18n('PhantomChat.GroupEdit.AdminLeaveHint' as LangPackKey).textContent;
-    }
-
-    attachClickEvent(btnLeave, async() => {
-      try {
-        await confirmationPopup({
-          titleLangKey: 'ChatList.Context.LeaveGroup' as LangPackKey,
-          button: {langKey: 'ChatList.Context.LeaveGroup' as LangPackKey, isDanger: true}
-        });
-        await getGroupAPI().leaveGroup(this.groupId);
-
-        // Remove group dialog from chat list
+      attachClickEvent(btnLeave, async() => {
         try {
-          const dialogsStorage = (rootScope.managers as any).dialogsStorage;
-          if(dialogsStorage?.dropP2PDialog) {
-            await dialogsStorage.dropP2PDialog(this.groupPeerId.toPeerId(true));
-          }
-        } catch{/* ignore */}
-        rootScope.dispatchEvent('dialog_drop', {peerId: this.groupPeerId.toPeerId(true)} as any);
+          await confirmationPopup({
+            titleLangKey: 'ChatList.Context.LeaveGroup' as LangPackKey,
+            button: {langKey: 'ChatList.Context.LeaveGroup' as LangPackKey, isDanger: true}
+          });
+          await getGroupAPI().leaveGroup(this.groupId);
 
-        this.close();
-      } catch{
-        // user cancelled
-      }
-    }, {listenerSetter: this.listenerSetter});
+          // Remove group dialog from chat list
+          try {
+            const dialogsStorage = (rootScope.managers as any).dialogsStorage;
+            if(dialogsStorage?.dropP2PDialog) {
+              await dialogsStorage.dropP2PDialog(this.groupPeerId.toPeerId(true));
+            }
+          } catch{/* ignore */}
+          rootScope.dispatchEvent('dialog_drop', {peerId: this.groupPeerId.toPeerId(true)} as any);
 
-    leaveSection.content.append(btnLeave);
+          this.close();
+        } catch{
+          // user cancelled
+        }
+      }, {listenerSetter: this.listenerSetter});
+
+      leaveSection.content.append(btnLeave);
+    }
 
     // Admin-only: delete the group for EVERYONE (no restrictions). Broadcasts a
     // group_delete so other members' clients drop it too, then tears it down
