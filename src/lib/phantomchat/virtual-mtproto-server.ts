@@ -1607,11 +1607,17 @@ export class PhantomChatMTProtoServer {
    * `folder_id === 1` — the same flag a chat, a group and a session use — and
    * an archived dialog is read-only for every class (owner batch 12).
    * Reads the synced mirror only; a miss (peer not dialogs yet) is not archived.
+   *
+   * ASYNC, and it has to be: `rootScope.managers` is the PROXIED AppManagers
+   * (`getProxiedManagers`), so `getAnyDialog` crosses a boundary and answers a
+   * Promise. Reading `folder_id` off that Promise was always undefined, which
+   * made the whole 1:1 refusal dead code (Kai, #292 review at b21b342). Same
+   * form as `applyGroupDialogFolder` in phantomchat-groups-sync.ts.
    */
-  private isArchivedPeer(peerId: number): boolean {
+  private async isArchivedPeer(peerId: number): Promise<boolean> {
     try {
       const dialogsStorage = (rootScope as any)?.managers?.dialogsStorage;
-      const dialog = dialogsStorage?.getAnyDialog?.(peerId);
+      const dialog = await dialogsStorage?.getAnyDialog?.(peerId);
       return !!dialog && dialog.folder_id === FOLDER_ID_ARCHIVE;
     } catch{
       return false;
@@ -1645,7 +1651,7 @@ export class PhantomChatMTProtoServer {
     // hiding the composer is not the only thing standing between an archived
     // chat and a new row (a retry, a share-to-chat flow or a shortcut never
     // goes near that input).
-    if(this.isArchivedPeer(peerId)) {
+    if(await this.isArchivedPeer(peerId)) {
       console.warn(LOG_PREFIX, 'sendMessage: chat is archived (read-only)', Math.abs(peerId));
       return emptyUpdates;
     }
@@ -2399,7 +2405,7 @@ export class PhantomChatMTProtoServer {
     // Archived chats are read-only (owner batch 12) — same refusal as the text
     // path, so a drop / queued upload / attach cannot post media into an
     // archived chat behind the hidden composer.
-    if(this.isArchivedPeer(peerId)) {
+    if(await this.isArchivedPeer(peerId)) {
       console.warn(LOG_PREFIX, 'phantomchatSendFile: chat is archived (read-only)', Math.abs(peerId));
       return emptyUpdates;
     }

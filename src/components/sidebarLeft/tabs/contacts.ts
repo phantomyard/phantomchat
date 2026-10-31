@@ -24,6 +24,7 @@ import confirmationPopup from '@components/confirmationPopup';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {i18n} from '@lib/langPack';
 import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
+import {resolvePickPeerHook} from '@lib/phantomchat/session-pick-hook';
 
 // TODO: поиск по людям глобальный, если не нашло в контактах никого
 
@@ -54,7 +55,11 @@ export default class AppContactsTab extends SliderSuperTab {
   }
 
   public init(params?: {onPickPeer?: (peerId: PeerId) => void}) {
-    this.onPickPeer = params?.onPickPeer;
+    // `open()` runs `init` with NO args on every fresh instance, so an
+    // unconditional assign would null the hook set by `setPickPeerHook` one
+    // line earlier — the first `+` in Sessions then opened a DM (Kai, #292
+    // review at b21b342). Only a caller that passes params gets a say.
+    this.onPickPeer = resolvePickPeerHook(this.onPickPeer, params);
     this.container.id = 'contacts-container';
 
     // this.list = appDialogsManager.createChatList(/* {avatarSize: 48, handheldsSize: 66} */);

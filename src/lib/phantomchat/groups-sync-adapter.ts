@@ -300,12 +300,17 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
           // `updatedAt` and drop the stamp). The clear signal is a NUMBER —
           // `0` means "explicitly unarchived", minted by updateInfo(null) — so
           // absent field = "this writer knows nothing about archive", local
-          // stamp wins, and 0 is normalised away.
+          // stamp wins. The 0 is KEPT on the record rather than normalised
+          // away: stripping it made the unarchive non-durable (A clears -> B
+          // persists an absent field -> B republishes absent -> an offline C
+          // with 999 wins the keep-local guard and re-archives for everyone).
+          // Everything reading the field tests truthiness, and the archive-
+          // change compare in phantomchat-onboarding-integration.ts uses
+          // `(x ?? 0)`, both of which read 0 as unarchived.
           const localArchivedAt = storeState?.get(id)?.archivedAt;
           if(typeof record.archivedAt !== 'number' && typeof localArchivedAt === 'number') {
             record.archivedAt = localArchivedAt;
           }
-          if(record.archivedAt === 0) delete record.archivedAt;
           if(typeof entry.deliberateAddAt === 'number') {
             record.deliberateAddAt = entry.deliberateAddAt * 1000;
           }
