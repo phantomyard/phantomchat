@@ -71,11 +71,12 @@ describe('shared-state release gate', () => {
     const deployed = config.stableRef;
     config.stableRef = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: dir}).toString().trim();
     expect(checkCompatibility(config, 'HEAD', dir)).toEqual([]);
-    const fetcher = async(url: URL, options: RequestInit) => {
+    const fetcher: typeof fetch = async(input, options) => {
+      const url = new URL(String(input));
       expect(url.origin + url.pathname).toBe('https://chat.phantomyard.ai/channels.json');
       expect(url.searchParams.has('compatibility')).toBe(true);
-      expect(options.cache).toBe('no-store');
-      return {ok: true, json: async() => ({stable: deployed, preview: config.stableRef})};
+      expect(options?.cache).toBe('no-store');
+      return new Response(JSON.stringify({stable: deployed, preview: config.stableRef}));
     };
     await expect(checkPublishedCompatibility(config, 'HEAD', dir, fetcher)).rejects.toThrow('src/store.ts');
     const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -86,9 +87,9 @@ describe('shared-state release gate', () => {
   });
   it('fails closed on unavailable or malformed published metadata', async() => {
     const config = fixture();
-    await expect(checkPublishedCompatibility(config, 'HEAD', dir, async() => ({ok: false, status: 503})))
+    await expect(checkPublishedCompatibility(config, 'HEAD', dir, async() => new Response('', {status: 503})))
       .rejects.toThrow('HTTP 503');
-    await expect(checkPublishedCompatibility(config, 'HEAD', dir, async() => ({ok: true, json: async() => ({stable: 'main'})})))
+    await expect(checkPublishedCompatibility(config, 'HEAD', dir, async() => new Response(JSON.stringify({stable: 'main'}))))
       .rejects.toThrow('Invalid published');
     await expect(checkPublishedCompatibility(config, 'HEAD', dir, async() => { throw new Error('offline'); }))
       .rejects.toThrow('offline');
