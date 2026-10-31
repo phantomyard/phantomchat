@@ -173,8 +173,8 @@
     },
     "src/components/sidebarLeft/tabs/contacts.ts": {
       "stable": "2237559b8a038447e7296a6c8e4b599fc206b8fc550104b41756ee6560c0b202",
-      "preview": "6f371d766ea350f0c00f3afc83fc43fc801e2a635403808eb466f65cd28316fd",
-      "reason": "Contacts can be opened as a single-contact picker: a click hands the peer to the caller instead of opening a DM. The hook is set per OPEN (setPickPeerHook) and cleared in onClose, because init runs once per instance and createTab reuses a live one. Default behaviour with no hook is unchanged, and no storage is touched."
+      "preview": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
+      "reason": "Contacts can be opened as a single-contact picker: a click hands the peer to the caller instead of opening a DM. The hook is set per OPEN (setPickPeerHook) and cleared in onClose, and init now only overrides it when it is given params - open() passes none, so the hook installed just before open survives instead of being nulled (and pick mode cannot leak into a later ordinary visit). Default behaviour with no hook is unchanged, and no storage is touched."
     },
     "src/lib/appManagers/constants.ts": {
       "stable": "b7add6caa33a3125c26fc6c22cbbaa26f12c25bcd5e197ad460e47f30e434431",
@@ -193,8 +193,8 @@
     },
     "src/lib/phantomchat/groups-sync-adapter.ts": {
       "stable": "f89fb6752a44234ec955fa08b9cf01e8611074115f31cdf0edcee0b039e1b8d0",
-      "preview": "8050e4a150a45530cdcf2c3d0d74b88e8fcc359f23fae5e1e3bf0ecf036ca196",
-      "reason": "CRDT apply keeps the local value for the two keep-local fields: `kind` (an older client must not reclassify a session) and `archivedAt` (an older client must not unarchive it for everyone). An explicit 0 is the unarchive signal, an absent field means \"unchanged\". Merge behaviour for every other field is untouched."
+      "preview": "f00495a264517ea7fb6b17bfc053e09e6d7a1de44e980657d11e07b05fce382b",
+      "reason": "CRDT apply keeps the local value for the two keep-local fields: `kind` (an older client must not reclassify a session) and `archivedAt` (an older client must not unarchive it for everyone). An explicit 0 is the unarchive signal, an absent field means \"unchanged\", and apply now PERSISTS that 0 rather than stripping it, so the clear signal survives a republish instead of turning back into an absent field (which the guard reads as \"unchanged\"). Same field, same type, same semantics for every reader; merge behaviour for every other field is untouched."
     },
     "src/lib/storages/filtersLocal.ts": {
       "stable": "27fdd28d97a60363a981960c2a944a83dadaf7b7640cb801586e1327dc8fa1d9",
@@ -213,8 +213,8 @@
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "59eb420187dc41693cb3b48d0256b86747763fc64fd5ee390b4ba210094f65a2",
-      "preview": "81a5082f3bc67764bef1cd0153ff273f5fe648a32d3743b22e0813506eac4bf9",
-      "reason": "Session peer-class refactor plus the 1:1 archive guard: the bridge refuses text and media for a peer whose dialog sits in the archive (folder_id 1), the one path every chat send crosses. Membership stays a pure function of (groupId, kind) and writes remain LWW-merged by updatedAt - no stored-format change."
+      "preview": "720794a3fef32fe101599f1a3351500b0c9126288bdcd03334fe256f55e19cae",
+      "reason": "Session peer-class refactor plus the 1:1 archive guard: the bridge refuses text and media for a peer whose dialog sits in the archive (folder_id 1), the one path every chat send crosses. The guard reads the dialog through the proxied dialogsStorage, so it awaits - a synchronous read was reading folder_id off a Promise and never refused at runtime. Membership stays a pure function of (groupId, kind) and writes remain LWW-merged by updatedAt - no stored-format change."
     },
     "src/components/dialogsContextMenu.ts": {
       "stable": "de80d11a3065a903d69411dddadf177c4eba2303becc2694ef1d775de4e68f99",
@@ -255,6 +255,11 @@
       "stable": "fcd56d4fd88aeb6dad4c2c8755bc297c1fe1f4dd2356fff6262f8ba07e2b6403",
       "preview": "30d5a0329ae0fb7379b9937de8442eb1bd99cd2f8654fc496d235d501caea440",
       "reason": "Snapshot TYPE only (the FoldersSync wire shape: version, order, custom folders, protected titles) plus the comment recording that custom folder ids start at START_LOCAL_ID (5). No reader, no writer, no storage - the sync engine and its adapter live in folders-sync.ts / folders-sync-adapter.ts."
+    },
+    "src/lib/phantomchat/session-pick-hook.ts": {
+      "stable": "absent",
+      "preview": "b4cedba5c80e425edfba716cf5d8f9e35dec85d51626569a53652385d89168cc",
+      "reason": "Which pick hook is in force for one open() of the Contacts tab: absent params keep the installed hook (open() passes none), present params own it. Pure decision function over UI state - no storage, protocol or settings change."
     }
   },
   "stableVersion": "1.1.77"
