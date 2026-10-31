@@ -701,6 +701,8 @@ export async function handleIncomingMessage(
   // Otherwise increment the persisted per-peer counter so multi-message
   // bursts count correctly.
   let unread: number;
+  // A message read on arrival stays read if we leave during Worker work;
+  // the recheck also catches a conversation opened while that work ran.
   if(chatIsOpen || isConversationSelected(peerId)) {
     unread = 0;
     if(convId && data.mid > 0) {

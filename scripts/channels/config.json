@@ -63,8 +63,8 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "12bbc698ae51ba00e2c837422c154d33282c20960943f5c7fa438e12547f08ca",
-      "preview": "04bcd8e209dec1b440c44b78c7a39464edf17360c3495e2c4e81cb196b304d01",
-      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+      "preview": "b08e89c452ec39a4771e4f9eff6b825fd7bb01853c7e81e7fc4465c933a6736c",
+      "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change. Exact Stable/Preview content requires independent review."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -233,8 +233,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "f4b0f5947235e9e6608c0ad16a92a8a5f61f2251a8d194caac8b9e02721a1bf0",
-      "preview": "993f9fadfdc0e124e7b0a062882a80591114e9e0f40409f5361592e95f7dba31",
-      "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change."
+      "preview": "bbcc7e94147bec1c976606854cd2e0d952494a239c887ed3f5862f7200d1457f",
+      "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change. Exact Stable/Preview content requires independent review."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
@@ -283,13 +283,18 @@
     },
     "src/lib/phantomchat/phantomchat-message-handler.ts": {
       "stable": "e1f5fe6123f07e58041b3aa245fadb6a84cf77e61e2b48fe540603db2c04e34a",
-      "preview": "07f8f1e1752898411dd5006e4a332fa02176dea2448fb51d018277e61f33b8d1",
-      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+      "preview": "95b52037c0faa5eec34d7c6757e5cc96387cbcecd6d6d370b09eda6052537573",
+      "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change. Exact Stable/Preview content requires independent review."
     },
     "src/lib/phantomchat/selected-conversation.ts": {
       "stable": "absent",
-      "preview": "205a3585630108651f23584e5ab95ec576b5954ba56a696d51696e067515bf5b",
-      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+      "preview": "18453a1a0378eb898500aaa1374c048eeed1cc02732ea5d2dc6b940acbf02899",
+      "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change. Exact Stable/Preview content requires independent review."
+    },
+    "src/lib/appImManager.ts": {
+      "stable": "c497fe315c7cdbdbd37b6a22b5ef002ec01802057789f6e2ce4e7b75f7d619d5",
+      "preview": "542efceeaa3c4928eef22bc99830429065061ed40b70923b7bd11476a87ead4d",
+      "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change. Exact Stable/Preview content requires independent review."
     }
   },
   "stableVersion": "1.1.78"
