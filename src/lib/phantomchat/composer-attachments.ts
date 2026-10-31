@@ -58,6 +58,19 @@ export function isPhantomChatPeerId(peerId: number | string | bigint): boolean {
   return Math.abs(numeric) >= 1e15 || isGroupPeer(numeric);
 }
 
+/**
+ * Whether this chat's composer shows the attachment tray. Decided per peer
+ * (`ChatInput.updateAttachmentTray`), never at construct time: `Chat.init` runs
+ * from `setPeer` before the peer id is assigned, so a construct-time check sees
+ * `NULL_PEER_ID` and the tray would never be built.
+ */
+export function shouldUseAttachmentTray(
+  peerId: number | string | bigint | undefined | null,
+  isScheduledChat: boolean
+): boolean {
+  return !!peerId && !isScheduledChat && isPhantomChatPeerId(peerId);
+}
+
 export function getAttachmentMediaType(file: File): PendingAttachmentMediaType {
   const mime = (file.type || '').toLowerCase();
   if(mime.startsWith('image/')) {

@@ -129,7 +129,7 @@ import {createStore} from 'solid-js/store';
 import SelectedEffect from '@components/chat/selectedEffect';
 import windowSize from '@helpers/windowSize';
 import AttachmentTray from '@components/chat/attachmentTray';
-import {isPhantomChatPeerId} from '@lib/phantomchat/composer-attachments';
+import {shouldUseAttachmentTray} from '@lib/phantomchat/composer-attachments';
 import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import accumulate from '@helpers/array/accumulate';
 import splitStringByLength from '@helpers/string/splitStringByLength';
@@ -1212,13 +1212,10 @@ export default class ChatInput {
     this.inlineHelper = new InlineHelper(this.rowsWrapper, this.autocompleteHelperController, this.chat, this.managers);
     this.rowsWrapper.append(this.newMessageWrapper);
 
-    // PhantomChat peers get a composer attachment tray (see AttachmentTray).
-    // Other peer types keep the stock tweb PopupNewMedia flow.
-    if(this.chat?.peerId && this.chat.type !== ChatType.Scheduled && isPhantomChatPeerId(Number(this.chat.peerId))) {
-      this.attachmentTray = new AttachmentTray();
-      this.attachmentTray.onChange = () => this.updateSendBtn();
-      this.rowsWrapper.insertBefore(this.attachmentTray.element, this.newMessageWrapper);
-    }
+    // The composer attachment tray (see AttachmentTray) is created per peer in
+    // `updateAttachmentTray`, invoked from `finishPeerChange`: `construct` runs
+    // from `Chat.init`, which `setPeer` calls *before* it assigns `chat.peerId`,
+    // so the peer is not known yet at this point.
 
     this.btnCancelRecord = this.createButtonIcon('binfilled btn-circle btn-record-cancel chat-input-secondary-button chat-secondary-button');
 
@@ -1987,12 +1984,18 @@ export default class ChatInput {
     this.placeholderParamsMiddlewareHelper.destroy();
     appNavigationController.removeItem(this.inputHelperNavigationItem);
     this.listenerSetter.removeAll();
-    this.attachmentTray?.clear();
+    this.removeAttachmentTray();
     this.middlewareHelper.destroy();
     this.setCurrentHover();
   }
 
   public cleanup(helperToo = true) {
+    // Peer changes reach here (`Chat.finishPeerChange` -> `Chat.cleanup`), and
+    // `ChatInput.destroy` only runs when the tab goes away. Any file staged in
+    // the previous chat must not survive into the next one: `finishPeerChange`
+    // builds the tray again for the incoming peer.
+    this.removeAttachmentTray();
+
     if(this.chat && !this.chat.peerId) {
       this.chatInput.classList.add('hide');
       this.goDownBtn.classList.add('hide');
@@ -2137,6 +2140,10 @@ export default class ChatInput {
     const previousSendAs = this.sendAs;
     const sendAs = this.createSendAs();
     const filteredAttachMenuButtons = this.filterAttachMenuButtons();
+
+    // The peer is known here (unlike in `construct`), so this is where the
+    // PhantomChat attachment tray is created or torn down.
+    this.updateAttachmentTray(peerId);
 
     const [
       isBroadcast,
@@ -3947,6 +3954,40 @@ export default class ChatInput {
 
     this.updateSendBtn();
     this.onMessageSent2?.();
+  }
+
+  /**
+   * Creates the composer attachment tray when `peerId` is a PhantomChat peer
+   * and removes it otherwise. Called on every peer change, because one `Chat`
+   * (and therefore one `ChatInput`) instance is reused across peers.
+   */
+  private updateAttachmentTray(peerId: Chat['peerId']) {
+    const usesTray = shouldUseAttachmentTray(peerId, this.chat.type === ChatType.Scheduled);
+
+    if(!usesTray) {
+      this.removeAttachmentTray();
+      return;
+    }
+
+    if(!this.attachmentTray) {
+      this.attachmentTray = new AttachmentTray();
+      this.attachmentTray.onChange = () => this.updateSendBtn();
+      this.rowsWrapper.insertBefore(this.attachmentTray.element, this.newMessageWrapper);
+    }
+  }
+
+  /**
+   * Drops the tray and any staged files (which also revokes their object URLs).
+   * The tray owns no other listeners, so removing the element is enough.
+   */
+  private removeAttachmentTray() {
+    if(!this.attachmentTray) {
+      return;
+    }
+
+    this.attachmentTray.clear();
+    this.attachmentTray.element.remove();
+    this.attachmentTray = undefined;
   }
 
   /**

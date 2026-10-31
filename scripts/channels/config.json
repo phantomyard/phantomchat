@@ -128,7 +128,7 @@
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "38d59ba9833ed8968bcff4dca419a2a13f10fed36b133692b6297e8fb8a26d8e",
-      "preview": "dd1a43d1f68ac52172fa23d3bb67e4876d402dc634385098a4e37a20a3ae0093",
+      "preview": "455200888a62f3cb8c0cbcfa3cd002951c602b0d2fe52082327cbef5ff801be3",
       "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change. PhantomChat file send extracted into sendFileViaBridge() with a sendPhantomChatAttachment() entry point that returns the published message; publish path, kind-15 rumor shape and stored fileMetadata unchanged. Preview hash refreshed for that refactor."
     },
     "src/lib/phantomchat/group-api.ts": {
@@ -283,7 +283,7 @@
     },
     "src/components/chat/input.ts": {
       "stable": "8ba48c42bce0bc2fc1361f0ed2c3a82cb9ec863daca5cb6a96aadc2d9c6442e2",
-      "preview": "e4720079979b13d2a684035e6c8bddc7f6e30a0845cfc86135448189f36eed0b",
+      "preview": "b59823fe312c3cc4925cf7642a62872e9a756bac8f5e25340385dc8770c34e08",
       "reason": "Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
     },
     "src/lib/appImManager.ts": {
@@ -293,7 +293,7 @@
     },
     "src/lib/phantomchat/composer-attachments.ts": {
       "stable": "absent",
-      "preview": "c592ffde008835c4fab2e786a78c4b11300690a8b59a0512991eea8c21a2dc44",
+      "preview": "62c8180e1e33386b2aa06b6a59ba4b3dda2a9252f4d0978b9e54cab822c0dd59",
       "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression and sequential dispatch. No storage, database or IPC access. Requires independent content review."
     }
   },

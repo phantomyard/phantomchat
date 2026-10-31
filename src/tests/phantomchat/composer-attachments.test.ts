@@ -17,6 +17,7 @@ import {
   PendingAttachment,
   removePendingAttachment,
   sendPendingAttachments,
+  shouldUseAttachmentTray,
   validateAttachment
 } from '@lib/phantomchat/composer-attachments';
 import {MAX_PHOTO_SIZE, MAX_VIDEO_SIZE} from '@lib/phantomchat/blossom-client';
@@ -45,6 +46,27 @@ describe('composer attachment batching', () => {
       expect(isPhantomChatPeerId(777000)).toBe(false);
       expect(isPhantomChatPeerId(-1001234567890)).toBe(false);
       expect(isPhantomChatPeerId(Number.NaN)).toBe(false);
+    });
+
+    // Regression: the tray used to be created from ChatInput.construct(), which
+    // runs before Chat.setPeer assigns chat.peerId, so the check saw
+    // NULL_PEER_ID and the tray was never built for any chat.
+    describe('shouldUseAttachmentTray()', () => {
+      it('is false while the chat has no peer yet', () => {
+        expect(shouldUseAttachmentTray(0, false)).toBe(false);
+        expect(shouldUseAttachmentTray(undefined, false)).toBe(false);
+        expect(shouldUseAttachmentTray(null, false)).toBe(false);
+      });
+
+      it('is true for PhantomChat direct and group peers', () => {
+        expect(shouldUseAttachmentTray(1_600_000_000_000_000, false)).toBe(true);
+        expect(shouldUseAttachmentTray(-2_000_000_000_000_001, false)).toBe(true);
+      });
+
+      it('is false for ordinary peers and for scheduled chats', () => {
+        expect(shouldUseAttachmentTray(777000, false)).toBe(false);
+        expect(shouldUseAttachmentTray(1_600_000_000_000_000, true)).toBe(false);
+      });
     });
   });
 

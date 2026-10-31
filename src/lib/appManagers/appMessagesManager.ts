@@ -1719,6 +1719,14 @@ export class AppMessagesManager extends AppManager {
    * as `sendFile`, but the caller gets the published message back.
    */
   public async sendPhantomChatAttachment(options: Parameters<AppMessagesManager['sendFile']>[0]): Promise<Message.message | undefined> {
+    // Only PhantomChat peers have a bridge: a tray that outlived its peer must
+    // fail loudly here instead of leaving the composer stuck on a send that
+    // can never publish.
+    const peerIdNum = Number(options.peerId);
+    if(!(Math.abs(peerIdNum) >= 1e15 || isGroupPeer(peerIdNum))) {
+      throw new Error(`sendPhantomChatAttachment: peer ${options.peerId} is not a PhantomChat peer`);
+    }
+
     await this.checkSendOptions(options);
     return this.sendFileViaBridge(options);
   }
