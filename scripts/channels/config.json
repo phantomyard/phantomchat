@@ -159,7 +159,7 @@
     "src/lib/phantomchat/update-channel-choice.ts": {
       "stable": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
       "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
-      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef \u2014 desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
+      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
     },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
       "stable": "e1a1cc6436f6533390ca9ae6a55b7872de4372d41d58da9c306eda800eec221e",
@@ -278,13 +278,13 @@
     },
     "src/components/chat/attachmentTray.ts": {
       "stable": "absent",
-      "preview": "7a34d8f3919051bc97e876de4425c34d92649dc240042e15f57987dbcdbf6be2",
-      "reason": "New composer attachment tray for PhantomChat peers: staged-file thumbnails, per-file remove and per-file send state above the message input. Owns no storage, database or IPC access and only mutates its own DOM. Requires independent content review."
+      "preview": "58e4e2f97d3e252be70d6588e3907545798be1f0270ad25e8c7056613d20ab37",
+      "reason": "New composer attachment tray for PhantomChat peers: staged-file thumbnails, per-file remove and per-file send state above the message input. Reads each image thumbnail's intrinsic size on load so the published bubble carries width/height without a media-editor step. Owns no storage, database or IPC access and only mutates its own DOM. Requires independent content review."
     },
     "src/components/chat/input.ts": {
       "stable": "8ba48c42bce0bc2fc1361f0ed2c3a82cb9ec863daca5cb6a96aadc2d9c6442e2",
-      "preview": "b59823fe312c3cc4925cf7642a62872e9a756bac8f5e25340385dc8770c34e08",
-      "reason": "Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
+      "preview": "d0c68a2777b64af8364e8c697f48b9bebed68c807ba0a16dd7c9fc617d347600",
+      "reason": "Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text, forwarding the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
     },
     "src/lib/appImManager.ts": {
       "stable": "c497fe315c7cdbdbd37b6a22b5ef002ec01802057789f6e2ce4e7b75f7d619d5",
@@ -293,8 +293,8 @@
     },
     "src/lib/phantomchat/composer-attachments.ts": {
       "stable": "absent",
-      "preview": "62c8180e1e33386b2aa06b6a59ba4b3dda2a9252f4d0978b9e54cab822c0dd59",
-      "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression and sequential dispatch. No storage, database or IPC access. Requires independent content review."
+      "preview": "345df2ab00dd770d7808f8ea05606c94ae424b69ef310528fbe085844dbf52d0",
+      "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression, sequential dispatch and an intrinsic-size setter that ignores a broken decode. No storage, database or IPC access. Requires independent content review."
     }
   },
   "stableVersion": "1.1.78"

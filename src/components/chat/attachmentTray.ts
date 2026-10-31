@@ -22,7 +22,8 @@ import {
   revokePendingAttachments,
   SendPendingAttachmentsHooks,
   SendPendingAttachmentsResult,
-  sendPendingAttachments
+  sendPendingAttachments,
+  setAttachmentDimensions
 } from '@lib/phantomchat/composer-attachments';
 
 type AttachmentTrayState = 'idle' | 'sending' | 'failed';
@@ -190,6 +191,11 @@ export default class AttachmentTray {
       img.src = item.previewURL;
       img.alt = item.file.name;
       img.draggable = false;
+      // The thumbnail is the only decode of this file before it is sent, so
+      // read the intrinsic size off it and hand it to the bridge.
+      img.addEventListener('load', () => {
+        setAttachmentDimensions(item, img.naturalWidth, img.naturalHeight);
+      });
       thumbEl.append(img);
     } else if(item.mediaType === 'video' && item.previewURL) {
       const video = document.createElement('video');

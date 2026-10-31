@@ -34,6 +34,13 @@ export type PendingAttachment = {
   previewURL?: string;
   kind: PendingAttachmentKind;
   mediaType: PendingAttachmentMediaType;
+  /**
+   * Intrinsic pixel size, filled in once a staged image has decoded. The tray
+   * has no media-editor step, so the bubble would otherwise have no dimensions
+   * until its own blob loads.
+   */
+  width?: number;
+  height?: number;
 };
 
 export type RejectedAttachmentReason = 'empty' | 'too-large' | 'batch-full' | 'duplicate';
@@ -194,6 +201,23 @@ export function addPendingAttachments(
   }
 
   return {items: items.concat(added), added, rejected};
+}
+
+/**
+ * Records a staged image's intrinsic size. Ignores non-positive or non-finite
+ * values so a broken decode cannot send `width: 0` to the bridge.
+ */
+export function setAttachmentDimensions(
+  item: PendingAttachment,
+  width: number,
+  height: number
+): void {
+  if(!(width > 0) || !(height > 0) || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return;
+  }
+
+  item.width = Math.round(width);
+  item.height = Math.round(height);
 }
 
 export function removePendingAttachment(items: PendingAttachment[], id: string): PendingAttachment[] {

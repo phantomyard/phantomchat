@@ -4028,7 +4028,11 @@ export default class ChatInput {
       const sent = await this.managers.appMessagesManager.sendPhantomChatAttachment({
         ...sendingParams,
         file: item.file,
-        isMedia: item.kind === 'media'
+        isMedia: item.kind === 'media',
+        // Present once the tray thumbnail decoded the image; the popup path gets
+        // these from the media editor, which the tray deliberately skips.
+        width: item.width,
+        height: item.height
       });
 
       // The PhantomChat bridge signals failure by resolving without a message

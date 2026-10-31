@@ -17,6 +17,7 @@ import {
   PendingAttachment,
   removePendingAttachment,
   sendPendingAttachments,
+  setAttachmentDimensions,
   shouldUseAttachmentTray,
   validateAttachment
 } from '@lib/phantomchat/composer-attachments';
@@ -243,6 +244,31 @@ describe('composer attachment batching', () => {
       });
 
       expect(events).toEqual(['sending:a.png', 'failed:a.png']);
+    });
+
+    it('carries the intrinsic image size to the send callback', async() => {
+      const {items} = addPendingAttachments([], [makeFile('a.png', 'image/png')], noPreview);
+      setAttachmentDimensions(items[0], 4032, 3024);
+      const send = vi.fn(async() => {});
+
+      await sendPendingAttachments(items, send);
+
+      expect(items[0].width).toBe(4032);
+      expect(items[0].height).toBe(3024);
+    });
+
+    it('ignores a broken decode instead of sending a zero size', () => {
+      const {items} = addPendingAttachments([], [makeFile('a.png', 'image/png')], noPreview);
+      setAttachmentDimensions(items[0], 0, 0);
+      setAttachmentDimensions(items[0], NaN, 10);
+      setAttachmentDimensions(items[0], -5, 10);
+
+      expect(items[0].width).toBeUndefined();
+      expect(items[0].height).toBeUndefined();
+
+      setAttachmentDimensions(items[0], 1920.4, 1080.6);
+      expect(items[0].width).toBe(1920);
+      expect(items[0].height).toBe(1081);
     });
 
     it('sends nothing when the batch is empty', async() => {
