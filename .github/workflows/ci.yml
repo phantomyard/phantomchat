@@ -32,15 +32,8 @@ jobs:
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:channels
-      - name: Load the published Stable baseline
-        id: baseline
-        run: node scripts/releases/registry.mjs baseline
-        env:
-          GH_TOKEN: ${{ github.token }}
       - name: Check compatibility with published Stable
-        run: pnpm check:channels
-        env:
-          CHANNEL_BASELINE: ${{ steps.baseline.outputs.baseline }}
+        run: node scripts/channels/check-published.mjs
       - run: npx tsc --noEmit
       - run: pnpm run typecheck:electron
 
