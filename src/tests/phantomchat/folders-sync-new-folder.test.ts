@@ -95,7 +95,7 @@ describe('folders-sync: new folder survives restart', () => {
   });
 
   it('preserves a locally-created folder on reboot when creation bumped localModifiedAt (the fix)', async() => {
-    const local = [...mkBaseFilters(), mkCustom(5, 'max-test')];
+    const local = [...mkBaseFilters(), mkCustom(6, 'max-test')];
     // The fix: creating the folder fired filter_new -> schedulePublish ->
     // setLastModifiedAt(now). Stale remote predates the creation.
     const remoteCreatedAt = 1000;
@@ -108,13 +108,13 @@ describe('folders-sync: new folder survives restart', () => {
     expect(decision.action).toBe('local-wins');
     // Folder NOT wiped, system folders NOT reseeded over it
     expect(reseed.count).toBe(0);
-    expect(filtersState.current.some((f) => f.id === 5)).toBe(true);
+    expect(filtersState.current.some((f) => f.id === 6)).toBe(true);
     // and it gets pushed up to the relay
     expect(publishedEvents.length).toBe(1);
   });
 
   it('DOCUMENTS the bug: without the modifiedAt bump a stale remote wipes the folder', async() => {
-    const local = [...mkBaseFilters(), mkCustom(5, 'max-test')];
+    const local = [...mkBaseFilters(), mkCustom(6, 'max-test')];
     // Old buggy behavior: filter_new never bumped localModifiedAt, so it stayed 0
     // while a stale remote snapshot (system-only) had a real timestamp.
     const remoteCreatedAt = 2000;
@@ -126,6 +126,6 @@ describe('folders-sync: new folder survives restart', () => {
 
     expect(decision.action).toBe('remote-wins');
     expect(reseed.count).toBe(1);
-    expect(filtersState.current.some((f) => f.id === 5)).toBe(false);
+    expect(filtersState.current.some((f) => f.id === 6)).toBe(false);
   });
 });

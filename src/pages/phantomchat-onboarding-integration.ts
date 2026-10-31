@@ -594,7 +594,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             getLegacyDeleteCutoff: () => getGroupStore().getLegacyDeleteCutoff(),
             clearDeletedGroup: (groupId) => getGroupStore().clearDeletedGroup(groupId),
             upsertGroup: async(record: GroupRecord) => {
-              const peerId = await groupIdToPeerId(record.groupId);
+              // Class first: the peerId is derived FROM it, and a session that
+              // resolved to a classic group peerId would be a different chat.
+              const peerId = await groupIdToPeerId(record.groupId, record.kind);
               const rec: GroupRecord = {...record, peerId};
               const existing = await getGroupStore().get(record.groupId);
               await getGroupStore().save(rec);
@@ -613,14 +615,17 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                   title: rec.name,
                   isOutgoing: rec.adminPubkey === ownPubkey
                 });
-                await injectGroupCreateDialog(rec.groupId, service.mid, createdAtSec);
+                await injectGroupCreateDialog(rec.groupId, service.mid, createdAtSec, rec);
               } else {
                 // Update (rename / membership): refresh the mirror + title.
                 await ensureGroupChatInjected(rec.groupId, peerId);
               }
             },
             removeGroup: async(groupId) => {
-              const peerId = await groupIdToPeerId(groupId);
+              // Read the class before the delete — it is what the peerId (and
+              // therefore the mirror teardown) is derived from.
+              const kind = (await getGroupStore().get(groupId))?.kind;
+              const peerId = await groupIdToPeerId(groupId, kind);
               await getGroupStore().delete(groupId);
               try { await cleanupGroupChatInjection(peerId); } catch{ /* mirror already gone */ }
             },

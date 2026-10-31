@@ -15,8 +15,9 @@ import assumeType from '@helpers/assumeType';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_CODE,
   FOLDER_ID_GROUPS,
+  FOLDER_ID_SESSION,
+  FOLDER_ID_SESSION_ARCHIVE,
   REAL_FOLDERS,
   REAL_FOLDER_ID,
   START_LOCAL_ID
@@ -26,8 +27,7 @@ import makeError from '@helpers/makeError';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {isDialog} from '@appManagers/utils/dialogs/isDialog';
 import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
-import {isGroupPeer} from '@lib/phantomchat/group-types';
-import {isSessionDialog, isSessionPeer} from '@lib/phantomchat/group-tags';
+import {isGroupPeer, isSessionPeer} from '@lib/phantomchat/group-types';
 
 export type MyDialogFilter = Exclude<DialogFilter, DialogFilter.dialogFilterDefault>;
 
@@ -93,12 +93,12 @@ export default class FiltersStorage extends AppManager {
   /**
    * ! use it only with saving
    *
-   * Ensures the 4 locally-seeded system folders (All, Groups, Code, Archive)
-   * are present in the filter array, in that order, followed by any user custom
-   * folders. For existing users whose filtersArr predates one of them (only
-   * [ALL, ARCHIVE], or the pre-Code [ALL, GROUPS, ARCHIVE]), the missing
-   * folder is retroactively inserted. Preserves user-renamed titles across
-   * reloads via the LANGPACK: sentinel check.
+   * Ensures the 5 locally-seeded system folders (All, Groups, Session, Session
+   * Archive, Archive) are present in the filter array, in that order, followed by
+   * any user custom folders. For existing users whose filtersArr predates one of
+   * them (only [ALL, ARCHIVE], or the pre-Session [ALL, GROUPS, ARCHIVE]), the
+   * missing folder is retroactively inserted. Preserves user-renamed titles
+   * across reloads via the LANGPACK: sentinel check.
    */
   private prependFilters(filters: DialogFilter[]) {
     filters = filters.slice();
@@ -106,7 +106,8 @@ export default class FiltersStorage extends AppManager {
     const allChatsFilter = this.localFilters[FOLDER_ID_ALL];
     const archiveFilter = this.localFilters[FOLDER_ID_ARCHIVE];
     const groupsFilter = this.localFilters[FOLDER_ID_GROUPS];
-    const codeFilter = this.localFilters[FOLDER_ID_CODE];
+    const sessionFilter = this.localFilters[FOLDER_ID_SESSION];
+    const sessionArchiveFilter = this.localFilters[FOLDER_ID_SESSION_ARCHIVE];
 
     // Persons (id 2) was a removed system folder. Strip any stale persisted
     // copy so existing users who had it seeded stop seeing it.
@@ -141,18 +142,26 @@ export default class FiltersStorage extends AppManager {
     findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_GROUPS);
     filters.splice(1, 0, preserveRename(existingGroups, groupsFilter));
 
-    // CODE: ensure present at index 2 (between Groups and Archive), preserve
-    // rename. Seeded locally on every device — the folder definition is code,
-    // only the groups' `session` tag travels (see lib/phantomchat/group-tags).
-    const existingCode = filters.find(
-      (f) => (f as MyDialogFilter).id === FOLDER_ID_CODE
+    // SESSION: ensure present at index 2 (between Groups and the archives),
+    // preserve rename. Seeded locally on every device — the folder definition is
+    // code, only the peer CLASS travels (see group-types.SESSION_PEER_BASE).
+    const existingSession = filters.find(
+      (f) => (f as MyDialogFilter).id === FOLDER_ID_SESSION
     ) as MyDialogFilter | undefined;
-    findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_CODE);
-    filters.splice(2, 0, preserveRename(existingCode, codeFilter));
+    findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_SESSION);
+    filters.splice(2, 0, preserveRename(existingSession, sessionFilter));
+
+    // SESSION ARCHIVE: the read-only home of archived sessions. Same seeding
+    // rules; a user rename survives.
+    const existingSessionArchive = filters.find(
+      (f) => (f as MyDialogFilter).id === FOLDER_ID_SESSION_ARCHIVE
+    ) as MyDialogFilter | undefined;
+    findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_SESSION_ARCHIVE);
+    filters.splice(3, 0, preserveRename(existingSessionArchive, sessionArchiveFilter));
 
     // ARCHIVE: ensure present after all system folders
     findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_ARCHIVE);
-    filters.splice(3, 0, archiveFilter);
+    filters.splice(4, 0, archiveFilter);
 
     this.localId = START_LOCAL_ID;
     filters.forEach((filter) => {
@@ -282,33 +291,41 @@ export default class FiltersStorage extends AppManager {
     const {peerId} = dialog;
 
     // Only the Telegram-style folder ids (All=0, Archive=1) are stored on
-    // dialog.folder_id. Persons (2) / Groups (3) / Code (4) are locally-seeded
-    // system folders whose membership is computed below — do NOT short-circuit
-    // them there, otherwise they always appear empty.
+    // dialog.folder_id. Persons (2) / Groups (3) / Session (4) / Session
+    // Archive (5) are locally-seeded system folders whose membership is
+    // computed below — do NOT short-circuit them there, otherwise they always
+    // appear empty.
     if(filter.id === FOLDER_ID_ALL || filter.id === FOLDER_ID_ARCHIVE) {
       // Chats (0) must never contain a group: groups have their own built-in
-      // folder. Groups still carry folder_id 0 (that is what the server sends),
-      // so folder_id alone would put them in both lists. Session groups are
-      // excluded twice over — they are groups, and they belong to Code.
-      if(filter.id === FOLDER_ID_ALL && (isGroupPeer(peerId) || isSessionDialog(dialog))) return false;
+      // folder. Sessions are group-class peers too, so they fall out here as
+      // well — they belong to the Session space.
+      if(filter.id === FOLDER_ID_ALL && isGroupPeer(peerId)) return false;
 
-      // Archive is opt-in for everything EXCEPT a session: a session lives in
-      // Code and nowhere else, archived or not.
-      if(filter.id === FOLDER_ID_ARCHIVE && isSessionDialog(dialog)) return false;
+      // The chat archive never holds a session: a session archives into its own
+      // Session Archive space, archived or not.
+      if(filter.id === FOLDER_ID_ARCHIVE && isSessionPeer(peerId)) return false;
 
       return dialog.folder_id === filter.id && this.dialogsStorage.canSaveDialog(peerId, dialog);
     }
 
-    // Code (4) owns exactly the session groups — nothing else, ever.
-    if(filter.id === FOLDER_ID_CODE) {
-      return isSessionDialog(dialog) && this.dialogsStorage.canSaveDialog(peerId, dialog);
+    // Session (4) owns exactly the live sessions — a scalar peer-class test, so
+    // it answers the same on this thread (MTPROTO worker) as on the main one.
+    if(filter.id === FOLDER_ID_SESSION) {
+      return isSessionPeer(peerId) &&
+        dialog.folder_id !== FOLDER_ID_ARCHIVE &&
+        this.dialogsStorage.canSaveDialog(peerId, dialog);
     }
 
-    // A session group lives in Code only, so it is not a member of any other
-    // computed folder (Groups included) either. This is the gate that keeps a
-    // session out of Groups: `pFlags.groups` would otherwise claim it, because
-    // a session IS a group.
-    if(isSessionDialog(dialog)) {
+    // Session Archive (5): archived sessions only, same peer class.
+    if(filter.id === FOLDER_ID_SESSION_ARCHIVE) {
+      return isSessionPeer(peerId) &&
+        dialog.folder_id === FOLDER_ID_ARCHIVE &&
+        this.dialogsStorage.canSaveDialog(peerId, dialog);
+    }
+
+    // A session belongs to the Session space and nowhere else, so it is not a
+    // member of any other computed folder either — Groups included.
+    if(isSessionPeer(peerId)) {
       return false;
     }
 

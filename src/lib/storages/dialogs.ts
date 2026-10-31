@@ -26,8 +26,7 @@ import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArra
 import safeReplaceObject from '@helpers/object/safeReplaceObject';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 import {AppManager} from '@appManagers/manager';
-import {isGroupPeer} from '@lib/phantomchat/group-types';
-import {isSessionDialog, isSessionPeer} from '@lib/phantomchat/group-tags';
+import {isGroupPeer, isSessionPeer} from '@lib/phantomchat/group-types';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import isObject from '@helpers/object/isObject';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
@@ -460,13 +459,13 @@ export default class DialogsStorage extends AppManager {
     // non-display readers that need the complete population are audited to ask for
     // it explicitly (getAllPersistedDialogs, FOLDER_ID_GROUPS, 0+1+3).
     if(id === FOLDER_ID_ALL) {
-      return dialogs.filter((dialog) => !isGroupPeer((dialog as Dialog).peerId) && !isSessionDialog(dialog as any));
+      return dialogs.filter((dialog) => !isGroupPeer((dialog as Dialog).peerId));
     }
 
-    // A session group belongs to the Code folder and to nothing else, so
-    // Archive cannot claim one either (see FiltersStorage.testDialogForFilter).
+    // A session archives into its own Session Archive space, never into the chat
+    // archive (see FiltersStorage.testDialogForFilter).
     if(id === FOLDER_ID_ARCHIVE) {
-      return dialogs.filter((dialog) => !isSessionDialog(dialog as any));
+      return dialogs.filter((dialog) => !isSessionPeer((dialog as Dialog).peerId));
     }
 
     return dialogs;
@@ -506,16 +505,12 @@ export default class DialogsStorage extends AppManager {
   }
 
   /**
-   * Session verdict for a bare peerId. The synchronous index (group-tags) is
-   * per-thread module state, so a dialog built on the other thread would be
-   * invisible to it; the dialogs held here carry Code's index key when they are
-   * sessions, so consult both.
+   * Session verdict for a bare peerId — a pure range test (group-types), so it
+   * is identical on this thread and in the MTPROTO worker and never depends on
+   * whether the dialogs map has been hydrated yet.
    */
   private isSessionPeerId(peerId: PeerId) {
-    if(isSessionPeer(peerId)) return true;
-    // `this.dialogs` is the per-peer map, so it may not hold the row yet (or at
-    // all, in a partial fixture) — the index answer above still stands.
-    return isSessionDialog(this.dialogs?.[peerId] as any);
+    return isSessionPeer(peerId);
   }
 
   public getFolderUnreadCount(filterId: number) {
@@ -523,7 +518,7 @@ export default class DialogsStorage extends AppManager {
 
     // Chats (0) no longer contains groups (see getFolderDialogs), so its badge
     // must not count them either — they are counted by the Groups folder. The
-    // same goes for session groups, which the Code folder counts.
+    // same goes for sessions, which the Session space counts.
     if(filterId === FOLDER_ID_ALL) {
       const isNotGroup = (peerId: PeerId) => !isGroupPeer(peerId) && !this.isSessionPeerId(peerId);
       return {

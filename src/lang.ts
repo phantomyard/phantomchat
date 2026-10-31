@@ -1508,8 +1508,8 @@ const lang = {
   'Open': 'Open',
   'OpenUrlTitle': 'Open Link',
   'OpenUrlAlert2': 'Do you want to open %1$s?',
-  'FilterNoChatsToDisplay': 'Folder is empty',
-  'FilterNoChatsToDisplayInfo': 'No chats currently belong to this folder.',
+  'FilterNoChatsToDisplay': 'Nothing here yet',
+  'FilterNoChatsToDisplayInfo': 'There is currently nothing in this space.',
   'SupportStatus': 'support',
   'Lately': 'last seen recently',
   'WithinAWeek': 'last seen within a week',
@@ -1864,6 +1864,10 @@ const lang = {
   'PrivacyClearPayment': 'Payment info',
   'Clear': 'Clear',
   'Save': 'Save',
+  // PhantomChat sessions (owner batch 11): the only two strings the session
+  // surface needs — the rename popup's field label and its failure toast.
+  'SessionName': 'Session name',
+  'SessionActionFailed': 'Could not update the session',
   'PaymentCheckoutName': 'Name',
   'ClearRecentStickersAlertTitle': 'Clear recent stickers',
   'ClearRecentStickersAlertMessage': 'Do you want to clear all your recent stickers?',

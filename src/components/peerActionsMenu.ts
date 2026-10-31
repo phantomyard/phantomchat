@@ -70,7 +70,13 @@ export async function openPeerEditor(peerId: PeerId) {
  * (chat-list right-click, topbar hamburger, topbar right-click, ...).
  */
 export function peerEditMenuButton(
-  getPeerId: () => PeerId
+  getPeerId: () => PeerId,
+  /**
+   * Extra gate, evaluated per menu open. Sessions pass `() => false`: they have
+   * no edit dialog by design (owner batch 11) — their own Rename button lives in
+   * the context menu.
+   */
+  extraVerify?: () => boolean
 ): ButtonMenuItemOptionsVerifiable {
   return {
     icon: 'edit',
@@ -78,6 +84,6 @@ export function peerEditMenuButton(
     onClick: () => {
       openPeerEditor(getPeerId());
     },
-    verify: () => isPhantomEditablePeer(getPeerId())
+    verify: () => isPhantomEditablePeer(getPeerId()) && (extraVerify ? extraVerify() : true)
   };
 }

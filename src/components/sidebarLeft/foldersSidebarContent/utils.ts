@@ -1,5 +1,5 @@
 
-import {FOLDER_ID_ALL, FOLDER_ID_CODE} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_SESSION, FOLDER_ID_SESSION_ARCHIVE} from '@appManagers/constants';
 import type {AppManagers} from '@lib/managers';
 import {MyDialogFilter} from '@lib/storages/filters';
 import {DialogFilter} from '@layer';
@@ -22,10 +22,11 @@ export async function getNotificationCountForFilter(filterId: number, managers: 
 
 export function getIconForFilter(filter: MyDialogFilter): Icon {
   if(filter.id === FOLDER_ID_ALL) return 'round_chats_filled';
-  // Code never renders a font icon — it draws a literal `#` (see
+  // Session never renders a font icon — it draws a literal `#` (see
   // FolderItemPayload.glyph). This fallback only feeds the payload for
   // completeness, so any icon key will do.
-  if(filter.id === FOLDER_ID_CODE) return 'tag';
+  if(filter.id === FOLDER_ID_SESSION) return 'tag';
+  if(filter.id === FOLDER_ID_SESSION_ARCHIVE) return 'archive';
   const matchedIcons: Icon[] = [];
 
   assumeType<DialogFilter.dialogFilter>(filter);

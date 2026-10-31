@@ -1,5 +1,5 @@
 import {Dialog} from '@appManagers/appMessagesManager';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_CODE, REAL_FOLDERS, REAL_FOLDER_ID} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_SESSION, FOLDER_ID_SESSION_ARCHIVE, REAL_FOLDERS, REAL_FOLDER_ID} from '@appManagers/constants';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {isDialog, isForumTopic} from '@appManagers/utils/dialogs/isDialog';
@@ -19,8 +19,7 @@ import {AppDialogsManager, DialogDom} from '@lib/appDialogsManager';
 import rootScope from '@lib/rootScope';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {runWithHotReloadGuard} from '@lib/solidjs/runWithHotReloadGuard';
-import {isGroupPeer} from '@lib/phantomchat/group-types';
-import {isSessionDialog} from '@lib/phantomchat/group-tags';
+import {isGroupPeer, isSessionPeer} from '@lib/phantomchat/group-types';
 
 
 type ConstructorArgs = BaseConstructorArgs & {
@@ -263,10 +262,13 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       return false;
     }
 
-    // A session group belongs to Code and to no other tab — Groups included,
-    // since a session IS a group and `index_3` alone would claim it. Code is the
-    // one list allowed to hold the row.
-    if(this.filterId !== FOLDER_ID_CODE && isSessionDialog(dialog as any)) {
+    // Session vs classic group is a PURE RANGE TEST on the peer id, so this
+    // answers identically here and in the MTPROTO worker that built the index.
+    // A session appears in the Session space (live) or the Session Archive
+    // (archived) and in no other tab; a classic group never appears in either.
+    const isSession = isSessionPeer(dialog.peerId);
+    const isSessionTab = this.filterId === FOLDER_ID_SESSION || this.filterId === FOLDER_ID_SESSION_ARCHIVE;
+    if(isSession !== isSessionTab) {
       return false;
     }
 

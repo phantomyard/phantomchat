@@ -25,7 +25,6 @@ import type {LocalAdapter} from './crdt-sync';
 import type {SyncMap} from './sync-crdt';
 import type {GroupRecord} from './group-types';
 import type {DeletedGroupRecord} from './group-store';
-import {mergeRecordTags} from './group-tags';
 
 export type GroupsAdapterDeps = {
   listGroups: () => Promise<GroupRecord[]>;
@@ -288,13 +287,13 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
             ...entry.data,
             updatedAt: entry.updatedAt * 1000
           };
-          // Tags are the one field with a hand-rolled merge: an older client
-          // that renames a session group republishes the record WITHOUT `tags`
-          // (it does not know the field), and a wholesale LWW overwrite would
-          // strip the tag for every device. Absent = unchanged.
-          const mergedTags = mergeRecordTags(storeState?.get(id)?.tags, entry.data.tags);
-          if(mergedTags) record.tags = mergedTags;
-          else delete record.tags;
+          // The class is immutable identity, not a mutable field: if an older
+          // client republishes the record without `kind` (or with the wrong
+          // one), keep the local class, because the local peerId was derived
+          // from it and every local row is keyed by that peerId.
+          const localKind = storeState?.get(id)?.kind;
+          if(localKind === 'session') record.kind = 'session';
+          else if(record.kind !== 'session') delete record.kind;
           if(typeof entry.deliberateAddAt === 'number') {
             record.deliberateAddAt = entry.deliberateAddAt * 1000;
           }

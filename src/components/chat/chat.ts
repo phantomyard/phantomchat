@@ -1234,6 +1234,24 @@ export default class Chat extends EventListenerBase<{
       callback?.();
     });
 
+    // Archived sessions are read-only (owner batch 11): the composer goes away
+    // so nothing invites a send. This is the UI half — GroupAPI.sendMessage
+    // refuses too, which is what actually protects the session.
+    if(this.input?.chatInput) {
+      const chatInput = this.input.chatInput;
+      const numericPeerId = +peerId;
+      void import('@lib/phantomchat/group-types').then(async({isSessionPeer}) => {
+        if(!isSessionPeer(numericPeerId)) {
+          chatInput.classList.remove('session-archived-readonly');
+          return;
+        }
+
+        const {getGroupStore} = await import('@lib/phantomchat/group-store');
+        const record = await getGroupStore().getByPeerId(numericPeerId).catch((): null => null);
+        chatInput.classList.toggle('session-archived-readonly', !!record?.archivedAt);
+      });
+    }
+
     // Deferred path: shared media and backgrounds are NOT visible on first
     // paint (shared media is in the right sidebar, backgrounds are cosmetic).
     // Fire them in the background so they don't block chat rendering.

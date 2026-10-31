@@ -131,3 +131,61 @@
     top: -1px;
   }
 }
+
+/*
+ * Session row avatar slot (owner batch 11) — a session has no group/phantom
+ * avatar, just a plain `#`. The media box stays (the 56px row geometry expects
+ * it); the generated avatar inside is hidden and the glyph is drawn in its
+ * place, so nothing else in the row shifts.
+ */
+.chatlist-chat.session-row {
+  .dialog-avatar {
+    position: relative;
+    background: var(--surface-color) !important;
+
+    > * {
+      opacity: 0;
+    }
+
+    &::after {
+      content: '#';
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 600;
+      line-height: 1;
+      color: var(--secondary-text-color);
+    }
+  }
+}
+
+/*
+ * Non-emoji empty-space glyph (Session's `#`). Same footprint as the 128px
+ * sticker it replaces so the placeholder does not jump.
+ */
+.empty-placeholder-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 128px;
+  height: 128px;
+  margin: 0 auto 1.9375rem;
+  font-size: 96px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--secondary-text-color);
+  opacity: .55;
+  user-select: none;
+}
+
+/*
+ * Archived session (owner batch 11) — read-only, so the composer is not shown.
+ * The refusal itself lives in GroupAPI.sendMessage; this only stops the UI from
+ * offering an input that would fail.
+ */
+.chat-input.session-archived-readonly {
+  display: none;
+}

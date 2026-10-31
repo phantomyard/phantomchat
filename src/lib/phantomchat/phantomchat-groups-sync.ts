@@ -37,6 +37,7 @@
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
 import {groupIdToPeerId} from './group-types';
+import type {GroupKind} from './group-types';
 import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 import {buildPhantomChatMedia} from './phantomchat-media-shape';
@@ -279,6 +280,25 @@ export async function ensureGroupChatInjected(
 }
 
 /**
+ * Resolve a group's peer id from its store record.
+ *
+ * The peerId is a function of (groupId, kind), so it CANNOT be derived from the
+ * id alone any more: a session would resolve to a classic group's peerId and
+ * every mirror keyed by peerId would point at a different conversation. Records
+ * are the source of truth for the class; an absent record (teardown in flight)
+ * falls back to the classic derivation.
+ */
+export async function resolveGroupPeerId(groupId: string): Promise<number> {
+  let kind: GroupKind | undefined;
+  try {
+    kind = (await getGroupStore().get(groupId))?.kind;
+  } catch{
+    // store unavailable — use the classic class
+  }
+  return groupIdToPeerId(groupId, kind ?? 'group');
+}
+
+/**
  * Render-side counterpart to `writeGroupCreateServiceMessage`: materialise
  * the group in main-thread mirrors (so `getPeer(-chatId)` resolves) and
  * dispatch `dialogs_multiupdate` TWICE so the chat list gains a row with
@@ -295,11 +315,11 @@ export async function injectGroupCreateDialog(
   groupId: string,
   serviceMid: number,
   timestampSec: number,
-  tags?: readonly string[]
+  record?: {kind?: GroupKind, archivedAt?: number}
 ): Promise<void> {
   let groupPeerId: number;
   try {
-    groupPeerId = await groupIdToPeerId(groupId);
+    groupPeerId = await resolveGroupPeerId(groupId);
   } catch(err) {
     console.warn(LOG_PREFIX, 'create-dialog: groupIdToPeerId failed; skipping', {groupId, err});
     return;
@@ -307,17 +327,18 @@ export async function injectGroupCreateDialog(
 
   await ensureGroupChatInjected(groupId, groupPeerId);
 
-  // Session groups must be stamped with Code's index key, not Groups' (see
-  // group-tags.isSessionDialog). The caller holds the record and passes its tags
-  // so the verdict is exact — re-reading the store here lost the race against
-  // the IndexedDB write on the create path, and the dialog then landed in Groups.
+  // The dialog's folder index key follows the peer CLASS (the mapper reads it
+  // off the peerId range), and an archived session is created straight into the
+  // chat archive's folder_id so it lands in the Session Archive. The caller
+  // holds the record — re-reading the store here would race the IndexedDB write
+  // on the create path.
   const mapper = getMapper();
   const dialog = mapper.createTwebDialog({
     peerId: groupPeerId,
     topMessage: serviceMid,
     topMessageDate: timestampSec,
     unreadCount: 0,
-    tags,
+    archived: !!record?.archivedAt,
     // Read markers must equal top_message when unread is 0; otherwise tweb's
     // getDialogs flags this dialog as "noIdsDialogs" and spams reloadConversation.
     readInboxMaxId: serviceMid,
@@ -337,6 +358,44 @@ export async function injectGroupCreateDialog(
   }
 
   dispatchGroupDialogUpdate(groupPeerId, dialog);
+}
+
+/**
+ * Move a group's dialog between the live space and the archive (owner batch 11).
+ *
+ * Archive state is the RECORD's `archivedAt` (it syncs over the groups CRDT);
+ * the dialog mirrors it as `folder_id` (1 = archived), which is the flag tweb's
+ * folder machinery already understands. This function is the live-UI half: it
+ * moves the existing dialog and asks dialogs storage to recompute its per-folder
+ * indices, so the row leaves the Session space and appears in the Session
+ * Archive without a reload. A reload converges too — `getDialogs` rebuilds every
+ * group dialog from its record.
+ */
+export async function applyGroupDialogFolder(record: {groupId: string, kind?: GroupKind, archivedAt?: number}): Promise<void> {
+  const groupPeerId = await resolveGroupPeerId(record.groupId);
+  const folderId = record.archivedAt ? 1 : 0;
+
+  const proxy = MOUNT_CLASS_TO.apiManagerProxy as any;
+  const mirrored = proxy?.mirrors?.dialogs?.[groupPeerId];
+  if(mirrored) mirrored.folder_id = folderId;
+
+  let dialog = mirrored;
+  try {
+    const dialogsStorage = (rootScope as any).managers.dialogsStorage;
+    const entry = await dialogsStorage.getDialog?.(groupPeerId);
+    const live = Array.isArray(entry) ? entry[0] : entry;
+    if(live) dialog = live;
+    if(dialog) {
+      dialog.folder_id = folderId;
+      // pushDialog re-runs processDialogForFilters, which is what clears
+      // index_4 / sets index_5 (and the folder unread counts) for this row.
+      await dialogsStorage.pushDialog?.({dialog});
+    }
+  } catch(err: any) {
+    console.debug(LOG_PREFIX, 'applyGroupDialogFolder: reindex non-critical:', err?.message);
+  }
+
+  if(dialog) dispatchGroupDialogUpdate(groupPeerId, dialog);
 }
 
 /**
@@ -421,7 +480,7 @@ export async function handleGroupIncoming(
 
   let groupPeerId: number;
   try {
-    groupPeerId = await groupIdToPeerId(groupId);
+    groupPeerId = await resolveGroupPeerId(groupId);
   } catch(err) {
     console.warn(LOG_PREFIX, 'rx: groupIdToPeerId failed; dropping', {groupId, err});
     return;
@@ -587,7 +646,7 @@ export async function applyGroupReaction(
 
   let groupPeerId: number;
   try {
-    groupPeerId = await groupIdToPeerId(groupId);
+    groupPeerId = await resolveGroupPeerId(groupId);
   } catch{
     return;
   }
@@ -670,7 +729,7 @@ export async function applyGroupEdit(
 
   let groupPeerId: number;
   try {
-    groupPeerId = await groupIdToPeerId(groupId);
+    groupPeerId = await resolveGroupPeerId(groupId);
   } catch{
     return;
   }
@@ -715,7 +774,7 @@ export async function handleGroupOutgoing(
 
   let groupPeerId: number;
   try {
-    groupPeerId = await groupIdToPeerId(groupId);
+    groupPeerId = await resolveGroupPeerId(groupId);
   } catch(err) {
     console.warn(LOG_PREFIX, 'tx: groupIdToPeerId failed; skipping', {groupId, err});
     return;

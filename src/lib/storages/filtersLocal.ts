@@ -4,8 +4,9 @@ import copy from '@helpers/object/copy';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_CODE,
-  FOLDER_ID_GROUPS
+  FOLDER_ID_GROUPS,
+  FOLDER_ID_SESSION,
+  FOLDER_ID_SESSION_ARCHIVE
 } from '@appManagers/constants';
 
 const LOCAL_FILTER_TEMPLATE: DialogFilter.dialogFilter = {
@@ -41,12 +42,16 @@ export function buildLocalFilter(id: number): MyDialogFilter {
     filter.pFlags.groups = true;
     filter.pFlags.exclude_archived = true;
     filter.title = literalTitle('Groups');
-  } else if(id === FOLDER_ID_CODE) {
-    // No pFlags: Code membership is the `session` GROUP TAG, not a peer class
-    // (see lib/phantomchat/group-tags). FiltersStorage.testDialogForFilter
-    // short-circuits this id before the pFlags walk below.
+  } else if(id === FOLDER_ID_SESSION) {
+    // No pFlags: Session membership is the SESSION PEER CLASS (isSessionPeer),
+    // which FiltersStorage.testDialogForFilter short-circuits before the pFlags
+    // walk. Archived sessions belong to the Session Archive instead.
     filter.pFlags.exclude_archived = true;
-    filter.title = literalTitle('Code');
+    filter.title = literalTitle('Session');
+  } else if(id === FOLDER_ID_SESSION_ARCHIVE) {
+    // Read-only space for archived sessions; membership is the same peer class
+    // AND `dialog.folder_id === 1`.
+    filter.title = literalTitle('Archive');
   }
 
   return filter;
@@ -57,7 +62,11 @@ export function buildLocalFilter(id: number): MyDialogFilter {
  * must still be recognized as defaults during migration. Keep this list
  * small — only strings that were the ACTUAL default at some prior release.
  */
-const LEGACY_DEFAULT_TITLES: Record<number, readonly string[]> = {};
+const LEGACY_DEFAULT_TITLES: Record<number, readonly string[]> = {
+  // Folder 4 shipped as "Code" for one preview build (owner batch 10). Anyone
+  // who never renamed it gets the new default; an explicit rename still wins.
+  [FOLDER_ID_SESSION]: ['Code']
+};
 
 /**
  * Returns true for titles produced by buildLocalFilter (unchanged default

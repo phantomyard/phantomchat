@@ -976,10 +976,10 @@ export class PhantomChatMTProtoServer {
             unreadCount,
             readInboxMaxId,
             readOutboxMaxId: readInboxMaxId,
-            // Code-folder sessions: the record's tags are what tell this thread
-            // (the MTPROTO worker, which owns DialogsStorage and its own copy of
-            // the session index) that the group belongs to Code and not Groups.
-            tags: group.tags
+            // Archive state comes from the record (owner batch 11) — it is the
+            // synced fact, and it puts an archived session straight into the
+            // Session Archive folder on every rebuild.
+            archived: !!group.archivedAt
           });
           // Rule 8 on the response path (see the 1:1 branch above). Skip
           // message-less groups — there is no preview to render.

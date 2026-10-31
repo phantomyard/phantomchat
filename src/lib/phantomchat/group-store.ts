@@ -8,7 +8,6 @@
  */
 
 import type {GroupRecord} from './group-types';
-import {syncSessionPeer, syncSessionPeers, forgetSessionPeer} from './group-tags';
 
 const DB_NAME = 'phantomchat-groups';
 const DB_VERSION = 2;
@@ -76,14 +75,12 @@ export class GroupStore {
   /**
    * Save or update a group record (upsert).
    *
-   * This is the single chokepoint for the `session` index (see group-tags):
-   * every write — creator, receiver of group_create/group_info_update, CRDT
-   * apply — lands here, so the folder-membership predicate can stay
-   * synchronous.
+   * No session bookkeeping here any more (owner batch 11): a session is a peer
+   * CLASS, identified by its peerId range, so no index has to be kept in step
+   * with the store.
    */
   async save(group: GroupRecord): Promise<void> {
     const db = await getDB();
-    syncSessionPeer(group.peerId, group.tags);
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
@@ -123,9 +120,8 @@ export class GroupStore {
   }
 
   /**
-   * Get all stored groups. Also rebuilds the whole `session` index: this is
-   * the boot read (VMT getDialogs) and the CRDT read pass, so a tag that
-   * arrived while the app was closed is picked up here rather than never.
+   * Get all stored groups — the boot read (VMT getDialogs) and the CRDT read
+   * pass.
    */
   async getAll(): Promise<GroupRecord[]> {
     const db = await getDB();
@@ -135,9 +131,7 @@ export class GroupStore {
       const request = store.getAll();
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
-        const records = (request.result ?? []) as GroupRecord[];
-        syncSessionPeers(records);
-        resolve(records);
+        resolve((request.result ?? []) as GroupRecord[]);
       };
     });
   }
@@ -147,14 +141,6 @@ export class GroupStore {
    */
   async delete(groupId: string): Promise<void> {
     const db = await getDB();
-    // Drop the session flag with the record: the Code folder would otherwise
-    // keep an empty index slot for a group that no longer exists.
-    try {
-      const existing = await this.get(groupId);
-      if(existing) forgetSessionPeer(existing.peerId);
-    } catch{
-      // best effort — the delete below is the authoritative step
-    }
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
@@ -176,20 +162,24 @@ export class GroupStore {
   }
 
   /**
-   * Update metadata fields (name, description, avatar, tags) for a group.
-   * `tags` is applied only when the caller passes it: absent = unchanged, the
-   * same rule the wire uses (see group-tags.mergeRecordTags).
+   * Update metadata fields (name, description, avatar, archivedAt) for a group.
+   *
+   * `archivedAt` follows the "absent means unchanged" rule so a plain rename
+   * cannot silently unarchive a session; pass `null` to clear it explicitly.
    */
   async updateInfo(
     groupId: string,
-    updates: Partial<Pick<GroupRecord, 'name' | 'description' | 'avatar' | 'tags'>>
+    updates: Partial<Pick<GroupRecord, 'name' | 'description' | 'avatar'>> & {archivedAt?: number | null}
   ): Promise<void> {
     const existing = await this.get(groupId);
     if(!existing) throw new Error(`Group not found: ${groupId}`);
     if(updates.name !== undefined) existing.name = updates.name;
     if(updates.description !== undefined) existing.description = updates.description;
     if(updates.avatar !== undefined) existing.avatar = updates.avatar;
-    if(updates.tags !== undefined) existing.tags = updates.tags;
+    if(updates.archivedAt !== undefined) {
+      if(updates.archivedAt === null) delete existing.archivedAt;
+      else existing.archivedAt = updates.archivedAt;
+    }
     existing.updatedAt = Date.now();
     await this.save(existing);
   }

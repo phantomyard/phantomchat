@@ -5,6 +5,7 @@
  */
 
 import type {Dialog} from '@appManagers/appMessagesManager';
+import type {Chat} from '@layer';
 import type {ForumTopic} from '@layer';
 import type {AnyDialog} from '@lib/storages/dialogs';
 import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG} from '@lib/appDialogsManager';
@@ -31,6 +32,7 @@ import {MonoforumDialog} from '@lib/storages/monoforumDialogs';
 import {openRemoveFeePopup} from '@components/chat/removeFee';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import {peerEditMenuButton} from '@components/peerActionsMenu';
+import {isSessionPeer} from '@lib/phantomchat/group-types';
 
 
 export default class DialogsContextMenu {
@@ -102,8 +104,71 @@ export default class DialogsContextMenu {
     });
   }
 
+  /**
+   * Session menu (owner batch 11): Rename / Archive / Delete, and Unarchive /
+   * Delete once archived. No Edit dialog — a session is a title, one phantom and
+   * its history, so there is nothing else to edit. `verify` runs per open, which
+   * is why the class check lives here rather than at build time.
+   */
+  private getSessionButtons(): ButtonMenuItemOptionsVerifiable[] {
+    const isLiveSession = () => isSessionPeer(+this.peerId) && !!(this.dialog as Dialog) && (this.dialog as Dialog).folder_id !== 1;
+    const isArchivedSession = () => isSessionPeer(+this.peerId) && !!(this.dialog as Dialog) && (this.dialog as Dialog).folder_id === 1;
+
+    const sessionGroupId = async(): Promise<string | undefined> => {
+      const {getGroupStore} = await import('@lib/phantomchat/group-store');
+      const record = await getGroupStore().getByPeerId(+this.peerId);
+      return record?.groupId;
+    };
+
+    return [{
+      icon: 'edit',
+      text: 'Edit',
+      onClick: async() => {
+        const groupId = await sessionGroupId();
+        if(!groupId) return;
+
+        const chat = await this.managers.appChatsManager.getChat(this.peerId.toChatId())
+        .catch((): undefined => undefined) as Chat.chat | undefined;
+        const title = chat?.title ?? '';
+        const {default: PopupRenameSession} = await import('@components/popups/renameSession');
+        new PopupRenameSession(groupId, title);
+      },
+      verify: isLiveSession
+    }, {
+      icon: 'archive',
+      text: 'Archive',
+      onClick: async() => {
+        const groupId = await sessionGroupId();
+        if(!groupId) return;
+        const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+        try {
+          await getGroupAPI().archiveSession(groupId);
+        } catch(err: any) {
+          console.error('[PhantomChat.chat] archive session failed:', err);
+          toastNew({langPackKey: 'SessionActionFailed'});
+        }
+      },
+      verify: isLiveSession
+    }, {
+      icon: 'unarchive',
+      text: 'Unarchive',
+      onClick: async() => {
+        const groupId = await sessionGroupId();
+        if(!groupId) return;
+        const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+        try {
+          await getGroupAPI().unarchiveSession(groupId);
+        } catch(err: any) {
+          console.error('[PhantomChat.chat] unarchive session failed:', err);
+          toastNew({langPackKey: 'SessionActionFailed'});
+        }
+      },
+      verify: isArchivedSession
+    }];
+  }
+
   private getButtons() {
-    this.buttons ??= [peerEditMenuButton(() => this.peerId), {
+    this.buttons ??= [...this.getSessionButtons(), peerEditMenuButton(() => this.peerId, () => !isSessionPeer(+this.peerId)), {
       icon: 'newtab',
       text: 'OpenInNewTab',
       onClick: (e) => {
