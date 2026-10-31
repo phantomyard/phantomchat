@@ -128,8 +128,8 @@
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "38d59ba9833ed8968bcff4dca419a2a13f10fed36b133692b6297e8fb8a26d8e",
-      "preview": "38d59ba9833ed8968bcff4dca419a2a13f10fed36b133692b6297e8fb8a26d8e",
-      "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change."
+      "preview": "c821b2c830eaf5fc09557ae22e0bd0d2e86a6f86e933bd1a849dfb96435ffa50",
+      "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change. Send finalization now moves the in-memory dialog's top_message from the deleted temp mid to the real mid. It writes only through the existing setDialogTopMessage path; no storage, schema or wire-format change."
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "10f1ed83d4cd0cd3d7ceb0c4f5062992435f2c611582b7789ef18706b8704bf6",
