@@ -98,12 +98,12 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "4451fea74901e056111ac4c532c6db083747cdab34de56e05efad8370912c378",
-      "preview": "8e554c8f3c75e4fd5f4605ab3a54fee1d082660f2ac65eeb95a12dcc5ce42fd2",
+      "preview": "5118596072745f9ba14b7cd24910eb45fff9399ceec59b39c380bf5ae1becb33",
       "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "5bb0c60f7cc6e73aa1fb27e9b053c244c441e1f63ab8500e533c48bd1446a6b2",
-      "preview": "ccbe47109d70d416507ea341525e68082391e8ec5a92e781f4c2c971e2d2225c",
+      "preview": "b17ca62b0442182c9684d4f333fe877c1613d805cd7f691953e353d4aab5e6a7",
       "reason": "updateDialog returns the base promise (awaited add). Same membership gates as before; presentation only."
     },
     "src/lib/storages/filters.ts": {
@@ -259,6 +259,11 @@
       "stable": "ae2743fdd383354228d3f1393539bb86de20b9834c1790a430f42687c692cb60",
       "preview": "fd70c6d6559bc76bf10a959592fc8f52cfd052c7339e65de323c782261d71fdb",
       "reason": "Group typing ticks resolve the chat peerId from the group record kind (session vs classic) before dispatching. Local UI update only; no storage or protocol change."
+    },
+    "src/components/archiveDialogContextMenu.ts": {
+      "stable": "abeb6f1ae46cc11ba7973a465e9e473ab795b83c58021373e9a51cfbb89317bb",
+      "preview": "33fbf8e4f98005d4d923de52b2165dd2db0e0069a1ac053fba8176f3841bd030",
+      "reason": "Owner batch 14: archive list count + no pinned archive row in Chats. No storage format change."
     }
   },
   "stableVersion": "1.1.77"
