@@ -58,8 +58,8 @@
     },
     "src/lang.ts": {
       "stable": "0925abc3137a54a74455ce8f9f2b057836cb3cdefb5ecb7124a863e30857921b",
-      "preview": "0925abc3137a54a74455ce8f9f2b057836cb3cdefb5ecb7124a863e30857921b",
-      "reason": "Two PhantomChat strings, text only: the empty-folder placeholder and the archive/session failure toasts."
+      "preview": "d1eebbb9fe04f67735d2bde881ca55b18991cc321eba1343606320ad79178d27",
+      "reason": "Two PhantomChat strings, text only: the empty-folder placeholder and the archive/session failure toasts. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "12bbc698ae51ba00e2c837422c154d33282c20960943f5c7fa438e12547f08ca",
@@ -73,8 +73,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "344c1a5255c80c3ff52a967c2c352735a3307b5beeb3a141ff337f1837d86f08",
-      "preview": "344c1a5255c80c3ff52a967c2c352735a3307b5beeb3a141ff337f1837d86f08",
-      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage."
+      "preview": "a4a49387f7c32635c82b55ec449ad9446755137381b5078654de35e15baded47",
+      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
@@ -138,8 +138,8 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
-      "preview": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
-      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow."
+      "preview": "b5b0a50fbd801a89a8ed2a26187b1587128e69a85527a8967ef1f325c34493a0",
+      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged."
     },
     "src/lib/folders-sidebar-layout.ts": {
       "stable": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
