@@ -33,13 +33,13 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "913aaaffc0fa4ba479a027b17f1bb549fecc12e7d8219b5500970fa813761787",
-      "preview": "94c63d52d098eb6faa9e936f83b8fbbe7b4571219cacb7ae88a8969acbba1985",
-      "reason": "Sets glyph \"#\" for Code in the rail payload. Presentation only."
+      "preview": "20b800cc7d49c223e1c2c82de9dfc60a31e042431e9e3e4eea2ca7f86d54f6a8",
+      "reason": "Folders rail payload: Sessions draws a literal \"#\" glyph and the Session Archive folder id is gone. Presentation only."
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "stable": "c7fcb47939c4aef10592331776b64640ba7caf18e33470b960641c9ea2df742e",
-      "preview": "e8922d4302674428038e17af6c2a1c7df90a2128a4c5b46efd05edcdb44869e2",
-      "reason": "getIconForFilter returns a placeholder icon key for Code because the glyph overrides it. Presentation only."
+      "preview": "43d69bd02bf334a32cd18ae611bb78db808e18fe6ac33ab2d5b4bce4229d4608",
+      "reason": "getIconForFilter returns a placeholder icon key for Sessions (the \"#\" glyph overrides it). Presentation only."
     },
     "src/components/sidebarLeft/tabs/editFolder.ts": {
       "preview": "fa6b94e9e8608446f352fb0f8c32b5da70a6b8348aa47afe5c71459920cb8609",
@@ -53,18 +53,18 @@
     },
     "src/helpers/dom/createFolderContextMenu.ts": {
       "stable": "8a1793c4094835af951f643136c10ffcba83d0667c7c5a1c895ec3ae4e52e2b1",
-      "preview": "e5ff20d2a0750f51abecb4450386fe74187868ea79955eb8bef568a84c0e2913",
-      "reason": "Set/Remove default are suppressed on archive folders (chat archive 1 and session archive 5); Mark all as read unchanged. Presentation only."
+      "preview": "66f230181afcacbc0d347a338cdefa9cb6f8a4bd6bbcad853b6a4a163025f128",
+      "reason": "Set/Remove default are suppressed on the archive folder (id 1, now shared by chats, groups and sessions); Mark all as read unchanged. Presentation only."
     },
     "src/lang.ts": {
       "stable": "9ce8a8a239e5ffe2663da99feced7b856aa42b4f3d0996c8c6536f510f2675e9",
-      "preview": "93fdec19b2e00fc6248ed941d85e50abb4607caa7dcae49040fec9a78d386ad0",
-      "reason": "Adds the SessionRename string. Text only."
+      "preview": "22f47ce94cb05e40e819b6cca276efa555fb9f027d640b9ff89943d135b586d1",
+      "reason": "Replaces the session-only strings with ArchiveActionFailed; Archive/Unarchive reuse the existing keys. Text only."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "3fe972d1aa8dca02f895090e1af2c98a66fe27175a733e6827252f55c80de437",
-      "preview": "d33c5aadc26cb9fffcf73717ef5f705bac1c7d5123f5ee9f85049a5c8476a9c6",
-      "reason": "Session chip on dialog rows only: appends the `#` badge element beside the existing P2P badge. No data, storage or protocol touch; the chip hides itself for every non-session peer."
+      "preview": "12bbc698ae51ba00e2c837422c154d33282c20960943f5c7fa438e12547f08ca",
+      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -73,8 +73,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "5578ea14a8a8f2854f3aac006c2ab927d24355aceeb9a224dc5cd22a9baffe24",
-      "preview": "b9d7a69b9c8bd3c428ca4449bc6bcdf41b23184df48d8d1ce2276a3a3c7cd6bc",
-      "reason": "Generated lang-pack mirror of the two new label keys. Text only."
+      "preview": "b7cb8289c49d296bd3114f4a40077a014d814fffe303ca9f825b4cd0da433287",
+      "reason": "Generated lang-pack mirror of the string change. Text only."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "305b1d29a1ab0fcfd63667937240ab0e1f16534b12e946d52889c05234e2c247",
-      "preview": "2ea4e07e587486db2a5e3a1d4b7c736c76c172af2ed279ddb9228af8128ef29d",
-      "reason": "The chat-list + button opens the single-contact picker (and creates a session group from the pick) when the active folder is Code; Groups and every other folder behave as before. UI routing only."
+      "preview": "420317511a4ac88057d6ead385af63b1ba646867b116f7edb66a6660a8e51a2e",
+      "reason": "The chat-list + button opens the single-contact picker in the Sessions folder; Groups and every other folder behave as before. UI routing only."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
@@ -108,8 +108,8 @@
     },
     "src/lib/storages/filters.ts": {
       "stable": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "preview": "674994d5852e5696b20d20a05c76cef22713d1e349eea707c73c3c9265e8a2a5",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "82af9eb150da7c5282dd6064552866d59397045d6007da9f997bcefa14c13c3f",
+      "reason": "Folder membership: Sessions (4) = live session-class peers, Groups (3) excludes sessions, Archives (1) = any dialog with folder_id 1. The folder-5 branch is removed. Each rule is one predicate in one place."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
@@ -118,8 +118,8 @@
     },
     "src/lib/phantomchat/phantomchat-peer-mapper.ts": {
       "stable": "147879b5e88fb8b22af2ac9009f77a74c06073e9be15f50bf1b3ec951f4d354a",
-      "preview": "d927e86b57741171a2b46a70acbecefb120eabb6b9c676947fa716c21254816b",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "258154e3cf9a9ef23e2f76e4267dd34055f6e73481dc51938c9073334c9258d7",
+      "reason": "An archived group/session dialog is built with folder_id 1 and index_1; a live one gets index_3 or index_4 by peer class. Derived dialog shape only; no storage or protocol change."
     },
     "src/components/appSelectPeers.ts": {
       "stable": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
@@ -133,8 +133,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
-      "preview": "c9dfdaa775a54b4d3482786425fa22c0c4b2d013c218a2314a9e0d18d9a046e3",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "3239a70bdbcc4a06167335c37a7bd5aa20f1ba08fb8d84f1b6f8f69fdab87d42",
+      "reason": "archiveGroup/unarchiveGroup now accept any group class (previously sessions only) and write the synced archivedAt; sendMessage refuses a group-class send while archived. No stored-format change: archivedAt is an existing optional record field, still LWW-merged by updatedAt."
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
@@ -183,8 +183,8 @@
     },
     "src/lib/appManagers/constants.ts": {
       "stable": "b7add6caa33a3125c26fc6c22cbbaa26f12c25bcd5e197ad460e47f30e434431",
-      "preview": "2eab1b186e488f6118250e394ffcbd8b63c06f2598cd87bb19d118b97fc7f7fd",
-      "reason": "Adds FOLDER_ID_CODE = 4 to the locally-seeded system folders (REAL_FOLDERS + PROTECTED_FOLDERS), so it is re-seeded on every boot like Groups and cannot be deleted. START_LOCAL_ID moves 4 -> 5; persisted custom folders have their localId reassigned at boot (prependFilters strips it), so no index collides."
+      "preview": "205f5d3ab19e662b7aed54d66a2c4acaf455d934c2d3d1a1a57ab6b873dcc444",
+      "reason": "Removes FOLDER_ID_SESSION_ARCHIVE (id 5): one archive (id 1) for chats, groups and sessions. START_LOCAL_ID returns to 5, and a persisted folder 5 is stripped at boot so no custom folder inherits its localId. Folder definitions are code, not stored state."
     },
     "src/lib/phantomchat/group-store.ts": {
       "stable": "2e30c94c1ab3eae2c306e0180a938156330bd99e98d6978e64910702c4fd6fad",
@@ -207,18 +207,18 @@
     },
     "src/lib/storages/filtersLocal.ts": {
       "stable": "27fdd28d97a60363a981960c2a944a83dadaf7b7640cb801586e1327dc8fa1d9",
-      "preview": "44eadcd89fafdf7fe619f45b482957ee755f5691e2eb2fbf319dbaf946c69803",
-      "reason": "buildLocalFilter(FOLDER_ID_CODE) seeds a literal \"Code\" title with exclude_archived and no peer-class pFlags — membership is the session tag, not a pFlag, so no dialog changes class."
+      "preview": "ab3990bc7af55166747ea6402494661a71252cfa0384e3940abd2ce0842056e8",
+      "reason": "Folder 4 is seeded with the title \"Sessions\"; the folder-5 seed is removed; both \"Code\" and \"Session\" migrate as prior defaults so an untouched title upgrades and an explicit rename wins."
     },
     "src/components/chat/chat.ts": {
       "stable": "a6a577321e55625e050550185eb57f392aa82f4369f047bb8910b35228a57708",
-      "preview": "8fff9086f54c77b5de31fba5ecc617b45649ffb021f40ed73df412d0a4460541",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "809198811aa5626fdea43c09d657db5d416f78fc63fa1fe750a9e7798fe7bc63",
+      "reason": "Read-only archived composer: the chat pane sets `archived-readonly` from the dialog's `folder_id === 1` on navigation and follows a PhantomChat `dialog_folder_update` event while open. Presentation only; the send refusal lives in GroupAPI."
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "a46baa8ccc438e8d353f242f3e9ca204b66f6343223dc33c418737b957e76965",
-      "preview": "ebfbe8ba30233a717caa06daed7316600954a219e922630bca7e9952e19037a3",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "45a216fdca141bf6c86e537a2c42f6e6a594f9e65981b05bc7bb3f16d16a2694",
+      "reason": "applyGroupDialogFolder derives the dialog's folder_id from the record's archivedAt and dispatches dialog_folder_update for an open pane. Derived mirror only — the groups CRDT already carries the record."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "59eb420187dc41693cb3b48d0256b86747763fc64fd5ee390b4ba210094f65a2",
@@ -227,8 +227,8 @@
     },
     "src/components/dialogsContextMenu.ts": {
       "stable": "de80d11a3065a903d69411dddadf177c4eba2303becc2694ef1d775de4e68f99",
-      "preview": "abe4350859b080bb4cf6876306249d7a185e22e51e54265a9a73ff199a5b0a3b",
-      "reason": "Session rows get only Rename/Archive (or Unarchive)/Delete: every generic dialog entry is gated off for a session peer, delete stays last and always reads \"Delete\". Presentation only."
+      "preview": "350506355ec01443e83220df89aa74715490707252a4dbbf081a35a2d21fa1d8",
+      "reason": "Archive/Unarchive are added for every GROUP-CLASS peer (groups and sessions alike) and route to GroupAPI.archiveGroup/unarchiveGroup. The session-specific menu path is removed, so sessions use the ordinary group menu. Presentation only."
     },
     "src/components/peerActionsMenu.ts": {
       "stable": "5998889797746ef749c14c6c30ca3a84723e0f167f10ddc4918ac37fb72a044e",
@@ -243,7 +243,7 @@
     "src/lib/phantomchat/group-sessions.ts": {
       "stable": "absent",
       "preview": "fcabd2394967c93580177372d89ba7ca59f42043e86065ffd26ed9ae90283514",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "reason": "Session naming policy only: the default title and the first-prompt truncation (10 chars + ellipsis). No storage, protocol or settings change."
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "fce5f5d9aa6b0689d0073ca1edd6253dd1806e9ceb26701b09f5e8d1abb3ab05",
