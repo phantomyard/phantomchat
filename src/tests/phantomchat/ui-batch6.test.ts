@@ -28,33 +28,20 @@ describe('batch 6: folders rail matches the top bar', () => {
   });
 });
 
-describe('batch 6: presence dot lives in the title row', () => {
+describe('chat-list presence is omitted', () => {
   const dialogsSrc = read('components/autonomousDialogList/dialogs.ts');
   const managerSrc = read('lib/appDialogsManager.ts');
-  const chatlistScss = read('scss/partials/_chatlist.scss');
 
-  it('the dot is stamped into the title container before the P2P chip', () => {
-    const dotIdx = managerSrc.indexOf("onlineDot.classList.add('dialog-online-dot');");
-    const p2pIdx = managerSrc.indexOf("titleSpanContainer.append(createP2PBadge(peerId, 'p2p-badge--row'));");
-    expect(dotIdx).toBeGreaterThan(-1);
-    expect(p2pIdx).toBeGreaterThan(-1);
-    // the dot is appended to titleSpanContainer above (title row) and the P2P
-    // chip comes later in the source, i.e. the browser order is [name][dot][p2p]
-    expect(dotIdx).toBeLessThan(p2pIdx);
+  it('does not construct title-row presence dots, and retains the direct-transport chip', () => {
+    expect(managerSrc).not.toContain('dialog-online-dot');
+    expect(managerSrc).not.toContain('onlineDot');
+    expect(managerSrc).toContain("titleSpanContainer.append(createP2PBadge(peerId, 'p2p-badge--row'));");
   });
 
-  it('presence no longer renders on the avatar', () => {
-    expect(dialogsSrc).not.toContain('dom.avatarEl.node');
-    expect(dialogsSrc).toContain('dom.onlineDot?.classList.toggle');
-    // the old avatar :after was pinned to a 54px box and overflowed the row
-    expect(chatlistScss).toContain('.dialog-avatar.is-online:after {');
-    expect(chatlistScss).toContain('display: none;');
-  });
-
-  it('the dot is 8px, inline-block, and hidden until online', () => {
-    expect(chatlistScss).toContain('.dialog-online-dot {');
-    expect(chatlistScss).toContain('&.is-online {');
-    expect(chatlistScss).toContain('width: 8px;');
+  it('does not fetch or toggle per-row online status', () => {
+    expect(dialogsSrc).not.toContain('setOnlineStatus');
+    expect(dialogsSrc).not.toContain('getUserStatus');
+    expect(managerSrc).not.toContain('setOnlineStatus');
   });
 });
 

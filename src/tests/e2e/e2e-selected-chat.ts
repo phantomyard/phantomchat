@@ -2,6 +2,7 @@
 /** Local Chromium regression: selected DMs/groups stay read across arrivals. */
 import assert from 'node:assert/strict';
 import {WebSocketServer} from 'ws';
+import {chromium} from 'playwright';
 import {matchFilters} from 'nostr-tools';
 import {bootHarness} from '../fuzz/harness';
 import {LocalRelay} from './helpers/local-relay';
@@ -42,6 +43,27 @@ LocalRelay.prototype.start = async function() {
 LocalRelay.prototype.stop = async function() {
   for(const client of relayServer.clients) client.terminate();
   await new Promise<void>((resolve) => relayServer.close(() => resolve()));
+};
+
+// Keep onboarding independent of public profile/asset services. The actual
+// messaging transport is the local relay above; all app assets come from Vite.
+const launch = chromium.launch.bind(chromium);
+chromium.launch = async(options) => {
+  const browser = await launch(options);
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async(contextOptions) => {
+    const context = await newContext(contextOptions);
+    context.on('page', (page) => {
+      page.on('domcontentloaded', () => console.log('browser DOM loaded'));
+      page.on('pageerror', (error) => console.error('browser pageerror:', error.message));
+    });
+    await context.route('**/*', (route) => {
+      const url = new URL(route.request().url());
+      return ['127.0.0.1', 'localhost'].includes(url.hostname) ? route.continue() : route.abort();
+    });
+    return context;
+  };
+  return browser;
 };
 
 async function main() {
@@ -85,7 +107,8 @@ async function main() {
     await A.page.evaluate((id) => { window.__selectedTestConv = id; }, dmConv);
     await select(0);
     const sendDM = async(text) => B.page.evaluate(async({peer, content}) => {
-      await window.__phantomchatChatAPI.sendText(peer, content);
+      await window.__phantomchatChatAPI.connect(peer);
+      await window.__phantomchatChatAPI.sendText(content);
     }, {peer: A.pubkeyHex, content: text});
     await sendDM('selected-dm-closed');
     await arrive('selected-dm-closed');
