@@ -1,6 +1,6 @@
 // @vitest-environment node
 import {afterEach, describe, expect, it} from 'vitest';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -38,5 +38,31 @@ describe('shared-state release gate', () => {
     expect(checkCompatibility(config, 'HEAD', dir)).toEqual(['src/store.ts']);
     config.compatibilityApprovals['src/store.ts'].preview = hash('different');
     expect(() => checkCompatibility(config, 'HEAD', dir)).toThrow('compatibility review required');
+  });
+  it('checks the supplied deployed baseline instead of the local pin in the CLI', () => {
+    const config = fixture();
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    config.compatibilityApprovals['src/store.ts'] = {
+      stable: hash('const version = 1;\n'),
+      preview: hash('const version = 2;\n')
+    };
+    mkdirSync(resolve(dir, 'scripts/channels'), {recursive: true});
+    writeFileSync(resolve(dir, 'scripts/channels/config.json'), JSON.stringify(config));
+    const baseline = resolve(dir, 'deployed.json');
+    const deployed = {...config, compatibilityApprovals: {}};
+    writeFileSync(baseline, JSON.stringify(deployed));
+    const script = resolve('scripts/channels/check.mjs');
+    const run = (baselinePath: string) => spawnSync(process.execPath, [script], {
+      cwd: dir,
+      env: {...process.env, CHANNEL_BASELINE: baselinePath},
+      encoding: 'utf8'
+    });
+    expect(run('').status).toBe(0);
+    const rejected = run(baseline);
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stderr).toContain('src/store.ts');
+    writeFileSync(baseline, JSON.stringify(config));
+    expect(run(baseline).status).toBe(0);
+    expect(run(resolve(dir, 'missing.json')).status).not.toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 name: ci
 
-# PRs run typechecks and unit tests only. Preview builds/publication run on main; Stable promotion is manual.
+# PRs check local and deployed compatibility, typechecks and unit tests. Preview builds/publication run on main; Stable promotion is manual.
 on:
   pull_request:
     branches: [main]
@@ -32,6 +32,15 @@ jobs:
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:channels
+      - name: Load the published Stable baseline
+        id: baseline
+        run: node scripts/releases/registry.mjs baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Check compatibility with published Stable
+        run: pnpm check:channels
+        env:
+          CHANNEL_BASELINE: ${{ steps.baseline.outputs.baseline }}
       - run: npx tsc --noEmit
       - run: pnpm run typecheck:electron
 
