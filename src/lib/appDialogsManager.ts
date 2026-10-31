@@ -89,7 +89,7 @@ import Icon from '@components/icon';
 import setBadgeContent from '@helpers/setBadgeContent';
 import createBadge from '@helpers/createBadge';
 import {isDialog, isForumTopic, isMonoforumDialog, isSavedDialog} from '@appManagers/utils/dialogs/isDialog';
-import {ChatType} from '@components/chat/chat';
+import ImChat, {ChatType} from '@components/chat/chat';
 import rtmpCallsController from '@lib/calls/rtmpCallsController';
 import IS_LIVE_STREAM_SUPPORTED from '@environment/liveStreamSupport';
 import {WrapRichTextOptions} from '@richTextProcessor/wrapRichText';
@@ -880,7 +880,7 @@ export class AppDialogsManager {
       }
     });
 
-    const updateActivePeer = ({peerId, threadId, monoforumThreadId, isForum}: Partial<Chat>) => {
+    const updateActivePeer = ({peerId, threadId, monoforumThreadId, isForum}: Partial<ImChat>) => {
       const options: Parameters<AppImManager['isSamePeer']>[0] = {peerId, monoforumThreadId, threadId: isForum || rootScope.myId ? threadId : undefined};
 
       const getOptionsForElement = (element: HTMLElement) => {

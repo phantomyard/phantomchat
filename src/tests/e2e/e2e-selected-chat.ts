@@ -154,8 +154,7 @@ async function main() {
     console.log('PASS DM deselect + reopen + reload');
 
     const group = await B.page.evaluate(async(other) => {
-      const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
-      return getGroupAPI().createGroup('Selected read regression', [other]);
+      return window.__phantomchatGroupAPI.createGroup('Selected read regression', [other]);
     }, A.pubkeyHex);
     await until('group control arrival', () => A.page.evaluate(async(gid) => {
       const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
@@ -168,8 +167,7 @@ async function main() {
     const groupConv = `group:${group}`;
     await A.page.evaluate((id) => { window.__selectedTestConv = id; }, groupConv);
     const sendGroup = async(text) => B.page.evaluate(async({gid, content}) => {
-      const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
-      await getGroupAPI().sendMessage(gid, content);
+      await window.__phantomchatGroupAPI.sendMessage(gid, content);
     }, {gid: group, content: text});
     await select(0);
     await sendGroup('selected-group-closed');
