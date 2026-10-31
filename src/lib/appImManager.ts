@@ -229,6 +229,11 @@ export class AppImManager extends EventListenerBase<{
     return this.chats[this.chats.length - 1];
   }
 
+  /** Mobile Back retains the peer and DOM, but the hidden pane is not active. */
+  public get isChatVisible(): boolean {
+    return !mediaSizes.isMobile || this.tabId === APP_TABS.CHAT;
+  }
+
   public construct(managers: AppManagers) {
     this.managers = managers;
     internalLinkProcessor.construct(managers);

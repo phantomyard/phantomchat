@@ -85,3 +85,19 @@ describe('batch 6: dead folder-management entry points are gone', () => {
     expect(read('lang.ts')).toContain("'EnableSidebar': 'Enable Sidebar'");
   });
 });
+
+
+describe('selected chat unread wiring', () => {
+  it('shares row/rail unread suppression and omits the composer counter', () => {
+    const dialogs = read('lib/appDialogsManager.ts');
+    expect(dialogs).toContain('!isConversationSelected(+peerId)');
+    expect(dialogs).toMatch(/const hasUnreadAvatarBadge = [^;]*&& hasUnreadBadge;/);
+    expect(read('components/chat/input.ts')).toContain('isConversationSelected(+this.chat.peerId)');
+  });
+
+  it('mobile Back clears active row styling and re-entry resets unread', () => {
+    expect(read('lib/appDialogsManager.ts')).toContain("appImManager.addEventListener('tab_changing'");
+    expect(read('pages/phantomchat-onboarding-integration.ts')).toContain('queueMicrotask(() => resetSelectedUnread(im.chat))');
+    expect(read('lib/appImManager.ts')).toContain('this.tabId === APP_TABS.CHAT');
+  });
+});
