@@ -1,5 +1,5 @@
 /*
- * Owner batch 8 — cascade guards for the folders strip and the presence dot.
+ * Cascade guards for the folders strip and selected-chat unread counters.
  *
  * The batch-6/7/8 tests are source-text assertions on the SCSS, which lock the
  * text of a rule rather than what it computes: one of them happily pinned a
@@ -8,10 +8,7 @@
  *
  * Media-query caveat: jsdom keeps `@media` rules in the CSSOM but never applies
  * them, so anything asserted through `getComputedStyle` here lives outside a
- * query. The presence dot's white-on-active rule *is* inside
- * `@media (min-width: 601px)`, so that one is checked by comparing selector
- * specificity across the flattened sheet (treated as satisfied, which it is on
- * every desktop window) rather than by computing a colour.
+ * query. The selected-row badge rules deliberately apply at every width.
  */
 import {describe, it, expect, beforeAll} from 'vitest';
 import {JSDOM} from 'jsdom';
@@ -45,18 +42,6 @@ const mount = (bodyClasses: string) => {
     scrollable: cs('.folders-tabs-scrollable .scrollable-x')
   };
 };
-
-/** [ids, classes+attributes+pseudo-classes, elements+pseudo-elements] */
-function specificity(selector: string): [number, number, number] {
-  const s = selector
-    .replace(/:not\(([^)]*)\)/g, ' $1 ')
-    .replace(/::[a-z-]+/gi, ' ::pseudo-element ')
-    .replace(/:([a-z-]+)(\([^)]*\))?/gi, (m, name) => name === 'pseudo-element' ? m : ' .pseudo ');
-  const ids = (s.match(/#[\w-]+/g) || []).length;
-  const classes = (s.match(/\.[\w-]+/g) || []).length + (s.match(/\[[^\]]*\]/g) || []).length + (s.match(/\.pseudo/g) || []).length;
-  const elements = s.split(/[\s>+~]+/).filter(part => part && !part.startsWith('#') && !part.startsWith('.') && !part.startsWith('[') && !part.startsWith(':')).length;
-  return [ids, classes, elements];
-}
 
 /** Every declaration block in the compiled sheet, media-query ancestry noted. */
 function flatten(): {selector: string; style: CSSStyleDeclaration; media: string}[] {
@@ -121,53 +106,24 @@ describe('folders strip geometry', () => {
   });
 });
 
-describe('presence dot', () => {
-  it('keeps the white-on-active rule authoritative', () => {
-    const sheet = flatten();
-    const fixture = new JSDOM(`<!doctype html><html><body>
-      <div class="chatlist-chat active"><div class="row-title"><span class="dialog-online-dot is-online"></span></div></div>
-    </body></html>`).window.document.querySelector('.dialog-online-dot')!;
-
-    const background = (rule: {style: CSSStyleDeclaration}) =>
-      rule.style.getPropertyValue('background-color') || rule.style.getPropertyValue('background');
-
-    // Every rule that paints this element, with the best-matching selector of
-    // each list and that selector's specificity.
-    const painting = sheet
-      .filter(rule => background(rule))
-      .flatMap(rule => rule.selector.split(',').map(sel => {
-        const selector = sel.trim();
-        try { return fixture.matches(selector) ? {selector, background: background(rule)} : null; }
-        catch { return null; }
-      }))
-      .filter((hit): hit is {selector: string; background: string} => !!hit);
-
-    // The dot's default is the primary colour, which is the active row's own
-    // background — so the active rule must win on specificity, not on order.
-    const fallback = painting.filter(hit => hit.background.includes('--avatar-online-color'));
-    const white = painting.filter(hit => /#fff|255, 255, 255/i.test(hit.background));
-    expect(fallback.length).toBe(1);
-    expect(white.length).toBe(1);
-
-    // Same specificity would make it a file-order coin flip; higher is the point.
-    expect(compare(specificity(white[0].selector), specificity(fallback[0].selector))).toBeGreaterThan(0);
+describe('chat-list presence and selected unread badges', () => {
+  it('has no inline presence-dot paint rules', () => {
+    expect(flatten().filter(rule => rule.selector.includes('.dialog-online-dot'))).toEqual([]);
   });
 
-  it('does not reach for an id in the dot default', () => {
-    // An id there outranks `.chatlist-chat.active .dialog-online-dot` and the
-    // dot disappears on the selected row.
-    const sheet = flatten();
-    const dotRules = sheet.filter(rule => rule.selector.includes('.dialog-online-dot'));
-    expect(dotRules.length).toBeGreaterThan(0);
-    for(const rule of dotRules) {
-      for(const sel of rule.selector.split(',')) {
-        if(!sel.includes('.dialog-online-dot')) continue;
-        expect(sel).not.toMatch(/#[\w-]+\s/);
-      }
+  it('hides normal and collapsed unread counters only on the selected row', () => {
+    const document = new JSDOM(`<!doctype html><html><head><style>${css}</style></head><body>
+      <div class="chatlist-chat active" id="selected">
+        <span class="badge dialog-subtitle-badge-unread">7</span><span class="badge avatar-badge">7</span>
+      </div>
+      <div class="chatlist-chat" id="closed">
+        <span class="badge dialog-subtitle-badge-unread">7</span><span class="badge avatar-badge">7</span>
+      </div>
+    </body></html>`).window;
+    for(const selector of ['.dialog-subtitle-badge-unread', '.avatar-badge']) {
+      expect(document.getComputedStyle(document.document.querySelector(`#selected ${selector}`)!).display).toBe('none');
+      expect(document.getComputedStyle(document.document.querySelector(`#closed ${selector}`)!).display).not.toBe('none');
     }
+    document.close();
   });
 });
-
-function compare(a: [number, number, number], b: [number, number, number]) {
-  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-}
