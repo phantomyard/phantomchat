@@ -1237,11 +1237,19 @@ export default class Chat extends EventListenerBase<{
     // Deferred path: shared media and backgrounds are NOT visible on first
     // paint (shared media is in the right sidebar, backgrounds are cosmetic).
     // Fire them in the background so they don't block chat rendering.
+    //
+    // `handleBackgrounds` resolves to the CALLBACK that appends the background
+    // layer (its first pass runs `manual`, so setBackground hands the paint back
+    // instead of painting). Dropping it meant a chat element created AFTER the
+    // app-wide `setCurrentBackground` pass — every new chat tab, so the first
+    // chat or group you open from an empty list — never got a wallpaper until
+    // something else forced a re-paint (owner report, 2026-10-31).
     Promise.all([
       sharedMediaTab?.fillProfileElements(),
       this.handleBackgrounds()
-    ]).then(([sharedMediaCallback]) => {
+    ]).then(([sharedMediaCallback, backgroundCallback]) => {
       if(!middleware()) return;
+      backgroundCallback?.();
       sharedMediaTab?.loadSidebarMedia(true);
       sharedMediaCallback?.();
       if(sharedMediaTab) {

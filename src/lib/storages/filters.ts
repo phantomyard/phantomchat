@@ -27,7 +27,7 @@ import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {isDialog} from '@appManagers/utils/dialogs/isDialog';
 import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
-import {isSessionPeer} from '@lib/phantomchat/group-tags';
+import {isSessionDialog, isSessionPeer} from '@lib/phantomchat/group-tags';
 
 export type MyDialogFilter = Exclude<DialogFilter, DialogFilter.dialogFilterDefault>;
 
@@ -290,23 +290,25 @@ export default class FiltersStorage extends AppManager {
       // folder. Groups still carry folder_id 0 (that is what the server sends),
       // so folder_id alone would put them in both lists. Session groups are
       // excluded twice over — they are groups, and they belong to Code.
-      if(filter.id === FOLDER_ID_ALL && (isGroupPeer(peerId) || isSessionPeer(peerId))) return false;
+      if(filter.id === FOLDER_ID_ALL && (isGroupPeer(peerId) || isSessionDialog(dialog))) return false;
 
       // Archive is opt-in for everything EXCEPT a session: a session lives in
       // Code and nowhere else, archived or not.
-      if(filter.id === FOLDER_ID_ARCHIVE && isSessionPeer(peerId)) return false;
+      if(filter.id === FOLDER_ID_ARCHIVE && isSessionDialog(dialog)) return false;
 
       return dialog.folder_id === filter.id && this.dialogsStorage.canSaveDialog(peerId, dialog);
     }
 
     // Code (4) owns exactly the session groups — nothing else, ever.
     if(filter.id === FOLDER_ID_CODE) {
-      return isSessionPeer(peerId) && this.dialogsStorage.canSaveDialog(peerId, dialog);
+      return isSessionDialog(dialog) && this.dialogsStorage.canSaveDialog(peerId, dialog);
     }
 
     // A session group lives in Code only, so it is not a member of any other
-    // computed folder (Groups included) either.
-    if(isSessionPeer(peerId)) {
+    // computed folder (Groups included) either. This is the gate that keeps a
+    // session out of Groups: `pFlags.groups` would otherwise claim it, because
+    // a session IS a group.
+    if(isSessionDialog(dialog)) {
       return false;
     }
 

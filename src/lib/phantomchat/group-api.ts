@@ -308,7 +308,7 @@ export class GroupAPI {
     // until the first send hits `handleGroupOutgoing`.
     if(serviceMid !== null) {
       try {
-        await injectGroupCreateDialog(groupId, serviceMid, createdAtSec);
+        await injectGroupCreateDialog(groupId, serviceMid, createdAtSec, record.tags);
       } catch(err) {
         this.log.warn('[GroupAPI] injectGroupCreateDialog (creator) failed:', err);
       }
@@ -1440,7 +1440,7 @@ export class GroupAPI {
     // a full `handleGroupIncoming` render round-trip.
     if(serviceMid !== null) {
       try {
-        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec);
+        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec, record.tags);
       } catch(err) {
         this.log.warn('[GroupAPI] injectGroupCreateDialog (receiver) failed:', err);
       }
@@ -1629,7 +1629,7 @@ export class GroupAPI {
     }
     if(serviceMid !== null) {
       try {
-        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec);
+        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec, record.tags);
       } catch(err) {
         this.log.warn('[GroupAPI] injectGroupCreateDialog (rebind) failed:', err);
       }

@@ -294,7 +294,8 @@ export async function ensureGroupChatInjected(
 export async function injectGroupCreateDialog(
   groupId: string,
   serviceMid: number,
-  timestampSec: number
+  timestampSec: number,
+  tags?: readonly string[]
 ): Promise<void> {
   let groupPeerId: number;
   try {
@@ -306,12 +307,17 @@ export async function injectGroupCreateDialog(
 
   await ensureGroupChatInjected(groupId, groupPeerId);
 
+  // Session groups must be stamped with Code's index key, not Groups' (see
+  // group-tags.isSessionDialog). The caller holds the record and passes its tags
+  // so the verdict is exact — re-reading the store here lost the race against
+  // the IndexedDB write on the create path, and the dialog then landed in Groups.
   const mapper = getMapper();
   const dialog = mapper.createTwebDialog({
     peerId: groupPeerId,
     topMessage: serviceMid,
     topMessageDate: timestampSec,
     unreadCount: 0,
+    tags,
     // Read markers must equal top_message when unread is 0; otherwise tweb's
     // getDialogs flags this dialog as "noIdsDialogs" and spams reloadConversation.
     readInboxMaxId: serviceMid,

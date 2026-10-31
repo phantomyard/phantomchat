@@ -8,8 +8,9 @@
 
 import type {User, Chat, Dialog, Message, MessageEntity, Peer, PeerNotifySettings} from '@layer';
 import {PhantomChatBridge} from './phantomchat-bridge';
-import {FOLDER_ID_GROUPS} from '@appManagers/constants';
+import {FOLDER_ID_CODE, FOLDER_ID_GROUPS} from '@appManagers/constants';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
+import {hasSessionTag, isSessionPeer, syncSessionPeer} from './group-tags';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
 import {renderMarkdownTables} from '@lib/phantomchat/markdown-tables';
@@ -71,6 +72,17 @@ export interface CreateDialogOpts {
   isGroup?: boolean;
   readInboxMaxId?: number;
   readOutboxMaxId?: number;
+  /**
+   * The group's stored `GroupRecord.tags`, when the caller has it.
+   *
+   * The session index (lib/phantomchat/group-tags) is per-thread module state,
+   * and this factory runs on BOTH threads — the group store that populates the
+   * index lives on the main thread, while the MTPROTO worker builds the dialogs
+   * `DialogsStorage` indexes. Passing the record's tags is how the worker's copy
+   * learns which groups are sessions; it also stamps `index_4` on the dialog so
+   * the verdict survives the payload round-trip (group-tags.isSessionDialog).
+   */
+  tags?: readonly string[];
 }
 
 export class PhantomChatPeerMapper {
@@ -298,16 +310,25 @@ export class PhantomChatPeerMapper {
 
     (dialog as any)['index_0'] = sortIndex;
 
-    // A group also belongs to the built-in Groups folder, and that list reads
-    // its own `index_3` key to decide membership + sort position. Setting only
-    // `index_0` left `index_3` undefined, so `AutonomousDialogList`'s
+    // A group also belongs to one of the two computed folder tabs, and those
+    // lists read a per-folder index key to decide membership + sort position.
+    // Setting only `index_0` left the key undefined, so `AutonomousDialogList`'s
     // testDialogForFilter reported a freshly created group as excluded and the
     // row never appeared until a reload recomputed the index — the "group only
-    // shows up after refresh" bug. Both keys share the same timestamp-derived
-    // sort index, exactly like DialogsStorage.setDialogIndexInFilter builds it
-    // for a REAL_FOLDER.
+    // shows up after refresh" bug. The key is the same timestamp-derived sort
+    // index either way, exactly like DialogsStorage.setDialogIndexInFilter
+    // builds it for a REAL_FOLDER; only WHICH folder claims the row differs.
+    //
+    // A session group is claimed by Code (index_4) and by nothing else, so it
+    // must never carry Groups' index_3 — that is what put sessions in the
+    // Groups folder (owner report, 2026-10-31).
     if(isGroup) {
-      (dialog as any)[getDialogIndexKey(FOLDER_ID_GROUPS as any)] = sortIndex;
+      const isSession = hasSessionTag(opts.tags) || isSessionPeer(peerId);
+      // Keep THIS thread's index in step when the caller hands over the record's
+      // tags: without it the worker's predicates answer "not a session" forever.
+      if(opts.tags) syncSessionPeer(peerId, opts.tags);
+
+      (dialog as any)[getDialogIndexKey((isSession ? FOLDER_ID_CODE : FOLDER_ID_GROUPS) as any)] = sortIndex;
     }
 
     return dialog;

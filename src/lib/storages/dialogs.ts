@@ -27,7 +27,7 @@ import safeReplaceObject from '@helpers/object/safeReplaceObject';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 import {AppManager} from '@appManagers/manager';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
-import {isSessionPeer} from '@lib/phantomchat/group-tags';
+import {isSessionDialog, isSessionPeer} from '@lib/phantomchat/group-tags';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import isObject from '@helpers/object/isObject';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
@@ -460,13 +460,13 @@ export default class DialogsStorage extends AppManager {
     // non-display readers that need the complete population are audited to ask for
     // it explicitly (getAllPersistedDialogs, FOLDER_ID_GROUPS, 0+1+3).
     if(id === FOLDER_ID_ALL) {
-      return dialogs.filter((dialog) => !isGroupPeer((dialog as Dialog).peerId) && !isSessionPeer((dialog as Dialog).peerId));
+      return dialogs.filter((dialog) => !isGroupPeer((dialog as Dialog).peerId) && !isSessionDialog(dialog as any));
     }
 
     // A session group belongs to the Code folder and to nothing else, so
     // Archive cannot claim one either (see FiltersStorage.testDialogForFilter).
     if(id === FOLDER_ID_ARCHIVE) {
-      return dialogs.filter((dialog) => !isSessionPeer((dialog as Dialog).peerId));
+      return dialogs.filter((dialog) => !isSessionDialog(dialog as any));
     }
 
     return dialogs;
@@ -505,6 +505,19 @@ export default class DialogsStorage extends AppManager {
     });
   }
 
+  /**
+   * Session verdict for a bare peerId. The synchronous index (group-tags) is
+   * per-thread module state, so a dialog built on the other thread would be
+   * invisible to it; the dialogs held here carry Code's index key when they are
+   * sessions, so consult both.
+   */
+  private isSessionPeerId(peerId: PeerId) {
+    if(isSessionPeer(peerId)) return true;
+    // `this.dialogs` is the per-peer map, so it may not hold the row yet (or at
+    // all, in a partial fixture) — the index answer above still stands.
+    return isSessionDialog(this.dialogs?.[peerId] as any);
+  }
+
   public getFolderUnreadCount(filterId: number) {
     const folder = this.getFolder(filterId);
 
@@ -512,7 +525,7 @@ export default class DialogsStorage extends AppManager {
     // must not count them either — they are counted by the Groups folder. The
     // same goes for session groups, which the Code folder counts.
     if(filterId === FOLDER_ID_ALL) {
-      const isNotGroup = (peerId: PeerId) => !isGroupPeer(peerId) && !isSessionPeer(peerId);
+      const isNotGroup = (peerId: PeerId) => !isGroupPeer(peerId) && !this.isSessionPeerId(peerId);
       return {
         unreadUnmutedCount: [...folder.unreadUnmutedPeerIds].filter(isNotGroup).length,
         unreadCount: [...folder.unreadPeerIds].filter(isNotGroup).length,
@@ -522,7 +535,7 @@ export default class DialogsStorage extends AppManager {
 
     // Archive hides sessions, so its badge must not count them.
     if(filterId === FOLDER_ID_ARCHIVE) {
-      const isNotSession = (peerId: PeerId) => !isSessionPeer(peerId);
+      const isNotSession = (peerId: PeerId) => !this.isSessionPeerId(peerId);
       return {
         unreadUnmutedCount: [...folder.unreadUnmutedPeerIds].filter(isNotSession).length,
         unreadCount: [...folder.unreadPeerIds].filter(isNotSession).length,
@@ -1841,7 +1854,7 @@ export default class DialogsStorage extends AppManager {
     // folder_id 0 as far as the server is concerned, hence the local exclusion —
     // same for a session group, which the Code folder owns.
     const targets = folderId === FOLDER_ID_ALL ?
-      peerIds.filter((peerId) => !isGroupPeer(peerId) && !isSessionPeer(peerId)) :
+      peerIds.filter((peerId) => !isGroupPeer(peerId) && !this.isSessionPeerId(peerId)) :
       peerIds;
     for(const peerId of targets) {
       await this.appMessagesManager.markDialogUnread({peerId, read: true});

@@ -59,6 +59,24 @@ export function isSessionPeer(peerId: number): boolean {
   return sessionPeerIds.has(peerId);
 }
 
+/**
+ * Session verdict for a DIALOG, not just a peer id.
+ *
+ * The index above is per-thread module state, and the folder-membership
+ * predicates do not all run on the same thread as the group store: DialogsStorage
+ * and FiltersStorage run inside the MTPROTO worker, which has its own copy of
+ * this module and therefore its own (empty) set. The dialog is the one object
+ * that crosses that boundary, so a session stamps the Code folder's own index
+ * key (`index_4`, see phantomchat-peer-mapper.createTwebDialog) on the dialog at
+ * creation time. Every gate reads the set OR the dialog, which makes the answer
+ * identical on both threads and survives a payload round-trip.
+ */
+export function isSessionDialog(dialog: {peerId?: number, index_4?: number} | undefined | null): boolean {
+  if(!dialog) return false;
+  if(typeof dialog.peerId === 'number' && isSessionPeer(dialog.peerId)) return true;
+  return typeof dialog.index_4 === 'number';
+}
+
 /** Mirror ONE group's session flag into the index (upsert path). */
 export function syncSessionPeer(peerId: number, tags?: readonly string[]): void {
   if(!Number.isFinite(peerId)) return;

@@ -1,5 +1,5 @@
 import {Dialog} from '@appManagers/appMessagesManager';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS, REAL_FOLDER_ID} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_CODE, REAL_FOLDERS, REAL_FOLDER_ID} from '@appManagers/constants';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {isDialog, isForumTopic} from '@appManagers/utils/dialogs/isDialog';
@@ -20,7 +20,7 @@ import rootScope from '@lib/rootScope';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {runWithHotReloadGuard} from '@lib/solidjs/runWithHotReloadGuard';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
-import {isSessionPeer} from '@lib/phantomchat/group-tags';
+import {isSessionDialog} from '@lib/phantomchat/group-tags';
 
 
 type ConstructorArgs = BaseConstructorArgs & {
@@ -258,15 +258,15 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     // Chats (0) excludes groups (they belong to the built-in Groups folder).
     // This is the gate that adds/keeps a row on dialog updates, so the rule has
     // to live here too — otherwise a group re-enters the list the first time it
-    // emits dialog_flush / dialogs_multiupdate after load. A session group is
-    // excluded on the same grounds: it lives in Code, and Code is a computed
-    // index like Groups, so the row can only arrive through this gate.
-    if(this.filterId === FOLDER_ID_ALL && (isGroupPeer(dialog.peerId) || isSessionPeer(dialog.peerId))) {
+    // emits dialog_flush / dialogs_multiupdate after load.
+    if(this.filterId === FOLDER_ID_ALL && isGroupPeer(dialog.peerId)) {
       return false;
     }
 
-    // Archive never holds a session either (mirrors FiltersStorage.testDialogForFilter).
-    if(this.filterId === FOLDER_ID_ARCHIVE && isSessionPeer(dialog.peerId)) {
+    // A session group belongs to Code and to no other tab — Groups included,
+    // since a session IS a group and `index_3` alone would claim it. Code is the
+    // one list allowed to hold the row.
+    if(this.filterId !== FOLDER_ID_CODE && isSessionDialog(dialog as any)) {
       return false;
     }
 

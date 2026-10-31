@@ -975,7 +975,11 @@ export class PhantomChatMTProtoServer {
             isGroup: true,
             unreadCount,
             readInboxMaxId,
-            readOutboxMaxId: readInboxMaxId
+            readOutboxMaxId: readInboxMaxId,
+            // Code-folder sessions: the record's tags are what tell this thread
+            // (the MTPROTO worker, which owns DialogsStorage and its own copy of
+            // the session index) that the group belongs to Code and not Groups.
+            tags: group.tags
           });
           // Rule 8 on the response path (see the 1:1 branch above). Skip
           // message-less groups — there is no preview to render.
