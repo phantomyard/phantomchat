@@ -63,7 +63,7 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "12bbc698ae51ba00e2c837422c154d33282c20960943f5c7fa438e12547f08ca",
-      "preview": "04bcd8e209dec1b440c44b78c7a39464edf17360c3495e2c4e81cb196b304d01",
+      "preview": "be1e0c429d227d4c9525161cd1de8da27ab1e802491a8e6f1d0c0a2c9b69ce49",
       "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/folders-default.ts": {
@@ -159,7 +159,7 @@
     "src/lib/phantomchat/update-channel-choice.ts": {
       "stable": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
       "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
-      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef \u2014 desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
+      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
     },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
       "stable": "e1a1cc6436f6533390ca9ae6a55b7872de4372d41d58da9c306eda800eec221e",
@@ -233,7 +233,7 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "993f9fadfdc0e124e7b0a062882a80591114e9e0f40409f5361592e95f7dba31",
-      "preview": "993f9fadfdc0e124e7b0a062882a80591114e9e0f40409f5361592e95f7dba31",
+      "preview": "bbcc7e94147bec1c976606854cd2e0d952494a239c887ed3f5862f7200d1457f",
       "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change."
     },
     "src/components/autonomousDialogList/base.ts": {
@@ -283,13 +283,18 @@
     },
     "src/lib/phantomchat/phantomchat-message-handler.ts": {
       "stable": "e1f5fe6123f07e58041b3aa245fadb6a84cf77e61e2b48fe540603db2c04e34a",
-      "preview": "07f8f1e1752898411dd5006e4a332fa02176dea2448fb51d018277e61f33b8d1",
+      "preview": "95b52037c0faa5eec34d7c6757e5cc96387cbcecd6d6d370b09eda6052537573",
       "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/selected-conversation.ts": {
       "stable": "absent",
-      "preview": "205a3585630108651f23584e5ab95ec576b5954ba56a696d51696e067515bf5b",
+      "preview": "18453a1a0378eb898500aaa1374c048eeed1cc02732ea5d2dc6b940acbf02899",
       "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+    },
+    "src/lib/appImManager.ts": {
+      "stable": "c497fe315c7cdbdbd37b6a22b5ef002ec01802057789f6e2ce4e7b75f7d619d5",
+      "preview": "542efceeaa3c4928eef22bc99830429065061ed40b70923b7bd11476a87ead4d",
+      "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change."
     }
   },
   "stableVersion": "1.1.80"

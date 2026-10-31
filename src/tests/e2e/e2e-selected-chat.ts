@@ -148,10 +148,7 @@ async function main() {
     await expectUnread(dmConv, 1);
     await select(A.remotePeerId);
     await expectUnread(dmConv, 0);
-    await A.page.reload({waitUntil: 'load'});
-    await ready(A.page);
-    await expectUnread(dmConv, 0);
-    console.log('PASS DM deselect + reopen + reload');
+    console.log('PASS DM deselect + reopen');
 
     const group = await B.page.evaluate(async(other) => {
       return window.__phantomchatGroupAPI.createGroup('Selected read regression', [other]);
@@ -204,8 +201,14 @@ async function main() {
     await expectUnread(groupConv, 0);
     await assertUI(groupPeer);
     console.log('PASS group mobile re-entry clears and holds read');
+    await A.page.reload();
+    await A.page.waitForFunction(() => window.appImManager?.setPeer && window.__phantomchatChatAPI,
+      undefined, {timeout: 60000});
+    await expectUnread(dmConv, 0);
+    await expectUnread(groupConv, 0);
+    console.log('PASS DM and group durable cursors after reload');
   } catch(error) {
-    console.error('USER A console', A.consoleLog.slice(-45).join('\n'));
+    console.error('USER A console', A.consoleLog.slice(-120).join('\n'));
     console.error('USER B console', B.consoleLog.slice(-25).join('\n'));
     throw error;
   } finally {
