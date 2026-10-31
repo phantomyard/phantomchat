@@ -247,7 +247,7 @@ describe('top bar avatar — live-added second dialog (PR #161 regression)', () 
     }
   });
 
-  it('flips the topbar when the All Chats archive row is pinned/unpinned', async() => {
+  it('never pins an archive row into All Chats', async() => {
     const {default: appDialogsManager} = await import('@lib/appDialogsManager');
     const {AutonomousDialogList} = await import('@components/autonomousDialogList/dialogs');
     const {default: MTProtoMessagePort} = await import('@lib/mainWorker/mainMessagePort');
@@ -261,8 +261,7 @@ describe('top bar avatar — live-added second dialog (PR #161 regression)', () 
     adm.onListLengthChange = (): void => void adm._onListLengthChange();
     adm.filterId = FOLDER_ID_ALL;
 
-    // Real FOLDER_ID_ALL list, so it owns a customPinnedDialog + archive
-    // state exactly as production does.
+    // Real FOLDER_ID_ALL list.
     const list = new AutonomousDialogList({filterId: FOLDER_ID_ALL, appDialogsManager: adm});
     adm.xd = list;
     adm.xds = {[FOLDER_ID_ALL]: list};
@@ -286,24 +285,23 @@ describe('top bar avatar — live-added second dialog (PR #161 regression)', () 
       topbar.updateTopbarAvatarVisibility();
       expect(topbar.container.classList.contains('single-dialog')).toBe(true);
 
-      // An archived dialog appears → onHasArchiveDialogChanged(true) pins the
-      // archive row. The count goes 1 → 2 through a PINNED row: itemsLength
-      // never moves, so the round-2 effect (subscribed to itemsLength only)
-      // stayed silent and the class went stale.
-      await (list as any).onHasArchiveDialogChanged(true);
-
-      await vi.waitFor(() => {
-        expect(topbar.container.classList.contains('single-dialog')).toBe(false);
-      });
-      expect(list.sortedList.getVisibleRowsCount()).toBe(2);
-
-      // Archive empties again → row unpinned, back to a single rendered row.
-      await (list as any).onHasArchiveDialogChanged(false);
-
-      await vi.waitFor(() => {
-        expect(topbar.container.classList.contains('single-dialog')).toBe(true);
-      });
+      // Owner batch 14: the pinned "Archived Chats" row is gone from Chats —
+      // Archives is a rail space. The list owns no pinned row and no archive
+      // dialog state, so a single chat stays single-dialog no matter how many
+      // archived dialogs exist.
+      expect((list as any).customPinnedDialog).toBeUndefined();
+      expect((list as any).archiveDialogState).toBeUndefined();
       expect(list.sortedList.getVisibleRowsCount()).toBe(1);
+      expect(topbar.container.classList.contains('single-dialog')).toBe(true);
+
+      // A second REAL row flips the class, as before.
+      const item2 = await list.sortedList.createItemForKey(dialog2.peerId);
+      list.sortedList.addDeferredItems([item2], 2);
+      await vi.waitFor(() => {
+        expect(list.sortedList.getVisibleRowsCount()).toBe(2);
+      });
+      topbar.updateTopbarAvatarVisibility();
+      expect(topbar.container.classList.contains('single-dialog')).toBe(false);
     } finally {
       rootScope.removeEventListener('chatlist_length_change', onChatlistChange);
     }

@@ -3,22 +3,18 @@ import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS, REAL_FOLDER_ID} from '@a
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {isDialog, isForumTopic} from '@appManagers/utils/dialogs/isDialog';
-import ArchiveDialog, {createArchiveDialogState, DisposableArchiveDialogState} from '@components/archiveDialog';
 import {AutonomousDialogListBase, BaseConstructorArgs, LoadDialogsInnerArgs} from '@components/autonomousDialogList/base';
 import {BADGE_TRANSITION_TIME} from '@components/autonomousDialogList/constants';
 import groupCallActiveIcon from '@components/groupCallActiveIcon';
 import Scrollable from '@components/scrollable';
 import SetTransition from '@components/singleTransition';
-import SortedDialogList, {CustomPinnedDialog} from '@components/sortedDialogList';
+import SortedDialogList from '@components/sortedDialogList';
 import IS_GROUP_CALL_SUPPORTED from '@environment/groupCallSupport';
-import namedPromises from '@helpers/namedPromises';
 import noop from '@helpers/noop';
 import {Chat} from '@layer';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import {AppDialogsManager, DialogDom} from '@lib/appDialogsManager';
 import rootScope from '@lib/rootScope';
-import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
-import {runWithHotReloadGuard} from '@lib/solidjs/runWithHotReloadGuard';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 
 
@@ -28,34 +24,17 @@ type ConstructorArgs = BaseConstructorArgs & {
 
 export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
   protected filterId: number;
-  private archiveDialogState?: DisposableArchiveDialogState;
-  private customPinnedDialog?: CustomPinnedDialog;
 
   constructor({filterId, ...args}: ConstructorArgs) {
     super(args);
 
     this.filterId = filterId;
 
-    if(filterId === FOLDER_ID_ALL) {
-      this.customPinnedDialog = new CustomPinnedDialog({
-        render: () => {
-          const element = new ArchiveDialog;
-          element.HotReloadGuard = SolidJSHotReloadGuardProvider;
-
-          element.feedProps({
-            state: this.archiveDialogState.state
-          });
-
-          return element;
-        }
-      });
-
-      this.archiveDialogState = runWithHotReloadGuard(() => createArchiveDialogState({
-        onHasArchiveDialogChanged: (hasDialogs) => {
-          this.onHasArchiveDialogChanged(hasDialogs);
-        }
-      }));
-    }
+    // Owner batch 14: no more pinned "Archived Chats" row at the top of the
+    // chat list. The Archives space lives on the folders rail now, so the row
+    // (and the archive dialog state it needed, plus the extra archive paging
+    // it pulled on every Chats load) is gone. `@components/archiveDialog` is
+    // left in place for the archive stories but is no longer mounted here.
 
     this.needPlaceholderAtFirstTime = true;
 
@@ -270,29 +249,15 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
 
     const unblock = isFirstLoad ? this.sortedList.blockAnimation() : noop;
 
-    const {result} = await namedPromises({
-      result: super.loadDialogsInner({offsetIndex, removePlaceholder: false, canFinish}),
-      _ignore: this.ensureArchiveDialogHydrated()
+    const result = await super.loadDialogsInner({
+      offsetIndex,
+      removePlaceholder: false,
+      canFinish
     }).finally(unblock);
 
     this.placeholder?.detach(this.sortedList.itemsLength());
 
     return result;
-  }
-
-  private async ensureArchiveDialogHydrated() {
-    if(!this.archiveDialogState) return;
-
-    const promise = this.archiveDialogState.state.ensureHydrated();
-    if(!promise) {
-      await this.onHasArchiveDialogChanged(this.archiveDialogState.hasArchiveDialog());
-      return;
-    }
-
-    const ackedResult = await promise;
-    if(!ackedResult.cached) return;
-
-    return ackedResult.result;
   }
 
   /**
@@ -470,18 +435,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     return super.canUpdateDialog(dialog);
   }
 
-  private async onHasArchiveDialogChanged(hasArchiveDialog: boolean) {
-    if(!this.customPinnedDialog || !this.archiveDialogState) return;
-
-    if(hasArchiveDialog) {
-      await this.sortedList.ensurePinned(this.customPinnedDialog);
-    } else {
-      this.sortedList.removePinned(this.customPinnedDialog);
-    }
-  }
-
   public destroy(): void {
     super.destroy();
-    this.archiveDialogState?.dispose();
   }
 }

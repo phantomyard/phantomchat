@@ -1780,12 +1780,18 @@ export default class DialogsStorage extends AppManager {
       // comparison can therefore never be satisfied. The pager then ends on the
       // first empty page, and isEnd latches setDialogsLoaded(folderId, true), so
       // no request is repeated at the end of the list.
-      // FOLDER_ID_ARCHIVE (1) is a real server folder whose result.count is
-      // correct, and virtual filters (forum/saved) carry their own counts, so
-      // both are excluded.
+      // FOLDER_ID_ARCHIVE (1) is a real server folder in Telegram, where
+      // result.count is the archived subset. PhantomChat's virtual server is
+      // not: its messages.getDialogs ignores the requested folder_id and
+      // answers EVERY folder with the global dialog set (`count:
+      // dialogs.length`). Taking that count for the Archive sizes the virtual
+      // list to the whole account and pads the surplus with permanent ghost
+      // skeleton rows under the archived chats (owner batch 14). Every folder
+      // whose membership is decided locally — which is now all of them — must
+      // report the locally filtered length; only virtual filters (forum /
+      // saved) carry their own counts.
       const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS;
-      const isLocallyFilteredFolder = !isVirtualFilter &&
-        filterId !== FOLDER_ID_ARCHIVE;
+      const isLocallyFilteredFolder = !isVirtualFilter;
 
       if(skipMigrated) {
         curDialogStorage = this.getFolderDialogs(filterId, skipMigrated);
