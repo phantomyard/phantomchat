@@ -178,62 +178,67 @@ describe('folder definition', () => {
   });
 });
 
-  it('#292 review: renumbers a user folder squatting on id 4 instead of deleting it', () => {
-    const fs = filterStorage();
-    (fs as any).localFilters = {
-      [FOLDER_ID_ALL]: buildLocalFilter(FOLDER_ID_ALL),
-      [FOLDER_ID_ARCHIVE]: buildLocalFilter(FOLDER_ID_ARCHIVE),
-      [FOLDER_ID_GROUPS]: buildLocalFilter(FOLDER_ID_GROUPS),
-      [FOLDER_ID_SESSION]: buildLocalFilter(FOLDER_ID_SESSION)
-    };
-    // A real custom folder from when `createDialogFilter` minted `max(id) + 1`
-    // with system folders at 0/1/3/4: the first one landed on 4.
-    const userFolder = {
-      ...buildLocalFilter(FOLDER_ID_SESSION),
-      id: FOLDER_ID_SESSION,
-      title: {_: 'textWithEntities', text: 'Themes'},
-      include_peers: [{_: 'inputPeerUser', user_id: 7}]
-    };
-    const persisted = [0, 1, 3].map((id) => ({...buildLocalFilter(id), localId: id}));
-    persisted.push(userFolder as any);
+// Kai's nit at b21b342: these two were top-level `it()`s orphaned between
+// describes, so they ran with no shared context and no grouping. Same
+// assertions, now inside a describe of their own.
+describe('folder id migration (#292 review)', () => {
+    it('#292 review: renumbers a user folder squatting on id 4 instead of deleting it', () => {
+      const fs = filterStorage();
+      (fs as any).localFilters = {
+        [FOLDER_ID_ALL]: buildLocalFilter(FOLDER_ID_ALL),
+        [FOLDER_ID_ARCHIVE]: buildLocalFilter(FOLDER_ID_ARCHIVE),
+        [FOLDER_ID_GROUPS]: buildLocalFilter(FOLDER_ID_GROUPS),
+        [FOLDER_ID_SESSION]: buildLocalFilter(FOLDER_ID_SESSION)
+      };
+      // A real custom folder from when `createDialogFilter` minted `max(id) + 1`
+      // with system folders at 0/1/3/4: the first one landed on 4.
+      const userFolder = {
+        ...buildLocalFilter(FOLDER_ID_SESSION),
+        id: FOLDER_ID_SESSION,
+        title: {_: 'textWithEntities', text: 'Themes'},
+        include_peers: [{_: 'inputPeerUser', user_id: 7}]
+      };
+      const persisted = [0, 1, 3].map((id) => ({...buildLocalFilter(id), localId: id}));
+      persisted.push(userFolder as any);
 
-    const seeded = (fs as any).prependFilters(persisted) as any[];
-    const ids = seeded.map((f) => f.id);
+      const seeded = (fs as any).prependFilters(persisted) as any[];
+      const ids = seeded.map((f) => f.id);
 
-    // Nothing lost: the user's folder survives with its title AND its rules,
-    // just past the reserved ids, so the boot reconcile keeps it too.
-    const themes = seeded.find((f) => f.title?.text === 'Themes');
-    expect(themes).toBeDefined();
-    expect(themes.id).toBeGreaterThanOrEqual(START_LOCAL_ID);
-    expect(themes.include_peers).toHaveLength(1);
-    // And Sessions comes back at its historical id.
-    expect(ids).toContain(FOLDER_ID_SESSION);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
+      // Nothing lost: the user's folder survives with its title AND its rules,
+      // just past the reserved ids, so the boot reconcile keeps it too.
+      const themes = seeded.find((f) => f.title?.text === 'Themes');
+      expect(themes).toBeDefined();
+      expect(themes.id).toBeGreaterThanOrEqual(START_LOCAL_ID);
+      expect(themes.include_peers).toHaveLength(1);
+      // And Sessions comes back at its historical id.
+      expect(ids).toContain(FOLDER_ID_SESSION);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
 
-  it('#292 review: a user folder that landed on id 5 is left alone — 5 is a legal custom id', () => {
-    const fs = filterStorage();
-    (fs as any).localFilters = {
-      [FOLDER_ID_ALL]: buildLocalFilter(FOLDER_ID_ALL),
-      [FOLDER_ID_ARCHIVE]: buildLocalFilter(FOLDER_ID_ARCHIVE),
-      [FOLDER_ID_GROUPS]: buildLocalFilter(FOLDER_ID_GROUPS),
-      [FOLDER_ID_SESSION]: buildLocalFilter(FOLDER_ID_SESSION)
-    };
-    const userFolder = {
-      ...buildLocalFilter(FOLDER_ID_SESSION),
-      id: 5,
-      title: {_: 'textWithEntities', text: 'Clients'},
-      include_peers: [{_: 'inputPeerUser', user_id: 9}]
-    };
-    const persisted = [0, 1, 3, 4].map((id) => ({...buildLocalFilter(id), localId: id}));
-    persisted.push(userFolder as any);
+    it('#292 review: a user folder that landed on id 5 is left alone — 5 is a legal custom id', () => {
+      const fs = filterStorage();
+      (fs as any).localFilters = {
+        [FOLDER_ID_ALL]: buildLocalFilter(FOLDER_ID_ALL),
+        [FOLDER_ID_ARCHIVE]: buildLocalFilter(FOLDER_ID_ARCHIVE),
+        [FOLDER_ID_GROUPS]: buildLocalFilter(FOLDER_ID_GROUPS),
+        [FOLDER_ID_SESSION]: buildLocalFilter(FOLDER_ID_SESSION)
+      };
+      const userFolder = {
+        ...buildLocalFilter(FOLDER_ID_SESSION),
+        id: 5,
+        title: {_: 'textWithEntities', text: 'Clients'},
+        include_peers: [{_: 'inputPeerUser', user_id: 9}]
+      };
+      const persisted = [0, 1, 3, 4].map((id) => ({...buildLocalFilter(id), localId: id}));
+      persisted.push(userFolder as any);
 
-    const seeded = (fs as any).prependFilters(persisted) as any[];
-    const clients = seeded.find((f) => f.title?.text === 'Clients');
-    expect(clients).toBeDefined();
-    expect(clients.id).toBe(5);
-    expect(clients.include_peers).toHaveLength(1);
-  });
+      const seeded = (fs as any).prependFilters(persisted) as any[];
+      const clients = seeded.find((f) => f.title?.text === 'Clients');
+      expect(clients).toBeDefined();
+      expect(clients.id).toBe(5);
+      expect(clients.include_peers).toHaveLength(1);
+    });
+});
 
 describe('folder membership', () => {
   it('puts a live session in Sessions and in no live group space', () => {
