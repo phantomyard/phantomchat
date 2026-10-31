@@ -162,6 +162,21 @@ describe('AttachmentTray', () => {
       expect(tray.element.querySelector('.attachment-tray-item-status')?.textContent).toBe('!');
     });
 
+    it('skips a queued file that was removed mid-batch', async() => {
+      const tray = new AttachmentTray();
+      tray.addFiles([makeFile('a.png', 'image/png'), makeFile('b.png', 'image/png')]);
+      const [a, b] = tray.pending;
+
+      const sent: string[] = [];
+      await tray.sendAll(async(item) => {
+        sent.push(item.file.name);
+        if(item.id === a.id) tray.remove(b.id);
+      });
+
+      expect(sent).toEqual(['a.png']);
+      expect(tray.hasFiles()).toBe(false);
+    });
+
     it('retries the leftovers on a second send', async() => {
       const tray = new AttachmentTray();
       tray.addFiles([makeFile('a.png', 'image/png'), makeFile('b.png', 'image/png')]);

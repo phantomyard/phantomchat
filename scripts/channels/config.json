@@ -278,8 +278,8 @@
     },
     "src/components/chat/attachmentTray.ts": {
       "stable": "absent",
-      "preview": "58e4e2f97d3e252be70d6588e3907545798be1f0270ad25e8c7056613d20ab37",
-      "reason": "New composer attachment tray for PhantomChat peers: staged-file thumbnails, per-file remove and per-file send state above the message input. Reads each image thumbnail's intrinsic size on load so the published bubble carries width/height without a media-editor step. Owns no storage, database or IPC access and only mutates its own DOM. Requires independent content review."
+      "preview": "6fcab5d8e50d6ccc4295186b1de5539802ef47dad07f072679222ca62ff40301",
+      "reason": "New composer attachment tray for PhantomChat peers: staged-file thumbnails, per-file remove and per-file send state above the message input. Reads each image thumbnail's intrinsic size on load so the published bubble carries width/height without a media-editor step, and re-checks batch membership before each send so a file removed mid-batch is not published. Owns no storage, database or IPC access and only mutates its own DOM. Requires independent content review."
     },
     "src/components/chat/input.ts": {
       "stable": "8ba48c42bce0bc2fc1361f0ed2c3a82cb9ec863daca5cb6a96aadc2d9c6442e2",

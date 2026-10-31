@@ -131,7 +131,17 @@ export default class AttachmentTray {
       }
     };
 
-    const result = await sendPendingAttachments(this.items, send, hooks);
+    // A file removed while the batch is in flight must not still publish: the
+    // dispatch list is a snapshot, so re-check membership before each file.
+    const sendIfStillStaged = async(item: PendingAttachment) => {
+      if(!this.items.some((entry) => entry.id === item.id)) {
+        return;
+      }
+
+      await send(item);
+    };
+
+    const result = await sendPendingAttachments(this.items, sendIfStillStaged, hooks);
     if(result.remaining.length) {
       // Re-mark the untouched remainder as idle-failed so the tray reads as
       // "these still need sending" rather than looking half-broken.
