@@ -731,6 +731,13 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             try {
               const {getGroupAPI} = await import('@lib/phantomchat/group-api');
               await getGroupAPI().reconcileSupersededGroups();
+              // Class reconcile BEFORE the orphan sweep: a pre-class record
+              // ingested in the batch-10 tag era keeps a group-range peerId, so
+              // its session renders in Groups and Sessions stays empty (the
+              // PWA/desktop split). Records are the definitive merged state by
+              // now, so the repair runs on settled data — and it must precede
+              // the sweep, which reads live peer ids to decide what is orphaned.
+              await getGroupAPI().repairGroupPeerClasses();
               // (#198) Post-convergence chat-list heal: records are now the
               // definitive merged CRDT state, so any remaining group-range
               // dialog without a live record is an orphan left by an older
