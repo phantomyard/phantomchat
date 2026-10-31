@@ -8,8 +8,9 @@
 
 import type {User, Chat, Dialog, Message, MessageEntity, Peer, PeerNotifySettings} from '@layer';
 import {PhantomChatBridge} from './phantomchat-bridge';
-import {FOLDER_ID_GROUPS} from '@appManagers/constants';
+import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManagers/constants';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
+import {isSessionPeer} from './group-types';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
 import {renderMarkdownTables} from '@lib/phantomchat/markdown-tables';
@@ -71,6 +72,12 @@ export interface CreateDialogOpts {
   isGroup?: boolean;
   readInboxMaxId?: number;
   readOutboxMaxId?: number;
+  /**
+   * True when the group record is archived. Mirrors the chat archive's own
+   * representation — `dialog.folder_id === 1` — so tweb's existing folder_peers
+   * / getFolderDialogs machinery does the work and Archives is just that folder.
+   */
+  archived?: boolean;
 }
 
 export class PhantomChatPeerMapper {
@@ -284,7 +291,7 @@ export class PhantomChatPeerMapper {
       unread_count: opts.unreadCount ?? 0,
       unread_mentions_count: 0,
       unread_reactions_count: 0,
-      folder_id: 0,
+      folder_id: opts.archived ? 1 : 0,
       notify_settings: {
         _: 'peerNotifySettings',
         pFlags: {},
@@ -298,16 +305,24 @@ export class PhantomChatPeerMapper {
 
     (dialog as any)['index_0'] = sortIndex;
 
-    // A group also belongs to the built-in Groups folder, and that list reads
-    // its own `index_3` key to decide membership + sort position. Setting only
-    // `index_0` left `index_3` undefined, so `AutonomousDialogList`'s
+    // A group also belongs to one of the computed folder tabs, and those lists
+    // read a per-folder index key to decide membership + sort position. Setting
+    // only `index_0` left the key undefined, so `AutonomousDialogList`'s
     // testDialogForFilter reported a freshly created group as excluded and the
     // row never appeared until a reload recomputed the index — the "group only
-    // shows up after refresh" bug. Both keys share the same timestamp-derived
-    // sort index, exactly like DialogsStorage.setDialogIndexInFilter builds it
-    // for a REAL_FOLDER.
+    // shows up after refresh" bug. The key is the same timestamp-derived sort
+    // index either way, exactly like DialogsStorage.setDialogIndexInFilter
+    // builds it for a REAL_FOLDER; only WHICH folder claims the row differs.
+    //
+    // The class is a PURE RANGE TEST on the peer id (owner batch 11): a session
+    // is claimed by Sessions (index_4), a classic group by Groups (index_3).
+    // Neither key is set when the dialog is archived — archives is a plain
+    // folder_id flag, so the row belongs to index_1 and to no live space at all
+    // (owner batch 12: one archive for every type).
     if(isGroup) {
-      (dialog as any)[getDialogIndexKey(FOLDER_ID_GROUPS as any)] = sortIndex;
+      const isSession = isSessionPeer(peerId);
+      const folderId = opts.archived ? FOLDER_ID_ARCHIVE : (isSession ? FOLDER_ID_SESSION : FOLDER_ID_GROUPS);
+      (dialog as any)[getDialogIndexKey(folderId as any)] = sortIndex;
     }
 
     return dialog;

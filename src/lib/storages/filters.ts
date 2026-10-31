@@ -16,6 +16,7 @@ import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
   FOLDER_ID_GROUPS,
+  FOLDER_ID_SESSION,
   REAL_FOLDERS,
   REAL_FOLDER_ID,
   START_LOCAL_ID
@@ -25,7 +26,7 @@ import makeError from '@helpers/makeError';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {isDialog} from '@appManagers/utils/dialogs/isDialog';
 import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
-import {isGroupPeer} from '@lib/phantomchat/group-types';
+import {isGroupPeer, isSessionPeer} from '@lib/phantomchat/group-types';
 
 export type MyDialogFilter = Exclude<DialogFilter, DialogFilter.dialogFilterDefault>;
 
@@ -91,11 +92,12 @@ export default class FiltersStorage extends AppManager {
   /**
    * ! use it only with saving
    *
-   * Ensures the 3 locally-seeded system folders (All, Groups, Archive)
-   * are present in the filter array, in that order, followed by any user custom
-   * folders. For existing users whose filtersArr already contains only [ALL, ARCHIVE],
-   * this method retroactively inserts Groups. Preserves user-renamed
-   * titles across reloads via the LANGPACK: sentinel check.
+   * Ensures the 4 locally-seeded system folders (All, Groups, Sessions,
+   * Archives) are present in the filter array, in that order, followed by any
+   * user custom folders. For existing users whose filtersArr predates one of
+   * them (only [ALL, ARCHIVE], or the pre-Sessions [ALL, GROUPS, ARCHIVE]), the
+   * missing folder is retroactively inserted. Preserves user-renamed titles
+   * across reloads via the LANGPACK: sentinel check.
    */
   private prependFilters(filters: DialogFilter[]) {
     filters = filters.slice();
@@ -103,10 +105,69 @@ export default class FiltersStorage extends AppManager {
     const allChatsFilter = this.localFilters[FOLDER_ID_ALL];
     const archiveFilter = this.localFilters[FOLDER_ID_ARCHIVE];
     const groupsFilter = this.localFilters[FOLDER_ID_GROUPS];
+    const sessionFilter = this.localFilters[FOLDER_ID_SESSION];
 
     // Persons (id 2) was a removed system folder. Strip any stale persisted
     // copy so existing users who had it seeded stop seeing it.
     findAndSplice(filters, (f) => (f as MyDialogFilter).id === 2);
+
+    // Folder ids 4 and 5 have meant different things across preview builds
+    // (batch 10: "Code" at 4; batch 11: "Session" at 4 + "Session Archive" at
+    // 5; batch 12: Sessions at 4, one archive for everything). A persisted
+    // filter on either id is one of two very different things:
+    //
+    //  - a leftover SYSTEM folder from an earlier build -- drop it, it is
+    //    re-seeded below;
+    //  - a REAL user folder, from when `createDialogFilter` minted
+    //    `max(id) + 1` and the first custom folder therefore landed on 4.
+    //
+    // They are told apart by SHAPE, not by the bare id: a custom folder always
+    // carries include/exclude peer rules (Telegram requires an include list),
+    // a system folder never does.
+    //
+    //  - id 5 is a legal custom id today (START_LOCAL_ID), so a folder with
+    //    rules is simply left alone there;
+    //  - id 4 is the Sessions system folder, so a folder with rules sitting on
+    //    it is RENUMBERED past START_LOCAL_ID, never deleted. Deleting it would
+    //    take the user's folder, its title and its rules away on the next boot,
+    //    and anything left below START_LOCAL_ID is dropped by the boot
+    //    reconcile anyway (owner PR #292 review).
+    const legacySystemTitles: Record<number, readonly string[]> = {
+      [FOLDER_ID_SESSION]: ['Code', 'Session'],
+      5: ['Archive']
+    };
+    const hasPeerRules = (filter: MyDialogFilter) => {
+      // `dialogFilterChatlist` has no exclude side at all, so read the union
+      // through a cast rather than narrowing per variant.
+      const rules = filter as unknown as {include_peers?: unknown[]; exclude_peers?: unknown[]; includePeerIds?: unknown[]; excludePeerIds?: unknown[]};
+      return !!(rules.include_peers?.length || rules.exclude_peers?.length ||
+        rules.includePeerIds?.length || rules.excludePeerIds?.length);
+    };
+    const isLegacySystemFilter = (filter: MyDialogFilter) => {
+      if(hasPeerRules(filter)) return false;
+      const title = (filter as unknown as DialogFilter.dialogFilter).title?.text ?? '';
+      return !title || title.startsWith('LANGPACK:') ||
+        !!legacySystemTitles[filter.id]?.includes(title) || isDefaultLocalTitle(filter.id, title);
+    };
+    const legacySessions = filters.find((f) => (f as MyDialogFilter).id === FOLDER_ID_SESSION) as MyDialogFilter | undefined;
+    if(legacySessions) {
+      if(isLegacySystemFilter(legacySessions)) {
+        // Old Code/Session seed: drop it, the Sessions filter is re-seeded
+        // below. A RENAMED one stays where it is and `preserveRename` carries
+        // the title onto the fresh seed.
+        filters.splice(filters.indexOf(legacySessions), 1);
+      } else {
+        const usedIds = new Set(filters.map((f) => (f as MyDialogFilter).id));
+        usedIds.delete(FOLDER_ID_SESSION);
+        let nextFreeId = START_LOCAL_ID;
+        while(usedIds.has(nextFreeId)) ++nextFreeId;
+        legacySessions.id = nextFreeId;
+      }
+    }
+    const legacySessionArchive = filters.find((f) => (f as MyDialogFilter).id === 5) as MyDialogFilter | undefined;
+    if(legacySessionArchive && isLegacySystemFilter(legacySessionArchive)) {
+      findAndSplice(filters, (f) => (f as MyDialogFilter).id === 5);
+    }
 
     // ALL: replace existing or prepend
     const allIdx = filters.findIndex(
@@ -137,9 +198,19 @@ export default class FiltersStorage extends AppManager {
     findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_GROUPS);
     filters.splice(1, 0, preserveRename(existingGroups, groupsFilter));
 
-    // ARCHIVE: ensure present at index 2 (after all system folders)
+    // SESSIONS: ensure present at index 2 (between Groups and Archives),
+    // preserve rename. Seeded locally on every device — the folder definition is
+    // code, only the peer CLASS travels (see group-types.SESSION_PEER_BASE).
+    const existingSession = filters.find(
+      (f) => (f as MyDialogFilter).id === FOLDER_ID_SESSION
+    ) as MyDialogFilter | undefined;
+    findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_SESSION);
+    filters.splice(2, 0, preserveRename(existingSession, sessionFilter));
+
+    // ARCHIVES: ensure present after all system folders. One archive for every
+    // type — a group or session in here is just a dialog with folder_id 1.
     findAndSplice(filters, (f) => (f as MyDialogFilter).id === FOLDER_ID_ARCHIVE);
-    filters.splice(2, 0, archiveFilter);
+    filters.splice(3, 0, archiveFilter);
 
     this.localId = START_LOCAL_ID;
     filters.forEach((filter) => {
@@ -203,7 +274,7 @@ export default class FiltersStorage extends AppManager {
         const filterId = +_filterId;
         // PhantomChat: the virtual MTProto server is NOT authoritative for
         // custom folders. messages.getDialogFilters returns only the locally
-        // seeded system folders ([], prepended to All/Groups/Archive), because
+        // seeded system folders ([], prepended to All/Groups/Sessions/Archive), because
         // user folders live in local state and sync cross-device over Nostr via
         // FoldersSync — never through the (stubbed) Telegram filter API. Without
         // this guard, every boot-time updateDialogFilters reconcile saw each
@@ -269,16 +340,33 @@ export default class FiltersStorage extends AppManager {
     const {peerId} = dialog;
 
     // Only the Telegram-style folder ids (All=0, Archive=1) are stored on
-    // dialog.folder_id. Persons (2) / Groups (3) are locally-seeded system
-    // folders whose membership is computed from pFlags below — do NOT
-    // short-circuit them here, otherwise they always appear empty.
+    // dialog.folder_id. Groups (3) and Sessions (4) are locally-seeded system
+    // folders whose membership is computed below — do NOT short-circuit them
+    // there, otherwise they always appear empty.
     if(filter.id === FOLDER_ID_ALL || filter.id === FOLDER_ID_ARCHIVE) {
-      // Chats (0) must never contain a group: groups have their own built-in
-      // folder. Groups still carry folder_id 0 (that is what the server sends),
-      // so folder_id alone would put them in both lists.
+      // Chats (0) must never contain a group: groups (sessions included, they
+      // are group-class peers) have their own built-in folders.
       if(filter.id === FOLDER_ID_ALL && isGroupPeer(peerId)) return false;
 
       return dialog.folder_id === filter.id && this.dialogsStorage.canSaveDialog(peerId, dialog);
+    }
+
+    // Groups (3) holds LIVE classic groups. `isSessionPeer` is a pure scalar test
+    // on the peer id, so the same answer holds on this thread (the MTPROTO
+    // worker) and on the main one — sessions are the one thing Groups must not
+    // claim. Everything else (include/exclude lists, exclude_archived) keeps
+    // running through the pFlags walk below, unchanged.
+    if(filter.id === FOLDER_ID_GROUPS && isSessionPeer(peerId)) {
+      return false;
+    }
+
+    // Sessions (4): the Session peer class, minus anything in the archive —
+    // archiving is `dialog.folder_id === 1`, so one flag moves a session out of
+    // here and into Archives with no second membership rule to keep in step.
+    if(filter.id === FOLDER_ID_SESSION) {
+      return isSessionPeer(peerId) &&
+        dialog.folder_id !== FOLDER_ID_ARCHIVE &&
+        this.dialogsStorage.canSaveDialog(peerId, dialog);
     }
 
     // * check whether dialog exists
@@ -404,7 +492,7 @@ export default class FiltersStorage extends AppManager {
   }
 
   /**
-   * Ensure the 4 system folders (All/Persons/Groups/Archive) are present
+   * Ensure the system folders (All/Groups/Sessions/Archive) are present
    * in filtersArr after a replaceAllFilters call. Re-runs prependFilters
    * and updates the in-memory maps.
    */
@@ -444,7 +532,10 @@ export default class FiltersStorage extends AppManager {
   public createDialogFilter(filter: MyDialogFilter, prepend?: boolean) {
     const maxId = Math.max(1, ...Object.keys(this.filters).map((i) => +i));
     filter = copy(filter);
-    filter.id = maxId + 1;
+    // Never mint below START_LOCAL_ID: the system folders occupy 0/1/3/4, so
+    // `max(id) + 1` is 5 today and would collide with any folder still sitting
+    // on that id from an earlier build (and, once 5 is taken, with itself).
+    filter.id = Math.max(START_LOCAL_ID, maxId + 1);
     return this.updateDialogFilter(filter, undefined, prepend);
   }
 

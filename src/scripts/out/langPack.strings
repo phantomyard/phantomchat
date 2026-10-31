@@ -1149,6 +1149,8 @@
 "Allow" = "Allow";
 "HistoryCleared" = "History was cleared";
 "Archive" = "Archive";
+"ArchiveActionFailed" = "Could not update this conversation";
+"SessionCreateFailed" = "Could not create the session";
 "Unarchive" = "Unarchive";
 "Delete" = "Delete";
 "Reply" = "Reply";
@@ -1325,8 +1327,8 @@
 "Open" = "Open";
 "OpenUrlTitle" = "Open Link";
 "OpenUrlAlert2" = "Do you want to open %1$s?";
-"FilterNoChatsToDisplay" = "Folder is empty";
-"FilterNoChatsToDisplayInfo" = "No chats currently belong to this folder.";
+"FilterNoChatsToDisplay" = "Nothing here yet";
+"FilterNoChatsToDisplayInfo" = "There is currently nothing in this space.";
 "SupportStatus" = "support";
 "Lately" = "last seen recently";
 "WithinAWeek" = "last seen within a week";

@@ -16,9 +16,10 @@
  * fix the same probe reports count:5 → zero ghosts.
  *
  * The fix generalises the existing FOLDER_ID_GROUPS guard to every locally
- * filtered folder (Groups + custom filters), excluding the real server folders
- * (All / Archive) and virtual filters (forum / saved). This test drives the
- * REAL getDialogs() so that reverting the guard fails it.
+ * filtered folder (Groups + custom filters + Archive, whose count the
+ * PhantomChat virtual server inflates to the global total), excluding only
+ * virtual filters (forum / saved). This test drives the REAL getDialogs() so
+ * that reverting the guard fails it.
  */
 import {describe, it, expect, vi} from 'vitest';
 import DialogsStorage, {FilterType} from '@lib/storages/dialogs';
@@ -102,13 +103,21 @@ describe('getDialogs count — ghost placeholder rows (issue #42)', () => {
     expect(res.count).not.toBe(GLOBAL_COUNT);
   });
 
-  it('still reports the GLOBAL count for the real Archive folder (control)', async () => {
+  it('reports the FILTERED count for the Archive folder', async() => {
     const filtered = mkDialogs([20, 21, 22]);
-    const {ds} = makeStorage(FOLDER_ID_ARCHIVE, filtered);
+    const {ds, folder} = makeStorage(FOLDER_ID_ARCHIVE, filtered);
 
     const res = await ds.getDialogs({filterId: FOLDER_ID_ARCHIVE, limit: 20});
 
-    // Archive is a real server folder — its server/global count is authoritative.
-    expect(res.count).toBe(GLOBAL_COUNT);
+    // Real Telegram filters the archive server-side, so its result.count would
+    // be the archived subset. PhantomChat's virtual server is not that: its
+    // messages.getDialogs ignores the requested folder_id and answers every
+    // folder with the GLOBAL set (`count: dialogs.length`). Trusting it sized
+    // the Archived list to the whole account and padded the surplus with
+    // permanent ghost skeleton rows under the archived chats (owner batch 14).
+    // The locally filtered folder list is the authoritative count.
+    expect(res.count).toBe(3);
+    expect(res.count).not.toBe(GLOBAL_COUNT);
+    expect(folder.count).toBe(3);
   });
 });

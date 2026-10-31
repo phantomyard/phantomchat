@@ -17,12 +17,16 @@ import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
 import {writeGroupCreateServiceMessage, writeGroupRebindNoticeMessage} from './group-service-messages';
+import {
+  DEFAULT_SESSION_GROUP_NAME,
+  sessionTitleFromPrompt
+} from './group-sessions';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
-import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
+import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {getMessageStore} from './message-store';
 import {isSafeGroupAvatarUrl} from './blossom-servers';
 import type {GroupStore} from './group-store';
-import type {GroupRecord, GroupControlPayload} from './group-types';
+import type {GroupKind, GroupRecord, GroupControlPayload} from './group-types';
 import type {NTNostrEvent} from './nostr-crypto';
 
 // ─── Source-event watermarks (per-field LWW on event time) ────────
@@ -210,8 +214,18 @@ export class GroupAPI {
    * 3. Store GroupRecord with adminPubkey = ownPubkey
    * 4. Broadcast group_create control to all members + self
    * 5. Return groupId
+   *
+   * `options.kind` selects the peer CLASS (owner batch 11). A `session` derives
+   * its peerId in the SESSION range, which is what makes it a session on every
+   * device and every thread; the class travels in `group_create.groupKind` so a
+   * member derives the same peerId we did.
    */
-  async createGroup(name: string, memberPubkeys: string[], description?: string): Promise<string> {
+  async createGroup(
+    name: string,
+    memberPubkeys: string[],
+    description?: string,
+    options?: {kind?: GroupKind}
+  ): Promise<string> {
     // Validate member pubkeys BEFORE we touch the local store. Earlier the
     // store was written first and the broadcast wrap exploded on the first
     // malformed pubkey (`pointFromBytes: bad point`), leaving an orphan
@@ -223,7 +237,8 @@ export class GroupAPI {
     }
 
     const groupId = mintBoundGroupId(this.ownPubkey);
-    const peerId = await groupIdToPeerId(groupId);
+    const kind: GroupKind = options?.kind === 'session' ? 'session' : 'group';
+    const peerId = await groupIdToPeerId(groupId, kind);
 
     const record: GroupRecord = {
       groupId,
@@ -234,6 +249,7 @@ export class GroupAPI {
       peerId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      ...(kind === 'session' ? {kind} : {}),
       // The user's own create gesture (#180): only this stamp lets the group
       // clear a durable delete in the groups CRDT merge. The receive path
       // (handleGroupCreate) deliberately does NOT stamp — a relay-replayed
@@ -253,7 +269,8 @@ export class GroupAPI {
       groupName: name,
       groupDescription: description,
       memberPubkeys: record.members,
-      adminPubkey: this.ownPubkey
+      adminPubkey: this.ownPubkey,
+      ...(kind === 'session' ? {groupKind: kind} : {})
     };
 
     let controlWraps;
@@ -289,7 +306,7 @@ export class GroupAPI {
     // until the first send hits `handleGroupOutgoing`.
     if(serviceMid !== null) {
       try {
-        await injectGroupCreateDialog(groupId, serviceMid, createdAtSec);
+        await injectGroupCreateDialog(groupId, serviceMid, createdAtSec, record);
       } catch(err) {
         this.log.warn('[GroupAPI] injectGroupCreateDialog (creator) failed:', err);
       }
@@ -343,6 +360,13 @@ export class GroupAPI {
       throw new Error(`sendMessage: not a member of group ${groupId.slice(0, 8)}`);
     }
 
+    // Archived groups are read-only (owner batch 12): the composer is hidden in
+    // the UI, and this is the enforcement behind it — a stale chat pane, a
+    // keyboard shortcut or a retry must not post into an archived group.
+    if(group.archivedAt) {
+      throw new Error('sendMessage: group is archived (read-only)');
+    }
+
     // Normalize the optional 3rd arg. Older callers pass a plain `type`
     // string; the new shape is an options object that also carries a
     // reply target. Both are kept supported to avoid churning unit tests.
@@ -351,6 +375,19 @@ export class GroupAPI {
       (typeOrOptions || {});
     const msgType = opts.type || 'text';
     const replyToRumorId = opts.replyToRumorId;
+
+    // Sessions take their name from the FIRST prompt (first 20 characters, no
+    // ellipsis). Fire-and-forget: the rename is a control-message broadcast, and
+    // the user's send must never wait on it. The guard is `name === 'New
+    // session'`, so it fires exactly once and is a no-op for every later
+    // message, every other group, and every file/voice send.
+    if(msgType === 'text' && group.kind === 'session' && group.name === DEFAULT_SESSION_GROUP_NAME) {
+      const nextName = sessionTitleFromPrompt(content);
+      if(nextName) {
+        this.renameGroup(groupId, nextName)
+        .catch((err) => this.log.warn('[GroupAPI] session auto-name failed (non-critical):', err));
+      }
+    }
 
     // Pin a single timestamp for the whole send so the payload, handler and
     // any downstream mid derivation all agree. Anchoring via `Date.now()`
@@ -436,6 +473,14 @@ export class GroupAPI {
     if(!group) throw new Error(`Group not found: ${groupId}`);
     if(!group.members.includes(this.ownPubkey)) {
       throw new Error(`sendFile: not a member of group ${groupId.slice(0, 8)}`);
+    }
+
+    // Archived groups are read-only (owner batch 12). sendMessage refuses text;
+    // this is the same invariant for media — a drop onto the chat area, a
+    // queued upload or the attach path all reach the group through here and
+    // never pass the hidden composer. Without it `archivedAt` gated text only.
+    if(group.archivedAt) {
+      throw new Error('sendFile: group is archived (read-only)');
     }
 
     const timestampMs = Date.now();
@@ -670,6 +715,47 @@ export class GroupAPI {
   }
 
   /**
+   * Archive a GROUP or a SESSION (owner batch 12).
+   *
+   * `archivedAt` lives on the GroupRecord, so the groups CRDT carries it to every
+   * device — no separate sync channel, no schema bump. The local dialog mirrors
+   * it as `folder_id === 1`, the same flag a chat uses, which is what moves the
+   * row into Archives and makes it read-only there.
+   *
+   * There is ONE archive for every type: a group, a session and a chat archived
+   * in the same place behave identically. The class makes no difference here.
+   */
+  async archiveGroup(groupId: string): Promise<void> {
+    await this.setGroupArchived(groupId, Date.now());
+  }
+
+  async unarchiveGroup(groupId: string): Promise<void> {
+    await this.setGroupArchived(groupId, null);
+  }
+
+  private async setGroupArchived(groupId: string, archivedAt: number | null): Promise<void> {
+    const group = await this.store.get(groupId);
+    if(!group) throw new Error(`Group not found: ${groupId}`);
+
+    await this.store.updateInfo(groupId, {archivedAt: archivedAt});
+    // Publish BEFORE touching the UI. Every other mutator in this file ends with
+    // this line and archive is no different: without it `archivedAt` sits in
+    // this device's IndexedDB and only leaks out when some unrelated group
+    // mutation happens to publish, or on the 30-minute periodic reconcile.
+    schedulePublish('groups');
+    const updated = await this.store.get(groupId);
+    if(!updated) return;
+
+    // Live UI: move the dialog now rather than at the next reload. The mapper
+    // reads `archived` too, so a reload converges either way.
+    try {
+      await applyGroupDialogFolder(updated);
+    } catch(err) {
+      this.log.warn('[GroupAPI] setGroupArchived: dialog move non-critical:', err);
+    }
+  }
+
+  /**
    * Update group info (name, description, avatar). Only admin can rename.
    *
    * 1. Update local store record
@@ -709,7 +795,8 @@ export class GroupAPI {
     }
 
     // Apply locally first so admin's UI updates immediately even before
-    // the publish completes.
+    // the publish completes. Tags are sanitized to the known vocabulary, and
+    // an explicit empty list clears them.
     await this.store.updateInfo(groupId, info);
 
     // Refresh main-thread mirror so subscribers (chat-list, topbar) see the
@@ -831,7 +918,15 @@ export class GroupAPI {
    * chat-list dialog row.
    */
   private async teardownGroupLocally(groupId: string): Promise<void> {
-    const peerId = await groupIdToPeerId(groupId);
+    // Peer id is class-dependent (a session lives in its own range), so read the
+    // record BEFORE deleting it — after the delete there is nothing left to ask.
+    let kind: GroupKind | undefined;
+    try {
+      kind = (await this.store.get(groupId))?.kind;
+    } catch{
+      // store read failed: fall back to the classic derivation below
+    }
+    const peerId = await groupIdToPeerId(groupId, kind ?? 'group');
     // Durable positive delete fact (PR #179 round 5): recorded BEFORE the
     // destructive teardown and as a STRICT precondition — if the durable write
     // fails, we abort and the live record stays (Kai's round-9 review of
@@ -928,8 +1023,11 @@ export class GroupAPI {
       for(const convId of convIds) {
         if(!convId.startsWith('group:')) continue;
         const candidateId = convId.slice('group:'.length);
+        // The candidate's class is unknown once its record is gone, so match
+        // against both derivations rather than assuming a classic group.
         const candidatePeerId = await groupIdToPeerId(candidateId);
-        if(candidatePeerId === peerId) {
+        const candidateSessionPeerId = await groupIdToPeerId(candidateId, 'session');
+        if(candidatePeerId === peerId || candidateSessionPeerId === peerId) {
           await this.tombstoneGroupConversation(candidateId);
           return;
         }
@@ -1304,7 +1402,11 @@ export class GroupAPI {
   }
 
   private async handleGroupCreate(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<void> {
-    const peerId = await groupIdToPeerId(payload.groupId);
+    // The class is what the peerId is derived FROM, so it must be known before
+    // anything else: a session that derived a classic group peerId would be a
+    // different conversation from the creator's.
+    const kind: GroupKind = payload.groupKind === 'session' ? 'session' : 'group';
+    const peerId = await groupIdToPeerId(payload.groupId, kind);
 
     // REBIND MIGRATION (#188 remainder): a supersede create migrates a
     // legacy group to a bound id. Separate trust path — the bound id
@@ -1349,7 +1451,10 @@ export class GroupAPI {
       members: payload.memberPubkeys || [],
       peerId,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      // The creator's class, carried by the create: it is what the peerId above
+      // was derived from.
+      ...(kind === 'session' ? {kind} : {})
     };
 
     // A delete can arrive before its create because control handlers run
@@ -1397,7 +1502,7 @@ export class GroupAPI {
     // a full `handleGroupIncoming` render round-trip.
     if(serviceMid !== null) {
       try {
-        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec);
+        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec, record);
       } catch(err) {
         this.log.warn('[GroupAPI] injectGroupCreateDialog (receiver) failed:', err);
       }
@@ -1539,7 +1644,13 @@ export class GroupAPI {
       createdAt: nowMs,
       updatedAt: nowMs,
       supersededGroupIds: [payload.supersedesGroupId],
-      reboundAt: createdAt
+      reboundAt: createdAt,
+      // Carry the CLASS across the rebind: the same conversation under a new id,
+      // so a session must stay a session. The legacy record is authoritative
+      // here — it is the local proof of what this conversation was.
+      ...(payload.groupKind === 'session' || legacyRecord?.kind === 'session' ? {kind: 'session' as GroupKind} : {}),
+      // An archived session stays archived across the rebind.
+      ...(legacyRecord?.archivedAt ? {archivedAt: legacyRecord.archivedAt} : {})
     };
 
     await this.commitLegacyMigration(record, {deliberate: false, teardownLegacy: !!legacyRecord});
@@ -1583,7 +1694,7 @@ export class GroupAPI {
     }
     if(serviceMid !== null) {
       try {
-        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec);
+        await injectGroupCreateDialog(record.groupId, serviceMid, createdAtSec, record);
       } catch(err) {
         this.log.warn('[GroupAPI] injectGroupCreateDialog (rebind) failed:', err);
       }
@@ -1696,7 +1807,9 @@ export class GroupAPI {
     }
 
     const newGroupId = mintBoundGroupId(this.ownPubkey);
-    const peerId = await groupIdToPeerId(newGroupId);
+    // Same conversation under a new id: the class must survive the rebind or a
+    // session would come out the other side as a classic group.
+    const peerId = await groupIdToPeerId(newGroupId, group.kind);
     const nowMs = Date.now();
     const payload: GroupControlPayload = {
       type: 'group_create',
@@ -1704,6 +1817,7 @@ export class GroupAPI {
       groupName: group.name,
       groupDescription: group.description,
       memberPubkeys: group.members,
+      ...(group.kind === 'session' ? {groupKind: group.kind} : {}),
       adminPubkey: this.ownPubkey,
       supersedesGroupId: oldGroupId
     };
@@ -2054,8 +2168,9 @@ export class GroupAPI {
         // No record: nothing verifiable, nothing to tear down durably.
         // Mirror cleanup only — the durable row and tombstone stay reserved
         // for an authenticated admin kick against a live record.
-        const peerId = await groupIdToPeerId(payload.groupId);
-        await cleanupGroupChatInjection(peerId);
+        // Class unknown (no record): clear both derivations' mirrors.
+        await cleanupGroupChatInjection(await groupIdToPeerId(payload.groupId));
+        await cleanupGroupChatInjection(await groupIdToPeerId(payload.groupId, 'session'));
         this.log('[GroupAPI] group_remove_member(self) for unknown group; mirror cleanup only:', payload.groupId.slice(0, 8));
         return false;
       }

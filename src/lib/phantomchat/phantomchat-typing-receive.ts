@@ -25,6 +25,8 @@ import rootScope from '@lib/rootScope';
 import {verifyEvent} from 'nostr-tools/pure';
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {groupIdToPeerId} from './group-types';
+import type {GroupKind} from './group-types';
+import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 import {getReadReceiptsEnabled} from './read-receipts-setting';
 
@@ -98,7 +100,22 @@ class PhantomChatTypingReceive {
   private lastTickLog = new Map<string, string>();
   private mapper = new PhantomChatPeerMapper();
   private resolver: PeerResolver = (pubkey) => this.mapper.mapPubkey(pubkey);
-  private groupResolver: GroupResolver = (groupId) => groupIdToPeerId(groupId);
+  /**
+   * Group id → chat peerId. The peerId is a function of (groupId, KIND), and a
+   * session's id lives in its own range: resolving with the default 'group'
+   * class lands on a peerId that no conversation owns, so the dots are dropped
+   * and the row shows nothing. The store record is the class's source of truth;
+   * an absent record falls back to the classic derivation.
+   */
+  private groupResolver: GroupResolver = async(groupId) => {
+    let kind: GroupKind | undefined;
+    try {
+      kind = (await getGroupStore().get(groupId))?.kind;
+    } catch{
+      // store unavailable — use the classic class
+    }
+    return groupIdToPeerId(groupId, kind ?? 'group');
+  };
   private verify: SignatureVerifier = (event) => {
     try {
       return verifyEvent(event as any);

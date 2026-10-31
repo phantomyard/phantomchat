@@ -13,7 +13,7 @@ export type UserAuth = {dcID: number | string, date: number, id: PeerId};
 export type REAL_FOLDER_ID = 0 | 1;
 
 // Represents locally-seeded system folder IDs (not Telegram dialog.folder_id)
-export type SYSTEM_FOLDER_ID = 0 | 1 | 2 | 3;
+export type SYSTEM_FOLDER_ID = 0 | 1 | 2 | 3 | 4 | 5;
 
 export const NULL_PEER_ID: PeerId = 0;
 export const REPLIES_PEER_ID: PeerId = 1271266957;
@@ -46,15 +46,32 @@ export const PEER_FULL_TTL = 3 * 60e3;
 export const FOLDER_ID_ALL: REAL_FOLDER_ID = 0;
 export const FOLDER_ID_ARCHIVE: REAL_FOLDER_ID = 1;
 export const FOLDER_ID_GROUPS: SYSTEM_FOLDER_ID = 3;
+/**
+ * Sessions (owner batch 11, 2026-10-31): the space that owns SESSION-class
+ * peers — their own peerId range (group-types.SESSION_PEER_BASE), one phantom
+ * member each, created from this space's + button. Membership is a scalar test
+ * on the peer id, so it holds identically on the main thread and in the MTPROTO
+ * worker.
+ *
+ * A session is otherwise an ordinary group: same menu, same avatar, same
+ * protocol. The ONLY difference is the peerId range (which is what puts it in
+ * this space) and auto-naming from its first prompt.
+ *
+ * Archived groups and sessions both go to FOLDER_ID_ARCHIVE (id 1) — one
+ * archive for every type, exactly like the chat archive (owner batch 12).
+ */
+export const FOLDER_ID_SESSION: SYSTEM_FOLDER_ID = 4;
 export const REAL_FOLDERS: Set<number> = new Set([
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_GROUPS
+  FOLDER_ID_GROUPS,
+  FOLDER_ID_SESSION
 ]);
 export const PROTECTED_FOLDERS: Set<number> = new Set([
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_GROUPS
+  FOLDER_ID_GROUPS,
+  FOLDER_ID_SESSION
 ]);
 export const START_LOCAL_ID = Math.max(...Array.from(REAL_FOLDERS)) + 1 as MyDialogFilter['localId'];
 

@@ -24,6 +24,7 @@ import confirmationPopup from '@components/confirmationPopup';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {i18n} from '@lib/langPack';
 import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
+import {resolvePickPeerHook} from '@lib/phantomchat/session-pick-hook';
 
 // TODO: поиск по людям глобальный, если не нашло в контактах никого
 
@@ -33,8 +34,32 @@ export default class AppContactsTab extends SliderSuperTab {
   private middlewareHelperLoad: ReturnType<typeof getMiddleware>;
   private sortedUserList: SortedUserList;
   private listsContainer: HTMLElement;
+  /**
+   * Session picker mode (2026-10-30): when set, a click on a contact hands
+   * the peer here instead of opening a DM. Owned by the caller (sidebarLeft
+   * .openNewSessionFlow), which creates the session group and navigates. A
+   * `false` return from the row listener suppresses the default open-chat.
+   *
+   * It is PER OPEN, not per instance: `SliderSuperTab.open` runs `init` once
+   * and then nulls it, while `createTab` hands back an existing instance when
+   * one is up (`noSame`). A hook passed to `init` therefore either never
+   * arrives (Contacts already open -> `+` in Sessions silently opened a DM) or
+   * outlives its picker (a later normal open of Contacts created sessions
+   * instead of opening chats). Set it with `setPickPeerHook` right before
+   * `open()`, and let `onClose` drop it.
+   */
+  private onPickPeer?: (peerId: PeerId) => void;
 
-  public init() {
+  public setPickPeerHook(hook?: (peerId: PeerId) => void) {
+    this.onPickPeer = hook;
+  }
+
+  public init(params?: {onPickPeer?: (peerId: PeerId) => void}) {
+    // `open()` runs `init` with NO args on every fresh instance, so an
+    // unconditional assign would null the hook set by `setPickPeerHook` one
+    // line earlier — the first `+` in Sessions then opened a DM (Kai, #292
+    // review at b21b342). Only a caller that passes params gets a say.
+    this.onPickPeer = resolvePickPeerHook(this.onPickPeer, params);
     this.container.id = 'contacts-container';
 
     // this.list = appDialogsManager.createChatList(/* {avatarSize: 48, handheldsSize: 66} */);
@@ -88,7 +113,15 @@ export default class AppContactsTab extends SliderSuperTab {
     list.classList.add('contacts-container');
     appDialogsManager.setListClickListener({
       list,
-      onFound: () => {
+      onFound: (elem) => {
+        // Pick mode: the caller decides what a contact means (a session), and
+        // the normal open-chat path is suppressed.
+        if(this.onPickPeer) {
+          const raw = elem.dataset.peerId;
+          if(raw) this.onPickPeer(+raw as PeerId);
+          return false;
+        }
+
         this.close();
       },
       withContext: undefined,
@@ -193,6 +226,8 @@ export default class AppContactsTab extends SliderSuperTab {
   }
 
   protected onClose() {
+    // Pick mode never survives its own open -- see setPickPeerHook.
+    this.onPickPeer = undefined;
     this.middlewareHelperLoad.clean();
     /* // need to clear, and left 1 page for smooth slide
     let pageCount = appPhotosManager.windowH / 56 * 1.25 | 0;

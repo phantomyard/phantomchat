@@ -74,6 +74,10 @@ function initGroupDB(): Promise<IDBDatabase> {
 export class GroupStore {
   /**
    * Save or update a group record (upsert).
+   *
+   * No session bookkeeping here any more (owner batch 11): a session is a peer
+   * CLASS, identified by its peerId range, so no index has to be kept in step
+   * with the store.
    */
   async save(group: GroupRecord): Promise<void> {
     const db = await getDB();
@@ -116,7 +120,8 @@ export class GroupStore {
   }
 
   /**
-   * Get all stored groups.
+   * Get all stored groups — the boot read (VMT getDialogs) and the CRDT read
+   * pass.
    */
   async getAll(): Promise<GroupRecord[]> {
     const db = await getDB();
@@ -125,7 +130,9 @@ export class GroupStore {
       const store = tx.objectStore(STORE_NAME);
       const request = store.getAll();
       request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result ?? []);
+      request.onsuccess = () => {
+        resolve((request.result ?? []) as GroupRecord[]);
+      };
     });
   }
 
@@ -155,17 +162,29 @@ export class GroupStore {
   }
 
   /**
-   * Update metadata fields (name, description, avatar) for a group.
+   * Update metadata fields (name, description, avatar, archivedAt) for a group.
+   *
+   * `archivedAt` follows the "absent means unchanged" rule so a plain rename
+   * cannot silently unarchive a session; pass `null` to clear it explicitly.
    */
   async updateInfo(
     groupId: string,
-    updates: Partial<Pick<GroupRecord, 'name' | 'description' | 'avatar'>>
+    updates: Partial<Pick<GroupRecord, 'name' | 'description' | 'avatar'>> & {archivedAt?: number | null}
   ): Promise<void> {
     const existing = await this.get(groupId);
     if(!existing) throw new Error(`Group not found: ${groupId}`);
     if(updates.name !== undefined) existing.name = updates.name;
     if(updates.description !== undefined) existing.description = updates.description;
     if(updates.avatar !== undefined) existing.avatar = updates.avatar;
+    if(updates.archivedAt !== undefined) {
+      // `null` = unarchive, stored as an explicit 0 rather than deleted. An
+      // ABSENT field is what an older client republishes, and the groups CRDT
+      // has to tell "cleared" from "does not know about archive" -- otherwise a
+      // rename from an old build resurrects the stamp, or an unarchive can
+      // never propagate. Truthiness checks (`if(group.archivedAt)`) still read
+      // 0 as unarchived.
+      existing.archivedAt = updates.archivedAt === null ? 0 : updates.archivedAt;
+    }
     existing.updatedAt = Date.now();
     await this.save(existing);
   }

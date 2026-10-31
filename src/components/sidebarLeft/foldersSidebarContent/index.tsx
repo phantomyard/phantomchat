@@ -7,7 +7,7 @@ import ListenerSetter from '@helpers/listenerSetter';
 import {Middleware} from '@helpers/middleware';
 import pause from '@helpers/schedulers/pause';
 import {logger, LogTypes} from '@lib/logger';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, REAL_FOLDERS} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_SESSION, REAL_FOLDERS} from '@appManagers/constants';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {MyDialogFilter} from '@lib/storages/filters';
@@ -87,6 +87,10 @@ export function FoldersSidebarContent(props: {
 
     const titleRest: Pick<FolderItemPayload, 'name' | 'title'> = filter.id === FOLDER_ID_ALL ? {
       name: i18n('FilterAllChats')
+    } : filter.id === FOLDER_ID_ARCHIVE ? {
+      // The archive filter carries no title of its own — it is defined by a
+      // pFlag, not a name — so the rail supplies the label.
+      name: 'Archived'
     } : {
       title: (cleanTitle = extractEmojiFromFilterTitle(filter.title)).text
     };
@@ -105,6 +109,9 @@ export function FoldersSidebarContent(props: {
     return {
       id: filter.id,
       icon: getIconForFilter(filter),
+      // Session draws its `#` as text (the icon font has no hashtag glyph);
+      // every other folder keeps the font icon / custom emoji path untouched.
+      ...(filter.id === FOLDER_ID_SESSION ? {glyph: '#'} : {}),
       notifications: notifications,
       chatsCount: folder?.dialogs?.length || 0,
       dontAnimate: filter.pFlags?.title_noanimate,
@@ -145,7 +152,11 @@ export function FoldersSidebarContent(props: {
 
   async function updateItemsOrder(order: number[]) {
     order = [...order];
+    // Archives is always the last space: it is not reorderable, and the server
+    // order array never carries it. (Dropping it entirely used to sort it to
+    // the TOP, because unknown ids sort first below.)
     indexOfAndSplice(order, FOLDER_ID_ARCHIVE);
+    order.push(FOLDER_ID_ARCHIVE);
 
     const items = [...folderItems];
 
@@ -163,6 +174,15 @@ export function FoldersSidebarContent(props: {
   }
 
   async function setSelectedFolder(folderId: number) {
+    if(folderId === FOLDER_ID_ARCHIVE) {
+      // The archive owns its own tab (stories, its own header) and has no
+      // inline chatlist — `addFilter` skips it, so the generic path below would
+      // dereference a `filtersRendered[1]` that does not exist.
+      setSelectedFolderId(folderId);
+      appSidebarLeft.openArchiveTab();
+      return true;
+    }
+
     const isFilterAvailable = await rootScope.managers.filtersStorage.isFilterIdAvailable(folderId);
     if(!isFilterAvailable) {
       showLimitPopup('folders');
@@ -232,7 +252,8 @@ export function FoldersSidebarContent(props: {
   createEffect(() => {
     if(!props.isFiltersInited) return;
 
-    const folderFilters = props.filters.filter((filter) => filter.id !== FOLDER_ID_ARCHIVE);
+    // Every space renders in the rail now, Archives included.
+    const folderFilters = props.filters;
 
     let cleaned = false;
     onCleanup(() => void (cleaned = true));

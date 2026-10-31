@@ -287,6 +287,30 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
             ...entry.data,
             updatedAt: entry.updatedAt * 1000
           };
+          // The class is immutable identity, not a mutable field: if an older
+          // client republishes the record without `kind` (or with the wrong
+          // one), keep the local class, because the local peerId was derived
+          // from it and every local row is keyed by that peerId.
+          const localKind = storeState?.get(id)?.kind;
+          if(localKind === 'session') record.kind = 'session';
+          else if(record.kind !== 'session') delete record.kind;
+          // `archivedAt` gets the same keep-local guard as `kind`: a writer
+          // that republishes the record without the field must not unarchive
+          // the group for everyone (its rename would otherwise win on
+          // `updatedAt` and drop the stamp). The clear signal is a NUMBER —
+          // `0` means "explicitly unarchived", minted by updateInfo(null) — so
+          // absent field = "this writer knows nothing about archive", local
+          // stamp wins. The 0 is KEPT on the record rather than normalised
+          // away: stripping it made the unarchive non-durable (A clears -> B
+          // persists an absent field -> B republishes absent -> an offline C
+          // with 999 wins the keep-local guard and re-archives for everyone).
+          // Everything reading the field tests truthiness, and the archive-
+          // change compare in phantomchat-onboarding-integration.ts uses
+          // `(x ?? 0)`, both of which read 0 as unarchived.
+          const localArchivedAt = storeState?.get(id)?.archivedAt;
+          if(typeof record.archivedAt !== 'number' && typeof localArchivedAt === 'number') {
+            record.archivedAt = localArchivedAt;
+          }
           if(typeof entry.deliberateAddAt === 'number') {
             record.deliberateAddAt = entry.deliberateAddAt * 1000;
           }

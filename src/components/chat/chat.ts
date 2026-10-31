@@ -17,7 +17,7 @@ import ChatContextMenu from '@components/chat/contextMenu';
 import ChatInput from '@components/chat/input';
 import ChatSelection from '@components/chat/selection';
 import ChatTopbar from '@components/chat/topbar';
-import {HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SERVICE_PEER_ID, VERIFICATION_CODES_BOT_ID} from '@appManagers/constants';
+import {FOLDER_ID_ARCHIVE, HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SERVICE_PEER_ID, VERIFICATION_CODES_BOT_ID} from '@appManagers/constants';
 import SetTransition from '@components/singleTransition';
 import AppPrivateSearchTab from '@components/sidebarRight/tabs/search';
 import renderImageFromUrl from '@helpers/dom/renderImageFromUrl';
@@ -34,7 +34,7 @@ import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
 import noop from '@helpers/noop';
 import middlewarePromise from '@helpers/middlewarePromise';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
-import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity, PaymentsPaymentForm, InputPeer, ChatTheme, UserFull, User, StoriesStealthMode} from '@layer';
+import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity, PaymentsPaymentForm, InputPeer, ChatTheme, UserFull, User, StoriesStealthMode, Dialog} from '@layer';
 import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
 import {getColorsFromWallPaper} from '@helpers/color';
 import apiManagerProxy from '@lib/apiManagerProxy';
@@ -678,6 +678,14 @@ export default class Chat extends EventListenerBase<{
       }
     });
 
+    // Archived = read-only (owner batch 12). The dialog move can happen while
+    // this chat is open (archive from the list), so the composer follows the
+    // folder flag rather than only being set on navigation.
+    this.bubbles.listenerSetter.add(rootScope)('dialog_folder_update' as any, ({peerId, folderId}: {peerId: PeerId, folderId: number}) => {
+      if(+peerId !== +this.peerId) return;
+      this.input?.chatInput?.classList.toggle('archived-readonly', folderId === FOLDER_ID_ARCHIVE);
+    });
+
     this.bubbles.listenerSetter.add(rootScope)('dialog_drop', (dialog) => {
       if(dialog.peerId === this.peerId && (isDialog(dialog) || this.threadId === getDialogKey(dialog))) {
         this.appImManager.setPeer({isDeleting: true});
@@ -1234,14 +1242,34 @@ export default class Chat extends EventListenerBase<{
       callback?.();
     });
 
+    // Archived dialogs are read-only (owner batch 12): the composer goes away so
+    // nothing invites a send. That is only the UI half. The enforcement lives
+    // behind it — GroupAPI.sendMessage / sendFile refuse for a group-class peer,
+    // and the VMT bridge refuses every 1:1 send (text and media) for a dialog in
+    // the archive — so a retry, a share-to-chat flow or a shortcut cannot post
+    // into an archived item. One flag (`folder_id === 1`) covers chats, groups
+    // and sessions alike.
+    void this.managers.dialogsStorage.getAnyDialog(this.peerId).then((dialog) => {
+      if(!middleware() || !isDialog(dialog)) return;
+      this.input?.chatInput?.classList.toggle('archived-readonly', (dialog as Dialog).folder_id === FOLDER_ID_ARCHIVE);
+    }).catch(() => {});
+
     // Deferred path: shared media and backgrounds are NOT visible on first
     // paint (shared media is in the right sidebar, backgrounds are cosmetic).
     // Fire them in the background so they don't block chat rendering.
+    //
+    // `handleBackgrounds` resolves to the CALLBACK that appends the background
+    // layer (its first pass runs `manual`, so setBackground hands the paint back
+    // instead of painting). Dropping it meant a chat element created AFTER the
+    // app-wide `setCurrentBackground` pass — every new chat tab, so the first
+    // chat or group you open from an empty list — never got a wallpaper until
+    // something else forced a re-paint (owner report, 2026-10-31).
     Promise.all([
       sharedMediaTab?.fillProfileElements(),
       this.handleBackgrounds()
-    ]).then(([sharedMediaCallback]) => {
+    ]).then(([sharedMediaCallback, backgroundCallback]) => {
       if(!middleware()) return;
+      backgroundCallback?.();
       sharedMediaTab?.loadSidebarMedia(true);
       sharedMediaCallback?.();
       if(sharedMediaTab) {

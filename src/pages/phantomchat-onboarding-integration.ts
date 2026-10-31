@@ -44,7 +44,7 @@ import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
 import {createConversationResidueWipe} from '@lib/phantomchat/contacts-residue-wipe';
 import {addP2PContact} from '@lib/phantomchat/add-p2p-contact';
 import {writeGroupCreateServiceMessage} from '@lib/phantomchat/group-service-messages';
-import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection} from '@lib/phantomchat/phantomchat-groups-sync';
+import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection, applyGroupDialogFolder} from '@lib/phantomchat/phantomchat-groups-sync';
 import {toast} from '@components/toast';
 import I18n from '@lib/langPack';
 // tweb-contained CSS no longer needed — onboarding uses native tweb styles
@@ -594,7 +594,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             getLegacyDeleteCutoff: () => getGroupStore().getLegacyDeleteCutoff(),
             clearDeletedGroup: (groupId) => getGroupStore().clearDeletedGroup(groupId),
             upsertGroup: async(record: GroupRecord) => {
-              const peerId = await groupIdToPeerId(record.groupId);
+              // Class first: the peerId is derived FROM it, and a session that
+              // resolved to a classic group peerId would be a different chat.
+              const peerId = await groupIdToPeerId(record.groupId, record.kind);
               const rec: GroupRecord = {...record, peerId};
               const existing = await getGroupStore().get(record.groupId);
               await getGroupStore().save(rec);
@@ -613,14 +615,25 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                   title: rec.name,
                   isOutgoing: rec.adminPubkey === ownPubkey
                 });
-                await injectGroupCreateDialog(rec.groupId, service.mid, createdAtSec);
+                await injectGroupCreateDialog(rec.groupId, service.mid, createdAtSec, rec);
               } else {
-                // Update (rename / membership): refresh the mirror + title.
+                // Update (rename / membership / archive): refresh the mirror +
+                // title, and re-apply the archive state when it changed —
+                // `ensureGroupChatInjected` only re-mirrors title/avatar, so a
+                // remote archive would otherwise be stored but never shown
+                // (the row would sit in Sessions with a live composer until a
+                // reload rebuilt every dialog from its record).
                 await ensureGroupChatInjected(rec.groupId, peerId);
+                if((existing.archivedAt ?? 0) !== (rec.archivedAt ?? 0)) {
+                  try { await applyGroupDialogFolder(rec); } catch(e) { console.warn('[groups-sync] live archive move failed', e); }
+                }
               }
             },
             removeGroup: async(groupId) => {
-              const peerId = await groupIdToPeerId(groupId);
+              // Read the class before the delete — it is what the peerId (and
+              // therefore the mirror teardown) is derived from.
+              const kind = (await getGroupStore().get(groupId))?.kind;
+              const peerId = await groupIdToPeerId(groupId, kind);
               await getGroupStore().delete(groupId);
               try { await cleanupGroupChatInjection(peerId); } catch{ /* mirror already gone */ }
             },
@@ -647,7 +660,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             if(convId.startsWith('group:')) {
               const rec = await getGroupStore().get(convId.slice('group:'.length));
               if(!rec) return null;
-              return rec.peerId ?? groupIdToPeerId(rec.groupId);
+              return rec.peerId ?? groupIdToPeerId(rec.groupId, rec.kind);
             }
             const parts = convId.split(':');
             if(parts.length !== 2) return null;

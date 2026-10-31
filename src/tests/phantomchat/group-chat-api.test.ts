@@ -229,6 +229,53 @@ describe('GroupAPI', () => {
     expect(publishedEvents.length).toBe(3);
   });
 
+  // ─── PR #292 review round: archive is a real invariant, not a comment ──
+  //
+  // Kai/Lena both found that archive was device-local (no publish) and that
+  // only TEXT was refused while sendFile was not. These are the behavioural
+  // pins for both halves.
+
+  it('#292 review: archiveGroup publishes the groups domain', async() => {
+    const groupId = 'abc123def456abc123def456abc123de00';
+    const {registerSyncPublisher} = await import('@lib/phantomchat/phantomchat-sync-triggers');
+    const publish = vi.fn();
+    registerSyncPublisher('groups', publish);
+    try {
+      mockGroupStore.get.mockResolvedValue({
+        groupId, name: 'G', adminPubkey: OWN_PUBKEY,
+        members: [MEMBER_A, OWN_PUBKEY], peerId: -2e15,
+        createdAt: Date.now(), updatedAt: Date.now()
+      } as GroupRecord);
+      mockGroupStore.updateInfo.mockResolvedValue(undefined);
+
+      await api.archiveGroup(groupId);
+      await api.unarchiveGroup(groupId);
+
+      // One publish per toggle. Without it `archivedAt` never leaves the
+      // device and the PR's headline claim ("archive syncs via the groups
+      // CRDT") is simply false.
+      expect(publish).toHaveBeenCalledTimes(2);
+    } finally {
+      registerSyncPublisher('groups', () => {});
+    }
+  });
+
+  it('#292 review: an archived group refuses media as well as text', async() => {
+    const groupId = 'abc123def456abc123def456abc123de00';
+    mockGroupStore.get.mockResolvedValue({
+      groupId, name: 'G', adminPubkey: OWN_PUBKEY,
+      members: [MEMBER_A, OWN_PUBKEY], peerId: -2e15,
+      createdAt: Date.now(), updatedAt: Date.now(), archivedAt: Date.now()
+    } as GroupRecord);
+
+    await expect(api.sendFile(groupId, 'image', {
+      url: 'blossom://x', sha256: 'a'.repeat(64), keyHex: 'k'.repeat(64),
+      ivHex: 'i'.repeat(32), mimeType: 'image/png', size: 10
+    })).rejects.toThrow(/archived/);
+    await expect(api.sendMessage(groupId, 'hi')).rejects.toThrow(/archived/);
+    expect(publishedEvents.length).toBe(0);
+  });
+
   it('Test 5: incoming rumor with group tag routes to group handler', () => {
     const handleSpy = vi.spyOn(api, 'handleIncomingGroupMessage');
     const rumor = {id: 'r1', kind: 14, content: '{}', pubkey: MEMBER_A,

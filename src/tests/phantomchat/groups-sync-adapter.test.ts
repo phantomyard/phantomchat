@@ -581,3 +581,71 @@ describe('groups adapter apply()', () => {
     expect(calls.upserted).toHaveLength(1);
   });
 });
+// ─── #292 review (Kai at b21b342): the unarchive signal must be DURABLE ────
+//
+// `apply` used to delete an explicit `archivedAt: 0` before `upsertGroup`, so a
+// device that received an unarchive persisted a record with NO field and
+// republished it that way. The keep-local guard then read "absent" as "this
+// writer knows nothing about archive" — right for a plain rename, wrong for a
+// device that was offline during the unarchive and still holds 999, which
+// re-archived the group for everyone on its next local mutation. Keeping the 0
+// makes the clear signal survive the hop; every reader tests truthiness or
+// `(x ?? 0)`, so 0 still reads as unarchived.
+describe('groups adapter apply(): archivedAt 0 is a durable clear signal', () => {
+  const empty: SyncMap<GroupRecord> = {};
+
+  it('persists an explicit 0 instead of stripping the field', async() => {
+    const {deps, calls} = makeDeps([], []);
+    const merged: SyncMap<GroupRecord> = {
+      [G1]: {id: G1, updatedAt: 9000, data: {...group(G1, 9_000_000, 'Team'), archivedAt: 0}}
+    };
+    await createGroupsAdapter(deps).apply(merged, empty);
+    expect(calls.upserted).toHaveLength(1);
+    expect(calls.upserted[0].archivedAt).toBe(0);
+    expect('archivedAt' in calls.upserted[0]).toBe(true);
+  });
+
+  it('still refuses to unarchive for a writer that OMITS the field (keep-local guard intact)', async() => {
+    // A plain rename republishes the record without `archivedAt`. That must not
+    // be read as an unarchive — the local stamp wins.
+    const local: GroupRecord = {...group(G1, 7_000_000, 'Team'), archivedAt: 999};
+    const {deps, calls} = makeDeps([local], []);
+    const before: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 7000, data: local}};
+    const merged: SyncMap<GroupRecord> = {
+      [G1]: {id: G1, updatedAt: 9000, data: {...group(G1, 9_000_000, 'Team Renamed')}}
+    };
+    await createGroupsAdapter(deps).apply(merged, before);
+    expect(calls.upserted).toHaveLength(1);
+    expect(calls.upserted[0].archivedAt).toBe(999);
+    expect(calls.upserted[0].name).toBe('Team Renamed');
+  });
+
+  it('three-device chain: A unarchives -> B persists 0 -> offline C must not re-archive', async() => {
+    // A: user unarchives -> updateInfo(null) writes 0 into the record, which
+    //    read() publishes.
+    const aRecord: GroupRecord = {...group(G1, 9_100_000, 'Team'), archivedAt: 0};
+    const aMap = await createGroupsAdapter(makeDeps([aRecord], []).deps).read();
+    expect(aMap[G1].data!.archivedAt).toBe(0);
+    expect('archivedAt' in aMap[G1].data!).toBe(true);
+
+    // B: receives A's entry, persists it, and republishes from its own store.
+    const bStore: GroupRecord[] = [];
+    const bBase = makeDeps([], []).deps;
+    await createGroupsAdapter({...bBase, upsertGroup: async(rec) => { bStore.push(rec); }}).apply(aMap, empty);
+    expect(bStore[0].archivedAt).toBe(0);
+    const bMap = await createGroupsAdapter({...bBase, listGroups: async() => bStore}).read();
+    expect(bMap[G1].data!.archivedAt).toBe(0);
+    expect('archivedAt' in bMap[G1].data!).toBe(true);
+
+    // C: offline during the unarchive, still holds 999 at an OLDER stamp. B's
+    // republished entry must win the keep-local guard. Before the fix B
+    // republished an ABSENT field, so C kept 999 and re-archived the group.
+    const cLocal: GroupRecord = {...group(G1, 9_000_000, 'Team'), archivedAt: 999};
+    const c = makeDeps([cLocal], []);
+    const cBefore: SyncMap<GroupRecord> = {[G1]: {id: G1, updatedAt: 9000, data: cLocal}};
+    const cMerged = mergeMaps(cBefore, bMap);
+    await createGroupsAdapter(c.deps).apply(cMerged, cBefore);
+    expect(c.calls.upserted).toHaveLength(1);
+    expect(c.calls.upserted[0].archivedAt).toBe(0);
+  });
+});

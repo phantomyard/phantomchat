@@ -22,7 +22,7 @@ export type FolderTitle = DialogFilter.dialogFilter['title'];
 export type FolderSnapshot = {
   version: number;
   order: number[];                        // full order including system IDs
-  customFolders: MyDialogFilter[];        // only IDs >= START_LOCAL_ID (4)
+  customFolders: MyDialogFilter[];        // only IDs >= START_LOCAL_ID (5)
   protectedTitles?: Record<number, FolderTitle>;
 };
 

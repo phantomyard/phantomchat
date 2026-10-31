@@ -31,6 +31,8 @@ import {MonoforumDialog} from '@lib/storages/monoforumDialogs';
 import {openRemoveFeePopup} from '@components/chat/removeFee';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import {peerEditMenuButton} from '@components/peerActionsMenu';
+import {FOLDER_ID_ARCHIVE} from '@appManagers/constants';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 
 
 export default class DialogsContextMenu {
@@ -238,6 +240,16 @@ export default class DialogsContextMenu {
       onClick: () => this.onToggleFeeClick(false),
       verify: () => this.verifyToggleFee(false)
     }, {
+      icon: 'archive',
+      text: 'Archive',
+      onClick: () => this.onArchiveClick(true),
+      verify: () => this.isArchivable() && !this.isArchived()
+    }, {
+      icon: 'unarchive',
+      text: 'Unarchive',
+      onClick: () => this.onArchiveClick(false),
+      verify: () => this.isArchivable() && this.isArchived()
+    }, {
       icon: 'delete',
       className: 'danger',
       text: 'Delete',
@@ -246,6 +258,37 @@ export default class DialogsContextMenu {
     }];
 
     return this.buttons = this.buttons.filter(Boolean);
+  }
+
+  /**
+   * Archive is a GROUP-CLASS action (owner batch 12). A group and a session are
+   * the same object to every menu in this file — the only difference is the
+   * peerId range — so both get the entry, and the same `folder_id === 1` flag
+   * that archives a chat archives them.
+   */
+  private isArchivable() {
+    return !this.threadId && isGroupPeer(+this.peerId);
+  }
+
+  private isArchived() {
+    return isDialog(this.dialog) && (this.dialog as Dialog).folder_id === FOLDER_ID_ARCHIVE;
+  }
+
+  private onArchiveClick(archive: boolean) {
+    const peerId = +this.peerId;
+    void (async() => {
+      const {getGroupStore} = await import('@lib/phantomchat/group-store');
+      const record = await getGroupStore().getByPeerId(peerId);
+      if(!record) return;
+
+      const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+      try {
+        await (archive ? getGroupAPI().archiveGroup(record.groupId) : getGroupAPI().unarchiveGroup(record.groupId));
+      } catch(err) {
+        console.error('[PhantomChat.chat] archive toggle failed:', err);
+        toastNew({langPackKey: 'ArchiveActionFailed'});
+      }
+    })();
   }
 
   private createAddToFolderSubmenu = async({middleware}: CreateSubmenuArgs) => {

@@ -1508,8 +1508,8 @@ const lang = {
   'Open': 'Open',
   'OpenUrlTitle': 'Open Link',
   'OpenUrlAlert2': 'Do you want to open %1$s?',
-  'FilterNoChatsToDisplay': 'Folder is empty',
-  'FilterNoChatsToDisplayInfo': 'No chats currently belong to this folder.',
+  'FilterNoChatsToDisplay': 'Nothing here yet',
+  'FilterNoChatsToDisplayInfo': 'There is currently nothing in this space.',
   'SupportStatus': 'support',
   'Lately': 'last seen recently',
   'WithinAWeek': 'last seen within a week',
@@ -1864,6 +1864,10 @@ const lang = {
   'PrivacyClearPayment': 'Payment info',
   'Clear': 'Clear',
   'Save': 'Save',
+  // PhantomChat groups/sessions (owner batch 12): the archive toggle's failure
+  // toast. Archiving reuses the existing 'Archive' / 'Unarchive' strings.
+  'ArchiveActionFailed': 'Could not update this conversation',
+  'SessionCreateFailed': 'Could not create the session',
   'PaymentCheckoutName': 'Name',
   'ClearRecentStickersAlertTitle': 'Clear recent stickers',
   'ClearRecentStickersAlertMessage': 'Do you want to clear all your recent stickers?',

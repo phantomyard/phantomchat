@@ -67,7 +67,7 @@ describe('FoldersSync.reconcile', () => {
 
   it('no-remote + custom folder → publishes local', async() => {
     const deps = mkMockDeps();
-    deps._state.filtersState.current = [...mkBaseFilters(), mkCustom(4, 'Work')];
+    deps._state.filtersState.current = [...mkBaseFilters(), mkCustom(6, 'Work')];
     const sync = new FoldersSync(deps);
     const res = await sync.reconcile();
     expect(res.action).toBe('publish-local');
@@ -81,8 +81,8 @@ describe('FoldersSync.reconcile', () => {
     const deps = mkMockDeps();
     const payload = {
       version: 1,
-      order: [0, 3, 1, 5],
-      customFolders: [mkCustom(5, 'RemoteCustom')],
+      order: [0, 3, 1, 6],
+      customFolders: [mkCustom(6, 'RemoteCustom')],
       protectedTitles: {}
     };
     deps._state.fetchResults.push({
@@ -96,7 +96,7 @@ describe('FoldersSync.reconcile', () => {
     expect(deps._state.toastFires).toHaveLength(0);
     expect(deps._state.reseedCalls.count).toBe(1);
     const after = deps._state.filtersState.current;
-    expect((after.find((f) => f.id === 5) as any)?.title.text).toBe('RemoteCustom');
+    expect((after.find((f) => f.id === 6) as any)?.title.text).toBe('RemoteCustom');
   });
 
   it('remote wins with offline local changes → fires toast', async() => {
@@ -123,7 +123,7 @@ describe('FoldersSync.reconcile', () => {
 
   it('local wins → publishes new event', async() => {
     const deps = mkMockDeps();
-    deps._state.filtersState.current = [...mkBaseFilters(), mkCustom(4, 'LocalNew')];
+    deps._state.filtersState.current = [...mkBaseFilters(), mkCustom(6, 'LocalNew')];
     localStorage.setItem('phantomchat-folders-last-published', '100');
     localStorage.setItem('phantomchat-folders-last-modified', '500');
     deps._state.fetchResults.push({

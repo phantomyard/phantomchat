@@ -42,7 +42,7 @@ import windowSize from '@helpers/windowSize';
 import isInDOM from '@helpers/dom/isInDOM';
 import {setSendingStatus} from '@components/sendingStatus';
 import {SortedElementBase} from '@helpers/sortedList';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION, NULL_PEER_ID, REAL_FOLDERS} from '@appManagers/constants';
 import groupCallActiveIcon from '@components/groupCallActiveIcon';
 import {Chat, ChatlistsChatlistUpdates, DialogFilter, Message, MessageMedia, MessageReplyHeader} from '@layer';
 import mediaSizes from '@helpers/mediaSizes';
@@ -186,6 +186,23 @@ const avatarSizeMap: {[k in DialogElementSize]?: number} = {
 };
 
 export type DialogElementSize = RowMediaSizeType;
+/**
+ * The mark an empty space shows (owner batch 11). Each space shows ITS OWN rail
+ * glyph — the same mark the sidebar uses for that row — instead of the old
+ * generic folder emoji: it tells you which space you are in at a glance, and
+ * drops the Windows folder metaphor entirely. `glyph` is used when the mark is
+ * not an emoji (the icon font has no hashtag), rendered as text.
+ */
+export function getEmptySpaceGlyph(filterId: number): {emoji?: string, glyph?: string} {
+  switch(filterId) {
+    case FOLDER_ID_ALL: return {emoji: '💬'};
+    case FOLDER_ID_GROUPS: return {emoji: '👥'};
+    case FOLDER_ID_SESSION: return {glyph: '#'};
+    case FOLDER_ID_ARCHIVE: return {emoji: '🗄️'};
+    default: return {emoji: '💬'};
+  }
+}
+
 export type AsAllChatsType = 'monoforum' | 'topics';
 
 type DialogElementOptions = {
@@ -1498,15 +1515,25 @@ export class AppDialogsManager {
 
       placeholderContainer = placeholder.container;
 
+      // Owner batch 11: no folder metaphor. The empty state shows the SPACE's
+      // own rail glyph (the same mark the sidebar uses) so it is obvious which
+      // space you are looking at, and the copy talks about a space, not a folder.
       const div = document.createElement('div');
-      const emoji = '📂';
       const size = 128;
-      wrapStickerEmoji({
-        div,
-        emoji: emoji,
-        width: size,
-        height: size
-      });
+      const {emoji, glyph} = getEmptySpaceGlyph(this.filterId);
+      if(emoji) {
+        wrapStickerEmoji({
+          div,
+          emoji: emoji,
+          width: size,
+          height: size
+        });
+      } else {
+        const span = document.createElement('span');
+        span.classList.add('empty-placeholder-glyph');
+        span.textContent = glyph;
+        div.append(span);
+      }
 
       placeholderContainer.prepend(div);
     }

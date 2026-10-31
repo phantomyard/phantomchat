@@ -93,3 +93,32 @@
     top: -1px;
   }
 }
+
+/*
+ * Non-emoji empty-space glyph (Sessions' `#`). Same footprint as the 128px
+ * sticker it replaces so the placeholder does not jump.
+ */
+.empty-placeholder-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 128px;
+  height: 128px;
+  margin: 0 auto 1.9375rem;
+  font-size: 96px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--secondary-text-color);
+  opacity: .55;
+  user-select: none;
+}
+
+/*
+ * Archived dialog (owner batch 12) — read-only, so the composer is not shown.
+ * The refusal itself lives in GroupAPI.sendMessage (a group-class peer cannot
+ * post while archived); this only stops the UI from offering an input that
+ * would fail. One flag for chats, groups and sessions alike.
+ */
+.chat-input.archived-readonly {
+  display: none;
+}

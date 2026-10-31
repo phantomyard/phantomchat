@@ -4,7 +4,8 @@ import copy from '@helpers/object/copy';
 import {
   FOLDER_ID_ALL,
   FOLDER_ID_ARCHIVE,
-  FOLDER_ID_GROUPS
+  FOLDER_ID_GROUPS,
+  FOLDER_ID_SESSION
 } from '@appManagers/constants';
 
 const LOCAL_FILTER_TEMPLATE: DialogFilter.dialogFilter = {
@@ -40,6 +41,15 @@ export function buildLocalFilter(id: number): MyDialogFilter {
     filter.pFlags.groups = true;
     filter.pFlags.exclude_archived = true;
     filter.title = literalTitle('Groups');
+  } else if(id === FOLDER_ID_SESSION) {
+    // Membership is the SESSION PEER CLASS (isSessionPeer), which
+    // FiltersStorage.testDialogForFilter short-circuits before the pFlags walk —
+    // so `exclude_archived` below is a no-op today (archived sessions already
+    // leave for the shared archive by folder_id). It is dropped rather than
+    // kept: a second, unreachable membership rule is exactly the "scattered
+    // gates" problem this refactor removes, and it would silently become a real
+    // rule if that short-circuit ever moved.
+    filter.title = literalTitle('Sessions');
   }
 
   return filter;
@@ -50,7 +60,12 @@ export function buildLocalFilter(id: number): MyDialogFilter {
  * must still be recognized as defaults during migration. Keep this list
  * small — only strings that were the ACTUAL default at some prior release.
  */
-const LEGACY_DEFAULT_TITLES: Record<number, readonly string[]> = {};
+const LEGACY_DEFAULT_TITLES: Record<number, readonly string[]> = {
+  // Folder 4 shipped as "Code" (owner batch 10) and then "Session" (batch 11)
+  // for one preview build each. Anyone who never renamed it gets the new
+  // default; an explicit rename still wins.
+  [FOLDER_ID_SESSION]: ['Code', 'Session']
+};
 
 /**
  * Returns true for titles produced by buildLocalFilter (unchanged default

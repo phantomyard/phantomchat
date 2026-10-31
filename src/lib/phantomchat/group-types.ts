@@ -17,11 +17,59 @@ export const GROUP_PEER_BASE = BigInt(2 * 10 ** 15);
 export const GROUP_PEER_RANGE = BigInt(9 * 10 ** 15);
 
 /**
- * Returns true if peerId belongs to a group (negative, in GROUP_PEER_BASE range).
+ * Base for SESSION peer IDs (owner batch 11, 2026-10-31).
+ *
+ * A session is a peer CLASS, not a tagged group. It sits in its own negative
+ * range ABOVE the group range so the classification is a pure scalar test —
+ * no module state, no per-thread index, no field on the dialog. The same answer
+ * therefore holds on the main thread, in the MTPROTO worker, on an IDB replay
+ * and after any reload, which is exactly what the tag-based rule could not
+ * guarantee (its index was per-thread module state and the folder-membership
+ * predicates run in the worker).
+ */
+export const SESSION_PEER_BASE = BigInt(12 * 10 ** 15);
+
+/** Range for session peer IDs */
+export const SESSION_PEER_RANGE = BigInt(9 * 10 ** 15);
+
+/**
+ * Returns true if peerId belongs to a group OR a session (negative, >= the
+ * group base). This is the "is a phantom group-class peer" test: protocol
+ * paths (membership, control messages, edits, reactions, avatars) must use it,
+ * because a session speaks the group protocol and would otherwise be treated
+ * as an unknown peer.
+ *
+ * Folder membership is a DIFFERENT question — see isChatGroupPeer/isSessionPeer.
  */
 export function isGroupPeer(peerId: number): boolean {
   return peerId < 0 && Math.abs(peerId) >= Number(GROUP_PEER_BASE);
 }
+
+/**
+ * True when the peer is a SESSION (the Session space's object class).
+ *
+ * Pure range test on purpose: it must be safe to call from any thread, at any
+ * time, before the group store has been read.
+ */
+export function isSessionPeer(peerId: number): boolean {
+  return peerId < 0 && Math.abs(peerId) >= Number(SESSION_PEER_BASE);
+}
+
+/**
+ * True for a classic group — i.e. a group-class peer that is NOT a session.
+ * This is the Groups folder's membership class, and ONLY that: everywhere else
+ * (protocol, rendering, storage) the question is isGroupPeer.
+ */
+export function isChatGroupPeer(peerId: number): boolean {
+  return isGroupPeer(peerId) && !isSessionPeer(peerId);
+}
+
+/**
+ * The object class of a group record. `session` records live in the Session
+ * space and nowhere else; the field is the INPUT to peer-id derivation at
+ * create/join time and is never used as a live UI predicate (isSessionPeer is).
+ */
+export type GroupKind = 'group' | 'session';
 
 // ─── Control Message Types ──────────────────────────────────────────
 
@@ -63,6 +111,13 @@ export interface GroupControlPayload {
   emoji?: string;
   reactionEventId?: string;
   createdAt?: number;
+  /**
+   * Object class, carried by `group_create` (owner batch 11). A receiver MUST
+   * derive the same peerId as the creator, and the peerId range is a function
+   * of this field — without it a session would land in the group range and the
+   * two sides would disagree about which peer the conversation is.
+   */
+  groupKind?: GroupKind;
 }
 
 // ─── Group Record ───────────────────────────────────────────────────
@@ -96,6 +151,22 @@ export interface GroupRecord {
    * deterministic winner tuple (reboundAt, groupId) settles competing
    * rebinds from two of the admin's devices without a coordinator. */
   reboundAt?: number;
+  /**
+   * Object class (owner batch 11). `session` = a Session-space peer: its peerId
+   * is derived in the SESSION_PEER_BASE range, it is listed only in the Session
+   * (or Session-Archive) space, and it has one phantom member. Immutable after
+   * create — a session can never become a group, because the peerId is derived
+   * from it and every local row is keyed by that peerId.
+   */
+  kind?: GroupKind;
+  /**
+   * Unix-millis archive stamp for a SESSION. Present = the session is in the
+   * Session Archive space (read-only there). Absent/null = live.
+   * Lives on the record so the groups CRDT carries it to every device with no
+   * schema bump; the local dialog mirrors it as `folder_id === 1` so tweb's
+   * existing archive machinery (folder_peers / getFolderDialogs) does the work.
+   */
+  archivedAt?: number;
 }
 
 // ─── Group Delivery Info ────────────────────────────────────────────
@@ -146,12 +217,17 @@ function bigEndianUint64(bytes: Uint8Array): bigint {
  * second group cannot even be saved). Legacy 32-hex ids keep the original
  * first-8-bytes derivation so existing groups never change peerId.
  */
-export async function groupIdToPeerId(groupId: string): Promise<number> {
+export async function groupIdToPeerId(groupId: string, kind: GroupKind = 'group'): Promise<number> {
   const groupBytes = hexToBytes(groupId);
   const deriveBytes = groupBytes.length > 16 ? groupBytes : groupBytes.slice(0, 8);
   const hashBuffer = await crypto.subtle.digest('SHA-256', deriveBytes);
   const hashBytes = new Uint8Array(hashBuffer);
   const hashBigInt = bigEndianUint64(hashBytes);
 
-  return -Number(GROUP_PEER_BASE + (hashBigInt % GROUP_PEER_RANGE));
+  // Sessions derive from their OWN base (owner batch 11): the peerId is what
+  // classifies the object, so it must be a pure function of (groupId, kind) on
+  // every device and every thread.
+  const base = kind === 'session' ? SESSION_PEER_BASE : GROUP_PEER_BASE;
+  const range = kind === 'session' ? SESSION_PEER_RANGE : GROUP_PEER_RANGE;
+  return -Number(base + (hashBigInt % range));
 }

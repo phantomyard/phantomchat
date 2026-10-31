@@ -5,7 +5,6 @@ import noop from '@helpers/noop';
 import {FOLDER_ID_ARCHIVE} from '@lib/appManagers/constants';
 import {i18n} from '@lib/langPack';
 import rootScope from '@lib/rootScope';
-import {useAppSettings} from '@stores/appSettings';
 import {archiveDialogTagName} from './archiveDialog';
 import confirmationPopup from './confirmationPopup';
 import createFeatureDetailsIconSticker from './featureDetailsIconSticker';
@@ -43,26 +42,12 @@ export const createArchiveDialogContextMenu = ({
 };
 
 export const getArchiveContextMenuButtons = (): ButtonMenuItemOptionsVerifiable[] => {
-  const [appSettings, setAppSettings] = useAppSettings();
-
   const markAllAsRead = createMarkAllAsReadHandler();
 
   return [
-    {
-      icon: 'movetomenu',
-      text: 'Archive.HideFromChatList',
-      onClick: () => {
-        setAppSettings('showArchiveInChatList', false);
-      },
-      verify: () => appSettings.showArchiveInChatList
-    }, {
-      icon: 'movetochats',
-      text: 'Archive.ShowInChatList',
-      onClick: () => {
-        setAppSettings('showArchiveInChatList', true);
-      },
-      verify: () => !appSettings.showArchiveInChatList
-    },
+    // Owner batch 14: the "show/hide archive row in the chat list" pair is
+    // gone with the pinned row itself (Archives is a rail space now), so
+    // there is nothing left for these toggles to toggle.
     {
       icon: 'readchats',
       text: 'MarkAllAsRead',

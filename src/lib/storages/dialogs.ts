@@ -16,7 +16,7 @@ import tsNow from '@helpers/tsNow';
 import SearchIndex from '@lib/searchIndex';
 import {SliceEnd} from '@helpers/slicedArray';
 import {MyDialogFilter} from '@lib/storages/filters';
-import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '@appManagers/constants';
+import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '@appManagers/constants';
 import {MaybePromise, Modify, NoneToVoidFunction} from '@types';
 import ctx from '@environment/ctx';
 import AppStorage from '@lib/storage';
@@ -1780,12 +1780,22 @@ export default class DialogsStorage extends AppManager {
       // comparison can therefore never be satisfied. The pager then ends on the
       // first empty page, and isEnd latches setDialogsLoaded(folderId, true), so
       // no request is repeated at the end of the list.
-      // FOLDER_ID_ARCHIVE (1) is a real server folder whose result.count is
-      // correct, and virtual filters (forum/saved) carry their own counts, so
-      // both are excluded.
-      const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS;
-      const isLocallyFilteredFolder = !isVirtualFilter &&
-        filterId !== FOLDER_ID_ARCHIVE;
+      // FOLDER_ID_ARCHIVE (1) is a real server folder in Telegram, where
+      // result.count is the archived subset. PhantomChat's virtual server is
+      // not: its messages.getDialogs ignores the requested folder_id and
+      // answers EVERY folder with the global dialog set (`count:
+      // dialogs.length`). Taking that count for the Archive sizes the virtual
+      // list to the whole account and pads the surplus with permanent ghost
+      // skeleton rows under the archived chats (owner batch 14). Every folder
+      // whose membership is decided locally — which is now all of them — must
+      // report the locally filtered length; only virtual filters (forum /
+      // saved) carry their own counts.
+      // Sessions (4) is local-only too: its membership is the SESSION peer
+      // class, decided here, never by the server. Without the latch the pager
+      // depends on the virtual server's whole-set `isEnd` for a folder it is
+      // most likely to load EMPTY (you create a session, nothing in it yet).
+      const isLocalSystemFolder = filterId === FOLDER_ID_GROUPS || filterId === FOLDER_ID_SESSION;
+      const isLocallyFilteredFolder = !isVirtualFilter;
 
       if(skipMigrated) {
         curDialogStorage = this.getFolderDialogs(filterId, skipMigrated);

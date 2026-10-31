@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+// The DEFAULT group resolver reads the group store (record.kind decides the
+// peerId range), so the IndexedDB the store opens has to exist.
+import 'fake-indexeddb/auto';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
 
 const OWN = 'a'.repeat(64);
@@ -161,6 +164,39 @@ describe('phantomchatTypingReceive', () => {
     } finally {
       localStorage.removeItem('phantomchat:read-receipts-enabled');
     }
+  });
+
+  it('resolves a SESSION tick to the session peer range (kind from the record)', async() => {
+    // Owner batch 13: the default resolver used the classic 'group' class, so a
+    // session's tick landed on a peerId no conversation owns → no dots, no
+    // subtitle. The record's `kind` is what decides the range.
+    const {getGroupStore} = await import('@lib/phantomchat/group-store');
+    const {groupIdToPeerId} = await import('@lib/phantomchat/group-types');
+
+    const groupId = 'f'.repeat(64) + 'd'.repeat(32);
+    const sessionPeerId = await groupIdToPeerId(groupId, 'session');
+    const classicPeerId = await groupIdToPeerId(groupId, 'group');
+    expect(sessionPeerId).not.toBe(classicPeerId);
+
+    await getGroupStore().save({
+      groupId,
+      name: 'New session',
+      adminPubkey: 'a'.repeat(64),
+      members: ['a'.repeat(64)],
+      peerId: sessionPeerId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      kind: 'session'
+    } as any);
+
+    const groupCalls: Array<{chatId: number, from: number}> = [];
+    typing.setUserEnsurer(async() => {});
+    typing.setGroupTypingDispatcher((chatId: number, from: number) => groupCalls.push({chatId, from}));
+
+    // No setGroupResolver call: exercise the DEFAULT production resolver.
+    await typing.onTyping(makeEvent({tags: [['group', groupId], ['p', OWN]]}));
+
+    expect(groupCalls).toEqual([{chatId: -sessionPeerId, from: 4242}]);
   });
 
   it('group stop dispatches a group CANCEL and skips user-ensure', async() => {
