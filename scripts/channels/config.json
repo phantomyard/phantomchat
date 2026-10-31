@@ -98,18 +98,15 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "4451fea74901e056111ac4c532c6db083747cdab34de56e05efad8370912c378",
-      "preview": "c1833352495726bb22b942fa25d50eda9261e4904d2b8c108362c0b9120c70a7",
-      "reason": "getFolderDialogs / getFolderUnreadCount / markFolderAsRead apply the same session exclusion the filter predicate does, so the list, the badge and \"mark as read\" cannot disagree with the folder tabs. Presentation only."
+      "preview": "064876b3be04dc12063506984e0545102fad5fed9f6258a59c6022bbb3199afa"
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "5bb0c60f7cc6e73aa1fb27e9b053c244c441e1f63ab8500e533c48bd1446a6b2",
-      "preview": "efc6db78262051f2f315367adb308988d2f63ba0b794b4963f1d45d409003c85",
-      "reason": "The incremental row gate excludes a session peer from Chats and Archive, mirroring the group exclusion that already lives there — without it a session re-enters Chats on the first dialog_flush after load. Display gate only."
+      "preview": "c6501cf0dee36bbbd0dc1111aa3be723090d31002dfa999614de3c26298dab5a"
     },
     "src/lib/storages/filters.ts": {
       "stable": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "preview": "864fbdca44f91540c28a6ef6e91b3d8a2b9c83270f5dadce55b256c15e172727",
-      "reason": "Seeds Code between Groups and Archive and makes the session rule live in the same membership predicate as the existing group rule: Chats/Groups/Archive/custom folders exclude a session peer, Code admits only session peers. Presentation membership only — storage, folder arrays keyed by dialog.folder_id and the on-disk shape are unchanged."
+      "preview": "9af701b3bf10f0b0971548d87da919803e5b730134bd4b165e3e98a608f9f291"
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
@@ -118,8 +115,7 @@
     },
     "src/lib/phantomchat/phantomchat-peer-mapper.ts": {
       "stable": "147879b5e88fb8b22af2ac9009f77a74c06073e9be15f50bf1b3ec951f4d354a",
-      "preview": "147879b5e88fb8b22af2ac9009f77a74c06073e9be15f50bf1b3ec951f4d354a",
-      "reason": "createTwebDialog stamps the built-in Groups folder index (index_3) alongside index_0 on group dialogs. Derived from the same message timestamp, so it only mirrors what DialogsStorage already computes for the Groups REAL_FOLDER on reload; no stored key, format or value changes."
+      "preview": "bf04b42b7de414b40bccce292856444b328c65cf2bbc195c9da42bed9e152540"
     },
     "src/components/appSelectPeers.ts": {
       "stable": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
@@ -133,8 +129,7 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
-      "preview": "41053af9a29bfb65216f01c29bcf0ebc7de3fabd7c9b8c8e9d5f9b77419aef7f",
-      "reason": "createGroup takes an optional {tags} and sends them as groupTags on group_create; group_info_update carries groupTags and applies them (absent = unchanged); sendMessage fire-and-forget renames a still-default session group from its first prompt. Wire and storage are additive optional fields — a peer that ignores them behaves exactly as before."
+      "preview": "06b24360b471116dd1b78f757cd7438e58b7e44a53b56905e7eaed3fcf423f66"
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
@@ -193,8 +188,7 @@
     },
     "src/lib/phantomchat/group-tags.ts": {
       "stable": "absent",
-      "preview": "47e396bb66056ddf3ea8176f3eaa2aac35a8cbe5a12181229b12802c8d64fc89",
-      "reason": "New module: the session-tag vocabulary and the synchronous session-peer index the folder-membership predicates read. Pure in-memory state; the persisted form is GroupRecord.tags in the group store (unchanged on-disk shape, no new DB/keys)."
+      "preview": "8d3fdb3c9b04681de67af905bc6c750d37d6f02799fdaa1d1b3ca7ad49d66abc"
     },
     "src/lib/phantomchat/group-types.ts": {
       "stable": "8e1db65ee2a54edf87ba16dae2e254c0e65209748de4af0ed4e14f68b067d90d",
@@ -210,6 +204,18 @@
       "stable": "27fdd28d97a60363a981960c2a944a83dadaf7b7640cb801586e1327dc8fa1d9",
       "preview": "846153d877127221ccd499cfab7315200b649ba66f12834751fcb19d5c939e8c",
       "reason": "buildLocalFilter(FOLDER_ID_CODE) seeds a literal \"Code\" title with exclude_archived and no peer-class pFlags — membership is the session tag, not a pFlag, so no dialog changes class."
+    },
+    "src/components/chat/chat.ts": {
+      "stable": "a6a577321e55625e050550185eb57f392aa82f4369f047bb8910b35228a57708",
+      "preview": "9d6617b329b28c9a35c5d5dad102a645f4bf47637067fb917f39aec87349dc26"
+    },
+    "src/lib/phantomchat/phantomchat-groups-sync.ts": {
+      "stable": "a46baa8ccc438e8d353f242f3e9ca204b66f6343223dc33c418737b957e76965",
+      "preview": "420f61ffad3f824b30d007835cf589afd8ff0c3d0f4e358dc9e3dbc7fb5c6e79"
+    },
+    "src/lib/phantomchat/virtual-mtproto-server.ts": {
+      "stable": "59eb420187dc41693cb3b48d0256b86747763fc64fd5ee390b4ba210094f65a2",
+      "preview": "f105a4699e50127b74cb76b80b4cfa3f82e74113501119b1ff707889876b9466"
     }
   },
   "stableVersion": "1.1.77"
