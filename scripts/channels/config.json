@@ -58,8 +58,8 @@
     },
     "src/lang.ts": {
       "stable": "9ce8a8a239e5ffe2663da99feced7b856aa42b4f3d0996c8c6536f510f2675e9",
-      "preview": "22f47ce94cb05e40e819b6cca276efa555fb9f027d640b9ff89943d135b586d1",
-      "reason": "Replaces the session-only strings with ArchiveActionFailed; Archive/Unarchive reuse the existing keys. Text only."
+      "preview": "0925abc3137a54a74455ce8f9f2b057836cb3cdefb5ecb7124a863e30857921b",
+      "reason": "Two PhantomChat strings, text only: the empty-folder placeholder and the archive/session failure toasts."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "3fe972d1aa8dca02f895090e1af2c98a66fe27175a733e6827252f55c80de437",
@@ -73,8 +73,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "5578ea14a8a8f2854f3aac006c2ab927d24355aceeb9a224dc5cd22a9baffe24",
-      "preview": "b7cb8289c49d296bd3114f4a40077a014d814fffe303ca9f825b4cd0da433287",
-      "reason": "Generated lang-pack mirror of the string change. Text only."
+      "preview": "344c1a5255c80c3ff52a967c2c352735a3307b5beeb3a141ff337f1837d86f08",
+      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
@@ -88,8 +88,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "305b1d29a1ab0fcfd63667937240ab0e1f16534b12e946d52889c05234e2c247",
-      "preview": "a12f90b57af7c1b82aba1ec19700d31dde83a67ee6deac4fbc58c39cad4fbd9a",
-      "reason": "Comment only (session auto-name length)."
+      "preview": "413b66cb7924be680ae1d081e23004bcc2a7d50363c7b5d2ad84d5dfabde58be",
+      "reason": "The Session space + opens the Contacts picker in pick mode and creates a session from the pick; presentation and navigation only, no stored format change."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
@@ -98,8 +98,8 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "4451fea74901e056111ac4c532c6db083747cdab34de56e05efad8370912c378",
-      "preview": "5118596072745f9ba14b7cd24910eb45fff9399ceec59b39c380bf5ae1becb33",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "230e8aeb9fc0fe34280ea6f02bcdf6dc3f99bd5754fbca481629d00d1f3cc406",
+      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "5bb0c60f7cc6e73aa1fb27e9b053c244c441e1f63ab8500e533c48bd1446a6b2",
@@ -108,8 +108,8 @@
     },
     "src/lib/storages/filters.ts": {
       "stable": "e276d13b6d06466e9ba33fc985563bbd6bfbfd7c7e6194b76687f4778a49072f",
-      "preview": "82af9eb150da7c5282dd6064552866d59397045d6007da9f997bcefa14c13c3f",
-      "reason": "Folder membership: Sessions (4) = live session-class peers, Groups (3) excludes sessions, Archives (1) = any dialog with folder_id 1. The folder-5 branch is removed. Each rule is one predicate in one place."
+      "preview": "fbf2bd3823bb8924467d5931f45e0cb742bea4aa157a3c5b8a0c2fabb91ff89d",
+      "reason": "Folder-id migration without data loss: a persisted id 4 (or the abandoned id 5) that carries peer rules is a USER folder and is renumbered past START_LOCAL_ID with its rules intact; only stock system folders (recognised by shape - a custom folder always has peer rules) are dropped and re-seeded. createDialogFilter never mints an id below START_LOCAL_ID. Code only - no stored format change beyond renumbering a legacy folder id."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
@@ -133,8 +133,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "85379c5069f06f9c7f285577c9ccc8e1189b93ecddee8d165b959bdb3cbb28f5",
-      "preview": "ba0695539e1cda423d85e054d95af83bf2ec6e23fabb073ea03b0b24caf0483f",
-      "reason": "Comment only (session auto-name length)."
+      "preview": "10f1ed83d4cd0cd3d7ceb0c4f5062992435f2c611582b7789ef18706b8704bf6",
+      "reason": "Group archive mutators: archiveGroup/unarchiveGroup write the record archivedAt and publish the groups domain; sendMessage and sendFile both refuse an archived group. No schema change - archivedAt already travels inside the record."
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
@@ -161,11 +161,6 @@
       "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
       "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
     },
-    "src/components/phantomchat/sessionBadge.ts": {
-      "stable": "absent",
-      "preview": "4eab2e39f732787d11d8b748c9d4f05a1bd3c19613825b1ca29d8861078fb7f5",
-      "reason": "New presentation component: a static `#` chip whose visibility comes from the synchronous session index. No storage, network or state mutation."
-    },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
       "stable": "b688eae2335aa5aa803605db436f720f87229d2f60956c0cd9b76a8a9d081b13",
       "preview": "e1a1cc6436f6533390ca9ae6a55b7872de4372d41d58da9c306eda800eec221e",
@@ -173,57 +168,53 @@
     },
     "src/components/sidebarLeft/foldersSidebarContent/types.ts": {
       "stable": "82e9c49c24207aea0e7c112c60f80e2032a21d1bf7391b15fefaf4a8742c6e70",
-      "preview": "1731ccc0fe9b0ef25bf10785de943b050f5461b9dc28ed02e513693e819eeffb",
-      "reason": "Adds an optional `glyph` field to the folder-item payload so Code can draw a literal `#` (the icon font has no hashtag). Presentation type only."
+      "preview": "72a2f374976954e0691bc7d4fc813ee4eadefcdcf41fe7b7792ad4dff71c0ebb",
+      "reason": "Adds an optional `glyph` field to the folder-item payload so Sessions can draw a literal # (the icon font has no hashtag). Presentation type only."
     },
     "src/components/sidebarLeft/tabs/contacts.ts": {
       "stable": "2237559b8a038447e7296a6c8e4b599fc206b8fc550104b41756ee6560c0b202",
-      "preview": "df2e01f488a450e9e71bdcfb18835f5328ac89c2ba6c1d214b8014ea706f82e8",
-      "reason": "Optional init param onPickPeer: when set, a contact click hands the peer to the caller instead of opening a DM. Default behaviour (no param) is unchanged."
+      "preview": "6f371d766ea350f0c00f3afc83fc43fc801e2a635403808eb466f65cd28316fd",
+      "reason": "Contacts can be opened as a single-contact picker: a click hands the peer to the caller instead of opening a DM. The hook is set per OPEN (setPickPeerHook) and cleared in onClose, because init runs once per instance and createTab reuses a live one. Default behaviour with no hook is unchanged, and no storage is touched."
     },
     "src/lib/appManagers/constants.ts": {
       "stable": "b7add6caa33a3125c26fc6c22cbbaa26f12c25bcd5e197ad460e47f30e434431",
       "preview": "205f5d3ab19e662b7aed54d66a2c4acaf455d934c2d3d1a1a57ab6b873dcc444",
-      "reason": "Removes FOLDER_ID_SESSION_ARCHIVE (id 5): one archive (id 1) for chats, groups and sessions. START_LOCAL_ID returns to 5, and a persisted folder 5 is stripped at boot so no custom folder inherits its localId. Folder definitions are code, not stored state."
+      "reason": "Removes FOLDER_ID_SESSION_ARCHIVE (id 5): one archive (id 1) for chats, groups and sessions. START_LOCAL_ID returns to 5, and the boot migration renumbers a user folder found on id 4 instead of deleting it. Folder definitions are code, not stored state."
     },
     "src/lib/phantomchat/group-store.ts": {
       "stable": "2e30c94c1ab3eae2c306e0180a938156330bd99e98d6978e64910702c4fd6fad",
-      "preview": "f878c3d7d82790b1f19e3d1a4baeeef3dbd5318aa02eb88741f333aa15c3b0c6",
-      "reason": "save/delete/getAll now mirror each record's session tag into the in-memory index (group-tags). No schema, store name, key path or index change: the IDB layout is byte-identical, updateInfo just accepts an optional `tags` field."
-    },
-    "src/lib/phantomchat/group-tags.ts": {
-      "stable": "absent",
-      "preview": "8d3fdb3c9b04681de67af905bc6c750d37d6f02799fdaa1d1b3ca7ad49d66abc"
+      "preview": "51ababa6d0bbf8864e4590e3d309795b09ae4311c94cabbc2913a6a4ab791dc4",
+      "reason": "Same IDB layout (store name, key path, index) - no schema change. updateInfo accepts `archivedAt` and stores the CLEAR as an explicit 0 instead of deleting the field, so the groups CRDT can tell \"unarchived\" from \"written by a build that never knew about archive\"."
     },
     "src/lib/phantomchat/group-types.ts": {
       "stable": "8e1db65ee2a54edf87ba16dae2e254c0e65209748de4af0ed4e14f68b067d90d",
       "preview": "639b9046bc1e8c12ac01ed32483fae9d1d3b3527ee35e0bdc9eadce7665fe044",
-      "reason": "Adds optional `tags?: string[]` to GroupRecord and `groupTags?: string[]` to GroupControlPayload. Optional fields only: existing records/payloads parse and merge exactly as before, and the groups CRDT entry IS the record so no version bump is needed."
+      "reason": "Adds `kind` (immutable peer class: group | session) and optional `archivedAt` to GroupRecord, plus `groupKind` on the group_create control payload. Optional fields only: existing records and payloads parse and merge exactly as before, and the groups CRDT entry IS the record, so no version bump is needed."
     },
     "src/lib/phantomchat/groups-sync-adapter.ts": {
       "stable": "f89fb6752a44234ec955fa08b9cf01e8611074115f31cdf0edcee0b039e1b8d0",
-      "preview": "c71c7dfd02430862e7aeb6285a76dd3ab22fc0c8694a578262e63b58b37ba062",
-      "reason": "CRDT apply keeps local tags when the winning remote record has none, so an older client that renames a session cannot strip the tag for everyone. Merge behaviour for every other field is untouched."
+      "preview": "8050e4a150a45530cdcf2c3d0d74b88e8fcc359f23fae5e1e3bf0ecf036ca196",
+      "reason": "CRDT apply keeps the local value for the two keep-local fields: `kind` (an older client must not reclassify a session) and `archivedAt` (an older client must not unarchive it for everyone). An explicit 0 is the unarchive signal, an absent field means \"unchanged\". Merge behaviour for every other field is untouched."
     },
     "src/lib/storages/filtersLocal.ts": {
       "stable": "27fdd28d97a60363a981960c2a944a83dadaf7b7640cb801586e1327dc8fa1d9",
-      "preview": "ab3990bc7af55166747ea6402494661a71252cfa0384e3940abd2ce0842056e8",
-      "reason": "Folder 4 is seeded with the title \"Sessions\"; the folder-5 seed is removed; both \"Code\" and \"Session\" migrate as prior defaults so an untouched title upgrades and an explicit rename wins."
+      "preview": "a345c2e275316e339832a7d1a1dfd75fedb612fc458661c4f4d417271bb2c941",
+      "reason": "Folder 4 is seeded as \"Sessions\" with no membership pFlags (the peer class decides) and no separate archive folder; both \"Code\" and \"Session\" are recognised as prior default titles so an untouched folder upgrades and an explicit rename still wins."
     },
     "src/components/chat/chat.ts": {
       "stable": "a6a577321e55625e050550185eb57f392aa82f4369f047bb8910b35228a57708",
-      "preview": "809198811aa5626fdea43c09d657db5d416f78fc63fa1fe750a9e7798fe7bc63",
-      "reason": "Read-only archived composer: the chat pane sets `archived-readonly` from the dialog's `folder_id === 1` on navigation and follows a PhantomChat `dialog_folder_update` event while open. Presentation only; the send refusal lives in GroupAPI."
+      "preview": "0180ebad74e87a2b96ceec9163e498bfabd6f1476e504fb5e81e9d84accad306",
+      "reason": "Read-only archived composer: the chat pane sets `archived-readonly` from the dialog folder_id === 1 on navigation and follows a PhantomChat dialog_folder_update event while open. Presentation only - the send refusal is enforced in GroupAPI (groups) and in the VMT bridge (1:1 chats)."
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "a46baa8ccc438e8d353f242f3e9ca204b66f6343223dc33c418737b957e76965",
-      "preview": "45a216fdca141bf6c86e537a2c42f6e6a594f9e65981b05bc7bb3f16d16a2694",
-      "reason": "applyGroupDialogFolder derives the dialog's folder_id from the record's archivedAt and dispatches dialog_folder_update for an open pane. Derived mirror only — the groups CRDT already carries the record."
+      "preview": "8a0c48200155358703095ff7eabc994a8988e41084d3396c186eaa045bb449f0",
+      "reason": "applyGroupDialogFolder derives a dialog folder_id from the record archivedAt and dispatches dialog_folder_update for an open pane; resolveGroupPeerId caches the record class instead of an IndexedDB read per message. Derived mirrors and an in-memory cache only - the groups CRDT already carries the record."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "59eb420187dc41693cb3b48d0256b86747763fc64fd5ee390b4ba210094f65a2",
-      "preview": "0240b64b9ad571f6e64334a0e38996985b1ec26ad5194ed60a0dfc14becb81c8",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "81a5082f3bc67764bef1cd0153ff273f5fe648a32d3743b22e0813506eac4bf9",
+      "reason": "Session peer-class refactor plus the 1:1 archive guard: the bridge refuses text and media for a peer whose dialog sits in the archive (folder_id 1), the one path every chat send crosses. Membership stays a pure function of (groupId, kind) and writes remain LWW-merged by updatedAt - no stored-format change."
     },
     "src/components/dialogsContextMenu.ts": {
       "stable": "de80d11a3065a903d69411dddadf177c4eba2303becc2694ef1d775de4e68f99",
@@ -235,11 +226,6 @@
       "preview": "e86c7a0f3273d6917da1e02788b77f0604aed1bb7bfc57e209f3cd88f4b11db8",
       "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
     },
-    "src/components/popups/renameSession.ts": {
-      "stable": "absent",
-      "preview": "1df521daf7634689966714900d934fe6e62715530afc282d14c8825ecdbc429c",
-      "reason": "Session rename popup title is \"Rename\" instead of \"Edit\". Presentation only."
-    },
     "src/lib/phantomchat/group-sessions.ts": {
       "stable": "absent",
       "preview": "a33bbfb6a3a2ccb06f612ec07cc1c4204ecb7dc307a90fec361bd7c03d4597d1",
@@ -247,8 +233,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "fce5f5d9aa6b0689d0073ca1edd6253dd1806e9ceb26701b09f5e8d1abb3ab05",
-      "preview": "d4a2ea129d242ee81818ea8ee04503b258d51f45edb2c038ca140c1d930383a1",
-      "reason": "Session peer-class refactor: presentation and folder membership only; no stored-format change (peerId is derived from groupId + kind, records stay LWW-merged by updatedAt)."
+      "preview": "f4b0f5947235e9e6608c0ad16a92a8a5f61f2251a8d194caac8b9e02721a1bf0",
+      "reason": "Wiring only: a remote archive now re-applies the live dialog move (upsertGroup only re-mirrors title/avatar), and conversationToPeerId passes the record kind so a session read cursor lands on the session peerId. No stored-format change."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "86f55e73d40856e68138c9fc2346ccd6e257a1a240e78a8af45010e7ebcd1327",
@@ -264,6 +250,11 @@
       "stable": "abeb6f1ae46cc11ba7973a465e9e473ab795b83c58021373e9a51cfbb89317bb",
       "preview": "33fbf8e4f98005d4d923de52b2165dd2db0e0069a1ac053fba8176f3841bd030",
       "reason": "Owner batch 14: archive list count + no pinned archive row in Chats. No storage format change."
+    },
+    "src/lib/phantomchat/folders-sync-types.ts": {
+      "stable": "fcd56d4fd88aeb6dad4c2c8755bc297c1fe1f4dd2356fff6262f8ba07e2b6403",
+      "preview": "30d5a0329ae0fb7379b9937de8442eb1bd99cd2f8654fc496d235d501caea440",
+      "reason": "Snapshot TYPE only (the FoldersSync wire shape: version, order, custom folders, protected titles) plus the comment recording that custom folder ids start at START_LOCAL_ID (5). No reader, no writer, no storage - the sync engine and its adapter live in folders-sync.ts / folders-sync-adapter.ts."
     }
   },
   "stableVersion": "1.1.77"
