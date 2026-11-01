@@ -775,7 +775,14 @@ ul.chatlist {
 
 // Owner batch 5 (2026-10-30): dialog avatars match the 32px top-bar avatar.
 // --multiplier is 54 / size (see _avatar.scss) so initials scale with the box.
-#chatlist-container .chatlist-chat {
+//
+// Both list surfaces that render dialog rows must be named here. The Chats tab
+// uses the hardcoded #chatlist-container node from index.html; the Archived tab
+// builds its own list in tabs/archivedTab.ts and mounts it in
+// #chats-archived-container, which is NOT inside #chatlist-container — scoping
+// only on the latter left archived rows at the 54px avatar / 72px row defaults.
+#chatlist-container .chatlist-chat,
+#chats-archived-container .chatlist-chat {
   &.row-with-padding {
     padding-inline-start: 3.125rem !important;
   }
@@ -795,7 +802,8 @@ ul.chatlist {
 // virtual list (itemSize in autonomousDialogList/dialogs.ts) so the two numbers
 // must match or rows overlap. Type: title 16px (inherited), subtitle 14px,
 // timestamp 12px (inherited).
-#chatlist-container .chatlist-chat {
+#chatlist-container .chatlist-chat,
+#chats-archived-container .chatlist-chat {
   &.row-big {
     height: 3.5rem !important;
     min-height: 3.5rem !important;
