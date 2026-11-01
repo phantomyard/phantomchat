@@ -221,6 +221,21 @@ describe('#207 — getDialogs group branch restores top message + read state', (
     expect(dialog.unread_count).toBe(1);
   });
 
+  it('context-menu read RPC persists the canonical cursor and leaves later arrivals unread', async() => {
+    await clearStore();
+    await store.setMigration(GROUP_KEY_MIGRATION);
+    const mid = 1_793_543_210_123_456;
+    await seedMessage({mid});
+    const instance = server();
+    await instance.handleMethod('messages.readHistory', {peer: {chat_id: -GROUP_PEER_ID}, max_id: mid});
+    expect(await store.getReadCursor(CONV_ID)).toBe(mid);
+    expect(await store.countUnread(CONV_ID, OWN_PUBKEY)).toBe(0);
+    expect(await store.getReadCursor(GROUP_ID)).toBe(0);
+    await seedMessage({eventId: 'later-group-message', mid: mid + 1});
+    const result = await instance.getDialogs({}, new Set([GROUP_PEER_ID]));
+    expect(groupDialog(result).unread_count).toBe(1);
+  });
+
   it('reports unread 0 once the read cursor has advanced (restart-no-badge)', async() => {
     await clearStore();
     await seedMessage({mid: 201, timestamp: 1_699_000_200});

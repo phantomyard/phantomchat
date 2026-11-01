@@ -6587,13 +6587,16 @@ export class AppMessagesManager extends AppManager {
       return Promise.resolve();
     }
 
+    // PhantomChat mids are chronological IDs, not Telegram channel offsets.
+    // Modulo MESSAGE_ID_OFFSET would persist a cursor below every real message.
+    const serverMaxId = Number(peerId) >= 1e15 || isGroupPeer(Number(peerId)) ? maxId : getServerMessageId(maxId);
     let apiPromise: Promise<any>;
     if(monoforumThreadId) {
       if(!historyStorage.readPromise) {
         apiPromise = this.apiManager.invokeApi('messages.readSavedHistory', {
           parent_peer: this.appPeersManager.getInputPeerById(peerId),
           peer: this.appPeersManager.getInputPeerById(monoforumThreadId),
-          max_id: getServerMessageId(maxId)
+          max_id: serverMaxId
         });
       }
 
@@ -6608,7 +6611,7 @@ export class AppMessagesManager extends AppManager {
         apiPromise = this.apiManager.invokeApi('messages.readDiscussion', {
           peer: this.appPeersManager.getInputPeerById(peerId),
           msg_id: getServerMessageId(threadId),
-          read_max_id: getServerMessageId(maxId)
+          read_max_id: serverMaxId
         });
         // apiPromise = new Promise<void>((resolve) => resolve());
       }
@@ -6635,7 +6638,7 @@ export class AppMessagesManager extends AppManager {
       if(!historyStorage.readPromise) {
         apiPromise = this.apiManager.invokeApi('channels.readHistory', {
           channel: this.appChatsManager.getChannelInput(peerId.toChatId()),
-          max_id: getServerMessageId(maxId)
+          max_id: serverMaxId
         });
       }
 
@@ -6650,7 +6653,7 @@ export class AppMessagesManager extends AppManager {
       if(!historyStorage.readPromise) {
         apiPromise = this.apiManager.invokeApi('messages.readHistory', {
           peer: this.appPeersManager.getInputPeerById(peerId),
-          max_id: getServerMessageId(maxId)
+          max_id: serverMaxId
         }).then((affectedMessages) => {
           this.apiUpdatesManager.processLocalUpdate({
             _: 'updatePts',
