@@ -371,6 +371,11 @@
       "preview": "eef321475e2849e845e0a49d40ecc32d5a9b2d08f8fa3359360a642b8d4d2397",
       "stable": "absent",
       "reason": "New module holding the index-key clear that setDialogsFromState used to inline: index_1..index_21 always dropped, index_0 kept for a group-row sort anchor. Pure in-memory key deletion on an already-persisted object; no new storage, no format change. State-restore sort anchor (#332): a restored row keeps a group's index_0 (its top-message sort anchor, kept by the new clearComputedDialogIndexes helper) while index_1..21 are still cleared, so the unpin re-anchor no longer falls through to \"now\". Existing persisted row, folder and pinnedOrders schemas unchanged; no stored-format, wire or protocol change."
+    },
+    "src/environment/webpSupport.ts": {
+      "stable": "709c16ccb8ce8ec75588f051b0897333858c94e94c42c5b32c13fa13f2612306",
+      "preview": "406677dafc9bc52289ad8e076ad7de395a5c53119f83732af56430ba5b5d8815",
+      "reason": "Detect WebP support only from a string result. toDataURL returns null when the browser cannot encode WebP (jsdom returns null because canvas is not implemented), and calling .startsWith on it threw at module scope, making every module that reaches this file unimportable outside a real browser. The capability answer is unchanged wherever it already worked: true when the result starts with data:image/webp, false when the browser gives us nothing. No storage, network or channel semantics change. The Stable blob is byte-identical, so this is a Preview-only refresh."
     }
   }
 }
