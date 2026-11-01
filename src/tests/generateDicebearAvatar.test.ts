@@ -115,13 +115,15 @@ describe('generateDicebearAvatar', () => {
       expect(generatePhantomAvatarSvg('seed')).toBe(fun);
     });
 
-    it('draws Boring Corporate in muted greys with no glow', () => {
+    it('draws Boring Corporate in muted greys with blue eyes and no glow', () => {
       setTheme('boring-corporate');
       for(const seed of seeds) {
         for(const svg of [generatePhantomAvatarSvg(seed), generatePhantomSquadAvatarSvg(seed)]) {
           expect(svg).not.toMatch(/filter="url\(#glow/);
-          expect(colours(svg).filter((hex) => !isGrey(hex))).toEqual([]);
+          expect(colours(svg).filter((hex) => !isGrey(hex)).sort()).toEqual(['#346bf1', '#6d94f5']);
         }
+        // Squad key nodes stay white, but no eye highlight on a lone phantom may.
+        expect(generatePhantomAvatarSvg(seed)).not.toContain('#ffffff');
       }
     });
 

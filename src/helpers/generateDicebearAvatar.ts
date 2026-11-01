@@ -86,7 +86,13 @@ const corporateGradients: BgGradient[] = [
   {start: '#52525c', end: '#d4d4d8', cloak: '#71717b', stroke: '#e4e4e755'}
 ];
 
-const corporateEyes = ['#f5f5f5', '#e4e4e7', '#d4d4d8', '#a1a1aa'];
+// Squad rings keep this grey palette and their white key nodes; only the eyes carry blue.
+const corporateRingColors = ['#f5f5f5', '#e4e4e7', '#d4d4d8', '#a1a1aa'];
+// One night-accent blue pair for both colour schemes, because the phantom body they sit on
+// is #27272a in both. The fill is 3.21:1 against that body, above the 3:1 non-text minimum.
+// The lighter glint replaces the eye's white highlight so it does not outshine the blue.
+const corporateEyeColor = '#346bf1';
+const corporateEyeGlint = '#6d94f5';
 
 function isBoringCorporate(): boolean {
   return typeof document !== 'undefined' && document.documentElement?.dataset?.uiTheme === 'boring-corporate';
@@ -117,36 +123,36 @@ function hashString(str: string): number[] {
   ];
 }
 
-function renderEyeSvg(style: number, color: string, filterId: string): string {
+function renderEyeSvg(style: number, color: string, filterId: string, glint = '#ffffff'): string {
   switch(style) {
     case 0:
       return `<rect x="47" y="65" width="34" height="8" rx="4" fill="${color}" filter="url(#${filterId})"/>
-              <circle cx="64" cy="69" r="2" fill="#ffffff"/>`;
+              <circle cx="64" cy="69" r="2" fill="${glint}"/>`;
     case 1:
       return `<rect x="46" y="66" width="12" height="6" rx="3" fill="${color}" filter="url(#${filterId})"/>
               <rect x="70" y="66" width="12" height="6" rx="3" fill="${color}" filter="url(#${filterId})"/>
-              <circle cx="52" cy="69" r="1.5" fill="#ffffff"/>
-              <circle cx="76" cy="69" r="1.5" fill="#ffffff"/>`;
+              <circle cx="52" cy="69" r="1.5" fill="${glint}"/>
+              <circle cx="76" cy="69" r="1.5" fill="${glint}"/>`;
     case 2:
       return `<path d="M 44 65 L 58 69 L 57 74 L 43 70 Z" fill="${color}" filter="url(#${filterId})"/>
               <path d="M 84 65 L 70 69 L 71 74 L 85 70 Z" fill="${color}" filter="url(#${filterId})"/>
-              <circle cx="51" cy="70" r="1.5" fill="#ffffff"/>
-              <circle cx="77" cy="70" r="1.5" fill="#ffffff"/>`;
+              <circle cx="51" cy="70" r="1.5" fill="${glint}"/>
+              <circle cx="77" cy="70" r="1.5" fill="${glint}"/>`;
     case 3:
       return `<circle cx="52" cy="69" r="5.5" fill="${color}" filter="url(#${filterId})"/>
               <circle cx="76" cy="69" r="5.5" fill="${color}" filter="url(#${filterId})"/>
-              <circle cx="52" cy="69" r="2" fill="#ffffff"/>
-              <circle cx="76" cy="69" r="2" fill="#ffffff"/>`;
+              <circle cx="52" cy="69" r="2" fill="${glint}"/>
+              <circle cx="76" cy="69" r="2" fill="${glint}"/>`;
     case 4:
       return `<rect x="43" y="66" width="42" height="7" rx="3.5" fill="${color}" filter="url(#${filterId})"/>
-              <circle cx="53" cy="69.5" r="1.5" fill="#ffffff"/>
-              <circle cx="64" cy="69.5" r="1.5" fill="#ffffff"/>
-              <circle cx="75" cy="69.5" r="1.5" fill="#ffffff"/>`;
+              <circle cx="53" cy="69.5" r="1.5" fill="${glint}"/>
+              <circle cx="64" cy="69.5" r="1.5" fill="${glint}"/>
+              <circle cx="75" cy="69.5" r="1.5" fill="${glint}"/>`;
     default:
       return `<ellipse cx="51" cy="68" rx="6" ry="4.5" fill="${color}" filter="url(#${filterId})"/>
               <ellipse cx="77" cy="68" rx="6" ry="4.5" fill="${color}" filter="url(#${filterId})"/>
-              <ellipse cx="51" cy="68" rx="2" ry="2" fill="#ffffff"/>
-              <ellipse cx="77" cy="68" rx="2" ry="2" fill="#ffffff"/>`;
+              <ellipse cx="51" cy="68" rx="2" ry="2" fill="${glint}"/>
+              <ellipse cx="77" cy="68" rx="2" ry="2" fill="${glint}"/>`;
   }
 }
 
@@ -163,13 +169,12 @@ export function generatePhantomAvatarSvg(seed: string): string {
   const hashes = hashString(clean);
   const corporate = isBoringCorporate();
   const gradients = corporate ? corporateGradients : bgGradients;
-  const eyes = corporate ? corporateEyes : eyePalettes;
 
   const bg = gradients[hashes[0] % gradients.length];
-  const eyeColor = eyes[hashes[1] % eyes.length];
+  const eyeColor = corporate ? corporateEyeColor : eyePalettes[hashes[1] % eyePalettes.length];
   const eyeStyle = hashes[2] % 6;
   const id = (hashes[0].toString(36) + hashes[1].toString(36)).slice(0, 10);
-  const eyeSvg = renderEyeSvg(eyeStyle, eyeColor, `glow-${id}`);
+  const eyeSvg = renderEyeSvg(eyeStyle, eyeColor, `glow-${id}`, corporate ? corporateEyeGlint : undefined);
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
@@ -213,19 +218,21 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
 
   const corporate = isBoringCorporate();
   const gradients = corporate ? corporateGradients : bgGradients;
-  const eyes = corporate ? corporateEyes : eyePalettes;
+  const ringColors = corporate ? corporateRingColors : eyePalettes;
 
   const bg = gradients[hashes[0] % gradients.length];
   const wingmanBg = gradients[(hashes[0] + 7) % gradients.length];
-  const ringColorIdx = hashes[1] % eyes.length;
-  const ringColor = eyes[ringColorIdx];
-  const accentColor = eyes[(ringColorIdx + 5) % eyes.length];
-  const leaderEyeColor = eyes[(hashes[3] + 2) % eyes.length];
-  const wingmanEyeColor = eyes[(hashes[3] + 5) % eyes.length];
+  const ringColorIdx = hashes[1] % ringColors.length;
+  const ringColor = ringColors[ringColorIdx];
+  const accentColor = ringColors[(ringColorIdx + 5) % ringColors.length];
+  // Corporate squad phantoms share one eye colour on purpose: eye style, scale and opacity tell them apart.
+  const leaderEyeColor = corporate ? corporateEyeColor : eyePalettes[(hashes[3] + 2) % eyePalettes.length];
+  const wingmanEyeColor = corporate ? corporateEyeColor : eyePalettes[(hashes[3] + 5) % eyePalettes.length];
+  const glint = corporate ? corporateEyeGlint : undefined;
 
   const eyeStyle = hashes[2] % 6;
-  const leaderEyeSvg = renderEyeSvg(eyeStyle, leaderEyeColor, `glow-${id}`);
-  const wingmanEyeSvg = renderEyeSvg((eyeStyle + 1) % 6, wingmanEyeColor, `glow-w-${id}`);
+  const leaderEyeSvg = renderEyeSvg(eyeStyle, leaderEyeColor, `glow-${id}`, glint);
+  const wingmanEyeSvg = renderEyeSvg((eyeStyle + 1) % 6, wingmanEyeColor, `glow-w-${id}`, glint);
 
   // Deterministic orbital ring rotation
   const rot = (hashes[0] % 12) * 30;
