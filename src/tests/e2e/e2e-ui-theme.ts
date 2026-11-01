@@ -7,6 +7,7 @@
  *  - The costume beats ThemeController's inline colours, on <html> and in Day and Night.
  *  - The saved accent and wallpaper are never rewritten: switching back restores them.
  *  - An unknown stored value falls back to Fun and Relaxed.
+ *  - A failing localStorage write still reloads, onto the theme the app can read.
  *
  * Start Vite separately, then run:
  * E2E_APP_URL=http://127.0.0.1:8080 pnpm exec tsx src/tests/e2e/e2e-ui-theme.ts
@@ -45,10 +46,22 @@ async function createIdentity(page) {
 }
 
 async function openInterfaceSettings(page) {
-  const box = await page.locator('.folders-sidebar__menu-button, .btn-menu-toggle').first().boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.waitForTimeout(800);
-  await page.locator('.btn-menu.active .btn-menu-item', {hasText: 'Settings'}).first().click();
+  const menuButton = page.locator('.folders-sidebar__menu-button, .btn-menu-toggle').first();
+  await menuButton.waitFor({state: 'visible'});
+  const box = await menuButton.boundingBox();
+  const settingsItem = page.locator('.btn-menu.active .btn-menu-item', {hasText: 'Settings'}).first();
+  // Straight after a reload the button paints before its handler is attached,
+  // so a click can land on nothing: click again until the menu actually opens.
+  for(let attempt = 1; ; attempt++) {
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    try {
+      await settingsItem.waitFor({state: 'visible', timeout: 3000});
+      break;
+    } catch(err) {
+      if(attempt === 10) throw err;
+    }
+  }
+  await settingsItem.click();
   await page.waitForTimeout(1200);
   await page.locator('#column-left .row', {hasText: 'Interface Settings'}).first().click();
   await page.waitForTimeout(1200);
@@ -104,6 +117,18 @@ async function main() {
     assert.equal(await attribute(page), null, 'switching back removes the costume');
     assert.equal(await colour(page, '--primary-color'), funPrimary, 'switching back restores the accent');
     assert.equal(await savedThemes(page), themes, 'saved accent and wallpaper survive the round trip');
+
+    const storedBefore = await stored(page);
+    await page.evaluate((key) => {
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(name, value) {
+        if(name === key) throw new DOMException('blocked', 'QuotaExceededError');
+        return setItem.call(this, name, value);
+      };
+    }, KEY);
+    await pick(page, 'Boring Corporate');
+    assert.equal(await stored(page), storedBefore, 'a failed write persists nothing');
+    assert.equal(await attribute(page), null, 'a failed write comes back on the readable theme');
 
     await page.evaluate((key) => localStorage.setItem(key, 'neon-disco'), KEY);
     await page.reload({waitUntil: 'load'});

@@ -180,7 +180,14 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
         const radioField = new RadioField({langKey, name: 'ui-theme', value});
         radioField.setValueSilently(checked);
         radioField.input.addEventListener('change', () => {
-          localStorage.setItem('phantomchat:ui-theme', value);
+          // Reload even when the write throws (storage disabled, quota, private
+          // mode): the app then comes back on the theme it can actually read,
+          // instead of the radio showing a theme the app is not wearing.
+          try {
+            localStorage.setItem('phantomchat:ui-theme', value);
+          } catch(err) {
+            console.warn('[settings] UI theme not saved:', err);
+          }
           location.reload();
         });
         return new Row({radioField});

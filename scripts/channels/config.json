@@ -334,8 +334,8 @@
     },
     "src/scss/style.scss": {
       "stable": "5b3e6f40706e1ba559751c84ee6a0ce62973845b98eda6ca061879d6f95bd299",
-      "preview": "cf50c788d350be08d9c4eb677d09dbe17867ab9b6fb037d46081359993791ce9",
-      "reason": "Content reviewed for Stable/Preview compatibility."
+      "preview": "aed7770b0304319cc425301453a90fc61bd082e68650862d4b358f9d2400c982",
+      "reason": "Content reviewed for Stable/Preview compatibility. UI theme import: one @import of a costume partial whose rules are all scoped to html[data-ui-theme=boring-corporate]. Presentation only, no storage or wire change."
     },
     "src/components/popups/deleteDialog.ts": {
       "stable": "3b024c2d3de3a99c4ec6f4cd26e8d3e3b8f8c68b4428d94bee2a11383d4b8351",
@@ -354,8 +354,8 @@
     },
     "src/components/sidebarLeft/tabs/generalSettings.ts": {
       "stable": "618e285a5629a557778526bec9ed9c3b02611e9c5ccbe240a307e3c85cdb388a",
-      "preview": "fd1ab7f59438d615a20729a369f9705ca411b38c7583246207ecd89c3bf66305",
-      "reason": "Adds a theme radio section to Interface Settings. Writes only the device-local phantomchat:ui-theme localStorage key, then reloads. Nothing syncs and no shared state changes; Stable ignores the key. Requires independent content review."
+      "preview": "11be3e8069e654e20612cee8f959fad88f6b66ea4030956eed673911089e67e3",
+      "reason": "Adds a theme radio section to Interface Settings. Writes only the device-local phantomchat:ui-theme localStorage key, then reloads. Nothing syncs and no shared state changes; Stable ignores the key. Requires independent content review. Failed theme write: a throwing localStorage write is caught and the app still reloads. Same key, no stored-format change."
     },
     "src/helpers/generateDicebearAvatar.ts": {
       "stable": "a0313477f28d25311948e1ea0a952f579d61c6f80c2f86ef4b78250527445e7b",
