@@ -643,6 +643,14 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                   try { await applyGroupDialogFlags(rec); } catch(e) { console.warn('[groups-sync] live flags update failed', e); }
                 }
               }
+              // A group_history_backfill can reach a newcomer BEFORE this record
+              // does (the CRDT publish follows the membership control), so it is
+              // staged on arrival. The record now exists — drain it. No-op when
+              // nothing is staged.
+              try {
+                const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+                await getGroupAPI().drainPendingHistoryBackfill(rec.groupId);
+              } catch(e) { console.warn('[groups-sync] pending backfill drain failed', e); }
             },
             removeGroup: async(groupId) => {
               // Read the class before the delete — it is what the peerId (and

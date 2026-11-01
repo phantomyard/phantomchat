@@ -16,13 +16,24 @@ import {groupIdToPeerId, isGroupPeer} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
+import {
+  HISTORY_BACKFILL_MAX_MESSAGES,
+  applyIngestBudget,
+  buildBackfillControlPayloads,
+  collectGroupHistoryItems,
+  isWellFormedHistoryItem,
+  isWellFormedHistoryItemShape,
+  peekPendingBackfill,
+  stagePendingBackfill,
+  takePendingBackfill
+} from './group-history-backfill';
 import {writeGroupCreateServiceMessage, writeGroupRebindNoticeMessage} from './group-service-messages';
 import {
   DEFAULT_SESSION_GROUP_NAME,
   sessionTitleFromPrompt
 } from './group-sessions';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
-import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
+import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, cleanupGroupChatInjection, ensureGroupChatInjected, ingestBackfilledGroupHistory, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {reconcileGroupPeerClasses} from './group-class-reconcile';
 import {getMessageStore} from './message-store';
 import {isSafeGroupAvatarUrl} from './blossom-servers';
@@ -699,11 +710,37 @@ export class GroupAPI {
       groupName: group.name
     };
 
+    // THE NEWCOMER NEEDS THE RECORD, AND ONLY WE CAN GIVE IT TO IT.
+    //
+    // A group's record normally reaches a member through the groups CRDT, but
+    // that snapshot is SELF-ADDRESSED (`getConversationKey(priv, ownPubkey)`,
+    // crdt-sync.ts), so `schedulePublish('groups')` below reaches only our own
+    // devices. A device added later therefore holds no record at all: its
+    // `handleAddMember` throws `Group not found`, and the history relay has
+    // nothing to accept rows against. So the adder also sends the newcomer a
+    // `group_create` carrying the post-add member list.
+    //
+    // Addressed to the newcomer ALONE, never to the other members: a create
+    // re-sent to a device that previously left would resurrect the group on
+    // the next unrelated add (the tombstone gate only rejects creates older
+    // than `deletedAt`).
+    const createPayload: GroupControlPayload = {
+      type: 'group_create',
+      groupId,
+      groupName: group.name,
+      groupDescription: group.description,
+      memberPubkeys: updatedMembers,
+      adminPubkey: group.adminPubkey,
+      ...(group.kind === 'session' ? {groupKind: group.kind} : {})
+    };
+
     // Build wraps FIRST so a malformed curve-shape pubkey throws before we
     // touch the store. This + the regex gate above closes FIND-fcfcdec0 #4
     // (orphan member persisted on admin after broadcast failure).
     let controlWraps;
+    let createWraps;
     try {
+      createWraps = broadcastGroupControl(this.ownSk, [newMemberPubkey], createPayload);
       controlWraps = broadcastGroupControl(this.ownSk, updatedMembers, payload);
     } catch(err) {
       this.log.warn('[GroupAPI] addMember: broadcastGroupControl threw before local mutation:', err);
@@ -716,7 +753,10 @@ export class GroupAPI {
     await this.store.updateMembers(groupId, updatedMembers);
 
     try {
-      await this.publishFn(controlWraps);
+      // The create goes first, so a device that honours publish order already
+      // holds the record when the membership event (and the history slice
+      // that follows it) arrives.
+      await this.publishFn([...createWraps, ...controlWraps]);
     } catch(err) {
       // Roll the local membership back so admin's view re-converges with
       // peers' on the next list refresh.
@@ -730,6 +770,64 @@ export class GroupAPI {
 
     this.log('[GroupAPI] member added to group:', groupId, newMemberPubkey.slice(0, 8));
     schedulePublish('groups');
+
+    // Hand the newcomer a bounded slice of what it missed. Fire-and-forget: the
+    // membership event has already been published and adding a member must not
+    // wait on a history re-wrap.
+    void this.sendHistoryBackfill(groupId, newMemberPubkey);
+  }
+
+  /**
+   * Relay a bounded slice of this device's group history to a newly added
+   * member.
+   *
+   * A member added after the fact holds none of the group's N+1 wrapped
+   * messages — the wraps were addressed to the members of the time — so the
+   * history has to be re-wrapped by a member who has it (us, the adder) and
+   * pushed as `group_history_backfill` control payloads addressed to the
+   * newcomer alone. Budget and chunking live in group-history-backfill.ts.
+   *
+   * Best-effort by design: a device with no history (fresh install, or a
+   * session where this admin never received anything) simply sends nothing, and
+   * the newcomer sees the group from the add onwards. There is no pull-from-
+   * any-member fallback yet.
+   */
+  private async sendHistoryBackfill(groupId: string, targetPubkey: string): Promise<void> {
+    try {
+      const msgStore = getMessageStore();
+      const group = await this.store.get(groupId);
+      const items = await collectGroupHistoryItems({
+        conversationId: `group:${groupId}`,
+        getMessages: (conversationId, limit, before) => msgStore.getMessages(conversationId, limit, before),
+        getByMid: (mid) => msgStore.getByMid(mid),
+        // Rows authored by someone who has since left are rejected by the
+        // receiver, so spending the budget on them only shortens the slice.
+        members: group?.members
+      });
+      if(items.length === 0) {
+        this.log('[GroupAPI] history backfill: no local history for', groupId.slice(0, 8));
+        return;
+      }
+
+      const payloads = buildBackfillControlPayloads(groupId, targetPubkey, items);
+      if(payloads.length === 0) return;
+
+      // Addressed to the newcomer only. broadcastGroupControl also self-wraps;
+      // the self copy carries historyTargetPubkey = the newcomer, so our own
+      // other devices ignore it (handleHistoryBackfill gates on the target).
+      const wraps = payloads.flatMap((payload) => broadcastGroupControl(this.ownSk, [targetPubkey], payload));
+      await this.publishFn(wraps);
+      this.log('[GroupAPI] history backfill sent to', targetPubkey.slice(0, 8), {
+        groupId: groupId.slice(0, 8),
+        items: items.length,
+        payloads: payloads.length,
+        wraps: wraps.length
+      });
+    } catch(err) {
+      // Never let a backfill failure look like an addMember failure — the member
+      // is already in the group and the control event is already published.
+      this.log.warn('[GroupAPI] history backfill failed (non-critical):', err);
+    }
   }
 
   /**
@@ -1366,7 +1464,17 @@ export class GroupAPI {
         await this.handleGroupCreate(payload, senderPubkey, ts);
         break;
       case 'group_add_member':
-        applied = (await this.handleAddMember(payload)) !== false;
+        // A membership event can beat the `group_create` that carries this
+        // device's record (independent gift-wraps, no delivery-order
+        // guarantee). Throwing there would escape as an unhandled rejection
+        // from a caller that does not await the dispatch, so catch and leave
+        // the watermark un-advanced: a relay redelivery retries the apply once
+        // the record exists, exactly like group_remove_member below.
+        try {
+          applied = (await this.handleAddMember(payload)) !== false;
+        } catch(err) {
+          this.log.warn('[GroupAPI] group_add_member handling failed; retry expected via backlog:', err);
+        }
         break;
       case 'group_remove_member':
         // The self-removal (kicked) branch runs the same durable-write
@@ -1375,7 +1483,7 @@ export class GroupAPI {
         // survives and a relay-backlog redelivery retries the kick, exactly
         // like the group_delete case above.
         try {
-          applied = (await this.handleRemoveMember(payload, senderPubkey)) !== false;
+          applied = (await this.handleRemoveMember(payload, senderPubkey, ts)) !== false;
         } catch(err) {
           this.log.warn('[GroupAPI] group_remove_member handling failed; retry expected via backlog:', err);
         }
@@ -1409,6 +1517,11 @@ export class GroupAPI {
         break;
       case 'group_reaction':
         await this.handleReactionControl(payload, senderPubkey);
+        break;
+      case 'group_history_backfill':
+        // Not a field-bearing control: no source-event watermark, no group
+        // state mutation — only rows for the addressed newcomer.
+        await this.handleHistoryBackfill(payload, senderPubkey);
         break;
       default:
         this.log.warn('[GroupAPI] unknown control message type:', payload.type);
@@ -1472,6 +1585,140 @@ export class GroupAPI {
       return;
     }
     await applyGroupReaction(payload.groupId, targetEventId, emoji, senderPubkey, createdAt);
+  }
+
+  /**
+   * Apply a `group_history_backfill` relayed by the group's admin.
+   *
+   * Gates, in order:
+   *   1. ADDRESSED TO US. The wraps are per-recipient, but a payload smuggled
+   *      into a third member's wrap must not inject rows into a device that
+   *      already holds the history, so the payload must name our own key.
+   *   2. RECORD REQUIRED — BUT NOT IMMEDIATELY. A backfill never materialises a
+   *      group. A newcomer's record arrives through the groups CRDT, which the
+   *      adder publishes AFTER the membership control, so the slice can
+   *      legitimately land first: it is staged (bounded, expiring) and drained
+   *      once the record shows up, instead of being lost forever.
+   *   3. ADMIN-ONLY RELAYER. Adding a member is admin-only, so the adder — and
+   *      therefore the only legitimate relayer — is the group's admin. Without
+   *      this any current member could silently plant rows attributed to
+   *      anyone, at any past timestamp; the live path authenticates authorship
+   *      through the gift-wrap and must not be widened here.
+   *   4. PER-ITEM. Original rumor id, author and payload are shape-checked, the
+   *      author must be a member, a future-dated row is rejected, and
+   *      already-persisted ids are skipped by the ingest loop.
+   *   5. AGGREGATE BUDGET. The receiver enforces its own byte/row ceiling per
+   *      group per window (group-history-backfill.ts) — the sender's caps are
+   *      advisory, these bytes come from another device.
+   *
+   * Authorship caveat, stated plainly: the relayer holds the plaintext, so an
+   * item's `senderPubkey` cannot be cryptographically re-verified. The trust
+   * level is that of the group's admin forwarding content to a new member, not
+   * that of the original signed rumor.
+   */
+  private async handleHistoryBackfill(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
+    if(typeof payload.groupId !== 'string' || payload.groupId.length === 0) {
+      this.log.warn('[GroupAPI] group_history_backfill: missing groupId, dropping');
+      return;
+    }
+    if(payload.historyTargetPubkey !== this.ownPubkey) {
+      this.log('[GroupAPI] group_history_backfill: not addressed to this device, ignoring', payload.groupId.slice(0, 8));
+      return;
+    }
+
+    const incoming = Array.isArray(payload.historyItems) ? payload.historyItems : [];
+    const group = await this.store.get(payload.groupId);
+    if(!group) {
+      // Order tolerance: hold the slice (shape-checked only — there is no
+      // member list to check it against yet) until the record lands.
+      const staged = incoming
+      .filter((item) => isWellFormedHistoryItemShape(item))
+      .slice(0, HISTORY_BACKFILL_MAX_MESSAGES);
+      stagePendingBackfill({groupId: payload.groupId, relayerPubkey: senderPubkey, items: staged});
+      this.log('[GroupAPI] group_history_backfill: no record yet, staged', {
+        groupId: payload.groupId.slice(0, 8),
+        items: staged.length
+      });
+      return;
+    }
+
+    // The record exists, so anything staged while we waited for it can land
+    // now. Draining here is what keeps a stage from outliving its record when
+    // the record arrives in the middle of a multi-chunk slice.
+    await this.drainPendingHistoryBackfill(group.groupId);
+
+    await this.ingestHistoryBackfill(group.groupId, group.adminPubkey, group.members, senderPubkey, incoming);
+  }
+
+  /**
+   * Apply a slice against a group record we hold. Shared by the live path and
+   * the pending-stage drain so both run the same gates.
+   */
+  private async ingestHistoryBackfill(
+    groupId: string,
+    adminPubkey: string,
+    members: string[],
+    relayerPubkey: string,
+    incoming: any[]
+  ): Promise<void> {
+    if(relayerPubkey !== adminPubkey) {
+      this.log.warn('[GroupAPI] group_history_backfill: relayer is not the group admin, dropping', relayerPubkey.slice(0, 8));
+      return;
+    }
+    if(!members.includes(this.ownPubkey)) {
+      this.log.warn('[GroupAPI] group_history_backfill: this device is not a member, dropping', groupId.slice(0, 8));
+      return;
+    }
+
+    const items = incoming
+    .filter((item) => isWellFormedHistoryItem(item, members))
+    .slice(0, HISTORY_BACKFILL_MAX_MESSAGES);
+    if(items.length === 0) {
+      this.log.warn('[GroupAPI] group_history_backfill: no well-formed items, dropping', groupId.slice(0, 8));
+      return;
+    }
+
+    const allowed = applyIngestBudget(groupId, items);
+    if(allowed.length === 0) {
+      this.log.warn('[GroupAPI] group_history_backfill: ingest budget exhausted for now, dropping', groupId.slice(0, 8));
+      return;
+    }
+    if(allowed.length < items.length) {
+      this.log.warn('[GroupAPI] group_history_backfill: ingest budget trimmed the slice', {
+        groupId: groupId.slice(0, 8),
+        offered: items.length,
+        accepted: allowed.length
+      });
+    }
+
+    await ingestBackfilledGroupHistory(this.ownPubkey, groupId, allowed, this.dispatch);
+  }
+
+  /**
+   * Drain a slice that was staged because the group record had not arrived yet.
+   * Called from every point that can end the wait: `handleGroupCreate`, the
+   * groups CRDT upsert in the sync adapter, and the live backfill path itself
+   * (a record that lands between two chunks must not strand the earlier ones
+   * until the stage's TTL).
+   *
+   * The gates are re-checked BEFORE the stage is taken: a drain that fails
+   * them leaves the slice in place for a later attempt instead of destroying it.
+   */
+  async drainPendingHistoryBackfill(groupId: string): Promise<void> {
+    const pending = peekPendingBackfill(groupId);
+    if(!pending) return;
+    const group = await this.store.get(groupId);
+    if(!group) return;
+    if(pending.relayerPubkey !== group.adminPubkey || !group.members.includes(this.ownPubkey)) {
+      this.log.warn('[GroupAPI] group_history_backfill: staged slice failed the drain gates, keeping it', {
+        groupId: groupId.slice(0, 8),
+        relayerIsAdmin: pending.relayerPubkey === group.adminPubkey,
+        member: group.members.includes(this.ownPubkey)
+      });
+      return;
+    }
+    takePendingBackfill(group.groupId);
+    await this.ingestHistoryBackfill(group.groupId, group.adminPubkey, group.members, pending.relayerPubkey, pending.items);
   }
 
   // ─── Control message handlers ─────────────────────────────────
@@ -1673,6 +1920,10 @@ export class GroupAPI {
     }
 
     this.log('[GroupAPI] group_create received:', payload.groupId);
+
+    // A backfill that arrived before this create was staged rather than
+    // dropped; the record it needed now exists.
+    await this.drainPendingHistoryBackfill(payload.groupId);
   }
 
   // ─── Legacy rebind migration (#188 remainder) ─────────────────────
@@ -2335,8 +2586,27 @@ export class GroupAPI {
     return true;
   }
 
-  private async handleRemoveMember(payload: GroupControlPayload, senderPubkey: string): Promise<boolean> {
+  private async handleRemoveMember(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<boolean> {
     if(payload.targetPubkey === this.ownPubkey) {
+      // QUARANTINE THE KICK BEFORE THE FIRST AWAIT (cold join). A newcomer's
+      // record now arrives as a targeted `group_create` from the adder, so a
+      // kick and that create race on the newcomer's device: if the kick lands
+      // first it finds no record, does mirror cleanup only and is gone — then
+      // the create saves a LIVE record naming the kicked device a member, and
+      // nothing tears it down until a replayed kick survives the relay TTL.
+      // The fact is staged here, before any await, so a create that is already
+      // in flight cannot pass both of its consume() checks while this handler
+      // is suspended. It is the same quarantine group_delete uses, with the
+      // same authority rule: for a bound id only the id-bound key can ever be
+      // promoted, so any other sender would only pollute the bounded map.
+      // Verification happens in handleGroupCreate, which promotes the fact
+      // only when the create's admin is the kick's sender AND the kick is not
+      // older than the create — a genuine re-invite still lands.
+      const boundAdmin = boundGroupAdmin(payload.groupId);
+      const stagedKick = !(boundAdmin && boundAdmin !== senderPubkey);
+      if(stagedKick) {
+        this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
+      }
       // We were removed — FULL durable teardown, same as leaveGroup /
       // deleteGroup / handleGroupDelete (issue #181, mirroring
       // teardownGroupLocally post-#179): the kick must be a POSITIVE delete
@@ -2364,6 +2634,7 @@ export class GroupAPI {
       // the common case.
       const group = await this.store.get(payload.groupId);
       if(group && group.adminPubkey !== senderPubkey) {
+        this.clearPendingGroupDeletes(payload.groupId, senderPubkey);
         this.log.warn('[GroupAPI] ignoring group_remove_member(self) from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
         return false;
       }
@@ -2374,9 +2645,15 @@ export class GroupAPI {
         // Class unknown (no record): clear both derivations' mirrors.
         await cleanupGroupChatInjection(await groupIdToPeerId(payload.groupId));
         await cleanupGroupChatInjection(await groupIdToPeerId(payload.groupId, 'session'));
-        this.log('[GroupAPI] group_remove_member(self) for unknown group; mirror cleanup only:', payload.groupId.slice(0, 8));
+        this.log(
+          stagedKick ?
+            '[GroupAPI] quarantined unverifiable kick for unknown group; mirror cleanup only:' :
+            '[GroupAPI] kick for unknown group from an unpromotable sender; mirror cleanup only:',
+          payload.groupId.slice(0, 8)
+        );
         return false;
       }
+      this.clearPendingGroupDeletes(payload.groupId);
       await this.teardownGroupLocally(payload.groupId);
       this.log('[GroupAPI] removed from group:', payload.groupId);
       return true;

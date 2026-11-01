@@ -84,7 +84,8 @@ export type GroupControlType =
   | 'group_edit_message'
   | 'group_delete_message'
   | 'group_reaction'
-  | 'group_unreaction';
+  | 'group_unreaction'
+  | 'group_history_backfill';
 
 export interface GroupControlPayload {
   type: GroupControlType;
@@ -118,6 +119,31 @@ export interface GroupControlPayload {
    * two sides would disagree about which peer the conversation is.
    */
   groupKind?: GroupKind;
+  /**
+   * Backfill addressing + payload (`type === 'group_history_backfill'`).
+   *
+   * `historyTargetPubkey` is the newly added member the slice was wrapped for:
+   * a device ingests a backfill ONLY when that field names its own key, so a
+   * payload smuggled into a third member's wrap cannot inject rows into a
+   * device that already holds the history.
+   */
+  historyTargetPubkey?: string;
+  historyItems?: GroupHistoryItem[];
+}
+
+/**
+ * One relayed historical message. The identity triple is the ORIGINAL rumor's,
+ * so a receiver dedupes on `rumorId` exactly like a live delivery; `payload` is
+ * the original rumor content (content/type/id/timestamp/replyToRumorId/
+ * fileMetadata) rebuilt from the relayer's stored row.
+ */
+export interface GroupHistoryItem {
+  rumorId: string;
+  senderPubkey: string;
+  /** Unix seconds — the original rumor's created_at. */
+  createdAt: number;
+  /** Original rumor content JSON. */
+  payload: string;
 }
 
 // ─── Group Record ───────────────────────────────────────────────────

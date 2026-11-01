@@ -38,7 +38,7 @@ import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
 import {groupIdToPeerId, isSessionPeer} from './group-types';
 import {intendedGroupKind} from './group-class-reconcile';
-import type {GroupKind} from './group-types';
+import type {GroupKind, GroupHistoryItem} from './group-types';
 import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManagers/constants';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {getGroupStore} from './group-store';
@@ -921,6 +921,20 @@ export async function cleanupGroupChatInjection(groupPeerId: number): Promise<vo
 }
 
 /**
+ * Options for {@link handleGroupIncoming}.
+ *
+ * `silent` is the BACKFILL mode: a slice of history relayed by the group's
+ * admin to a member who joined after the fact (`group_history_backfill`). The
+ * rows are persisted and rendered in place, but nothing about the user's
+ * current view may move — no dialog bump, no unread counter, no read cursor,
+ * no `phantomchat_new_message`. Anything else would resurrect old messages as
+ * if they had just arrived.
+ */
+export interface GroupIncomingOptions {
+  silent?: boolean;
+}
+
+/**
  * Render + persist an incoming group message. Called by
  * `GroupAPI.handleIncomingGroupMessage` after dedup.
  */
@@ -929,8 +943,10 @@ export async function handleGroupIncoming(
   groupId: string,
   rumor: any,
   senderPubkey: string,
-  dispatch: GroupDispatchFn
+  dispatch: GroupDispatchFn,
+  options: GroupIncomingOptions = {}
 ): Promise<void> {
+  const silent = options.silent === true;
   const mapper = getMapper();
   const store = getMessageStore();
 
@@ -1073,6 +1089,14 @@ export async function handleGroupIncoming(
   await invalidateGroupHistoryCache(groupPeerId);
   dispatchGroupHistoryAppend(groupPeerId, msg);
 
+  // Backfilled history stops here: the bubble exists and scrolling finds it,
+  // but the dialog, the unread badge, the read cursor and the new-message event
+  // all describe "what just arrived", and backfill is by definition old.
+  if(silent) {
+    console.log(LOG_PREFIX, 'rx backfill rendered', {groupPeerId, mid, groupId: groupId.slice(0, 8)});
+    return;
+  }
+
   const selected = isConversationSelected(groupPeerId);
   if(selected && mid > 0) {
     void store.setReadCursor(`group:${groupId}`, mid).catch((err) => {
@@ -1115,6 +1139,84 @@ export async function handleGroupIncoming(
   // Reference ownPubkey to silence unused-param warning — kept in signature
   // for future delivery-tracker wiring (mark sender-self-echoes read, etc).
   void ownPubkey;
+}
+
+/**
+ * Ingest a `group_history_backfill` slice relayed by a member who was already in
+ * the group.
+ *
+ * Items arrive OLDEST-FIRST and are ingested in order: `history_append` order is
+ * the reading order of the thread, so this loop is deliberately sequential
+ * (each item depends on the previous one having been appended). The whole burst
+ * is bounded by the sender (<= HISTORY_BACKFILL_MAX_MESSAGES) and runs once per
+ * join, never on a hot path.
+ *
+ * Each item is replayed through the ordinary receive pipeline in `silent` mode,
+ * so the persisted row, the mirrors and the reply/file rendering are identical
+ * to a live delivery — only the dialog/unread/read-cursor/new-message side
+ * effects are skipped.
+ *
+ * @returns number of rows actually ingested (already-known items are skipped).
+ */
+export async function ingestBackfilledGroupHistory(
+  ownPubkey: string,
+  groupId: string,
+  items: GroupHistoryItem[],
+  dispatch: GroupDispatchFn
+): Promise<number> {
+  if(!Array.isArray(items) || items.length === 0) return 0;
+  const store = getMessageStore();
+  let ingested = 0;
+
+  for(const item of items) {
+    try {
+      // Dedupe on the ORIGINAL rumor id: a relay replay, a second member
+      // relaying the same window, or a message we already had live all resolve
+      // to the same row.
+      const known = store.hasSeenEventId?.(item.rumorId) || await store.getByEventId(item.rumorId);
+      if(known) continue;
+
+      await handleGroupIncoming(
+        ownPubkey,
+        groupId,
+        {id: item.rumorId, content: item.payload, created_at: item.createdAt},
+        item.senderPubkey,
+        dispatch,
+        {silent: true}
+      );
+      ingested++;
+    } catch(err) {
+      console.warn(LOG_PREFIX, 'backfill: item ingest failed; continuing', {rumorId: item?.rumorId, err});
+    }
+  }
+
+  console.log(LOG_PREFIX, 'backfill: ingested', ingested, 'of', items.length, 'item(s) for', groupId.slice(0, 8));
+
+  // The slice is OLD (mids are timestamp-derived, so every backfilled row sorts
+  // before anything that arrived after the join), but silent mode skipped the
+  // per-row cursor advance — leaving a newcomer's cursor at 0 and `countUnread`
+  // reporting the whole slice as unread on the next reload. Advance the cursor
+  // to the newest row of the slice: it is monotone (never moves backwards) and
+  // cannot swallow a live unread, whose mid is strictly newer than every
+  // backfilled one.
+  if(ingested > 0 && items.length > 0) {
+    const conversationId = `group:${groupId}`;
+    try {
+      const newest = items[items.length - 1];
+      const newestRow = await store.getByEventId(newest.rumorId);
+      const newestMid = newestRow?.mid;
+      if(typeof newestMid === 'number' && newestMid > 0) {
+        const cursor = await store.getReadCursor(conversationId);
+        if(newestMid > cursor) {
+          await store.setReadCursor(conversationId, newestMid);
+        }
+      }
+    } catch(err) {
+      console.warn(LOG_PREFIX, 'backfill: read cursor advance failed; slice stays unread', err);
+    }
+  }
+
+  return ingested;
 }
 
 // WU-2: apply an incoming/own group reaction. Mirrors applyGroupEdit's
