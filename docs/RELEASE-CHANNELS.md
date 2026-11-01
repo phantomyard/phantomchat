@@ -58,7 +58,11 @@ The build also runs real Stable/Preview MessageStore code against the same
 IndexedDB fixture, including writes and cursor changes followed by Stable reopen.
 
 The gate scans src/, public/, electron/, index.html, package.json and the
-dependency lock. Root scripts/ and workflow files implement the gate/build itself
+dependency lock. The approved Preview hash is authoritative: it must equal the
+exact blob in the tree being published. The Stable column records the baseline
+the reviewer compared against, so it is reported as drift (not a failure) once a
+promotion moves that baseline — a red main after every promotion is a bug, not
+a review. Root scripts/ and workflow files implement the gate/build itself
 and require normal PR review; they are not self-approved by this content check.
 Direct builder execution must use `pnpm build`. Without APP_VERSION, local Preview
 is explicitly labelled with the pinned version plus `-preview-local`. Release and

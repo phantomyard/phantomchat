@@ -32,13 +32,39 @@ describe('shared-state release gate', () => {
   it('rejects unapproved storage changes', () => {
     expect(() => checkCompatibility(fixture(), 'HEAD', dir)).toThrow('compatibility review required');
   });
-  it('requires both exact approved hashes and invalidates stale approvals', () => {
+  it('requires the exact approved Preview hash and invalidates stale approvals', () => {
     const config = fixture();
     const hash = (value: string) => createHash('sha256').update(value).digest('hex');
     config.compatibilityApprovals['src/store.ts'] = {stable: hash('const version = 1;\n'), preview: hash('const version = 2;\n')};
     expect(checkCompatibility(config, 'HEAD', dir)).toEqual(['src/store.ts']);
     config.compatibilityApprovals['src/store.ts'].preview = hash('different');
     expect(() => checkCompatibility(config, 'HEAD', dir)).toThrow('compatibility review required');
+  });
+  // A published Stable advances on every promotion, so a row written against an
+  // older baseline carries a Stable digest that no longer matches the current
+  // one. That alone must not block: the Preview blob is the reviewed artefact.
+  it('keeps an approved Preview hash valid when the Stable baseline has moved on', () => {
+    const config = fixture();
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    config.compatibilityApprovals['src/store.ts'] = {stable: hash('const version = 0;\n'), preview: hash('const version = 2;\n')};
+    expect(checkCompatibility(config, 'HEAD', dir)).toEqual(['src/store.ts']);
+    config.compatibilityApprovals['src/store.ts'].preview = hash('const version = 3;\n');
+    expect(() => checkCompatibility(config, 'HEAD', dir)).toThrow('compatibility review required');
+  });
+  it('reports Stable-column drift without failing the gate', () => {
+    const config = fixture();
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    config.compatibilityApprovals['src/store.ts'] = {stable: hash('const version = 0;\n'), preview: hash('const version = 2;\n')};
+    const report: string[] = [];
+    const original = console.error;
+    console.error = (...args: string[]) => report.push(args.join(' '));
+    try {
+      checkCompatibility(config, 'HEAD', dir);
+    } finally {
+      console.error = original;
+    }
+    expect(report.join('\n')).toContain('src/store.ts');
+    expect(report.join('\n')).toContain('Preview hashes still match');
   });
   it('checks the supplied deployed baseline instead of the local pin in the CLI', () => {
     const config = fixture();
