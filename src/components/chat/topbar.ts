@@ -241,13 +241,19 @@ export default class ChatTopbar {
             if(isGroupPeer(peerId)) {
               // Match PopupDeleteDialog: P2P authority lives on the group record,
               // not Telegram's delete_chat right (always false for these peers).
-              const {getGroupStore} = await import('@lib/phantomchat/group-store');
-              const record = await getGroupStore().getByPeerId(peerId);
-              const ownPubkey = (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey;
-              deleteButtonText = ownPubkey && record?.adminPubkey === ownPubkey ? 'Delete' : 'ChatList.Context.LeaveGroup';
+              deleteButtonText = 'ChatList.Context.LeaveGroup';
+              try {
+                const {getGroupStore} = await import('@lib/phantomchat/group-store');
+                const record = await getGroupStore().getByPeerId(peerId);
+                const ownPubkey = (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey;
+                if(ownPubkey && record?.adminPubkey === ownPubkey) deleteButtonText = 'Delete';
+              } catch{
+                // Like the confirmation popup, keep Leave Group on lookup failure.
+              }
             }
-            if(peerId !== (this.chat.monoforumThreadId || this.peerId)) return;
-            deleteButton.element.lastChild.replaceWith(i18n(deleteButtonText));
+            if(peerId === (this.chat.monoforumThreadId || this.peerId)) {
+              deleteButton.element.lastChild.replaceWith(i18n(deleteButtonText));
+            }
           }
 
           this.autoDeleteBtnMenuOptions.onOpen?.();

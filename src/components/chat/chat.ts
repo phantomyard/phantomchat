@@ -1358,10 +1358,11 @@ export default class Chat extends EventListenerBase<{
     this.searchSignal?.(undefined);
   }
 
-  public initSearch(options: {query?: string, filterPeerId?: PeerId, reaction?: Reaction} = {}): void {
-    if(!this.peerId) return;
-    options.query ||= '';
-    this.searchSignal(options);
+  public initSearch(_options: {query?: string, filterPeerId?: PeerId, reaction?: Reaction} = {}): void {
+    // The local search adapter ignores the peer and excludes groups. Keep every
+    // entry point (selection, avatar, hashtag and reaction) from opening a
+    // misleading chat-search panel until the adapter supports scoped search.
+    return;
   }
 
   public canSend(action?: ChatRights) {
