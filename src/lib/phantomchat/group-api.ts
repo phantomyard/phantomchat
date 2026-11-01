@@ -2116,11 +2116,12 @@ export class GroupAPI {
       // before the destructive step: a group that arrived in between is not an orphan.
       try {
         if(await this.store.getByPeerId(peerId)) continue;
-      } catch{
+      } catch(err) {
+        this.log.warn('[GroupAPI] dropOrphanGroupDialogs: group store re-check failed, skipping sweep', err);
         return;
       }
       try {
-        rootScope.managers.dialogsStorage.dropDialogOnDeletion(peerId);
+        await rootScope.managers.dialogsStorage.dropDialogOnDeletion(peerId.toPeerId(true));
         dropped++;
         this.log('[GroupAPI] dropped orphan group dialog:', peerId);
       } catch(err) {

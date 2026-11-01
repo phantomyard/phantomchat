@@ -165,19 +165,30 @@ export async function reconcileGroupPeerClasses(
     // A crash mid-way is safe because the record still claims the OLD peerId, so
     // the next boot re-runs the same idempotent steps.
     const migrated = normalised(record, kind, canonical);
+    let dialogMoved = false;
     try {
       await deps.rekeyConversation(`group:${record.groupId}`, canonical);
       await deps.relocateDialog({record: migrated, fromPeerId: record.peerId, toPeerId: canonical});
+      dialogMoved = true;
       await deps.saveGroup(migrated);
       repairs.push({groupId: record.groupId, kind, fromPeerId: record.peerId, toPeerId: canonical, recordOnly: false});
       deps.log?.('re-keyed', record.groupId.slice(-8), record.peerId, '→', canonical, `(${kind})`);
     } catch(err) {
       // A peerId collision (the unique store index) is the realistic failure:
-      // log and leave the record alone. The one step that can already have
-      // landed is the history re-stamp, so put it back on the id the record
-      // still claims — otherwise the rows render under a peer that has no
-      // dialog row until the next boot converges.
+      // log and leave the record alone. Put history and the dialog row back on the
+      // id the record still claims. relocateDialog only rejects with the old row
+      // intact, so it needs moving back only if the save was what failed. If it
+      // cannot be moved back, history stays with the row: rows must never point at
+      // a peer with no dialog row. The next pass converges either way.
       deps.log?.('class re-key failed for', record.groupId.slice(0, 8), err);
+      if(dialogMoved) {
+        try {
+          await deps.relocateDialog({record, fromPeerId: canonical, toPeerId: record.peerId});
+        } catch(rollbackErr) {
+          deps.log?.('class re-key dialog rollback failed for', record.groupId.slice(0, 8), rollbackErr);
+          continue;
+        }
+      }
       try {
         await deps.rekeyConversation(`group:${record.groupId}`, record.peerId);
       } catch(rollbackErr) {

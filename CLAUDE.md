@@ -172,6 +172,9 @@ solid-js/store  → src/vendor/solid/store
 - Do not remove the `!public/recorder.min.js` exception in `.gitignore` — it's a third-party UMD imported statically from `src/components/chat/input.ts`.
 - Do NOT narrow the `lint` / `lint-staged` globs back to `src/**/*.ts` — must be `src/**/*.{ts,tsx}`. Solid components live in `.tsx` files; the narrow glob lets indent/formatting errors reach CI where `vite-plugin-checker` catches them, blocking release.
 
+- **Don't drop a group's old dialog row before its new one lands.** `relocateGroupDialog` is make-before-break and rejects only while the group is still where it was; history, dialog row and record must end on one peer id. Pass `offsetDate: 0` when pushing a PhantomChat dialog: `pushDialog` otherwise drops the row silently while the target folder is unloaded.
+- **Don't persist a group `peerId` that wasn't derived locally.** Session evidence is a one-way ratchet (`intendedGroupKind`), and classic and session peer ranges never overlap, so a session-range id can only come from a session. Sync upserts re-derive `peerId` from the class before saving.
+
 ## Release & Deployment
 
 - **Web application channels:** Stable `/` and Preview `/preview/index.html` share identity and IndexedDB. Read [docs/RELEASE-CHANNELS.md](docs/RELEASE-CHANNELS.md) for the compatibility gate and artifact promotion contract.

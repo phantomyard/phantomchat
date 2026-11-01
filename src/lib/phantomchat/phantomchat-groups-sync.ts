@@ -449,7 +449,9 @@ export async function applyGroupDialogFolder(record: {groupId: string, kind?: Gr
       dialog.folder_id = folderId;
       // pushDialog re-runs processDialogForFilters, which is what clears
       // index_3 / index_4 / index_1 (and the folder unread counts) for this row.
-      await dialogsStorage.pushDialog?.({dialog});
+      // `offsetDate: 0`: see relocateGroupDialog. The Archive folder is often not
+      // loaded yet, and that branch would drop the row it is moving there.
+      await dialogsStorage.pushDialog?.({dialog, offsetDate: 0});
     }
   } catch(err: any) {
     console.debug(LOG_PREFIX, 'applyGroupDialogFolder: reindex non-critical:', err?.message);
@@ -511,8 +513,12 @@ export function carriedDialogState(previous: any, topMessage: number): {
  * a session, Sessions stays empty. Re-deriving the record's peerId is not
  * enough on its own: the persisted dialog row, the chat/peer mirrors and the
  * history cache all key on the OLD id, so the stale row would keep rendering in
- * Groups while a second row appeared in Sessions. This drops the old row for
- * real and re-materialises it under the new id.
+ * Groups while a second row appeared in Sessions. This re-materialises the row
+ * under the new id, then drops the old row for real.
+ *
+ * Rejects only while the old row is still intact (or no row was moved), so a
+ * rejection always means "the group is still where it was". Resolving means the
+ * new row landed.
  *
  * Message rows are re-stamped by the caller (`setConversationTwebPeerId`) — the
  * conversation key is the group id, so nothing is lost by the move. Read
@@ -527,99 +533,161 @@ export async function relocateGroupDialog(
 ): Promise<void> {
   const proxy = MOUNT_CLASS_TO.apiManagerProxy as any;
   const dialogsStorage = (rootScope as any).managers.dialogsStorage;
-  if(!dialogsStorage?.dropDialogWithEvent || !dialogsStorage?.pushDialog) {
-    // Same contract as applyGroupDialogFolder: a missing hook would silently
-    // leave the row in the old space until a reload rebuilt it from the record.
-    console.warn(LOG_PREFIX, 'relocateGroupDialog: dialogsStorage hooks missing — old row may linger until reload');
+  if(!dialogsStorage?.pushDialog || !dialogsStorage?.getAnyDialog) {
+    throw new Error('relocateGroupDialog: dialogsStorage hooks missing');
   }
 
-  // Read what the user sees NOW, before the drop — the read markers live only
-  // on the dialog row.
-  let previous: any = proxy?.mirrors?.dialogs?.[fromPeerId] ?? null;
-  try {
-    const entry = await dialogsStorage?.getAnyDialog?.(fromPeerId);
-    const live = Array.isArray(entry) ? entry[0] : entry;
-    if(live) previous = live;
-    // A retry after a failed record save (#296): the row already moved, so its
-    // state now lives under the target id.
-    if(!previous) {
-      const moved = await dialogsStorage?.getAnyDialog?.(toPeerId);
-      previous = (Array.isArray(moved) ? moved[0] : moved) ?? proxy?.mirrors?.dialogs?.[toPeerId] ?? null;
+  const readRow = async(peerId: number): Promise<any> => {
+    const entry = await dialogsStorage.getAnyDialog(peerId);
+    return (Array.isArray(entry) ? entry[0] : entry) ?? null;
+  };
+
+  // Read what the user sees NOW: the read markers live only on the dialog row.
+  // A failed read rejects here, before anything has changed.
+  const source = await readRow(fromPeerId) ?? proxy?.mirrors?.dialogs?.[fromPeerId] ?? null;
+  const target = await readRow(toPeerId);
+
+  // A retry after a failed record save (#296): the row already moved. Pushing it
+  // again could only fail or lose state, and there is no old row left to fall
+  // back on, so this path cannot reject. The record save decides the outcome.
+  if(!source && target) {
+    try {
+      if(record?.kind) kindByGroupId.set(groupId, record.kind);
+      await cleanupGroupChatInjection(fromPeerId);
+      await ensureGroupChatInjected(groupId, toPeerId);
+    } catch(e: any) {
+      console.warn(LOG_PREFIX, 'relocateGroupDialog: retry refresh failed:', e?.message);
     }
-  } catch(e: any) {
-    console.debug(LOG_PREFIX, 'relocateGroupDialog: previous dialog read failed:', e?.message);
+    dispatchGroupDialogUpdate(toPeerId, target);
+    return;
   }
 
-  // Drop the OLD row for real (persisted row + folder caches + mirror).
-  // Awaited: the proxied manager can reject, and the cleanup below must not
-  // start against a row that is still being deleted.
+  const previous = source ?? proxy?.mirrors?.dialogs?.[toPeerId] ?? null;
+  const previousKind = kindByGroupId.get(groupId);
+  const previousTargetMirror = proxy?.mirrors?.dialogs?.[toPeerId];
+
+  // Make before break: the new row must land before the old one is touched, so a
+  // failure at any step here leaves the old row intact for the caller to return to.
+  let dialog: any;
   try {
-    await dialogsStorage?.dropDialogWithEvent?.(fromPeerId);
-  } catch(e: any) {
-    console.debug(LOG_PREFIX, 'relocateGroupDialog: old dialog drop failed:', e?.message);
-  }
-  await cleanupGroupChatInjection(fromPeerId);
-  await invalidateGroupHistoryCache(fromPeerId);
+    if(record?.kind) kindByGroupId.set(groupId, record.kind);
+    await ensureGroupChatInjected(groupId, toPeerId);
 
-  if(record?.kind) kindByGroupId.set(groupId, record.kind);
-  await ensureGroupChatInjected(groupId, toPeerId);
+    const topMessage = Number(previous?.top_message) || 0;
+    const sortIndex = Number(previous?.index_0) || 0;
+    const carried = carriedDialogState(previous, topMessage);
+    dialog = getMapper().createTwebDialog({
+      peerId: toPeerId,
+      topMessage,
+      // index_0 is the sort index — seconds * 0x10000 (see createTwebDialog).
+      topMessageDate: sortIndex ? Math.floor(sortIndex / 0x10000) : Math.floor(Date.now() / 1000),
+      unreadCount: carried.unreadCount,
+      readInboxMaxId: carried.readInboxMaxId,
+      readOutboxMaxId: carried.readOutboxMaxId,
+      archived: !!record?.archivedAt
+    });
+    // State createTwebDialog does not take as an option, but which the user set:
+    // without it a pinned session falls out of the pinned list and a muted one
+    // starts notifying again after the repair.
+    if(carried.pinned) (dialog as any).pFlags.pinned = 1;
+    if(carried.muteUntil > 0) (dialog as any).notify_settings.mute_until = carried.muteUntil;
+    if(carried.unreadMentionsCount > 0) (dialog as any).unread_mentions_count = carried.unreadMentionsCount;
+    if(carried.unreadReactionsCount > 0) (dialog as any).unread_reactions_count = carried.unreadReactionsCount;
 
-  const topMessage = Number(previous?.top_message) || 0;
-  const sortIndex = Number(previous?.index_0) || 0;
-  const carried = carriedDialogState(previous, topMessage);
-  const mapper = getMapper();
-  const dialog = mapper.createTwebDialog({
-    peerId: toPeerId,
-    topMessage,
-    // index_0 is the sort index — seconds * 0x10000 (see createTwebDialog).
-    topMessageDate: sortIndex ? Math.floor(sortIndex / 0x10000) : Math.floor(Date.now() / 1000),
-    unreadCount: carried.unreadCount,
-    readInboxMaxId: carried.readInboxMaxId,
-    readOutboxMaxId: carried.readOutboxMaxId,
-    archived: !!record?.archivedAt
-  });
-  // State createTwebDialog does not take as an option, but which the user set:
-  // without it a pinned session falls out of the pinned list and a muted one
-  // starts notifying again after the repair.
-  if(carried.pinned) (dialog as any).pFlags.pinned = 1;
-  if(carried.muteUntil > 0) (dialog as any).notify_settings.mute_until = carried.muteUntil;
-  if(carried.unreadMentionsCount > 0) (dialog as any).unread_mentions_count = carried.unreadMentionsCount;
-  if(carried.unreadReactionsCount > 0) (dialog as any).unread_reactions_count = carried.unreadReactionsCount;
-
-  if(proxy?.mirrors) {
-    if(!proxy.mirrors.dialogs) proxy.mirrors.dialogs = {};
-    proxy.mirrors.dialogs[toPeerId] = dialog;
-  }
-  try {
+    if(proxy?.mirrors) {
+      if(!proxy.mirrors.dialogs) proxy.mirrors.dialogs = {};
+      proxy.mirrors.dialogs[toPeerId] = dialog;
+    }
     // pushDialog re-runs processDialogForFilters, which stamps the index key the
     // row's NEW class belongs to (index_4 for a session) and persists the row.
-    await dialogsStorage?.pushDialog?.({dialog});
-  } catch(e: any) {
-    console.debug(LOG_PREFIX, 'relocateGroupDialog: pushDialog failed:', e?.message);
+    // `offsetDate: 0` is required: a truthy offset older than a not-yet-loaded
+    // folder's makes pushDialog drop the persisted row and return without an error.
+    await dialogsStorage.pushDialog({dialog, offsetDate: 0});
+    if(!await readRow(toPeerId)) throw new Error('target dialog row did not land');
+  } catch(err) {
+    if(previousKind) kindByGroupId.set(groupId, previousKind);
+    else kindByGroupId.delete(groupId);
+    try {
+      if(target) {
+        if(proxy?.mirrors?.dialogs) proxy.mirrors.dialogs[toPeerId] = previousTargetMirror ?? target;
+      } else {
+        await dialogsStorage.dropDialogWithEvent?.(toPeerId);
+        await cleanupGroupChatInjection(toPeerId);
+      }
+    } catch(e: any) {
+      console.warn(LOG_PREFIX, 'relocateGroupDialog: target cleanup failed:', e?.message);
+    }
+    throw err;
   }
 
-  await invalidateGroupHistoryCache(toPeerId);
+  // The new row is in place, so the move has succeeded. A failure from here on
+  // can only leave a stale old row, which the orphan sweep removes. It must not
+  // reject, or the caller would point the history back at the old id.
+  try {
+    // Persisted row + folder caches + mirror.
+    await dialogsStorage.dropDialogWithEvent?.(fromPeerId);
+  } catch(e: any) {
+    console.warn(LOG_PREFIX, 'relocateGroupDialog: old dialog drop failed:', e?.message);
+  }
+  try {
+    await cleanupGroupChatInjection(fromPeerId);
+    await invalidateGroupHistoryCache(fromPeerId);
+    await invalidateGroupHistoryCache(toPeerId);
+  } catch(e: any) {
+    console.warn(LOG_PREFIX, 'relocateGroupDialog: old peer cleanup failed:', e?.message);
+  }
   dispatchGroupDialogUpdate(toPeerId, dialog);
 }
 
 /**
- * Move a group onto a new peer id because a SYNCED record changed its class.
+ * Move a group onto a new peer id because a SYNCED record changed its class, and
+ * save the record. One unit, in the same order as the boot repair: history, dialog,
+ * record. Without the dialog move the row stays on the old id, the orphan sweep
+ * deletes it, and the session vanishes until a reload.
  *
- * The record is saved by the caller afterwards, in the same order as the boot
- * repair: history, dialog, record. Without the dialog move the row stays on the
- * old id, the orphan sweep deletes it, and the session vanishes until a reload.
+ * Any failure puts history and the dialog row back together on the id the stored
+ * record still claims, then rejects so the next sync pass retries. If the row
+ * cannot be moved back, history stays with the row: rows must never point at a
+ * peer id that has no dialog.
  */
 export async function moveSyncedGroupToPeer(
   record: {groupId: string, peerId: number, kind?: GroupKind, archivedAt?: number},
-  fromPeerId: number
+  existing: {peerId: number, kind?: GroupKind, archivedAt?: number},
+  saveRecord: () => Promise<void>
 ): Promise<void> {
   const conversationId = `group:${record.groupId}`;
   const store = getMessageStore();
-  await store.setConversationTwebPeerId(conversationId, record.peerId);
+  const fromPeerId = existing.peerId;
+  const restoreHistory = async() => {
+    try {
+      await store.setConversationTwebPeerId(conversationId, fromPeerId);
+    } catch(e: any) {
+      console.warn(LOG_PREFIX, 'moveSyncedGroupToPeer: history rollback failed:', e?.message);
+    }
+  };
+
   try {
+    // Not atomic (one write per row), so a rejection can leave some rows moved.
+    await store.setConversationTwebPeerId(conversationId, record.peerId);
     await relocateGroupDialog(record.groupId, fromPeerId, record.peerId, record);
   } catch(err) {
-    await store.setConversationTwebPeerId(conversationId, fromPeerId);
+    await restoreHistory();
+    throw err;
+  }
+
+  try {
+    await saveRecord();
+  } catch(err) {
+    try {
+      await relocateGroupDialog(record.groupId, record.peerId, fromPeerId, {
+        kind: intendedGroupKind(existing),
+        archivedAt: existing.archivedAt
+      });
+    } catch(e: any) {
+      console.warn(LOG_PREFIX, 'moveSyncedGroupToPeer: dialog rollback failed:', e?.message);
+      throw err;
+    }
+    await restoreHistory();
     throw err;
   }
 }

@@ -607,9 +607,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               const rec: GroupRecord = {...record, peerId};
               const existing = await getGroupStore().get(record.groupId);
               if(existing && existing.peerId !== peerId) {
-                await moveSyncedGroupToPeer(rec, existing.peerId);
+                await moveSyncedGroupToPeer(rec, existing, () => getGroupStore().save(rec));
+              } else {
+                await getGroupStore().save(rec);
               }
-              await getGroupStore().save(rec);
               const createdAtSec = Math.floor((rec.createdAt || Date.now()) / 1000);
               if(!existing) {
                 // Fresh restore: clear any stale deletion watermark AND the
