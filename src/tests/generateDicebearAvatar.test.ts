@@ -120,8 +120,10 @@ describe('generateDicebearAvatar', () => {
       for(const seed of seeds) {
         for(const svg of [generatePhantomAvatarSvg(seed), generatePhantomSquadAvatarSvg(seed)]) {
           expect(svg).not.toMatch(/filter="url\(#glow/);
-          expect(colours(svg).filter((hex) => !isGrey(hex)).sort()).toEqual(['#2a59cc', '#346bf1']);
+          expect(colours(svg).filter((hex) => !isGrey(hex)).sort()).toEqual(['#346bf1', '#6d94f5']);
         }
+        // Squad key nodes stay white, but no eye highlight on a lone phantom may.
+        expect(generatePhantomAvatarSvg(seed)).not.toContain('#ffffff');
       }
     });
 
