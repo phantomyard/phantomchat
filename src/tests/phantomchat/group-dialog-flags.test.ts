@@ -382,7 +382,11 @@ describe('unpin drops the pinned sort position (real DialogsStorage reindex)', (
     ds.appNotificationsManager = {isPeerLocalMuted: (): boolean => false};
     ds.appPeersManager = {
       peerId: 1,
-      // The Worker has no message for a group peer — the whole point of the bug.
+      // Default: no resolvable top message, so the row falls through to the
+      // build anchor. The cases that need a message override this per-test —
+      // group messages DO reach this storage (receive path injects under
+      // `${peerId}_history`, appMessagesManager maps it back), so this is the
+      // no-history-yet case, not a property of groups.
       getMessageByPeer: (): undefined => undefined,
       isBotforum: (): boolean => false,
       isForum: (): boolean => false,
