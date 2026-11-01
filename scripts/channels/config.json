@@ -287,7 +287,7 @@
       "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/selected-conversation.ts": {
-      "stable": "absent",
+      "stable": "18453a1a0378eb898500aaa1374c048eeed1cc02732ea5d2dc6b940acbf02899",
       "preview": "18453a1a0378eb898500aaa1374c048eeed1cc02732ea5d2dc6b940acbf02899",
       "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
