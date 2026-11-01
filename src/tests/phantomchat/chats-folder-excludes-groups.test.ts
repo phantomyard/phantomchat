@@ -138,6 +138,60 @@ describe('Chats folder excludes groups', () => {
     expect(marked).toEqual([USER_PEER_ID]);
   });
 
+  // #323: the exclusion above is presentation only. A query is a chat lookup,
+  // not a folder listing — every caller of it is a picker or search
+  // (appSearchSuper, appSelectPeers, pickUser, sidebarLeft), and all of them
+  // must reach a group while the user is standing in Chats. This is the
+  // asymmetry that makes "a queried picker is unchanged" true, so it is
+  // asserted rather than left to the comment at dialogs.ts:1742-1746.
+  const seedQueryable = () => {
+    const ds = new DialogsStorage();
+    // `after()` is what builds the search index in the app (via clear(true));
+    // tests never run it, so do the half of it the query path needs.
+    (ds as any).clear(true);
+    const group = mkDialog(GROUP_PEER_ID);
+    const user = mkDialog(USER_PEER_ID);
+    (ds as any).dialogs = {[GROUP_PEER_ID]: group, [USER_PEER_ID]: user};
+    (ds as any).appPeersManager = {isBotforum: () => false, peerId: USER_PEER_ID};
+    (ds as any).folders = {
+      [FOLDER_ID_ALL]: {
+        id: FOLDER_ID_ALL,
+        dialogs: [group, user],
+        count: 2,
+        unreadMessagesCount: 0,
+        unreadPeerIds: new Set(),
+        unreadUnmutedPeerIds: new Set(),
+        unreadMentionsPeerIds: new Set()
+      }
+    };
+    // Both names are unique to this fixture so the shared index cannot return
+    // a row from another case in this file.
+    (ds as any).dialogsIndex.indexObject(GROUP_PEER_ID, 'zzq hidden group');
+    (ds as any).dialogsIndex.indexObject(USER_PEER_ID, 'zzq plain user');
+    return {ds, group, user};
+  };
+
+  it('getDialogs({filterId: 0, query}) still returns the group Chats hides', async() => {
+    const {ds} = seedQueryable();
+
+    const res: any = await ds.getDialogs({filterId: FOLDER_ID_ALL, query: 'zzq hidden', limit: 50, forceLocal: true} as any);
+
+    expect(res.dialogs.map((d: any) => d.peerId)).toEqual([GROUP_PEER_ID]);
+    // The pair is what makes it an asymmetry rather than a contradiction: the
+    // listing hides it, the lookup finds it.
+    expect(ds.getFolderDialogs(FOLDER_ID_ALL).some((d) => d.peerId === GROUP_PEER_ID)).toBe(false);
+  });
+
+  it('the query path keeps filtering on folder_id, so a group does not leak into another folder', async() => {
+    const {ds} = seedQueryable();
+
+    // No dialog carries folder_id === 3, so a Groups-folder query that ignored
+    // the membership test would hand back folder-0 rows.
+    const res: any = await ds.getDialogs({filterId: FOLDER_ID_GROUPS, query: 'zzq', limit: 50, forceLocal: true} as any);
+
+    expect(res.dialogs).toEqual([]);
+  });
+
   it('a group pinned in folder 0 still has its stale pin cleared by the pin-order sweep', () => {
     // handleDialogsPinned walks getFolderDialogs(folderId), and folder 0 no
     // longer lists groups, so before the sweep gained a group pass a group

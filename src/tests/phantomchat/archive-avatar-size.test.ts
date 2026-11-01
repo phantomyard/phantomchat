@@ -92,6 +92,69 @@ describe('archived chat rows match the compact chat-list geometry', () => {
     expect(rowScopes.some(selector => selector.startsWith(`#${archivedContainerId} `))).toBe(true);
   });
 
+  /**
+   * #326: the stylesheet half above is only half the contract. `row-big` and
+   * `dialog-avatar.row-media-bigger` are emitted by `appDialogsManager`'s
+   * `avatarSize === 'bigger'` branch, not by the archived tab — so a future
+   * change to that branch would leave these assertions green while the rows
+   * quietly went back to a 54px avatar inside a 72px row, which is the bug
+   * this file exists to prevent.
+   *
+   * The honest shape would be mounting an `AppArchivedTab` row, but importing
+   * `appDialogsManager` pulls the whole app (IDB, popups, IntersectionObserver)
+   * into the test, so instead each link of the chain is pinned: the branch
+   * emits the classes, the archived list reaches that branch, and the CSS keys
+   * off exactly those classes.
+   */
+  it('the classes the archived scopes target are emitted only by the bigger-avatar branch', () => {
+    const src = read('lib/appDialogsManager.ts');
+
+    // `row-big` exists for one reason: this branch.
+    expect(src).toContain("if(avatarSize === 'bigger') {");
+    expect(src).toContain("this.container.classList.add('row-big')");
+
+    // The avatar class is derived from the same variable that gates `row-big`,
+    // so `row-media-bigger` cannot drift from the container class.
+    const ctor = src.slice(src.indexOf('constructor({'), src.indexOf("if(avatarSize === 'bigger') {"));
+    expect(ctor).toContain('this.applyMediaElement(avatarEl, avatarSize)');
+    // …and applyMediaElement is what turns 'bigger' into the class name.
+    expect(read('components/row.ts')).toContain("media.classList.add('row-media-' + size)");
+  });
+
+  it('the archived list reaches that branch, and the shared row options do not override the size', () => {
+    // AppArchivedTab mounts the manager's own AutonomousDialogList for
+    // FOLDER_ID_ARCHIVE → SortedDialogList.createElementForKey →
+    // appDialogsManager.addListDialog → addDialogNew({avatarSize: 'bigger'}).
+    const archived = read('components/sidebarLeft/tabs/archivedTab.ts');
+    expect(archived).toContain('localId: FOLDER_ID_ARCHIVE');
+    expect(archived).toContain('appDialogsManager.xds[AppArchivedTab.filterId]');
+
+    // That list class is the one the manager builds rows with.
+    const managerForList = read('lib/appDialogsManager.ts');
+    expect(managerForList).toContain('new AutonomousDialogList({filterId: filter.id, appDialogsManager: this})');
+
+    const sorted = read('components/sortedDialogList.ts');
+    expect(sorted).toContain('this.appDialogsManager.addListDialog(options)');
+
+    // getDialogOptions is shared by every list, Chats included. The moment it
+    // sets avatarSize itself, the archived rows stop going through the bigger
+    // branch and the archived-scoped rules above stop matching — which is
+    // exactly how this would regress without a single assertion failing.
+    const opts = sorted.slice(sorted.indexOf('private getDialogOptions'), sorted.indexOf('private getAsAllChats'));
+    expect(opts).not.toContain('avatarSize');
+
+    // The default it inherits.
+    const addDialogNew = managerForList.slice(managerForList.indexOf('public addDialogNew'));
+    expect(addDialogNew).toContain("avatarSize: 'bigger',");
+  });
+
+  it('leaves no archived rule at the old 54px avatar size', () => {
+    const rules = flatten(css).filter(rule => rule.selector.includes(`#${archivedContainerId}`));
+    // 3.375rem = 54px, the size the bug left behind.
+    const wrong = rules.filter(rule => declares(rule, 'width', '3.375rem'));
+    expect(wrong.map(rule => rule.selector)).toEqual([]);
+  });
+
   it('keeps the matching inline padding in both lists so text does not start under the smaller avatar', () => {
     const scopes = selectorsSetting(flatten(css), 'padding-inline-start', '3.125rem');
     expect(scopes.split(', ').some(selector => selector.startsWith('#chatlist-container '))).toBe(true);
