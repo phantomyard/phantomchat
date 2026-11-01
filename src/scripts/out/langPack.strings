@@ -3012,7 +3012,7 @@
 "Notification.Contact.Reacted" = "%1$@ to your \"%2$@\"";
 "Payments.Recurrent.Accept" = "I accept [Terms of Service]() of **%@**.";
 "Peer.Activity.User.PlayingGame" = "playing a game";
-"Peer.Activity.User.TypingText" = "typing";
+"Peer.Activity.User.TypingText" = "working";
 "Peer.Activity.User.SendingPhoto" = "sending a photo";
 "Peer.Activity.User.RecordingVideo" = "recording video";
 "Peer.Activity.User.SendingVideo" = "sending a video";
@@ -3021,7 +3021,7 @@
 "Peer.Activity.User.ChoosingSticker" = "choosing a sticker";
 "Peer.Activity.User.EnjoyingAnimations" = "watching %@";
 "Peer.Activity.Chat.PlayingGame" = "%@ is playing a game";
-"Peer.Activity.Chat.TypingText" = "%@ is typing";
+"Peer.Activity.Chat.TypingText" = "%@ is working";
 "Peer.Activity.Chat.SendingPhoto" = "%@ is sending a photo";
 "Peer.Activity.Chat.RecordingVideo" = "%@ is recording video";
 "Peer.Activity.Chat.SendingVideo" = "%@ is sending a video";
@@ -3030,7 +3030,7 @@
 "Peer.Activity.Chat.ChoosingSticker" = "%@ is choosing a sticker";
 "Peer.Activity.Chat.EnjoyingAnimations" = "%@ is watching %@";
 "Peer.Activity.Chat.Multi.PlayingGame1" = "%@ and %d others are playing a game";
-"Peer.Activity.Chat.Multi.TypingText1" = "%@ and %d others are typing";
+"Peer.Activity.Chat.Multi.TypingText1" = "%@ and %d others are working";
 "Peer.Activity.Chat.Multi.SendingPhoto1" = "%@ and %d others are sending photos";
 "Peer.Activity.Chat.Multi.RecordingVideo1" = "%@ and %d others are recording video";
 "Peer.Activity.Chat.Multi.SendingVideo1" = "%@ and %d others are sending videos";

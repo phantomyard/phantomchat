@@ -23,5 +23,5 @@ export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd
   return files;
 }
 if(process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  checkCompatibility(JSON.parse(readFileSync('scripts/channels/config.json', 'utf8')), process.argv[2] || 'HEAD');
+  checkCompatibility(JSON.parse(readFileSync(process.env.CHANNEL_BASELINE || 'scripts/channels/config.json', 'utf8')), process.argv[2] || 'HEAD');
 }

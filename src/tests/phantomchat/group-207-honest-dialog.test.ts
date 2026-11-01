@@ -23,10 +23,13 @@ const SENDER_PUBKEY = '44'.repeat(32);
 const RUMOR_ID = 'ff'.repeat(32);
 
 const mockDispatchEvent = vi.hoisted(() => vi.fn());
+const mockSetReadCursor = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockIm = vi.hoisted(() => ({chat: {peerId: 0}, isChatVisible: true}));
 
 vi.mock('@lib/phantomchat/message-store', () => ({
   getMessageStore: () => ({
     getTombstone: vi.fn().mockResolvedValue(0),
+    setReadCursor: mockSetReadCursor,
     saveMessage: vi.fn().mockResolvedValue(undefined),
     getByEventId: vi.fn().mockResolvedValue(null),
     getMessages: vi.fn().mockResolvedValue([]),
@@ -64,6 +67,7 @@ vi.mock('@stores/peers', () => ({reconcilePeer: vi.fn()}));
 
 vi.mock('@config/debug', () => ({
   MOUNT_CLASS_TO: {
+    appImManager: mockIm,
     apiManagerProxy: {
       mirrors: {messages: {}, chats: {}, dialogs: {}, peers: {}}
     }
@@ -118,6 +122,9 @@ function dispatchedDialog(tag: string) {
 describe('#207 — handleGroupIncoming dialog honesty', () => {
   beforeEach(() => {
     mockDispatchEvent.mockClear();
+    mockSetReadCursor.mockClear();
+    mockIm.chat.peerId = 0;
+    mockIm.isChatVisible = true;
   });
 
   it('own echo dispatches unreadCount 0 with the read marker at mid', async() => {
@@ -139,4 +146,22 @@ describe('#207 — handleGroupIncoming dialog honesty', () => {
     expect(dialog.unread_count).toBe(1);
     expect(dialog.read_inbox_max_id).toBe(dialog.top_message - 1);
   });
+
+  it('a selected group persists the canonical read cursor and clears its dialog', async() => {
+    mockIm.chat.peerId = GROUP_PEER_ID;
+    await handleGroupIncoming(OWN_PUBKEY, GROUP_ID, {...rumor(), pubkey: SENDER_PUBKEY}, SENDER_PUBKEY, vi.fn());
+    const dialog = dispatchedDialog('dialogs_multiupdate');
+    expect(dialog.unread_count).toBe(0);
+    expect(dialog.read_inbox_max_id).toBe(dialog.top_message);
+    expect(mockSetReadCursor).toHaveBeenCalledWith(`group:${GROUP_ID}`, dialog.top_message);
+  });
+
+  it('a retained group behind mobile Back stays unread', async() => {
+    mockIm.chat.peerId = GROUP_PEER_ID;
+    mockIm.isChatVisible = false;
+    await handleGroupIncoming(OWN_PUBKEY, GROUP_ID, {...rumor(), pubkey: SENDER_PUBKEY}, SENDER_PUBKEY, vi.fn());
+    expect(dispatchedDialog('dialogs_multiupdate').unread_count).toBe(1);
+    expect(mockSetReadCursor).not.toHaveBeenCalled();
+  });
+
 });

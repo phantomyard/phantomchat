@@ -1,3 +1,4 @@
+import {isConversationSelected} from '@lib/phantomchat/selected-conversation';
 /**
  * PhantomChat.chat Onboarding Integration for tweb
  *
@@ -440,13 +441,19 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           setTimeout(attachUnreadReset, 500);
           return;
         }
-        im.addEventListener('peer_changed', (chat: any) => {
+        const resetSelectedUnread = (chat: any) => {
           const pid = +chat?.peerId;
-          if(pid) {
+          if(isConversationSelected(pid)) {
             resetUnreadForPeer(pid).catch((err) => {
               console.warn('[PhantomChatOnboardingIntegration] resetUnread error:', err);
             });
           }
+        };
+        im.addEventListener('peer_changed', resetSelectedUnread);
+        im.addEventListener('tab_changing', () => {
+          // selectTab publishes the event before assigning tabId. Re-entering
+          // a retained mobile chat must clear messages received on the list.
+          queueMicrotask(() => resetSelectedUnread(im.chat));
         });
       };
       attachUnreadReset();

@@ -1,6 +1,7 @@
 import {MOUNT_CLASS_TO} from '@config/debug';
 
-/** Selection, rather than scroll position or window focus, defines read state. */
+/** A selected peer must have its chat pane visible; window focus is independent. */
 export function isConversationSelected(peerId: number): boolean {
-  return !!peerId && +(MOUNT_CLASS_TO as any).appImManager?.chat?.peerId === peerId;
+  const im = (MOUNT_CLASS_TO as any).appImManager;
+  return !!peerId && +im?.chat?.peerId === peerId && im.isChatVisible !== false;
 }
