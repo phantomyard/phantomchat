@@ -624,3 +624,151 @@ describe('the dispatched row is the one the Worker reindexed', () => {
     expect((MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs[peerId].index_3).toBe(1_000 * 0x10000);
   });
 });
+
+/**
+ * #332 — the storage-level half, run through the real restore path rather than
+ * the helper alone.
+ *
+ * `dialog-index-keys.test.ts` pins the helper's contract, and it passes with
+ * either PR alone — which is exactly the shape that hid the original defect
+ * (Robert at `b4bcb5ab`). The behaviour this pair of PRs exists for only shows
+ * up with the real `setDialogsFromState` AND the real folder pass:
+ *
+ *   restore → `clearComputedDialogIndexes` keeps `index_0` for a group
+ *          → folder 0 refuses the row but no longer overwrites `index_0`
+ *            (#321's guard) → Groups (3) reads the anchor as `fallbackDate`
+ *            and stamps `index_3` from it instead of `now`.
+ *
+ * Break either half and this fails: drop the helper's keep and `index_0` is
+ * gone after the restore; drop #321's guard and folder 0 wipes it before
+ * Groups reads it. Either way `index_3` lands on `now`.
+ */
+describe('a state-restored group row keeps its sort anchor (#332)', () => {
+  const ANCHOR_SECONDS = Math.floor(Date.now() / 1000) - 3600;
+
+  const makeRestoreStorage = () => {
+    const ds: any = new DialogsStorage();
+    ds.clear(true);
+    ds.appStateManager = {pushToState: vi.fn()};
+    ds.timeManager = {getServerTimeOffset: (): number => 0};
+    ds.dialogs = {};
+    ds.dialogsOffsetDate = {};
+    ds.allDialogsLoaded = {0: true, 1: true, 3: true, 4: true};
+    ds.getDialogMessageForState = (): undefined => undefined;
+    ds.setDialogToState = vi.fn();
+    ds.rootScope = {dispatchEvent: vi.fn()};
+    ds.peersStorage = {requestPeer: (): undefined => undefined, requestPeersForKey: (): undefined => undefined};
+    ds.appMessagesIdsManager = {clearMessageId: (id: number): number => id};
+    ds.appNotificationsManager = {isPeerLocalMuted: (): boolean => false};
+    ds.appPeersManager = {
+      peerId: 1,
+      getMessageByPeer: (): undefined => undefined,
+      isBotforum: (): boolean => false,
+      isForum: (): boolean => false,
+      isChannel: (): boolean => false,
+      getOutputPeer: (): any => ({})
+    };
+    ds.appChatsManager = {isChannel: (): boolean => false, getChat: (): undefined => undefined};
+    ds.appMessagesManager = {
+      getMessageByPeer: (): undefined => undefined,
+      getHistoryStorage: (): any => ({history: []}),
+      getDialogUnreadCount: (): number => 0,
+      saveMessages: vi.fn(),
+      // The restore path reloads a conversation that has no local message; that
+      // is not what this test is about.
+      reloadConversation: vi.fn(async() => {})
+    };
+
+    const filter: any = {id: 3, pinnedPeerIds: []};
+    ds.filtersStorage = {
+      getFilters: (): any => ({0: {id: 0, pinnedPeerIds: []}, 3: filter, 4: {id: 4, pinnedPeerIds: []}}),
+      getFilter: (): any => filter,
+      testDialogForFilter: (_dialog: any, f: any): boolean => f.id !== 0
+    };
+
+    return {ds, filter};
+  };
+
+  it('stamps index_3 from the restored anchor, not from "now"', () => {
+    const {ds} = makeRestoreStorage();
+    const anchor = ANCHOR_SECONDS * 0x10000;
+    const dialog: any = {
+      _: 'dialog',
+      peerId: GROUP_PEER_ID,
+      folder_id: 3,
+      top_message: 42,
+      unread_count: 0,
+      pFlags: {},
+      index_0: anchor,
+      index_3: anchor
+    };
+    ds.dialogs[GROUP_PEER_ID] = dialog;
+
+    // The real `saveDialog` body needs more runtime than this harness carries;
+    // the part under test is the index computation the push performs, so go
+    // straight there. (Robert's harness did the same at `b4bcb5ab`.)
+    ds.saveDialog = (options: any): boolean => {
+      ds.pushDialog(options);
+      return true;
+    };
+
+    (ds as any).setDialogsFromState([dialog]);
+
+    // The helper kept the anchor across the restore...
+    expect(dialog.index_0).toBe(anchor);
+    // ...folder 0 refused the row without wiping it (#321's guard)...
+    expect(ds.getFolder(0).dialogs).not.toContain(dialog);
+    // ...and Groups sorted on the anchor's date in SECONDS, not `now`.
+    expect(Math.floor(dialog.index_3 / 0x10000)).toBe(ANCHOR_SECONDS);
+    expect(Math.floor(dialog.index_3 / 0x10000)).toBeLessThan(Math.floor(Date.now() / 1000) - 60);
+  });
+
+  it('drops index_1..21 on the same restore, so no stale folder key claims the row', () => {
+    const {ds} = makeRestoreStorage();
+    const anchor = ANCHOR_SECONDS * 0x10000;
+    const dialog: any = {
+      _: 'dialog',
+      peerId: GROUP_PEER_ID,
+      folder_id: 3,
+      top_message: 42,
+      pFlags: {},
+      index_0: anchor
+    };
+    // A persisted key for a folder the row has since left.
+    dialog.index_7 = 0x7fff0000 * 0x10000;
+    ds.dialogs[GROUP_PEER_ID] = dialog;
+    ds.saveDialog = (options: any): boolean => {
+      ds.pushDialog(options);
+      return true;
+    };
+
+    (ds as any).setDialogsFromState([dialog]);
+
+    expect(dialog.index_7).toBeUndefined();
+    expect(ds.getFolder(7).dialogs).not.toContain(dialog);
+  });
+
+  it('still stamps "now" for a restored group row that carries no anchor (legacy rows, #332 scope)', () => {
+    const {ds} = makeRestoreStorage();
+    const dialog: any = {
+      _: 'dialog',
+      peerId: GROUP_PEER_ID,
+      folder_id: 3,
+      top_message: 42,
+      pFlags: {}
+    };
+    ds.dialogs[GROUP_PEER_ID] = dialog;
+    ds.saveDialog = (options: any): boolean => {
+      ds.pushDialog(options);
+      return true;
+    };
+
+    (ds as any).setDialogsFromState([dialog]);
+
+    // Pinned rather than assumed fixed: rows persisted by today's builds have
+    // no `index_0` (folder 0 wipes it before the state write), so the first
+    // restore after upgrade still lands on `now` until the mapper rebuilds the
+    // row. Narrowed on #332 as the remaining gap.
+    expect(Math.floor(dialog.index_3 / 0x10000)).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) - 5);
+  });
+});
