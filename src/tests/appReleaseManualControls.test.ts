@@ -3,8 +3,9 @@ import {join} from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {load} from 'js-yaml';
 
-type Step = {name?: string; if?: string; run?: string};
-type Workflow = {on: Record<string, unknown>; jobs: Record<string, {steps: Step[]}>};
+type Step = {name?: string; if?: string; run?: string; env?: Record<string, string>};
+type Job = {steps: Step[]; if?: string; needs?: string | string[]};
+type Workflow = {on: Record<string, unknown>; permissions?: Record<string, string>; jobs: Record<string, Job>};
 const readWorkflow = (name: string) => load(readFileSync(join(process.cwd(), '.github', 'workflows', name), 'utf8')) as Workflow;
 
 describe('independent release controls', () => {
@@ -27,11 +28,33 @@ describe('independent release controls', () => {
     expect(bootIndex).toBeGreaterThanOrEqual(0);
     expect(deployIndex).toBeGreaterThan(bootIndex);
   });
-  it('PR CI has no application/native builds', () => {
+  it('PR CI may compile both channels dry, but can never assemble a release or publish', () => {
     const workflow = readWorkflow('ci.yml');
+    // Still only PRs: no push or dispatch path into a release.
     expect(Object.keys(workflow.on)).toEqual(['pull_request']);
-    expect(Object.keys(workflow.jobs)).toEqual(['typecheck', 'test']);
-    expect(JSON.stringify(workflow)).not.toMatch(/pnpm (?:run )?build|electron-builder/);
+    expect(workflow.permissions).toEqual({contents: 'read'});
+    expect(Object.keys(workflow.jobs).sort()).toEqual(['changes', 'channel-build', 'test', 'typecheck']);
+
+    const steps = Object.values(workflow.jobs).flatMap(job => job.steps);
+    const serialized = JSON.stringify(workflow);
+    // The publication surface: no Pages upload/deploy, no GitHub release, no
+    // packaging. Release-record lookups are banned too — PR CI must compile
+    // from the repo's pinned config, never from deployed truth.
+    expect(serialized).not.toMatch(/deploy-pages|upload-pages-artifact|actions\/(?:create|upload)-release|electron-builder/);
+    expect(serialized).not.toMatch(/scripts\/releases\/registry\.mjs|check-site\.mjs/);
+    // A Pages environment attached to a PR job is a publish-shaped hole.
+    expect(steps.some(step => 'environment' in step)).toBe(false);
+    // Release mode is env-driven inside build.mjs: any of these turns the dry
+    // build into a promotion build against live bytes.
+    const env = steps.map(step => JSON.stringify(step.env ?? {})).join('\n');
+    expect(env).not.toMatch(/PWA_RELEASE|CHANNEL_BASELINE|PWA_STABLE_DIST/);
+    // Exactly one build, and it is the plain channel build off repo config.
+    const builds = steps.filter(step => /pnpm (?:run )?build/.test(step.run || ''));
+    expect(builds).toHaveLength(1);
+    expect((builds[0].run || '').trim()).toBe('pnpm run build');
+    // Cost control: a PR that cannot affect the build must not pay for it.
+    expect(workflow.jobs['channel-build'].needs).toContain('changes');
+    expect(workflow.jobs['channel-build'].if ?? '').toContain('needs.changes.outputs.relevant');
   });
   it('every Electron Preview job remains main-only', () => {
     const workflow = readWorkflow('app-release.yml');

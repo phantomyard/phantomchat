@@ -1,6 +1,8 @@
 name: ci
 
-# PRs check local and deployed compatibility, typechecks and unit tests. Preview builds/publication run on main; Stable promotion is manual.
+# PRs check local and deployed compatibility, typechecks and unit tests, and
+# compile BOTH channels (pinned Stable + this PR's Preview) without publishing.
+# Preview builds/publication run on main; Stable promotion is manual.
 on:
   pull_request:
     branches: [main]
@@ -11,6 +13,30 @@ permissions:
   contents: read
 
 jobs:
+  # Decides whether this PR can affect the channel build at all. Docs-only and
+  # unrelated changes skip the compile, which is the expensive job.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Check build-relevant paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          echo "changed files:${changed}"
+          if grep -Eq '^(src/|public/|scripts/channels/|package\.json|pnpm-lock\.yaml|vite\.config\.|index\.html|tsconfig|\.github/workflows/ci\.yml)' <<<"$changed"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   typecheck:
     runs-on: ubuntu-latest
     # Per-job concurrency so a new push to the PR cancels the in-flight run
@@ -57,3 +83,29 @@ jobs:
       # browser/Tor e2e suites and runs unit tests under jsdom.
       - run: node --test scripts/releases/registry.node-test.mjs
       - run: pnpm exec vitest run
+
+  # Dry channel build: compiles the pinned Stable tree AND this PR's Preview
+  # tree, then runs the cross-version storage smoke test between them. No
+  # CHANNEL_BASELINE, no PWA_RELEASE, no Pages artifact, no publication. It
+  # exists so a broken compile or a stale pin fails on the PR instead of
+  # during a Stable promotion, where the failure is already deployed.
+  channel-build:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: ci-channel-build-${{ github.head_ref || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
