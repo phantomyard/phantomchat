@@ -381,6 +381,11 @@
       "stable": "cc27ffb914390f08e5ea0e2bcd2a992f9f9e53ac0f4ee2e22e219bd9d966fcca",
       "preview": "49fbd8fe4fb3f3fe3a6080763bf562375ab2bee6a86f07eda47369bb24826c8d",
       "reason": "JSDoc only: default-channel rationale reworded because Electron Preview is now manual. No code, wire or storage change."
+    },
+    "src/environment/webpSupport.ts": {
+      "stable": "709c16ccb8ce8ec75588f051b0897333858c94e94c42c5b32c13fa13f2612306",
+      "preview": "406677dafc9bc52289ad8e076ad7de395a5c53119f83732af56430ba5b5d8815",
+      "reason": "Detect WebP support only from a string result. A browser that cannot encode WebP answers `toDataURL` with a PNG data URL - a string - so the capability answer was always correct there and is unchanged. Outside a browser the call can return nothing at all (jsdom has no canvas and answers null), and calling `.startsWith` on that threw at module scope, which made every module reaching this file unimportable under jsdom. The stable half is byte-identical, so this is a Preview-only refresh."
     }
   }
 }
