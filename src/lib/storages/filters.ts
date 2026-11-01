@@ -509,20 +509,35 @@ export default class FiltersStorage extends AppManager {
   public async toggleDialogPin(peerId: PeerId, filterId: number) {
     const filter = this.filters[filterId];
 
+    // For the system folders `pinned_peers` is not the pinned set: it is seeded
+    // empty on every boot (filtersLocal.ts:18, then prependFilters re-seeds all
+    // four at :245-248 and the persisted copies are discarded at :196-213), so
+    // it only ever held the pins made since this launch. Maintaining it here
+    // left a mirror that is empty after one reload, and measuring the cap
+    // against it offset the limit by the restored pin count (#319).
+    //
+    // `pinnedPeerIds` *is* the pinned set and the order for those folders —
+    // generateLocalFilter binds it to the live bucket at :226, as the same
+    // array object dialogsStorage.getPinnedOrders(id) returns. Custom folders
+    // still carry both, populated in lockstep (:707-711).
+    const mirrorsPinnedPeers = !REAL_FOLDERS.has(filterId as REAL_FOLDER_ID);
+
     const index = filter.pinnedPeerIds.indexOf(peerId);
     const wasPinned = index !== -1;
 
     if(wasPinned) {
-      filter.pinned_peers.splice(index, 1);
+      // Splice the list the index was taken from: applying it to `pinned_peers`
+      // removed whatever sat at that position in the other array (#319).
+      if(mirrorsPinnedPeers) filter.pinned_peers.splice(index, 1);
       filter.pinnedPeerIds.splice(index, 1);
     }
 
     if(!wasPinned) {
-      if(filter.pinned_peers.length >= (await this.apiManager.getLimit('folderPin'))) {
+      if(filter.pinnedPeerIds.length >= (await this.apiManager.getLimit('folderPin'))) {
         return Promise.reject(makeError('PINNED_DIALOGS_TOO_MUCH'));
       }
 
-      filter.pinned_peers.unshift(this.appPeersManager.getInputPeerById(peerId));
+      if(mirrorsPinnedPeers) filter.pinned_peers.unshift(this.appPeersManager.getInputPeerById(peerId));
       filter.pinnedPeerIds.unshift(peerId);
     }
 

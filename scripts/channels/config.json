@@ -109,8 +109,8 @@
     },
     "src/lib/storages/filters.ts": {
       "stable": "fbf2bd3823bb8924467d5931f45e0cb742bea4aa157a3c5b8a0c2fabb91ff89d",
-      "preview": "fbf2bd3823bb8924467d5931f45e0cb742bea4aa157a3c5b8a0c2fabb91ff89d",
-      "reason": "Folder-id migration without data loss: a persisted id 4 (or the abandoned id 5) that carries peer rules is a USER folder and is renumbered past START_LOCAL_ID with its rules intact; only stock system folders (recognised by shape - a custom folder always has peer rules) are dropped and re-seeded. createDialogFilter never mints an id below START_LOCAL_ID. Code only - no stored format change beyond renumbering a legacy folder id."
+      "preview": "ac8db943fde1e46556002e3be72c7b3b8bac67f9f879c5c94cb8781ab0559346",
+      "reason": "Folder-id migration without data loss: a persisted id 4 (or the abandoned id 5) that carries peer rules is a USER folder and is renumbered past START_LOCAL_ID with its rules intact; only stock system folders (recognised by shape - a custom folder always has peer rules) are dropped and re-seeded. createDialogFilter never mints an id below START_LOCAL_ID. Code only - no stored format change beyond renumbering a legacy folder id. #319: toggleDialogPin no longer maintains the empty-at-boot pinned_peers mirror for the system folders and measures the folderPin cap against filter.pinnedPeerIds, the live order bucket, instead of against that mirror - so the limit stops being offset by the pins restored on load and stops changing after a reload. Unpin reads its index out of the bucket and splices the bucket; custom folders keep both lists. Code only, no stored-format change: the mirror this stops writing was already discarded on every boot."
     },
     "src/components/loadingDialogSkeleton.tsx": {
       "stable": "04e0f12a9f308abbcc57bd7797fa16e66b140328f4f385c3d5797d3a0d18bbef",
