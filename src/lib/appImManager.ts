@@ -2349,6 +2349,12 @@ export class AppImManager extends EventListenerBase<{
       return;
     }
 
+    // PhantomChat peers stage files in the composer tray (one publish per file,
+    // no modal round-trip per pick). Every other chat keeps the tweb popup.
+    if(!this.chat.input?.editMessage && this.chat.input?.addFilesToTray(files)) {
+      return;
+    }
+
     const chatInput = this.chat.input;
     if(!chatInput.canPaste()) {
       return;

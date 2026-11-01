@@ -68,6 +68,7 @@ import {joinDeepPath} from '@helpers/object/setDeepProperty';
 // P2P send bridge removed from Worker — runs only in main thread
 // import {isVirtualPeer, sendTextViaChatAPI, sendMediaViaChatAPI} from '../phantomchat/phantomchat-send-bridge';
 import {isP2PPeer} from '@lib/phantomchat/phantomchat-bridge';
+import {isPhantomChatPeerId} from '@lib/phantomchat/bridge-invariants';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
 import {LOCAL_ENTITIES} from '@lib/richTextProcessor';
@@ -1623,6 +1624,120 @@ export class AppMessagesManager extends AppManager {
     return Promise.all(promises).then(noop);
   }
 
+  /**
+   * PhantomChat bridge send: one Blossom upload + one kind-15 rumor publish for
+   * a single file, for 1:1 P2P peers and group peers alike.
+   *
+   * Resolves with the published message, or undefined when the bridge refused
+   * the send (it dispatches `phantomchat_file_upload_failed` for the bubble in
+   * that case). `sendFile` keeps its fire-and-forget contract; the composer
+   * tray goes through the public wrapper below so it can tell a real publish
+   * from a refusal and keep a refused file staged for a retry.
+   */
+  private async sendFileViaBridge(options: SendFileArgs): Promise<Message.message | undefined> {
+    const {peerId: targetPeerId} = options;
+    const peerId = this.appPeersManager.getPeerMigratedTo(targetPeerId) || targetPeerId;
+    const file = options.file;
+    if(!(file instanceof File) && !(file instanceof Blob)) {
+      return undefined;
+    }
+
+    const mime = (file.type || '').toLowerCase();
+    const phantomchatType: 'image' | 'video' | 'file' | 'voice' =
+      options.isVoiceMessage ? 'voice' :
+      mime.startsWith('image/') ? 'image' :
+      mime.startsWith('video/') ? 'video' :
+      'file';
+    // Issue #111: counter-suffixed tempMid avoids same-ms collisions when
+    // sendGrouped Promise.all's multiple sendFile calls for an album.
+    const seq = ++this.phantomchatSendFileCounter;
+    const tempMid = -(Date.now() * 1000 + (seq % 1000));
+    try {
+      const updates: any = await this.apiManager.invokeApi('phantomchatSendFile' as any, {
+        peerId,
+        blob: file,
+        type: phantomchatType,
+        caption: options.caption || '',
+        tempMid,
+        groupedId: options.groupId,
+        width: options.width,
+        height: options.height,
+        duration: options.duration,
+        waveform: options.waveform
+      } as any);
+      if(updates?.phantomchatMid) {
+        const storage = this.getHistoryMessagesStorage(peerId);
+        const realMid = updates.phantomchatMid;
+        // Build a minimal message/tempMessage so bubbles.ts can remid the
+        // optimistic bubble and flip ⏳ → ✓ the same way text messages do
+        // (undefined tempMessage would crash makeFullMid and skip status).
+        const tempMessage: any = {
+          _: 'message',
+          id: tempMid,
+          mid: tempMid,
+          peerId,
+          pFlags: {out: true, is_outgoing: true},
+          date: Math.floor(Date.now() / 1000)
+        };
+        const finalMessage: any = {
+          _: 'message',
+          id: realMid,
+          mid: realMid,
+          peerId,
+          pFlags: {out: true, unread: true},
+          date: Math.floor(Date.now() / 1000)
+        };
+        // The VMT send path already stored the full row (media, sender) under
+        // the real mid; `finalMessage` is only enough to remid the bubble.
+        this.settleDialogTopAfterSend((storage.get(realMid) as MyMessage) || finalMessage, tempMid);
+        this.rootScope.dispatchEvent('messages_pending');
+        this.rootScope.dispatchEvent('message_sent', {
+          storageKey: storage.key,
+          tempId: tempMid,
+          tempMessage,
+          mid: realMid,
+          message: finalMessage
+        });
+
+        // Return the published message so batch callers (the composer tray)
+        // can tell a real publish from a bridge refusal. The pre-existing
+        // `return;` here made this branch indistinguishable from failure and
+        // was why sendGrouped dereferenced undefined for P2P albums.
+        return finalMessage;
+      } else {
+        // VMT returned emptyUpdates — a guard clause rejected the send
+        // (missing key, no pubkey mapping, invalid blob, etc.). Surface
+        // the failure so the UI can notify the user instead of silently
+        // swallowing it.
+        this.log.error('[PhantomChat.chat] sendFile P2P: VMT returned emptyUpdates (no phantomchatMid)', {peerId, tempMid, type: phantomchatType});
+        this.rootScope.dispatchEvent('phantomchat_file_upload_failed', {peerId, mid: tempMid, error: 'P2P send failed — VMT returned empty updates'});
+      }
+    } catch(err) {
+      this.log.error('sendFile P2P shortcut failed:', err);
+      this.rootScope.dispatchEvent('phantomchat_file_upload_failed', {peerId, mid: tempMid, error: err instanceof Error ? err.message : String(err)});
+    }
+    return undefined;
+  }
+
+  /**
+   * Batch-send entry point for the PhantomChat composer tray: same publish path
+   * as `sendFile`, but the caller gets the published message back.
+   */
+  public async sendPhantomChatAttachment(options: Parameters<AppMessagesManager['sendFile']>[0]): Promise<Message.message | undefined> {
+    // Only PhantomChat peers have a bridge: a tray that outlived its peer must
+    // fail loudly here instead of leaving the composer stuck on a send that
+    // can never publish. `isPhantomChatPeerId` is the same predicate the tray
+    // and `sendFile`'s bridge shortcut use, so the guard cannot drift from the
+    // path it guards.
+    const peerIdNum = Number(options.peerId);
+    if(!isPhantomChatPeerId(peerIdNum)) {
+      throw new Error(`sendPhantomChatAttachment: peer ${options.peerId} is not a PhantomChat peer`);
+    }
+
+    await this.checkSendOptions(options);
+    return this.sendFileViaBridge(options);
+  }
+
   public async sendFile(options: SendFileArgs) {
     let file = options.file;
     let {peerId} = options;
@@ -1639,77 +1754,8 @@ export class AppMessagesManager extends AppManager {
     // group branch handles fan-out to all members via wrapGroupMessage
     // (FIND-3786a35f obs B).
     const peerIdNumForFile = Number(peerId);
-    const isPhantomChatDMForFile = peerIdNumForFile >= 1e15;
-    const isPhantomChatGroupForFile = isGroupPeer(peerIdNumForFile);
-    if((isPhantomChatDMForFile || isPhantomChatGroupForFile) && (file instanceof File || file instanceof Blob)) {
-      const mime = (file.type || '').toLowerCase();
-      const phantomchatType: 'image' | 'video' | 'file' | 'voice' =
-        options.isVoiceMessage ? 'voice' :
-        mime.startsWith('image/') ? 'image' :
-        mime.startsWith('video/') ? 'video' :
-        'file';
-      // Issue #111: counter-suffixed tempMid avoids same-ms collisions when
-      // sendGrouped Promise.all's multiple sendFile calls for an album.
-      const seq = ++this.phantomchatSendFileCounter;
-      const tempMid = -(Date.now() * 1000 + (seq % 1000));
-      try {
-        const updates: any = await this.apiManager.invokeApi('phantomchatSendFile' as any, {
-          peerId,
-          blob: file,
-          type: phantomchatType,
-          caption: options.caption || '',
-          tempMid,
-          groupedId: options.groupId,
-          width: options.width,
-          height: options.height,
-          duration: options.duration,
-          waveform: options.waveform
-        } as any);
-        if(updates?.phantomchatMid) {
-          const storage = this.getHistoryMessagesStorage(peerId);
-          const realMid = updates.phantomchatMid;
-          // Build a minimal message/tempMessage so bubbles.ts can remid the
-          // optimistic bubble and flip ⏳ → ✓ the same way text messages do
-          // (undefined tempMessage would crash makeFullMid and skip status).
-          const tempMessage: any = {
-            _: 'message',
-            id: tempMid,
-            mid: tempMid,
-            peerId,
-            pFlags: {out: true, is_outgoing: true},
-            date: Math.floor(Date.now() / 1000)
-          };
-          const finalMessage: any = {
-            _: 'message',
-            id: realMid,
-            mid: realMid,
-            peerId,
-            pFlags: {out: true, unread: true},
-            date: Math.floor(Date.now() / 1000)
-          };
-          // The VMT send path already stored the full row (media, sender) under
-          // the real mid; `finalMessage` is only enough to remid the bubble.
-          this.settleDialogTopAfterSend((storage.get(realMid) as MyMessage) || finalMessage, tempMid);
-          this.rootScope.dispatchEvent('messages_pending');
-          this.rootScope.dispatchEvent('message_sent', {
-            storageKey: storage.key,
-            tempId: tempMid,
-            tempMessage,
-            mid: realMid,
-            message: finalMessage
-          });
-        } else {
-          // VMT returned emptyUpdates — a guard clause rejected the send
-          // (missing key, no pubkey mapping, invalid blob, etc.). Surface
-          // the failure so the UI can notify the user instead of silently
-          // swallowing it.
-          this.log.error('[PhantomChat.chat] sendFile P2P: VMT returned emptyUpdates (no phantomchatMid)', {peerId, tempMid, type: phantomchatType});
-          this.rootScope.dispatchEvent('phantomchat_file_upload_failed', {peerId, mid: tempMid, error: 'P2P send failed — VMT returned empty updates'});
-        }
-      } catch(err) {
-        this.log.error('sendFile P2P shortcut failed:', err);
-        this.rootScope.dispatchEvent('phantomchat_file_upload_failed', {peerId, mid: tempMid, error: err instanceof Error ? err.message : String(err)});
-      }
+    if(isPhantomChatPeerId(peerIdNumForFile) && (file instanceof File || file instanceof Blob)) {
+      await this.sendFileViaBridge(options);
       return;
     }
 

@@ -129,6 +129,8 @@ import {Accessor, createEffect, createMemo, createRoot, createSignal, on, onClea
 import {createStore} from 'solid-js/store';
 import SelectedEffect from '@components/chat/selectedEffect';
 import windowSize from '@helpers/windowSize';
+import AttachmentTray from '@components/chat/attachmentTray';
+import {sendBatchThenText, shouldUseAttachmentTray} from '@lib/phantomchat/composer-attachments';
 import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import accumulate from '@helpers/array/accumulate';
 import splitStringByLength from '@helpers/string/splitStringByLength';
@@ -204,6 +206,12 @@ export default class ChatInput {
   public messageInput: HTMLElement;
   public messageInputField: InputFieldAnimated;
   private fileInput: HTMLInputElement;
+  /**
+   * Staging tray for PhantomChat peers: they publish one rumor per file, so a
+   * multi-file pick is staged here instead of going through `PopupNewMedia`.
+   * Undefined for every other peer type, which keeps the tweb flow untouched.
+   */
+  private attachmentTray?: AttachmentTray;
   private inputMessageContainer: HTMLDivElement;
   private btnSend: HTMLButtonElement;
   public btnCancelRecord: HTMLButtonElement;
@@ -1205,6 +1213,11 @@ export default class ChatInput {
     this.inlineHelper = new InlineHelper(this.rowsWrapper, this.autocompleteHelperController, this.chat, this.managers);
     this.rowsWrapper.append(this.newMessageWrapper);
 
+    // The composer attachment tray (see AttachmentTray) is created per peer in
+    // `updateAttachmentTray`, invoked from `finishPeerChange`: `construct` runs
+    // from `Chat.init`, which `setPeer` calls *before* it assigns `chat.peerId`,
+    // so the peer is not known yet at this point.
+
     this.btnCancelRecord = this.createButtonIcon('binfilled btn-circle btn-record-cancel chat-input-secondary-button chat-secondary-button');
 
     this.btnSendContainer = document.createElement('div');
@@ -1329,11 +1342,15 @@ export default class ChatInput {
         return;
       }
 
-      const newMediaPopup = getCurrentNewMediaPopup();
-      if(newMediaPopup) {
-        newMediaPopup.addFiles(files);
+      if(this.attachmentTray) {
+        this.stageAttachments(files);
       } else {
-        PopupElement.createPopup(PopupNewMedia, this.chat, files, this.willAttachType);
+        const newMediaPopup = getCurrentNewMediaPopup();
+        if(newMediaPopup) {
+          newMediaPopup.addFiles(files);
+        } else {
+          PopupElement.createPopup(PopupNewMedia, this.chat, files, this.willAttachType);
+        }
       }
 
       this.fileInput.value = '';
@@ -1968,11 +1985,18 @@ export default class ChatInput {
     this.placeholderParamsMiddlewareHelper.destroy();
     appNavigationController.removeItem(this.inputHelperNavigationItem);
     this.listenerSetter.removeAll();
+    this.removeAttachmentTray();
     this.middlewareHelper.destroy();
     this.setCurrentHover();
   }
 
   public cleanup(helperToo = true) {
+    // Peer changes reach here (`Chat.finishPeerChange` -> `Chat.cleanup`), and
+    // `ChatInput.destroy` only runs when the tab goes away. Any file staged in
+    // the previous chat must not survive into the next one: `finishPeerChange`
+    // builds the tray again for the incoming peer.
+    this.removeAttachmentTray();
+
     if(this.chat && !this.chat.peerId) {
       this.chatInput.classList.add('hide');
       this.goDownBtn.classList.add('hide');
@@ -2117,6 +2141,10 @@ export default class ChatInput {
     const previousSendAs = this.sendAs;
     const sendAs = this.createSendAs();
     const filteredAttachMenuButtons = this.filterAttachMenuButtons();
+
+    // The peer is known here (unlike in `construct`), so this is where the
+    // PhantomChat attachment tray is created or torn down.
+    this.updateAttachmentTray(peerId);
 
     const [
       isBroadcast,
@@ -3302,7 +3330,7 @@ export default class ChatInput {
     if(this.chat.type === ChatType.Stories && isInputEmpty && !this.freezedFocused && this.canForwardStory) {
       this.forwardStoryCallback?.(e as MouseEvent);
       return;
-    } else if(!this.recorder || this.recording || !isInputEmpty || this.forwarding || this.editMsgId || this.suggestedPost?.hasMedia) {
+    } else if(!this.recorder || this.recording || !isInputEmpty || this.attachmentTray?.hasFiles() || this.forwarding || this.editMsgId || this.suggestedPost?.hasMedia) {
       if(this.recording) {
         if((Date.now() - this.recordStartTime) < RECORD_MIN_TIME) {
           this.onCancelRecordClick();
@@ -3681,10 +3709,11 @@ export default class ChatInput {
     let icon: ChatSendBtnIcon;
 
     const isInputEmpty = this.isInputEmpty();
+    const hasAttachments = !!this.attachmentTray?.hasFiles();
 
     if(this.chat.type === ChatType.Stories && isInputEmpty && !this.freezedFocused && this.canForwardStory) icon = 'forward';
     else if(this.editMsgId) icon = 'edit';
-    else if(!this.recorder || this.recording || !isInputEmpty || this.forwarding || this.suggestedPost?.hasMedia) icon = this.chat.type === ChatType.Scheduled ? 'schedule' : 'send';
+    else if(!this.recorder || this.recording || !isInputEmpty || hasAttachments || this.forwarding || this.suggestedPost?.hasMedia) icon = this.chat.type === ChatType.Scheduled ? 'schedule' : 'send';
     else icon = 'record';
 
     ['send', 'record', 'edit', 'schedule', 'forward'].forEach((i) => {
@@ -3697,7 +3726,7 @@ export default class ChatInput {
     // there's no dead button. (Scheduled shows 'schedule', Stories 'forward',
     // forwarding/edit/suggested-post all have a real action — leave those.)
     if(!VOICE_RECORDING_ENABLED) {
-      const wouldBeRecord = isInputEmpty && !this.editMsgId && !this.forwarding &&
+      const wouldBeRecord = isInputEmpty && !hasAttachments && !this.editMsgId && !this.forwarding &&
         !this.suggestedPost?.hasMedia &&
         this.chat.type !== ChatType.Stories && this.chat.type !== ChatType.Scheduled;
       this.btnSendContainer.style.display = wouldBeRecord ? 'none' : '';
@@ -3928,6 +3957,102 @@ export default class ChatInput {
     this.onMessageSent2?.();
   }
 
+  /**
+   * Creates the composer attachment tray when `peerId` is a PhantomChat peer
+   * and removes it otherwise. Called on every peer change, because one `Chat`
+   * (and therefore one `ChatInput`) instance is reused across peers.
+   */
+  private updateAttachmentTray(peerId: Chat['peerId']) {
+    const usesTray = shouldUseAttachmentTray(peerId, this.chat.type === ChatType.Scheduled);
+
+    if(!usesTray) {
+      this.removeAttachmentTray();
+      return;
+    }
+
+    if(!this.attachmentTray) {
+      this.attachmentTray = new AttachmentTray();
+      this.attachmentTray.onChange = () => this.updateSendBtn();
+      this.rowsWrapper.insertBefore(this.attachmentTray.element, this.newMessageWrapper);
+    }
+  }
+
+  /**
+   * Drops the tray and any staged files (which also revokes their object URLs).
+   * The tray owns no other listeners, so removing the element is enough.
+   */
+  private removeAttachmentTray() {
+    if(!this.attachmentTray) {
+      return;
+    }
+
+    this.attachmentTray.clear();
+    this.attachmentTray.element.remove();
+    this.attachmentTray = undefined;
+  }
+
+  /**
+   * Stages files in the composer tray. Returns false when this chat has no tray
+   * (i.e. it is not a PhantomChat peer) so callers can fall back to the popup.
+   */
+  public addFilesToTray(files: File[]): boolean {
+    if(!this.attachmentTray || this.editMsgId || !files?.length) {
+      return false;
+    }
+
+    this.stageAttachments(files);
+    return true;
+  }
+
+  private stageAttachments(files: File[]): void {
+    if(!this.attachmentTray) {
+      return;
+    }
+
+    const rejected = this.attachmentTray.addFiles(files);
+    rejected.forEach((entry) => toast(entry.message));
+    this.updateSendBtn();
+  }
+
+  /**
+   * Dispatches the staged batch, one file at a time. Returns false when a file
+   * failed, in which case the batch stays staged for a retry.
+   */
+  private async sendPendingAttachments(): Promise<boolean> {
+    const tray = this.attachmentTray;
+    if(!tray) {
+      return true;
+    }
+
+    const sendingParams = this.chat.getMessageSendingParams();
+    const result = await tray.sendAll(async(item) => {
+      const sent = await this.managers.appMessagesManager.sendPhantomChatAttachment({
+        ...sendingParams,
+        file: item.file,
+        isMedia: item.kind === 'media',
+        // Present once the tray thumbnail decoded the image; the popup path gets
+        // these from the media editor, which the tray deliberately skips.
+        width: item.width,
+        height: item.height
+      });
+
+      // The PhantomChat bridge signals failure by resolving without a message
+      // (it dispatches `phantomchat_file_upload_failed` for the bubble itself).
+      // Treat that as a failed send so the file stays in the tray for a retry
+      // instead of vanishing from a batch that never published.
+      if(!sent) {
+        throw new Error(`${item.file.name} could not be sent.`);
+      }
+    });
+
+    if(result.failed) {
+      toast(result.failed.file.name + ' could not be sent. Still attached.');
+      return false;
+    }
+
+    return true;
+  }
+
   public async sendMessage(force = false) {
     const {editMsgId, chat} = this;
     if(chat.type === ChatType.Scheduled && !force && !editMsgId) {
@@ -3948,7 +4073,28 @@ export default class ChatInput {
       this.btnSend.classList.add('is-sending');
     }
     try {
-      await this.sendMessageInner(force);
+      // PhantomChat batch: attachments go first (one publish per file), then the
+      // typed text, so the text always lands below the files it describes and
+      // the agent sees the attachments before the instruction that refers to
+      // them. A failed file aborts the text send and keeps both staged.
+      if(!this.editMsgId && this.attachmentTray?.hasFiles()) {
+        // The batch keeps the peer it started on, so the typed text has to
+        // follow it: `sendMessageInner` re-reads `this.chat` after the await,
+        // so a chat switch mid-upload would publish the newly opened chat's
+        // draft as if Send had been pressed there. `sendBatchThenText` drops
+        // the text in that case and still lets the files land.
+        const sentAll = await sendBatchThenText(
+          this.chat.peerId,
+          () => this.sendPendingAttachments(),
+          () => this.sendMessageInner(force),
+          () => this.chat.peerId
+        );
+        if(!sentAll) {
+          return;
+        }
+      } else {
+        await this.sendMessageInner(force);
+      }
     } finally {
       this.sendingMessage = false;
       if(this.btnSend) {
