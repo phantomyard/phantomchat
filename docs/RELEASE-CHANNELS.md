@@ -4,9 +4,9 @@
 app at `/preview/index.html`. Both retain the current origin, database names,
 identity, localStorage and Electron profile. The small shared selector remembers
 the choice; selecting Stable explicitly overrides the remembered Preview choice.
-The canonical root manifest preserves the installed PWA identity. Electron ships
-both bundles under the existing `app://localhost` origin; its binary update ring
-remains independent of this frontend selector.
+The canonical root manifest preserves the installed PWA identity. Electron serves
+both from the live site under the existing `app://localhost` origin; its binary
+update ring remains independent of this frontend selector.
 
 ## Release contract
 
@@ -17,8 +17,8 @@ available locally. Dependency-lock changes require exact-content compatibility a
 when locks differ, the pinned source receives an independent frozen install
 without package lifecycle scripts. Stable never uses Preview’s dependency graph.
 
-PWA promotion uses the manual artifact workflow described below. The source pin
-still controls the independent frontend embedded in new Electron binaries.
+PWA promotion uses the manual artifact workflow described below, and it is also
+what moves desktop users to a new Stable frontend.
 Neither merging a feature PR nor publishing Preview promotes either product.
 Andrew owns publication and promotion.
 
@@ -50,9 +50,10 @@ not establish native runtime readiness. Do not call a release verified while tho
 checks remain outstanding.
 
 `node scripts/channels/browser-smoke.mjs` checks desktop/mobile switching against
-the combined output. After `node electron/build.mjs`, run
-`xvfb-run -a node scripts/channels/electron-smoke.mjs` on Linux (omit xvfb on
-native desktop runners). Both use disposable data and block live connections.
+the combined output and blocks live connections. After `node electron/build.mjs`,
+run `xvfb-run -a node scripts/channels/electron-smoke.mjs` on Linux (omit xvfb on
+native desktop runners). It uses disposable data against the live site, with relays
+blocked. `electron-shell-smoke.mjs` and `electron-upgrade-smoke.mjs` run beside it.
 The build also runs real Stable/Preview MessageStore code against the same
 IndexedDB fixture, including writes and cursor changes followed by Stable reopen.
 

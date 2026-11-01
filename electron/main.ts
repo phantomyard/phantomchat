@@ -4,18 +4,21 @@
  * Security posture (issue #150):
  *  - contextIsolation: true, nodeIntegration: false, sandbox: true
  *  - narrow typed preload API only (see preload.ts)
- *  - production UI is loaded from the packaged bundle via the app:// protocol —
- *    never from a remote origin
- *  - strict CSP (build-time computed hashes for the boot-splash inline script,
- *    see build.mjs), navigation away from app:// is blocked, window.open is
- *    denied and vetted https links are handed to the OS browser
+ *  - the UI runs on the private app:// origin; its files come from the pinned
+ *    live PWA origin, with a local copy for offline launches (frontendProxy.ts)
+ *  - strict CSP on every app:// response (csp.ts), navigation away from app://
+ *    is blocked, window.open is denied and vetted https links are handed to the
+ *    OS browser
  */
 import {app, BrowserWindow, session, shell, protocol, net, ipcMain, dialog} from 'electron';
-import {readFileSync, writeFileSync, renameSync, mkdirSync, existsSync} from 'fs';
-import {join, normalize, relative, isAbsolute, extname} from 'path';
+import {readFileSync, writeFileSync, renameSync, mkdirSync} from 'fs';
+import {join} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
 import {attachEditableContextMenu} from './contextMenu';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
+import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontendProxy';
+import {SPLASH_PATH} from './splash';
+import {piCliPath, runPiVersion} from './piHarness';
 import {
   resolvePermissionRequest,
   isPermissionCheckAllowed,
@@ -52,9 +55,13 @@ if(process.argv.includes('--log-path')) {
   process.exit(0);
 }
 
+// Packaging probe: proves the bundled Pi harness runs on this install.
+if(process.argv.includes('--pi-version')) {
+  process.exit(runPiVersion(process.execPath, piCliPath(app.isPackaged, process.resourcesPath, __dirname)));
+}
+
 // Standard, secure scheme so the renderer gets a proper origin (localStorage,
-// crypto.subtle, fetch all behave like the web app) while still serving the
-// immutable packaged bundle. allowServiceWorkers is required: without it
+// crypto.subtle, fetch all behave like the web app). allowServiceWorkers is required: without it
 // navigator.serviceWorker.register() rejects on app:// and the SW-backed
 // features (media streaming, notifications, the message port) never start.
 protocol.registerSchemesAsPrivileged([
@@ -63,8 +70,6 @@ protocol.registerSchemesAsPrivileged([
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
-const DIST_DIR = isDev ? undefined : join(__dirname, '../../dist');
-const CSP_FILE = join(__dirname, 'csp.json');
 
 // Single instance: a second launch focuses the existing window instead of
 // forking a second app instance (matches the PWA tab model).
@@ -173,9 +178,7 @@ function promptForPermission(
 }
 
 let mainWindow: BrowserWindow | null = null;
-// The strict CSP, resolved once at startup (throws — fail closed — when the
-// packaged CSP is broken). createWindow consumes it after whenReady.
-let activeCsp: string | undefined;
+let frontend: ReturnType<typeof createFrontendProxy> | undefined;
 
 // IPC surface — keep it in lockstep with the preload allowlist.
 ipcMain.handle('desktop:get-version', () => app.getVersion());
@@ -212,59 +215,6 @@ ipcMain.handle('desktop:set-permission-setting', (_event, permission: unknown, s
   savePermissionSettings();
   return permissionSettings;
 });
-
-function serveFromDisk(filePath: string): Response {
-  // net.fetch handles MIME types and is asar-transparent.
-  return net.fetch('file://' + filePath) as unknown as Response;
-}
-
-function serveFile(url: URL): Response {
-  // pathname is e.g. /index.html or /assets/js/xxx.js
-  let pathname = decodeURIComponent(url.pathname);
-  if(pathname === '/' || pathname === '') {
-    pathname = '/index.html';
-  }
-
-  // Resolve inside DIST_DIR only — reject any traversal attempt. path.relative
-  // is the real containment check: a startsWith() prefix test would accept a
-  // sibling directory sharing the prefix (<dist>/../dist-evil/x). An empty
-  // relative path means DIST_DIR itself, also rejected.
-  const resolved = normalize(join(DIST_DIR!, pathname));
-  const rel = relative(DIST_DIR!, resolved);
-  if(rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
-    return new Response('forbidden', {status: 403});
-  }
-
-  const filePath = existsSync(resolved) ? resolved : join(DIST_DIR!, 'index.html');
-
-  if(!existsSync(filePath)) {
-    return new Response('not found', {status: 404});
-  }
-
-  return serveFromDisk(filePath);
-}
-
-function getCsp(): string | undefined {
-  if(isDev) {
-    // Dev builds load from the Vite dev server, which supplies its own
-    // headers; there is no packaged CSP to apply.
-    return undefined;
-  }
-  try {
-    const parsed = JSON.parse(readFileSync(CSP_FILE, 'utf8')) as {header?: string};
-    if(typeof parsed.header !== 'string' || parsed.header.length === 0) {
-      throw new Error('missing or empty "header" field');
-    }
-    return parsed.header;
-  } catch(err) {
-    // Fail closed: a packaged build without its strict CSP must not start —
-    // shipping an unprotected renderer would silently void the security
-    // posture this app is built around.
-    throw new Error(
-      `packaged CSP missing or malformed (${CSP_FILE}) — refusing to start without the Content-Security-Policy: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-}
 
 /**
  * Vet a renderer-originated URL. Only well-formed https links may leave the
@@ -305,23 +255,6 @@ function createWindow(): void {
   // bubbles, the send button and search but not the composer.
   attachEditableContextMenu(mainWindow.webContents);
   attachWindowDiagnostics(mainWindow);
-
-  if(activeCsp) {
-    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-      // CSP only for the packaged app:// origin; the dev server is exempt.
-      // Document-Policy opts the page in to JS call-stack collection, so a
-      // frozen renderer's stack can be written to the diagnostics log.
-      if(details.url.startsWith('app://')) {
-        callback({responseHeaders: {
-          ...details.responseHeaders,
-          'Content-Security-Policy': [activeCsp!],
-          'Document-Policy': ['include-js-call-stacks-in-crash-reports']
-        }});
-      } else {
-        callback({});
-      }
-    });
-  }
 
   // Deny all renderer-initiated window creation; https links go to the OS.
   mainWindow.webContents.setWindowOpenHandler(({url}) => {
@@ -383,7 +316,7 @@ function createWindow(): void {
   if(isDev) {
     mainWindow.loadURL(DEV_URL!);
   } else {
-    mainWindow.loadURL('app://localhost/index.html');
+    mainWindow.loadURL('app://localhost' + (frontend!.hasEntry() ? ENTRY_PATH : SPLASH_PATH));
   }
 
   mainWindow.on('closed', () => {
@@ -399,12 +332,14 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
-  // Resolved before anything is served — a broken packaged CSP aborts the
-  // boot instead of starting an unprotected renderer.
-  activeCsp = getCsp();
   loadPermissionSettings();
   if(!isDev) {
-    protocol.handle('app', (request) => serveFile(new URL(request.url)));
+    frontend = createFrontendProxy({
+      origin: resolveFrontendOrigin(app.isPackaged, process.env.PHANTOMCHAT_FRONTEND_ORIGIN),
+      cacheDir: join(app.getPath('userData'), 'frontend-cache'),
+      fetch: (url, init) => net.fetch(url, init)
+    });
+    protocol.handle('app', (request) => frontend!.handle(request));
   }
   createWindow();
   startDiagnosticsAfterReady(() => mainWindow);

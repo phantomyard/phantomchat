@@ -8,7 +8,8 @@ unaffected and continues to deploy via GitHub Pages (`docs/RELEASE.md`).
 
 - `electron/main.ts` — main process. Serves the packaged frontend through a
   private `app://` protocol (standard + secure, so the renderer gets a real
-  origin and the immutable bundle never loads from a remote origin).
+  origin). Its files come from the pinned live PWA origin, with a local copy for
+  offline launches: see "Thin shell" below.
 - `electron/preload.ts` — contextIsolation preload exposing exactly one
   narrow typed API, `window.phantomchatDesktop` (version, platform,
   https-only `openExternal`). No other IPC surface exists.
@@ -41,7 +42,7 @@ pnpm run typecheck:electron
 ### Linux
 
 ```bash
-pnpm run app:build        # PWA build + electron bundle + AppImage/.deb/.rpm into release/<version>/
+pnpm run app:build        # electron bundle + Pi harness + AppImage/.deb/.rpm into release/<version>/
 pnpm run app:pack         # same but unpacked dir only (faster iteration)
 ```
 
@@ -57,7 +58,26 @@ running a newer version" popup). Build local test packages with a version
 at least as high as the installed one:
 `APP_VERSION=1.0.<n> pnpm run app:build`.
 
-The packaged UI is served from `app://localhost`. That scheme is registered
+## Thin shell
+
+The desktop app ships no frontend. `electron/frontendProxy.ts` serves
+`app://localhost` from `https://chat.phantomyard.ai`, so a PWA deploy reaches
+desktop with no build, signature or notarization, and the update pill works as it
+does on the web. Rebuild the app only for changes to `electron/`, the builder
+config, Pi or Chromium. New frontends must feature-check the desktop bridge,
+because they can land on an older app.
+
+The first launch opens the bootstrap in `electron/splash.ts`, which stores the
+entry document and hands over. An install arriving from a bundled release takes
+the same path: its identity, phantoms, history and settings already sit on this
+origin and carry over untouched, so nobody reconfigures anything.
+`scripts/channels/electron-upgrade-smoke.mjs` proves that with a profile made by
+v1.1.86, the last bundled release, so keep that release published.
+
+The Pi harness (#276) ships inert in `resources/pi`, from its own package in
+`electron/pi-harness`. Nothing starts it except the `--pi-version` packaging probe.
+
+The UI is served from `app://localhost`. That scheme is registered
 with `allowServiceWorkers` (see `electron/scheme.ts`), and the Cache API
 store keys use a synthetic `https://phantomchat.invalid/` base there,
 because Chromium's Cache API rejects `app://` request URLs.

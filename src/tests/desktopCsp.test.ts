@@ -1,21 +1,24 @@
-import {readFileSync} from 'node:fs';
+import {buildCsp, inlineScriptHashes} from '../../electron/csp';
 
-// Pin the policy emitted into electron/dist/csp.json, rather than a second
-// copy of the policy that could drift away from the packaged desktop build.
-const build = readFileSync('electron/build.mjs', 'utf8');
-const scriptSrc = build.match(/`script-src ([^`]+)`/)?.[1];
+const scriptSrcOf = (policy: string) => policy.split('; ').find((part) => part.startsWith('script-src'))?.split(' ');
+const DOCUMENT = '<script>boot()</script><script src="x.js"></script><script> </script>';
 
-describe('packaged desktop script-src', () => {
+describe('desktop script-src', () => {
   test('allows rlottie WebAssembly compilation', () => {
-    expect(scriptSrc).toBeDefined();
-    expect(scriptSrc?.split(' ')).toContain("'wasm-unsafe-eval'");
+    expect(scriptSrcOf(buildCsp())).toContain("'wasm-unsafe-eval'");
   });
 
   test('keeps JavaScript eval and arbitrary inline scripts blocked', () => {
-    expect(scriptSrc).toBeDefined();
-    expect(scriptSrc?.split(' ')).not.toContain("'unsafe-eval'");
-    expect(scriptSrc?.split(' ')).not.toContain("'unsafe-inline'");
+    const scriptSrc = scriptSrcOf(buildCsp(DOCUMENT));
+    expect(scriptSrc).not.toContain("'unsafe-eval'");
+    expect(scriptSrc).not.toContain("'unsafe-inline'");
     expect(scriptSrc).toContain("'self'");
-    expect(scriptSrc).toContain("${scriptHashes.join(' ')}");
+  });
+
+  test('allows only the inline script bodies in the served document', () => {
+    const hashes = inlineScriptHashes(DOCUMENT);
+    expect(hashes).toHaveLength(1);
+    expect(scriptSrcOf(buildCsp(DOCUMENT))).toEqual(expect.arrayContaining(hashes));
+    expect(scriptSrcOf(buildCsp()).some((source) => source.includes('sha256-'))).toBe(false);
   });
 });

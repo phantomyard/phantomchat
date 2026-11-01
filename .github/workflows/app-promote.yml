@@ -8,8 +8,10 @@ on:
         required: false
         default: ''
 
+# Its own lock: promote only flips published releases, and sharing the build's lock
+# queued it behind builds, where a newer pending run could cancel it.
 concurrency:
-  group: electron-release
+  group: electron-promote
   cancel-in-progress: false
 
 permissions:
