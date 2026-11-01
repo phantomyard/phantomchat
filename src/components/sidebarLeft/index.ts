@@ -16,6 +16,7 @@ import AppSearchSuper, {SearchSettingsEntry} from '@components/appSearchSuper';
 import {DateData, fillTipDates} from '@helpers/date';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import AppSettingsTab from '@components/sidebarLeft/tabs/settings';
+import AppGeneralSettingsTab from '@components/sidebarLeft/tabs/generalSettings';
 import AppContactsTab from '@components/sidebarLeft/tabs/contacts';
 import AppArchivedTab from '@components/sidebarLeft/tabs/archivedTab';
 import AppAddMembersTab from '@components/sidebarLeft/tabs/addMembers';
@@ -38,7 +39,6 @@ import ripple from '@components/ripple';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import formatNumber from '@helpers/number/formatNumber';
 import {AppManagers} from '@lib/managers';
-import themeController from '@helpers/themeController';
 import contextMenuController from '@helpers/contextMenuController';
 import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG} from '@lib/appDialogsManager';
 import apiManagerProxy from '@lib/apiManagerProxy';
@@ -95,7 +95,6 @@ import createSubmenuTrigger from '@components/createSubmenuTrigger';
 import {RequestHistoryOptions} from '@appManagers/appMessagesManager';
 import useHasFoldersSidebar, {useIsSidebarCollapsed} from '@stores/foldersSidebar';
 import isObject from '@helpers/object/isObject';
-import {useAppSettings} from '@stores/appSettings';
 import {isFoldersSidebarEnabled, toggleFoldersSidebar} from '@lib/folders-sidebar-layout';
 import {openEmojiStatusPicker} from '@components/sidebarLeft/emojiStatusPicker';
 import {animateValue} from '@helpers/animateValue';
@@ -645,44 +644,18 @@ export class AppSidebarLeft extends SidebarSlider {
       });
     };
 
-    const darkModeText = document.createElement('span');
-    const animationsText = document.createElement('span');
-
-    const darkModeBtn: ButtonMenuItemOptionsVerifiable = {
+    const appearanceBtn: ButtonMenuItemOptionsVerifiable = {
       icon: 'darkmode',
-      regularText: darkModeText,
+      text: 'PhantomChat.GeneralSettingsViewController',
       separator: true,
-      onClick: () => {}
-    };
-
-    const animationsBtn: ButtonMenuItemOptionsVerifiable = {
-      id: 'animations-toggle',
-      icon: 'animations',
-      regularText: animationsText,
       onClick: () => {
-        toggleAnimations();
-      },
-      verify: () => !liteMode.isEnabled()
+        closeTabsBefore(() => {
+          this.createTab(AppGeneralSettingsTab).open(AppGeneralSettingsTab.getInitArgs());
+        });
+      }
     };
 
-    const hasAnimations = () => !rootScope.settings.liteMode.animations;
-    const toggleAnimations = async() => {
-      updateAnimationsToggleButton(!hasAnimations());
-      const [, setAppSettings] = useAppSettings();
-      // eslint-disable-next-line @typescript-eslint/await-thenable
-      await setAppSettings('liteMode', 'animations', hasAnimations());
-    };
-    const updateAnimationsToggleButton = (enabled: boolean) => {
-      const el = animationsBtn.element;
-      if(!el) return;
-      const icon = el.querySelector('.tgico');
-      enabled ?
-        icon?.classList.add('animations-icon-off') :
-        icon?.classList.remove('animations-icon-off');
-      animationsText.replaceChildren(i18n(enabled ? 'DisableAnimations' : 'EnableAnimations'));
-    };
-
-    // Owner batch 6 (2026-10-30): sits directly under Disable Animations and
+    // Owner batch 6 (2026-10-30): sits directly under Appearance and
     // flips folders between the left rail and a strip above the chat list. The
     // rail's own bottom button drives the same preference (folders-sidebar-layout).
     const sidebarText = document.createElement('span');
@@ -783,7 +756,7 @@ export class AppSidebarLeft extends SidebarSlider {
           });
         }, 0);
       }
-    }, darkModeBtn, animationsBtn, sidebarBtn, {
+    }, appearanceBtn, sidebarBtn, {
       icon: 'animations',
       text: 'LiteMode.Title',
       onClick: () => {
@@ -949,23 +922,7 @@ export class AppSidebarLeft extends SidebarSlider {
         newSubmenu.onOpen();
         btnArchive.element?.append(this.archivedCount);
 
-        darkModeText.replaceChildren(i18n(themeController.isNight() ? 'DisableDarkMode' : 'EnableDarkMode'));
-        updateAnimationsToggleButton(hasAnimations());
         updateSidebarToggleButton(isFoldersSidebarEnabled());
-
-        const darkModeEl = darkModeBtn.element;
-        if(darkModeEl) {
-          darkModeEl.addEventListener(CLICK_EVENT_NAME, (e) => {
-            e.stopPropagation();
-            const icon = darkModeEl.querySelector('.tgico');
-            const rect = icon.getBoundingClientRect();
-            themeController.switchTheme(undefined, {
-              x: rect.left + rect.width / 2,
-              y: rect.top + rect.height / 2
-            });
-            pause(20).then(() => contextMenuController.close());
-          }, true);
-        }
 
         element.append(getVersionLink());
       },
@@ -1609,7 +1566,7 @@ export class AppSidebarLeft extends SidebarSlider {
     destroyable = true,
     doNotAppend?: boolean
   ) {
-    const ctorsToOpenInPopup = [AppSettingsTab, AppEditFolderTab, AppChatFoldersTab]
+    const ctorsToOpenInPopup = [AppSettingsTab, AppGeneralSettingsTab, AppEditFolderTab, AppChatFoldersTab]
     if(this.isCollapsed() && !mediaSizes.isLessThanFloatingLeftSidebar && ctorsToOpenInPopup.includes(ctor as any)) {
       const popup = new SettingsSliderPopup(this.managers);
       popup.show();

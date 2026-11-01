@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * E2E: the UI theme selector (#317), through the real Interface Settings row.
+ * E2E: the UI theme selector (#317), through the real Appearance menu entry.
  *
  *  - Fun and Relaxed is the default: no data-ui-theme attribute on <html>.
  *  - Picking Boring Corporate persists per device and reloads into the costume.
@@ -45,30 +45,28 @@ async function createIdentity(page) {
   await ready(page);
 }
 
-async function openInterfaceSettings(page) {
+async function openAppearance(page) {
   const menuButton = page.locator('.folders-sidebar__menu-button, .btn-menu-toggle').first();
   await menuButton.waitFor({state: 'visible'});
   const box = await menuButton.boundingBox();
-  const settingsItem = page.locator('.btn-menu.active .btn-menu-item', {hasText: 'Settings'}).first();
+  const appearanceItem = page.locator('.btn-menu.active .btn-menu-item', {hasText: 'Appearance'}).first();
   // Straight after a reload the button paints before its handler is attached,
   // so a click can land on nothing: click again until the menu actually opens.
   for(let attempt = 1; ; attempt++) {
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     try {
-      await settingsItem.waitFor({state: 'visible', timeout: 3000});
+      await appearanceItem.waitFor({state: 'visible', timeout: 3000});
       break;
     } catch(err) {
       if(attempt === 10) throw err;
     }
   }
-  await settingsItem.click();
-  await page.waitForTimeout(1200);
-  await page.locator('#column-left .row', {hasText: 'Interface Settings'}).first().click();
+  await appearanceItem.click();
   await page.waitForTimeout(1200);
 }
 
 async function pick(page, name) {
-  await openInterfaceSettings(page);
+  await openAppearance(page);
   const row = page.locator('#column-left .row', {hasText: name}).first();
   const navigation = page.waitForEvent('load', {timeout: 60000});
   await row.click();

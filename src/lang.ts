@@ -3622,7 +3622,7 @@ const lang = {
   'Stickers.SuggestStickers': 'Suggest Stickers by Emoji',
   'ShareModal.Search.Placeholder': 'Share to...',
   'ShareModal.Search.ForwardPlaceholder': 'Forward to...',
-  'PhantomChat.GeneralSettingsViewController': 'Interface Settings',
+  'PhantomChat.GeneralSettingsViewController': 'Appearance',
   'PhantomChat.InstalledStickerPacksController': 'Stickers',
   'PhantomChat.NotificationSettingsViewController': 'Notifications',
   'PhantomChat.LanguageViewController': 'Language',
@@ -3776,9 +3776,6 @@ const lang = {
     'other_value': 'Subscribe to [PhantomChat Premium]() to increase upload speeds %d times.'
   },
   'Chat.Service.Refund': '%@ refunded %@',
-  'EnableDarkMode': 'Enable Dark Mode',
-  'DisableDarkMode': 'Disable Dark Mode',
-  'DisableAnimations': 'Disable Animations',
   'DisableSidebar': 'Disable Sidebar',
   'EnableSidebar': 'Enable Sidebar',
   'AudioAndVideoTranscription.PremiumAlert': 'Subscribe to PhantomChat Premium to unlock video and audio transcription. [Read More]()',
