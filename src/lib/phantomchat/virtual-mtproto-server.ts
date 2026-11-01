@@ -1679,11 +1679,24 @@ export class PhantomChatMTProtoServer {
    * form as `applyGroupDialogFolder` in phantomchat-groups-sync.ts.
    */
   private async isArchivedPeer(peerId: number): Promise<boolean> {
+    const dialogsStorage = (rootScope as any)?.managers?.dialogsStorage;
+    if(!dialogsStorage?.getAnyDialog) {
+      // FAIL OPEN, LOUDLY. A renamed or moved hook answers `undefined` through
+      // both optional chains, which turns this whole 1:1 archive refusal back
+      // into dead code — the exact b21b342 failure mode, and the reason it went
+      // unnoticed is that nothing said a word. Same pattern as
+      // `applyGroupDialogFlags` (phantomchat-groups-sync.ts:483).
+      console.warn(LOG_PREFIX, 'isArchivedPeer: dialogsStorage.getAnyDialog missing — archive guard is INERT');
+      return false;
+    }
+
     try {
-      const dialogsStorage = (rootScope as any)?.managers?.dialogsStorage;
-      const dialog = await dialogsStorage?.getAnyDialog?.(peerId);
+      const dialog = await dialogsStorage.getAnyDialog(peerId);
       return !!dialog && dialog.folder_id === FOLDER_ID_ARCHIVE;
-    } catch{
+    } catch(err) {
+      // A rejected proxy call must not be silent either: it means the guard
+      // could not answer, not that the peer is unarchived.
+      console.warn(LOG_PREFIX, 'isArchivedPeer: dialog lookup failed for', Math.abs(peerId), err);
       return false;
     }
   }
