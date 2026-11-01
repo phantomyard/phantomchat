@@ -204,8 +204,8 @@
     },
     "src/components/chat/chat.ts": {
       "stable": "0180ebad74e87a2b96ceec9163e498bfabd6f1476e504fb5e81e9d84accad306",
-      "preview": "0180ebad74e87a2b96ceec9163e498bfabd6f1476e504fb5e81e9d84accad306",
-      "reason": "Read-only archived composer: the chat pane sets `archived-readonly` from the dialog folder_id === 1 on navigation and follows a PhantomChat dialog_folder_update event while open. Presentation only - the send refusal is enforced in GroupAPI (groups) and in the VMT bridge (1:1 chats)."
+      "preview": "26cd3245d3d67e7675be70fda57f49e9779f4e312a023dc1e88c514dc27e135d",
+      "reason": "Read-only archived composer: the chat pane sets `archived-readonly` from the dialog folder_id === 1 on navigation and follows a PhantomChat dialog_folder_update event while open. Presentation only - the send refusal is enforced in GroupAPI (groups) and in the VMT bridge (1:1 chats). Hide unsupported Auto-delete controls: the P2P adapter has no history-TTL persistence or expiry behavior. Visibility only; no persistence, schema or protocol change. Independent exact-head content review required. Scoped search is also disabled at initSearch so avatar, selected-text, hashtag and reaction entry points cannot open the misleading panel."
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "da4f22f8961bbbfd9af4f79db5a5db3cc3e1a8c3897379768b48c4f120962d0a",
@@ -431,6 +431,11 @@
       "stable": "71615d13642ac455a34229fbfebe4b27721653c2866f8dddff0daa7aefde7be0",
       "preview": "71615d13642ac455a34229fbfebe4b27721653c2866f8dddff0daa7aefde7be0",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "src/components/chat/topbar.ts": {
+      "stable": "1d1c76774e47c8e0a0c9c1100df551ee074305e282cf1913e4bc55fea6a345ce",
+      "preview": "11719c62e8cf9d01babc05e9ba53c3f7766334a54287c50920f3b559933819bc",
+      "reason": "Chat menu presentation only: derive Delete versus Leave Group from the same P2P group admin record as the confirmation popup; hide unsupported chat search. No persistence, schema, identity or wire changes. Independent exact-head content review required. Lookup failures retain Leave Group and do not prevent menu opening; a stale chat skips only the label write, preserving the submenu hook."
     }
   }
 }

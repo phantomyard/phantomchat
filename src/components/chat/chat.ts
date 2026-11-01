@@ -1358,10 +1358,11 @@ export default class Chat extends EventListenerBase<{
     this.searchSignal?.(undefined);
   }
 
-  public initSearch(options: {query?: string, filterPeerId?: PeerId, reaction?: Reaction} = {}): void {
-    if(!this.peerId) return;
-    options.query ||= '';
-    this.searchSignal(options);
+  public initSearch(_options: {query?: string, filterPeerId?: PeerId, reaction?: Reaction} = {}): void {
+    // The local search adapter ignores the peer and excludes groups. Keep every
+    // entry point (selection, avatar, hashtag and reaction) from opening a
+    // misleading chat-search panel until the adapter supports scoped search.
+    return;
   }
 
   public canSend(action?: ChatRights) {
@@ -1655,17 +1656,9 @@ export default class Chat extends EventListenerBase<{
   }
 
   public canManageAutoDelete = async() => {
-    const specialChats = [REPLIES_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID.toPeerId(), VERIFICATION_CODES_BOT_ID, HIDDEN_PEER_ID, SERVICE_PEER_ID, rootScope.myId];
-    if(specialChats.includes(this.peerId)) return false;
-
-    if(this.peerId.isUser()) return true;
-
-    const {chat, isMonoforum}  = await namedPromises({
-      chat: this.managers.appChatsManager.getChat(this.peerId.toChatId()),
-      isMonoforum: this.managers.appChatsManager.isMonoforum(this.peerId.toChatId())
-    });
-
-    return !isMonoforum && hasRights(chat, 'change_info');
+    // No P2P history-TTL persistence, expiry scheduler or relay contract exists.
+    // Hide the control rather than offering a setting that never deletes.
+    return false;
   }
 
   public toggleChatIfMedium() {
