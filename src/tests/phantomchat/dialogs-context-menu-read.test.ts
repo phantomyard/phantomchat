@@ -42,3 +42,23 @@ describe('direct-chat Mark as Read context-menu gesture', () => {
     expect(resetUnread.mock.invocationCallOrder[0]).toBeLessThan(markDialogUnread.mock.invocationCallOrder[0]);
   });
 });
+
+describe('threaded (topic) Mark as Read context-menu gesture', () => {
+  it('does not clear the whole conversation when a threadId is set', async() => {
+    resetUnread.mockClear();
+    const peerId = 1_000_000_000_000_002;
+    const threadId = 42;
+    const markDialogUnread = vi.fn().mockResolvedValue(undefined);
+    const readHistory = vi.fn().mockResolvedValue(undefined);
+    const menu = new Menu({appMessagesManager: {markDialogUnread, readHistory}} as any) as any;
+    menu.peerId = peerId;
+    menu.threadId = threadId;
+    menu.dialog = {_: 'dialog', peerId, unread_count: 3, top_message: 12345, pFlags: {}};
+    await menu.onUnreadClick();
+    // #348: the explicit-read branch is conversation-scoped, so a topic gesture
+    // must not reach it — it would clear every topic in the chat.
+    expect(resetUnread).not.toHaveBeenCalled();
+    expect(markDialogUnread).not.toHaveBeenCalledWith({peerId, read: true});
+    expect(readHistory).toHaveBeenCalledWith({peerId, maxId: 12345, threadId});
+  });
+});
