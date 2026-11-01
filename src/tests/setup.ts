@@ -46,6 +46,46 @@ if(typeof globalScope.Blob !== 'undefined' && typeof globalScope.Blob.prototype.
   };
 }
 
+// jsdom has no layout engine, so neither observer ever fires. Module-scope
+// singletons (scrollable's animationIntersector, the virtual list's resize
+// hooks) construct one at import time and throw `IntersectionObserver is not
+// defined` during module-graph evaluation before any test runs. These are
+// deliberate no-ops: nothing in jsdom can observe geometry, so tests never
+// assert on callback delivery.
+if(typeof globalScope.IntersectionObserver === 'undefined') {
+  class MockIntersectionObserver {
+    readonly root: Element | null = null;
+    readonly rootMargin = '0px';
+    readonly thresholds: readonly number[] = [0];
+    constructor(_cb: IntersectionObserverCallback, _options?: IntersectionObserverInit) {}
+    observe(_target: Element) {}
+    unobserve(_target: Element) {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] { return []; }
+  }
+
+  Object.defineProperty(globalScope, 'IntersectionObserver', {
+    value: MockIntersectionObserver,
+    configurable: true,
+    writable: true
+  });
+}
+
+if(typeof globalScope.ResizeObserver === 'undefined') {
+  class MockResizeObserver {
+    constructor(_cb: ResizeObserverCallback) {}
+    observe(_target: Element, _options?: ResizeObserverOptions) {}
+    unobserve(_target: Element) {}
+    disconnect() {}
+  }
+
+  Object.defineProperty(globalScope, 'ResizeObserver', {
+    value: MockResizeObserver,
+    configurable: true,
+    writable: true
+  });
+}
+
 // Mock WebRTC APIs for testing
 if(typeof global.RTCPeerConnection === 'undefined') {
   class MockRTCPeerConnection {
