@@ -3,7 +3,7 @@ import {join} from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {load} from 'js-yaml';
 
-type Step = {name?: string; if?: string; run?: string; env?: Record<string, string>};
+type Step = {id?: string; name?: string; if?: string; run?: string; env?: Record<string, string>};
 type Job = {steps: Step[]; if?: string; needs?: string | string[]; env?: Record<string, string>; environment?: unknown};
 type Workflow = {on: Record<string, unknown>; permissions?: Record<string, string>; env?: Record<string, string>; jobs: Record<string, Job>};
 const readWorkflow = (name: string) => load(readFileSync(join(process.cwd(), '.github', 'workflows', name), 'utf8')) as Workflow;
@@ -58,6 +58,24 @@ describe('independent release controls', () => {
     // Cost control: a PR that cannot affect the build must not pay for it.
     expect(workflow.jobs['channel-build'].needs).toContain('changes');
     expect(workflow.jobs['channel-build'].if ?? '').toContain('needs.changes.outputs.relevant');
+    // ...but the list that decides "relevant" has to cover everything the
+    // builder reads, because a skipped job counts as a satisfied job: a build
+    // entry point missing from the filter would not fail, it would skip, and
+    // the run would still report green. So derive the inputs from build.mjs
+    // itself rather than trusting a second hand-maintained list.
+    const filterRun = workflow.jobs.changes.steps.find(step => step.id === 'filter')?.run ?? '';
+    const filterPattern = /grep -Eq '([^']+)'/.exec(filterRun)?.[1];
+    expect(filterPattern).toBeTruthy();
+    const relevant = new RegExp(filterPattern as string);
+    const builder = readFileSync(join(process.cwd(), 'scripts', 'channels', 'build.mjs'), 'utf8');
+    const builderInputs = [
+      ...builder.matchAll(/readFileSync\('([^']+)'/g),
+      ...builder.matchAll(/patch\('([^']+)'/g),
+      ...builder.matchAll(/git', \['show', `\$\{candidate\}:([^`$]+)`/g),
+      ...builder.matchAll(/^ {6}'([a-z0-9][\w.-]*\/[\w./-]+\.ts)',?$/gm)
+    ].map(match => match[1]);
+    expect(new Set(builderInputs).size).toBeGreaterThanOrEqual(8);
+    for(const input of builderInputs) expect(relevant.test(input), `build.mjs reads ${input} but the changes filter does not match it`).toBe(true);
   });
   it('every Electron Preview job remains main-only', () => {
     const workflow = readWorkflow('app-release.yml');

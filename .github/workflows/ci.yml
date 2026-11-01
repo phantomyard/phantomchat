@@ -98,6 +98,13 @@ jobs:
       group: ci-channel-build-${{ github.head_ref || github.ref }}
       cancel-in-progress: true
     steps:
+      # Full history is REQUIRED, not a convenience: build.mjs resolves
+      # `phantomchat-v<stableVersion>` and asserts it equals config.stableRef
+      # (build.mjs:16-19), then `git archive`s both the pinned Stable ref and
+      # this PR's commit. A shallow checkout has neither the tag nor
+      # necessarily the pinned commit, so the job dies in the Stable-SHA
+      # assertion before compiling anything. Do not "speed up" this job by
+      # removing fetch-depth without moving that check first.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
