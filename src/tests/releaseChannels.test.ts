@@ -4,7 +4,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
-import {checkCompatibility} from '../../scripts/channels/check.mjs';
+import {checkCompatibility, baselineDigestFor} from '../../scripts/channels/check.mjs';
 import {checkPublishedCompatibility} from '../../scripts/channels/check-published.mjs';
 
 let dir: string;
@@ -123,5 +123,89 @@ describe('shared-state release gate', () => {
       .toThrow('compatibility review required');
     // The pin itself is unchanged by the extra column.
     expect(checkCompatibility(config, 'HEAD', dir)).toEqual(['src/store.ts']);
+  });
+  it('picks the review column that matches the baseline it was built from', () => {
+    // The deploy workflow rewrites stableRef to the DEPLOYED Stable and keeps
+    // the repository pin in pinRef. Selecting `stable` there would compare the
+    // pin's digests against deployed content, which the pin can never describe.
+    const pin = 'a'.repeat(40);
+    const deployed = 'b'.repeat(40);
+    expect(baselineDigestFor({stableRef: pin})).toBe('stable');
+    expect(baselineDigestFor({stableRef: pin, publishedStableRef: deployed})).toBe('stable');
+    expect(baselineDigestFor({stableRef: deployed, pinRef: pin, publishedStableRef: deployed})).toBe('published');
+    // A promotion or rollback moves the deployed Stable past the derived
+    // published column, and the promote workflow does not refresh it. The
+    // selector still picks `published` so the lane keeps running; the per-file
+    // digest check is what rejects content nobody reviewed.
+    expect(baselineDigestFor({stableRef: 'c'.repeat(40), pinRef: pin, publishedStableRef: deployed})).toBe('published');
+    expect(baselineDigestFor({stableRef: 'c'.repeat(40), pinRef: pin})).toBe('published');
+  });
+  it('keeps the publish lane running after a promotion rather than throwing', () => {
+    const config = fixture();
+    const pin = config.stableRef;
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    // fixture leaves HEAD at the commit the published column was derived from.
+    const deployed = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: dir}).toString().trim();
+    // A promotion moves the deployed Stable to a commit nobody derived a
+    // column for, while publishedStableRef stays where it was.
+    writeFileSync(resolve(dir, 'src/store.ts'), 'const version = 3;\n');
+    execFileSync('git', ['commit', '-qam', 'Promotion'], {cwd: dir});
+    const promoted = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: dir}).toString().trim();
+    writeFileSync(resolve(dir, 'src/store.ts'), 'const version = 4;\n');
+    execFileSync('git', ['commit', '-qam', 'Preview'], {cwd: dir});
+    const approvals = {
+      stable: hash('const version = 1;\n'),
+      published: hash('const version = 2;\n'),
+      preview: hash('const version = 4;\n')
+    };
+    const stale = {...config, stableRef: promoted, pinRef: pin, publishedStableRef: deployed,
+      compatibilityApprovals: {...config.compatibilityApprovals, 'src/store.ts': approvals}};
+    // The selector resolves instead of taking the lane down...
+    expect(baselineDigestFor(stale)).toBe('published');
+    // ...and the exact digest gate still fails closed on the drifted file,
+    // naming the re-derive that fixes it.
+    expect(() => checkCompatibility(stale, 'HEAD', dir, baselineDigestFor(stale)))
+      .toThrow(/re-derive scripts\/channels\/config\.json/);
+    // While the derived column still describes the deployed commit, a build
+    // the reviewer approved publishes normally.
+    const fresh = {...stale, stableRef: deployed};
+    expect(baselineDigestFor(fresh)).toBe('published');
+    expect(checkCompatibility(fresh, 'HEAD', dir, baselineDigestFor(fresh))).toEqual(['src/store.ts']);
+  });
+  it('passes the deploy baseline through the published column end to end', () => {
+    const config = fixture();
+    const pin = config.stableRef;
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    // fixture leaves HEAD at the promotion commit (version 2).
+    const deployed = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: dir}).toString().trim();
+    writeFileSync(resolve(dir, 'src/store.ts'), 'const version = 3;\n');
+    execFileSync('git', ['commit', '-qam', 'Preview'], {cwd: dir});
+    expect(pin).not.toBe(deployed);
+    const approvals = {
+      stable: hash('const version = 1;\n'),
+      published: hash('const version = 2;\n'),
+      preview: hash('const version = 3;\n')
+    };
+    config.compatibilityApprovals['src/store.ts'] = approvals;
+    // Deploy baseline: stableRef = deployed, pin preserved in pinRef.
+    const baseline = {...config, stableRef: deployed, pinRef: pin, publishedStableRef: deployed};
+    expect(baselineDigestFor(baseline)).toBe('published');
+    expect(checkCompatibility(baseline, 'HEAD', dir, baselineDigestFor(baseline))).toEqual(['src/store.ts']);
+    // The pin column would have compared v1's digest against v2 content.
+    expect(() => checkCompatibility({...baseline, publishedStableRef: undefined}, 'HEAD', dir, 'stable'))
+      .toThrow('compatibility review required');
+    // Wrong deployed digest is still rejected through the selector.
+    baseline.compatibilityApprovals['src/store.ts'] = {...approvals, published: hash('stale')};
+    expect(() => checkCompatibility(baseline, 'HEAD', dir, baselineDigestFor(baseline)))
+      .toThrow('compatibility review required');
+    // ...and the CLI (the path build.mjs runs) resolves the same column.
+    writeFileSync(resolve(dir, 'baseline.json'), JSON.stringify({...baseline, compatibilityApprovals: {'src/store.ts': approvals}}));
+    const cli = spawnSync(process.execPath, [resolve('scripts/channels/check.mjs')], {
+      cwd: dir,
+      env: {...process.env, CHANNEL_BASELINE: resolve(dir, 'baseline.json')},
+      encoding: 'utf8'
+    });
+    expect(cli.stderr).toBe('');
+    expect(cli.status).toBe(0);
   });
 });
