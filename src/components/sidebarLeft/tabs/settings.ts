@@ -6,7 +6,6 @@
 
 import {SliderSuperTab} from '@components/slider';
 import ButtonMenuToggle from '@components/buttonMenuToggle';
-import AppGeneralSettingsTab from '@components/sidebarLeft/tabs/generalSettings';
 import lottieLoader from '@lib/rlottie/lottieLoader';
 import Row from '@components/row';
 import SettingSection from '@components/settingSection';
@@ -183,22 +182,11 @@ export default class AppSettingsTab extends SliderSuperTab {
       listenerSetter: this.listenerSetter
     });
 
-    const generalRow = new Row({
-      titleLangKey: 'PhantomChat.GeneralSettingsViewController',
-      icon: 'settings',
-      clickable: () => {
-        const tab = this.slider.createTab(AppGeneralSettingsTab);
-        tab.open(AppGeneralSettingsTab.getInitArgs());
-      },
-      listenerSetter: this.listenerSetter
-    });
-
     buttonsDiv.append(
       identityRow.container,
       relayRow.container,
       privacyRow.container,
-      notificationsRow.container,
-      generalRow.container
+      notificationsRow.container
     );
 
     // Desktop only (issue #164): the release-ring picker and update status.
