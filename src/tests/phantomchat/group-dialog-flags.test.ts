@@ -340,3 +340,159 @@ describe('flag changes never drop the persisted row (real pushDialog)', () => {
     expect(drop).toHaveBeenCalled();
   });
 });
+
+/**
+ * Owner bug 2026-11-01: pin a group, then unpin it — the badge went away but the
+ * row stayed at the very top of the list.
+ *
+ * Two independent halves, both pinned below:
+ *
+ *  1. STORAGE. The Groups folder sorts on `index_3`, which
+ *     `setDialogIndexInFilter` rebuilds. With the peer no longer in the folder's
+ *     pinned order the group took the `generateIndexForDialog` path, which asks
+ *     `appMessagesManager.getMessageByPeer` for the top message — and a group's
+ *     messages live in the PhantomChat stores, not in that one, so `topDate`
+ *     stayed 0 and fell through to `topDate ||= now`. The unpinned row was
+ *     stamped with the CURRENT time: still above every chat.
+ *
+ *  2. DISPATCH. The row handed to the list came from a read taken BEFORE
+ *     `pushDialog`, so it still carried the pinned index (same shape as #318's
+ *     archive bug).
+ */
+describe('unpin drops the pinned sort position (real DialogsStorage reindex)', () => {
+  const PINNED_BLOCK_FLOOR = 0x7fff0000 * 0x10000;
+
+  /** A DialogsStorage with just enough runtime to run the real reindex. */
+  const makeStorage = (peerId: number) => {
+    const ds: any = new DialogsStorage();
+    ds.clear(true);
+    ds.appStateManager = {pushToState: vi.fn()};
+    ds.timeManager = {getServerTimeOffset: () => 0};
+    ds.dialogs = {};
+    ds.dialogsOffsetDate = {};
+    ds.allDialogsLoaded = {0: true, 1: true, 3: true, 4: true};
+    ds.getDialogMessageForState = () => undefined;
+    ds.setDialogToState = vi.fn();
+    ds.rootScope = {dispatchEvent: vi.fn()};
+    ds.peersStorage = {requestPeer: () => undefined, requestPeersForKey: () => undefined};
+    ds.appMessagesIdsManager = {clearMessageId: (id: number) => id};
+    ds.appNotificationsManager = {isPeerLocalMuted: (): boolean => false};
+    ds.appPeersManager = {
+      peerId: 1,
+      // The Worker has no message for a group peer — the whole point of the bug.
+      getMessageByPeer: (): undefined => undefined,
+      isBotforum: (): boolean => false,
+      isForum: (): boolean => false,
+      isChannel: (): boolean => false,
+      getOutputPeer: (): any => ({})
+    };
+    ds.appChatsManager = {isChannel: (): boolean => false, getChat: (): undefined => undefined};
+    ds.appMessagesManager = {
+      getMessageByPeer: (): undefined => undefined,
+      getHistoryStorage: (): any => ({history: []}),
+      getDialogUnreadCount: (): number => 0
+    };
+
+    const filter: any = {id: 3, pinnedPeerIds: ds.getPinnedOrders(3)};
+    ds.filtersStorage = {
+      getFilters: (): any => ({3: filter}),
+      getFilter: (): any => filter,
+      testDialogForFilter: (): boolean => true
+    };
+
+    return {ds, filter, peerId};
+  };
+
+  it('re-stamps index_3 from the row`s own anchor instead of "now"', async() => {
+    const groupId = 'ef'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = GROUP_PEER_ID;
+    const {ds} = makeStorage(peerId);
+
+    // Last message an hour ago: the anchor PhantomChatPeerMapper stamps.
+    const anchor = (Math.floor(Date.now() / 1000) - 3600) * 0x10000;
+    const dialog: any = {
+      _: 'dialog',
+      peerId,
+      folder_id: 0,
+      top_message: 42,
+      unread_count: 0,
+      pFlags: {},
+      index_0: anchor,
+      index_3: anchor
+    };
+    ds.dialogs[peerId] = dialog;
+
+    ds.setDialogPinnedOrder(peerId, 3, true);
+    ds.pushDialog({dialog, offsetDate: 0});
+    expect(dialog.index_3).toBe(PINNED_BLOCK_FLOOR);
+    expect(ds.getPinnedOrders(3)).toEqual([peerId]);
+
+    delete dialog.pFlags.pinned;
+    ds.setDialogPinnedOrder(peerId, 3, false);
+    ds.pushDialog({dialog, offsetDate: 0});
+
+    expect(ds.getPinnedOrders(3)).toEqual([]);
+    // The bug: this was `now * 0x10000`, i.e. the top of the whole list.
+    expect(dialog.index_3).toBe(anchor);
+    expect(dialog.index_3).toBeLessThan(PINNED_BLOCK_FLOOR);
+
+    // Control: the pre-fix computation really does jump to "now" here.
+    const control = ds.generateIndexForDialog(dialog, true, undefined, false);
+    expect(control).toBeGreaterThan(anchor);
+    expect(Math.floor(control / 0x10000)).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) - 5);
+  });
+
+  it('keeps a chat on the old recompute path (its index_0 holds the pinned index)', async() => {
+    const ds: any = new DialogsStorage();
+    ds.timeManager = {getServerTimeOffset: () => 0};
+    ds.dialogsNum = 0;
+    const chatPeerId = 1_000_000_000_000_042;
+
+    const messageDate = Math.floor(Date.now() / 1000) - 7200;
+    const chat: any = {_: 'dialog', peerId: chatPeerId, folder_id: 0, top_message: 7, pFlags: {}, index_0: 0x7fff0000 * 0x10000};
+    ds.appMessagesManager = {getMessageByPeer: (): any => ({date: messageDate})};
+    ds.appPeersManager = {peerId: 1, isBotforum: (): boolean => false, isChannel: (): boolean => false};
+    ds.filtersStorage = {testDialogForFilter: (): boolean => true};
+
+    const filter: any = {id: 3, pinnedPeerIds: []};
+    const index = ds.setDialogIndexInFilter(chat, 'index_3', filter);
+
+    // A chat is re-anchored from its top message, not from index_0.
+    expect(Math.floor(index / 0x10000)).toBe(messageDate);
+  });
+});
+
+describe('the dispatched row is the one the Worker reindexed', () => {
+  it('dispatches the post-push read, not the stale pre-push clone', async() => {
+    const groupId = 'a1'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = await groupIdToPeerId(groupId, 'group');
+
+    const stale = {_: 'dialog', peerId, pFlags: {pinned: true}, folder_id: 0, index_3: 0x7fff0000 * 0x10000};
+    const reindexed = {_: 'dialog', peerId, pFlags: {}, folder_id: 0, index_3: 1_000 * 0x10000};
+
+    let reads = 0;
+    (MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs = {[peerId]: structuredClone(stale)};
+    (rootScope.managers as any).dialogsStorage = {
+      // First read: the live row. Second read: what the Worker holds after the push.
+      getDialog: async() => [structuredClone(++reads === 1 ? stale : reindexed)],
+      setDialogPinnedOrder: vi.fn(async() => {}),
+      pushDialog: vi.fn(async() => {})
+    };
+    const dispatched: any[] = [];
+    (rootScope as any).dispatchEvent = vi.fn((event: string, payload: any) => {
+      if(event === 'dialogs_multiupdate') dispatched.push(payload.values().next().value.dialog);
+    });
+
+    await applyGroupDialogFlags({groupId, pinnedAt: 0, unreadMarkAt: 0});
+
+    expect(reads).toBe(2);
+    expect(dispatched[0]).toBeTruthy();
+    // The bug: the list was handed the pinned index and kept the row pinned.
+    expect(dispatched[0].index_3).toBe(1_000 * 0x10000);
+    expect(dispatched[0].pFlags.pinned).toBeUndefined();
+    // The mirror has to be honest too — the next message repaint reads it.
+    expect((MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs[peerId].index_3).toBe(1_000 * 0x10000);
+  });
+});
