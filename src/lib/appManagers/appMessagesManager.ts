@@ -3736,8 +3736,14 @@ export class AppMessagesManager extends AppManager {
       const message = this.getMessageByPeer(peerId, historyStorage.maxId);
       // const readMaxId = peerId.isUser() ? Math.max(historyStorage.readMaxId, historyStorage.readOutboxMaxId) : historyStorage.readMaxId;
       const readMaxId = historyStorage.readMaxId;
-      // readMaxId can be 4294967295 (0)
-      return !message?.pFlags?.out && readMaxId < historyStorage.maxId && getServerMessageId(readMaxId) ? readMaxId : 0;
+      // `readMaxId` is a local mid, never a wire id: a mid that is an exact
+      // multiple of MESSAGE_ID_OFFSET (0x100000000) collapses to `0` through
+      // `getServerMessageId`, so gating the cursor on the DERIVED id read a
+      // real cursor as "nothing to read" and the chat opened with everything
+      // still marked unread (#347). Only the zero/absent sentinel means
+      // nothing has been read; the `readMaxId < maxId` bound is the real
+      // sanity check on the stored value.
+      return !message?.pFlags?.out && readMaxId < historyStorage.maxId && readMaxId > 0 ? readMaxId : 0;
     }
   }
 
