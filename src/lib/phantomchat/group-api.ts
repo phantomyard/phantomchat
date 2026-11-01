@@ -16,13 +16,19 @@ import {groupIdToPeerId, isGroupPeer} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
 import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
+import {
+  HISTORY_BACKFILL_MAX_MESSAGES,
+  buildBackfillControlPayloads,
+  collectGroupHistoryItems,
+  isWellFormedHistoryItem
+} from './group-history-backfill';
 import {writeGroupCreateServiceMessage, writeGroupRebindNoticeMessage} from './group-service-messages';
 import {
   DEFAULT_SESSION_GROUP_NAME,
   sessionTitleFromPrompt
 } from './group-sessions';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
-import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
+import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, cleanupGroupChatInjection, ensureGroupChatInjected, ingestBackfilledGroupHistory, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {reconcileGroupPeerClasses} from './group-class-reconcile';
 import {getMessageStore} from './message-store';
 import {isSafeGroupAvatarUrl} from './blossom-servers';
@@ -730,6 +736,60 @@ export class GroupAPI {
 
     this.log('[GroupAPI] member added to group:', groupId, newMemberPubkey.slice(0, 8));
     schedulePublish('groups');
+
+    // Hand the newcomer a bounded slice of what it missed. Fire-and-forget: the
+    // membership event has already been published and adding a member must not
+    // wait on a history re-wrap.
+    void this.sendHistoryBackfill(groupId, newMemberPubkey);
+  }
+
+  /**
+   * Relay a bounded slice of this device's group history to a newly added
+   * member.
+   *
+   * A member added after the fact holds none of the group's N+1 wrapped
+   * messages — the wraps were addressed to the members of the time — so the
+   * history has to be re-wrapped by a member who has it (us, the adder) and
+   * pushed as `group_history_backfill` control payloads addressed to the
+   * newcomer alone. Budget and chunking live in group-history-backfill.ts.
+   *
+   * Best-effort by design: a device with no history (fresh install, or a
+   * session where this admin never received anything) simply sends nothing, and
+   * the newcomer sees the group from the add onwards. There is no pull-from-
+   * any-member fallback yet.
+   */
+  private async sendHistoryBackfill(groupId: string, targetPubkey: string): Promise<void> {
+    try {
+      const msgStore = getMessageStore();
+      const items = await collectGroupHistoryItems({
+        conversationId: `group:${groupId}`,
+        getMessages: (conversationId, limit, before) => msgStore.getMessages(conversationId, limit, before),
+        getByMid: (mid) => msgStore.getByMid(mid)
+      });
+      if(items.length === 0) {
+        this.log('[GroupAPI] history backfill: no local history for', groupId.slice(0, 8));
+        return;
+      }
+
+      const payloads = buildBackfillControlPayloads(groupId, targetPubkey, items);
+      if(payloads.length === 0) return;
+
+      // Addressed to the newcomer only. broadcastGroupControl also self-wraps;
+      // the self copy carries historyTargetPubkey = the newcomer, so our own
+      // other devices ignore it (handleHistoryBackfill gates on the target).
+      const wraps = payloads.flatMap((payload) => broadcastGroupControl(this.ownSk, [targetPubkey], payload));
+      await this.publishFn(wraps);
+      this.log('[GroupAPI] history backfill sent to', targetPubkey.slice(0, 8), {
+        groupId: groupId.slice(0, 8),
+        items: items.length,
+        payloads: payloads.length,
+        wraps: wraps.length
+      });
+    } catch(err) {
+      // Never let a backfill failure look like an addMember failure — the member
+      // is already in the group and the control event is already published.
+      this.log.warn('[GroupAPI] history backfill failed (non-critical):', err);
+    }
   }
 
   /**
@@ -1410,6 +1470,11 @@ export class GroupAPI {
       case 'group_reaction':
         await this.handleReactionControl(payload, senderPubkey);
         break;
+      case 'group_history_backfill':
+        // Not a field-bearing control: no source-event watermark, no group
+        // state mutation — only rows for the addressed newcomer.
+        await this.handleHistoryBackfill(payload, senderPubkey);
+        break;
       default:
         this.log.warn('[GroupAPI] unknown control message type:', payload.type);
     }
@@ -1472,6 +1537,53 @@ export class GroupAPI {
       return;
     }
     await applyGroupReaction(payload.groupId, targetEventId, emoji, senderPubkey, createdAt);
+  }
+
+  /**
+   * Apply a `group_history_backfill` relayed by another member.
+   *
+   * Gates, in order:
+   *   1. ADDRESSED TO US. The wraps are per-recipient, but a payload smuggled
+   *      into a third member's wrap must not inject rows into a device that
+   *      already holds the history, so the payload must name our own key.
+   *   2. AUTHENTICATED RELAYER. The gift-wrap already proves `senderPubkey`
+   *      signed it; it must also be a CURRENT member of the group (same gate
+   *      the live message path applies), and we must hold a record at all — a
+   *      backfill never materialises a group.
+   *   3. PER-ITEM. Original rumor id, author and payload are shape-checked and
+   *      the author must be a member; already-persisted ids are skipped by the
+   *      ingest loop.
+   *
+   * Authorship caveat, stated plainly: the relayer holds the plaintext, so an
+   * item's `senderPubkey` cannot be cryptographically re-verified. The trust
+   * level is that of a member forwarding content to a new member, not that of
+   * the original signed rumor.
+   */
+  private async handleHistoryBackfill(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
+    if(payload.historyTargetPubkey !== this.ownPubkey) {
+      this.log('[GroupAPI] group_history_backfill: not addressed to this device, ignoring', payload.groupId.slice(0, 8));
+      return;
+    }
+    const group = await this.store.get(payload.groupId);
+    if(!group) {
+      this.log.warn('[GroupAPI] group_history_backfill: unknown group, dropping', payload.groupId.slice(0, 8));
+      return;
+    }
+    if(!group.members.includes(senderPubkey)) {
+      this.log.warn('[GroupAPI] group_history_backfill: relayer is not a member, dropping', senderPubkey.slice(0, 8));
+      return;
+    }
+
+    const incoming = Array.isArray(payload.historyItems) ? payload.historyItems : [];
+    const items = incoming
+    .filter((item) => isWellFormedHistoryItem(item, group.members))
+    .slice(0, HISTORY_BACKFILL_MAX_MESSAGES);
+    if(items.length === 0) {
+      this.log.warn('[GroupAPI] group_history_backfill: no well-formed items, dropping', payload.groupId.slice(0, 8));
+      return;
+    }
+
+    await ingestBackfilledGroupHistory(this.ownPubkey, payload.groupId, items, this.dispatch);
   }
 
   // ─── Control message handlers ─────────────────────────────────
