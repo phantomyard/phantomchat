@@ -1,6 +1,7 @@
 {
   "stableRef": "2cee0bba600e6918a0c3f0bffc5ba0910e8214d0",
   "stableVersion": "1.1.106",
+  "publishedStableRef": "efd94bf9742a6f1685154f998bb27152b1b81ce0",
   "compatibilityApprovals": {
     "public/channel-switcher.js": {
       "stable": "73edaf28910b166c177f12a1f4971d23d8e27fda57b055ffe181226164836406",
@@ -64,6 +65,7 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
+      "published": "3df894fb157c028ee4864b8d5b49df633bd8618b73cd3316dc3b3b409fc46b2e",
       "preview": "3df894fb157c028ee4864b8d5b49df633bd8618b73cd3316dc3b3b409fc46b2e",
       "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Pin/unread menu update: Presentation only: gives count-less unread marks their own CSS class. Counts, read cursor and persistence are unchanged. Requires independent exact-head content review. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required."
     },
@@ -89,6 +91,7 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "20ecf8550de094f7d0cd8275896bf73bd1cb43e85c2f008429b7ef0c120acba4",
+      "published": "f5fc478a6aaef2398b35983edebbdb5dc0c37dfcf0c27bb5216bd18213f0271e",
       "preview": "f5fc478a6aaef2398b35983edebbdb5dc0c37dfcf0c27bb5216bd18213f0271e",
       "reason": "The Session space + opens the Contacts picker in pick mode and creates a session from the pick; presentation and navigation only, no stored format change. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Comment-only: session title length now reads 30 characters."
     },
@@ -129,11 +132,13 @@
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "dc06ae04e02840ac1d76466ffad6443352c11f317ff316726d716c5561bd96e6",
+      "published": "189be63d9e256b959da82f2bb007cdfcd38de72445c72b63574a93ebecfeaf3d",
       "preview": "189be63d9e256b959da82f2bb007cdfcd38de72445c72b63574a93ebecfeaf3d",
       "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change. Send finalization now moves the in-memory dialog's top_message from the deleted temp mid to the real mid. It writes only through the existing setDialogTopMessage path; no storage, schema or wire-format change. sendPhantomChatAttachment()'s peer guard and sendFile()'s bridge shortcut now share one isPhantomChatPeerId() predicate instead of two hand-written range tests, so the guard cannot drift from the path it guards. No storage, database or IPC format change. Context-menu read fix: preserve chronological mids, persist the canonical cursor and reconcile existing unread counters/folder badges. No stored-format change. Requires independent exact-head content review. Read-cursor gating now tests the stored mid (readMaxId > 0) instead of the derived wire id, so a cursor at an exact multiple of 2^32 is no longer treated as empty. No storage, schema or wire-format change."
     },
     "src/lib/phantomchat/group-api.ts": {
-      "stable": "9a26ad45492e189636e76b6c23c4887e98efdc5631dba88f7e27cf755196cc57",
+      "stable": "cf47cb2ee628f3d1dad10c5b718b6b16e158cd64053ea5be4e38de6c22ddfd39",
+      "published": "9a26ad45492e189636e76b6c23c4887e98efdc5631dba88f7e27cf755196cc57",
       "preview": "825ac264b9db9892fa120395c24cd8de72b775359c8dab414f9de63b7b17a268",
       "reason": "Session peer class: a group's class is the input to peerId derivation and travels on group_create.groupKind. New `repairGroupPeerClasses()` runs the local class reconcile at boot and after each definitive groups reconcile - it only ever re-derives a record against evidence the record already carries, never invents one. The three boot sweeps (reconcileSupersededGroups, rebindAllLegacyGroups, repairGroupPeerClasses) now run in sequence rather than in parallel, since each retires or re-keys ids the others touch. No stored-format change: the field already exists on GroupRecord. Session stability update: Teardown uses the stored peer id; orphan sweep re-checks the store before dropping a row. No stored format change. Sweep hardening: a failed re-check is logged and the drop is awaited. No stored format change. Pin/unread menu update: Adds pin and manual-unread setters using optional numeric pinnedAt/unreadMarkAt on existing GroupRecord rows. Absent means unknown; zero means explicitly cleared. Existing groups sync publishes unchanged v2 envelopes; no schema version, database, identity, conversation key or message cursor change. Requires independent exact-head content review. Comment-only: session title length now reads 30 characters. Rename persistence: group_info_update is ordered per sub-field (name / description / avatar) by source event time. The payload is partial (the edit pane publishes one field at a time and the store skips absent keys), so a single shared watermark dropped an event carrying a field nobody had applied yet; each sub-field now carries its own watermark and only the fields that are strictly newer than their own watermark are applied and advanced. The rule is a total order on whole seconds, so what loses is any info edit whose second is not strictly greater than the newest applied one for that field, including an edit from a device whose clock runs behind. The grace window is kept for members only, where a behind-clock delta still has to land. A legacy single info watermark is honoured as a monotone floor (max of coarse and sub-field) for sub-fields that have applied nothing since the split, so the upgrade cannot reset anti-replay protection, and the rebind/successor carry-over helpers enumerate every persisted key including the sub-fields. No stored-format, schema, wire or identity change: the watermark already lives in localStorage and the control payload is unchanged. Requires independent exact-head content review. Group history backfill: addMember now relays a bounded (32 KiB / 400 row) re-wrapped slice of this device's own stored history to the newcomer via group_history_backfill control payloads, fire-and-forget after the membership event; the receive handler ingests only a payload addressed to this device from a current member of a group we hold a record for. New control type on the existing envelope, no stored-format, schema or identity change. Review round: the receive handler now accepts a slice only from the group ADMIN (adding a member is admin-only, so the adder is the only legitimate relayer), rejects future-dated rows, applies its own per-group per-window byte and row budget, and STAGES a slice whose group record has not landed yet - bounded, expiring, in memory - instead of dropping it, draining from handleGroupCreate and the groups-sync upsert. Review round 3: chunks staged for the same relayer ACCUMULATE (overlapping chunks dedupe on the original rumor id, newest window kept) instead of replacing one another, the drain re-checks the admin and membership gates BEFORE taking the stage so a failed attempt leaves the slice intact, and the live handler drains as soon as a record exists so a record landing mid-slice cannot strand the earlier chunks until the TTL. No stored-format, schema or identity change."
     },
@@ -219,6 +224,7 @@
     },
     "src/components/dialogsContextMenu.ts": {
       "stable": "95cb488c369560065eaef66688ec496962cf1011c245d104788ae649a546daf1",
+      "published": "db355a1ed007d7c232d6a3136c0293bfdbaac1f93e0e754ac92743e89e3259ee",
       "preview": "db355a1ed007d7c232d6a3136c0293bfdbaac1f93e0e754ac92743e89e3259ee",
       "reason": "Archive/Unarchive are added for every GROUP-CLASS peer (groups and sessions alike) and route to GroupAPI.archiveGroup/unarchiveGroup. The session-specific menu path is removed, so sessions use the ordinary group menu. Presentation only. Pin/unread menu update: Group menu routes pin and read/unread through existing GroupAPI, and chooses read for counted unread as well as manual marks. Admin delete label reads existing identity and GroupRecord. No new persistence outside the optional GroupRecord fields described below. Requires independent exact-head content review. Explicit direct-chat Read gestures reset the existing durable cursor and main-thread receive counter before clearing the Worker flag, tolerating stale Worker counts. No schema or stored-format change. Requires independent exact-head content review. Threaded gestures are excluded from the conversation-scoped explicit-read branch, so a topic Mark as Read falls through to the existing thread-scoped readHistory rather than clearing every topic in the chat. The same exclusion now covers group-class peers: their branch routes through GroupAPI and its clear half calls resetUnreadForPeer, which is conversation-scoped, so a threaded group gesture falls through to the thread-scoped readHistory instead of clearing every topic in the group. Presentation/control-flow only; no schema or stored-format change."
     },
@@ -229,6 +235,7 @@
     },
     "src/lib/phantomchat/group-sessions.ts": {
       "stable": "a33bbfb6a3a2ccb06f612ec07cc1c4204ecb7dc307a90fec361bd7c03d4597d1",
+      "published": "30428d8ed42929134ae763aa0c26a2b76ee51273abd37c0e4c00d65dbc57e93e",
       "preview": "30428d8ed42929134ae763aa0c26a2b76ee51273abd37c0e4c00d65dbc57e93e",
       "reason": "Session naming policy only: default title and first-prompt truncation (30 characters, no ellipsis, trailing space trimmed). No storage, protocol or settings change."
     },
@@ -349,6 +356,7 @@
     },
     "index.html": {
       "stable": "4de92dc7976fd19e38b6f79b91672a92c9dcb37e0878e7f1474a5376cf0a7062",
+      "published": "4d4e505c45a3804382e5a0320a3088814c38b8e38275463e2b967d85af8a8bf1",
       "preview": "4d4e505c45a3804382e5a0320a3088814c38b8e38275463e2b967d85af8a8bf1",
       "reason": "Boot-only read of the device-local phantomchat:ui-theme key to set html[data-ui-theme] before first paint. Preview treats an absent, unknown or unreadable key as Boring Corporate; Stable treats it as Fun and Relaxed, so a device that never picked a theme shows that channel's default. Same key, no storage schema change, nothing written at boot. Requires independent content review."
     },
@@ -359,6 +367,7 @@
     },
     "src/helpers/generateDicebearAvatar.ts": {
       "stable": "c07aa8a25e731987b4b593f47094109354b0a617881aa7432e47eaf9a30883fd",
+      "published": "2ad4b0aeef7973f2d6f98d51ef258d6b68beb0e0d832cad54a0b1faec48da40f",
       "preview": "2ad4b0aeef7973f2d6f98d51ef258d6b68beb0e0d832cad54a0b1faec48da40f",
       "reason": "Adds a muted grey avatar palette with theme-blue eyes selected by html[data-ui-theme]. Output with no attribute is byte-identical to before and is never persisted or published. Requires independent content review."
     },

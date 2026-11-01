@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 
-export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd()) {
+export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd(), baselineDigest = 'stable') {
   const git = (...args) => execFileSync('git', args, {cwd});
   const files = git('diff', '--name-only', config.stableRef, candidate, '--', 'src', 'public', 'index.html', 'pnpm-lock.yaml', 'package.json', 'electron').toString().trim().split('\n').filter(Boolean);
   const blocked = files.filter(file => {
@@ -17,7 +17,11 @@ export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd
       catch { return 'absent'; }
     };
     const approval = config.compatibilityApprovals[file];
-    return !approval || approval.stable !== digest(config.stableRef) || approval.preview !== digest(candidate);
+    // `published` is the same review recorded against the DEPLOYED Stable when
+    // that is a different commit from the repo pin. A row without it was only
+    // ever reviewed at the pin, which is the same thing while the two agree.
+    const approved = approval?.[baselineDigest] ?? approval?.stable;
+    return !approval || approved !== digest(config.stableRef) || approval.preview !== digest(candidate);
   });
   if(blocked.length) throw new Error(`Shared-state compatibility review required (exact Stable/Preview hashes):\n${blocked.join('\n')}`);
   return files;
