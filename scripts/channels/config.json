@@ -48,8 +48,8 @@
       "stable": "fa6b94e9e8608446f352fb0f8c32b5da70a6b8348aa47afe5c71459920cb8609"
     },
     "src/config/state.ts": {
-      "preview": "ce47c9da7f8123f9e885b8d0d59bb09eb3a459bdd0b17e8eebeb67fe458ad8f4",
-      "reason": "Adds optional StateSettings.defaultChatFolderId. Optional key in the settings object: old channels preserve unknown keys opaquely and ignore them; no reset or migration on load. Default tabsInSidebar becomes false (folders above chats). Only fills a missing key: a stored boolean is kept by validateInitObject, so existing profiles and channel switches keep their layout.",
+      "preview": "f43b53ed7d4e021678e835280d7ee51b34005b2d9752c12f855be71f7ccd556a",
+      "reason": "Adds optional StateSettings.defaultChatFolderId. Optional key in the settings object: old channels preserve unknown keys opaquely and ignore them; no reset or migration on load.",
       "stable": "f43b53ed7d4e021678e835280d7ee51b34005b2d9752c12f855be71f7ccd556a"
     },
     "src/helpers/dom/createFolderContextMenu.ts": {

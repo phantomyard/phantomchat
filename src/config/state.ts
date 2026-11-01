@@ -360,7 +360,7 @@ export const SETTINGS_INIT: StateSettings = {
   },
   savedAsForum: false,
   notifyAllAccounts: true,
-  tabsInSidebar: false,
+  tabsInSidebar: true,
   playbackParams: {
     volume: 1,
     muted: false,

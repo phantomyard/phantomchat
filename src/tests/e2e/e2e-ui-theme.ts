@@ -2,7 +2,7 @@
 /**
  * E2E: the UI theme selector (#317), through the real Appearance menu entry.
  *
- *  - Boring Corporate is the default, with nothing stored and folders above the chats.
+ *  - Boring Corporate is the default, with nothing stored.
  *  - Picking a theme persists per device and reloads into it. Fun and Relaxed has no attribute.
  *  - The costume beats ThemeController's inline colours, on <html> and in Day and Night.
  *  - The saved accent and wallpaper are never rewritten: switching back restores them.
@@ -89,7 +89,6 @@ async function main() {
     await createIdentity(page);
     assert.equal(await attribute(page), 'boring-corporate', 'Boring Corporate is the default');
     assert.equal(await stored(page), null, 'nothing is written until the user picks a theme');
-    assert.equal(await page.evaluate(() => document.body.classList.contains('has-folders-sidebar')), false, 'folders start above the chats');
 
     await pick(page, 'Fun and Relaxed');
     assert.equal(await stored(page), 'fun-and-relaxed');
