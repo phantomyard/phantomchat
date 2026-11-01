@@ -2,11 +2,11 @@
 /**
  * E2E: the UI theme selector (#317), through the real Appearance menu entry.
  *
- *  - Fun and Relaxed is the default: no data-ui-theme attribute on <html>.
- *  - Picking Boring Corporate persists per device and reloads into the costume.
+ *  - Boring Corporate is the default, with nothing stored and folders above the chats.
+ *  - Picking a theme persists per device and reloads into it. Fun and Relaxed has no attribute.
  *  - The costume beats ThemeController's inline colours, on <html> and in Day and Night.
  *  - The saved accent and wallpaper are never rewritten: switching back restores them.
- *  - An unknown stored value falls back to Fun and Relaxed.
+ *  - An unknown stored value falls back to the default.
  *  - A failing localStorage write still reloads, onto the theme the app can read.
  *
  * Start Vite separately, then run:
@@ -87,8 +87,13 @@ async function main() {
 
   try {
     await createIdentity(page);
-    assert.equal(await attribute(page), null, 'Fun and Relaxed is the default');
+    assert.equal(await attribute(page), 'boring-corporate', 'Boring Corporate is the default');
     assert.equal(await stored(page), null, 'nothing is written until the user picks a theme');
+    assert.equal(await page.evaluate(() => document.body.classList.contains('has-folders-sidebar')), false, 'folders start above the chats');
+
+    await pick(page, 'Fun and Relaxed');
+    assert.equal(await stored(page), 'fun-and-relaxed');
+    assert.equal(await attribute(page), null, 'Fun and Relaxed removes the costume');
     const funPrimary = await colour(page, '--primary-color');
     const themes = await savedThemes(page);
 
@@ -130,7 +135,7 @@ async function main() {
 
     await page.evaluate((key) => localStorage.setItem(key, 'neon-disco'), KEY);
     await page.reload({waitUntil: 'load'});
-    assert.equal(await attribute(page), null, 'an unknown value falls back to Fun and Relaxed');
+    assert.equal(await attribute(page), 'boring-corporate', 'an unknown value falls back to the default');
 
     assert.deepEqual(errors, [], 'no page errors');
     console.log('PASS UI theme selector round trip');

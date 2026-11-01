@@ -36,7 +36,7 @@ async function clickNewGroupViaUI(page: any): Promise<void> {
   // Owner batch 4: the floating "+" is a one-click action — on the Groups folder it
   // opens the multi-select member picker directly, so select that folder first
   // (on the Chats folder the same button opens the contact picker).
-  const groupsFolder = page.locator('.folders-sidebar__folder-item').filter({hasText: 'Groups'}).first();
+  const groupsFolder = page.locator('.folders-sidebar__folder-item:visible, .menu-horizontal-div-item:visible').filter({hasText: 'Groups'}).first();
   if(await groupsFolder.count()) {
     await groupsFolder.click();
     await page.waitForTimeout(600);

@@ -2,8 +2,9 @@
 <html lang="en">
   <head>
     <script>
-      // UI theme costume (#317). Read once, before first paint. Absent or unknown means Fun and Relaxed.
-      try{if(localStorage.getItem('phantomchat:ui-theme')==='boring-corporate')document.documentElement.setAttribute('data-ui-theme','boring-corporate');}catch(e){}
+      // UI theme costume (#317). Read once, before first paint. Absent, unknown or unreadable means Boring Corporate, the default.
+      var uiTheme;try{uiTheme=localStorage.getItem('phantomchat:ui-theme');}catch(e){}
+      if(uiTheme!=='fun-and-relaxed')document.documentElement.setAttribute('data-ui-theme','boring-corporate');
     </script>
     <meta charset="utf-8" />
     <title>{{title}}</title>
