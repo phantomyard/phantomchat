@@ -9,14 +9,19 @@
 
 import {
   addPendingAttachments,
+  createBatchCaptionPicker,
+  getAttachmentCaption,
   getAttachmentKind,
   getAttachmentMediaType,
   getAttachmentSizeLimit,
+  MAX_ATTACHMENT_CAPTION_LENGTH,
   MAX_PENDING_ATTACHMENTS,
   PendingAttachment,
   removePendingAttachment,
   sendPendingAttachments,
+  sendStagedBatchWithCaption,
   setAttachmentDimensions,
+  shouldConsumeComposerAfterFailedBatch,
   shouldUseAttachmentTray,
   validateAttachment
 } from '@lib/phantomchat/composer-attachments';
@@ -31,6 +36,52 @@ function makeFile(name: string, type: string, size = 1024): File {
 }
 
 const noPreview = (): undefined => undefined;
+
+describe('attachment caption', () => {
+  const plain = {
+    text: 'The avatars on the Archived folder are the wrong size.',
+    hasReply: false,
+    isForwarding: false,
+    hasSuggestedPost: false
+  };
+
+  it('carries the composer text as the caption of the batch', () => {
+    expect(getAttachmentCaption(plain)).toBe(plain.text);
+  });
+
+  it('sends no caption when the composer is empty or blank', () => {
+    expect(getAttachmentCaption({...plain, text: ''})).toBe('');
+    expect(getAttachmentCaption({...plain, text: '   \n  '})).toBe('');
+  });
+
+  it('keeps the text as its own message when the file path cannot carry the flag', () => {
+    // A caption is the body of the file message: it cannot express a reply, a
+    // forwarded batch or a suggested post, so those keep the files-then-text
+    // order instead of silently dropping the linkage.
+    expect(getAttachmentCaption({...plain, hasReply: true})).toBe('');
+    expect(getAttachmentCaption({...plain, isForwarding: true})).toBe('');
+    expect(getAttachmentCaption({...plain, hasSuggestedPost: true})).toBe('');
+  });
+
+  it('falls back to a separate message above the caption ceiling', () => {
+    expect(getAttachmentCaption({
+      ...plain,
+      text: 'x'.repeat(MAX_ATTACHMENT_CAPTION_LENGTH)
+    })).toHaveLength(MAX_ATTACHMENT_CAPTION_LENGTH);
+    expect(getAttachmentCaption({
+      ...plain,
+      text: 'x'.repeat(MAX_ATTACHMENT_CAPTION_LENGTH + 1)
+    })).toBe('');
+  });
+
+  it('gives the caption to exactly one file in the batch', () => {
+    const nextCaption = createBatchCaptionPicker('look at this');
+
+    expect(nextCaption()).toBe('look at this');
+    expect(nextCaption()).toBe('');
+    expect(nextCaption()).toBe('');
+  });
+});
 
 describe('composer attachment batching', () => {
   describe('peer detection', () => {
@@ -279,6 +330,101 @@ describe('composer attachment batching', () => {
       expect(send).not.toHaveBeenCalled();
       expect(result.sent).toHaveLength(0);
       expect(result.remaining).toHaveLength(0);
+    });
+  });
+
+  // A media message is its own turn for the recipient, so the typed text must
+  // reach it exactly once — including across the retry that the tray offers
+  // after a partial failure. These cases drive the real picker and the real
+  // batch runner the way `ChatInput.sendMessage` does: read the composer, run
+  // the batch, decide whether the composer is spent, run the retry.
+  describe('sendStagedBatchWithCaption()', () => {
+    const staged = (...names: string[]) => addPendingAttachments([], names.map((n) => makeFile(n, 'image/png')), noPreview).items;
+
+    function makeComposer() {
+      const state = {composer: 'please look at these', peerId: 1};
+      const published: string[] = [];
+
+      /** Mirrors the caller: one Send, then a retry when files are left. */
+      const send = async(failing: string[] = []) => {
+        const batch = await sendStagedBatchWithCaption(staged('a.png', 'b.png'), state.composer, async(item, caption) => {
+          if(failing.includes(item.file.name)) {
+            throw new Error('bridge refused');
+          }
+
+          published.push(`${item.file.name}:${caption}`);
+          return true;
+        });
+
+        // What `sendMessage` does with the result.
+        if(batch.failed && shouldConsumeComposerAfterFailedBatch(batch, state.peerId, state.peerId)) {
+          state.composer = '';
+        }
+
+        return batch;
+      };
+
+      return {state, published, send};
+    }
+
+    it('publishes the caption once when a later file fails and the batch is retried', async() => {
+      const {state, published, send} = makeComposer();
+
+      const first = await send(['b.png']);
+      expect(first.failed?.file.name).toBe('b.png');
+      expect(first.captionPublished).toBe(true);
+      // The wording is spent: the composer is cleared before the retry re-reads it.
+      expect(state.composer).toBe('');
+
+      const retry = await sendStagedBatchWithCaption(first.remaining, state.composer, async(item, caption) => {
+        published.push(`${item.file.name}:${caption}`);
+        return true;
+      });
+
+      expect(retry.captionPublished).toBe(false);
+      expect(published).toEqual(['a.png:please look at these', 'b.png:']);
+    });
+
+    it('keeps the caption for the retry when the failing file was the one holding it', async() => {
+      const {state, published, send} = makeComposer();
+
+      const first = await send(['a.png']);
+      expect(first.captionPublished).toBe(false);
+      // Nothing went out with the wording, so the composer still has it.
+      expect(state.composer).toBe('please look at these');
+
+      const retry = await sendStagedBatchWithCaption(first.remaining, state.composer, async(item, caption) => {
+        published.push(`${item.file.name}:${caption}`);
+        return true;
+      });
+
+      expect(retry.captionPublished).toBe(true);
+      expect(published).toEqual(['a.png:please look at these', 'b.png:']);
+    });
+
+    it('passes the caption past a file the tray dropped mid-batch', async() => {
+      const {items} = addPendingAttachments([], ['a.png', 'b.png'].map((n) => makeFile(n, 'image/png')), noPreview);
+      const published: string[] = [];
+
+      const result = await sendStagedBatchWithCaption(items, 'look', async(item, caption) => {
+        if(item.file.name === 'a.png') {
+          return false;
+        }
+
+        published.push(`${item.file.name}:${caption}`);
+        return true;
+      });
+
+      expect(published).toEqual(['b.png:look']);
+      expect(result.captionPublished).toBe(true);
+    });
+
+    it('does not clear the composer of a chat opened mid-batch', () => {
+      const spent = {captionPublished: true};
+
+      expect(shouldConsumeComposerAfterFailedBatch(spent, 1, 1)).toBe(true);
+      expect(shouldConsumeComposerAfterFailedBatch(spent, 1, 2)).toBe(false);
+      expect(shouldConsumeComposerAfterFailedBatch({captionPublished: false}, 1, 1)).toBe(false);
     });
   });
 });

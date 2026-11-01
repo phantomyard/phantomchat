@@ -279,8 +279,8 @@
     },
     "src/components/chat/input.ts": {
       "stable": "149dc315e5f9bb6decff24bc856d23f2e4b03ea8fcd9f6b70bedd9b3ffa21470",
-      "preview": "02c59a04e896831b5cfd9317b6d5cfe03d26194ad9a8fed192267aa027cabe03",
-      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text through sendBatchThenText(), which drops the text if the user switched chat mid-upload, and forwards the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
+      "preview": "00902fb8dd1f3fb11ad72d8746fcbde66f54daf52e8d6c77f2c664f208e8bdb5",
+      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text through sendBatchThenText(), which drops the text if the user switched chat mid-upload, and forwards the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review. Composer attachment caption: the typed text now travels as the caption of the first staged file instead of a separate message, so a recipient agent reads the instruction together with the attachment. The text keeps its own message when a caption cannot express the message flags (reply, story reply, forwarded batch, suggested post, or text over MAX_ATTACHMENT_CAPTION_LENGTH). No new store, schema, key or protocol field: the caption is a field that already exists on the existing file rumor. Preview hash refreshed: a failed batch consumes the composer once a file already published the caption, so the retry cannot caption the next file with the same text; the successful path clears it only when a file carried it. Peer guard unchanged."
     },
     "src/lib/phantomchat/phantomchat-message-handler.ts": {
       "stable": "865f56016aa949b6f7d8a1b570e9665e2e7259d9e5ea340d861b45fa0d010b73",
@@ -314,8 +314,8 @@
     },
     "src/components/chat/attachmentTray.ts": {
       "stable": "absent",
-      "preview": "6fcab5d8e50d6ccc4295186b1de5539802ef47dad07f072679222ca62ff40301",
-      "reason": "New composer attachment tray for PhantomChat peers: staged-file thumbnails, per-file remove and per-file send state above the message input. Reads each image thumbnail's intrinsic size on load so the published bubble carries width/height without a media-editor step, and re-checks batch membership before each send so a file removed mid-batch is not published. Owns no storage, database or IPC access and only mutates its own DOM. Requires independent content review."
+      "preview": "2e2031858a3a835ba5a6378dbb158e1a2c467dcdff937ebed2afa012643e1200",
+      "reason": "New composer attachment tray for PhantomChat peers: staged-file thumbnails, per-file remove and per-file send state above the message input. Reads each image thumbnail's intrinsic size on load so the published bubble carries width/height without a media-editor step, and re-checks batch membership before each send so a file removed mid-batch is not published. Owns no storage, database or IPC access and only mutates its own DOM. Requires independent content review. Preview hash refreshed: sendAll() now takes the typed text and reports whether a file actually published with it, so the composer knows the wording is spent; a file dropped mid-batch returns false and passes the caption to the next file. Still owns no storage, database or IPC access."
     },
     "src/lib/phantomchat/bridge-invariants.ts": {
       "stable": "688d961f6884f278cb92c6f48089d5dc20ef3d8ff85b1830b27547dacffb595f",
@@ -324,8 +324,8 @@
     },
     "src/lib/phantomchat/composer-attachments.ts": {
       "stable": "absent",
-      "preview": "f6e595a0c978041d14e4d5ebdb2eacddd7a21443c9065826eeae1a0d3ccdf6ec",
-      "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression, sequential dispatch, an intrinsic-size setter that ignores a broken decode, and sendBatchThenText() which drops the typed text when the chat changed while the batch was uploading. Peer detection is delegated to isPhantomChatPeerId() in bridge-invariants. No storage, database or IPC access. Requires independent content review."
+      "preview": "771e662360e113c572d6ec5692b8653268dc450897bf8b050e2690abb4b51060",
+      "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression, sequential dispatch, an intrinsic-size setter that ignores a broken decode, and sendBatchThenText() which drops the typed text when the chat changed while the batch was uploading. Peer detection is delegated to isPhantomChatPeerId() in bridge-invariants. No storage, database or IPC access. Also getAttachmentCaption(), which decides whether the composer text may ride along as a file caption, and createBatchCaptionPicker(), which hands that caption to exactly one file in the batch. Requires independent content review. Preview hash refreshed: new sendStagedBatchWithCaption() and shouldConsumeComposerAfterFailedBatch() track the caption as spent only after a publish resolves, plus tests for the retry. No storage, database or IPC access."
     },
     "src/scss/partials/_chatAttachmentTray.scss": {
       "stable": "absent",

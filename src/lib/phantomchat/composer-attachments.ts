@@ -43,6 +43,15 @@ export type PendingAttachment = {
   height?: number;
 };
 
+/**
+ * Ceiling for a composer caption that rides along with an attachment.
+ *
+ * The caption is the composer text, so it is bounded by the composer rather than
+ * by the wire: above this the text falls back to its own message instead of
+ * being truncated into a bubble that also has to hold the file.
+ */
+export const MAX_ATTACHMENT_CAPTION_LENGTH = 1024;
+
 export type RejectedAttachmentReason = 'empty' | 'too-large' | 'batch-full' | 'duplicate';
 
 export type RejectedAttachment = {
@@ -226,6 +235,78 @@ export function revokePendingAttachments(items: PendingAttachment[]): void {
   items.forEach(revokePendingAttachment);
 }
 
+/**
+ * Composer state that decides whether the typed text can travel as a caption.
+ *
+ * A caption is the *body* of the file message, so it is rejected whenever the
+ * text carries a per-message flag the file path cannot express — a reply, a
+ * story reply, a forwarded batch or a suggested post. Those fall back to the
+ * files-then-text order, which is what keeps the linkage.
+ */
+export type AttachmentCaptionContext = {
+  /** Raw composer text. */
+  text: string;
+  /** A reply (or story reply) is armed on the composer. */
+  hasReply: boolean;
+  /** A forwarded batch is staged. */
+  isForwarding: boolean;
+  /** A suggested post is being edited. */
+  hasSuggestedPost: boolean;
+};
+
+/**
+ * Returns the caption to attach to the first file of a batch, or `''` when the
+ * text has to be published as its own message.
+ *
+ * Why this exists: the recipient of a PhantomChat media message gets the file
+ * and nothing else, so a batch sent as `files… then text` reaches an agent as N
+ * context-free media events followed by the instruction that explains them — it
+ * answers the first one blind. Carrying the text as the caption of the file the
+ * batch starts with puts the instruction on the same published message as the
+ * first file, which is the only way it can be read in the same turn.
+ */
+export function getAttachmentCaption({
+  text,
+  hasReply,
+  isForwarding,
+  hasSuggestedPost
+}: AttachmentCaptionContext): string {
+  if(!text.trim()) {
+    return '';
+  }
+
+  if(hasReply || isForwarding || hasSuggestedPost) {
+    return '';
+  }
+
+  if(text.length > MAX_ATTACHMENT_CAPTION_LENGTH) {
+    return '';
+  }
+
+  return text;
+}
+
+/**
+ * Builds the per-item caption accessor for one batch.
+ *
+ * The caption is the body of a single message, so exactly one published file may
+ * carry it: the first one that actually dispatches. Everything after it gets
+ * nothing, because a second copy of the text would read as the user having said
+ * it twice. A retry builds a fresh picker from whatever is still in the
+ * composer — see `sendStagedBatchWithCaption` and
+ * `shouldConsumeComposerAfterFailedBatch`.
+ */
+export function createBatchCaptionPicker(caption: string): () => string {
+  let pending = caption;
+
+  return () => {
+    const current = pending;
+    pending = '';
+
+    return current;
+  };
+}
+
 export type SendPendingAttachmentsResult = {
   sent: PendingAttachment[];
   /** The item that failed, if any. It stays staged for a retry. */
@@ -238,6 +319,14 @@ export type SendPendingAttachmentsHooks = {
   onSending?: (item: PendingAttachment) => void;
   onSent?: (item: PendingAttachment) => void;
   onFailed?: (item: PendingAttachment, error: unknown) => void;
+};
+
+export type SendStagedBatchResult = SendPendingAttachmentsResult & {
+  /**
+   * True when a file that carried the caption actually published, so the
+   * wording is spent: a retry must not put it on another file.
+   */
+  captionPublished: boolean;
 };
 
 /**
@@ -271,6 +360,67 @@ export async function sendPendingAttachments(
   }
 
   return {sent, remaining: []};
+}
+
+/**
+ * Sends a staged batch with `caption` as the caption of its first published
+ * file.
+ *
+ * `publish` reports whether the item really went out: a file removed from the
+ * tray mid-batch is skipped without publishing and returns false, so it must
+ * neither consume the caption nor claim it — the next file takes the wording.
+ *
+ * `captionPublished` is set after `publish` resolves, never when the picker
+ * hands the caption out. That distinction is the whole point: a publish that
+ * throws has already emptied the picker, and the text has to survive in the
+ * composer for the retry.
+ */
+export async function sendStagedBatchWithCaption(
+  items: PendingAttachment[],
+  caption: string,
+  publish: (item: PendingAttachment, caption: string) => Promise<boolean>,
+  hooks?: SendPendingAttachmentsHooks
+): Promise<SendStagedBatchResult> {
+  const nextCaption = createBatchCaptionPicker(caption);
+  let unclaimedCaption = '';
+  let captionPublished = false;
+
+  const result = await sendPendingAttachments(items, async(item) => {
+    const itemCaption = unclaimedCaption || nextCaption();
+    const published = await publish(item, itemCaption);
+
+    if(!published) {
+      // The item was skipped, not sent: the wording moves on to the next file.
+      unclaimedCaption = itemCaption;
+      return;
+    }
+
+    unclaimedCaption = '';
+    if(itemCaption) {
+      captionPublished = true;
+    }
+  }, hooks);
+
+  return {...result, captionPublished};
+}
+
+/**
+ * Whether a failed batch still has to consume the composer.
+ *
+ * Once a file published with the caption, the wording is spent: the retry that
+ * the tray offers would otherwise caption the next file with the same text, and
+ * a recipient agent answers every media message as its own turn, so it would
+ * act on the instruction twice. When the failing file was the one holding the
+ * caption, nothing carried it and the text stays in the composer. The peer
+ * guard matches the successful path: a chat switched mid-batch must not have
+ * the newly opened chat's draft cleared.
+ */
+export function shouldConsumeComposerAfterFailedBatch(
+  batch: Pick<SendStagedBatchResult, 'captionPublished'>,
+  peerIdBeforeBatch: number,
+  currentPeerId: number
+): boolean {
+  return batch.captionPublished && currentPeerId === peerIdBeforeBatch;
 }
 
 /**

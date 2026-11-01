@@ -76,6 +76,43 @@ describe('attachment tray wiring', () => {
     expect(body.indexOf('this.chat.peerId')).toBeLessThan(body.indexOf('this.sendPendingAttachments()'));
   });
 
+  it('carries the typed text as the caption instead of a second message', () => {
+    const start = inputTs.indexOf('public async sendMessage(');
+    const body = inputTs.slice(start, inputTs.indexOf('private async sendMessageInner(', start));
+
+    // The caption is read BEFORE the batch runs, on the same composer the text
+    // would otherwise have been sent from, and it is handed to the batch.
+    expect(body).toContain('this.getPendingAttachmentCaption()');
+    expect(body.indexOf('getPendingAttachmentCaption()')).toBeLessThan(body.indexOf('this.sendPendingAttachments(caption)'));
+    // Once the wording travels inside the first file's message, the composer is
+    // consumed rather than publishing the same text again.
+    expect(body).toContain('this.onMessageSent(true, true)');
+    // The peer-switch guard still wraps the coalesced path.
+    expect(body).toContain('peerIdBeforeBatch');
+  });
+
+  it('attaches the caption to one file, not to every publish in the batch', () => {
+    const body = methodBody(inputTs, 'sendPendingAttachments');
+
+    // The picker lives in the batch runner, which hands each publish its own
+    // caption; the composer passes the text in once and never re-derives it.
+    expect(body).toContain('tray.sendAll(');
+    expect(body).toContain('caption: itemCaption || undefined');
+  });
+
+  it('consumes the composer after a failed batch that already published the caption', () => {
+    const start = inputTs.indexOf('public async sendMessage(');
+    const body = inputTs.slice(start, inputTs.indexOf('private async sendMessageInner(', start));
+
+    // A later file failing must not leave the text in the composer: the retry
+    // would caption the next file with it and the recipient would act twice.
+    expect(body.indexOf('if(batch.failed)')).toBeGreaterThan(-1);
+    expect(body.indexOf('if(batch.failed)')).toBeLessThan(body.indexOf('shouldConsumeComposerAfterFailedBatch('));
+    expect(body).toContain('shouldConsumeComposerAfterFailedBatch(batch, peerIdBeforeBatch, this.chat.peerId)');
+    // ...and the successful path only clears it when a file actually carried it.
+    expect(body).toContain('if(batch.captionPublished)');
+  });
+
   it('forwards the staged image size to the bridge', () => {
     const body = methodBody(inputTs, 'sendPendingAttachments');
     expect(body).toContain('width: item.width');

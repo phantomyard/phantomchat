@@ -130,7 +130,13 @@ import {createStore} from 'solid-js/store';
 import SelectedEffect from '@components/chat/selectedEffect';
 import windowSize from '@helpers/windowSize';
 import AttachmentTray from '@components/chat/attachmentTray';
-import {sendBatchThenText, shouldUseAttachmentTray} from '@lib/phantomchat/composer-attachments';
+import {
+  getAttachmentCaption,
+  sendBatchThenText,
+  SendStagedBatchResult,
+  shouldConsumeComposerAfterFailedBatch,
+  shouldUseAttachmentTray
+} from '@lib/phantomchat/composer-attachments';
 import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import accumulate from '@helpers/array/accumulate';
 import splitStringByLength from '@helpers/string/splitStringByLength';
@@ -4015,21 +4021,42 @@ export default class ChatInput {
   }
 
   /**
-   * Dispatches the staged batch, one file at a time. Returns false when a file
-   * failed, in which case the batch stays staged for a retry.
+   * The text to ride along as the caption of the batch's first file, or `''`
+   * when the text has to keep its own message (reply, forward, suggested post,
+   * or longer than a caption can hold).
    */
-  private async sendPendingAttachments(): Promise<boolean> {
+  private getPendingAttachmentCaption(): string {
+    const {value} = getRichValueWithCaret(this.messageInputField.input, true, false);
+    return getAttachmentCaption({
+      text: value,
+      hasReply: !!(this.replyToMsgId || this.replyToStoryId),
+      isForwarding: !!this.forwarding,
+      hasSuggestedPost: !!this.suggestedPost
+    });
+  }
+
+  /**
+   * Dispatches the staged batch, one file at a time. The batch stays staged for
+   * a retry when a file failed; `captionPublished` then says whether the text
+   * already escaped inside a file's message.
+   *
+   * `caption` goes on the first file that actually publishes, so the recipient
+   * reads the instruction together with the first attachment instead of getting
+   * a context-free file and the text as two separate turns.
+   */
+  private async sendPendingAttachments(caption = ''): Promise<SendStagedBatchResult> {
     const tray = this.attachmentTray;
     if(!tray) {
-      return true;
+      return {sent: [], remaining: [], captionPublished: false};
     }
 
     const sendingParams = this.chat.getMessageSendingParams();
-    const result = await tray.sendAll(async(item) => {
+    const result = await tray.sendAll(async(item, itemCaption) => {
       const sent = await this.managers.appMessagesManager.sendPhantomChatAttachment({
         ...sendingParams,
         file: item.file,
         isMedia: item.kind === 'media',
+        caption: itemCaption || undefined,
         // Present once the tray thumbnail decoded the image; the popup path gets
         // these from the media editor, which the tray deliberately skips.
         width: item.width,
@@ -4043,14 +4070,13 @@ export default class ChatInput {
       if(!sent) {
         throw new Error(`${item.file.name} could not be sent.`);
       }
-    });
+    }, caption);
 
     if(result.failed) {
       toast(result.failed.file.name + ' could not be sent. Still attached.');
-      return false;
     }
 
-    return true;
+    return result;
   }
 
   public async sendMessage(force = false) {
@@ -4073,19 +4099,54 @@ export default class ChatInput {
       this.btnSend.classList.add('is-sending');
     }
     try {
-      // PhantomChat batch: attachments go first (one publish per file), then the
-      // typed text, so the text always lands below the files it describes and
-      // the agent sees the attachments before the instruction that refers to
-      // them. A failed file aborts the text send and keeps both staged.
+      // PhantomChat batch: one publish per file. The typed text rides along as
+      // the caption of the first file, because a recipient agent answers each
+      // published message on its own — a context-free file followed by the text
+      // that explains it is answered blind. A failed file aborts the text and
+      // keeps everything staged.
       if(!this.editMsgId && this.attachmentTray?.hasFiles()) {
+        // The batch keeps the peer it started on, and so does the wording: both
+        // the caption and the fallback text are guarded by the same peer id.
+        const peerIdBeforeBatch = this.chat.peerId;
+        const caption = this.getPendingAttachmentCaption();
+        if(caption) {
+          const batch = await this.sendPendingAttachments(caption);
+          if(batch.failed) {
+            // A file already published the wording, so the text is spent: the
+            // retry the tray offers would otherwise caption the next file with
+            // it, and the recipient answers each media message as its own turn.
+            if(shouldConsumeComposerAfterFailedBatch(batch, peerIdBeforeBatch, this.chat.peerId)) {
+              this.onMessageSent(true, true);
+            }
+
+            return;
+          }
+
+          if(batch.captionPublished) {
+            // The wording is already published inside a file's message: consume
+            // the composer instead of sending it a second time. A chat switch
+            // mid-batch leaves the composer alone (the input instance is
+            // reused, so the newly opened chat's draft must not be cleared).
+            if(this.chat.peerId === peerIdBeforeBatch) {
+              this.onMessageSent(true, true);
+            }
+
+            return;
+          }
+
+          // Nothing carried the caption (every staged file was removed while the
+          // batch ran), so the text still has to be published: fall through to
+          // the files-then-text order rather than dropping it.
+        }
+
         // The batch keeps the peer it started on, so the typed text has to
         // follow it: `sendMessageInner` re-reads `this.chat` after the await,
         // so a chat switch mid-upload would publish the newly opened chat's
         // draft as if Send had been pressed there. `sendBatchThenText` drops
         // the text in that case and still lets the files land.
         const sentAll = await sendBatchThenText(
-          this.chat.peerId,
-          () => this.sendPendingAttachments(),
+          peerIdBeforeBatch,
+          async() => !(await this.sendPendingAttachments()).failed,
           () => this.sendMessageInner(force),
           () => this.chat.peerId
         );
