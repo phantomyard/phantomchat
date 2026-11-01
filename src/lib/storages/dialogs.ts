@@ -29,6 +29,7 @@ import {AppManager} from '@appManagers/manager';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import isObject from '@helpers/object/isObject';
+import clearComputedDialogIndexes from '@lib/storages/clearComputedDialogIndexes';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import getPeerIdsFromMessage from '@appManagers/utils/messages/getPeerIdsFromMessage';
 import {AppStoragesManager} from '@appManagers/appStoragesManager';
@@ -258,10 +259,7 @@ export default class DialogsStorage extends AppManager {
         this.appMessagesManager.saveMessages([dialog.topMessage]);
       }
 
-      for(let i = 0; i <= 21; ++i) {
-        const indexKey: ReturnType<typeof getDialogIndexKey> = `index_${i}` as any;
-        delete dialog[indexKey];
-      }
+      clearComputedDialogIndexes(dialog);
       // delete dialog.indexes;
 
       this.saveDialog({
