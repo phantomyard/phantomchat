@@ -552,9 +552,14 @@ export async function applyGroupDialogFolder(record: {groupId: string, kind?: Gr
    *
    * So read back the row the worker now holds and dispatch THAT — it carries the
    * indices storage actually computed, in both directions (archive drops
-   * `index_4`, unarchive re-stamps it). Falls back to the local row with the
-   * live-folder keys cleared, so an unreachable re-read can still never dispatch
-   * a row that claims a place it no longer has.
+   * `index_4` / `index_3`, unarchive re-stamps them).
+   *
+   * The fallback is one-directional on purpose. The row read at the top of this
+   * function is the LIVE one, so it carries `index_0` and no `index_3` /
+   * `index_4`: clearing the live-folder keys therefore makes an unreachable
+   * re-read safe when ARCHIVING (the row leaves the space), and leaves an
+   * unarchived row out of Sessions / Groups until the space is rebuilt — the
+   * acceptable direction to lose, since the row is still there and reachable.
    */
   const rereadReindexedDialog = async(fallback: any): Promise<any> => {
     let fresh: any;

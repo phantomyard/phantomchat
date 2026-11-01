@@ -164,7 +164,7 @@ describe('applyGroupDialogFolder: the dispatched row is the reindexed one', () =
     await sync.applyGroupDialogFolder({groupId: GROUP_ID, kind: 'session', archivedAt: 1234});
 
     const dispatched = lastDialog(peerId);
-    expect(dispatched).toBeTruthy();
+        expect(dispatched).toBeTruthy();
     expect(dispatched.folder_id).toBe(1);
     // The whole bug: this used to still be defined, so the list kept the row.
     expect(dispatched.index_4).toBeUndefined();
@@ -201,5 +201,75 @@ describe('applyGroupDialogFolder: the dispatched row is the reindexed one', () =
     expect(dispatched.folder_id).toBe(1);
     expect(dispatched.index_4).toBeUndefined();
     expect(dispatched.index_3).toBeUndefined();
+  });
+});
+
+/**
+ * Lena's point 2 at `feba3dd`: the re-read has to RESOLVE, not quietly fall back.
+ * `getDialog` walks the `REAL_FOLDERS` arrays while `processDialogForFilter`
+ * inserts the row into the destination folder's array, so an archived row is
+ * found even when the Archive folder was never loaded. The suite above models
+ * that by hand; this one drives the REAL `DialogsStorage` so the claim rests on
+ * production code. It deliberately stops at the storage boundary — no port, no
+ * dispatch — because the port simulation above is already the honest model, and
+ * booting tweb's state machinery here would only test the shims instead.
+ */
+describe('the archived row is readable out of the real folder arrays', () => {
+  it('clears the live-folder index and inserts into a never-loaded Archive', async() => {
+    const {default: DialogsStorage} = await import('@lib/storages/dialogs');
+    const storage = new DialogsStorage();
+
+    (storage as any).folders = {};
+    (storage as any).dialogs = {};
+    (storage as any).allDialogsLoaded = {0: true, 1: false, 3: true, 4: true};
+    (storage as any).appPeersManager = {
+      peerId: 0x777,
+      isBotforum: () => false,
+      isMuted: () => false,
+      isChannel: () => false
+    };
+    (storage as any).appMessagesManager = {
+      getMessageByPeer: () => ({date: 1_000, pFlags: {}, mid: 9})
+    };
+    const archivedOnly = (dialog: any) => dialog.folder_id === 1;
+    const sessionPeer = (dialog: any) => isSessionPeer(dialog.peerId);
+    (storage as any).filtersStorage = {
+      getFilters: () => ({
+        0: {id: 0, pinnedPeerIds: [] as any[]},
+        1: {id: 1, pinnedPeerIds: [] as any[]},
+        3: {id: 3, pinnedPeerIds: [] as any[]},
+        4: {id: 4, pinnedPeerIds: [] as any[]}
+      }),
+      getFilter: (id: number) => ({id, pinnedPeerIds: [] as any[]}),
+      // Archive holds only archived rows; Groups / Sessions hold the row only
+      // while it is live and its peer class matches the space.
+      testDialogForFilter: (dialog: any, filter: any) => {
+        if(filter.id === 1) return archivedOnly(dialog);
+        if(archivedOnly(dialog)) return false;
+        if(filter.id === 4) return sessionPeer(dialog);
+        if(filter.id === 3) return !sessionPeer(dialog);
+        return true;
+      }
+    };
+    vi.spyOn(storage as any, 'prepareFolderUnreadCountModifyingByDialog').mockImplementation(() => () => {});
+    (storage as any).peersStorage = {requestPeersForKey: () => {}, releasePeer: () => {}};
+
+    const row = {...liveRow(peerId), folder_id: 1} as any;
+
+    // Real production reindex, over all four filters as `processDialogForFilters`
+    // does: this is the code that decides membership and clears the live indices.
+    (storage as any).processDialogForFilters(row);
+
+    expect((storage as any).getFolder(0).dialogs.length).toBe(0);
+    expect((storage as any).getFolder(1).dialogs.length).toBe(1);
+    expect(row.index_4).toBeUndefined();
+
+    // And the row the fix reads back is the one in Archive — Archive itself was
+    // never loaded, which is the case that used to make this fall back.
+    const [found] = storage.getDialog(peerId as any) as any[];
+    expect(found).toBeTruthy();
+    expect(found).toBe(row);
+    expect(found.folder_id).toBe(1);
+    expect(found.index_4).toBeUndefined();
   });
 });
