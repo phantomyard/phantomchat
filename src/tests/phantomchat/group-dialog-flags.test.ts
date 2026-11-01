@@ -772,3 +772,39 @@ describe('a state-restored group row keeps its sort anchor (#332)', () => {
     expect(Math.floor(dialog.index_3 / 0x10000)).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) - 5);
   });
 });
+
+describe('flag-only changes refresh folder unread badges without navigation', () => {
+  it('clears and restores Groups and custom-folder counters with an unchanged sort index', async() => {
+    const groupId = 'cd'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = await groupIdToPeerId(groupId, 'group');
+    let row: any = {_: 'dialog', peerId, folder_id: 0, top_message: 42, unread_count: 0, pFlags: {unread_mark: true}};
+    const worker = new DialogsStorage();
+    Object.assign(worker as any, {
+      folders: {},
+      rootScope,
+      getDialogOnly: () => row,
+      processDialogForFilters: vi.fn(), // same membership and sort index
+      filtersStorage: {getFilters: () => ({3: {id: 3}, 100: {id: 100}}), testDialogForFilter: () => true},
+      appMessagesManager: {getDialogUnreadCount: (d: any) => d.unread_count || +!!d.pFlags.unread_mark},
+      appPeersManager: {isForum: () => false},
+      appNotificationsManager: {isPeerLocalMuted: () => false}
+    });
+    worker.processChangedUnreadOrUnmuted(peerId as any);
+    expect(worker.getFolderUnreadCount(3).unreadCount).toBe(1);
+    expect(worker.getFolderUnreadCount(100).unreadCount).toBe(1);
+    (MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs = {[peerId]: structuredClone(row)};
+    (rootScope.managers as any).dialogsStorage = {
+      getDialog: async() => [structuredClone(row)],
+      setDialogPinnedOrder: async() => {},
+      pushDialog: async({dialog}: any) => { row = structuredClone(dialog); },
+      processChangedUnreadOrUnmuted: async(id: any) => worker.processChangedUnreadOrUnmuted(id)
+    };
+    for(const unreadMarkAt of [0, 1, 0]) {
+      await applyGroupDialogFlags({groupId, unreadMarkAt});
+      expect(worker.getFolderUnreadCount(3).unreadCount).toBe(unreadMarkAt);
+      expect(worker.getFolderUnreadCount(100).unreadCount).toBe(unreadMarkAt);
+      await vi.waitFor(() => expect(rootScope.dispatchEvent).toHaveBeenCalledWith('folder_unread', expect.objectContaining({id: 3})));
+    }
+  });
+});

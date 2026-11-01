@@ -514,6 +514,9 @@ export async function applyGroupDialogFlags(
       // return before setDialogToState. A flag-only change must never move a row
       // or lose it; the flag itself has already been applied to the record.
       await dialogsStorage.pushDialog?.({dialog, offsetDate: 0});
+      // A flag-only push can retain the same sort index. Refresh unread sets
+      // explicitly so Groups, Sessions and custom-folder badges update now.
+      await dialogsStorage.processChangedUnreadOrUnmuted?.(groupPeerId);
 
       // Dispatch the row the WORKER reindexed, not the copy read before the
       // push: on a pin -> unpin the copy still carries the pinned sort index,

@@ -59,6 +59,13 @@ const mockGetPubkey = vi.hoisted(() => vi.fn());
 const mockRemoveMapping = vi.hoisted(() => vi.fn());
 const mockRecordDeletedPeer = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
+const mockApplyReadState = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockUnreadForPeer = vi.hoisted(() => vi.fn(() => 1));
+vi.mock('@lib/phantomchat/phantomchat-message-handler', () => ({
+  applyRemoteReadState: mockApplyReadState,
+  getUnreadForPeer: mockUnreadForPeer
+}));
+
 // rootScope is reached via dynamic `await import('@lib/rootScope')` inside
 // handlers that dispatch UI events (e.g. deleteContacts → conversation_deleted).
 // The real rootScope.dispatchEvent fires an async MTProtoMessagePort call that
@@ -1416,6 +1423,31 @@ describe('PhantomChatMTProtoServer', () => {
       });
 
       expect(mockStore.setReadCursor).toHaveBeenCalledWith(CONVERSATION_ID, 42);
+    });
+
+    it('persists full group mids under the canonical conversation key', async() => {
+      const peerId = -8_000_000_000_000_001;
+      const mid = 1_793_543_210_123_456;
+      mockGroupStore.getByPeerId.mockResolvedValueOnce({groupId: 'read-group'});
+      await server.handleMethod('messages.readHistory', {peer: {chat_id: -peerId}, max_id: mid});
+      expect(mockStore.setReadCursor).toHaveBeenCalledWith('group:read-group', mid);
+      expect(mockGetPubkey).not.toHaveBeenCalled();
+      expect(mockApplyReadState).toHaveBeenCalledWith(peerId);
+    });
+
+    it('refreshes the main-thread counter after persisting a direct-chat read', async() => {
+      const mid = 1_793_543_210_123_456;
+      await server.handleMethod('messages.readHistory', {peer: {user_id: PEER_ID}, max_id: mid});
+      expect(mockStore.setReadCursor).toHaveBeenCalledWith(CONVERSATION_ID, mid);
+      expect(mockApplyReadState).toHaveBeenCalledWith(PEER_ID);
+      expect(mockStore.setReadCursor.mock.invocationCallOrder[0]).toBeLessThan(mockApplyReadState.mock.invocationCallOrder[0]);
+    });
+
+    it('avoids re-counting the conversation when the receive counter is already zero', async() => {
+      mockUnreadForPeer.mockReturnValueOnce(0);
+      await server.handleMethod('messages.readHistory', {peer: {user_id: PEER_ID}, max_id: 42});
+      expect(mockStore.setReadCursor).toHaveBeenCalledWith(CONVERSATION_ID, 42);
+      expect(mockApplyReadState).not.toHaveBeenCalled();
     });
 
     it('is a no-op when max_id is 0', async () => {

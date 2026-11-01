@@ -347,6 +347,28 @@ describe('phantomchat-message-handler', () => {
   });
 
   describe('dialog update coalescing', () => {
+    it.each([0, 10])('a read action supersedes pending arrivals and replays at %ims', async(delay) => {
+      vi.useFakeTimers();
+      try {
+        const dispatch = vi.fn();
+        const queue = createDialogUpdateQueue(dispatch, 500);
+        queue.enqueue(1, {unread_count: 4});
+        if(delay) await vi.advanceTimersByTimeAsync(delay);
+        dispatch.mockClear();
+        queue.replace(1, {unread_count: 0});
+        expect(dispatch.mock.calls[0][0].get(1).unread_count).toBe(0);
+        await vi.advanceTimersByTimeAsync(1000);
+        for(const [batch] of dispatch.mock.calls) {
+          if(batch.has(1)) expect(batch.get(1).unread_count).toBe(0);
+        }
+        queue.enqueue(1, {unread_count: 1});
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(dispatch.mock.calls.at(-1)[0].get(1).unread_count).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('gives late arrivals a full replay delay', async() => {
       vi.useFakeTimers();
       try {
@@ -555,6 +577,28 @@ describe('phantomchat-message-handler', () => {
       mockMessageStore.getMessages.mockResolvedValue([]);
       mockMessageStore.setReadCursor.mockResolvedValue(undefined);
       mockGroupStoreGetByPeerId.mockResolvedValue(null);
+    });
+
+    it('never replays the pre-read badge after resetting a queued incoming message', async() => {
+      vi.useFakeTimers();
+      try {
+        (MOUNT_CLASS_TO as any).appImManager = {chat: {peerId: 0}};
+        mockMessageStore.peekReadCursor.mockReturnValue(0);
+        await handleIncomingMessage(makeData(), OWN_PUBKEY);
+        await vi.advanceTimersByTimeAsync(0);
+        mockMessageStore.getMessages.mockResolvedValue([{mid: 2000000001}]);
+        await resetUnreadForPeer(PEER_ID);
+        mockDispatchEvent.mockClear();
+        await vi.advanceTimersByTimeAsync(1000);
+        const repaints = mockDispatchEvent.mock.calls.filter(([name]) => name === 'dialogs_multiupdate');
+        expect(repaints.length).toBeGreaterThan(0);
+        for(const [, batch] of repaints) {
+          const update = batch.get(PEER_ID);
+          if(update) expect(update.dialog.unread_count).toBe(0);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('clears the mirrored badge before IndexedDB answers', async() => {

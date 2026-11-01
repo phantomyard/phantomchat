@@ -534,7 +534,7 @@ function dispatchDialogBatch(dialogs: Map<number, any>): void {
 export function createDialogUpdateQueue(
   dispatch: (dialogs: Map<number, any>) => void,
   replayDelayMs = 500
-): {enqueue(peerId: number, dialog: any): void} {
+): {enqueue(peerId: number, dialog: any): void; replace(peerId: number, dialog: any): void} {
   const pending = new Map<number, any>();
   const pendingReplays = new Map<number, any>();
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -560,6 +560,20 @@ export function createDialogUpdateQueue(
   };
 
   return {
+    replace(peerId, dialog) {
+      // Supersede both an unflushed arrival and its delayed mount repaint.
+      pending.delete(peerId);
+      pendingReplays.set(peerId, dialog);
+      dispatch(new Map([[peerId, dialog]]));
+      if(replayTimer === null) {
+        replayTimer = setTimeout(() => {
+          replayTimer = null;
+          const replay = new Map(pendingReplays);
+          pendingReplays.clear();
+          dispatch(replay);
+        }, replayDelayMs);
+      }
+    },
     enqueue(peerId, dialog) {
       pending.set(peerId, dialog);
       if(flushTimer === null) flushTimer = setTimeout(flush, 0);
@@ -570,9 +584,7 @@ export function createDialogUpdateQueue(
 const dialogUpdateQueue = createDialogUpdateQueue(dispatchDialogBatch);
 
 export function dispatchDialogUpdate(peerId: number, dialog: any): void {
-  const dialogs = new Map([[peerId, dialog]]);
-  dispatchDialogBatch(dialogs);
-  setTimeout(() => dispatchDialogBatch(dialogs), 500);
+  dialogUpdateQueue.replace(peerId, dialog);
 }
 
 /** Multiple incoming messages collapse into one chat-list fan-out. */

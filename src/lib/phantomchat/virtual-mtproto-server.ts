@@ -2965,12 +2965,22 @@ export class PhantomChatMTProtoServer {
 
     if(peerId !== null && maxId > 0 && this.ownPubkey) {
       try {
-        const absPeerId = Math.abs(peerId);
-        const pubkey = await this.cachedGetPubkey(absPeerId);
-        if(pubkey) {
-          const store = getMessageStore();
-          const convId = store.getConversationId(this.ownPubkey, pubkey);
+        const store = getMessageStore();
+        let convId: string | undefined;
+        if(isGroupPeer(peerId)) {
+          const {getGroupStore} = await import('./group-store');
+          const group = await getGroupStore().getByPeerId(peerId);
+          if(group) convId = `group:${group.groupId}`;
+        } else {
+          const pubkey = await this.cachedGetPubkey(Math.abs(peerId));
+          if(pubkey) convId = store.getConversationId(this.ownPubkey, pubkey);
+        }
+        if(convId) {
           await store.setReadCursor(convId, maxId);
+          // The receive-side counter is separate from the Worker's dialog.
+          // Reconcile it too, or the next arrival resurrects the old count.
+          const {applyRemoteReadState, getUnreadForPeer} = await import('./phantomchat-message-handler');
+          if(getUnreadForPeer(peerId) > 0) await applyRemoteReadState(peerId);
         }
       } catch(err) {
         console.warn(LOG_PREFIX, 'readHistory: failed to advance cursor', err);
