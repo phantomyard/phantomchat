@@ -517,7 +517,7 @@ export default class DialogsContextMenu {
     // The rendered main-thread dialog can be newer than the Worker snapshot.
     // An explicit Read gesture must persist the cursor and reset the receive
     // counter even if the Worker's generic toggle currently sees zero unread.
-    if(+peerId >= 1e15 && (dialog.unread_count || dialog.pFlags?.unread_mark)) {
+    if(+peerId >= 1e15 && isDialog(dialog) && (dialog.unread_count || dialog.pFlags?.unread_mark)) {
       const {resetUnreadForPeer} = await import('@lib/phantomchat/phantomchat-message-handler');
       await resetUnreadForPeer(+peerId);
       return this.managers.appMessagesManager.markDialogUnread({peerId, read: true});
