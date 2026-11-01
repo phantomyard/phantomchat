@@ -17,10 +17,10 @@
 export const DEFAULT_SESSION_GROUP_NAME = 'New session';
 
 /** How many characters of the first prompt become the session title. */
-export const SESSION_NAME_PREFIX_LENGTH = 20;
+export const SESSION_NAME_PREFIX_LENGTH = 30;
 
 /**
- * The title a session takes from its first prompt: the first 20 characters,
+ * The title a session takes from its first prompt: the first 30 characters,
  * verbatim — no ellipsis (owner: the trailing `…` cost a character of the name
  * and looked like the prompt was truncated mid-thought). Whitespace is
  * collapsed first so a multi-line prompt does not produce a title full of gaps.

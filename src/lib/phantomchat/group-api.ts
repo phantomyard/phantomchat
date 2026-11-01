@@ -377,7 +377,7 @@ export class GroupAPI {
     const msgType = opts.type || 'text';
     const replyToRumorId = opts.replyToRumorId;
 
-    // Sessions take their name from the FIRST prompt (first 20 characters, no
+    // Sessions take their name from the FIRST prompt (first 30 characters, no
     // ellipsis). Fire-and-forget: the rename is a control-message broadcast, and
     // the user's send must never wait on it. The guard is `name === 'New
     // session'`, so it fires exactly once and is a no-op for every later
