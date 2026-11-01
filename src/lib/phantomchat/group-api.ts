@@ -839,6 +839,10 @@ export class GroupAPI {
 
     // Build wraps before mutating local store so any crypto-shape rejection
     // on member pubkeys throws cleanly without leaving a drifted record.
+    // Capture the event time here: createRumor() stamps created_at from the
+    // same clock a moment later, and this is the value our own info watermark
+    // advances to below.
+    const infoTsSec = Math.floor(Date.now() / 1000);
     const allMembers = group.members;
     let controlWraps;
     try {
@@ -852,6 +856,18 @@ export class GroupAPI {
     // the publish completes. Tags are sanitized to the known vocabulary, and
     // an explicit empty list clears them.
     await this.store.updateInfo(groupId, info);
+
+    // Advance the local `info` watermark to the event we just published.
+    // Without this the incoming-control gate is blind to changes we originated:
+    // a session's first-prompt auto-name (published seconds earlier) looks
+    // "newer than nothing", so on reload its relay replay restored the
+    // auto-name over the user's rename. The gate drops any group_info_update
+    // that is not strictly newer than this value, on every device. Raise-only:
+    // a peer whose clock runs ahead may already have set a higher watermark,
+    // and lowering it would re-open the replay window.
+    if(infoTsSec > readEventWatermark(groupId, 'info')) {
+      writeEventWatermark(groupId, 'info', infoTsSec);
+    }
 
     // Refresh main-thread mirror so subscribers (chat-list, topbar) see the
     // new title on the next render pass — same path ensureGroupChatInjected
@@ -1252,7 +1268,20 @@ export class GroupAPI {
         return;
       }
       const wm = readEventWatermark(payload.groupId, wmField);
-      if(ts < wm - WATERMARK_GRACE_SEC) {
+      // STRICT ORDERING FOR `info`. The grace below exists for DELTA events
+      // (member lists): a device whose clock runs a few seconds behind must
+      // still land its add/remove. A `group_info_update` is not a delta — it
+      // carries the absolute name/description/avatar, so an event that is not
+      // strictly newer than the newest info we know about is by definition an
+      // older value, and applying it reverts a newer edit. Inside the grace
+      // window the old value won every time: renaming a session seconds after
+      // its first-prompt auto-name, then reloading, restored the auto-name
+      // and re-stamped it with Date.now() (which also made it the groups
+      // CRDT winner and pushed it to other devices). The sender's own rename
+      // advances this same watermark (updateGroupInfo), so "not newer"
+      // covers both applied remote events and our own published ones.
+      const stale = wmField === 'info' ? ts <= wm : ts < wm - WATERMARK_GRACE_SEC;
+      if(stale) {
         this.log('[GroupAPI] dropping replayed control message older than watermark', payload.type, payload.groupId.slice(0, 8), {ts, watermark: wm});
         return;
       }
