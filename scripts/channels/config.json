@@ -374,8 +374,8 @@
     },
     "src/environment/webpSupport.ts": {
       "stable": "709c16ccb8ce8ec75588f051b0897333858c94e94c42c5b32c13fa13f2612306",
-      "preview": "406677dafc9bc52289ad8e076ad7de395a5c53119f83732af56430ba5b5d8815",
-      "reason": "Detect WebP support only from a string result. toDataURL returns null when the browser cannot encode WebP (jsdom returns null because canvas is not implemented), and calling .startsWith on it threw at module scope, making every module that reaches this file unimportable outside a real browser. The capability answer is unchanged wherever it already worked: true when the result starts with data:image/webp, false when the browser gives us nothing. No storage, network or channel semantics change. The Stable blob is byte-identical, so this is a Preview-only refresh."
+      "preview": "a09c39e8f66364581e2a65261c4524acf14f4548eb8b1b2fd1df62bda0c88b6b",
+      "reason": "Detect WebP support only from a string result. A browser that cannot encode WebP answers `toDataURL` with a PNG data URL - a string - so the capability answer was always correct there and is unchanged. Outside a browser the call can return nothing at all (jsdom has no canvas and answers null), and calling `.startsWith` on that threw at module scope, which made every module reaching this file unimportable under jsdom. The stable half is byte-identical, so this is a Preview-only refresh."
     }
   }
 }
