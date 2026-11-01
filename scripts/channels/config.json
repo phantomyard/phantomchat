@@ -159,7 +159,7 @@
     "src/lib/phantomchat/update-channel-choice.ts": {
       "stable": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
       "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
-      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef \u2014 desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
+      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
     },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
       "stable": "e1a1cc6436f6533390ca9ae6a55b7872de4372d41d58da9c306eda800eec221e",
@@ -287,7 +287,7 @@
       "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/selected-conversation.ts": {
-      "stable": "18453a1a0378eb898500aaa1374c048eeed1cc02732ea5d2dc6b940acbf02899",
+      "stable": "absent",
       "preview": "18453a1a0378eb898500aaa1374c048eeed1cc02732ea5d2dc6b940acbf02899",
       "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
@@ -297,5 +297,5 @@
       "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change."
     }
   },
-  "stableVersion": "1.1.80"
+  "stableVersion": "1.1.86"
 }
