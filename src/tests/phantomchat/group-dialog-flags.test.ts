@@ -394,10 +394,18 @@ describe('unpin drops the pinned sort position (real DialogsStorage reindex)', (
     };
 
     const filter: any = {id: 3, pinnedPeerIds: ds.getPinnedOrders(3)};
+    // The REAL filter set, not `{3: filter}`: `prependFilters([])` on a real
+    // FiltersStorage yields [0, 3, 4, 1] and the loop is integer-keyed, so
+    // folder 0 is walked FIRST. Stubbing it 3-only is what let the original
+    // fix pass its own test while folder 0 wiped `index_0` in the real app
+    // (Robert's blocker at 9a728af).
+    const allChats: any = {id: 0, pinnedPeerIds: []};
+    const sessions: any = {id: 4, pinnedPeerIds: []};
     ds.filtersStorage = {
-      getFilters: (): any => ({3: filter}),
+      getFilters: (): any => ({0: allChats, 3: filter, 4: sessions}),
       getFilter: (): any => filter,
-      testDialogForFilter: (): boolean => true
+      // filters.ts:349 — Chats (0) refuses a group peer.
+      testDialogForFilter: (_dialog: any, f: any): boolean => f.id !== 0
     };
 
     return {ds, filter, peerId};
@@ -436,11 +444,36 @@ describe('unpin drops the pinned sort position (real DialogsStorage reindex)', (
     // The bug: this was `now * 0x10000`, i.e. the top of the whole list.
     expect(dialog.index_3).toBe(anchor);
     expect(dialog.index_3).toBeLessThan(PINNED_BLOCK_FLOOR);
+    // The anchor itself has to survive the folder-0 pass, or the fallback above
+    // is the only thing left and it stamps `now`.
+    expect(dialog.index_0).toBe(anchor);
+    // ...and it must not drag the group into Chats (0).
+    expect(ds.getFolder(0).dialogs).not.toContain(dialog);
 
     // Control: the pre-fix computation really does jump to "now" here.
     const control = ds.generateIndexForDialog(dialog, true, undefined, false);
     expect(control).toBeGreaterThan(anchor);
     expect(Math.floor(control / 0x10000)).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) - 5);
+  });
+
+  it('leaves a group index_0 anchor alone when folder 0 refuses it', () => {
+    const ds: any = new DialogsStorage();
+    ds.timeManager = {getServerTimeOffset: () => 0};
+    ds.dialogsNum = 0;
+    const anchor = (Math.floor(Date.now() / 1000) - 3600) * 0x10000;
+    const dialog: any = {_: 'dialog', peerId: GROUP_PEER_ID, folder_id: 0, top_message: 1, pFlags: {}, index_0: anchor};
+    const chats: any = {id: 0, pinnedPeerIds: []};
+    ds.appPeersManager = {peerId: 1, isBotforum: (): boolean => false};
+    // Only the one mock that stands in for `filters.ts:349`.
+    ds.filtersStorage = {
+      testDialogForFilter: (_d: any, f: any): boolean => f.id !== 0,
+      getFilter: (): any => chats
+    };
+
+    // No index for Chats (0) — the row is not a member...
+    expect(ds.setDialogIndexInFilter(dialog, 'index_0', chats)).toBeUndefined();
+    // ...but the anchor is still there for the Groups pass to read.
+    expect(dialog.index_0).toBe(anchor);
   });
 
   it('keeps a chat on the old recompute path (its index_0 holds the pinned index)', async() => {

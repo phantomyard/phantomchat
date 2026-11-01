@@ -569,6 +569,20 @@ export default class DialogsStorage extends AppManager {
 
     let index: number;
 
+    // Chats (0) refuses groups by rule (FiltersStorage.testDialogForFilter), so
+    // this pass produces no index for them — but writing `undefined` here would
+    // DESTROY the row's sort anchor. A group's `index_0` is its top-message date
+    // (PhantomChatPeerMapper stamps it) *because* groups are never in Chats, and
+    // the Groups branch below falls back to exactly that key when the row is not
+    // in the folder's pinned order. Folder 0 is walked FIRST (`getFilters()` is
+    // integer-keyed and 0 sorts first), so wiping it here is what made an
+    // unpinned group re-stamp to `now` (Robert's blocker at 9a728af). Leave the
+    // key alone: `processDialogForFilter` still evicts the row from folder 0 on
+    // the `undefined` this returns — only the anchor survives.
+    if(filter?.id === FOLDER_ID_ALL && isGroupPeer((dialog as Dialog).peerId)) {
+      return;
+    }
+
     const isVirtual = this.isVirtualFilter(this.getDialogFilterId(dialog));
     const isRealFolder = isVirtual || REAL_FOLDERS.has(filter.id);
     /* if(isRealFolder) {
@@ -594,10 +608,12 @@ export default class DialogsStorage extends AppManager {
         // a group therefore left it sorted at the very top of the list, right
         // where its pin had put it, with the badge gone (owner bug 2026-11-01).
         // A group's own sort anchor is `index_0`: PhantomChatPeerMapper stamps
-        // it from the top message date on every build and no folder test rewrites
-        // it (groups are excluded from All Chats, so this branch never runs for
-        // index_0 itself). Chats keep the old path — their `index_0` holds the
-        // PINNED index while pinned, so it cannot be used as a date anchor.
+        // it from the top message date on every build, and the folder-0 pass
+        // above deliberately leaves the key alone for a group peer (see the
+        // guard at the top of this function) — without that guard folder 0 ran
+        // first and overwrote it with `undefined`. Chats keep the old path —
+        // their `index_0` holds the PINNED index while pinned, so it cannot be
+        // used as a date anchor.
         const anchor = isGroupPeer(dialog.peerId) ?
           getDialogIndex(dialog, getDialogIndexKey(GLOBAL_FOLDER_ID as any)) :
           getDialogIndex(dialog);
