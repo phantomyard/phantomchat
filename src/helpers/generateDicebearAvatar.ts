@@ -76,6 +76,26 @@ const eyePalettes = [
   '#ff9100', '#00e5ff', '#76ff03', '#ffffff'
 ];
 
+// Boring Corporate costume (#317): same shapes and seeds, muted greys, no glow.
+const corporateGradients: BgGradient[] = [
+  {start: '#3f3f46', end: '#71717b', cloak: '#52525c', stroke: '#a1a1aa55'},
+  {start: '#27272a', end: '#71717b', cloak: '#52525c', stroke: '#a1a1aa55'},
+  {start: '#52525c', end: '#a1a1aa', cloak: '#71717b', stroke: '#d4d4d855'},
+  {start: '#3f3f46', end: '#9f9fa9', cloak: '#71717b', stroke: '#d4d4d855'},
+  {start: '#27272a', end: '#52525c', cloak: '#3f3f46', stroke: '#71717b55'},
+  {start: '#52525c', end: '#d4d4d8', cloak: '#71717b', stroke: '#e4e4e755'}
+];
+
+const corporateEyes = ['#f5f5f5', '#e4e4e7', '#d4d4d8', '#a1a1aa'];
+
+function isBoringCorporate(): boolean {
+  return typeof document !== 'undefined' && document.documentElement?.dataset?.uiTheme === 'boring-corporate';
+}
+
+function wearCostume(svg: string): string {
+  return svg.replace(/ filter="url\(#glow[^"]*"/g, '').replace(/#0b0e14/g, '#27272a');
+}
+
 function hashString(str: string): number[] {
   let h1 = 0x811c9dc5;
   let h2 = 0x5bd1e995;
@@ -141,14 +161,17 @@ function renderPhantomBody(cx: number, cy: number, scale: number, bg: BgGradient
 export function generatePhantomAvatarSvg(seed: string): string {
   const clean = (seed || '').trim().toLowerCase().replace(/^-/, '') || 'phantom-seed';
   const hashes = hashString(clean);
+  const corporate = isBoringCorporate();
+  const gradients = corporate ? corporateGradients : bgGradients;
+  const eyes = corporate ? corporateEyes : eyePalettes;
 
-  const bg = bgGradients[hashes[0] % bgGradients.length];
-  const eyeColor = eyePalettes[hashes[1] % eyePalettes.length];
+  const bg = gradients[hashes[0] % gradients.length];
+  const eyeColor = eyes[hashes[1] % eyes.length];
   const eyeStyle = hashes[2] % 6;
   const id = (hashes[0].toString(36) + hashes[1].toString(36)).slice(0, 10);
   const eyeSvg = renderEyeSvg(eyeStyle, eyeColor, `glow-${id}`);
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
     <linearGradient id="bg-${id}" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="${bg.start}"/>
@@ -179,6 +202,8 @@ export function generatePhantomAvatarSvg(seed: string): string {
     ${eyeSvg}
   </g>
 </svg>`;
+
+  return corporate ? wearCostume(svg) : svg;
 }
 
 export function generatePhantomSquadAvatarSvg(seed: string): string {
@@ -186,13 +211,17 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
   const hashes = hashString(clean);
   const id = (hashes[0].toString(36) + hashes[1].toString(36)).slice(0, 10);
 
-  const bg = bgGradients[hashes[0] % bgGradients.length];
-  const wingmanBg = bgGradients[(hashes[0] + 7) % bgGradients.length];
-  const ringColorIdx = hashes[1] % eyePalettes.length;
-  const ringColor = eyePalettes[ringColorIdx];
-  const accentColor = eyePalettes[(ringColorIdx + 5) % eyePalettes.length];
-  const leaderEyeColor = eyePalettes[(hashes[3] + 2) % eyePalettes.length];
-  const wingmanEyeColor = eyePalettes[(hashes[3] + 5) % eyePalettes.length];
+  const corporate = isBoringCorporate();
+  const gradients = corporate ? corporateGradients : bgGradients;
+  const eyes = corporate ? corporateEyes : eyePalettes;
+
+  const bg = gradients[hashes[0] % gradients.length];
+  const wingmanBg = gradients[(hashes[0] + 7) % gradients.length];
+  const ringColorIdx = hashes[1] % eyes.length;
+  const ringColor = eyes[ringColorIdx];
+  const accentColor = eyes[(ringColorIdx + 5) % eyes.length];
+  const leaderEyeColor = eyes[(hashes[3] + 2) % eyes.length];
+  const wingmanEyeColor = eyes[(hashes[3] + 5) % eyes.length];
 
   const eyeStyle = hashes[2] % 6;
   const leaderEyeSvg = renderEyeSvg(eyeStyle, leaderEyeColor, `glow-${id}`);
@@ -201,7 +230,7 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
   // Deterministic orbital ring rotation
   const rot = (hashes[0] % 12) * 30;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
     <linearGradient id="bg-${id}" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="${bg.start}"/>
@@ -267,6 +296,8 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
     </g>
   </g>
 </svg>`;
+
+  return corporate ? wearCostume(svg) : svg;
 }
 
 /**
@@ -275,7 +306,8 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
  */
 export async function generateDicebearAvatar(hex: string, isGroup = false): Promise<string> {
   const normalizedHex = typeof hex === 'string' ? hex.replace(/^-/, '') : String(hex).replace(/^-/, '');
-  const cacheKey = isGroup ? `group:${normalizedHex}` : normalizedHex;
+  const baseKey = isGroup ? `group:${normalizedHex}` : normalizedHex;
+  const cacheKey = isBoringCorporate() ? `corporate:${baseKey}` : baseKey;
   const cached = cache.get(cacheKey);
   if(cached) {
     return cached;

@@ -31,6 +31,7 @@ TESTS=(
   # would silently break every other test's prerequisites (onboarding mount).
   e2e-dev-boot-smoke.ts
   e2e-branding.ts
+  e2e-ui-theme.ts
   e2e-status-ui.ts
   e2e-avatar.ts
   e2e-contacts-and-sending.ts

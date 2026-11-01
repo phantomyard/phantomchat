@@ -1,0 +1,324 @@
+// Boring Corporate: a thin costume with the look and feel of T3 Code.
+// Colours, radii and type are taken from T3 Code (https://github.com/pingdotgg/t3code),
+// Copyright (c) 2026 T3 Tools Inc., MIT licence.
+//
+// Everything here is scoped to html[data-ui-theme="boring-corporate"], which only
+// the boot script in index.html sets, so none of it can match Fun and Relaxed.
+//
+// ThemeController.applyTheme writes colours as inline styles on <html>. A stylesheet
+// !important beats a normal inline style, so the custom properties below win without
+// touching the controller, and saved accents and wallpapers are never rewritten.
+// chat.ts writes the same inline colours onto each .chat, so the palette is declared
+// on .chat as well as <html>.
+
+$bc: 'html[data-ui-theme="boring-corporate"]';
+
+@mixin bc-palette(
+  $canvas, $canvas-rgb, $sidebar, $sidebar-rgb, $surface, $surface-rgb, $text, $text-rgb, $muted, $muted-rgb,
+  $border, $input, $accent, $accent-rgb, $accent-dark, $message, $message-rgb, $message-dark,
+  $hover, $selected, $danger, $danger-rgb, $danger-dark, $green, $scrollbar, $menu, $out-status
+) {
+  --bc-canvas: #{$canvas};
+  --bc-sidebar: #{$sidebar};
+  --bc-sidebar-rgb: #{$sidebar-rgb};
+  --bc-hover: #{$hover};
+  --bc-selected: #{$selected};
+  --bc-input: #{$input};
+  --bc-out-status: #{$out-status};
+
+  --body-background-color: #{$canvas} !important;
+  --body-background-color-rgb: #{$canvas-rgb} !important;
+  --background-color-true: #{$canvas} !important;
+  --background-color: #{$canvas} !important;
+  --border-color: #{$border} !important;
+  --scrollbar-color: #{$scrollbar} !important;
+  --input-search-background-color: #{$surface} !important;
+  --input-search-border-color: #{$input} !important;
+  --old-input-background-color: #{$surface} !important;
+  --secondary-color: #{$muted} !important;
+  --chatlist-pinned-color: #{$muted} !important;
+  --link-color: #{$accent} !important;
+  --monospace-text-color: #{$text} !important;
+  --menu-background-color: #{$menu} !important;
+  --menu-backdrop-filter: blur(12px) !important;
+  --menu-box-shadow-color: #{rgba(#000, .1)} !important;
+  --section-box-shadow-color: transparent !important;
+  --message-highlighting-color: #{rgba($muted, .14)} !important;
+  --message-highlighting-color-rgb: #{$muted-rgb} !important;
+  --message-highlighting-alpha: .14 !important;
+  --folders-sidebar-item-color: #{$muted} !important;
+
+  --primary-color: #{$accent} !important;
+  --primary-color-rgb: #{$accent-rgb} !important;
+  --light-primary-color: #{rgba($accent, .1)} !important;
+  --light-filled-primary-color: #{$hover} !important;
+  --dark-primary-color: #{$accent-dark} !important;
+  --premium-color: #{$accent} !important;
+  --saved-color: #{$accent} !important;
+  --light-filled-saved-color: #{$hover} !important;
+  --green-color: #{$green} !important;
+
+  --surface-color: #{$surface} !important;
+  --surface-color-rgb: #{$surface-rgb} !important;
+
+  --primary-text-color: #{$text} !important;
+  --primary-text-color-rgb: #{$text-rgb} !important;
+  --secondary-text-color: #{$muted} !important;
+  --secondary-text-color-rgb: #{$muted-rgb} !important;
+  --light-secondary-text-color: #{rgba($muted, .1)} !important;
+  --light-filled-secondary-text-color: #{$hover} !important;
+
+  --danger-color: #{$danger} !important;
+  --danger-color-rgb: #{$danger-rgb} !important;
+  --light-danger-color: #{rgba($danger, .1)} !important;
+  --dark-danger-color: #{$danger-dark} !important;
+
+  --message-background-color: #{$canvas} !important;
+  --light-message-background-color: #{rgba($muted, .1)} !important;
+  --light-filled-message-background-color: #{$hover} !important;
+  --dark-message-background-color: #{$canvas} !important;
+
+  --message-out-background-color: #{$message} !important;
+  --message-out-background-color-rgb: #{$message-rgb} !important;
+  --light-message-out-background-color: #{rgba($muted, .12)} !important;
+  --light-filled-message-out-background-color: #{$hover} !important;
+  --dark-message-out-background-color: #{$message-dark} !important;
+
+  --message-out-primary-color: #{$accent} !important;
+  --message-out-primary-color-rgb: #{$accent-rgb} !important;
+  --light-filled-message-out-primary-color: #{$hover} !important;
+}
+
+// Light: T3 Code default palette, as rendered.
+#{$bc},
+#{$bc} .chat {
+  @include bc-palette(
+    $canvas: #fcfcfc, $canvas-rgb: (252, 252, 252), $sidebar: #fafafa, $sidebar-rgb: (250, 250, 250),
+    $surface: #ffffff, $surface-rgb: (255, 255, 255),
+    $text: #27272a, $text-rgb: (39, 39, 42), $muted: #71717b, $muted-rgb: (113, 113, 123),
+    $border: #e4e4e7, $input: #d4d4d8,
+    $accent: #1b4ed8, $accent-rgb: (27, 78, 216), $accent-dark: #173fb0,
+    $message: #ebebed, $message-rgb: (235, 235, 237), $message-dark: #dfdfe2,
+    $hover: #f4f4f5, $selected: #ffffff,
+    $danger: #fb2c36, $danger-rgb: (251, 44, 54), $danger-dark: #d9202a,
+    $green: #16a34a, $scrollbar: rgba(0, 0, 0, .15), $menu: rgba(255, 255, 255, .8), $out-status: #63636c
+  );
+
+}
+
+#{$bc} {
+  --font-regular: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif !important;
+  --font-monospace: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace !important;
+  --font-weight-bold: 600 !important;
+  --messages-line-height: 1.5 !important;
+  --chat-input-border-radius: 1rem !important;
+}
+
+// Dark: T3 Code default palette, as rendered.
+#{$bc}.night,
+#{$bc}.night .chat {
+  @include bc-palette(
+    $canvas: #000000, $canvas-rgb: (0, 0, 0), $sidebar: #030303, $sidebar-rgb: (3, 3, 3),
+    $surface: #0e0e0e, $surface-rgb: (14, 14, 14),
+    $text: #f5f5f5, $text-rgb: (245, 245, 245), $muted: #a1a1a1, $muted-rgb: (161, 161, 161),
+    $border: #161616, $input: #1e1e1e,
+    $accent: #346bf1, $accent-rgb: (52, 107, 241), $accent-dark: #2a59cc,
+    $message: #1e1e1e, $message-rgb: (30, 30, 30), $message-dark: #161616,
+    $hover: #131313, $selected: #1c1c1c,
+    $danger: #fb414a, $danger-rgb: (251, 65, 74), $danger-dark: #d9333b,
+    $green: #22c55e, $scrollbar: rgba(255, 255, 255, .08), $menu: rgba(17, 17, 17, .8), $out-status: #a1a1a1
+  );
+}
+
+// T3's dark accent is too dim for links and names on the outgoing surface (3.6:1).
+#{$bc}.night .chat {
+  --message-out-primary-color: #7da0f5 !important;
+  --message-out-primary-color-rgb: 125, 160, 245 !important;
+}
+
+#{$bc} {
+  // ---- Message colours, set where tweb scopes them to .chat ----
+  .chat {
+    --message-time-color: var(--secondary-text-color) !important;
+    --message-status-color: var(--secondary-text-color) !important;
+    --message-out-status-color: var(--bc-out-status) !important;
+    --message-out-time-color: var(--bc-out-status) !important;
+    --message-out-link-color: var(--message-out-primary-color) !important;
+    --message-checkbox-color: var(--primary-color) !important;
+  }
+
+  // ---- Flat canvas: wallpaper hidden, its renderers keep running ----
+  .chat,
+  .chat-background {
+    background: var(--bc-canvas) !important;
+  }
+
+  .chat-background > * {
+    visibility: hidden !important;
+  }
+
+  // ---- Messages ----
+  .bubble-tail {
+    display: none !important;
+  }
+
+  .bubble.bubble.bubble.bubble.bubble {
+    --border-start-start-radius: 1rem !important;
+    --border-start-end-radius: 1rem !important;
+    --border-end-end-radius: 1rem !important;
+    --border-end-start-radius: 1rem !important;
+  }
+
+  // Incoming messages have no bubble. --message-background-color stays the canvas so
+  // anything inside that cuts out against the bubble still matches what is behind it.
+  .bubble.is-in .bubble-content {
+    background-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .bubble.is-out .bubble-content {
+    box-shadow: none !important;
+  }
+
+  // Sender names are quiet, like the rest of the type.
+  .bubble .name,
+  .bubble .colored-name {
+    color: var(--secondary-text-color) !important;
+  }
+
+  // Service messages and date pills.
+  .bubble.service .service-msg,
+  .bubble .service-msg {
+    color: var(--secondary-text-color) !important;
+    background-color: var(--bc-hover) !important;
+  }
+
+  .bubbles-group-avatar {
+    --size: 2.25rem !important;
+    --multiplier: 1.5;
+  }
+
+  // ---- Composer ----
+  .chat-input-wrapper,
+  .rows-wrapper {
+    border-radius: 1rem !important;
+  }
+
+  .rows-wrapper:before {
+    box-shadow: none !important;
+    border: 1px solid var(--bc-input);
+  }
+
+  .btn-send,
+  .btn-corner {
+    box-shadow: none !important;
+  }
+
+  // ---- Chat list: rows, not tiles ----
+  #chatlist-container .chatlist-chat .dialog-avatar.row-media-bigger {
+    --size: 1.75rem !important;
+    --multiplier: 1.9286;
+    width: 1.75rem !important;
+    height: 1.75rem !important;
+    inset-inline-start: .875rem !important;
+  }
+
+  .chatlist-chat {
+    border-radius: .375rem !important;
+  }
+
+  .chatlist-chat.active.active.active {
+    --background: var(--bc-selected) !important;
+    box-shadow: inset 0 0 0 1px var(--border-color);
+
+    .row-subtitle,
+    .dialog-subtitle-badge-pinned,
+    .message-status,
+    .sending-status-icon,
+    .dialog-subtitle-ico {
+      color: var(--secondary-text-color) !important;
+    }
+
+    .row-title,
+    .user-title,
+    .text-highlight,
+    .primary-text {
+      color: var(--primary-text-color) !important;
+    }
+
+    .danger {
+      color: var(--danger-color) !important;
+    }
+
+    .dialog-muted-icon {
+      color: var(--secondary-text-color);
+    }
+
+    .peer-title-direct-badge {
+      color: var(--secondary-text-color);
+      background-color: var(--bc-hover);
+    }
+
+    .badge.unread,
+    .mention,
+    .dialog-subtitle-badge-reaction {
+      background-color: var(--primary-color) !important;
+      color: #fff;
+    }
+  }
+
+  // ---- Chrome ----
+  // The whole left column and the right column are "sidebar" in T3's palette.
+  #column-left,
+  #column-right {
+    --surface-color: var(--bc-sidebar) !important;
+    --surface-color-rgb: var(--bc-sidebar-rgb) !important;
+  }
+
+  .folders-sidebar {
+    --background: var(--bc-sidebar) !important;
+    --background-hover: var(--bc-hover) !important;
+    --folder-item-ripple-color: rgba(127, 127, 127, .1);
+    border-inline-end: 1px solid var(--border-color);
+  }
+
+  #column-center .chat .sidebar-header {
+    background-color: var(--bc-canvas) !important;
+    box-shadow: 0 1px 0 0 var(--border-color) !important;
+  }
+
+  .input-search {
+    --border-radius: .5rem !important;
+  }
+
+  .sidebar-left-h2,
+  .sidebar-left-section-name {
+    color: var(--primary-text-color) !important;
+    font-weight: 600;
+  }
+
+  .btn-menu {
+    border-radius: .5rem !important;
+    border: 1px solid var(--border-color);
+  }
+
+  .btn-menu-item {
+    border-radius: .375rem;
+  }
+
+  .popup-container {
+    border-radius: .75rem !important;
+    border: 1px solid var(--border-color);
+    box-shadow: none !important;
+  }
+
+  .toast,
+  .toast-container {
+    border-radius: .5rem !important;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+}
