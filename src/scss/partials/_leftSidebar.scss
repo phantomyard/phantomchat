@@ -397,12 +397,103 @@
     .folders-tabs-scrollable {
       flex: 1 1 auto;
       min-width: 0;
+      --scrollable-size: 2.75rem;
+      box-shadow: none;
+
+      &:after {
+        display: none;
+      }
+    }
+
+    .menu-horizontal-div {
+      --padding-horizontal: 0px;
+
+      &:before,
+      &:after {
+        display: none;
+      }
+    }
+
+    .chatlist-folder-badge {
+      position: relative;
+      display: flex;
+      flex: 1 1 0;
+      min-width: 3.5rem;
+      height: 2.75rem;
+      padding: .25rem;
+      border: 0;
+      border-radius: .5rem;
+      background: transparent;
+      color: var(--folders-sidebar-item-color);
+      font-family: inherit;
+      font-size: 10px;
+      line-height: 12px;
+      font-weight: var(--font-weight-bold);
+      cursor: pointer;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: .125rem;
+
+      &.active {
+        color: var(--primary-color);
+      }
+
+      @include hover() {
+        background: var(--light-secondary-text-color);
+      }
+
+      .menu-horizontal-div-item-span {
+        display: flex;
+        flex-direction: column;
+        gap: .125rem;
+        max-width: 100%;
+      }
+
+      .text-super {
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        vertical-align: baseline;
+      }
+
+      .chatlist-folder-icon {
+        font-size: 22px;
+        line-height: 22px;
+        height: 22px;
+      }
+
+      .badge {
+        position: absolute;
+        top: 0;
+        inset-inline-start: calc(50% + .375rem);
+        margin: 0;
+        font-size: 12px;
+        line-height: 18px;
+        box-shadow: 0 0 0 1px var(--surface-color);
+        pointer-events: none;
+      }
+
+      .badge-gray {
+        background-color: var(--folders-sidebar-item-color);
+      }
+
+      i {
+        display: none;
+      }
+    }
+
+    .chatlist-archive-badge {
+      // One quarter of the row beside the three standard folders. Additional
+      // custom folders retain the existing strip's horizontal scrolling.
+      flex: 0 0 25%;
     }
 
     .chatlist-sidebar-toggle {
       flex: 0 0 auto;
       width: 3.5rem;
-      height: 3.5rem;
+      height: 2.75rem;
       padding: 0;
       display: flex;
       align-items: center;
@@ -413,6 +504,12 @@
        would duplicate the rail's own toggle, so only the button goes. */
     body.has-folders-sidebar & .chatlist-sidebar-toggle {
       display: none;
+    }
+
+    @include respond-to(until-floating-left-sidebar) {
+      .chatlist-sidebar-toggle {
+        display: none;
+      }
     }
   }
 
@@ -1902,4 +1999,12 @@
 // 54px button + 1.25rem offset = 74px; keep a little clearance past it.
 #chatlist-container .scrollable-y {
   padding-bottom: 5rem;
+}
+
+// The rail cannot be displayed below this breakpoint, regardless of its
+// saved preference. Hide the menu entry too, including in portalled menus.
+@include respond-to(until-floating-left-sidebar) {
+  .folders-sidebar-layout-toggle {
+    display: none;
+  }
 }
