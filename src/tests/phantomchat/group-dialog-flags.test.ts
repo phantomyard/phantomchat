@@ -340,3 +340,287 @@ describe('flag changes never drop the persisted row (real pushDialog)', () => {
     expect(drop).toHaveBeenCalled();
   });
 });
+
+/**
+ * Owner bug 2026-11-01: pin a group, then unpin it — the badge went away but the
+ * row stayed at the very top of the list.
+ *
+ * Two independent halves, both pinned below:
+ *
+ *  1. STORAGE. The Groups folder sorts on `index_3`, which
+ *     `setDialogIndexInFilter` rebuilds. With the peer no longer in the folder's
+ *     pinned order the group took the `generateIndexForDialog` path, which asks
+ *     `appMessagesManager.getMessageByPeer` for the top message. That resolution
+ *     is not dead for groups — the receive path injects the message under
+ *     `${peerId}_history` and `getMessagesStorageByKey` maps that key back to
+ *     the history storage `getMessageByPeer` reads (Kai at 7ed6853) — but a row
+ *     built before its history is in this client gets no date, so `topDate`
+ *     stayed 0 and fell through to `topDate ||= now`. The unpinned row was
+ *     stamped with the CURRENT time: still above every chat.
+ *
+ *  2. DISPATCH. The row handed to the list came from a read taken BEFORE
+ *     `pushDialog`, so it still carried the pinned index (same shape as #318's
+ *     archive bug).
+ */
+describe('unpin drops the pinned sort position (real DialogsStorage reindex)', () => {
+  const PINNED_BLOCK_FLOOR = 0x7fff0000 * 0x10000;
+
+  /** A DialogsStorage with just enough runtime to run the real reindex. */
+  const makeStorage = (peerId: number) => {
+    const ds: any = new DialogsStorage();
+    ds.clear(true);
+    ds.appStateManager = {pushToState: vi.fn()};
+    ds.timeManager = {getServerTimeOffset: (): number => 0};
+    ds.dialogs = {};
+    ds.dialogsOffsetDate = {};
+    ds.allDialogsLoaded = {0: true, 1: true, 3: true, 4: true};
+    ds.getDialogMessageForState = (): undefined => undefined;
+    ds.setDialogToState = vi.fn();
+    ds.rootScope = {dispatchEvent: vi.fn()};
+    ds.peersStorage = {requestPeer: (): undefined => undefined, requestPeersForKey: (): undefined => undefined};
+    ds.appMessagesIdsManager = {clearMessageId: (id: number): number => id};
+    ds.appNotificationsManager = {isPeerLocalMuted: (): boolean => false};
+    ds.appPeersManager = {
+      peerId: 1,
+      // Default: no resolvable top message, so the row falls through to the
+      // build anchor. The cases that need a message override this per-test —
+      // group messages DO reach this storage (receive path injects under
+      // `${peerId}_history`, appMessagesManager maps it back), so this is the
+      // no-history-yet case, not a property of groups.
+      getMessageByPeer: (): undefined => undefined,
+      isBotforum: (): boolean => false,
+      isForum: (): boolean => false,
+      isChannel: (): boolean => false,
+      getOutputPeer: (): any => ({})
+    };
+    ds.appChatsManager = {isChannel: (): boolean => false, getChat: (): undefined => undefined};
+    ds.appMessagesManager = {
+      getMessageByPeer: (): undefined => undefined,
+      getHistoryStorage: (): any => ({history: []}),
+      getDialogUnreadCount: (): number => 0
+    };
+
+    const filter: any = {id: 3, pinnedPeerIds: ds.getPinnedOrders(3)};
+    // The REAL filter set, not `{3: filter}`: `prependFilters([])` on a real
+    // FiltersStorage yields [0, 3, 4, 1] and the loop is integer-keyed, so
+    // folder 0 is walked FIRST. Stubbing it 3-only is what let the original
+    // fix pass its own test while folder 0 wiped `index_0` in the real app
+    // (Robert's blocker at 9a728af).
+    const allChats: any = {id: 0, pinnedPeerIds: []};
+    const sessions: any = {id: 4, pinnedPeerIds: []};
+    ds.filtersStorage = {
+      getFilters: (): any => ({0: allChats, 3: filter, 4: sessions}),
+      getFilter: (): any => filter,
+      // filters.ts:349 — Chats (0) refuses a group peer.
+      testDialogForFilter: (_dialog: any, f: any): boolean => f.id !== 0
+    };
+
+    return {ds, filter, peerId};
+  };
+
+  it('re-stamps index_3 from the row`s own anchor instead of "now"', async() => {
+    const groupId = 'ef'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = GROUP_PEER_ID;
+    const {ds} = makeStorage(peerId);
+
+    // Last message an hour ago: the anchor PhantomChatPeerMapper stamps.
+    const anchor = (Math.floor(Date.now() / 1000) - 3600) * 0x10000;
+    const dialog: any = {
+      _: 'dialog',
+      peerId,
+      folder_id: 0,
+      top_message: 42,
+      unread_count: 0,
+      pFlags: {},
+      index_0: anchor,
+      index_3: anchor
+    };
+    ds.dialogs[peerId] = dialog;
+
+    ds.setDialogPinnedOrder(peerId, 3, true);
+    ds.pushDialog({dialog, offsetDate: 0});
+    expect(dialog.index_3).toBe(PINNED_BLOCK_FLOOR);
+    expect(ds.getPinnedOrders(3)).toEqual([peerId]);
+
+    delete dialog.pFlags.pinned;
+    ds.setDialogPinnedOrder(peerId, 3, false);
+    ds.pushDialog({dialog, offsetDate: 0});
+
+    expect(ds.getPinnedOrders(3)).toEqual([]);
+    // The bug: this was `now * 0x10000`, i.e. the top of the whole list. The
+    // low 16 bits carry the insertion counter, so the date half is what is
+    // asserted — `index_0` is stamped through `generateDialogIndex`, not copied.
+    expect(Math.floor(dialog.index_3 / 0x10000)).toBe(Math.floor(anchor / 0x10000));
+    expect(dialog.index_3).toBeLessThan(PINNED_BLOCK_FLOOR);
+    // The anchor itself has to survive the folder-0 pass, or the fallback above
+    // is the only thing left and it stamps `now`.
+    expect(dialog.index_0).toBe(anchor);
+    // ...and it must not drag the group into Chats (0).
+    expect(ds.getFolder(0).dialogs).not.toContain(dialog);
+
+    // Control: the pre-fix computation really does jump to "now" here.
+    const control = ds.generateIndexForDialog(dialog, true, undefined, false);
+    expect(control).toBeGreaterThan(anchor);
+    expect(Math.floor(control / 0x10000)).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) - 5);
+  });
+
+  /**
+   * The anchor is a FALLBACK, not a precedence (Robert + Kai at 7ed6853).
+   *
+   * `index_0` is written once, at row build; nothing re-stamps it on send,
+   * receive or draft. The `else` branch in `setDialogIndexInFilter` runs on
+   * every push of an unpinned group row, so an anchor used in place of
+   * `generateIndexForDialog` would freeze the row on its build stamp and let
+   * neither a new message nor a draft lift it. Both cases below must beat it.
+   */
+  const anchorHoursAgo = (hours: number) => (Math.floor(Date.now() / 1000) - hours * 3600) * 0x10000;
+
+  it('still sorts an unpinned group by a resolvable top message, not the anchor', async() => {
+    const groupId = 'ef'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = GROUP_PEER_ID;
+    const {ds} = makeStorage(peerId);
+
+    const anchor = anchorHoursAgo(2);
+    const messageDate = Math.floor(Date.now() / 1000) - 300;
+    ds.appMessagesManager.getMessageByPeer = (): any => ({date: messageDate});
+
+    const dialog: any = {
+      _: 'dialog', peerId, folder_id: 0, top_message: 42, unread_count: 0, pFlags: {},
+      index_0: anchor, index_3: anchor
+    };
+    ds.dialogs[peerId] = dialog;
+
+    ds.setDialogPinnedOrder(peerId, 3, true);
+    ds.pushDialog({dialog, offsetDate: 0});
+    delete dialog.pFlags.pinned;
+    ds.setDialogPinnedOrder(peerId, 3, false);
+    ds.pushDialog({dialog, offsetDate: 0});
+
+    expect(Math.floor(dialog.index_3 / 0x10000)).toBe(messageDate);
+    expect(Math.floor(dialog.index_3 / 0x10000)).not.toBe(Math.floor(anchor / 0x10000));
+  });
+
+  it('still lifts an unpinned group by a newer draft, not the anchor', async() => {
+    const groupId = 'ef'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = GROUP_PEER_ID;
+    const {ds} = makeStorage(peerId);
+
+    const anchor = anchorHoursAgo(2);
+    const draftDate = Math.floor(Date.now() / 1000) - 600;
+
+    const dialog: any = {
+      _: 'dialog', peerId, folder_id: 0, top_message: 0, unread_count: 0, pFlags: {},
+      index_0: anchor, index_3: anchor,
+      draft: {_: 'draftMessage', date: draftDate, message: 'half typed'}
+    };
+    ds.dialogs[peerId] = dialog;
+
+    ds.setDialogPinnedOrder(peerId, 3, true);
+    ds.pushDialog({dialog, offsetDate: 0});
+    delete dialog.pFlags.pinned;
+    ds.setDialogPinnedOrder(peerId, 3, false);
+    ds.pushDialog({dialog, offsetDate: 0});
+
+    // The draft path needs no message storage at all (`dialogs.ts:969-975`),
+    // which is what makes this the cheaper of the two regressions to pin.
+    expect(Math.floor(dialog.index_3 / 0x10000)).toBe(draftDate);
+  });
+
+  it('passes the anchor in seconds, so the index is not scaled twice', () => {
+    const {ds} = makeStorage(GROUP_PEER_ID);
+    const seconds = Math.floor(Date.now() / 1000) - 7200;
+    const dialog: any = {_: 'dialog', peerId: GROUP_PEER_ID, folder_id: 0, top_message: 0, pFlags: {}};
+
+    const index = ds.generateIndexForDialog(dialog, true, undefined, false, seconds);
+    expect(Math.floor(index / 0x10000)).toBe(seconds);
+  });
+
+  it('falls back to now when the row has no anchor and no resolvable top message', () => {
+    // The reload shape: `setDialogsFromState` deletes every `index_N`, and the
+    // folder-0 guard now leaves `index_0` absent instead of wiping it. Nothing
+    // re-derives it here, so a state-restored row with no mapper-built
+    // replacement is still stamped `now` — the same as on main. Pinned so the
+    // gap is visible rather than assumed fixed.
+    const {ds} = makeStorage(GROUP_PEER_ID);
+    const dialog: any = {_: 'dialog', peerId: GROUP_PEER_ID, folder_id: 0, top_message: 42, pFlags: {}};
+
+    const index = ds.generateIndexForDialog(dialog, true, undefined, false, undefined);
+    expect(Math.floor(index / 0x10000)).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) - 5);
+  });
+
+  it('leaves a group index_0 anchor alone when folder 0 refuses it', () => {
+    const ds: any = new DialogsStorage();
+    ds.timeManager = {getServerTimeOffset: () => 0};
+    ds.dialogsNum = 0;
+    const anchor = (Math.floor(Date.now() / 1000) - 3600) * 0x10000;
+    const dialog: any = {_: 'dialog', peerId: GROUP_PEER_ID, folder_id: 0, top_message: 1, pFlags: {}, index_0: anchor};
+    const chats: any = {id: 0, pinnedPeerIds: []};
+    ds.appPeersManager = {peerId: 1, isBotforum: (): boolean => false};
+    // Only the one mock that stands in for `filters.ts:349`.
+    ds.filtersStorage = {
+      testDialogForFilter: (_d: any, f: any): boolean => f.id !== 0,
+      getFilter: (): any => chats
+    };
+
+    // No index for Chats (0) — the row is not a member...
+    expect(ds.setDialogIndexInFilter(dialog, 'index_0', chats)).toBeUndefined();
+    // ...but the anchor is still there for the Groups pass to read.
+    expect(dialog.index_0).toBe(anchor);
+  });
+
+  it('keeps a chat on the old recompute path (its index_0 holds the pinned index)', async() => {
+    const ds: any = new DialogsStorage();
+    ds.timeManager = {getServerTimeOffset: () => 0};
+    ds.dialogsNum = 0;
+    const chatPeerId = 1_000_000_000_000_042;
+
+    const messageDate = Math.floor(Date.now() / 1000) - 7200;
+    const chat: any = {_: 'dialog', peerId: chatPeerId, folder_id: 0, top_message: 7, pFlags: {}, index_0: 0x7fff0000 * 0x10000};
+    ds.appMessagesManager = {getMessageByPeer: (): any => ({date: messageDate})};
+    ds.appPeersManager = {peerId: 1, isBotforum: (): boolean => false, isChannel: (): boolean => false};
+    ds.filtersStorage = {testDialogForFilter: (): boolean => true};
+
+    const filter: any = {id: 3, pinnedPeerIds: []};
+    const index = ds.setDialogIndexInFilter(chat, 'index_3', filter);
+
+    // A chat is re-anchored from its top message, not from index_0.
+    expect(Math.floor(index / 0x10000)).toBe(messageDate);
+  });
+});
+
+describe('the dispatched row is the one the Worker reindexed', () => {
+  it('dispatches the post-push read, not the stale pre-push clone', async() => {
+    const groupId = 'a1'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = await groupIdToPeerId(groupId, 'group');
+
+    const stale = {_: 'dialog', peerId, pFlags: {pinned: true}, folder_id: 0, index_3: 0x7fff0000 * 0x10000};
+    const reindexed = {_: 'dialog', peerId, pFlags: {}, folder_id: 0, index_3: 1_000 * 0x10000};
+
+    let reads = 0;
+    (MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs = {[peerId]: structuredClone(stale)};
+    (rootScope.managers as any).dialogsStorage = {
+      // First read: the live row. Second read: what the Worker holds after the push.
+      getDialog: async() => [structuredClone(++reads === 1 ? stale : reindexed)],
+      setDialogPinnedOrder: vi.fn(async() => {}),
+      pushDialog: vi.fn(async() => {})
+    };
+    const dispatched: any[] = [];
+    (rootScope as any).dispatchEvent = vi.fn((event: string, payload: any) => {
+      if(event === 'dialogs_multiupdate') dispatched.push(payload.values().next().value.dialog);
+    });
+
+    await applyGroupDialogFlags({groupId, pinnedAt: 0, unreadMarkAt: 0});
+
+    expect(reads).toBe(2);
+    expect(dispatched[0]).toBeTruthy();
+    // The bug: the list was handed the pinned index and kept the row pinned.
+    expect(dispatched[0].index_3).toBe(1_000 * 0x10000);
+    expect(dispatched[0].pFlags.pinned).toBeUndefined();
+    // The mirror has to be honest too — the next message repaint reads it.
+    expect((MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs[peerId].index_3).toBe(1_000 * 0x10000);
+  });
+});
