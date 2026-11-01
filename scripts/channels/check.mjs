@@ -12,9 +12,13 @@ export function baselineDigestFor(config) {
   // A baseline without pinRef is the repository config itself: stableRef IS
   // the pin. registry.mjs sets pinRef when it substitutes the deployed SHA.
   const pin = config.pinRef ?? config.stableRef;
-  if(config.stableRef === pin) return 'stable';
-  if(config.stableRef === config.publishedStableRef) return 'published';
-  throw new Error(`Deployed Stable ${config.stableRef} matches neither the repository pin ${pin} nor the derived published column ${config.publishedStableRef || '(absent)'}; re-derive scripts/channels/config.json`);
+  // Anything else IS the deployed Stable, whether or not publishedStableRef
+  // has caught up with it. A PWA promotion moves the deployed commit without
+  // re-deriving that field, so refusing an unrecognised baseline here would
+  // take the whole publish lane down on the next merge. Selecting the column
+  // instead leaves the exact per-file digest check below to fail closed on
+  // precisely the files that changed.
+  return config.stableRef === pin ? 'stable' : 'published';
 }
 export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd(), baselineDigest = 'stable') {
   const git = (...args) => execFileSync('git', args, {cwd});
@@ -35,7 +39,15 @@ export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd
     const approved = approval?.[baselineDigest] ?? approval?.stable;
     return !approval || approved !== digest(config.stableRef) || approval.preview !== digest(candidate);
   });
-  if(blocked.length) throw new Error(`Shared-state compatibility review required (exact Stable/Preview hashes):\n${blocked.join('\n')}`);
+  if(blocked.length) {
+    // A deployed baseline that has moved past the derived column is the one
+    // failure an operator can only fix by hand, so name it in the error
+    // rather than leaving a bare digest mismatch.
+    const stale = baselineDigest === 'published' && config.publishedStableRef && config.publishedStableRef !== config.stableRef
+      ? `\nThe published column was derived from ${config.publishedStableRef}; re-derive scripts/channels/config.json against ${config.stableRef}.`
+      : '';
+    throw new Error(`Shared-state compatibility review required (exact Stable/Preview hashes):\n${blocked.join('\n')}${stale}`);
+  }
   return files;
 }
 if(process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

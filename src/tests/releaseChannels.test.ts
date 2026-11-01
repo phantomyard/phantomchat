@@ -133,10 +133,44 @@ describe('shared-state release gate', () => {
     expect(baselineDigestFor({stableRef: pin})).toBe('stable');
     expect(baselineDigestFor({stableRef: pin, publishedStableRef: deployed})).toBe('stable');
     expect(baselineDigestFor({stableRef: deployed, pinRef: pin, publishedStableRef: deployed})).toBe('published');
-    // A promotion past the derived published column must fail closed, not fall
-    // back to a column that cannot describe the deployed commit.
-    expect(() => baselineDigestFor({stableRef: 'c'.repeat(40), pinRef: pin, publishedStableRef: deployed}))
-      .toThrow('re-derive scripts/channels/config.json');
+    // A promotion or rollback moves the deployed Stable past the derived
+    // published column, and the promote workflow does not refresh it. The
+    // selector still picks `published` so the lane keeps running; the per-file
+    // digest check is what rejects content nobody reviewed.
+    expect(baselineDigestFor({stableRef: 'c'.repeat(40), pinRef: pin, publishedStableRef: deployed})).toBe('published');
+    expect(baselineDigestFor({stableRef: 'c'.repeat(40), pinRef: pin})).toBe('published');
+  });
+  it('keeps the publish lane running after a promotion rather than throwing', () => {
+    const config = fixture();
+    const pin = config.stableRef;
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    // fixture leaves HEAD at the commit the published column was derived from.
+    const deployed = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: dir}).toString().trim();
+    // A promotion moves the deployed Stable to a commit nobody derived a
+    // column for, while publishedStableRef stays where it was.
+    writeFileSync(resolve(dir, 'src/store.ts'), 'const version = 3;\n');
+    execFileSync('git', ['commit', '-qam', 'Promotion'], {cwd: dir});
+    const promoted = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: dir}).toString().trim();
+    writeFileSync(resolve(dir, 'src/store.ts'), 'const version = 4;\n');
+    execFileSync('git', ['commit', '-qam', 'Preview'], {cwd: dir});
+    const approvals = {
+      stable: hash('const version = 1;\n'),
+      published: hash('const version = 2;\n'),
+      preview: hash('const version = 4;\n')
+    };
+    const stale = {...config, stableRef: promoted, pinRef: pin, publishedStableRef: deployed,
+      compatibilityApprovals: {...config.compatibilityApprovals, 'src/store.ts': approvals}};
+    // The selector resolves instead of taking the lane down...
+    expect(baselineDigestFor(stale)).toBe('published');
+    // ...and the exact digest gate still fails closed on the drifted file,
+    // naming the re-derive that fixes it.
+    expect(() => checkCompatibility(stale, 'HEAD', dir, baselineDigestFor(stale)))
+      .toThrow(/re-derive scripts\/channels\/config\.json/);
+    // While the derived column still describes the deployed commit, a build
+    // the reviewer approved publishes normally.
+    const fresh = {...stale, stableRef: deployed};
+    expect(baselineDigestFor(fresh)).toBe('published');
+    expect(checkCompatibility(fresh, 'HEAD', dir, baselineDigestFor(fresh))).toEqual(['src/store.ts']);
   });
   it('passes the deploy baseline through the published column end to end', () => {
     const config = fixture();
