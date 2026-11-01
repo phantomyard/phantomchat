@@ -276,6 +276,9 @@ describe('live flags through asynchronous manager proxies', () => {
     await applyGroupDialogFlags({groupId, pinnedAt: 1, unreadMarkAt: 1});
     expect(mutation).toHaveBeenLastCalledWith(peerId, 3, true);
     expect(push).toHaveBeenCalledOnce();
+    // Pin the call shape, not just that a push happened: without `offsetDate: 0`
+    // pushDialog falls back to the top message's date and can drop the row.
+    expect(push).toHaveBeenLastCalledWith({dialog: expect.anything(), offsetDate: 0});
     await applyGroupDialogFlags({groupId, pinnedAt: 0, unreadMarkAt: 0});
     expect(mutation).toHaveBeenLastCalledWith(peerId, 3, false);
     expect(worker.getPinnedOrders(3)).toEqual([]);
