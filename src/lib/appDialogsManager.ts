@@ -586,7 +586,7 @@ export class AppDialogsManager {
   private suggestionContainer: HTMLElement;
 
   private lazyLoadQueue: LazyLoadQueue;
-  private archiveFolderUnread: HTMLElement;
+  private archiveFolderUnread?: HTMLElement;
 
   public start() {
     const managers = this.managers = getProxiedManagers();
