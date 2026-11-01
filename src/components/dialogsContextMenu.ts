@@ -465,7 +465,7 @@ export default class DialogsContextMenu {
     const {peerId, filterId, threadId, dialog} = this;
     // Group-class peers persist the pin on their record: the generic path's only
     // effect is a local dialog flag that the next rebuild throws away.
-    if(isGroupPeer(+peerId)) {
+    if(!this.threadId && isGroupPeer(+peerId)) {
       this.toggleGroupPin(!(this.dialog as Dialog).pFlags?.pinned);
       return;
     }
@@ -508,7 +508,10 @@ export default class DialogsContextMenu {
     // what is already read, and the generic markDialogUnread RPC no-ops for them
     // (no group branch on the virtual server). Route through GroupAPI so the
     // mark persists on the record alongside the dialog flag.
-    if(isGroupPeer(+peerId)) {
+    // A topic inside a group is thread-scoped, and this branch is not: the
+    // "mark read" half calls resetUnreadForPeer, which clears the whole peer.
+    // Leave a threaded gesture to the thread-scoped branches below.
+    if(!this.threadId && isGroupPeer(+peerId)) {
       const marked = !!(dialog as Dialog).unread_count || !!(dialog as Dialog).pFlags?.unread_mark;
       this.toggleGroupUnread(!marked);
       return;
