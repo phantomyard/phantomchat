@@ -1,5 +1,10 @@
 // @ts-nocheck
-/** Local Chromium regression: selected DMs/groups stay read across arrivals. */
+/**
+ * Local Chromium regression: selected DMs/groups stay read across arrivals.
+ * Start Vite separately, then run:
+ * FUZZ_APP_URL=http://127.0.0.1:8080 pnpm exec tsx src/tests/e2e/e2e-selected-chat.ts
+ * Uses disposable identities and its own in-process relay; no Docker required.
+ */
 import assert from 'node:assert/strict';
 import {WebSocketServer} from 'ws';
 import {chromium} from 'playwright';
@@ -54,6 +59,12 @@ chromium.launch = async(options) => {
   browser.newContext = async(contextOptions) => {
     const context = await newContext(contextOptions);
     context.on('page', (page) => {
+      // The harness's fixed load deadline can wait on unrelated late assets;
+      // onboarding below still waits for and clicks the real auth controls.
+      const goto = page.goto.bind(page);
+      const reload = page.reload.bind(page);
+      page.goto = (url, opts) => goto(url, {...opts, waitUntil: 'domcontentloaded', timeout: 120000});
+      page.reload = (opts) => reload({...opts, waitUntil: 'domcontentloaded', timeout: 120000});
       page.on('domcontentloaded', () => console.log('browser DOM loaded'));
       page.on('pageerror', (error) => console.error('browser pageerror:', error.message));
     });
@@ -70,7 +81,12 @@ async function main() {
   const {ctx, teardown} = await bootHarness({consoleBufferMax: 1500});
   const A = ctx.users.userA;
   const B = ctx.users.userB;
+  const ready = async(page) => page.waitForFunction(() =>
+    window.appImManager?.setPeer && window.__phantomchatChatAPI && window.__phantomchatGroupAPI,
+  undefined, {timeout: 60000});
+  await Promise.all([ready(A.page), ready(B.page)]);
   const select = async(pid) => {
+    await ready(A.page);
     await A.page.evaluate((peerId) => window.appImManager.setPeer({peerId}), pid);
     await A.page.waitForTimeout(700);
   };
@@ -79,21 +95,27 @@ async function main() {
     const store = getMessageStore();
     return {unread: await store.countUnread(id, window.__phantomchatOwnPubkey), cursor: await store.getReadCursor(id)};
   }, convId);
-  const expectUnread = async(convId, expected) => {
-    await A.page.waitForFunction(async({id, count}) => {
-      const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
-      return await getMessageStore().countUnread(id, window.__phantomchatOwnPubkey) === count;
-    }, {id: convId, count: expected}, {timeout: 20000});
+  const until = async(label, predicate, timeout = 20000) => {
+    const deadline = Date.now() + timeout;
+    while(Date.now() < deadline) {
+      if(await predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out: ${label}`);
   };
-  const arrive = async(text) => {
-    await A.page.waitForFunction(async(content) => {
-      const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
-      const rows = await getMessageStore().getMessages(window.__selectedTestConv, 100);
-      return rows.some((row) => row.content === content);
-    }, text, {timeout: 20000});
-  };
+  const expectUnread = async(convId, expected) => until(
+    `unread ${expected} for ${convId}`, async() => (await snapshot(convId)).unread === expected
+  );
+  const arrive = async(text) => until(`arrival of ${text}`, () => A.page.evaluate(async(content) => {
+    const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
+    const rows = await getMessageStore().getMessages(window.__selectedTestConv, 100);
+    return rows.some((row) => row.content === content);
+  }, text));
   const assertUI = async(pid) => {
     assert.equal(await A.page.locator('.chatlist-chat .dialog-online-dot').count(), 0);
+    await until('composer unread cleared', () => A.page.evaluate(() =>
+      window.appImManager.chat.input.goDownUnreadBadge?.textContent === ''
+    ));
     const rows = A.page.locator(`.chatlist-chat[data-peer-id="${pid}"]`);
     assert.ok(await rows.count(), 'selected chat has list rows');
     for(const row of await rows.all()) {
@@ -126,19 +148,15 @@ async function main() {
     await expectUnread(dmConv, 1);
     await select(A.remotePeerId);
     await expectUnread(dmConv, 0);
-    await A.page.reload({waitUntil: 'load'});
-    await A.page.waitForFunction(() => window.appImManager && window.__phantomchatGroupAPI, {timeout: 30000});
-    await expectUnread(dmConv, 0);
-    console.log('PASS DM deselect + reopen + reload');
+    console.log('PASS DM deselect + reopen');
 
     const group = await B.page.evaluate(async(other) => {
-      const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
-      return getGroupAPI().createGroup('Selected read regression', [other]);
+      return window.__phantomchatGroupAPI.createGroup('Selected read regression', [other]);
     }, A.pubkeyHex);
-    await A.page.waitForFunction(async(gid) => {
+    await until('group control arrival', () => A.page.evaluate(async(gid) => {
       const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
       return !!await getGroupStore().get(gid);
-    }, group, {timeout: 20000});
+    }, group));
     const groupPeer = await A.page.evaluate(async(gid) => {
       const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
       return (await getGroupStore().get(gid)).peerId;
@@ -146,12 +164,14 @@ async function main() {
     const groupConv = `group:${group}`;
     await A.page.evaluate((id) => { window.__selectedTestConv = id; }, groupConv);
     const sendGroup = async(text) => B.page.evaluate(async({gid, content}) => {
-      const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
-      await getGroupAPI().sendMessage(gid, content);
+      await window.__phantomchatGroupAPI.sendMessage(gid, content);
     }, {gid: group, content: text});
     await select(0);
     await sendGroup('selected-group-closed');
     await arrive('selected-group-closed');
+    // The Chats space deliberately excludes groups; inspect the Groups list.
+    await A.page.evaluate(() => window.appDialogsManager.setFilterIdAndChangeTab(3));
+    await until('group row mounted', () => A.page.locator(`.chatlist-chat[data-peer-id="${groupPeer}"]`).count());
     await select(groupPeer);
     await expectUnread(groupConv, 0);
     await sendGroup('selected-group-open');
@@ -166,9 +186,29 @@ async function main() {
     await sendGroup('selected-group-left');
     await arrive('selected-group-left');
     await expectUnread(groupConv, 1);
-    console.log('PASS group deselect restores unread');
+    assert.equal(await A.page.evaluate(() => +window.appImManager.chat.peerId), groupPeer,
+      'mobile Back retains the cached peer');
+    const inactiveRows = A.page.locator(`.chatlist-chat[data-peer-id="${groupPeer}"]`);
+    for(const row of await inactiveRows.all()) {
+      assert.equal(await row.evaluate((el) => el.classList.contains('active')), false);
+    }
+    console.log('PASS group mobile Back restores unread');
+    await select(groupPeer);
+    await expectUnread(groupConv, 0);
+    await assertUI(groupPeer);
+    await sendGroup('selected-group-mobile-reopened');
+    await arrive('selected-group-mobile-reopened');
+    await expectUnread(groupConv, 0);
+    await assertUI(groupPeer);
+    console.log('PASS group mobile re-entry clears and holds read');
+    await A.page.reload();
+    await A.page.waitForFunction(() => window.appImManager?.setPeer && window.__phantomchatChatAPI,
+      undefined, {timeout: 60000});
+    await expectUnread(dmConv, 0);
+    await expectUnread(groupConv, 0);
+    console.log('PASS DM and group durable cursors after reload');
   } catch(error) {
-    console.error('USER A console', A.consoleLog.slice(-45).join('\n'));
+    console.error('USER A console', A.consoleLog.slice(-120).join('\n'));
     console.error('USER B console', B.consoleLog.slice(-25).join('\n'));
     throw error;
   } finally {

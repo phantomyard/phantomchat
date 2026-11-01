@@ -701,7 +701,15 @@ export async function handleIncomingMessage(
   // Otherwise increment the persisted per-peer counter so multi-message
   // bursts count correctly.
   let unread: number;
-  if(chatIsOpen || isConversationSelected(peerId)) {
+  // The read-state decision re-reads selection HERE, after the Worker awaits,
+  // and the snapshot above is deliberately NOT part of it. `chatIsOpen` was
+  // taken before `injectIntoMirrors` / `invalidateHistoryCache` /
+  // `setDialogTopMessage`, so OR-ing it in lets a stale `true` win: mobile Back
+  // during that window would still write a durable, account-wide read cursor
+  // for a message nobody saw (#218's class). The snapshot above is still the
+  // right input for `hydrateHistory` and the `history_append` below — rendering
+  // into a pane that closes a moment later is harmless, a read cursor is not.
+  if(isConversationSelected(peerId)) {
     unread = 0;
     if(convId && data.mid > 0) {
       void getMessageStore().setReadCursor(convId, data.mid).catch((err) => {

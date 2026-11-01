@@ -514,6 +514,27 @@ describe('phantomchat-message-handler', () => {
       expect(mockMessageStore.setReadCursor).toHaveBeenCalledWith('conv-aaaa-bbbb', 2000000001);
     });
 
+    it('leaves the arrival unread when mobile Back lands during Worker work', async() => {
+      // The bug this pins: `chatIsOpen` is snapshotted before the awaits, so an
+      // OR with the live predicate let a stale `true` win and wrote a durable
+      // read cursor for a message the user never saw.
+      mockSetDialogTopMessage.mockImplementationOnce(async() => {
+        (MOUNT_CLASS_TO as any).appImManager.isChatVisible = false;
+      });
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+      expect(getUnreadForPeer(PEER_ID)).toBe(1);
+    });
+
+    it('counts arrivals after mobile Back retains the peer behind a hidden pane', async() => {
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+      mockMessageStore.setReadCursor.mockClear();
+      (MOUNT_CLASS_TO as any).appImManager.isChatVisible = false;
+      await handleIncomingMessage({...makeData(), mid: 2000000002}, OWN_PUBKEY);
+      expect(getUnreadForPeer(PEER_ID)).toBe(1);
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+    });
+
     it('counts new messages again after the chat is deselected', async() => {
       await handleIncomingMessage(makeData(), OWN_PUBKEY);
       mockMessageStore.setReadCursor.mockClear();
@@ -558,6 +579,20 @@ describe('phantomchat-message-handler', () => {
       const pending = resetUnreadForPeer(PEER_ID);
       await vi.waitFor(() => expect(mockMessageStore.getMessages).toHaveBeenCalled());
       (MOUNT_CLASS_TO as any).appImManager.chat.peerId = 0;
+      mockDispatchEvent.mockClear();
+      release!([{mid: 100}]);
+      await pending;
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+      expect(mockDispatchEvent).not.toHaveBeenCalled();
+    });
+
+    it('abandons a delayed reset when mobile Back hides a retained peer', async() => {
+      mockMessageStore.countUnread.mockResolvedValue(2);
+      let release: (value: any[]) => void;
+      mockMessageStore.getMessages.mockReturnValueOnce(new Promise<any[]>((resolve) => { release = resolve; }));
+      const pending = resetUnreadForPeer(PEER_ID);
+      await vi.waitFor(() => expect(mockMessageStore.getMessages).toHaveBeenCalled());
+      (MOUNT_CLASS_TO as any).appImManager.isChatVisible = false;
       mockDispatchEvent.mockClear();
       release!([{mid: 100}]);
       await pending;

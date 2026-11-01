@@ -89,7 +89,7 @@ import Icon from '@components/icon';
 import setBadgeContent from '@helpers/setBadgeContent';
 import createBadge from '@helpers/createBadge';
 import {isDialog, isForumTopic, isMonoforumDialog, isSavedDialog} from '@appManagers/utils/dialogs/isDialog';
-import {ChatType} from '@components/chat/chat';
+import ImChat, {ChatType} from '@components/chat/chat';
 import rtmpCallsController from '@lib/calls/rtmpCallsController';
 import IS_LIVE_STREAM_SUPPORTED from '@environment/liveStreamSupport';
 import {WrapRichTextOptions} from '@richTextProcessor/wrapRichText';
@@ -880,7 +880,7 @@ export class AppDialogsManager {
       }
     });
 
-    appImManager.addEventListener('peer_changed', ({peerId, threadId, monoforumThreadId, isForum}) => {
+    const updateActivePeer = ({peerId, threadId, monoforumThreadId, isForum}: Partial<ImChat>) => {
       const options: Parameters<AppImManager['isSamePeer']>[0] = {peerId, monoforumThreadId, threadId: isForum || rootScope.myId ? threadId : undefined};
 
       const getOptionsForElement = (element: HTMLElement) => {
@@ -919,6 +919,12 @@ export class AppDialogsManager {
         }
       });
       // this.log('peer_changed total time:', performance.now() - perf);
+    };
+    appImManager.addEventListener('peer_changed', updateActivePeer);
+    appImManager.addEventListener('tab_changing', (tabId) => {
+      if(!mediaSizes.isMobile) return;
+      // Back keeps the cached Chat, so no peer_changed event clears its row.
+      updateActivePeer(tabId === APP_TABS.CHAT ? appImManager.chat : {peerId: NULL_PEER_ID});
     });
 
     rootScope.addEventListener('filter_update', async(filter) => {
