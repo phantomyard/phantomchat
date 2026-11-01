@@ -506,7 +506,7 @@ jobs:
       # document-sealing "eSeal" credential which is marked DEFAULT, so an
       # omitted id would silently sign with the wrong one.
       #
-      # Main-only push/manual jobs can access signing secrets; fork PR events
+      # Main-only manual jobs can access signing secrets; fork PR events
       # never trigger this workflow.
       - name: Assert signing credentials are present
         env:
