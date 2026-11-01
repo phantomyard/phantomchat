@@ -314,6 +314,18 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
           if(typeof record.archivedAt !== 'number' && typeof localArchivedAt === 'number') {
             record.archivedAt = localArchivedAt;
           }
+          // `pinnedAt` / `unreadMarkAt` (owner batch 15) are user-set dialog
+          // flags with the identical absent-vs-cleared contract, so they get the
+          // identical keep-local guard: an absent field means "this writer knows
+          // nothing about pinning", never "unpin". Without it a rename from a
+          // build that predates the flag would clear the user's pin on every
+          // device.
+          if(typeof record.pinnedAt !== 'number' && typeof localRecord?.pinnedAt === 'number') {
+            record.pinnedAt = localRecord.pinnedAt;
+          }
+          if(typeof record.unreadMarkAt !== 'number' && typeof localRecord?.unreadMarkAt === 'number') {
+            record.unreadMarkAt = localRecord.unreadMarkAt;
+          }
           if(typeof entry.deliberateAddAt === 'number') {
             record.deliberateAddAt = entry.deliberateAddAt * 1000;
           }

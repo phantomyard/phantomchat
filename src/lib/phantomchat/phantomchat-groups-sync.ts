@@ -36,9 +36,10 @@
 
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
-import {groupIdToPeerId} from './group-types';
+import {groupIdToPeerId, isSessionPeer} from './group-types';
 import {intendedGroupKind} from './group-class-reconcile';
 import type {GroupKind} from './group-types';
+import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManagers/constants';
 import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 import {buildPhantomChatMedia} from './phantomchat-media-shape';
@@ -194,6 +195,20 @@ function cancelPendingGroupDialogRepaint(groupPeerId: number): void {
 function dispatchGroupDialogUpdate(groupPeerId: number, dialog: any): void {
   const toPeerId = (Number.prototype as any).toPeerId;
   const asPeerId = toPeerId ? (groupPeerId as any).toPeerId(true) : groupPeerId;
+  // Carry the user-set dialog flags forward (owner batch 15). The tx/rx paths
+  // build a FRESH dialog per message, so without this the pin badge and the
+  // manual unread dot would vanish the moment the next message lands — a pin
+  // that survives exactly until the group is next active is worse than none.
+  // Read from the in-memory mirror (no IDB on the message path) and copy the
+  // flags the record stamped there; `applyGroupDialogFlags` is the writer.
+  const mirrored = (MOUNT_CLASS_TO.apiManagerProxy as any)?.mirrors?.dialogs?.[groupPeerId];
+  if(dialog && mirrored) {
+    applyGroupDialogFlagsToDialog(dialog, {
+      pinnedAt: mirrored.pFlags?.pinned ? 1 : 0,
+      unreadMarkAt: mirrored.pFlags?.unread_mark ? 1 : 0
+    });
+    if(mirrored.folder_id) dialog.folder_id = mirrored.folder_id;
+  }
   // The typed envelope for `dialogs_multiupdate` is
   //   Map<PeerId, {dialog?: Dialog, topics?, saved?}>
   // — earlier we wrapped the dialog bare (`new Map([[peerId, dialog]])`),
@@ -364,7 +379,7 @@ export async function injectGroupCreateDialog(
   groupId: string,
   serviceMid: number,
   timestampSec: number,
-  record?: {kind?: GroupKind, archivedAt?: number}
+  record?: {kind?: GroupKind, archivedAt?: number, pinnedAt?: number, unreadMarkAt?: number}
 ): Promise<void> {
   let groupPeerId: number;
   try {
@@ -392,6 +407,8 @@ export async function injectGroupCreateDialog(
     topMessageDate: timestampSec,
     unreadCount: 0,
     archived: !!record?.archivedAt,
+    pinned: !!record?.pinnedAt,
+    unreadMark: !!record?.unreadMarkAt,
     // Read markers must equal top_message when unread is 0; otherwise tweb's
     // getDialogs flags this dialog as "noIdsDialogs" and spams reloadConversation.
     readInboxMaxId: serviceMid,
@@ -411,6 +428,97 @@ export async function injectGroupCreateDialog(
   }
 
   dispatchGroupDialogUpdate(groupPeerId, dialog);
+}
+
+/**
+ * Stamp the USER-SET dialog flags a group record carries onto a dialog row
+ * (owner batch 15). Pure, so the mapping is testable without booting sync.
+ *
+ * Pin and mark-unread are `pFlags.pinned` / `pFlags.unread_mark` — the exact
+ * flags a chat uses — because every reader downstream (chat-list badge, pinned
+ * ordering, selection badge suppression) already tests those. Clearing uses
+ * `delete`, not `= false`: tweb's readers test `!!dialog.pFlags?.pinned`, but a
+ * lingering `false` would come back as a truthy OBJECT key in some serializers
+ * and the built-in "unpinned" path (`handleDialogUnpinning`) deletes for the
+ * same reason.
+ */
+export function applyGroupDialogFlagsToDialog(
+  dialog: any,
+  record: {pinnedAt?: number, unreadMarkAt?: number}
+): void {
+  if(!dialog) return;
+  dialog.pFlags ??= {};
+  if(record.pinnedAt) dialog.pFlags.pinned = true;
+  else delete dialog.pFlags.pinned;
+  if(record.unreadMarkAt) dialog.pFlags.unread_mark = true;
+  else delete dialog.pFlags.unread_mark;
+}
+
+/**
+ * Live-UI half of a pin / mark-unread toggle for a group (owner batch 15).
+ *
+ * The flag itself lives on the RECORD (`pinnedAt` / `unreadMarkAt`, synced over
+ * the groups CRDT); this stamps the existing dialog row, keeps the folder's
+ * pinned order in step, and asks dialogs storage to reindex, so the badge appears
+ * and the row sorts into the pinned block without a reload. A reload converges
+ * too — `getDialogs` builds every group dialog from its record.
+ *
+ * Deliberately mirrors `applyGroupDialogFolder`: same mirror-then-live-read, the
+ * same `pushDialog` (which re-runs processDialogForFilters → pinned index), the
+ * same dispatch so the row repaints.
+ */
+export async function applyGroupDialogFlags(
+  record: {groupId: string, kind?: GroupKind, archivedAt?: number, pinnedAt?: number, unreadMarkAt?: number}
+): Promise<void> {
+  const groupPeerId = await resolveGroupPeerId(record.groupId);
+  const proxy = MOUNT_CLASS_TO.apiManagerProxy as any;
+  const mirrored = proxy?.mirrors?.dialogs?.[groupPeerId];
+  if(mirrored) applyGroupDialogFlagsToDialog(mirrored, record);
+
+  let dialog: any = mirrored;
+  try {
+    const dialogsStorage = (rootScope as any).managers.dialogsStorage;
+    if(!dialogsStorage?.getDialog || !dialogsStorage?.pushDialog) {
+      console.warn(LOG_PREFIX, 'applyGroupDialogFlags: dialogsStorage hooks missing — live toggle skipped');
+    }
+    const entry = await dialogsStorage.getDialog?.(groupPeerId);
+    const live = Array.isArray(entry) ? entry[0] : entry;
+    if(live) dialog = live;
+    if(dialog) {
+      applyGroupDialogFlagsToDialog(dialog, record);
+
+      // The pinned ORDER, not just the flag: see setPinnedOrderEntry. The folder
+      // is the one the row lives in — archive is a plain folder_id, a session
+      // lives in Sessions, everything else in Groups.
+      const folderId = record.archivedAt ?
+        FOLDER_ID_ARCHIVE :
+        (isSessionPeer(groupPeerId) ? FOLDER_ID_SESSION : FOLDER_ID_GROUPS);
+      try {
+        // Managers cross a MessagePort: mutating getPinnedOrders() would
+        // mutate a cloned array (and without await, a Promise). Own the
+        // mutation inside the Worker before reindexing its dialog.
+        await dialogsStorage.setDialogPinnedOrder(groupPeerId, folderId, !!record.pinnedAt);
+      } catch(err: any) {
+        console.debug(LOG_PREFIX, 'applyGroupDialogFlags: pinned order non-critical:', err?.message);
+      }
+
+      // pushDialog re-runs processDialogForFilters, which is what moves the row
+      // into (or out of) the pinned block: the pinned index is derived from the
+      // folder's pinned order for a REAL_FOLDER, which is what Groups is.
+      //
+      // `offsetDate: 0`: see relocateGroupDialog. Without it pushDialog falls
+      // back to the top message's date, and for a row that is not pinned that
+      // date is older than the folder's saved offset — so an unloaded Archive
+      // (or a not-yet-loaded Groups folder) makes it DROP the persisted row and
+      // return before setDialogToState. A flag-only change must never move a row
+      // or lose it; the flag itself has already been applied to the record.
+      await dialogsStorage.pushDialog?.({dialog, offsetDate: 0});
+    }
+  } catch(err: any) {
+    console.debug(LOG_PREFIX, 'applyGroupDialogFlags: reindex non-critical:', err?.message);
+  }
+
+  if(dialog) dispatchGroupDialogUpdate(groupPeerId, dialog);
 }
 
 /**
@@ -478,6 +586,7 @@ export function carriedDialogState(previous: any, topMessage: number): {
   readInboxMaxId: number,
   readOutboxMaxId: number,
   pinned: boolean,
+  unreadMark: boolean,
   muteUntil: number,
   unreadMentionsCount: number,
   unreadReactionsCount: number
@@ -498,6 +607,9 @@ export function carriedDialogState(previous: any, topMessage: number): {
     readInboxMaxId: carried('read_inbox_max_id'),
     readOutboxMaxId: carried('read_outbox_max_id'),
     pinned: !!previous?.pFlags?.pinned,
+    // The manual "mark unread" dot is user state too (owner batch 15): dropping
+    // it on a class repair would silently clear a mark the user set.
+    unreadMark: !!previous?.pFlags?.unread_mark,
     muteUntil: Number(previous?.notify_settings?.mute_until) || 0,
     unreadMentionsCount: Number(previous?.unread_mentions_count) || 0,
     unreadReactionsCount: Number(previous?.unread_reactions_count) || 0
@@ -529,7 +641,7 @@ export async function relocateGroupDialog(
   groupId: string,
   fromPeerId: number,
   toPeerId: number,
-  record?: {kind?: GroupKind, archivedAt?: number}
+  record?: {kind?: GroupKind, archivedAt?: number, pinnedAt?: number, unreadMarkAt?: number}
 ): Promise<void> {
   const proxy = MOUNT_CLASS_TO.apiManagerProxy as any;
   const dialogsStorage = (rootScope as any).managers.dialogsStorage;
@@ -590,6 +702,7 @@ export async function relocateGroupDialog(
     // without it a pinned session falls out of the pinned list and a muted one
     // starts notifying again after the repair.
     if(carried.pinned) (dialog as any).pFlags.pinned = 1;
+    if(carried.unreadMark) (dialog as any).pFlags.unread_mark = true;
     if(carried.muteUntil > 0) (dialog as any).notify_settings.mute_until = carried.muteUntil;
     if(carried.unreadMentionsCount > 0) (dialog as any).unread_mentions_count = carried.unreadMentionsCount;
     if(carried.unreadReactionsCount > 0) (dialog as any).unread_reactions_count = carried.unreadReactionsCount;

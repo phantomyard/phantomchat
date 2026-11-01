@@ -45,7 +45,7 @@ import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
 import {createConversationResidueWipe} from '@lib/phantomchat/contacts-residue-wipe';
 import {addP2PContact} from '@lib/phantomchat/add-p2p-contact';
 import {writeGroupCreateServiceMessage} from '@lib/phantomchat/group-service-messages';
-import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection, applyGroupDialogFolder, moveSyncedGroupToPeer} from '@lib/phantomchat/phantomchat-groups-sync';
+import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection, applyGroupDialogFolder, moveSyncedGroupToPeer, applyGroupDialogFlags} from '@lib/phantomchat/phantomchat-groups-sync';
 import {toast} from '@components/toast';
 import I18n from '@lib/langPack';
 // tweb-contained CSS no longer needed — onboarding uses native tweb styles
@@ -637,6 +637,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                 await ensureGroupChatInjected(rec.groupId, peerId);
                 if((existing.archivedAt ?? 0) !== (rec.archivedAt ?? 0)) {
                   try { await applyGroupDialogFolder(rec); } catch(e) { console.warn('[groups-sync] live archive move failed', e); }
+                }
+                if((existing.pinnedAt ?? 0) !== (rec.pinnedAt ?? 0) ||
+                  (existing.unreadMarkAt ?? 0) !== (rec.unreadMarkAt ?? 0)) {
+                  try { await applyGroupDialogFlags(rec); } catch(e) { console.warn('[groups-sync] live flags update failed', e); }
                 }
               }
             },

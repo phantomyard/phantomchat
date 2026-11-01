@@ -169,7 +169,11 @@ export class GroupStore {
    */
   async updateInfo(
     groupId: string,
-    updates: Partial<Pick<GroupRecord, 'name' | 'description' | 'avatar'>> & {archivedAt?: number | null}
+    updates: Partial<Pick<GroupRecord, 'name' | 'description' | 'avatar'>> & {
+      archivedAt?: number | null,
+      pinnedAt?: number | null,
+      unreadMarkAt?: number | null
+    }
   ): Promise<void> {
     const existing = await this.get(groupId);
     if(!existing) throw new Error(`Group not found: ${groupId}`);
@@ -184,6 +188,15 @@ export class GroupStore {
       // never propagate. Truthiness checks (`if(group.archivedAt)`) still read
       // 0 as unarchived.
       existing.archivedAt = updates.archivedAt === null ? 0 : updates.archivedAt;
+    }
+    // Same absent-vs-cleared contract as archivedAt, for the same reason: these
+    // are user-set dialog flags carried over the groups CRDT, and a republish
+    // from a build that does not know the field must not clear it.
+    if(updates.pinnedAt !== undefined) {
+      existing.pinnedAt = updates.pinnedAt === null ? 0 : updates.pinnedAt;
+    }
+    if(updates.unreadMarkAt !== undefined) {
+      existing.unreadMarkAt = updates.unreadMarkAt === null ? 0 : updates.unreadMarkAt;
     }
     existing.updatedAt = Date.now();
     await this.save(existing);

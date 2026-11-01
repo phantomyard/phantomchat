@@ -79,8 +79,9 @@ export default class DialogsContextMenu {
       },
       onOpenBefore: async() => {
         this.buttons?.forEach(button => button?.onOpen?.());
-        // delete button
-        const langPackKey: LangPackKey = this.threadId ? 'Delete' : await this.managers.appPeersManager.getDeleteButtonText(this.peerId);
+        // delete button — group-class peers decide by ADMIN rank, not by
+        // tweb's chat rights (see getDeleteMenuText)
+        const langPackKey: LangPackKey = this.threadId ? 'Delete' : await this.getDeleteMenuText();
         const lastButton = this.buttons[this.buttons.length - 1];
         if(lastButton?.element) {
           lastButton.element.lastChild.replaceWith(i18n(langPackKey));
@@ -102,6 +103,83 @@ export default class DialogsContextMenu {
         return findUpTag(e.target, DIALOG_LIST_ELEMENT_TAG);
       }
     });
+  }
+
+  /**
+   * Pin / unpin a group-class peer (owner batch 15).
+   *
+   * `appMessagesManager.toggleDialogPin` cannot do this: the request lands on
+   * the virtual server's action fallback and the only resulting state change is
+   * an `updateDialogPinned` that the next `getDialogs` rebuild discards, so the
+   * badge never appeared and the row never sorted into the pinned block.
+   * GroupAPI persists the pin on the record and stamps the live row.
+   */
+  private toggleGroupPin(pinned: boolean) {
+    const peerId = +this.peerId;
+    void (async() => {
+      try {
+        const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+        await getGroupAPI().setGroupPinnedByPeerId(peerId, pinned);
+      } catch(err) {
+        console.error('[PhantomChat.chat] group pin toggle failed:', err);
+      }
+    })();
+  }
+
+  /**
+   * Mark a group-class peer read / unread (owner batch 15).
+   *
+   * Unread is the DOT only, exactly like a chat: `pFlags.unread_mark`, no count.
+   * Read clears the mark AND runs the same "reset unread" path the chat list
+   * uses when a group is opened, so the badge, the IDB read cursor and the
+   * message store all agree instead of the badge fading out and coming back.
+   */
+  private toggleGroupUnread(markUnread: boolean) {
+    const peerId = +this.peerId;
+    void (async() => {
+      try {
+        const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+        if(markUnread) {
+          await getGroupAPI().setGroupUnreadMarkByPeerId(peerId, true);
+        } else {
+          const {resetUnreadForPeer} = await import('@lib/phantomchat/phantomchat-message-handler');
+          await resetUnreadForPeer(peerId);
+          await getGroupAPI().setGroupUnreadMarkByPeerId(peerId, false);
+        }
+      } catch(err) {
+        console.error('[PhantomChat.chat] group unread toggle failed:', err);
+      }
+    })();
+  }
+
+  /**
+   * Is the group record's `adminPubkey` our own key? Reads the canonical runtime
+   * source (`window.__phantomchatOwnPubkey`) — `loadIdentity()` returns null in a
+   * real session and silently demoted group admins everywhere it was used.
+   */
+  private static async isGroupAdmin(peerId: number): Promise<boolean> {
+    try {
+      const ownPubkey = (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey;
+      if(!ownPubkey) return false;
+      const {getGroupStore} = await import('@lib/phantomchat/group-store');
+      const record = await getGroupStore().getByPeerId(peerId);
+      return !!record && record.adminPubkey === ownPubkey;
+    } catch{
+      return false;
+    }
+  }
+
+  private async getDeleteMenuText(): Promise<LangPackKey> {
+    const peerId = +this.peerId;
+    if(!isGroupPeer(peerId)) {
+      return this.managers.appPeersManager.getDeleteButtonText(this.peerId);
+    }
+
+    // Owner batch 15: an admin leaving a P2P group DELETES it (there is no
+    // server-side owner to hand it to), so the menu must say so. A non-admin
+    // keeps the leave wording. tweb cannot answer this — `hasRights` is always
+    // false for a group peer, which is why it always read "Leave Group".
+    return (await DialogsContextMenu.isGroupAdmin(peerId)) ? 'Delete' : 'ChatList.Context.LeaveGroup';
   }
 
   private getButtons() {
@@ -138,12 +216,12 @@ export default class DialogsContextMenu {
       icon: 'unread',
       text: 'MarkAsUnread',
       onClick: this.onUnreadClick,
-      verify: async() => !this.threadId && !(await this.managers.appMessagesManager.isDialogUnread(this.dialog))
+      verify: async() => !this.threadId && !(await this.isUnreadMarked())
     }, {
       icon: 'readchats',
       text: 'MarkAsRead',
       onClick: this.onUnreadClick,
-      verify: () => this.managers.appMessagesManager.isDialogUnread(this.dialog)
+      verify: () => this.isUnreadMarked()
     }, createSubmenuTrigger({
       options: {
         icon: 'folder',
@@ -169,10 +247,7 @@ export default class DialogsContextMenu {
           return false;
         }
 
-        const isPinned = this.filterId !== undefined && this.filterId > 1 ?
-          (await this.managers.appMessagesManager.getFilter(this.filterId)).pinnedPeerIds.includes(this.dialog.peerId) :
-          !!this.dialog.pFlags?.pinned;
-        return !isPinned;
+        return !(await this.isPinnedForMenu());
       }
     }, {
       icon: 'unpin',
@@ -189,10 +264,7 @@ export default class DialogsContextMenu {
           return false;
         }
 
-        const isPinned = this.filterId !== undefined && this.filterId > 1 ?
-          (await this.managers.appMessagesManager.getFilter(this.filterId)).pinnedPeerIds.includes(this.dialog.peerId) :
-          !!this.dialog.pFlags?.pinned;
-        return isPinned;
+        return this.isPinnedForMenu();
       }
     }, {
       icon: 'mute',
@@ -291,6 +363,35 @@ export default class DialogsContextMenu {
     })();
   }
 
+  private async isPinnedForMenu(): Promise<boolean> {
+    if(isGroupPeer(+this.peerId)) {
+      // A group row in Groups/Sessions has no custom-filter object, so the
+      // filter lookup below would answer undefined — read the dialog flag the
+      // record stamps instead (it is also what the badge reads).
+      return !!(this.dialog as Dialog).pFlags?.pinned;
+    }
+
+    if(this.filterId !== undefined && this.filterId > 1) {
+      const filter = await this.managers.appMessagesManager.getFilter(this.filterId);
+      return !!filter?.pinnedPeerIds?.includes(this.dialog.peerId);
+    }
+
+    return !!(this.dialog as Dialog).pFlags?.pinned;
+  }
+
+  /**
+   * Read/unread state for the menu. A chat answers from its unread COUNT; a
+   * group-class peer additionally counts the manual unread dot, which carries no
+   * count and would otherwise leave "Mark as unread" clickable forever.
+   */
+  private async isUnreadMarked(): Promise<boolean> {
+    if(isGroupPeer(+this.peerId) && (this.dialog as Dialog).pFlags?.unread_mark) {
+      return true;
+    }
+
+    return this.managers.appMessagesManager.isDialogUnread(this.dialog);
+  }
+
   private createAddToFolderSubmenu = async({middleware}: CreateSubmenuArgs) => {
     if(!isDialog(this.dialog)) return;
 
@@ -362,6 +463,13 @@ export default class DialogsContextMenu {
 
   private onPinClick = () => {
     const {peerId, filterId, threadId, dialog} = this;
+    // Group-class peers persist the pin on their record: the generic path's only
+    // effect is a local dialog flag that the next rebuild throws away.
+    if(isGroupPeer(+peerId)) {
+      this.toggleGroupPin(!(this.dialog as Dialog).pFlags?.pinned);
+      return;
+    }
+
     const isSaved = isSavedDialog(dialog);
     this.managers.appMessagesManager.toggleDialogPin({
       peerId,
@@ -395,6 +503,16 @@ export default class DialogsContextMenu {
   private onUnreadClick = async() => {
     const {peerId, dialog} = this;
     if(!isDialog(dialog) && !isForumTopic(dialog) && !isMonoforumDialog(dialog)) return;
+
+    // Group-class peers: "unread" means the user-marked dot, not a re-count of
+    // what is already read, and the generic markDialogUnread RPC no-ops for them
+    // (no group branch on the virtual server). Route through GroupAPI so the
+    // mark persists on the record alongside the dialog flag.
+    if(isGroupPeer(+peerId)) {
+      const marked = !!(dialog as Dialog).unread_count || !!(dialog as Dialog).pFlags?.unread_mark;
+      this.toggleGroupUnread(!marked);
+      return;
+    }
 
     if(this.monoforumParentPeerId) {
       this.managers.appMessagesManager.markDialogUnread({

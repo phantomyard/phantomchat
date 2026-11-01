@@ -513,6 +513,20 @@ export class PhantomChatMTProtoServer {
       case 'messages.readHistory':
         return this.readHistory(params);
 
+      // Owner batch 15: the chat-list context menu's Pin and Mark-as-unread
+      // entries reached `fallback()`, whose `.toggle` / `.mark` action patterns
+      // answered `true` with no wire and no state change. For a 1:1 chat the
+      // local `updateDialogPinned` / `updateDialogUnreadMark` that
+      // appMessagesManager dispatches next was enough to make the badge appear;
+      // for a GROUP the dialog row is rebuilt from the group record, so the pin
+      // was gone at the next rebuild and the dot never stuck. The group branch
+      // persists on the record instead of relying on that transient update.
+      case 'messages.toggleDialogPin':
+        return this.toggleDialogPin(params);
+
+      case 'messages.markDialogUnread':
+        return this.markDialogUnread(params);
+
       case 'messages.createChat':
         return this.createChat(params);
 
@@ -664,6 +678,51 @@ export class PhantomChatMTProtoServer {
       }
     } catch(err) {
       console.warn(LOG_PREFIX, 'updateNotifySettings persist failed:', err);
+    }
+    return true;
+  }
+
+  // ─── Group dialog flags: pin + mark-unread (owner batch 15) ───────
+  //
+  // Both RPCs are per-dialog view state, not message state: tweb's caller
+  // (`appMessagesManager.toggleDialogPin` / `markDialogUnread`) applies its own
+  // optimistic update afterwards, which is right for a chat but cannot persist a
+  // group — a group dialog is rebuilt from the record on every `getDialogs`, so
+  // only the record survives. Route the group-class peer to GroupAPI and keep
+  // the previous `true` answer for everything else (1:1 chats work as they are).
+  //
+  // The peer arrives wrapped: tweb sends `inputDialogPeer{peer: inputPeerChat}`,
+  // which flat `extractPeerId` cannot read (same unwrap as the dialog-peer loop
+  // above).
+  private extractDialogPeerId(peer: any): number | null {
+    return extractPeerId(peer?._ === 'inputDialogPeer' ? peer.peer : peer);
+  }
+
+  private async toggleDialogPin(params: any): Promise<boolean> {
+    try {
+      const peerId = this.extractDialogPeerId(params?.peer);
+      if(peerId !== null && isGroupPeer(peerId)) {
+        const {getGroupAPI} = await import('./group-api');
+        await getGroupAPI().setGroupPinnedByPeerId(peerId, !!params?.pinned);
+      }
+    } catch(err) {
+      console.warn(LOG_PREFIX, 'toggleDialogPin: group pin failed', err);
+    }
+    return true;
+  }
+
+  private async markDialogUnread(params: any): Promise<boolean> {
+    try {
+      const peerId = this.extractDialogPeerId(params?.peer);
+      if(peerId !== null && isGroupPeer(peerId)) {
+        const {getGroupAPI} = await import('./group-api');
+        // `unread` is tweb's field name for the DOT. Clearing it here only
+        // removes the manual mark; the read cursor is advanced by the caller
+        // that also owns the badge (`resetUnreadForPeer`).
+        await getGroupAPI().setGroupUnreadMarkByPeerId(peerId, !!params?.unread);
+      }
+    } catch(err) {
+      console.warn(LOG_PREFIX, 'markDialogUnread: group mark failed', err);
     }
     return true;
   }
@@ -981,7 +1040,12 @@ export class PhantomChatMTProtoServer {
             // Archive state comes from the record (owner batch 11) — it is the
             // synced fact, and it puts an archived session straight into the
             // Session Archive folder on every rebuild.
-            archived: !!group.archivedAt
+            archived: !!group.archivedAt,
+            // Pin + manual unread dot are record state too (owner batch 15).
+            // This is the single rebuild site for a group row, so without them
+            // here a pin would not survive a reload.
+            pinned: !!group.pinnedAt,
+            unreadMark: !!group.unreadMarkAt
           });
           // Rule 8 on the response path (see the 1:1 branch above). Skip
           // message-less groups — there is no preview to render.

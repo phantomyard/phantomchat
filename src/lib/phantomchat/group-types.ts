@@ -167,6 +167,24 @@ export interface GroupRecord {
    * existing archive machinery (folder_peers / getFolderDialogs) does the work.
    */
   archivedAt?: number;
+  /**
+   * Unix-millis PIN stamp (owner batch 15). Present = the row is pinned in the
+   * chat list; `0` = explicitly unpinned (same absent/0 semantics as
+   * `archivedAt`, so a writer that knows nothing about pinning cannot clear
+   * someone's pin and an older build's rename cannot resurrect it).
+   *
+   * The local dialog mirrors it as `pFlags.pinned`, which is the flag tweb's
+   * badge + pinned ordering already read for a chat — a group pins exactly the
+   * way a chat does, no separate pin machinery.
+   */
+  pinnedAt?: number;
+  /**
+   * Unix-millis MARK-UNREAD stamp (owner batch 15). Present = the user marked
+   * the row unread by hand, so the chat list shows the unread dot even with
+   * `unread_count === 0`. Mirrors as `pFlags.unread_mark`, the flag a chat's
+   * "Mark as unread" sets. `0` = explicitly cleared.
+   */
+  unreadMarkAt?: number;
 }
 
 // ─── Group Delivery Info ────────────────────────────────────────────

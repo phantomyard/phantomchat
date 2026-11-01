@@ -54,7 +54,30 @@ export default class PopupDeleteDialog {
     // Route them through GroupAPI.leaveGroupByPeerId, which broadcasts
     // `group_leave`, deletes the local store record, and cleans the mirror.
     const isP2PGroup = isGroupPeer(peerId);
-    const groupAPI = (window as any).__phantomchatGroupAPI as {leaveGroupByPeerId?: (id: number) => Promise<void>} | undefined;
+    const groupAPI = (window as any).__phantomchatGroupAPI as {leaveGroupByPeerId?: (id: number) => Promise<void>, deleteGroupByPeerId?: (id: number) => Promise<void>} | undefined;
+
+    // Owner batch 15: for a group-class peer the ADMIN is the owner — there is no
+    // server to hand the group to — so an admin's "leave" DELETES it for every
+    // member instead of orphaning it. Non-admins keep leaving. Answers false when
+    // there is no record (already being torn down), which leaves the existing
+    // leave path in charge.
+    const isP2PGroupAdmin = async(): Promise<boolean> => {
+      if(!isP2PGroup) return false;
+      try {
+        const ownPubkey = (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey;
+        if(!ownPubkey) return false;
+        const {getGroupStore} = await import('@lib/phantomchat/group-store');
+        const record = await getGroupStore().getByPeerId(peerId);
+        return !!record && record.adminPubkey === ownPubkey;
+      } catch{
+        return false;
+      }
+    };
+
+    const deleteP2PGroup = (): Promise<any> => {
+      const call = groupAPI?.deleteGroupByPeerId ?? groupAPI?.leaveGroupByPeerId;
+      return call!.call(groupAPI, peerId).then(() => managers.appMessagesManager.flushHistory({peerId}));
+    };
 
     const callbackLeave = (e: MouseEvent, checked: PopupPeerButtonCallbackCheckboxes, flush = checkboxes && !!checked.size) => {
       let promise: Promise<any>;
@@ -85,9 +108,14 @@ export default class PopupDeleteDialog {
         promise = managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true, threadOrSavedId: threadId});
       } else if(peerId.isUser()) {
         promise = managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: checkboxes ? !!checked.size : undefined});
+      } else if(isP2PGroup && groupAPI?.deleteGroupByPeerId) {
+        // Owner batch 15: an admin's Delete on a P2P group tears it down for every
+        // member (group_delete control) — the same path as the context menu's
+        // Delete, so the popup and the menu can never disagree.
+        promise = deleteP2PGroup();
       } else if(isP2PGroup && groupAPI?.leaveGroupByPeerId) {
-        // For PhantomChat P2P groups "Delete" and "Leave" are functionally equivalent —
-        // there is no server-side group, just the local record + relay broadcast.
+        // A non-admin has no group to delete: "Delete" is the same as dropping
+        // their own copy (local record + group_leave broadcast).
         promise = groupAPI.leaveGroupByPeerId(peerId).then(() => {
           return managers.appMessagesManager.flushHistory({peerId});
         });
@@ -224,7 +252,11 @@ export default class PopupDeleteDialog {
             isDanger: true,
             callback: callbackDelete
           }];
-        } else if(/* actionType === 'delete' &&  */await managers.appChatsManager.hasRights(peerId.toChatId(), 'delete_chat')) {
+        } else if(isP2PGroup ? await isP2PGroupAdmin() : await managers.appChatsManager.hasRights(peerId.toChatId(), 'delete_chat')) {
+          // Owner batch 15: `hasRights` is ALWAYS false for a group-class peer, so
+          // every member — admin included — got the leave wording. The group
+          // record's adminPubkey is the real answer: an admin gets the
+          // delete-for-everyone dialog, everyone else keeps Leave.
           title = 'DeleteMegaMenu';
           description = 'AreYouSureDeleteAndExit';
           buttons = [{
@@ -233,7 +265,9 @@ export default class PopupDeleteDialog {
             callback: callbackDelete
           }];
 
-          checkboxes = [{
+          // No "delete for all members" checkbox: a group-class peer has no other
+          // deletion mode — an admin's delete IS for everyone.
+          checkboxes = isP2PGroup ? undefined : [{
             text: 'DeleteChat.DeleteGroupForAll'
           }];
         } else {
