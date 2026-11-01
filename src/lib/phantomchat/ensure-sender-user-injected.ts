@@ -34,6 +34,8 @@ export interface EnsureSenderUserInjectedOpts {
   peerId: number;
   /** Optional log-prefix override (defaults to '[ensureSenderUserInjected]'). */
   logPrefix?: string;
+  /** False for a sender known only through a group or typing tick: not a contact. */
+  asContact?: boolean;
 }
 
 export interface EnsureSenderUserInjectedResult {
@@ -112,6 +114,7 @@ export async function ensureSenderUserInjected(
   opts: EnsureSenderUserInjectedOpts
 ): Promise<EnsureSenderUserInjectedResult> {
   const {senderPubkey, peerId} = opts;
+  const contactArgs: [] | [{asContact: boolean}] = opts.asContact === false ? [{asContact: false}] : [];
   const logPrefix = opts.logPrefix || '[ensureSenderUserInjected]';
   const proxy = MOUNT_CLASS_TO.apiManagerProxy;
 
@@ -141,7 +144,7 @@ export async function ensureSenderUserInjected(
       const bridge = PhantomChatBridge.getInstance();
       const avatar = bridge.deriveAvatarFromPubkeySync(senderPubkey);
       const name = existing.first_name || ('npub...' + senderPubkey.slice(0, 8));
-      await rootScope.managers.appUsersManager.injectP2PUser(senderPubkey, peerId, name, avatar);
+      await rootScope.managers.appUsersManager.injectP2PUser(senderPubkey, peerId, name, avatar, ...contactArgs);
     } catch(e: any) {
       console.debug(logPrefix, 'injectP2PUser (worker re-sync) non-critical:', e?.message);
     }
@@ -165,7 +168,7 @@ export async function ensureSenderUserInjected(
     const {PhantomChatBridge} = await import('@lib/phantomchat/phantomchat-bridge');
     const bridge = PhantomChatBridge.getInstance();
     const avatar = bridge.deriveAvatarFromPubkeySync(senderPubkey);
-    await rootScope.managers.appUsersManager.injectP2PUser(senderPubkey, peerId, displayName, avatar);
+    await rootScope.managers.appUsersManager.injectP2PUser(senderPubkey, peerId, displayName, avatar, ...contactArgs);
   } catch(e: any) {
     console.debug(logPrefix, 'injectP2PUser non-critical:', e?.message);
   }

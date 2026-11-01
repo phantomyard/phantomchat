@@ -25,6 +25,7 @@ import rootScope from '@lib/rootScope';
 import {verifyEvent} from 'nostr-tools/pure';
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {groupIdToPeerId} from './group-types';
+import {intendedGroupKind} from './group-class-reconcile';
 import type {GroupKind} from './group-types';
 import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
@@ -110,7 +111,8 @@ class PhantomChatTypingReceive {
   private groupResolver: GroupResolver = async(groupId) => {
     let kind: GroupKind | undefined;
     try {
-      kind = (await getGroupStore().get(groupId))?.kind;
+      const record = await getGroupStore().get(groupId);
+      if(record) kind = intendedGroupKind(record);
     } catch{
       // store unavailable — use the classic class
     }
@@ -124,7 +126,7 @@ class PhantomChatTypingReceive {
     }
   };
   private ensureUser: UserEnsurer = async(pubkey, peerId) => {
-    await ensureSenderUserInjected({senderPubkey: pubkey, peerId, logPrefix: LOG_PREFIX});
+    await ensureSenderUserInjected({senderPubkey: pubkey, peerId, logPrefix: LOG_PREFIX, asContact: false});
   };
   private dispatcher: TypingDispatcher = (peerId, isStop, isRecording) => {
     // Native path: a local `updateUserTyping` populates appProfileManager's

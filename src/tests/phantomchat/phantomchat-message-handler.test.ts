@@ -113,7 +113,8 @@ vi.mock('@lib/rootScope', () => ({
         setMessageToStorage: (...args: any[]) => mockSetMessageToStorage(...args),
         appendLocalHistoryMessage: (...args: any[]) => mockAppendLocalHistoryMessage(...args),
         invalidateHistoryCache: (...args: any[]) => mockInvalidateHistoryCache(...args),
-        setDialogTopMessage: (...args: any[]) => mockSetDialogTopMessage(...args)
+        setDialogTopMessage: (...args: any[]) => mockSetDialogTopMessage(...args),
+        readHistory: vi.fn().mockResolvedValue(undefined)
       },
       appUsersManager: {
         injectP2PUser: (...args: any[]) => mockInjectP2PUser(...args),
@@ -489,6 +490,61 @@ describe('phantomchat-message-handler', () => {
     });
   });
 
+  describe('selected conversation arrivals', () => {
+    beforeEach(() => {
+      mockMessageStore.setReadCursor.mockResolvedValue(undefined);
+      mockMessageStore.peekReadCursor.mockReturnValue(0);
+    });
+
+    it('persists incoming messages as read without waiting for the cursor write', async() => {
+      mockMessageStore.setReadCursor.mockReturnValueOnce(new Promise(() => {}));
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+      expect(getUnreadForPeer(PEER_ID)).toBe(0);
+      expect(mockMessageStore.setReadCursor).toHaveBeenCalledWith('conv-aaaa-bbbb', 2000000001);
+      expect(mockCreateTwebDialog.mock.calls.at(-1)![0].unreadCount).toBe(0);
+    });
+
+    it('rechecks selection after asynchronous receive work', async() => {
+      (MOUNT_CLASS_TO as any).appImManager.chat.peerId = 0;
+      mockSetDialogTopMessage.mockImplementationOnce(async() => {
+        (MOUNT_CLASS_TO as any).appImManager.chat.peerId = PEER_ID;
+      });
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+      expect(getUnreadForPeer(PEER_ID)).toBe(0);
+      expect(mockMessageStore.setReadCursor).toHaveBeenCalledWith('conv-aaaa-bbbb', 2000000001);
+    });
+
+    it('leaves the arrival unread when mobile Back lands during Worker work', async() => {
+      // The bug this pins: `chatIsOpen` is snapshotted before the awaits, so an
+      // OR with the live predicate let a stale `true` win and wrote a durable
+      // read cursor for a message the user never saw.
+      mockSetDialogTopMessage.mockImplementationOnce(async() => {
+        (MOUNT_CLASS_TO as any).appImManager.isChatVisible = false;
+      });
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+      expect(getUnreadForPeer(PEER_ID)).toBe(1);
+    });
+
+    it('counts arrivals after mobile Back retains the peer behind a hidden pane', async() => {
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+      mockMessageStore.setReadCursor.mockClear();
+      (MOUNT_CLASS_TO as any).appImManager.isChatVisible = false;
+      await handleIncomingMessage({...makeData(), mid: 2000000002}, OWN_PUBKEY);
+      expect(getUnreadForPeer(PEER_ID)).toBe(1);
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+    });
+
+    it('counts new messages again after the chat is deselected', async() => {
+      await handleIncomingMessage(makeData(), OWN_PUBKEY);
+      mockMessageStore.setReadCursor.mockClear();
+      (MOUNT_CLASS_TO as any).appImManager.chat.peerId = 0;
+      await handleIncomingMessage({...makeData(), mid: 2000000002}, OWN_PUBKEY);
+      expect(getUnreadForPeer(PEER_ID)).toBe(1);
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+    });
+  });
+
   describe('resetUnreadForPeer', () => {
     const GROUP_PEER_ID = -2_000_000_000_000_001;
 
@@ -499,6 +555,55 @@ describe('phantomchat-message-handler', () => {
       mockMessageStore.getMessages.mockResolvedValue([]);
       mockMessageStore.setReadCursor.mockResolvedValue(undefined);
       mockGroupStoreGetByPeerId.mockResolvedValue(null);
+    });
+
+    it('clears the mirrored badge before IndexedDB answers', async() => {
+      MOUNT_CLASS_TO.apiManagerProxy.mirrors.dialogs = {
+        [PEER_ID]: {peerId: PEER_ID, unread_count: 7, pFlags: {}}
+      };
+      let release: (value: number) => void;
+      mockMessageStore.countUnread.mockReturnValueOnce(new Promise<number>((resolve) => { release = resolve; }));
+      const pending = resetUnreadForPeer(PEER_ID);
+      expect(MOUNT_CLASS_TO.apiManagerProxy.mirrors.dialogs[PEER_ID].unread_count).toBe(0);
+      expect(mockDispatchEvent).toHaveBeenCalledWith('dialogs_multiupdate', expect.any(Map));
+      // Let resolveConversation's dynamic imports settle, then unblock IDB.
+      await vi.waitFor(() => expect(mockMessageStore.countUnread).toHaveBeenCalled());
+      release!(7);
+      await pending;
+    });
+
+    it('does not mark later arrivals read after leaving during a storage lookup', async() => {
+      mockMessageStore.countUnread.mockResolvedValue(2);
+      let release: (value: any[]) => void;
+      mockMessageStore.getMessages.mockReturnValueOnce(new Promise<any[]>((resolve) => { release = resolve; }));
+      const pending = resetUnreadForPeer(PEER_ID);
+      await vi.waitFor(() => expect(mockMessageStore.getMessages).toHaveBeenCalled());
+      (MOUNT_CLASS_TO as any).appImManager.chat.peerId = 0;
+      mockDispatchEvent.mockClear();
+      release!([{mid: 100}]);
+      await pending;
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+      expect(mockDispatchEvent).not.toHaveBeenCalled();
+    });
+
+    it('abandons a delayed reset when mobile Back hides a retained peer', async() => {
+      mockMessageStore.countUnread.mockResolvedValue(2);
+      let release: (value: any[]) => void;
+      mockMessageStore.getMessages.mockReturnValueOnce(new Promise<any[]>((resolve) => { release = resolve; }));
+      const pending = resetUnreadForPeer(PEER_ID);
+      await vi.waitFor(() => expect(mockMessageStore.getMessages).toHaveBeenCalled());
+      (MOUNT_CLASS_TO as any).appImManager.isChatVisible = false;
+      mockDispatchEvent.mockClear();
+      release!([{mid: 100}]);
+      await pending;
+      expect(mockMessageStore.setReadCursor).not.toHaveBeenCalled();
+      expect(mockDispatchEvent).not.toHaveBeenCalled();
+    });
+
+    it('advances a selected chat cursor even when a stale counter is already zero', async() => {
+      mockMessageStore.getMessages.mockResolvedValue([{mid: 123}]);
+      await resetUnreadForPeer(PEER_ID);
+      expect(mockMessageStore.setReadCursor).toHaveBeenCalledWith(expect.stringContaining('conv-'), 123);
     });
 
     it('post-reload: dispatches dialogs_multiupdate even when lastDialogs/mirror are empty', async() => {

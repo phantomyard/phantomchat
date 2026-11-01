@@ -1,5 +1,6 @@
 {
-  "stableRef": "4c5b3f7f2383a720e2696c01dcf9f0ef9d0e0e63",
+  "stableRef": "2eddd9cfcdfa558d20c0ba411a7c27beef54edda",
+  "stableVersion": "1.1.86",
   "compatibilityApprovals": {
     "public/channel-switcher.js": {
       "stable": "73edaf28910b166c177f12a1f4971d23d8e27fda57b055ffe181226164836406",
@@ -57,14 +58,14 @@
       "reason": "Set/Remove default are suppressed on the archive folder (id 1, now shared by chats, groups and sessions); Mark all as read unchanged. Presentation only."
     },
     "src/lang.ts": {
-      "stable": "0925abc3137a54a74455ce8f9f2b057836cb3cdefb5ecb7124a863e30857921b",
-      "preview": "0925abc3137a54a74455ce8f9f2b057836cb3cdefb5ecb7124a863e30857921b",
-      "reason": "Two PhantomChat strings, text only: the empty-folder placeholder and the archive/session failure toasts."
+      "stable": "d1eebbb9fe04f67735d2bde881ca55b18991cc321eba1343606320ad79178d27",
+      "preview": "d1eebbb9fe04f67735d2bde881ca55b18991cc321eba1343606320ad79178d27",
+      "reason": "Two PhantomChat strings, text only: the empty-folder placeholder and the archive/session failure toasts. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged."
     },
     "src/lib/appDialogsManager.ts": {
-      "stable": "12bbc698ae51ba00e2c837422c154d33282c20960943f5c7fa438e12547f08ca",
-      "preview": "12bbc698ae51ba00e2c837422c154d33282c20960943f5c7fa438e12547f08ca",
-      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only."
+      "stable": "be1e0c429d227d4c9525161cd1de8da27ab1e802491a8e6f1d0c0a2c9b69ce49",
+      "preview": "be1e0c429d227d4c9525161cd1de8da27ab1e802491a8e6f1d0c0a2c9b69ce49",
+      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -72,9 +73,9 @@
       "stable": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3"
     },
     "src/scripts/out/langPack.strings": {
-      "stable": "344c1a5255c80c3ff52a967c2c352735a3307b5beeb3a141ff337f1837d86f08",
-      "preview": "344c1a5255c80c3ff52a967c2c352735a3307b5beeb3a141ff337f1837d86f08",
-      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage."
+      "stable": "a4a49387f7c32635c82b55ec449ad9446755137381b5078654de35e15baded47",
+      "preview": "a4a49387f7c32635c82b55ec449ad9446755137381b5078654de35e15baded47",
+      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
@@ -98,13 +99,13 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "230e8aeb9fc0fe34280ea6f02bcdf6dc3f99bd5754fbca481629d00d1f3cc406",
-      "preview": "230e8aeb9fc0fe34280ea6f02bcdf6dc3f99bd5754fbca481629d00d1f3cc406",
-      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change."
+      "preview": "d0c1dd814fe6c40ebe30d5aa9baecb5703b5e30996e4e7494bc833039cf3cc99",
+      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change. Session stability update: Filter rebuilds read every persisted row instead of index-derived lists. No stored format change."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
-      "stable": "b17ca62b0442182c9684d4f333fe877c1613d805cd7f691953e353d4aab5e6a7",
-      "preview": "b17ca62b0442182c9684d4f333fe877c1613d805cd7f691953e353d4aab5e6a7",
-      "reason": "updateDialog returns the base promise (awaited add). Same membership gates as before; presentation only."
+      "stable": "487adb45dc21fb3625f50d78ceef164694292f10d7f11f57e20ee9d011572ccc",
+      "preview": "487adb45dc21fb3625f50d78ceef164694292f10d7f11f57e20ee9d011572ccc",
+      "reason": "updateDialog returns the base promise (awaited add). Same membership gates as before; presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
     },
     "src/lib/storages/filters.ts": {
       "stable": "fbf2bd3823bb8924467d5931f45e0cb742bea4aa157a3c5b8a0c2fabb91ff89d",
@@ -127,19 +128,19 @@
       "reason": "Groups (3) enumeration stage added after Archive so the recipient picker keeps offering existing groups (Chats still hides them by presentation rule). Read-only dialog enumeration; no storage or format change."
     },
     "src/lib/appManagers/appMessagesManager.ts": {
-      "stable": "38d59ba9833ed8968bcff4dca419a2a13f10fed36b133692b6297e8fb8a26d8e",
-      "preview": "5cf7c634704e8173c5e8159dc735b50b0e05d2705b5bb6fd437611d9dda312be",
-      "reason": "sendPhantomChatAttachment()'s peer guard and sendFile()'s bridge shortcut now share one isPhantomChatPeerId() predicate instead of two hand-written range tests, so the guard cannot drift from the path it guards. No storage, database or IPC format change."
+      "stable": "c821b2c830eaf5fc09557ae22e0bd0d2e86a6f86e933bd1a849dfb96435ffa50",
+      "preview": "bb37e2509f93b290a220f7295408b8f8dd5c157f7b03c7c6f9125bee3d5f7f91",
+      "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change. Send finalization now moves the in-memory dialog's top_message from the deleted temp mid to the real mid. It writes only through the existing setDialogTopMessage path; no storage, schema or wire-format change. sendPhantomChatAttachment()'s peer guard and sendFile()'s bridge shortcut now share one isPhantomChatPeerId() predicate instead of two hand-written range tests, so the guard cannot drift from the path it guards. No storage, database or IPC format change."
     },
     "src/lib/phantomchat/group-api.ts": {
-      "stable": "10f1ed83d4cd0cd3d7ceb0c4f5062992435f2c611582b7789ef18706b8704bf6",
-      "preview": "c55d42f930d4711b235544ea8f41e03ad4bdb72fe60330d02ec27a442eb90d9c",
-      "reason": "Session peer class: a group's class is the input to peerId derivation and travels on group_create.groupKind. New `repairGroupPeerClasses()` runs the local class reconcile at boot and after each definitive groups reconcile - it only ever re-derives a record against evidence the record already carries, never invents one. The three boot sweeps (reconcileSupersededGroups, rebindAllLegacyGroups, repairGroupPeerClasses) now run in sequence rather than in parallel, since each retires or re-keys ids the others touch. No stored-format change: the field already exists on GroupRecord."
+      "stable": "c55d42f930d4711b235544ea8f41e03ad4bdb72fe60330d02ec27a442eb90d9c",
+      "preview": "971eb3fdf8a969dc1dacd2ff6eeed8de8a6c695ade4da8de3b9f35c18f78b99b",
+      "reason": "Session peer class: a group's class is the input to peerId derivation and travels on group_create.groupKind. New `repairGroupPeerClasses()` runs the local class reconcile at boot and after each definitive groups reconcile - it only ever re-derives a record against evidence the record already carries, never invents one. The three boot sweeps (reconcileSupersededGroups, rebindAllLegacyGroups, repairGroupPeerClasses) now run in sequence rather than in parallel, since each retires or re-keys ids the others touch. No stored-format change: the field already exists on GroupRecord. Session stability update: Teardown uses the stored peer id; orphan sweep re-checks the store before dropping a row. No stored format change. Sweep hardening: a failed re-check is logged and the drop is awaited. No stored format change."
     },
     "src/langPackLocalVersion.example.ts": {
-      "stable": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
-      "preview": "02d4346856665f9046429060ac528a89b889712fa3bab61376a1745c5dfd4c05",
-      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow."
+      "stable": "b5b0a50fbd801a89a8ed2a26187b1587128e69a85527a8967ef1f325c34493a0",
+      "preview": "b5b0a50fbd801a89a8ed2a26187b1587128e69a85527a8967ef1f325c34493a0",
+      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged."
     },
     "src/lib/folders-sidebar-layout.ts": {
       "stable": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
@@ -193,8 +194,8 @@
     },
     "src/lib/phantomchat/groups-sync-adapter.ts": {
       "stable": "f00495a264517ea7fb6b17bfc053e09e6d7a1de44e980657d11e07b05fce382b",
-      "preview": "f00495a264517ea7fb6b17bfc053e09e6d7a1de44e980657d11e07b05fce382b",
-      "reason": "CRDT apply keeps the local value for the two keep-local fields: `kind` (an older client must not reclassify a session) and `archivedAt` (an older client must not unarchive it for everyone). An explicit 0 is the unarchive signal, an absent field means \"unchanged\", and apply now PERSISTS that 0 rather than stripping it, so the clear signal survives a republish instead of turning back into an absent field (which the guard reads as \"unchanged\"). Same field, same type, same semantics for every reader; merge behaviour for every other field is untouched."
+      "preview": "df8acc6de06840092a53be5fc0d39dd3b6fe317f74600fc55ae931175f247183",
+      "reason": "CRDT apply keeps the local value for the two keep-local fields: `kind` (an older client must not reclassify a session) and `archivedAt` (an older client must not unarchive it for everyone). An explicit 0 is the unarchive signal, an absent field means \"unchanged\", and apply now PERSISTS that 0 rather than stripping it, so the clear signal survives a republish instead of turning back into an absent field (which the guard reads as \"unchanged\"). Same field, same type, same semantics for every reader; merge behaviour for every other field is untouched. Session stability update: Class merge ratchets to session using existing fields. No wire or schema change."
     },
     "src/lib/storages/filtersLocal.ts": {
       "stable": "a345c2e275316e339832a7d1a1dfd75fedb612fc458661c4f4d417271bb2c941",
@@ -207,9 +208,9 @@
       "reason": "Read-only archived composer: the chat pane sets `archived-readonly` from the dialog folder_id === 1 on navigation and follows a PhantomChat dialog_folder_update event while open. Presentation only - the send refusal is enforced in GroupAPI (groups) and in the VMT bridge (1:1 chats)."
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
-      "stable": "8a0c48200155358703095ff7eabc994a8988e41084d3396c186eaa045bb449f0",
-      "preview": "536b502e2233a6b2ff12c77d2f4766ae86f8af485cc32a007e991e41d43340f3",
-      "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo."
+      "stable": "acd3d45d3ec3e285a3684266a2c6959872a7a755c83322932970ca6bf2f79228",
+      "preview": "6b18d4897f47bfec828f054a0a6cee18429a22e8422215e562bf04b037eb5157",
+      "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Session stability update: Dialog snapshots carry archive state, delayed repaints cancel, synced class changes move the row. No stored format change. Move hardening: the dialog move lands the new row before dropping the old one and rolls back on failure. No stored format change."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "720794a3fef32fe101599f1a3351500b0c9126288bdcd03334fe256f55e19cae",
@@ -232,9 +233,9 @@
       "reason": "Session naming policy only: default title and first-prompt truncation (20 characters, no ellipsis, trailing space trimmed). No storage, protocol or settings change."
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
-      "stable": "f4b0f5947235e9e6608c0ad16a92a8a5f61f2251a8d194caac8b9e02721a1bf0",
-      "preview": "993f9fadfdc0e124e7b0a062882a80591114e9e0f40409f5361592e95f7dba31",
-      "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change."
+      "stable": "bbcc7e94147bec1c976606854cd2e0d952494a239c887ed3f5862f7200d1457f",
+      "preview": "55b62a7c710c01786626a40a919846a7d566b2f012a17ad599432933a2c663d7",
+      "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change. Session stability update: Sync upsert moves the row on a class change; orphan sweep waits for a definitive read. No stored format change. Move hardening: the synced move and record save run as one unit. No stored format change."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
@@ -243,8 +244,8 @@
     },
     "src/lib/phantomchat/phantomchat-typing-receive.ts": {
       "stable": "fd70c6d6559bc76bf10a959592fc8f52cfd052c7339e65de323c782261d71fdb",
-      "preview": "fd70c6d6559bc76bf10a959592fc8f52cfd052c7339e65de323c782261d71fdb",
-      "reason": "Group typing ticks resolve the chat peerId from the group record kind (session vs classic) before dispatching. Local UI update only; no storage or protocol change."
+      "preview": "7a169408c0cba07bfd01e004d073fb63ec9686a224807e9347c9565c1ddd50b5",
+      "reason": "Group typing ticks resolve the chat peerId from the group record kind (session vs classic) before dispatching. Local UI update only; no storage or protocol change. Session stability update: Same class resolver as the message path. No stored format change."
     },
     "src/components/archiveDialogContextMenu.ts": {
       "stable": "33fbf8e4f98005d4d923de52b2165dd2db0e0069a1ac053fba8176f3841bd030",
@@ -262,44 +263,69 @@
       "reason": "Which pick hook is in force for one open() of the Contacts tab: absent params keep the installed hook (open() passes none), present params own it. Pure decision function over UI state - no storage, protocol or settings change."
     },
     "src/lib/phantomchat/message-store.ts": {
-      "stable": "715e62bd64c0cfdbedc54128b8ec575dbe5db6fd8f3468856c2fe23f4903ddda",
+      "stable": "eff9081cde19b4e0a7474c08ca44bff9313c6dcd1959ead3635583c7f0729d2c",
       "preview": "eff9081cde19b4e0a7474c08ca44bff9313c6dcd1959ead3635583c7f0729d2c",
       "reason": "`setConversationTwebPeerId` re-stamps the identity triple's peer id on a conversation's stored rows for the group/session class reconcile. Rows move inside the SAME conversation key (group:<groupId>) and keep their eventId, mid and timestamp (mid derives from the event id, not the peer), so message identity, edits and reaction targets are unchanged. No schema change."
     },
     "src/lib/phantomchat/group-class-reconcile.ts": {
-      "stable": "absent",
-      "preview": "52f6b9e69fc592e962476355ad5eee7766dfb3193213d15de3d4cf46d50d91dd",
-      "reason": "Local repair only: adopts a record's class (explicit kind, else the retired batch-10 tags: ['session'] marker, else the range its stored peerId is already in), re-derives the peerId and re-keys that one record with its dialog and stored rows. Nothing new is written to the wire and no record is ever reclassified against evidence it does not already carry; a converged store costs one range test and no writes. A failed dialog move re-stamps the conversation back onto the record's own peer id, so a pass can never leave rows under a peer with no dialog row."
+      "stable": "52f6b9e69fc592e962476355ad5eee7766dfb3193213d15de3d4cf46d50d91dd",
+      "preview": "d0def9e86940bc73dfe1f71b4e9e66ba3f199bc59a09f51d154fccd3fd9eb822",
+      "reason": "Local repair only: adopts a record's class (explicit kind, else the retired batch-10 tags: ['session'] marker, else the range its stored peerId is already in), re-derives the peerId and re-keys that one record with its dialog and stored rows. Nothing new is written to the wire and no record is ever reclassified against evidence it does not already carry; a converged store costs one range test and no writes. A failed dialog move re-stamps the conversation back onto the record's own peer id, so a pass can never leave rows under a peer with no dialog row. Session stability update: Session evidence becomes a one-way ratchet using the existing kind field and peer range. No schema change. Move hardening: a failed record save also moves the dialog row back. No schema change."
     },
     "src/components/sidebarRight/tabs/phantomchatGroupEdit.ts": {
-      "stable": "98a3280e490642103687ba373efab539f029f87ccbaafef10d9f62a5c2682f48",
+      "stable": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
       "preview": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
       "reason": "Group editor UI and save trigger only: removes the description input and unavailable admin Leave Group action; Enter reuses the existing check-button save path. Writes use the unchanged GroupAPI updateGroupInfo({name}) and membership APIs with existing GroupRecord fields. Renames preserve stored descriptions. No schema, identity, CRDT, storage-key or protocol changes. Real Chromium GroupAPI/IndexedDB rename and description-preservation check passed. Requires independent content review of this exact pair."
+    },
+    "src/components/chat/input.ts": {
+      "stable": "149dc315e5f9bb6decff24bc856d23f2e4b03ea8fcd9f6b70bedd9b3ffa21470",
+      "preview": "02c59a04e896831b5cfd9317b6d5cfe03d26194ad9a8fed192267aa027cabe03",
+      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text through sendBatchThenText(), which drops the text if the user switched chat mid-upload, and forwards the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
+    },
+    "src/lib/phantomchat/phantomchat-message-handler.ts": {
+      "stable": "865f56016aa949b6f7d8a1b570e9665e2e7259d9e5ea340d861b45fa0d010b73",
+      "preview": "865f56016aa949b6f7d8a1b570e9665e2e7259d9e5ea340d861b45fa0d010b73",
+      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+    },
+    "src/lib/phantomchat/selected-conversation.ts": {
+      "stable": "18453a1a0378eb898500aaa1374c048eeed1cc02732ea5d2dc6b940acbf02899",
+      "preview": "18453a1a0378eb898500aaa1374c048eeed1cc02732ea5d2dc6b940acbf02899",
+      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+    },
+    "src/lib/appImManager.ts": {
+      "stable": "542efceeaa3c4928eef22bc99830429065061ed40b70923b7bd11476a87ead4d",
+      "preview": "79f1ec4ecc6537f7e427a1edacf53d1c97df672414a5287cdbd6a88dba495c3c",
+      "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change. Routes pasted and dropped files into the composer attachment tray when the open chat is a PhantomChat peer, after the existing open-popup check. Every other chat keeps the existing PopupNewMedia handling; no storage format, database or IPC change. Requires independent content review."
+    },
+    "src/lib/appManagers/appUsersManager.ts": {
+      "stable": "55374155179d2b61accbdc15db43f4d7cf062ddce0cc6339ba3d9ee36df0079f",
+      "preview": "d2e77c71a6ce54c508f7a8520a4d5bc5dda51b998a95091f4b77bc7a3ea6043c",
+      "reason": "In-memory contact list only: group/typing senders stay out of it and non-user ids are refused. No stored format change."
+    },
+    "src/lib/phantomchat/crdt-sync.ts": {
+      "stable": "4258618498c6cf5e6a9cc37e1f6b278d7c1777b29b964a3abbead99c2d9a442a",
+      "preview": "7830591c589e574ac85b5c76b9ec990b6eb0897c454da709d2b4ff67b9bed0b8",
+      "reason": "Adds a pure outcome predicate. No wire or stored format change."
+    },
+    "src/lib/phantomchat/ensure-sender-user-injected.ts": {
+      "stable": "69d2eb05b01727602ab6f6dff6ae13e9ef20aae9c57b5a1db825a17b5a2d204f",
+      "preview": "9b1386f4af1d93ea6ef66556bd8400032b7a25dd2c8320b4963df2fc442b63be",
+      "reason": "Passes the in-memory contact-list option. No stored format change."
     },
     "src/components/chat/attachmentTray.ts": {
       "stable": "absent",
       "preview": "6fcab5d8e50d6ccc4295186b1de5539802ef47dad07f072679222ca62ff40301",
       "reason": "New composer attachment tray for PhantomChat peers: staged-file thumbnails, per-file remove and per-file send state above the message input. Reads each image thumbnail's intrinsic size on load so the published bubble carries width/height without a media-editor step, and re-checks batch membership before each send so a file removed mid-batch is not published. Owns no storage, database or IPC access and only mutates its own DOM. Requires independent content review."
     },
-    "src/components/chat/input.ts": {
-      "stable": "8ba48c42bce0bc2fc1361f0ed2c3a82cb9ec863daca5cb6a96aadc2d9c6442e2",
-      "preview": "d818f4aea6701a6a680250cf2b08fb695df16fa57ec7ffc08714908afd5c0c78",
-      "reason": "Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text through sendBatchThenText(), which drops the text if the user switched chat mid-upload, and forwards the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review."
-    },
-    "src/lib/appImManager.ts": {
-      "stable": "c497fe315c7cdbdbd37b6a22b5ef002ec01802057789f6e2ce4e7b75f7d619d5",
-      "preview": "cae087d938afdab9a225bb6a20261b2f390508b881b5cfa4bcee2343ab47c3fc",
-      "reason": "Routes pasted and dropped files into the composer attachment tray when the open chat is a PhantomChat peer, after the existing open-popup check. Every other chat keeps the existing PopupNewMedia handling; no storage format, database or IPC change. Requires independent content review."
+    "src/lib/phantomchat/bridge-invariants.ts": {
+      "stable": "688d961f6884f278cb92c6f48089d5dc20ef3d8ff85b1830b27547dacffb595f",
+      "preview": "5d85c3945e5e186c10930638d43280049904eb8a2d8f3eea784db97c96b27c0a",
+      "reason": "isPhantomChatPeerId() added here as the single bridge-peer predicate: P2P ids plus group peers, shared by the composer tray, the attachment entry point and sendFile(). Pure boolean, no storage or IPC access. Requires independent content review."
     },
     "src/lib/phantomchat/composer-attachments.ts": {
       "stable": "absent",
       "preview": "f6e595a0c978041d14e4d5ebdb2eacddd7a21443c9065826eeae1a0d3ccdf6ec",
       "reason": "New pure helper module for the PhantomChat composer attachment tray: per-batch file cap, per-type size ceilings reusing the Blossom limits, duplicate suppression, sequential dispatch, an intrinsic-size setter that ignores a broken decode, and sendBatchThenText() which drops the typed text when the chat changed while the batch was uploading. Peer detection is delegated to isPhantomChatPeerId() in bridge-invariants. No storage, database or IPC access. Requires independent content review."
-    },
-    "src/lib/phantomchat/bridge-invariants.ts": {
-      "stable": "688d961f6884f278cb92c6f48089d5dc20ef3d8ff85b1830b27547dacffb595f",
-      "preview": "5d85c3945e5e186c10930638d43280049904eb8a2d8f3eea784db97c96b27c0a",
-      "reason": "isPhantomChatPeerId() added here as the single bridge-peer predicate: P2P ids plus group peers, shared by the composer tray, the attachment entry point and sendFile(). Pure boolean, no storage or IPC access. Requires independent content review."
     },
     "src/scss/partials/_chatAttachmentTray.scss": {
       "stable": "absent",
@@ -311,6 +337,5 @@
       "preview": "cf50c788d350be08d9c4eb677d09dbe17867ab9b6fb037d46081359993791ce9",
       "reason": "Content reviewed for Stable/Preview compatibility."
     }
-  },
-  "stableVersion": "1.1.78"
+  }
 }

@@ -1,3 +1,4 @@
+import {isConversationSelected} from '@lib/phantomchat/selected-conversation';
 /*
  * https://github.com/morethanwords/tweb
  * Copyright (C) 2019-2021 Eduard Kuzmenko
@@ -1863,7 +1864,7 @@ export default class ChatInput {
       | 'unread_reactions_count'
     >>>(dialog);
 
-    const count = dialog?.unread_count;
+    const count = isConversationSelected(+this.chat.peerId) ? 0 : dialog?.unread_count;
     setBadgeContent(this.goDownUnreadBadge, '' + (count || ''));
     const isPeerLocalMuted = await this.managers.appNotificationsManager.isPeerLocalMuted({
       peerId: this.chat.peerId,
