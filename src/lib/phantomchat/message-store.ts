@@ -512,9 +512,15 @@ export class MessageStore {
   /**
    * Get messages for a conversation, sorted by timestamp desc.
    *
+   * A page always ends on a whole timestamp bucket, so `limit` is a floor and
+   * only the newest `limit` rows are guaranteed: every row that shares the
+   * last returned second comes with it. Callers page with a strict `<` cursor
+   * (`before = rows[rows.length - 1].timestamp`), and a page that stopped
+   * mid-bucket would lose the surplus rows of that second for good (#295).
+   *
    * @param conversationId - Deterministic conversation ID
-   * @param limit - Max messages to return (default 50)
-   * @param before - Optional timestamp for pagination (return messages before this time)
+   * @param limit - Messages to return, rounded up to the next whole second (default 50)
+   * @param before - Optional timestamp for pagination (return messages strictly before this time)
    */
   async getMessages(conversationId: string, limit: number = DEFAULT_LIMIT, before?: number): Promise<StoredMessage[]> {
     if(limit <= 0) return [];
@@ -540,7 +546,7 @@ export class MessageStore {
           if(a.message.mid !== undefined && b.message.mid !== undefined) return b.message.mid - a.message.mid;
           return Number(b.key) - Number(a.key);
         });
-        resolve(candidates.slice(0, limit).map(({message}) => message));
+        resolve(candidates.map(({message}) => message));
       };
 
       request.onerror = () => reject(request.error);
