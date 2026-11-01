@@ -367,15 +367,15 @@ describe('unpin drops the pinned sort position (real DialogsStorage reindex)', (
     const ds: any = new DialogsStorage();
     ds.clear(true);
     ds.appStateManager = {pushToState: vi.fn()};
-    ds.timeManager = {getServerTimeOffset: () => 0};
+    ds.timeManager = {getServerTimeOffset: (): number => 0};
     ds.dialogs = {};
     ds.dialogsOffsetDate = {};
     ds.allDialogsLoaded = {0: true, 1: true, 3: true, 4: true};
-    ds.getDialogMessageForState = () => undefined;
+    ds.getDialogMessageForState = (): undefined => undefined;
     ds.setDialogToState = vi.fn();
     ds.rootScope = {dispatchEvent: vi.fn()};
-    ds.peersStorage = {requestPeer: () => undefined, requestPeersForKey: () => undefined};
-    ds.appMessagesIdsManager = {clearMessageId: (id: number) => id};
+    ds.peersStorage = {requestPeer: (): undefined => undefined, requestPeersForKey: (): undefined => undefined};
+    ds.appMessagesIdsManager = {clearMessageId: (id: number): number => id};
     ds.appNotificationsManager = {isPeerLocalMuted: (): boolean => false};
     ds.appPeersManager = {
       peerId: 1,
