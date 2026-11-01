@@ -1507,6 +1507,7 @@ export class AppMessagesManager extends AppManager {
           }
 
           this.setMessageToStorage(storage, message);
+          this.settleDialogTopAfterSend(message, tempId);
           this.rootScope.dispatchEvent('message_sent', {
             storageKey: storage.key,
             tempId,
@@ -1686,6 +1687,9 @@ export class AppMessagesManager extends AppManager {
             pFlags: {out: true, unread: true},
             date: Math.floor(Date.now() / 1000)
           };
+          // The VMT send path already stored the full row (media, sender) under
+          // the real mid; `finalMessage` is only enough to remid the bubble.
+          this.settleDialogTopAfterSend((storage.get(realMid) as MyMessage) || finalMessage, tempMid);
           this.rootScope.dispatchEvent('messages_pending');
           this.rootScope.dispatchEvent('message_sent', {
             storageKey: storage.key,
@@ -3485,6 +3489,23 @@ export class AppMessagesManager extends AppManager {
     this.dialogsStorage.generateIndexForDialog(dialog, false, message);
 
     this.scheduleHandleNewDialogs(message.peerId, dialog);
+  }
+
+  /**
+   * [PhantomChat.chat] Move the dialog off a send's temp mid once the real mid is
+   * known. `beforeMessageSending` points `top_message` at the temp message, which
+   * the send then deletes. A group's real row never reaches this dialog another
+   * way, so the next repaint from the Worker's dialog (a typing stop, for one)
+   * resolved no message and blanked the chat-list preview.
+   *
+   * A newer message that arrived during the send keeps the top slot.
+   */
+  private settleDialogTopAfterSend(message: MyMessage, tempId: number) {
+    const dialog = this.getDialogOnly(message.peerId);
+    if(!dialog) return;
+    if(dialog.top_message === tempId || message.mid > dialog.top_message) {
+      this.setDialogTopMessage(message, dialog);
+    }
   }
 
   /**
