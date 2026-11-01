@@ -1,7 +1,7 @@
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync, readFileSync, writeFileSync, mkdirSync, cpSync, symlinkSync, rmSync} from 'node:fs';
 import {resolve, join} from 'node:path';
-import {checkCompatibility} from './check.mjs';
+import {checkCompatibility, baselineDigestFor} from './check.mjs';
 import {stateSmoke} from './state-smoke.mjs';
 
 if(!process.env.npm_execpath) throw new Error('Run this builder with pnpm build (pnpm supplies the package-manager executable).');
@@ -17,7 +17,7 @@ if(!process.env.CHANNEL_BASELINE) {
   const releasedStable = execFileSync('git', ['rev-parse', `phantomchat-v${config.stableVersion}^{commit}`]).toString().trim();
   if(releasedStable !== config.stableRef) throw new Error('Stable SHA must match its phantomchat-v release tag');
 }
-checkCompatibility(config, candidate);
+checkCompatibility(config, candidate, root, baselineDigestFor(config));
 const run = (cmd, args, cwd = root, env = {}) => execFileSync(cmd, args, {cwd, stdio: 'inherit', env: {...process.env, ...env}});
 // Scratch is inside this checkout, never a shared /tmp or live profile.
 mkdirSync('.channel-build', {recursive: true});

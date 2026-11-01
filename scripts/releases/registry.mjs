@@ -90,6 +90,9 @@ export async function main(command) {
       writeFileSync(`${workspace}/current.json`, JSON.stringify(current.record));
       // Build/check against the actual deployed Stable, not an obsolete source pin.
       const config = JSON.parse(readFileSync('scripts/channels/config.json'));
+      // Keep the repository pin so the builder can tell which review column
+      // describes the deployed commit (`published`) and which the pin (`stable`).
+      config.pinRef = config.stableRef;
       config.stableRef = current.record.stableRef;
       config.stableVersion = current.record.stableVersion;
       writeFileSync(`${workspace}/baseline.json`, JSON.stringify(config));

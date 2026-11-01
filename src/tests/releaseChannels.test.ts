@@ -4,7 +4,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
-import {checkCompatibility} from '../../scripts/channels/check.mjs';
+import {checkCompatibility, baselineDigestFor} from '../../scripts/channels/check.mjs';
 import {checkPublishedCompatibility} from '../../scripts/channels/check-published.mjs';
 
 let dir: string;
@@ -123,5 +123,55 @@ describe('shared-state release gate', () => {
       .toThrow('compatibility review required');
     // The pin itself is unchanged by the extra column.
     expect(checkCompatibility(config, 'HEAD', dir)).toEqual(['src/store.ts']);
+  });
+  it('picks the review column that matches the baseline it was built from', () => {
+    // The deploy workflow rewrites stableRef to the DEPLOYED Stable and keeps
+    // the repository pin in pinRef. Selecting `stable` there would compare the
+    // pin's digests against deployed content, which the pin can never describe.
+    const pin = 'a'.repeat(40);
+    const deployed = 'b'.repeat(40);
+    expect(baselineDigestFor({stableRef: pin})).toBe('stable');
+    expect(baselineDigestFor({stableRef: pin, publishedStableRef: deployed})).toBe('stable');
+    expect(baselineDigestFor({stableRef: deployed, pinRef: pin, publishedStableRef: deployed})).toBe('published');
+    // A promotion past the derived published column must fail closed, not fall
+    // back to a column that cannot describe the deployed commit.
+    expect(() => baselineDigestFor({stableRef: 'c'.repeat(40), pinRef: pin, publishedStableRef: deployed}))
+      .toThrow('re-derive scripts/channels/config.json');
+  });
+  it('passes the deploy baseline through the published column end to end', () => {
+    const config = fixture();
+    const pin = config.stableRef;
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    // fixture leaves HEAD at the promotion commit (version 2).
+    const deployed = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: dir}).toString().trim();
+    writeFileSync(resolve(dir, 'src/store.ts'), 'const version = 3;\n');
+    execFileSync('git', ['commit', '-qam', 'Preview'], {cwd: dir});
+    expect(pin).not.toBe(deployed);
+    const approvals = {
+      stable: hash('const version = 1;\n'),
+      published: hash('const version = 2;\n'),
+      preview: hash('const version = 3;\n')
+    };
+    config.compatibilityApprovals['src/store.ts'] = approvals;
+    // Deploy baseline: stableRef = deployed, pin preserved in pinRef.
+    const baseline = {...config, stableRef: deployed, pinRef: pin, publishedStableRef: deployed};
+    expect(baselineDigestFor(baseline)).toBe('published');
+    expect(checkCompatibility(baseline, 'HEAD', dir, baselineDigestFor(baseline))).toEqual(['src/store.ts']);
+    // The pin column would have compared v1's digest against v2 content.
+    expect(() => checkCompatibility({...baseline, publishedStableRef: undefined}, 'HEAD', dir, 'stable'))
+      .toThrow('compatibility review required');
+    // Wrong deployed digest is still rejected through the selector.
+    baseline.compatibilityApprovals['src/store.ts'] = {...approvals, published: hash('stale')};
+    expect(() => checkCompatibility(baseline, 'HEAD', dir, baselineDigestFor(baseline)))
+      .toThrow('compatibility review required');
+    // ...and the CLI (the path build.mjs runs) resolves the same column.
+    writeFileSync(resolve(dir, 'baseline.json'), JSON.stringify({...baseline, compatibilityApprovals: {'src/store.ts': approvals}}));
+    const cli = spawnSync(process.execPath, [resolve('scripts/channels/check.mjs')], {
+      cwd: dir,
+      env: {...process.env, CHANNEL_BASELINE: resolve(dir, 'baseline.json')},
+      encoding: 'utf8'
+    });
+    expect(cli.stderr).toBe('');
+    expect(cli.status).toBe(0);
   });
 });
