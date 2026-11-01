@@ -89,8 +89,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "20ecf8550de094f7d0cd8275896bf73bd1cb43e85c2f008429b7ef0c120acba4",
-      "preview": "c9b7f1a8f076ffec57eeab9195fd8f6f6d4404c3fd01feb3bc3263f7994bdc53",
-      "reason": "The Session space + opens the Contacts picker in pick mode and creates a session from the pick; presentation and navigation only, no stored format change. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required."
+      "preview": "f5fc478a6aaef2398b35983edebbdb5dc0c37dfcf0c27bb5216bd18213f0271e",
+      "reason": "The Session space + opens the Contacts picker in pick mode and creates a session from the pick; presentation and navigation only, no stored format change. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Comment-only: session title length now reads 30 characters."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
@@ -134,8 +134,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "cf47cb2ee628f3d1dad10c5b718b6b16e158cd64053ea5be4e38de6c22ddfd39",
-      "preview": "cf47cb2ee628f3d1dad10c5b718b6b16e158cd64053ea5be4e38de6c22ddfd39",
-      "reason": "Session peer class: a group's class is the input to peerId derivation and travels on group_create.groupKind. New `repairGroupPeerClasses()` runs the local class reconcile at boot and after each definitive groups reconcile - it only ever re-derives a record against evidence the record already carries, never invents one. The three boot sweeps (reconcileSupersededGroups, rebindAllLegacyGroups, repairGroupPeerClasses) now run in sequence rather than in parallel, since each retires or re-keys ids the others touch. No stored-format change: the field already exists on GroupRecord. Session stability update: Teardown uses the stored peer id; orphan sweep re-checks the store before dropping a row. No stored format change. Sweep hardening: a failed re-check is logged and the drop is awaited. No stored format change. Pin/unread menu update: Adds pin and manual-unread setters using optional numeric pinnedAt/unreadMarkAt on existing GroupRecord rows. Absent means unknown; zero means explicitly cleared. Existing groups sync publishes unchanged v2 envelopes; no schema version, database, identity, conversation key or message cursor change. Requires independent exact-head content review."
+      "preview": "c7ad7bd267d7949fa602fa17b1d7ab4810152cdf009f24500aa0ca25b1403485",
+      "reason": "Session peer class: a group's class is the input to peerId derivation and travels on group_create.groupKind. New `repairGroupPeerClasses()` runs the local class reconcile at boot and after each definitive groups reconcile - it only ever re-derives a record against evidence the record already carries, never invents one. The three boot sweeps (reconcileSupersededGroups, rebindAllLegacyGroups, repairGroupPeerClasses) now run in sequence rather than in parallel, since each retires or re-keys ids the others touch. No stored-format change: the field already exists on GroupRecord. Session stability update: Teardown uses the stored peer id; orphan sweep re-checks the store before dropping a row. No stored format change. Sweep hardening: a failed re-check is logged and the drop is awaited. No stored format change. Pin/unread menu update: Adds pin and manual-unread setters using optional numeric pinnedAt/unreadMarkAt on existing GroupRecord rows. Absent means unknown; zero means explicitly cleared. Existing groups sync publishes unchanged v2 envelopes; no schema version, database, identity, conversation key or message cursor change. Requires independent exact-head content review. Comment-only: session title length now reads 30 characters."
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536",
@@ -229,8 +229,8 @@
     },
     "src/lib/phantomchat/group-sessions.ts": {
       "stable": "a33bbfb6a3a2ccb06f612ec07cc1c4204ecb7dc307a90fec361bd7c03d4597d1",
-      "preview": "a33bbfb6a3a2ccb06f612ec07cc1c4204ecb7dc307a90fec361bd7c03d4597d1",
-      "reason": "Session naming policy only: default title and first-prompt truncation (20 characters, no ellipsis, trailing space trimmed). No storage, protocol or settings change."
+      "preview": "30428d8ed42929134ae763aa0c26a2b76ee51273abd37c0e4c00d65dbc57e93e",
+      "reason": "Session naming policy only: default title and first-prompt truncation (30 characters, no ellipsis, trailing space trimmed). No storage, protocol or settings change."
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
