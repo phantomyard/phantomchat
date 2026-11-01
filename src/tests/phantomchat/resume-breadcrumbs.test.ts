@@ -318,11 +318,22 @@ describe('resume breadcrumbs (wake-latency timing)', () => {
     const onMessage = vi.fn();
     const pool = await makePool(onMessage);
 
-    (pool as any).resumeConnectAt = Date.now() - 3000;
+    // The breadcrumb logs a wall-clock delta, so an exact assertion against a
+    // real clock flakes whenever this test loses a millisecond between arming
+    // and the connect (#287). Freeze the clock instead of loosening the
+    // assertion: 3000 ms is the value that proves the delta was taken from the
+    // resume epoch, not from process start.
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      (pool as any).resumeConnectAt = now - 3000;
 
-    (mockRelayInstances[0] as any).connectionState = 'connected';
-    if((mockRelayInstances[0] as any).onStateChangeCb) (mockRelayInstances[0] as any).onStateChangeCb();
-    await flushMicrotasks();
+      (mockRelayInstances[0] as any).connectionState = 'connected';
+      if((mockRelayInstances[0] as any).onStateChangeCb) (mockRelayInstances[0] as any).onStateChangeCb();
+      await flushMicrotasks();
+    } finally {
+      clock.mockRestore();
+    }
     const connectLine = logLines.find((l) => l.includes('first relay connected'));
     expect(connectLine).toBeTruthy();
     expect(connectLine).toContain('3000 ms');

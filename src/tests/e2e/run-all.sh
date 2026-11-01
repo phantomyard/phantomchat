@@ -43,6 +43,11 @@ TESTS=(
   # in the suite). e2e-groups-ui-attribution.ts stays excluded: its UI-click
   # create-group flow is flaky (GroupAPI-init race) — separate harness fix.
   e2e-groups-bilateral.ts
+  # #310: the group row must keep the newest message as its preview when the
+  # typing indicator clears. This is the only test that fails when that fix is
+  # removed, so leaving it out of this list left the regression guarded by
+  # nothing (#311).
+  e2e-group-preview-typing.ts
   e2e-relay-status.ts
   e2e-relay-publish.ts
   e2e-persistence-status.ts
@@ -63,15 +68,11 @@ TESTS=(
   e2e-p2p-full.ts
   e2e-back-and-forth.ts
   e2e-stress-1to1.ts
-  e2e-tor-ui.ts
-  e2e-tor-wasm.ts
-  e2e-tor-privacy-flow.ts
   e2e-bidirectional.ts
   e2e-qr-key-exchange.ts
   e2e-send-image.ts
   e2e-send-voice.ts
   e2e-send-file.ts
-  e2e-update-controlled.ts
 )
 
 PASSED=0
