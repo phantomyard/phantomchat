@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <script>
+      // UI theme costume (#317). Read once, before first paint. Absent or unknown means Fun and Relaxed.
+      try{if(localStorage.getItem('phantomchat:ui-theme')==='boring-corporate')document.documentElement.setAttribute('data-ui-theme','boring-corporate');}catch(e){}
+    </script>
     <meta charset="utf-8" />
     <title>{{title}}</title>
     <meta name="description" content="{{description}}">

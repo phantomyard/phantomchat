@@ -9,5 +9,7 @@ It is distributed under the GNU General Public License v3.0 (see LICENSE).
 Attribution:
   - Telegram Web K — Copyright (C) Eduard Kuzmenko and contributors
   - phantomchat-chat — decentralized Nostr backend and PWA adaptation
+  - Boring Corporate UI theme — colours, radii and type derived from T3 Code
+    (https://github.com/pingdotgg/t3code), Copyright (c) 2026 T3 Tools Inc., MIT licence
 
 Modifications by PhantomYard are documented in the project git history.
