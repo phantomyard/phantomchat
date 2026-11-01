@@ -82,6 +82,7 @@ import ButtonMenu, {ButtonMenuItemOptionsVerifiable} from '@components/buttonMen
 import Icon from '@components/icon';
 import {getDefaultOptions} from '@components/sidebarLeft/tabs/autoDeleteMessages/options';
 import {createAutoDeleteIcon} from '@components/chat/utils';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 import PopupBoost from '@components/popups/boost';
 import PopupPremium from '@components/popups/premium';
 
@@ -235,8 +236,24 @@ export default class ChatTopbar {
         onOpen: async(e, element) => {
           const deleteButton = this.menuButtons[this.menuButtons.length - 1];
           if(deleteButton?.element) {
-            const deleteButtonText = await this.managers.appPeersManager.getDeleteButtonText(this.chat.monoforumThreadId || this.peerId);
-            deleteButton.element.lastChild.replaceWith(i18n(deleteButtonText));
+            const peerId = this.chat.monoforumThreadId || this.peerId;
+            let deleteButtonText: LangPackKey = await this.managers.appPeersManager.getDeleteButtonText(peerId);
+            if(isGroupPeer(peerId)) {
+              // Match PopupDeleteDialog: P2P authority lives on the group record,
+              // not Telegram's delete_chat right (always false for these peers).
+              deleteButtonText = 'ChatList.Context.LeaveGroup';
+              try {
+                const {getGroupStore} = await import('@lib/phantomchat/group-store');
+                const record = await getGroupStore().getByPeerId(peerId);
+                const ownPubkey = (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey;
+                if(ownPubkey && record?.adminPubkey === ownPubkey) deleteButtonText = 'Delete';
+              } catch{
+                // Like the confirmation popup, keep Leave Group on lookup failure.
+              }
+            }
+            if(peerId === (this.chat.monoforumThreadId || this.peerId)) {
+              deleteButton.element.lastChild.replaceWith(i18n(deleteButtonText));
+            }
           }
 
           this.autoDeleteBtnMenuOptions.onOpen?.();
@@ -1247,7 +1264,9 @@ export default class ChatTopbar {
 
     return () => {
       const canHaveSomeButtons = !(this.chat.type === ChatType.Pinned || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Static || this.chat.type === ChatType.Logs);
-      const canHaveSearch = canHaveSomeButtons || this.chat.type === ChatType.Logs;
+      // The local search adapter ignores peer scope and excludes groups.
+      // Keep the chat search control hidden until scoped search is implemented.
+      const canHaveSearch = false;
 
       this.btnMute && this.btnMute.classList.toggle('hide', !isBroadcast || !canHaveSomeButtons);
       if(this.btnJoin) {
