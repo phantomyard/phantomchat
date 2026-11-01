@@ -165,8 +165,13 @@ describe('GroupAPI.addMember — relays a bounded history slice', () => {
     expect(carried.map((i: any) => i.createdAt)).toEqual([1_700_000_000, 1_700_000_001, 1_700_000_002]);
     expect(carried.every((i: any) => i.senderPubkey === MEMBER_A)).toBe(true);
 
-    // The membership control is still the FIRST broadcastGroupControl call.
-    expect(mockBroadcast.mock.calls[0][2]).toMatchObject({type: 'group_add_member', targetPubkey: NEW_MEMBER});
+    // The membership control is still broadcast to the whole group (the create
+    // that precedes it goes to the newcomer alone — see the cold-join suite).
+    const membership = mockBroadcast.mock.calls
+    .map((call) => call[2])
+    .filter((payload) => payload?.type === 'group_add_member');
+    expect(membership).toHaveLength(1);
+    expect(membership[0]).toMatchObject({type: 'group_add_member', targetPubkey: NEW_MEMBER});
   });
 
   it('sends nothing when this device has no history for the group', async() => {

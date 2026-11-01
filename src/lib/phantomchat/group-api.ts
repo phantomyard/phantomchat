@@ -710,11 +710,37 @@ export class GroupAPI {
       groupName: group.name
     };
 
+    // THE NEWCOMER NEEDS THE RECORD, AND ONLY WE CAN GIVE IT TO IT.
+    //
+    // A group's record normally reaches a member through the groups CRDT, but
+    // that snapshot is SELF-ADDRESSED (`getConversationKey(priv, ownPubkey)`,
+    // crdt-sync.ts), so `schedulePublish('groups')` below reaches only our own
+    // devices. A device added later therefore holds no record at all: its
+    // `handleAddMember` throws `Group not found`, and the history relay has
+    // nothing to accept rows against. So the adder also sends the newcomer a
+    // `group_create` carrying the post-add member list.
+    //
+    // Addressed to the newcomer ALONE, never to the other members: a create
+    // re-sent to a device that previously left would resurrect the group on
+    // the next unrelated add (the tombstone gate only rejects creates older
+    // than `deletedAt`).
+    const createPayload: GroupControlPayload = {
+      type: 'group_create',
+      groupId,
+      groupName: group.name,
+      groupDescription: group.description,
+      memberPubkeys: updatedMembers,
+      adminPubkey: group.adminPubkey,
+      ...(group.kind === 'session' ? {groupKind: group.kind} : {})
+    };
+
     // Build wraps FIRST so a malformed curve-shape pubkey throws before we
     // touch the store. This + the regex gate above closes FIND-fcfcdec0 #4
     // (orphan member persisted on admin after broadcast failure).
     let controlWraps;
+    let createWraps;
     try {
+      createWraps = broadcastGroupControl(this.ownSk, [newMemberPubkey], createPayload);
       controlWraps = broadcastGroupControl(this.ownSk, updatedMembers, payload);
     } catch(err) {
       this.log.warn('[GroupAPI] addMember: broadcastGroupControl threw before local mutation:', err);
@@ -727,7 +753,10 @@ export class GroupAPI {
     await this.store.updateMembers(groupId, updatedMembers);
 
     try {
-      await this.publishFn(controlWraps);
+      // The create goes first, so a device that honours publish order already
+      // holds the record when the membership event (and the history slice
+      // that follows it) arrives.
+      await this.publishFn([...createWraps, ...controlWraps]);
     } catch(err) {
       // Roll the local membership back so admin's view re-converges with
       // peers' on the next list refresh.
@@ -1435,7 +1464,17 @@ export class GroupAPI {
         await this.handleGroupCreate(payload, senderPubkey, ts);
         break;
       case 'group_add_member':
-        applied = (await this.handleAddMember(payload)) !== false;
+        // A membership event can beat the `group_create` that carries this
+        // device's record (independent gift-wraps, no delivery-order
+        // guarantee). Throwing there would escape as an unhandled rejection
+        // from a caller that does not await the dispatch, so catch and leave
+        // the watermark un-advanced: a relay redelivery retries the apply once
+        // the record exists, exactly like group_remove_member below.
+        try {
+          applied = (await this.handleAddMember(payload)) !== false;
+        } catch(err) {
+          this.log.warn('[GroupAPI] group_add_member handling failed; retry expected via backlog:', err);
+        }
         break;
       case 'group_remove_member':
         // The self-removal (kicked) branch runs the same durable-write

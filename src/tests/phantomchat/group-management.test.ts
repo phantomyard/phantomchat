@@ -168,8 +168,14 @@ describe('Group Management', () => {
       expect(updatedMembers).toContain(NEW_MEMBER);
       expect(updatedMembers).toContain(MEMBER_A);
 
-      expect(broadcast()).toHaveBeenCalledTimes(1);
-      const [, recipients, payload] = broadcast().mock.calls[0];
+      // Two broadcasts: the newcomer's own group_create (the groups snapshot is
+      // self-addressed, so nothing else can hand it a record — see
+      // group-history-backfill-cold-join.test.ts), then the membership event.
+      expect(broadcast()).toHaveBeenCalledTimes(2);
+      const [, createRecipients, createPayload] = broadcast().mock.calls[0];
+      expect(createPayload.type).toBe('group_create');
+      expect(createRecipients).toEqual([NEW_MEMBER]);
+      const [, recipients, payload] = broadcast().mock.calls[1];
       expect(recipients).toContain(NEW_MEMBER);
       expect(payload.type).toBe('group_add_member');
       expect(payload.targetPubkey).toBe(NEW_MEMBER);
