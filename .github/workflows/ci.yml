@@ -1,8 +1,8 @@
-name: ci
+name: PR checks — automatic on every PR
 
 # PRs check local and deployed compatibility, typechecks and unit tests, and
 # compile BOTH channels (pinned Stable + this PR's Preview) without publishing.
-# Preview builds/publication run on main; Stable promotion is manual.
+# PWA Preview publishes on merge to main; Electron Preview and Stable promotion are manual.
 on:
   pull_request:
     branches: [main]

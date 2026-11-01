@@ -95,7 +95,7 @@ hot paths that **violate** it. Don't reintroduce the violations below.
 10. **Desktop app (Electron): permissions stay default-deny, binary versions identify their
    own release.** Grant a new Chromium permission only by adding it to
    `electron/permissions.ts` (app-origin only, with a test). The desktop
-   release version is `1.1.<github.run_number>` from its own main-push/manual workflow;
+   release version is `1.1.<github.run_number>` from its own manual, main-only workflow;
    PWA releases are independent and never required to release Electron. The embedded Stable frontend retains its pinned release
    version; its source promotion is independent of the desktop binary update ring
    (see `docs/RELEASE-CHANNELS.md`).

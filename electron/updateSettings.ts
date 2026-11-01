@@ -20,8 +20,8 @@ export type UpdateChannel = 'stable' | 'preview';
 export const UPDATE_CHANNELS: readonly UpdateChannel[] = ['stable', 'preview'];
 
 /**
- * New installs land on stable. Preview is opt-in: every merge to main cuts a
- * preview build, so defaulting to it would hand unreviewed-in-the-field
+ * New installs land on stable. Preview is opt-in: every manual Preview run cuts
+ * a preview build, so defaulting to it would hand unreviewed-in-the-field
  * builds to everyone who never opened settings.
  */
 export const DEFAULT_CHANNEL: UpdateChannel = 'stable';

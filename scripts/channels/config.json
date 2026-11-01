@@ -371,6 +371,16 @@
       "preview": "eef321475e2849e845e0a49d40ecc32d5a9b2d08f8fa3359360a642b8d4d2397",
       "stable": "absent",
       "reason": "New module holding the index-key clear that setDialogsFromState used to inline: index_1..index_21 always dropped, index_0 kept for a group-row sort anchor. Pure in-memory key deletion on an already-persisted object; no new storage, no format change. State-restore sort anchor (#332): a restored row keeps a group's index_0 (its top-message sort anchor, kept by the new clearComputedDialogIndexes helper) while index_1..21 are still cleared, so the unpin re-anchor no longer falls through to \"now\". Existing persisted row, folder and pinnedOrders schemas unchanged; no stored-format, wire or protocol change."
+    },
+    "electron/updateFeed.ts": {
+      "stable": "0b37a9653792c048340b550c092fe45b60240596435ea2b7cc1259d2d939af8a",
+      "preview": "d54737693d2e205baeb5c9216b0ea88b351441a204e1f636b93222a64020986c",
+      "reason": "JSDoc only: why paging exists, reworded because Electron Preview is now manual. No code, wire or storage change."
+    },
+    "electron/updateSettings.ts": {
+      "stable": "cc27ffb914390f08e5ea0e2bcd2a992f9f9e53ac0f4ee2e22e219bd9d966fcca",
+      "preview": "49fbd8fe4fb3f3fe3a6080763bf562375ab2bee6a86f07eda47369bb24826c8d",
+      "reason": "JSDoc only: default-channel rationale reworded because Electron Preview is now manual. No code, wire or storage change."
     }
   }
 }

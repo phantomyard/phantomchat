@@ -1,32 +1,34 @@
 # Release & Deployment
 
-PhantomChat's PWA and Electron apps have independent manual publication pipelines.
+PhantomChat's PWA and Electron apps have independent publication pipelines.
 The full artifact/storage contract is in [RELEASE-CHANNELS.md](RELEASE-CHANNELS.md).
 
 ## Pipeline
 
-PRs targeting `main` run `typecheck` and `test`, including release regression
-checks. Pushes and merges run no builds and publish nothing.
+The Actions sidebar lists five pipelines, each named for what it does and how
+it starts:
 
-Use Actions → Run workflow and select the desired reviewed branch:
-
-- **PWA — build and publish Preview** (`deploy.yml`). Builds/validates Preview
+- **PR checks — automatic on every PR** (`ci.yml`). PRs targeting `main` run `typecheck` and `test`, including
+  release regression checks.
+- **PWA 1. Build + deploy to Preview — automatic on merge** (`deploy.yml`). Builds/validates Preview
   and its promotion-ready Stable variant. Publishes the combined site to GitHub
-  Pages while preserving the last published Stable bytes.
-- **PWA — promote to Stable** (`pwa-promote.yml`). Optional `release`; blank
+  Pages while preserving the last published Stable bytes. Also has Run workflow
+  for a reviewed branch.
+- **PWA 2. Promote Preview to Stable — manual** (`pwa-promote.yml`). Optional `release`; blank
   selects newest successfully published PWA Preview. Verifies checksummed assets,
   publishes the prepared Stable variant and preserves current Preview. No rebuild.
-- **Electron — build and publish Preview** (`app-release.yml`). Builds native
+- **Electron 1. Build + deploy to Preview — manual** (`app-release.yml`). Run workflow from `main`;
+  no push or merge ever starts it, and other branches skip every job. Builds native
   apps, verifies runtime/packages, signs/notarizes and publishes a prerelease.
   It does not require or dispatch a PWA workflow.
-- **Electron — promote to Stable** (`app-promote.yml`). Optional `tag`; blank
+- **Electron 2. Promote Preview to Stable — manual** (`app-promote.yml`). Optional `tag`; blank
   selects newest published Electron Preview. Verifies every required platform
   artifact and checksum before changing stable/latest metadata. No rebuild.
 
 First merge the workflow definitions onto the default branch so GitHub offers
 these buttons. The selected branch must contain the updated workflow. Dispatch
 only reviewed branches: the selected code runs with publication/signing access.
-Andrew owns publication and promotion; preparing/merging a PR does not authorize it.
+Andrew owns publication and promotion; merging a PR publishes PWA Preview only.
 
 ## Versioning
 
@@ -38,7 +40,7 @@ pin's version. Do not hand-edit package.json or tags to ship.
 
 Vite embeds APP_VERSION and emits `/version` and `/version.json` (separately
 under `/preview/`). The installed PWA refreshes through its service worker and
-in-app update prompt after a manual Pages publication. Local Preview builds
+in-app update prompt after a Pages publication. Local Preview builds
 without APP_VERSION use the pinned Stable version plus `-preview-local`.
 
 ## No bare tags

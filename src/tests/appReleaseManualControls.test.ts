@@ -16,10 +16,13 @@ describe('independent release controls', () => {
     expect(scripts).not.toContain('refs/heads/main');
     if(name.includes('promote')) expect(scripts).not.toMatch(/pnpm (?:run )?build|electron-builder/);
   });
-  it.each(['deploy.yml', 'app-release.yml'])('%s publishes Preview automatically only from main and supports manual dispatch', name => {
-    const workflow = readWorkflow(name);
+  it('PWA Preview publishes automatically only from main and supports manual dispatch', () => {
+    const workflow = readWorkflow('deploy.yml');
     expect(Object.keys(workflow.on).sort()).toEqual(['push', 'workflow_dispatch']);
     expect(workflow.on.push).toEqual({branches: ['main']});
+  });
+  it('Electron Preview can only be started by hand, never by a push or merge', () => {
+    expect(Object.keys(readWorkflow('app-release.yml').on)).toEqual(['workflow_dispatch']);
   });
   it('Stable promotion boots the assembled artifact before deployment without rebuilding', () => {
     const steps = readWorkflow('pwa-promote.yml').jobs.promote.steps;

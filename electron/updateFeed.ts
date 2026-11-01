@@ -129,7 +129,7 @@ export const RELEASES_MAX_PAGES = 10;
  * Collect releases, page by page, until the requested ring is represented or
  * the list is exhausted.
  *
- * Why paging at all: a prerelease is cut on EVERY merge to main, so a long
+ * Why paging at all: every manual Preview build cuts a prerelease, so a long
  * preview streak pushes the newest stable release off the first page. With a
  * single fixed page, pickReleaseForChannel(.., 'stable') eventually returns
  * null and a stable install is told it is up to date while a newer stable
