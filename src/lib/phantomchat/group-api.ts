@@ -1483,7 +1483,7 @@ export class GroupAPI {
         // survives and a relay-backlog redelivery retries the kick, exactly
         // like the group_delete case above.
         try {
-          applied = (await this.handleRemoveMember(payload, senderPubkey)) !== false;
+          applied = (await this.handleRemoveMember(payload, senderPubkey, ts)) !== false;
         } catch(err) {
           this.log.warn('[GroupAPI] group_remove_member handling failed; retry expected via backlog:', err);
         }
@@ -2586,8 +2586,27 @@ export class GroupAPI {
     return true;
   }
 
-  private async handleRemoveMember(payload: GroupControlPayload, senderPubkey: string): Promise<boolean> {
+  private async handleRemoveMember(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<boolean> {
     if(payload.targetPubkey === this.ownPubkey) {
+      // QUARANTINE THE KICK BEFORE THE FIRST AWAIT (cold join). A newcomer's
+      // record now arrives as a targeted `group_create` from the adder, so a
+      // kick and that create race on the newcomer's device: if the kick lands
+      // first it finds no record, does mirror cleanup only and is gone — then
+      // the create saves a LIVE record naming the kicked device a member, and
+      // nothing tears it down until a replayed kick survives the relay TTL.
+      // The fact is staged here, before any await, so a create that is already
+      // in flight cannot pass both of its consume() checks while this handler
+      // is suspended. It is the same quarantine group_delete uses, with the
+      // same authority rule: for a bound id only the id-bound key can ever be
+      // promoted, so any other sender would only pollute the bounded map.
+      // Verification happens in handleGroupCreate, which promotes the fact
+      // only when the create's admin is the kick's sender AND the kick is not
+      // older than the create — a genuine re-invite still lands.
+      const boundAdmin = boundGroupAdmin(payload.groupId);
+      const stagedKick = !(boundAdmin && boundAdmin !== senderPubkey);
+      if(stagedKick) {
+        this.rememberPendingGroupDelete(payload.groupId, senderPubkey, createdAt);
+      }
       // We were removed — FULL durable teardown, same as leaveGroup /
       // deleteGroup / handleGroupDelete (issue #181, mirroring
       // teardownGroupLocally post-#179): the kick must be a POSITIVE delete
@@ -2615,6 +2634,7 @@ export class GroupAPI {
       // the common case.
       const group = await this.store.get(payload.groupId);
       if(group && group.adminPubkey !== senderPubkey) {
+        this.clearPendingGroupDeletes(payload.groupId, senderPubkey);
         this.log.warn('[GroupAPI] ignoring group_remove_member(self) from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
         return false;
       }
@@ -2625,9 +2645,15 @@ export class GroupAPI {
         // Class unknown (no record): clear both derivations' mirrors.
         await cleanupGroupChatInjection(await groupIdToPeerId(payload.groupId));
         await cleanupGroupChatInjection(await groupIdToPeerId(payload.groupId, 'session'));
-        this.log('[GroupAPI] group_remove_member(self) for unknown group; mirror cleanup only:', payload.groupId.slice(0, 8));
+        this.log(
+          stagedKick ?
+            '[GroupAPI] quarantined unverifiable kick for unknown group; mirror cleanup only:' :
+            '[GroupAPI] kick for unknown group from an unpromotable sender; mirror cleanup only:',
+          payload.groupId.slice(0, 8)
+        );
         return false;
       }
+      this.clearPendingGroupDeletes(payload.groupId);
       await this.teardownGroupLocally(payload.groupId);
       this.log('[GroupAPI] removed from group:', payload.groupId);
       return true;

@@ -118,18 +118,18 @@ function device(pubkey: string) {
 }
 
 /** A control rumor as the relay would deliver it: authored by the admin. */
-function controlRumor(payload: any) {
+function controlRumor(payload: any, offsetSec = 0) {
   return {
     id: `${giftSeq++}`.padStart(64, 'f'),
-    created_at: Math.floor(Date.now() / 1000),
+    created_at: Math.floor(Date.now() / 1000) + offsetSec,
     content: JSON.stringify(payload),
     tags: [['control', 'true'], ['group', payload.groupId]]
   };
 }
 
-async function deliver(api: any, senderPubkey: string, payloads: any[]) {
+async function deliver(api: any, senderPubkey: string, payloads: any[], offsetSec = 0) {
   for(const payload of payloads) {
-    await api.handleControlMessage(controlRumor(payload), senderPubkey);
+    await api.handleControlMessage(controlRumor(payload, offsetSec), senderPubkey);
   }
 }
 
@@ -305,5 +305,98 @@ describe('the cold newcomer — applying what the adder published', () => {
     const carried = mockIngest.mock.calls.flatMap((call) => call[2]);
     expect(carried.map((item: any) => JSON.parse(item.payload).content)).toEqual(['message 0', 'message 1']);
     expect(carried.map((item: any) => item.senderPubkey)).toEqual([MEMBER, MEMBER]);
+  });
+});
+
+// ─── A create must not outlive the kick it raced ──────────────────
+
+/**
+ * The create is the only path to a record on a cold device, so it can also
+ * arrive AFTER the admin has already kicked that device. The kick found no
+ * record and could only fail closed, which used to be enough; now the create
+ * would save a live record naming the kicked device a member, with nothing to
+ * tear it down until the relay replays the kick. The kick is quarantined and
+ * the create verifies it against the admin it supplies, exactly as
+ * group_delete already does.
+ */
+describe('a kick that races the create', () => {
+  async function publishedAddAndKick() {
+    mockMsgStore.getMessages.mockResolvedValue([]);
+    const admin = await adminWithGroup();
+    await admin.addMember(GROUP_ID, NEWCOMER);
+    for(let i = 0; i < 50 && !sent.some((s) => s.payload.type === 'group_add_member'); i++) {
+      await flush();
+    }
+    await admin.removeMember(GROUP_ID, NEWCOMER);
+    const published = sent.slice();
+    await wipeDevice();
+    return published;
+  }
+
+  const kickPayload = (memberPubkeys: string[]) => ({
+    type: 'group_remove_member',
+    groupId: GROUP_ID,
+    targetPubkey: NEWCOMER,
+    memberPubkeys
+  });
+
+  it('kick then create: the record does not land on the kicked device', async() => {
+    const published = await publishedAddAndKick();
+    const newcomer = device(NEWCOMER);
+    const create = published.filter((s) => s.payload.type === 'group_create').map((s) => s.payload);
+
+    // The kick is the NEWER fact: it is dated now, the create 60s earlier.
+    await deliver(newcomer, ADMIN, [kickPayload([ADMIN, MEMBER])]);
+    expect(await getGroupStore().get(GROUP_ID)).toBeNull();
+
+    await deliver(newcomer, ADMIN, create, -60);
+
+    expect(await getGroupStore().get(GROUP_ID)).toBeNull();
+    expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it('create and kick dispatched concurrently, neither awaited: no live record', async() => {
+    const published = await publishedAddAndKick();
+    const newcomer = device(NEWCOMER);
+    const create = published.filter((s) => s.payload.type === 'group_create').map((s) => s.payload);
+    const kick = kickPayload([ADMIN, MEMBER]);
+
+    // chat-api-receive does not await these: two controls for one group can be
+    // in flight together, and the kick can read the store before the create's
+    // save completes.
+    await Promise.all([
+      newcomer.handleControlMessage(controlRumor(create[0]), ADMIN),
+      newcomer.handleControlMessage(controlRumor(kick), ADMIN)
+    ]);
+    await flush();
+
+    expect(await getGroupStore().get(GROUP_ID)).toBeNull();
+  });
+
+  it('a genuine re-invite still lands: the create is newer than the kick', async() => {
+    const published = await publishedAddAndKick();
+    const newcomer = device(NEWCOMER);
+    const create = published.filter((s) => s.payload.type === 'group_create').map((s) => s.payload);
+
+    // Kick 10 minutes ago, create now — the device was re-added afterwards.
+    await deliver(newcomer, ADMIN, [kickPayload([ADMIN, MEMBER])], -600);
+    await deliver(newcomer, ADMIN, create);
+
+    const record = await getGroupStore().get(GROUP_ID);
+    expect(record).not.toBeNull();
+    expect(record.members).toContain(NEWCOMER);
+  });
+
+  it('a kick from a non-admin neither lands nor blocks the create', async() => {
+    const published = await publishedAddAndKick();
+    const newcomer = device(NEWCOMER);
+    const create = published.filter((s) => s.payload.type === 'group_create').map((s) => s.payload);
+
+    await deliver(newcomer, MEMBER, [kickPayload([ADMIN, MEMBER])]);
+    await deliver(newcomer, ADMIN, create, -60);
+
+    const record = await getGroupStore().get(GROUP_ID);
+    expect(record).not.toBeNull();
+    expect(record.members).toContain(NEWCOMER);
   });
 });
