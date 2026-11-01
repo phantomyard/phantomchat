@@ -349,8 +349,8 @@
     },
     "index.html": {
       "stable": "4de92dc7976fd19e38b6f79b91672a92c9dcb37e0878e7f1474a5376cf0a7062",
-      "preview": "4de92dc7976fd19e38b6f79b91672a92c9dcb37e0878e7f1474a5376cf0a7062",
-      "reason": "Boot-only read of the device-local phantomchat:ui-theme key to set html[data-ui-theme] before first paint. Stable does not read the key and ignores the attribute, so a device switching channels simply shows Fun and Relaxed there. No storage schema change. Requires independent content review."
+      "preview": "4d4e505c45a3804382e5a0320a3088814c38b8e38275463e2b967d85af8a8bf1",
+      "reason": "Boot-only read of the device-local phantomchat:ui-theme key to set html[data-ui-theme] before first paint. Preview treats an absent, unknown or unreadable key as Boring Corporate; Stable treats it as Fun and Relaxed, so a device that never picked a theme shows that channel's default. Same key, no storage schema change, nothing written at boot. Requires independent content review."
     },
     "src/components/sidebarLeft/tabs/generalSettings.ts": {
       "stable": "11be3e8069e654e20612cee8f959fad88f6b66ea4030956eed673911089e67e3",
