@@ -40,10 +40,12 @@ vi.mock('@lib/phantomchat/group-api', () => ({
     setGroupUnreadMarkByPeerId: mocks.setGroupUnreadMarkByPeerId
   })
 }));
-import {applyGroupDialogFlagsToDialog, setPinnedOrderEntry} from '@lib/phantomchat/phantomchat-groups-sync';
+import rootScope from '@lib/rootScope';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import {applyGroupDialogFlags, primeGroupKindCache, applyGroupDialogFlagsToDialog} from '@lib/phantomchat/phantomchat-groups-sync';
 import DialogsStorage from '@lib/storages/dialogs';
 import {PhantomChatPeerMapper} from '@lib/phantomchat/phantomchat-peer-mapper';
-import {GROUP_PEER_BASE} from '@lib/phantomchat/group-types';
+import {groupIdToPeerId, GROUP_PEER_BASE} from '@lib/phantomchat/group-types';
 
 const GROUP_PEER_ID = -Number(GROUP_PEER_BASE) - 0x1234;
 
@@ -125,35 +127,6 @@ describe('createTwebDialog carries pin + unread mark', () => {
 
     expect(dialog.pFlags.pinned).toBeUndefined();
     expect(dialog.pFlags.unread_mark).toBeUndefined();
-  });
-});
-
-describe('setPinnedOrderEntry', () => {
-  // The folder's pinned ORDER is a second, independent half of "looks pinned":
-  // it drives the pinned block's sort position, and `filter.pinnedPeerIds` IS
-  // that array (filters.ts assigns the reference), so the badge reads it too.
-  it('puts a new pin first — position 0 sorts highest', () => {
-    const orders: any[] = [1, 2];
-    setPinnedOrderEntry(orders, 3, true);
-    expect(orders).toEqual([3, 1, 2]);
-  });
-
-  it('is idempotent for an existing pin (no duplicate entries)', () => {
-    const orders: any[] = [1, 2, 3];
-    setPinnedOrderEntry(orders, 2, true);
-    expect(orders).toEqual([2, 1, 3]);
-  });
-
-  it('removes the entry on unpin and tolerates an absent one', () => {
-    const orders: any[] = [1, 2];
-    setPinnedOrderEntry(orders, 2, false);
-    expect(orders).toEqual([1]);
-    setPinnedOrderEntry(orders, 9, false);
-    expect(orders).toEqual([1]);
-  });
-
-  it('is a no-op when the folder has no order yet', () => {
-    expect(() => setPinnedOrderEntry(undefined as any, 1, true)).not.toThrow();
   });
 });
 
@@ -252,5 +225,60 @@ describe('virtual server routes the two RPCs for a group peer', () => {
 
     expect(setGroupPinnedByPeerId).not.toHaveBeenCalled();
     expect(result).toBe(true);
+  });
+});
+
+describe('Worker-owned pin order', () => {
+  it('persists pins and removals in the Worker instead of mutating an RPC copy', async() => {
+    const ds = new DialogsStorage();
+    const workerOrders: any[] = [1, 2];
+    const save = vi.fn();
+    (ds as any).pinnedOrders = {3: workerOrders};
+    (ds as any).appStateManager = {pushToState: save};
+    // A bridge read returns a structured clone, so editing it cannot persist.
+    const copy = structuredClone(ds.getPinnedOrders(3));
+    copy.unshift(GROUP_PEER_ID as any);
+    expect(workerOrders).toEqual([1, 2]);
+
+    await Promise.resolve(ds.setDialogPinnedOrder(GROUP_PEER_ID as any, 3, true));
+    expect(workerOrders).toEqual([GROUP_PEER_ID, 1, 2]);
+    ds.setDialogPinnedOrder(GROUP_PEER_ID as any, 3, true);
+    expect(workerOrders).toEqual([GROUP_PEER_ID, 1, 2]);
+    ds.setDialogPinnedOrder(GROUP_PEER_ID as any, 3, false);
+    expect(workerOrders).toEqual([1, 2]);
+    expect(save).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('live flags through asynchronous manager proxies', () => {
+  it('awaits the Worker mutation before pushing the reindexed dialog', async() => {
+    const groupId = 'ab'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = await groupIdToPeerId(groupId, 'group');
+    const dialog: any = {_: 'dialog', peerId, pFlags: {}, folder_id: 0};
+    const worker = new DialogsStorage();
+    (worker as any).pinnedOrders = {3: []};
+    (worker as any).appStateManager = {pushToState: vi.fn()};
+    const mutation = vi.fn(async(id, folder, pinned) => {
+      await Promise.resolve();
+      worker.setDialogPinnedOrder(id, folder, pinned);
+    });
+    const push = vi.fn(async({dialog: row}) => {
+      expect(worker.getPinnedOrders(3).includes(peerId as any)).toBe(!!row.pFlags.pinned);
+    });
+    (MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs = {[peerId]: dialog};
+    (rootScope.managers as any).dialogsStorage = {
+      getDialog: async() => [structuredClone(dialog)],
+      getPinnedOrders: async(folder: number) => structuredClone(worker.getPinnedOrders(folder)),
+      setDialogPinnedOrder: mutation,
+      pushDialog: push
+    };
+
+    await applyGroupDialogFlags({groupId, pinnedAt: 1, unreadMarkAt: 1});
+    expect(mutation).toHaveBeenLastCalledWith(peerId, 3, true);
+    expect(push).toHaveBeenCalledOnce();
+    await applyGroupDialogFlags({groupId, pinnedAt: 0, unreadMarkAt: 0});
+    expect(mutation).toHaveBeenLastCalledWith(peerId, 3, false);
+    expect(worker.getPinnedOrders(3)).toEqual([]);
   });
 });

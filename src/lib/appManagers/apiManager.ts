@@ -875,6 +875,8 @@ export class ApiManager extends ApiManagerMethods {
     'messages.getPeerDialogs',
     'messages.search',
     'messages.readHistory',
+    'messages.toggleDialogPin',
+    'messages.markDialogUnread',
     'messages.deleteMessages',
     'messages.sendMessage',
     'messages.sendMedia',

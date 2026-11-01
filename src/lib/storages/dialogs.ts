@@ -369,6 +369,15 @@ export default class DialogsStorage extends AppManager {
     this.getPinnedOrders(folderId).length = 0;
   }
 
+  /** Mutate the Worker's order here; MessagePort callers only receive a copy. */
+  public setDialogPinnedOrder(peerId: PeerId, folderId: number, pinned: boolean) {
+    const orders = this.getPinnedOrders(folderId);
+    const index = orders.indexOf(peerId);
+    if(index !== -1) orders.splice(index, 1);
+    if(pinned) orders.unshift(peerId);
+    this.savePinnedOrders();
+  }
+
   public getPinnedOrders(folderId: number) {
     let orders = this.pinnedOrders[folderId];
     if(!orders && this.isVirtualFilter(folderId)) {

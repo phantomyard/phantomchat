@@ -509,7 +509,7 @@ export default class DialogsContextMenu {
     // (no group branch on the virtual server). Route through GroupAPI so the
     // mark persists on the record alongside the dialog flag.
     if(isGroupPeer(+peerId)) {
-      const marked = !!(dialog as Dialog).pFlags?.unread_mark;
+      const marked = !!(dialog as Dialog).unread_count || !!(dialog as Dialog).pFlags?.unread_mark;
       this.toggleGroupUnread(!marked);
       return;
     }

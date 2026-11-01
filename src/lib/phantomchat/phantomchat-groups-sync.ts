@@ -379,7 +379,7 @@ export async function injectGroupCreateDialog(
   groupId: string,
   serviceMid: number,
   timestampSec: number,
-  record?: {kind?: GroupKind, archivedAt?: number}
+  record?: {kind?: GroupKind, archivedAt?: number, pinnedAt?: number, unreadMarkAt?: number}
 ): Promise<void> {
   let groupPeerId: number;
   try {
@@ -407,6 +407,8 @@ export async function injectGroupCreateDialog(
     topMessageDate: timestampSec,
     unreadCount: 0,
     archived: !!record?.archivedAt,
+    pinned: !!record?.pinnedAt,
+    unreadMark: !!record?.unreadMarkAt,
     // Read markers must equal top_message when unread is 0; otherwise tweb's
     // getDialogs flags this dialog as "noIdsDialogs" and spams reloadConversation.
     readInboxMaxId: serviceMid,
@@ -453,28 +455,6 @@ export function applyGroupDialogFlagsToDialog(
 }
 
 /**
- * Add or remove a peer in a folder's pinned ORDER (owner batch 15). Pure, so the
- * ordering rule is testable without dialogs storage.
- *
- * The order is what the chat list actually reads: `DialogsStorage.isDialogPinned`
- * answers from `filter.pinnedPeerIds` whenever the folder has a filter object —
- * and Groups / Sessions both do — so a group whose `pFlags.pinned` is set but
- * whose peer is missing from the order shows NO badge and never sorts into the
- * pinned block. Newest pin goes first (Telegram's own rule: the pinned index is
- * `length - 1 - position`, so position 0 sorts highest).
- */
-export function setPinnedOrderEntry(orders: any[], key: any, pinned: boolean): void {
-  if(!orders) return;
-  const index = orders.indexOf(key);
-  if(pinned) {
-    if(index !== -1) orders.splice(index, 1);
-    orders.unshift(key);
-  } else if(index !== -1) {
-    orders.splice(index, 1);
-  }
-}
-
-/**
  * Live-UI half of a pin / mark-unread toggle for a group (owner batch 15).
  *
  * The flag itself lives on the RECORD (`pinnedAt` / `unreadMarkAt`, synced over
@@ -514,13 +494,10 @@ export async function applyGroupDialogFlags(
         FOLDER_ID_ARCHIVE :
         (isSessionPeer(groupPeerId) ? FOLDER_ID_SESSION : FOLDER_ID_GROUPS);
       try {
-        const orders = dialogsStorage.getPinnedOrders?.(folderId);
-        if(orders) {
-          setPinnedOrderEntry(orders, groupPeerId, !!record.pinnedAt);
-          dialogsStorage.savePinnedOrders?.();
-        } else {
-          console.warn(LOG_PREFIX, 'applyGroupDialogFlags: getPinnedOrders missing — pin badge may not render');
-        }
+        // Managers cross a MessagePort: mutating getPinnedOrders() would
+        // mutate a cloned array (and without await, a Promise). Own the
+        // mutation inside the Worker before reindexing its dialog.
+        await dialogsStorage.setDialogPinnedOrder(groupPeerId, folderId, !!record.pinnedAt);
       } catch(err: any) {
         console.debug(LOG_PREFIX, 'applyGroupDialogFlags: pinned order non-critical:', err?.message);
       }
@@ -657,7 +634,7 @@ export async function relocateGroupDialog(
   groupId: string,
   fromPeerId: number,
   toPeerId: number,
-  record?: {kind?: GroupKind, archivedAt?: number}
+  record?: {kind?: GroupKind, archivedAt?: number, pinnedAt?: number, unreadMarkAt?: number}
 ): Promise<void> {
   const proxy = MOUNT_CLASS_TO.apiManagerProxy as any;
   const dialogsStorage = (rootScope as any).managers.dialogsStorage;

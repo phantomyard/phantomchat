@@ -320,7 +320,6 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
           // nothing about pinning", never "unpin". Without it a rename from a
           // build that predates the flag would clear the user's pin on every
           // device.
-          const localRecord = storeState?.get(id);
           if(typeof record.pinnedAt !== 'number' && typeof localRecord?.pinnedAt === 'number') {
             record.pinnedAt = localRecord.pinnedAt;
           }
