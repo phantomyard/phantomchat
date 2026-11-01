@@ -465,7 +465,7 @@ export default class DialogsContextMenu {
     const {peerId, filterId, threadId, dialog} = this;
     // Group-class peers persist the pin on their record: the generic path's only
     // effect is a local dialog flag that the next rebuild throws away.
-    if(!this.threadId && isGroupPeer(+peerId)) {
+    if(isGroupPeer(+peerId)) {
       this.toggleGroupPin(!(this.dialog as Dialog).pFlags?.pinned);
       return;
     }
