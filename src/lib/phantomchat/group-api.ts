@@ -22,7 +22,7 @@ import {
   sessionTitleFromPrompt
 } from './group-sessions';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
-import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
+import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, cleanupGroupChatInjection, ensureGroupChatInjected, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {reconcileGroupPeerClasses} from './group-class-reconcile';
 import {getMessageStore} from './message-store';
 import {isSafeGroupAvatarUrl} from './blossom-servers';
@@ -713,6 +713,59 @@ export class GroupAPI {
 
     this.log('[GroupAPI] member removed from group:', groupId, memberPubkey.slice(0, 8));
     schedulePublish('groups');
+  }
+
+  /**
+   * Pin / unpin a GROUP or a SESSION in the chat list (owner batch 15).
+   *
+   * Pin is a per-user, per-device view preference — and it is the SAME flag a
+   * chat uses: `pFlags.pinned` on the dialog row, which tweb's badge and pinned
+   * ordering already read. The stamp lives on the GroupRecord (`pinnedAt`, same
+   * absent-vs-`0` contract as `archivedAt`) so the groups CRDT carries it to the
+   * user's other devices and a reload rebuilds the row pinned. Without the
+   * record half a pin would live only in this session's dialog object and be
+   * gone at the next rebuild — the tweb generic path cannot persist it because
+   * `messages.toggleDialogPin` has no group branch (it hits the virtual server's
+   * action fallback and no-ops).
+   */
+  async setGroupPinnedByPeerId(peerId: number, pinned: boolean): Promise<void> {
+    const group = await this.store.getByPeerId(peerId);
+    if(!group?.groupId) return;
+
+    await this.store.updateInfo(group.groupId, {pinnedAt: pinned ? Date.now() : null});
+    schedulePublish('groups');
+    const updated = await this.store.get(group.groupId);
+    if(!updated) return;
+
+    try {
+      await applyGroupDialogFlags(updated);
+    } catch(err) {
+      this.log.warn('[GroupAPI] setGroupPinned: dialog stamp non-critical:', err);
+    }
+  }
+
+  /**
+   * Mark a group / session read-or-unread by hand (owner batch 15).
+   *
+   * `unread` true sets only the DOT (`pFlags.unread_mark`), never a count — the
+   * chat-list "Mark as unread" behaves the same way on a chat. `false` clears
+   * the mark; the actual read cursor is the caller's job (`resetUnreadForPeer`
+   * owns that, so the badge, the IDB cursor and the message store agree).
+   */
+  async setGroupUnreadMarkByPeerId(peerId: number, unread: boolean): Promise<void> {
+    const group = await this.store.getByPeerId(peerId);
+    if(!group?.groupId) return;
+
+    await this.store.updateInfo(group.groupId, {unreadMarkAt: unread ? Date.now() : null});
+    schedulePublish('groups');
+    const updated = await this.store.get(group.groupId);
+    if(!updated) return;
+
+    try {
+      await applyGroupDialogFlags(updated);
+    } catch(err) {
+      this.log.warn('[GroupAPI] setGroupUnreadMark: dialog stamp non-critical:', err);
+    }
   }
 
   /**

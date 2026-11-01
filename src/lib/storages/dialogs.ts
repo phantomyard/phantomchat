@@ -380,6 +380,16 @@ export default class DialogsStorage extends AppManager {
   }
 
   public isDialogPinned(peerId: PeerId, folderId: number) {
+    // A group-class peer (owner batch 15): its pin is RECORD state synced over
+    // the groups CRDT, and the row is rebuilt from that record, so `pFlags` is
+    // the durable answer. The folder's `pinnedPeerIds` is a server-mirrored
+    // order that no group ever appears in, and answering from it is exactly why
+    // a pinned group showed no badge while a pinned chat did.
+    const dialog = this.getDialogOnly(peerId);
+    if(dialog && isGroupPeer(+peerId)) {
+      return !!(dialog as Dialog).pFlags?.pinned;
+    }
+
     const filter = this.filtersStorage.getFilter(folderId);
     let isPinned: boolean;
     if(filter) {

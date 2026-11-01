@@ -459,6 +459,23 @@ ul.chatlist {
     background-color: var(--chatlist-status-color);
   }
 
+  // Owner batch 15: the unread counter and the "marked unread" dot were both
+  // rendered at the base 22px badge size, which in a 56px chat row reads as a
+  // second avatar. The counter drops to 18px/12px and the count-less dot to a
+  // real dot (8px). `unread-dot` is stamped by appDialogsManager when the badge
+  // has no number, so a counter is never mistaken for a dot.
+  .dialog-subtitle-badge-unread {
+    --size: 1.125rem;
+    --padding: .3125rem;
+    font-size: .75rem;
+
+    &.unread-dot {
+      --size: .5rem;
+      --padding: 0;
+      padding: 0;
+    }
+  }
+
   .is-muted .unread,
   .no-unmuted-topic .unread {
     background-color: var(--secondary-color);

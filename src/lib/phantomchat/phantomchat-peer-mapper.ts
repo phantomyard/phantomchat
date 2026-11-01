@@ -78,6 +78,17 @@ export interface CreateDialogOpts {
    * / getFolderDialogs machinery does the work and Archives is just that folder.
    */
   archived?: boolean;
+  /**
+   * The group record's `pinnedAt` truthiness (owner batch 15). Stamped as
+   * `pFlags.pinned`, exactly the flag a chat's pin sets, so the chat-list badge
+   * and pinned ordering work with no group-specific rendering.
+   */
+  pinned?: boolean;
+  /**
+   * The group record's `unreadMarkAt` truthiness — the manual "mark unread"
+   * dot, carried as `pFlags.unread_mark` like a chat's.
+   */
+  unreadMark?: boolean;
 }
 
 export class PhantomChatPeerMapper {
@@ -263,7 +274,13 @@ export class PhantomChatPeerMapper {
 
   /**
    * Creates a Dialog.dialog object for a P2P peer.
-   * No pFlags.pinned — the pinned flag was a legacy bug.
+   *
+   * The pin / mark-unread flags DO belong on a group dialog (owner batch 15):
+   * they are the same `pFlags.pinned` + `pFlags.unread_mark` a chat uses, they
+   * come from the record (so a rebuild after reload keeps them), and the
+   * chat-list badge and pinned ordering already read them. The earlier "no
+   * pFlags.pinned" rule was about a legacy writer that stamped a stale pin on
+   * every rebuild — the flag is only set here from the synced record now.
    */
   createTwebDialog(opts: CreateDialogOpts): Dialog.dialog {
     const now = Math.floor(Date.now() / 1000);
@@ -302,6 +319,9 @@ export class PhantomChatPeerMapper {
       } as PeerNotifySettings,
       pts: undefined
     } as Dialog.dialog;
+
+    if(opts.pinned) (dialog as any).pFlags.pinned = true;
+    if(opts.unreadMark) (dialog as any).pFlags.unread_mark = true;
 
     (dialog as any)['index_0'] = sortIndex;
 

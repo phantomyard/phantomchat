@@ -2432,6 +2432,12 @@ export class AppDialogsManager {
 
       badge.classList.toggle('unread', isUnread);
       badge.classList.toggle('mention', isMention);
+      // Owner batch 15: a count-less unread badge IS the "marked unread" dot.
+      // The element is the same 22px circle used for a counter, which reads as a
+      // second avatar in a 56px chat row, so the chat list needs to be able to
+      // size the two shapes apart (see _chatlist.scss). Decided here because
+      // only the renderer knows whether a count exists.
+      badge.classList.toggle('unread-dot', isUnread && !unreadCount && !isMention);
     });
 
     // if(isPinned && !isUnread && !isMention) {

@@ -348,17 +348,29 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
     // design language (Row has no danger styling of its own).
     const leaveSection = new SettingSection({noDelimiter: true});
 
-    // Admins must transfer ownership before leaving; unavailable actions stay hidden.
-    if(!isAdmin) {
-      const btnLeave = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'ChatList.Context.LeaveGroup'});
+    // Owner batch 15: the admin is the group's owner — there is no server to
+    // hand it to — so the admin's danger action is DELETE (which tears the group
+    // down for every member), not a hidden leave. This pane used to hide the
+    // action entirely for an admin, which left delete reachable only from the
+    // chat-list context menu.
+    {
+      const isDelete = isAdmin;
+      const btn = Button('btn-primary btn-transparent danger', {
+        icon: 'delete',
+        text: isDelete ? 'Delete' : 'ChatList.Context.LeaveGroup'
+      });
 
-      attachClickEvent(btnLeave, async() => {
+      attachClickEvent(btn, async() => {
         try {
           await confirmationPopup({
-            titleLangKey: 'ChatList.Context.LeaveGroup' as LangPackKey,
-            button: {langKey: 'ChatList.Context.LeaveGroup' as LangPackKey, isDanger: true}
+            titleLangKey: (isDelete ? 'Delete' : 'ChatList.Context.LeaveGroup') as LangPackKey,
+            button: {
+              langKey: (isDelete ? 'Delete' : 'ChatList.Context.LeaveGroup') as LangPackKey,
+              isDanger: true
+            }
           });
-          await getGroupAPI().leaveGroup(this.groupId);
+          if(isDelete) await getGroupAPI().deleteGroup(this.groupId);
+          else await getGroupAPI().leaveGroup(this.groupId);
 
           // Remove group dialog from chat list
           try {
@@ -375,7 +387,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         }
       }, {listenerSetter: this.listenerSetter});
 
-      leaveSection.content.append(btnLeave);
+      leaveSection.content.append(btn);
     }
 
     // Admin-only: delete the group for EVERYONE (no restrictions). Broadcasts a
