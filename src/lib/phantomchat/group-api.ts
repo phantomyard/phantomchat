@@ -35,6 +35,21 @@ import type {NTNostrEvent} from './nostr-crypto';
 /** Which mutable field-set a control message kind writes to. */
 type GroupEventField = 'members' | 'info' | 'admin';
 
+/**
+ * One sub-field of `group_info_update`. The edit pane publishes these one at a
+ * time (`phantomchatGroupEdit.ts` sends `{avatar}` alone, `{name}` alone), so
+ * `info` ordering is decided per sub-field, never as one blob.
+ */
+type InfoField = 'name' | 'description' | 'avatar';
+/** Persisted watermark key: the coarse field-set, or one info sub-field. */
+type WatermarkKey = GroupEventField | `info:${InfoField}`;
+
+const INFO_FIELDS: Array<[InfoField, 'groupName' | 'groupDescription' | 'groupAvatar']> = [
+  ['name', 'groupName'],
+  ['description', 'groupDescription'],
+  ['avatar', 'groupAvatar']
+];
+
 const WATERMARK_PREFIX = 'phantomchat:group-wm:';
 /** Grace for clock skew between members' devices, in seconds. */
 const WATERMARK_GRACE_SEC = 60;
@@ -101,9 +116,38 @@ function mintBoundGroupId(adminPubkey: string): string {
   return adminPubkey + crypto.randomUUID().split('-').join('');
 }
 
-function readEventWatermark(groupId: string, field: GroupEventField): number {
+function infoWatermarkKey(field: InfoField): WatermarkKey {
+  return ('info:' + field) as WatermarkKey;
+}
+
+/**
+ * The sub-fields an info event CARRIES and that are not stale against their own
+ * watermark. Empty means the event is a replay of values we already hold.
+ *
+ * A single `info` watermark cannot be used: the payload is partial, so an
+ * event that is older than the newest applied one may still carry a field
+ * nobody has updated (save an avatar, then rename within the skew window, and
+ * one shared watermark would silently drop the avatar everywhere).
+ */
+function freshInfoFields(groupId: string, payload: GroupControlPayload, ts: number): InfoField[] {
+  const fresh: InfoField[] = [];
+  for(const [field, payloadField] of INFO_FIELDS) {
+    if(payload[payloadField] === undefined) continue;
+    if(ts <= readEventWatermark(groupId, infoWatermarkKey(field))) continue;
+    fresh.push(field);
+  }
+  return fresh;
+}
+
+function readEventWatermark(groupId: string, field: WatermarkKey): number {
   try {
-    const wm = parseInt(localStorage.getItem(WATERMARK_PREFIX + groupId + ':' + field) || '0', 10) || 0;
+    // Upgrade seam: `info` used to be a single watermark for name, description
+    // and avatar. A device that still holds that value keeps it as the floor
+    // for a sub-field that has not applied an event since the split, so the
+    // upgrade itself cannot reset anti-replay protection to 0.
+    const stored = localStorage.getItem(WATERMARK_PREFIX + groupId + ':' + field) ??
+      (field.startsWith('info:') ? localStorage.getItem(WATERMARK_PREFIX + groupId + ':info') : null);
+    const wm = parseInt(stored || '0', 10) || 0;
     // Heal a poisoned watermark: created_at is sender-chosen, so an event
     // dated in the far future (pre-clamp release, or a malicious member)
     // could have persisted a watermark years ahead — it would then drop
@@ -120,7 +164,7 @@ function readEventWatermark(groupId: string, field: GroupEventField): number {
   }
 }
 
-function writeEventWatermark(groupId: string, field: GroupEventField, tsSec: number): void {
+function writeEventWatermark(groupId: string, field: WatermarkKey, tsSec: number): void {
   try {
     localStorage.setItem(WATERMARK_PREFIX + groupId + ':' + field, String(tsSec));
   } catch{ /* best-effort — private mode etc. */ }
@@ -857,16 +901,21 @@ export class GroupAPI {
     // an explicit empty list clears them.
     await this.store.updateInfo(groupId, info);
 
-    // Advance the local `info` watermark to the event we just published.
-    // Without this the incoming-control gate is blind to changes we originated:
-    // a session's first-prompt auto-name (published seconds earlier) looks
-    // "newer than nothing", so on reload its relay replay restored the
-    // auto-name over the user's rename. The gate drops any group_info_update
-    // that is not strictly newer than this value, on every device. Raise-only:
-    // a peer whose clock runs ahead may already have set a higher watermark,
-    // and lowering it would re-open the replay window.
-    if(infoTsSec > readEventWatermark(groupId, 'info')) {
-      writeEventWatermark(groupId, 'info', infoTsSec);
+    // Advance the local watermarks to the event we just published, one per
+    // sub-field actually named here.
+    // Without this the incoming-control gate is blind to changes we
+    // originated: a session's first-prompt auto-name (published seconds
+    // earlier) looks "newer than nothing", so on reload its relay replay
+    // restored the auto-name over the user's rename. The gate drops any
+    // group_info_update whose sub-field is not strictly newer than this
+    // value, on every device. Raise-only: a peer whose clock runs ahead may
+    // already have set a higher watermark, and lowering it would re-open the
+    // replay window.
+    for(const [field] of INFO_FIELDS) {
+      if(info[field] === undefined) continue;
+      if(infoTsSec > readEventWatermark(groupId, infoWatermarkKey(field))) {
+        writeEventWatermark(groupId, infoWatermarkKey(field), infoTsSec);
+      }
     }
 
     // Refresh main-thread mirror so subscribers (chat-list, topbar) see the
@@ -1247,7 +1296,8 @@ export class GroupAPI {
     // This is source-event last-writer-wins, NOT a wall-clock comparison
     // against the record's updatedAt: the watermark is the newest
     // created_at we have actually APPLIED, kept per group AND per field
-    // (members / info / admin) so that a delayed event of one kind is never
+    // (members / info.<sub-field> / admin) so that a delayed event of one
+    // kind is never
     // dropped just because another kind applied more recently. The
     // watermark persists in localStorage, so a backlog replayed after a
     // reload can't resurrect removed members. group_create itself has no
@@ -1255,6 +1305,7 @@ export class GroupAPI {
     // already makes a replayed create a no-op for live records.
     const ts = typeof rumor.created_at === 'number' ? rumor.created_at : Math.floor(Date.now() / 1000);
     const wmField: GroupEventField | null = payload?.groupId ? watermarkFieldFor(payload.type) : null;
+    let infoFresh: InfoField[] = [];
     if(wmField) {
       // FUTURE-TIMESTAMP CLAMP. created_at is attacker-chosen and the
       // watermark is persisted: a single members event dated years ahead
@@ -1267,29 +1318,38 @@ export class GroupAPI {
         this.log('[GroupAPI] dropping control message dated in the future', payload.type, payload.groupId.slice(0, 8), {ts, nowSec});
         return;
       }
-      const wm = readEventWatermark(payload.groupId, wmField);
-      // STRICT ORDERING FOR `info`. The grace below exists for DELTA events
-      // (member lists): a device whose clock runs a few seconds behind must
-      // still land its add/remove. A `group_info_update` is not a delta — it
-      // carries the absolute name/description/avatar, so an event that is not
-      // strictly newer than the newest info we know about is by definition an
-      // older value, and applying it reverts a newer edit. Inside the grace
-      // window the old value won every time: renaming a session seconds after
-      // its first-prompt auto-name, then reloading, restored the auto-name
-      // and re-stamped it with Date.now() (which also made it the groups
-      // CRDT winner and pushed it to other devices). The sender's own rename
-      // advances this same watermark (updateGroupInfo), so "not newer"
-      // covers both applied remote events and our own published ones.
-      const stale = wmField === 'info' ? ts <= wm : ts < wm - WATERMARK_GRACE_SEC;
-      if(stale) {
-        this.log('[GroupAPI] dropping replayed control message older than watermark', payload.type, payload.groupId.slice(0, 8), {ts, watermark: wm});
-        return;
+      if(wmField === 'info') {
+        // STRICT PER-SUB-FIELD ORDERING FOR `info`. The grace below exists for
+        // DELTA events (member lists): a device whose clock runs a few seconds
+        // behind must still land its add/remove. A `group_info_update` is not
+        // a delta — it carries the absolute value of the sub-fields it names,
+        // so for each of those a value that is not strictly newer than the
+        // newest one we hold is by definition older, and applying it reverts a
+        // newer edit. Inside the grace window the old value won every time:
+        // renaming a session seconds after its first-prompt auto-name, then
+        // reloading, restored the auto-name and re-stamped it with Date.now()
+        // (which also made it the groups CRDT winner and pushed it to other
+        // devices). The sender's own rename advances the same watermarks
+        // (updateGroupInfo), so "not newer" covers both applied remote events
+        // and our own published ones.
+        infoFresh = freshInfoFields(payload.groupId, payload, ts);
+        if(infoFresh.length === 0) {
+          this.log('[GroupAPI] dropping replayed info update; no sub-field is newer', payload.groupId.slice(0, 8), {ts});
+          return;
+        }
+      } else {
+        const wm = readEventWatermark(payload.groupId, wmField);
+        if(ts < wm - WATERMARK_GRACE_SEC) {
+          this.log('[GroupAPI] dropping replayed control message older than watermark', payload.type, payload.groupId.slice(0, 8), {ts, watermark: wm});
+          return;
+        }
       }
     }
 
     // Field-bearing handlers report whether they actually applied (false =
     // validation dropped it) so the watermark only advances on real applies.
     let applied = false;
+    let appliedInfo: InfoField[] = [];
     switch(payload.type) {
       case 'group_create':
         await this.handleGroupCreate(payload, senderPubkey, ts);
@@ -1327,7 +1387,8 @@ export class GroupAPI {
         }
         break;
       case 'group_info_update':
-        applied = (await this.handleInfoUpdate(payload, senderPubkey)) !== false;
+        appliedInfo = await this.handleInfoUpdate(payload, senderPubkey, infoFresh);
+        applied = appliedInfo.length > 0;
         break;
       case 'group_admin_transfer':
         applied = (await this.handleAdminTransfer(payload, senderPubkey)) !== false;
@@ -1349,7 +1410,15 @@ export class GroupAPI {
       // Cap the persisted value at the local clock: ts was already clamped
       // above, but defense in depth — a stored watermark may never exceed
       // now + grace no matter what the sender claimed.
-      writeEventWatermark(payload.groupId, wmField, Math.min(ts, Math.floor(Date.now() / 1000)));
+      const capped = Math.min(ts, Math.floor(Date.now() / 1000));
+      if(wmField === 'info') {
+        // Only the sub-fields this event actually landed: an older event that
+        // still owed us a different field must not block that field's next
+        // legitimate edit.
+        for(const field of appliedInfo) writeEventWatermark(payload.groupId, infoWatermarkKey(field), capped);
+      } else {
+        writeEventWatermark(payload.groupId, wmField, capped);
+      }
     }
   }
 
@@ -2437,11 +2506,11 @@ export class GroupAPI {
     return true;
   }
 
-  private async handleInfoUpdate(payload: GroupControlPayload, senderPubkey: string): Promise<boolean | void> {
+  private async handleInfoUpdate(payload: GroupControlPayload, senderPubkey: string, fields: InfoField[]): Promise<InfoField[]> {
     const group = await this.store.get(payload.groupId);
     if(!group) {
       this.log('[GroupAPI] group_info_update for unknown group, ignoring:', payload.groupId.slice(0, 8));
-      return false;
+      return [];
     }
     // Only the current admin may broadcast info changes — same sender
     // validation as group_delete / group_admin_transfer. Without this, any
@@ -2450,17 +2519,26 @@ export class GroupAPI {
     // fetch an arbitrary URL — an IP/User-Agent beacon plus identity spoof.
     if(group.adminPubkey !== senderPubkey) {
       this.log.warn('[GroupAPI] ignoring group_info_update from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
-      return false;
+      return [];
     }
     if(!isSafeGroupAvatarUrl(payload.groupAvatar)) {
       this.log.warn('[GroupAPI] ignoring group_info_update with non-Blossom avatar URL for', payload.groupId.slice(0, 8));
-      return false;
+      return [];
     }
-    await this.store.updateInfo(payload.groupId, {
-      name: payload.groupName,
-      description: payload.groupDescription,
-      avatar: payload.groupAvatar
-    });
+
+    // Apply only the sub-fields the gate found NEWER than their own watermark:
+    // `updateInfo` skips undefined fields, so a partial event stays partial
+    // instead of letting an older event re-apply a field it does not carry.
+    const updates: Partial<Pick<GroupRecord, 'name' | 'description' | 'avatar'>> = {};
+    if(fields.includes('name') && payload.groupName !== undefined) updates.name = payload.groupName;
+    if(fields.includes('description') && payload.groupDescription !== undefined) updates.description = payload.groupDescription;
+    if(fields.includes('avatar') && payload.groupAvatar !== undefined) updates.avatar = payload.groupAvatar;
+    const appliedFields: InfoField[] = [];
+    if(updates.name !== undefined) appliedFields.push('name');
+    if(updates.description !== undefined) appliedFields.push('description');
+    if(updates.avatar !== undefined) appliedFields.push('avatar');
+    if(appliedFields.length === 0) return [];
+    await this.store.updateInfo(payload.groupId, updates);
 
     // Drop the avatarNew memo so a changed avatar renders on the next
     // cycle instead of lagging up to the 30s TTL.
@@ -2495,6 +2573,8 @@ export class GroupAPI {
     } catch(err) {
       this.log.warn('[GroupAPI] handleInfoUpdate: mirror refresh failed:', err);
     }
+
+    return appliedFields;
   }
 
   private async handleAdminTransfer(payload: GroupControlPayload, senderPubkey: string): Promise<boolean | void> {

@@ -512,9 +512,11 @@ describe('Group Management', () => {
 
       await api.updateGroupInfo(gid, {name: 'Auth work'});
       expect(store().updateInfo).toHaveBeenCalledTimes(1);
-      // The rename advanced the persisted info watermark to its own event.
-      const wm = Number(localStorage.getItem('phantomchat:group-wm:' + gid + ':info'));
+      // The rename advanced the persisted watermark for THAT sub-field (name)
+      // to its own event; description and avatar are untouched.
+      const wm = Number(localStorage.getItem('phantomchat:group-wm:' + gid + ':info:name'));
       expect(wm).toBeGreaterThanOrEqual(now);
+      expect(localStorage.getItem('phantomchat:group-wm:' + gid + ':info:description')).toBeNull();
 
       // Relay replay on the next app start must not restore the auto-name.
       await api.handleControlMessage(autoNameRumor, OWN_PUBKEY);
@@ -539,6 +541,100 @@ describe('Group Management', () => {
       } as any, OWN_PUBKEY);
       expect(store().updateInfo).toHaveBeenCalledTimes(2);
       expect(store().updateInfo.mock.calls[1][1]).toMatchObject({name: 'Auth rework'});
+    });
+
+    // `group_info_update` is PARTIAL: the edit pane publishes one field at a
+    // time. Ordering therefore has to be per sub-field — one shared `info`
+    // watermark dropped an older-timestamped event that carried a field no one
+    // had touched (save an avatar, rename within the skew window, avatar gone).
+    it('applies an older info event that carries a DIFFERENT sub-field (partial event)', async() => {
+      const gid = 'watermarkinfopartial00000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeInfoRumor = (id: string, ts: number, info: Partial<GroupControlPayload>): any => ({
+        id, kind: 14,
+        content: JSON.stringify({type: 'group_info_update', groupId: gid, ...info}),
+        pubkey: OWN_PUBKEY, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      await api.handleControlMessage(makeInfoRumor('ctrl-partial-name', now, {groupName: 'Auth work'}), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(1);
+
+      // Sent 5s BEFORE the rename, but it is the only description edit we
+      // have: it must apply and leave the newer name alone.
+      await api.handleControlMessage(makeInfoRumor('ctrl-partial-desc', now - 5, {groupDescription: 'Revoked tokens'}), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(2);
+      expect(store().updateInfo.mock.calls[1][1]).toEqual({description: 'Revoked tokens'});
+
+      // …and applying it must not advance the NAME watermark: a replay of the
+      // pre-rename name is still stale.
+      await api.handleControlMessage(makeInfoRumor('ctrl-partial-name-old', now - 5, {groupName: 'Fix the login bug'}), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(2);
+    });
+
+    it('applies only the fresh sub-fields of a mixed info event', async() => {
+      const gid = 'watermarkinfomixed0000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeInfoRumor = (id: string, ts: number, info: Partial<GroupControlPayload>): any => ({
+        id, kind: 14,
+        content: JSON.stringify({type: 'group_info_update', groupId: gid, ...info}),
+        pubkey: OWN_PUBKEY, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      await api.handleControlMessage(makeInfoRumor('ctrl-mixed-desc', now, {groupDescription: 'Revoked tokens'}), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(1);
+
+      // One event, two sub-fields, opposite staleness: the name is new, the
+      // description is a replay. Apply the name only — a whole-event drop
+      // would lose the rename, a whole-event apply would revert the description.
+      await api.handleControlMessage(makeInfoRumor('ctrl-mixed-both', now - 5, {groupName: 'Auth work', groupDescription: 'Old text'}), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(2);
+      expect(store().updateInfo.mock.calls[1][1]).toEqual({name: 'Auth work'});
+    });
+
+    // The strict rule is `ts <= wm` (equal second drops), not `ts < wm`. The
+    // publish usually lands on exactly the second captured for the watermark,
+    // so only the tie clause keeps the writer's own replayed event out — and a
+    // re-apply re-stamps updatedAt = Date.now(), the exact drift this fixes.
+    it('drops an info event stamped at the SAME second as the applied one (tie)', async() => {
+      const gid = 'watermarkinfotie00000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+
+      const makeInfoRumor = (id: string, ts: number, name: string): any => ({
+        id, kind: 14,
+        content: JSON.stringify({type: 'group_info_update', groupId: gid, groupName: name} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: ts,
+        tags: [['control', 'true'], ['group', gid]]
+      });
+
+      await api.handleControlMessage(makeInfoRumor('ctrl-tie-first', now, 'Auth work'), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(1);
+
+      await api.handleControlMessage(makeInfoRumor('ctrl-tie-second', now, 'Fix the login bug'), OWN_PUBKEY);
+      expect(store().updateInfo).toHaveBeenCalledTimes(1);
+    });
+
+    // Upgrade seam: a device upgrading from a single `info` watermark keeps it
+    // as the floor for a sub-field that has not applied anything since, so the
+    // split cannot reset anti-replay protection to 0.
+    it('falls back to the legacy single info watermark for an untouched sub-field', async() => {
+      const gid = 'watermarkinfolegacy000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      localStorage.setItem('phantomchat:group-wm:' + gid + ':info', String(Math.floor(Date.now() / 1000)));
+
+      await api.handleControlMessage({
+        id: 'ctrl-legacy-info', kind: 14,
+        content: JSON.stringify({type: 'group_info_update', groupId: gid, groupName: 'Older Name'} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: Math.floor(Date.now() / 1000) - 5,
+        tags: [['control', 'true'], ['group', gid]]
+      } as any, OWN_PUBKEY);
+      expect(store().updateInfo).not.toHaveBeenCalled();
     });
 
     it('keeps the skew grace for members events (delta ordering unchanged)', async() => {
