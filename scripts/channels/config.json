@@ -98,8 +98,8 @@
     },
     "src/lib/storages/dialogs.ts": {
       "stable": "230e8aeb9fc0fe34280ea6f02bcdf6dc3f99bd5754fbca481629d00d1f3cc406",
-      "preview": "230e8aeb9fc0fe34280ea6f02bcdf6dc3f99bd5754fbca481629d00d1f3cc406",
-      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change."
+      "preview": "d0c1dd814fe6c40ebe30d5aa9baecb5703b5e30996e4e7494bc833039cf3cc99",
+      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change. Session stability update: Filter rebuilds read every persisted row instead of index-derived lists. No stored format change."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "487adb45dc21fb3625f50d78ceef164694292f10d7f11f57e20ee9d011572ccc",
@@ -133,8 +133,8 @@
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "c55d42f930d4711b235544ea8f41e03ad4bdb72fe60330d02ec27a442eb90d9c",
-      "preview": "c55d42f930d4711b235544ea8f41e03ad4bdb72fe60330d02ec27a442eb90d9c",
-      "reason": "Session peer class: a group's class is the input to peerId derivation and travels on group_create.groupKind. New `repairGroupPeerClasses()` runs the local class reconcile at boot and after each definitive groups reconcile - it only ever re-derives a record against evidence the record already carries, never invents one. The three boot sweeps (reconcileSupersededGroups, rebindAllLegacyGroups, repairGroupPeerClasses) now run in sequence rather than in parallel, since each retires or re-keys ids the others touch. No stored-format change: the field already exists on GroupRecord."
+      "preview": "971eb3fdf8a969dc1dacd2ff6eeed8de8a6c695ade4da8de3b9f35c18f78b99b",
+      "reason": "Session peer class: a group's class is the input to peerId derivation and travels on group_create.groupKind. New `repairGroupPeerClasses()` runs the local class reconcile at boot and after each definitive groups reconcile - it only ever re-derives a record against evidence the record already carries, never invents one. The three boot sweeps (reconcileSupersededGroups, rebindAllLegacyGroups, repairGroupPeerClasses) now run in sequence rather than in parallel, since each retires or re-keys ids the others touch. No stored-format change: the field already exists on GroupRecord. Session stability update: Teardown uses the stored peer id; orphan sweep re-checks the store before dropping a row. No stored format change. Sweep hardening: a failed re-check is logged and the drop is awaited. No stored format change."
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "b5b0a50fbd801a89a8ed2a26187b1587128e69a85527a8967ef1f325c34493a0",
@@ -193,8 +193,8 @@
     },
     "src/lib/phantomchat/groups-sync-adapter.ts": {
       "stable": "f00495a264517ea7fb6b17bfc053e09e6d7a1de44e980657d11e07b05fce382b",
-      "preview": "f00495a264517ea7fb6b17bfc053e09e6d7a1de44e980657d11e07b05fce382b",
-      "reason": "CRDT apply keeps the local value for the two keep-local fields: `kind` (an older client must not reclassify a session) and `archivedAt` (an older client must not unarchive it for everyone). An explicit 0 is the unarchive signal, an absent field means \"unchanged\", and apply now PERSISTS that 0 rather than stripping it, so the clear signal survives a republish instead of turning back into an absent field (which the guard reads as \"unchanged\"). Same field, same type, same semantics for every reader; merge behaviour for every other field is untouched."
+      "preview": "df8acc6de06840092a53be5fc0d39dd3b6fe317f74600fc55ae931175f247183",
+      "reason": "CRDT apply keeps the local value for the two keep-local fields: `kind` (an older client must not reclassify a session) and `archivedAt` (an older client must not unarchive it for everyone). An explicit 0 is the unarchive signal, an absent field means \"unchanged\", and apply now PERSISTS that 0 rather than stripping it, so the clear signal survives a republish instead of turning back into an absent field (which the guard reads as \"unchanged\"). Same field, same type, same semantics for every reader; merge behaviour for every other field is untouched. Session stability update: Class merge ratchets to session using existing fields. No wire or schema change."
     },
     "src/lib/storages/filtersLocal.ts": {
       "stable": "a345c2e275316e339832a7d1a1dfd75fedb612fc458661c4f4d417271bb2c941",
@@ -208,8 +208,8 @@
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "acd3d45d3ec3e285a3684266a2c6959872a7a755c83322932970ca6bf2f79228",
-      "preview": "acd3d45d3ec3e285a3684266a2c6959872a7a755c83322932970ca6bf2f79228",
-      "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review."
+      "preview": "6b18d4897f47bfec828f054a0a6cee18429a22e8422215e562bf04b037eb5157",
+      "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Session stability update: Dialog snapshots carry archive state, delayed repaints cancel, synced class changes move the row. No stored format change. Move hardening: the dialog move lands the new row before dropping the old one and rolls back on failure. No stored format change."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "720794a3fef32fe101599f1a3351500b0c9126288bdcd03334fe256f55e19cae",
@@ -233,8 +233,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "bbcc7e94147bec1c976606854cd2e0d952494a239c887ed3f5862f7200d1457f",
-      "preview": "bbcc7e94147bec1c976606854cd2e0d952494a239c887ed3f5862f7200d1457f",
-      "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change."
+      "preview": "55b62a7c710c01786626a40a919846a7d566b2f012a17ad599432933a2c663d7",
+      "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change. Session stability update: Sync upsert moves the row on a class change; orphan sweep waits for a definitive read. No stored format change. Move hardening: the synced move and record save run as one unit. No stored format change."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
@@ -243,8 +243,8 @@
     },
     "src/lib/phantomchat/phantomchat-typing-receive.ts": {
       "stable": "fd70c6d6559bc76bf10a959592fc8f52cfd052c7339e65de323c782261d71fdb",
-      "preview": "fd70c6d6559bc76bf10a959592fc8f52cfd052c7339e65de323c782261d71fdb",
-      "reason": "Group typing ticks resolve the chat peerId from the group record kind (session vs classic) before dispatching. Local UI update only; no storage or protocol change."
+      "preview": "7a169408c0cba07bfd01e004d073fb63ec9686a224807e9347c9565c1ddd50b5",
+      "reason": "Group typing ticks resolve the chat peerId from the group record kind (session vs classic) before dispatching. Local UI update only; no storage or protocol change. Session stability update: Same class resolver as the message path. No stored format change."
     },
     "src/components/archiveDialogContextMenu.ts": {
       "stable": "33fbf8e4f98005d4d923de52b2165dd2db0e0069a1ac053fba8176f3841bd030",
@@ -268,8 +268,8 @@
     },
     "src/lib/phantomchat/group-class-reconcile.ts": {
       "stable": "52f6b9e69fc592e962476355ad5eee7766dfb3193213d15de3d4cf46d50d91dd",
-      "preview": "52f6b9e69fc592e962476355ad5eee7766dfb3193213d15de3d4cf46d50d91dd",
-      "reason": "Local repair only: adopts a record's class (explicit kind, else the retired batch-10 tags: ['session'] marker, else the range its stored peerId is already in), re-derives the peerId and re-keys that one record with its dialog and stored rows. Nothing new is written to the wire and no record is ever reclassified against evidence it does not already carry; a converged store costs one range test and no writes. A failed dialog move re-stamps the conversation back onto the record's own peer id, so a pass can never leave rows under a peer with no dialog row."
+      "preview": "d0def9e86940bc73dfe1f71b4e9e66ba3f199bc59a09f51d154fccd3fd9eb822",
+      "reason": "Local repair only: adopts a record's class (explicit kind, else the retired batch-10 tags: ['session'] marker, else the range its stored peerId is already in), re-derives the peerId and re-keys that one record with its dialog and stored rows. Nothing new is written to the wire and no record is ever reclassified against evidence it does not already carry; a converged store costs one range test and no writes. A failed dialog move re-stamps the conversation back onto the record's own peer id, so a pass can never leave rows under a peer with no dialog row. Session stability update: Session evidence becomes a one-way ratchet using the existing kind field and peer range. No schema change. Move hardening: a failed record save also moves the dialog row back. No schema change."
     },
     "src/components/sidebarRight/tabs/phantomchatGroupEdit.ts": {
       "stable": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
@@ -295,6 +295,21 @@
       "stable": "542efceeaa3c4928eef22bc99830429065061ed40b70923b7bd11476a87ead4d",
       "preview": "542efceeaa3c4928eef22bc99830429065061ed40b70923b7bd11476a87ead4d",
       "reason": "Selected-chat read-state UI only: mobile Back hides the retained pane and restores unread counts; re-entry clears them using existing monotonic read cursors and the existing Worker bridge. No new store, schema, identity, key, or wire-format change."
+    },
+    "src/lib/appManagers/appUsersManager.ts": {
+      "stable": "55374155179d2b61accbdc15db43f4d7cf062ddce0cc6339ba3d9ee36df0079f",
+      "preview": "d2e77c71a6ce54c508f7a8520a4d5bc5dda51b998a95091f4b77bc7a3ea6043c",
+      "reason": "In-memory contact list only: group/typing senders stay out of it and non-user ids are refused. No stored format change."
+    },
+    "src/lib/phantomchat/crdt-sync.ts": {
+      "stable": "4258618498c6cf5e6a9cc37e1f6b278d7c1777b29b964a3abbead99c2d9a442a",
+      "preview": "7830591c589e574ac85b5c76b9ec990b6eb0897c454da709d2b4ff67b9bed0b8",
+      "reason": "Adds a pure outcome predicate. No wire or stored format change."
+    },
+    "src/lib/phantomchat/ensure-sender-user-injected.ts": {
+      "stable": "69d2eb05b01727602ab6f6dff6ae13e9ef20aae9c57b5a1db825a17b5a2d204f",
+      "preview": "9b1386f4af1d93ea6ef66556bd8400032b7a25dd2c8320b4963df2fc442b63be",
+      "reason": "Passes the in-memory contact-list option. No stored format change."
     }
   },
   "stableVersion": "1.1.86"

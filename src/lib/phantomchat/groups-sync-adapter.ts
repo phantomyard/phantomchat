@@ -25,6 +25,7 @@ import type {LocalAdapter} from './crdt-sync';
 import type {SyncMap} from './sync-crdt';
 import type {GroupRecord} from './group-types';
 import type {DeletedGroupRecord} from './group-store';
+import {intendedGroupKind} from './group-class-reconcile';
 
 export type GroupsAdapterDeps = {
   listGroups: () => Promise<GroupRecord[]>;
@@ -287,13 +288,15 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
             ...entry.data,
             updatedAt: entry.updatedAt * 1000
           };
-          // The class is immutable identity, not a mutable field: if an older
-          // client republishes the record without `kind` (or with the wrong
-          // one), keep the local class, because the local peerId was derived
-          // from it and every local row is keyed by that peerId.
-          const localKind = storeState?.get(id)?.kind;
-          if(localKind === 'session') record.kind = 'session';
-          else if(record.kind !== 'session') delete record.kind;
+          // The class is a one-way ratchet: session evidence on EITHER side wins,
+          // so an older client republishing without `kind` cannot demote a
+          // session, and a device seeing it for the first time cannot ingest it
+          // as a classic group when the blob still shows a session peerId or tag.
+          const localRecord = storeState?.get(id);
+          const isSession = intendedGroupKind(entry.data) === 'session' ||
+            (!!localRecord && intendedGroupKind(localRecord) === 'session');
+          if(isSession) record.kind = 'session';
+          else delete record.kind;
           // `archivedAt` gets the same keep-local guard as `kind`: a writer
           // that republishes the record without the field must not unarchive
           // the group for everyone (its rename would otherwise win on

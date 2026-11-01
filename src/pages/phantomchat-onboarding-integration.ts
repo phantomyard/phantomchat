@@ -31,7 +31,7 @@ import {FoldersSync} from '@lib/phantomchat/folders-sync';
 import {setLastModifiedAt} from '@lib/phantomchat/folders-sync-state';
 import {FOLDER_SYNC_TRIGGER_EVENTS} from '@lib/phantomchat/folders-sync-types';
 import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/nostr-crypto';
-import {CrdtSync} from '@lib/phantomchat/crdt-sync';
+import {CrdtSync, isInconclusiveReconcile} from '@lib/phantomchat/crdt-sync';
 import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTACTS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/contacts-sync-adapter';
 import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
@@ -45,7 +45,7 @@ import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
 import {createConversationResidueWipe} from '@lib/phantomchat/contacts-residue-wipe';
 import {addP2PContact} from '@lib/phantomchat/add-p2p-contact';
 import {writeGroupCreateServiceMessage} from '@lib/phantomchat/group-service-messages';
-import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection, applyGroupDialogFolder} from '@lib/phantomchat/phantomchat-groups-sync';
+import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection, applyGroupDialogFolder, moveSyncedGroupToPeer} from '@lib/phantomchat/phantomchat-groups-sync';
 import {toast} from '@components/toast';
 import I18n from '@lib/langPack';
 // tweb-contained CSS no longer needed — onboarding uses native tweb styles
@@ -606,7 +606,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               const peerId = await groupIdToPeerId(record.groupId, record.kind);
               const rec: GroupRecord = {...record, peerId};
               const existing = await getGroupStore().get(record.groupId);
-              await getGroupStore().save(rec);
+              if(existing && existing.peerId !== peerId) {
+                await moveSyncedGroupToPeer(rec, existing, () => getGroupStore().save(rec));
+              } else {
+                await getGroupStore().save(rec);
+              }
               const createdAtSec = Math.floor((rec.createdAt || Date.now()) / 1000);
               if(!existing) {
                 // Fresh restore: clear any stale deletion watermark AND the
@@ -639,10 +643,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             removeGroup: async(groupId) => {
               // Read the class before the delete — it is what the peerId (and
               // therefore the mirror teardown) is derived from.
-              const kind = (await getGroupStore().get(groupId))?.kind;
-              const peerId = await groupIdToPeerId(groupId, kind);
+              const peerId = (await getGroupStore().get(groupId))?.peerId ?? await groupIdToPeerId(groupId);
               await getGroupStore().delete(groupId);
               try { await cleanupGroupChatInjection(peerId); } catch{ /* mirror already gone */ }
+              // Mirrors alone leave the persisted row rendering until the next sweep.
+              try { await rootScope.managers.dialogsStorage.dropDialogOnDeletion(peerId.toPeerId(true)); } catch{ /* no row */ }
             },
             setTombstone: (convId, sec) => store.setTombstone(convId, sec)
           });
@@ -748,9 +753,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               // (#198) Post-convergence chat-list heal: records are now the
               // definitive merged CRDT state, so any remaining group-range
               // dialog without a live record is an orphan left by an older
-              // teardown — drop its persisted row. Runs after the reconcile so
-              // it never fires on a store that hasn't synced yet (fresh device).
-              await getGroupAPI().dropOrphanGroupDialogs();
+              // teardown — drop its persisted row. Only after a DEFINITIVE read:
+              // a failed or cold-miss pass says nothing about which groups exist,
+              // and sweeping on it deletes rows the next pass brings back.
+              if(!isInconclusiveReconcile(g)) await getGroupAPI().dropOrphanGroupDialogs();
             } catch(e) {
               console.warn('[groups-sync] post-reconcile convergence failed', e);
             }
@@ -759,7 +765,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           // 'failed' = relay hiccup; 'no-remote-nothing-local' = we queried but
           // saw nothing (could be a genuinely empty relay, or a cold miss). Any
           // other outcome means we got a definitive read — stop retrying.
-          const inconclusive = (o: string) => o === 'failed' || o === 'no-remote-nothing-local';
+          const inconclusive = isInconclusiveReconcile;
           // Read-state is a PASSENGER in this loop (#218 review): its own
           // cold-miss self-heal rides the contacts/groups retries and the 30-min
           // interval, while 'no-remote-nothing-local' is its NORMAL steady state

@@ -442,3 +442,11 @@ export class CrdtSync<T> {
     return {status: 'ok', map: sanitizeMap<T>(snap.items), version: snap.version};
   }
 }
+
+/**
+ * A reconcile outcome that says nothing about remote state: the relay failed, or
+ * it answered empty on a store that is also empty (possibly just a cold socket).
+ */
+export function isInconclusiveReconcile(outcome: string): boolean {
+  return outcome === 'failed' || outcome === 'no-remote-nothing-local';
+}
