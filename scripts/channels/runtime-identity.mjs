@@ -55,9 +55,28 @@ export async function assertOfflineMessage(page, id, mid) {
   }, {id, mid}, {timeout: 30000});
 }
 
+/**
+ * The release-channel control, shared by both smokes.
+ *
+ * Derived from the radio itself rather than by DOM depth: the input is a
+ * zero-size, opacity-0 control and the wrapper markup is not part of the
+ * contract, so `locator('../..')` silently depends on how many elements the
+ * `Row` factory happens to wrap the input in. A change there would break one
+ * smoke while the other kept passing. Keep every channel lookup going through
+ * these three helpers.
+ */
+export const releaseChannelGroup = (page) =>
+  page.getByRole('form', {name: 'Release channel', exact: true});
+
+export const releaseChannelRadio = (page, name) =>
+  releaseChannelGroup(page).getByRole('radio', {name, exact: true});
+
+export const releaseChannelRow = (page, name) => releaseChannelRadio(page, name)
+  .locator('xpath=ancestor::label[contains(concat(" ", normalize-space(@class), " "), " row ")][1]');
+
 export async function openChannelSettings(page) {
   await page.locator('.sidebar-tools-button:visible').first().click();
   await page.locator('.btn-menu-item:visible').filter({hasText: 'Settings'}).first().click();
   await page.locator('.row:visible').filter({has: page.locator('.row-title').filter({hasText: /^Updates$/})}).click();
-  await page.getByRole('radio', {name: 'Stable', exact: true}).locator('../..').waitFor();
+  await releaseChannelRow(page, 'Stable').waitFor();
 }

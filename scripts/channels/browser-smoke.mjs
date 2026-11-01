@@ -2,7 +2,7 @@ import {chromium} from 'playwright';
 import express from 'express';
 import {mkdirSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage, openChannelSettings} from './runtime-identity.mjs';
+import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage, openChannelSettings, releaseChannelRow} from './runtime-identity.mjs';
 
 const app = express();
 app.use(express.static(process.env.CHANNEL_SMOKE_DIST || 'dist'));
@@ -51,7 +51,7 @@ try {
     console.log(`Opening channel settings: ${viewport.width}, ${page.url()}`);
     await openChannelSettings(page);
     assert.equal(await page.getByRole('combobox').count(), 0);
-    await page.getByRole('radio', {name: 'Preview', exact: true}).locator('../..').click();
+    await releaseChannelRow(page, 'Preview').click();
     assert.equal(new URL(page.url()).pathname, '/');
     assert.equal(await page.getByRole('radio', {name: 'Stable', exact: true}).isChecked(), true);
     acceptPreview = true;
@@ -86,7 +86,7 @@ try {
     await page.evaluate(() => { const url = new URL(location.href); url.searchParams.set('account', '1'); history.replaceState(null, '', url); });
     console.log(`Opening channel settings: ${viewport.width}, ${page.url()}`);
     await openChannelSettings(page);
-    await page.getByRole('radio', {name: 'Stable', exact: true}).locator('../..').click();
+    await releaseChannelRow(page, 'Stable').click();
     await page.waitForURL(url => url.pathname === '/index.html' && url.searchParams.get('channel') === 'stable');
     await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
     assert.equal(new URL(page.url()).searchParams.get('account'), '1');

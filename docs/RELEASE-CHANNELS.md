@@ -67,9 +67,14 @@ The selector is intentionally available to end users inside Settings → Updates
 control over messaging), using the same Row/RadioField/RadioForm components as
 the Electron updater: volunteers opt into Preview
 on their existing identity. The Stable SHA pins the frontend only; both frontend
-channels run inside the candidate Electron shell, controlled by the existing
-independent desktop binary update ring, available through Updates → Desktop updates. Native shell changes require compatibility
-review and native tests, but do not create a second pinned Electron executable.
+channels run inside the candidate Electron shell, controlled by the same single
+**Release channel** control in Settings → Updates. That one radio drives both the
+application channel and the desktop installer ring; there is no separate
+"Desktop updates" screen. A surface that is absent contributes nothing — the PWA
+has no installer ring, so on web the control moves the application channel only —
+and the radios are disabled only when neither surface exists. Native shell changes
+require compatibility review and native tests, but do not create a second pinned
+Electron executable.
 Stable SHA/version must resolve to the same `phantomchat-v<version>` release tag.
 
 The divergent dependency-lock install path is not exercised by this initial
