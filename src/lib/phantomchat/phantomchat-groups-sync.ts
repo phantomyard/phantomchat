@@ -40,6 +40,7 @@ import {groupIdToPeerId, isSessionPeer} from './group-types';
 import {intendedGroupKind} from './group-class-reconcile';
 import type {GroupKind} from './group-types';
 import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManagers/constants';
+import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 import {buildPhantomChatMedia} from './phantomchat-media-shape';
@@ -536,6 +537,52 @@ export async function applyGroupDialogFolder(record: {groupId: string, kind?: Gr
   const groupPeerId = await resolveGroupPeerId(record.groupId);
   const folderId = record.archivedAt ? 1 : 0;
 
+  /**
+   * The row the LIVE chat list has to be handed after `pushDialog`.
+   *
+   * `dialogsStorage` here is the main-thread proxy: every call crosses the
+   * MessagePort, so the dialog handed to `pushDialog` is CLONED on its way to
+   * the worker. The per-folder index recompute that decides membership happens
+   * on the WORKER's copy — the object we still hold keeps the index it was read
+   * with. That is why an archived group/session used to stay on screen in
+   * Sessions / Groups until the space was rebuilt by navigating away and back:
+   * `AutonomousDialogList.testDialogForFilter` tests membership for those spaces
+   * on `index_4` / `index_3`, and the dispatched copy still carried it, so the
+   * list repainted the row as a genuine member instead of evicting it.
+   *
+   * So read back the row the worker now holds and dispatch THAT — it carries the
+   * indices storage actually computed, in both directions (archive drops
+   * `index_4` / `index_3`, unarchive re-stamps them).
+   *
+   * The fallback is one-directional on purpose. The row read at the top of this
+   * function is the LIVE one, so it carries `index_0` and no `index_3` /
+   * `index_4`: clearing the live-folder keys therefore makes an unreachable
+   * re-read safe when ARCHIVING (the row leaves the space), and leaves an
+   * unarchived row out of Sessions / Groups until the space is rebuilt — the
+   * acceptable direction to lose, since the row is still there and reachable.
+   */
+  const rereadReindexedDialog = async(fallback: any): Promise<any> => {
+    let fresh: any;
+    try {
+      const reread = await (rootScope as any).managers.dialogsStorage?.getDialog?.(groupPeerId);
+      fresh = Array.isArray(reread) ? reread[0] : reread;
+    } catch(err: any) {
+      console.debug(LOG_PREFIX, 'applyGroupDialogFolder: re-read non-critical:', err?.message);
+    }
+
+    if(!fresh) {
+      delete fallback[getDialogIndexKey(FOLDER_ID_GROUPS as any)];
+      delete fallback[getDialogIndexKey(FOLDER_ID_SESSION as any)];
+      return fallback;
+    }
+
+    // A live dispatch must leave the mirror honest too, or the next message-path
+    // repaint would hand the list a row claiming its old folder indices.
+    const proxy = MOUNT_CLASS_TO.apiManagerProxy as any;
+    if(proxy?.mirrors?.dialogs) proxy.mirrors.dialogs[groupPeerId] = fresh;
+    return fresh;
+  };
+
   const proxy = MOUNT_CLASS_TO.apiManagerProxy as any;
   const mirrored = proxy?.mirrors?.dialogs?.[groupPeerId];
   if(mirrored) mirrored.folder_id = folderId;
@@ -560,6 +607,7 @@ export async function applyGroupDialogFolder(record: {groupId: string, kind?: Gr
       // `offsetDate: 0`: see relocateGroupDialog. The Archive folder is often not
       // loaded yet, and that branch would drop the row it is moving there.
       await dialogsStorage.pushDialog?.({dialog, offsetDate: 0});
+      dialog = await rereadReindexedDialog(dialog);
     }
   } catch(err: any) {
     console.debug(LOG_PREFIX, 'applyGroupDialogFolder: reindex non-critical:', err?.message);
