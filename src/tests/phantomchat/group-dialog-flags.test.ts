@@ -265,8 +265,7 @@ describe('live flags through asynchronous manager proxies', () => {
     });
     const push = vi.fn(async({dialog: row}) => {
       expect(worker.getPinnedOrders(3).includes(peerId as any)).toBe(!!row.pFlags.pinned);
-    });
-    (MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs = {[peerId]: dialog};
+    });    (MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs = {[peerId]: dialog};
     (rootScope.managers as any).dialogsStorage = {
       getDialog: async() => [structuredClone(dialog)],
       getPinnedOrders: async(folder: number) => structuredClone(worker.getPinnedOrders(folder)),
@@ -280,5 +279,61 @@ describe('live flags through asynchronous manager proxies', () => {
     await applyGroupDialogFlags({groupId, pinnedAt: 0, unreadMarkAt: 0});
     expect(mutation).toHaveBeenLastCalledWith(peerId, 3, false);
     expect(worker.getPinnedOrders(3)).toEqual([]);
+  });
+});
+
+/**
+ * Robert's blocker at f5ac796: `pushDialog({dialog})` without `offsetDate: 0`
+ * falls back to the top message's date. For a row that is NOT pinned, an
+ * offset older than the folder's saved offset in a folder that is not loaded
+ * runs `dropDialog` and returns BEFORE `setDialogToState` — so a flag-only
+ * change silently deleted the persisted row. Same defect #307 fixed in
+ * `relocateGroupDialog` / `applyGroupDialogFolder`.
+ *
+ * This exercises the REAL `DialogsStorage.pushDialog` rather than a spy, so the
+ * drop branch is the production one: an archived group whose Archive folder is
+ * not loaded, with a saved offset newer than its top message.
+ */
+describe('flag changes never drop the persisted row (real pushDialog)', () => {
+  it('keeps an unloaded-Archive row instead of dropping it', async() => {
+    const groupId = 'cd'.repeat(48);
+    primeGroupKindCache(groupId, 'group');
+    const peerId = await groupIdToPeerId(groupId, 'group');
+
+    const storage = new DialogsStorage();
+    // Archive (folder 1) is not loaded and its saved offset is NEWER than the
+    // top message, which is exactly the shape that trips the drop.
+    (storage as any).allDialogsLoaded = {1: false, 3: false};
+    (storage as any).dialogs = {};
+    (storage as any).dialogsOffsetDate = {1: 5_000, 3: 5_000};
+    (storage as any).getDialogMessageForState = () => ({date: 1_000});
+    (storage as any).processDialogForFilters = vi.fn();
+    (storage as any).setDialogToState = vi.fn();
+    const drop = vi.spyOn(storage, 'dropDialog').mockImplementation((() => [] as any[]) as any);
+
+    const dialog: any = {
+      _: 'dialog',
+      peerId,
+      folder_id: 1,
+      top_message: 42,
+      unread_count: 0,
+      pFlags: {}
+    };
+    (MOUNT_CLASS_TO.apiManagerProxy as any).mirrors.dialogs = {};
+    (rootScope.managers as any).dialogsStorage = Object.assign(storage, {
+      getDialog: async() => [structuredClone(dialog)],
+      setDialogPinnedOrder: vi.fn(async() => {})
+    });
+    (storage as any).pushDialog = storage.pushDialog.bind(storage);
+
+    await applyGroupDialogFlags({groupId, archivedAt: 1, unreadMarkAt: 1});
+
+    expect(drop).not.toHaveBeenCalled();
+    expect((storage as any).setDialogToState).toHaveBeenCalled();
+    // Sanity: the pre-fix call shape (no offsetDate) really does drop here.
+    drop.mockClear();
+    (storage as any).setDialogToState = vi.fn();
+    storage.pushDialog({dialog: {...dialog}});
+    expect(drop).toHaveBeenCalled();
   });
 });

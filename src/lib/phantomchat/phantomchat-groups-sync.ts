@@ -505,7 +505,14 @@ export async function applyGroupDialogFlags(
       // pushDialog re-runs processDialogForFilters, which is what moves the row
       // into (or out of) the pinned block: the pinned index is derived from the
       // folder's pinned order for a REAL_FOLDER, which is what Groups is.
-      await dialogsStorage.pushDialog?.({dialog});
+      //
+      // `offsetDate: 0`: see relocateGroupDialog. Without it pushDialog falls
+      // back to the top message's date, and for a row that is not pinned that
+      // date is older than the folder's saved offset — so an unloaded Archive
+      // (or a not-yet-loaded Groups folder) makes it DROP the persisted row and
+      // return before setDialogToState. A flag-only change must never move a row
+      // or lose it; the flag itself has already been applied to the record.
+      await dialogsStorage.pushDialog?.({dialog, offsetDate: 0});
     }
   } catch(err: any) {
     console.debug(LOG_PREFIX, 'applyGroupDialogFlags: reindex non-critical:', err?.message);
