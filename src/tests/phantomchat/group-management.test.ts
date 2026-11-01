@@ -637,6 +637,56 @@ describe('Group Management', () => {
       expect(store().updateInfo).not.toHaveBeenCalled();
     });
 
+    // The seam is a floor, not a fallback in one direction: the sub-field keys
+    // share this origin's storage with a pre-split build, so a later Stable run
+    // can raise the coarse `info` key above a sub-field one. Taking only the
+    // sub-field value would ignore that write and re-open the replay window the
+    // coarse watermark was raised to close.
+    it('floors a sub-field watermark at a NEWER legacy info value', async() => {
+      const gid = 'watermarkinfoseam00000000000000001';
+      store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));
+      const now = Math.floor(Date.now() / 1000);
+      localStorage.setItem('phantomchat:group-wm:' + gid + ':info', String(now - 10));
+      localStorage.setItem('phantomchat:group-wm:' + gid + ':info:name', String(now - 100));
+
+      await api.handleControlMessage({
+        id: 'ctrl-seam-info', kind: 14,
+        content: JSON.stringify({type: 'group_info_update', groupId: gid, groupName: 'Stale By Coarse'} as GroupControlPayload),
+        pubkey: OWN_PUBKEY, created_at: now - 50,
+        tags: [['control', 'true'], ['group', gid]]
+      } as any, OWN_PUBKEY);
+      expect(store().updateInfo).not.toHaveBeenCalled();
+    });
+
+    // A rebind carries anti-replay watermarks to the successor id; the sub-field
+    // keys have to travel with them or a successor of a device that only ran
+    // this build starts every info watermark at zero.
+    it('carries the info sub-field watermarks across a rebind', () => {
+      const from = 'watermarkcarryfrom00000000000000001';
+      const to = 'watermarkcarryto00000000000000000001';
+      localStorage.setItem('phantomchat:group-wm:' + from + ':info:name', '1234');
+      localStorage.setItem('phantomchat:group-wm:' + from + ':info:avatar', '1200');
+      localStorage.setItem('phantomchat:group-wm:' + from + ':members', '1100');
+
+      (api as any).copyEventWatermarks(from, to);
+      expect(localStorage.getItem('phantomchat:group-wm:' + to + ':info:name')).toBe('1234');
+      expect(localStorage.getItem('phantomchat:group-wm:' + to + ':info:avatar')).toBe('1200');
+      expect(localStorage.getItem('phantomchat:group-wm:' + to + ':members')).toBe('1100');
+    });
+
+    it('max-merges the info sub-field watermarks between competing successors', () => {
+      const from = 'watermarkmergefrom00000000000000001';
+      const to = 'watermarkmergeto00000000000000000001';
+      localStorage.setItem('phantomchat:group-wm:' + from + ':info:description', '1900');
+      localStorage.setItem('phantomchat:group-wm:' + to + ':info:description', '1800');
+      localStorage.setItem('phantomchat:group-wm:' + to + ':info:avatar', '2000');
+
+      (api as any).mergeEventWatermarks(from, to);
+      expect(localStorage.getItem('phantomchat:group-wm:' + to + ':info:description')).toBe('1900');
+      // Higher target value is kept, not overwritten by the lower source one.
+      expect(localStorage.getItem('phantomchat:group-wm:' + to + ':info:avatar')).toBe('2000');
+    });
+
     it('keeps the skew grace for members events (delta ordering unchanged)', async() => {
       const gid = 'watermarkmgrace00000000000000000001';
       store().get.mockResolvedValue(makeGroup({groupId: gid, adminPubkey: OWN_PUBKEY}));

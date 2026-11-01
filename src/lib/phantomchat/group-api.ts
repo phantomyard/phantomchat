@@ -139,15 +139,26 @@ function freshInfoFields(groupId: string, payload: GroupControlPayload, ts: numb
   return fresh;
 }
 
+/** Every persisted watermark key: the coarse field-sets plus the `info`
+ *  sub-fields. Carry-over helpers (rebind, successor merge) enumerate this, so a
+ *  successor never starts at zero for a key the legacy id had. */
+const WATERMARK_KEYS: WatermarkKey[] = ['members', 'info', 'admin', ...INFO_FIELDS.map(([field]) => infoWatermarkKey(field))];
+
 function readEventWatermark(groupId: string, field: WatermarkKey): number {
   try {
     // Upgrade seam: `info` used to be a single watermark for name, description
     // and avatar. A device that still holds that value keeps it as the floor
-    // for a sub-field that has not applied an event since the split, so the
-    // upgrade itself cannot reset anti-replay protection to 0.
-    const stored = localStorage.getItem(WATERMARK_PREFIX + groupId + ':' + field) ??
-      (field.startsWith('info:') ? localStorage.getItem(WATERMARK_PREFIX + groupId + ':info') : null);
-    const wm = parseInt(stored || '0', 10) || 0;
+    // for a sub-field, so the upgrade itself cannot reset anti-replay
+    // protection to 0. The floor is the GREATER of the two, not a fallback: the
+    // sub-fields share this origin's storage with a pre-split build (the
+    // channel switcher serves Stable and Preview from the same identity), so a
+    // later Stable run can raise the coarse key after this build raised a
+    // sub-field one. A one-way fallback would let that older-device write be
+    // ignored and re-open the window the coarse watermark was raised to close.
+    const own = parseInt(localStorage.getItem(WATERMARK_PREFIX + groupId + ':' + field) || '0', 10) || 0;
+    const legacy = field.startsWith('info:') ?
+      (parseInt(localStorage.getItem(WATERMARK_PREFIX + groupId + ':info') || '0', 10) || 0) : 0;
+    const wm = Math.max(own, legacy);
     // Heal a poisoned watermark: created_at is sender-chosen, so an event
     // dated in the far future (pre-clamp release, or a malicious member)
     // could have persisted a watermark years ahead — it would then drop
@@ -1920,7 +1931,7 @@ export class GroupAPI {
   /** Carry the legacy group's anti-replay watermarks over to the successor
    *  id — a control replay against the new id must not pass a zero watermark. */
   private copyEventWatermarks(fromGroupId: string, toGroupId: string): void {
-    for(const field of ['members', 'info', 'admin'] as const) {
+    for(const field of WATERMARK_KEYS) {
       try {
         const value = localStorage.getItem(WATERMARK_PREFIX + fromGroupId + ':' + field);
         if(value !== null) {
@@ -2052,7 +2063,7 @@ export class GroupAPI {
    *  HIGHER control watermark of the two, so a replayed control event the
    *  loser already saw can never slip past the winner's gate. */
   private mergeEventWatermarks(fromGroupId: string, toGroupId: string): void {
-    for(const field of ['members', 'info', 'admin'] as const) {
+    for(const field of WATERMARK_KEYS) {
       try {
         const from = localStorage.getItem(WATERMARK_PREFIX + fromGroupId + ':' + field);
         if(from === null) continue;
