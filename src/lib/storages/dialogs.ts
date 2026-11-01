@@ -600,24 +600,34 @@ export default class DialogsStorage extends AppManager {
         index = this.generateDialogIndex(this.generateDialogPinnedDateByIndex(pinnedIds.length - 1 - pinnedIndex), true);
       } else if(dialog.pFlags?.pinned || (isRealFolder && !isGroupPeer(dialog.peerId))) {
         index = this.generateIndexForDialog(dialog, true, undefined, !isRealFolder);
+      } else if(isGroupPeer(dialog.peerId)) {
+        // A group row keeps its own sort anchor (`index_0`, stamped by
+        // PhantomChatPeerMapper from the top message date) only as the
+        // FALLBACK date inside `generateIndexForDialog` — never in place of
+        // that call. Unpinning a group without it fell through to
+        // `topDate ||= now` and stamped the row with the CURRENT time, so it
+        // stayed at the very top of the list with the badge gone (owner bug
+        // 2026-11-01). But `index_0` is written at row BUILD and nothing
+        // re-stamps it on send, on receive or on a draft, while this branch
+        // runs on every push of an unpinned group row, not only on unpin: used
+        // as a precedence it would beat the top message date and the draft
+        // date, and an unpinned group could never be lifted by new activity
+        // (Robert's and Kai's blocker at 7ed6853). As `fallbackDate` a
+        // resolvable top message or a newer draft still wins and the anchor
+        // only replaces the `now` stamp.
+        //
+        // `topDate` is in SECONDS and `generateDialogIndex` reapplies the
+        // `* 0x10000`, while `index_0` is a finished index — hence the
+        // division. Passing the raw index would scale the date by 2^32.
+        // The folder-0 guard above is still required: this read has to find
+        // `index_0` BEFORE folder 0 (which is walked first) touches the row.
+        const anchor = getDialogIndex(dialog, getDialogIndexKey(FOLDER_ID_ALL as any));
+        index = this.generateIndexForDialog(
+          dialog, true, undefined, false,
+          anchor ? Math.floor(anchor / 0x10000) : undefined
+        );
       } else {
-        // A PhantomChat group row has no resolvable top message in the Worker —
-        // its messages live in the PhantomChat stores, not in the tweb message
-        // storage `generateIndexForDialog` reads — so that call falls back to
-        // `topDate ||= now` and stamps the row with the CURRENT time. Unpinning
-        // a group therefore left it sorted at the very top of the list, right
-        // where its pin had put it, with the badge gone (owner bug 2026-11-01).
-        // A group's own sort anchor is `index_0`: PhantomChatPeerMapper stamps
-        // it from the top message date on every build, and the folder-0 pass
-        // above deliberately leaves the key alone for a group peer (see the
-        // guard at the top of this function) — without that guard folder 0 ran
-        // first and overwrote it with `undefined`. Chats keep the old path —
-        // their `index_0` holds the PINNED index while pinned, so it cannot be
-        // used as a date anchor.
-        const anchor = isGroupPeer(dialog.peerId) ?
-          getDialogIndex(dialog, getDialogIndexKey(GLOBAL_FOLDER_ID as any)) :
-          getDialogIndex(dialog);
-        index = anchor ?? this.generateIndexForDialog(dialog, true);
+        index = getDialogIndex(dialog) ?? this.generateIndexForDialog(dialog, true);
       }
     }
 
@@ -961,11 +971,18 @@ export default class DialogsStorage extends AppManager {
     });
   }
 
+  /**
+   * @param fallbackDate date in SECONDS to use when neither the top message nor
+   * a draft yields one, instead of stamping `now`. Callers that hold a value
+   * which is merely a lower bound on the row's age (a build-time sort anchor)
+   * must pass it here rather than in place of this call.
+   */
   public generateIndexForDialog(
     dialog: AnyDialog,
     justReturn?: boolean,
     message?: MyMessage,
-    noPinnedOrderUpdate?: boolean
+    noPinnedOrderUpdate?: boolean,
+    fallbackDate?: number
   ) {
     if(!justReturn/*  && !isTopic */) {
       return;
@@ -981,6 +998,7 @@ export default class DialogsStorage extends AppManager {
       topDate = this.generateDialogPinnedDate(dialog);
       isPinned = true;
     } else {
+      topDate = fallbackDate ?? 0;
       const {peerId} = dialog;
       message ||= this.appMessagesManager.getMessageByPeer(peerId, dialog.top_message);
 
