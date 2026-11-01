@@ -190,7 +190,7 @@
     },
     "src/lib/phantomchat/group-types.ts": {
       "stable": "74f7cc28a5500410d80e301f563f2d71fb3636d01a28af47f5370a53461beb74",
-      "preview": "74f7cc28a5500410d80e301f563f2d71fb3636d01a28af47f5370a53461beb74",
+      "preview": "87d887fa4d06c067ec7a82a0a4e0bc01ba8839a3051f8f858fcc384000949a35",
       "reason": "Adds `kind` (immutable peer class: group | session) and optional `archivedAt` to GroupRecord, plus `groupKind` on the group_create control payload. Optional fields only: existing records and payloads parse and merge exactly as before, and the groups CRDT entry IS the record, so no version bump is needed. Pin/unread menu update: Types only: optional numeric pinnedAt/unreadMarkAt on existing GroupRecord. No database or wire version change; old readers ignore additional properties. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/groups-sync-adapter.ts": {
@@ -210,7 +210,7 @@
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
       "stable": "da4f22f8961bbbfd9af4f79db5a5db3cc3e1a8c3897379768b48c4f120962d0a",
-      "preview": "da4f22f8961bbbfd9af4f79db5a5db3cc3e1a8c3897379768b48c4f120962d0a",
+      "preview": "b6f5b42d0fba0c74857e842cfd89789f44a82a31d9a747657a8fb8bde6caedfa",
       "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Session stability update: Dialog snapshots carry archive state, delayed repaints cancel, synced class changes move the row. No stored format change. Move hardening: the dialog move lands the new row before dropping the old one and rolls back on failure. No stored format change. Pin/unread menu update: Mirrors optional record pin/unread flags into existing tweb pFlags; preserves them on message refresh, fresh sync restore and class relocation. Pin order mutation executes inside the Worker via MessagePort using existing pinnedOrders storage. No message identity, read-cursor, conversation key or wire changes. Requires independent exact-head content review. Live archive move: the row dispatched to the chat list is now the one dialogs storage reindexed (read back after pushDialog) instead of the pre-push clone, so an archived session/group leaves Sessions/Groups immediately and unarchive re-enters without a reload. Downgrade safety unchanged: same folder_id flag, same persisted row, no schema or storage-format change. Pin/unpin dispatch honesty: the row handed to the chat list after a flag change is now the one dialogs storage reindexed (read back after pushDialog) instead of the pre-push clone, so an unpinned group drops out of the pinned block without a reload. Same folder_id/pFlags contract, same persisted row, no schema, storage-format or wire change. Context-menu read fix: preserve chronological mids, persist the canonical cursor and reconcile existing unread counters/folder badges. No stored-format change. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
@@ -235,7 +235,7 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
+      "preview": "c59ff335fb6c047323fc280819169c05f4681c51c4961a91f5b10ec4c19eaf1b",
       "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change. Session stability update: Sync upsert moves the row on a class change; orphan sweep waits for a definitive read. No stored format change. Move hardening: the synced move and record save run as one unit. No stored format change. Pin/unread menu update: Existing groups sync upsert applies changed optional pin/unread flags to live dialogs. Existing group peer derivation, record persistence, membership and tombstone handling remain unchanged. Requires independent exact-head content review."
     },
     "src/components/autonomousDialogList/base.ts": {
