@@ -586,6 +586,7 @@ export class AppDialogsManager {
   private suggestionContainer: HTMLElement;
 
   private lazyLoadQueue: LazyLoadQueue;
+  private archiveFolderUnread: HTMLElement;
 
   public start() {
     const managers = this.managers = getProxiedManagers();
@@ -689,6 +690,20 @@ export class AppDialogsManager {
       import('@lib/folders-sidebar-layout').then(({toggleFoldersSidebar}) => toggleFoldersSidebar());
     });
     foldersRow.append(foldersSidebarToggle, this.folders.menuScrollContainer);
+    // Archive owns a separate sidebar tab; keep it outside the horizontal
+    // menu's indexed children so selecting it cannot switch the wrong list.
+    const archiveButton = document.createElement('button');
+    archiveButton.type = 'button';
+    archiveButton.classList.add('chatlist-folder-badge', 'chatlist-archive-badge');
+    archiveButton.dataset.filterId = '' + FOLDER_ID_ARCHIVE;
+    const archiveLabel = document.createElement('span');
+    archiveLabel.classList.add('text-super');
+    archiveLabel.textContent = 'Archived';
+    this.archiveFolderUnread = createBadge('div', 18, 'primary');
+    archiveButton.append(Icon('archive', 'chatlist-folder-icon'), archiveLabel, this.archiveFolderUnread);
+    ripple(archiveButton);
+    attachButtonClickEvent(archiveButton, () => appSidebarLeft.openArchiveTab());
+    foldersRow.append(archiveButton);
     bottomPart.prepend(foldersRow);
     const selectTab = this.selectTab = horizontalMenuObjArgs({
       tabs: this.folders.menu,
@@ -1220,7 +1235,7 @@ export class AppDialogsManager {
     //   return;
     // }
 
-    const unreadSpan = this.filtersRendered[filterId]?.unread;
+    const unreadSpan = filterId === FOLDER_ID_ARCHIVE ? this.archiveFolderUnread : this.filtersRendered[filterId]?.unread;
     if(!unreadSpan) {
       return;
     }
@@ -1237,6 +1252,7 @@ export class AppDialogsManager {
   }
 
   private setFiltersUnreadCount() {
+    this.setFilterUnreadCount(FOLDER_ID_ARCHIVE);
     for(const filterId in this.filtersRendered) {
       this.setFilterUnreadCount(+filterId);
     }
@@ -1338,16 +1354,20 @@ export class AppDialogsManager {
     const middlewareHelper = getMiddleware();
 
     const menuTab = document.createElement('div');
-    menuTab.classList.add('menu-horizontal-div-item');
+    menuTab.classList.add('menu-horizontal-div-item', 'chatlist-folder-badge');
     const span = document.createElement('span');
     span.classList.add('menu-horizontal-div-item-span');
     const titleSpan = document.createElement('span');
     titleSpan.classList.add('text-super');
     if(id === FOLDER_ID_ALL) titleSpan.append(this.allChatsIntlElement.element);
     else setInnerHTML(titleSpan, wrapFolderTitle(filter.title, middlewareHelper.get(), true, {textColor: 'secondary-text-color'}));
-    const unreadSpan = createBadge('div', 20, 'primary');
+    const unreadSpan = createBadge('div', 18, 'primary');
+    const icon = id === FOLDER_ID_SESSION ? document.createElement('span') :
+      Icon(id === FOLDER_ID_ALL ? 'round_chats_filled' : id === FOLDER_ID_GROUPS ? 'group_filled' : 'limit_folders');
+    icon.classList.add('chatlist-folder-icon');
+    if(id === FOLDER_ID_SESSION) icon.textContent = '#';
     const i = document.createElement('i');
-    span.append(titleSpan, unreadSpan, i);
+    span.append(icon, titleSpan, unreadSpan, i);
     ripple(menuTab);
     menuTab.append(span);
 
