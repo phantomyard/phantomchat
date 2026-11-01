@@ -9,13 +9,13 @@
     },
     "electron/build.mjs": {
       "stable": "93dae478f33aabf64d97c331ec25cab6cab810a8c1ba9bf9871d9a7f439bc994",
-      "preview": "93dae478f33aabf64d97c331ec25cab6cab810a8c1ba9bf9871d9a7f439bc994",
-      "reason": "CSP hashes cover both app shells; no native storage format change."
+      "preview": "01fdbe467ccd2e720894bbf492029922b49fc2886ecb74ed30c8316b5a48f9de",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "package.json": {
       "stable": "d34fb62184fa6cae05d2a4c1064d6bc30cb35f215e3839b918781dd0ddaedae2",
-      "preview": "d34fb62184fa6cae05d2a4c1064d6bc30cb35f215e3839b918781dd0ddaedae2",
-      "reason": "Build/check commands only; dependency declarations and stored formats unchanged."
+      "preview": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
+      "reason": "Desktop build commands only; dependency declarations and stored formats unchanged."
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "378b94f843ad08780c207dbf7560a054bb99df0a541758fbdc428cf6457a33e5",
@@ -386,6 +386,51 @@
       "stable": "709c16ccb8ce8ec75588f051b0897333858c94e94c42c5b32c13fa13f2612306",
       "preview": "a09c39e8f66364581e2a65261c4524acf14f4548eb8b1b2fd1df62bda0c88b6b",
       "reason": "Detect WebP support only from a string result. A browser that cannot encode WebP answers `toDataURL` with a PNG data URL - a string - so the capability answer was always correct there and is unchanged. Outside a browser the call can return nothing at all (jsdom has no canvas and answers null), and calling `.startsWith` on that threw at module scope, which made every module reaching this file unimportable under jsdom. The stable half is byte-identical, so this is a Preview-only refresh."
+    },
+    "electron/csp.ts": {
+      "stable": "absent",
+      "preview": "ad7e5e3c8f3a0f9345d2b68d9503315218fc8731105552b447b3bbd92b847d73",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/frontendProxy.test.ts": {
+      "stable": "absent",
+      "preview": "6f4182c45169bb551b23b3cc7de5a385ac630e7b53f42a6170d3025e06a7136e",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/frontendProxy.ts": {
+      "stable": "absent",
+      "preview": "331336c552e9a9124efb7b4fe4f5144df08b780f0480b6c2ca5bdf7af60dcbce",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/main.ts": {
+      "stable": "8332f11f84510e119ee09d3c7c90c31af73d1e77103169a2934786c7346dd74b",
+      "preview": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/pi-harness/package.json": {
+      "stable": "absent",
+      "preview": "0b6311ad0ea5a1363b6ba2ed2bc174dda3491d62b93410bc94ff4538fb88b258",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/pi-harness/pnpm-lock.yaml": {
+      "stable": "absent",
+      "preview": "150e21eac41a689e33014fb3eaf623c042b0b885f65b4bc5b921fc1e58b81a29",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/piHarness.ts": {
+      "stable": "absent",
+      "preview": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/splash.ts": {
+      "stable": "absent",
+      "preview": "350699fa7c10c53259186ddd680cce1a596a86bb5683a9e956fe34e9acee234e",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/tsconfig.json": {
+      "stable": "328e04b6b1f77c3667b95401a3d1a5c1930f98255a06c1159af05359e29d41a3",
+      "preview": "71615d13642ac455a34229fbfebe4b27721653c2866f8dddff0daa7aefde7be0",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     }
   }
 }

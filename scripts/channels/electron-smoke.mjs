@@ -10,14 +10,15 @@ const entry = join(dir, 'entry.cjs');
 writeFileSync(entry, `const {app, session} = require('electron');
 app.setPath('userData', ${JSON.stringify(join(dir, 'profile'))});
 app.setPath('sessionData', ${JSON.stringify(join(dir, 'profile'))});
-app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({cancel: /^https?:|^wss?:/.test(details.url)})));
+app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({cancel: /^wss?:/.test(details.url)})));
 require(${JSON.stringify(resolve('electron/dist/main.cjs'))});
 `);
 let desktop;
 try {
   desktop = await _electron.launch({args: ['--no-sandbox', entry], timeout: 60000});
   const page = await desktop.firstWindow();
-  await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 45000});
+  await page.waitForURL(url => url.pathname === '/index.html', {timeout: 60000});
+  await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 120000});
   const identity = await createDisposableIdentity(page);
   // Anchor the accent on a real colour: both comparisons below read the same
   // property, so an empty value would otherwise make the guard vacuous.

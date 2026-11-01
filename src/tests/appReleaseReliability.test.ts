@@ -77,8 +77,8 @@ describe('macOS release retry boundary', () => {
   it('preserves signed packages before the notarization job', () => {
     expect(WORKFLOW).toContain('macos-package:');
     expect(WORKFLOW).toContain('macos-notarize:');
-    expect(WORKFLOW).toContain('needs: [linux, macos-package]');
-    expect(WORKFLOW).toContain('needs: [linux, macos-notarize, windows]');
+    expect(WORKFLOW).toContain('needs: [version, macos-package]');
+    expect(WORKFLOW).toContain('needs: [version, test, linux, macos-notarize, windows]');
     // Upload in macos-package and download in macos-notarize: both sides of
     // the signed-artifact handoff must keep the same artifact name.
     expect(WORKFLOW.match(/name: signed-macos-\$\{\{ matrix\.arch \}\}/g)?.length).toBe(2);

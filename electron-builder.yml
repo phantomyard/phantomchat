@@ -11,19 +11,23 @@ directories:
   buildResources: electron/build
   output: release/${version}
 
-# The packaged bundle: the built frontend + the compiled electron main/preload.
-# Everything else (sources, tests) stays out of the asar.
+# The thin shell: the compiled electron main/preload only. The frontend comes
+# from the live PWA, so a website change never needs a new signed build.
 files:
-  - dist/**
   - electron/dist/**
+  - "!electron/dist/pi/**"
   - "!**/node_modules/**"
 
 extraResources:
   - from: electron/build/icon.png
     to: icon.png
+  # The Pi harness for Local PC access (#276). Outside the asar: Node cannot run
+  # its ES modules from inside one.
+  - from: electron/dist/pi
+    to: pi
 
 asar: true
-compression: maximum
+compression: normal
 
 # Update feed (issue #164). This block does two things, and BOTH are
 # required for in-app updates:
@@ -68,8 +72,8 @@ linux:
   synopsis: Privacy-first messaging
   description: >
     PhantomChat is a privacy-first messaging app with end-to-end encryption
-    and anonymous relay-based delivery. This package bundles the same UI as
-    the web app into a native desktop window.
+    and anonymous relay-based delivery. This package runs the web app in a
+    native desktop window.
   # electron-builder generates the .desktop entry from productName/
   # description/category above. AppImage users get the same integration via
   # `phantomchat --install`.

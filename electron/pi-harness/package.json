@@ -1,0 +1,8 @@
+{
+  "name": "phantomchat-pi-harness",
+  "private": true,
+  "description": "The Pi harness shipped inside the desktop app (issue #276). Separate from the root package so PWA builds never install it.",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0"
+  }
+}
