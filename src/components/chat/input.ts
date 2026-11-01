@@ -131,9 +131,10 @@ import SelectedEffect from '@components/chat/selectedEffect';
 import windowSize from '@helpers/windowSize';
 import AttachmentTray from '@components/chat/attachmentTray';
 import {
-  createBatchCaptionPicker,
   getAttachmentCaption,
   sendBatchThenText,
+  SendStagedBatchResult,
+  shouldConsumeComposerAfterFailedBatch,
   shouldUseAttachmentTray
 } from '@lib/phantomchat/composer-attachments';
 import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
@@ -4035,27 +4036,27 @@ export default class ChatInput {
   }
 
   /**
-   * Dispatches the staged batch, one file at a time. Returns false when a file
-   * failed, in which case the batch stays staged for a retry.
+   * Dispatches the staged batch, one file at a time. The batch stays staged for
+   * a retry when a file failed; `captionPublished` then says whether the text
+   * already escaped inside a file's message.
    *
    * `caption` goes on the first file that actually publishes, so the recipient
    * reads the instruction together with the first attachment instead of getting
    * a context-free file and the text as two separate turns.
    */
-  private async sendPendingAttachments(caption = ''): Promise<boolean> {
+  private async sendPendingAttachments(caption = ''): Promise<SendStagedBatchResult> {
     const tray = this.attachmentTray;
     if(!tray) {
-      return true;
+      return {sent: [], remaining: [], captionPublished: false};
     }
 
     const sendingParams = this.chat.getMessageSendingParams();
-    const nextCaption = createBatchCaptionPicker(caption);
-    const result = await tray.sendAll(async(item) => {
+    const result = await tray.sendAll(async(item, itemCaption) => {
       const sent = await this.managers.appMessagesManager.sendPhantomChatAttachment({
         ...sendingParams,
         file: item.file,
         isMedia: item.kind === 'media',
-        caption: nextCaption() || undefined,
+        caption: itemCaption || undefined,
         // Present once the tray thumbnail decoded the image; the popup path gets
         // these from the media editor, which the tray deliberately skips.
         width: item.width,
@@ -4069,14 +4070,13 @@ export default class ChatInput {
       if(!sent) {
         throw new Error(`${item.file.name} could not be sent.`);
       }
-    });
+    }, caption);
 
     if(result.failed) {
       toast(result.failed.file.name + ' could not be sent. Still attached.');
-      return false;
     }
 
-    return true;
+    return result;
   }
 
   public async sendMessage(force = false) {
@@ -4105,22 +4105,38 @@ export default class ChatInput {
       // that explains it is answered blind. A failed file aborts the text and
       // keeps everything staged.
       if(!this.editMsgId && this.attachmentTray?.hasFiles()) {
+        // The batch keeps the peer it started on, and so does the wording: both
+        // the caption and the fallback text are guarded by the same peer id.
+        const peerIdBeforeBatch = this.chat.peerId;
         const caption = this.getPendingAttachmentCaption();
         if(caption) {
-          const peerIdBeforeBatch = this.chat.peerId;
-          if(!await this.sendPendingAttachments(caption)) {
+          const batch = await this.sendPendingAttachments(caption);
+          if(batch.failed) {
+            // A file already published the wording, so the text is spent: the
+            // retry the tray offers would otherwise caption the next file with
+            // it, and the recipient answers each media message as its own turn.
+            if(shouldConsumeComposerAfterFailedBatch(batch, peerIdBeforeBatch, this.chat.peerId)) {
+              this.onMessageSent(true, true);
+            }
+
             return;
           }
 
-          // The wording is already published inside the first file's message:
-          // consume the composer instead of sending it a second time. A chat
-          // switch mid-batch leaves the composer alone (the input instance is
-          // reused, so the newly opened chat's draft must not be cleared).
-          if(this.chat.peerId === peerIdBeforeBatch) {
-            this.onMessageSent(true, true);
+          if(batch.captionPublished) {
+            // The wording is already published inside a file's message: consume
+            // the composer instead of sending it a second time. A chat switch
+            // mid-batch leaves the composer alone (the input instance is
+            // reused, so the newly opened chat's draft must not be cleared).
+            if(this.chat.peerId === peerIdBeforeBatch) {
+              this.onMessageSent(true, true);
+            }
+
+            return;
           }
 
-          return;
+          // Nothing carried the caption (every staged file was removed while the
+          // batch ran), so the text still has to be published: fall through to
+          // the files-then-text order rather than dropping it.
         }
 
         // The batch keeps the peer it started on, so the typed text has to
@@ -4129,8 +4145,8 @@ export default class ChatInput {
         // draft as if Send had been pressed there. `sendBatchThenText` drops
         // the text in that case and still lets the files land.
         const sentAll = await sendBatchThenText(
-          this.chat.peerId,
-          () => this.sendPendingAttachments(),
+          peerIdBeforeBatch,
+          async() => !(await this.sendPendingAttachments()).failed,
           () => this.sendMessageInner(force),
           () => this.chat.peerId
         );

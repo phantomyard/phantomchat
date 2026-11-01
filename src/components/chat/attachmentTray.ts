@@ -21,8 +21,8 @@ import {
   revokePendingAttachment,
   revokePendingAttachments,
   SendPendingAttachmentsHooks,
-  SendPendingAttachmentsResult,
-  sendPendingAttachments,
+  SendStagedBatchResult,
+  sendStagedBatchWithCaption,
   setAttachmentDimensions
 } from '@lib/phantomchat/composer-attachments';
 
@@ -111,8 +111,15 @@ export default class AttachmentTray {
    * Dispatches every staged file through `send`, in order. Sent files leave the
    * tray; the failed file and the untouched remainder stay, marked, so a retry
    * is one click away.
+   *
+   * `caption` is the typed text the first published file carries. The result
+   * says whether a file actually published with it, so the caller knows if the
+   * wording is spent.
    */
-  public async sendAll(send: (item: PendingAttachment) => Promise<void>): Promise<SendPendingAttachmentsResult> {
+  public async sendAll(
+    send: (item: PendingAttachment, caption: string) => Promise<void>,
+    caption = ''
+  ): Promise<SendStagedBatchResult> {
     const hooks: SendPendingAttachmentsHooks = {
       onSending: (item) => this.markSending(item.id),
       onSent: (item) => {
@@ -132,16 +139,19 @@ export default class AttachmentTray {
     };
 
     // A file removed while the batch is in flight must not still publish: the
-    // dispatch list is a snapshot, so re-check membership before each file.
-    const sendIfStillStaged = async(item: PendingAttachment) => {
+    // dispatch list is a snapshot, so re-check membership before each file. The
+    // skipped item does not take the caption either — a file the user deleted
+    // never speaks for them.
+    const sendIfStillStaged = async(item: PendingAttachment, itemCaption: string) => {
       if(!this.items.some((entry) => entry.id === item.id)) {
-        return;
+        return false;
       }
 
-      await send(item);
+      await send(item, itemCaption);
+      return true;
     };
 
-    const result = await sendPendingAttachments(this.items, sendIfStillStaged, hooks);
+    const result = await sendStagedBatchWithCaption(this.items, caption, sendIfStillStaged, hooks);
     if(result.remaining.length) {
       // Re-mark the untouched remainder as idle-failed so the tray reads as
       // "these still need sending" rather than looking half-broken.

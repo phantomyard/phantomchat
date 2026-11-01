@@ -290,9 +290,11 @@ export function getAttachmentCaption({
  * Builds the per-item caption accessor for one batch.
  *
  * The caption is the body of a single message, so exactly one published file may
- * carry it: the first one that actually dispatches. Everything after it — and
- * any retry, where the composer is empty by then — gets nothing, because a
- * second copy of the text would read as the user having said it twice.
+ * carry it: the first one that actually dispatches. Everything after it gets
+ * nothing, because a second copy of the text would read as the user having said
+ * it twice. A retry builds a fresh picker from whatever is still in the
+ * composer — see `sendStagedBatchWithCaption` and
+ * `shouldConsumeComposerAfterFailedBatch`.
  */
 export function createBatchCaptionPicker(caption: string): () => string {
   let pending = caption;
@@ -317,6 +319,14 @@ export type SendPendingAttachmentsHooks = {
   onSending?: (item: PendingAttachment) => void;
   onSent?: (item: PendingAttachment) => void;
   onFailed?: (item: PendingAttachment, error: unknown) => void;
+};
+
+export type SendStagedBatchResult = SendPendingAttachmentsResult & {
+  /**
+   * True when a file that carried the caption actually published, so the
+   * wording is spent: a retry must not put it on another file.
+   */
+  captionPublished: boolean;
 };
 
 /**
@@ -350,6 +360,67 @@ export async function sendPendingAttachments(
   }
 
   return {sent, remaining: []};
+}
+
+/**
+ * Sends a staged batch with `caption` as the caption of its first published
+ * file.
+ *
+ * `publish` reports whether the item really went out: a file removed from the
+ * tray mid-batch is skipped without publishing and returns false, so it must
+ * neither consume the caption nor claim it — the next file takes the wording.
+ *
+ * `captionPublished` is set after `publish` resolves, never when the picker
+ * hands the caption out. That distinction is the whole point: a publish that
+ * throws has already emptied the picker, and the text has to survive in the
+ * composer for the retry.
+ */
+export async function sendStagedBatchWithCaption(
+  items: PendingAttachment[],
+  caption: string,
+  publish: (item: PendingAttachment, caption: string) => Promise<boolean>,
+  hooks?: SendPendingAttachmentsHooks
+): Promise<SendStagedBatchResult> {
+  const nextCaption = createBatchCaptionPicker(caption);
+  let unclaimedCaption = '';
+  let captionPublished = false;
+
+  const result = await sendPendingAttachments(items, async(item) => {
+    const itemCaption = unclaimedCaption || nextCaption();
+    const published = await publish(item, itemCaption);
+
+    if(!published) {
+      // The item was skipped, not sent: the wording moves on to the next file.
+      unclaimedCaption = itemCaption;
+      return;
+    }
+
+    unclaimedCaption = '';
+    if(itemCaption) {
+      captionPublished = true;
+    }
+  }, hooks);
+
+  return {...result, captionPublished};
+}
+
+/**
+ * Whether a failed batch still has to consume the composer.
+ *
+ * Once a file published with the caption, the wording is spent: the retry that
+ * the tray offers would otherwise caption the next file with the same text, and
+ * a recipient agent answers every media message as its own turn, so it would
+ * act on the instruction twice. When the failing file was the one holding the
+ * caption, nothing carried it and the text stays in the composer. The peer
+ * guard matches the successful path: a chat switched mid-batch must not have
+ * the newly opened chat's draft cleared.
+ */
+export function shouldConsumeComposerAfterFailedBatch(
+  batch: Pick<SendStagedBatchResult, 'captionPublished'>,
+  peerIdBeforeBatch: number,
+  currentPeerId: number
+): boolean {
+  return batch.captionPublished && currentPeerId === peerIdBeforeBatch;
 }
 
 /**

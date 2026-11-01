@@ -94,8 +94,23 @@ describe('attachment tray wiring', () => {
   it('attaches the caption to one file, not to every publish in the batch', () => {
     const body = methodBody(inputTs, 'sendPendingAttachments');
 
-    expect(body).toContain('createBatchCaptionPicker(caption)');
-    expect(body).toContain('caption: nextCaption() || undefined');
+    // The picker lives in the batch runner, which hands each publish its own
+    // caption; the composer passes the text in once and never re-derives it.
+    expect(body).toContain('tray.sendAll(');
+    expect(body).toContain('caption: itemCaption || undefined');
+  });
+
+  it('consumes the composer after a failed batch that already published the caption', () => {
+    const start = inputTs.indexOf('public async sendMessage(');
+    const body = inputTs.slice(start, inputTs.indexOf('private async sendMessageInner(', start));
+
+    // A later file failing must not leave the text in the composer: the retry
+    // would caption the next file with it and the recipient would act twice.
+    expect(body.indexOf('if(batch.failed)')).toBeGreaterThan(-1);
+    expect(body.indexOf('if(batch.failed)')).toBeLessThan(body.indexOf('shouldConsumeComposerAfterFailedBatch('));
+    expect(body).toContain('shouldConsumeComposerAfterFailedBatch(batch, peerIdBeforeBatch, this.chat.peerId)');
+    // ...and the successful path only clears it when a file actually carried it.
+    expect(body).toContain('if(batch.captionPublished)');
   });
 
   it('forwards the staged image size to the bridge', () => {
