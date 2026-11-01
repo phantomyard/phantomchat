@@ -264,8 +264,8 @@
     },
     "src/lib/phantomchat/message-store.ts": {
       "stable": "eff9081cde19b4e0a7474c08ca44bff9313c6dcd1959ead3635583c7f0729d2c",
-      "preview": "eff9081cde19b4e0a7474c08ca44bff9313c6dcd1959ead3635583c7f0729d2c",
-      "reason": "`setConversationTwebPeerId` re-stamps the identity triple's peer id on a conversation's stored rows for the group/session class reconcile. Rows move inside the SAME conversation key (group:<groupId>) and keep their eventId, mid and timestamp (mid derives from the event id, not the peer), so message identity, edits and reaction targets are unchanged. No schema change."
+      "preview": "3116e2695d7794da4235df2c19665c4cb2b791423f66068ec0db8b61fd81c8a3",
+      "reason": "`setConversationTwebPeerId` re-stamps the identity triple's peer id on a conversation's stored rows for the group/session class reconcile. Rows move inside the SAME conversation key (group:<groupId>) and keep their eventId, mid and timestamp (mid derives from the event id, not the peer), so message identity, edits and reaction targets are unchanged. No schema change. Preview hash refreshed for #295: getMessages returns the whole boundary second so the strict before-cursor cannot skip rows; ordering, keys and stored format unchanged."
     },
     "src/lib/phantomchat/group-class-reconcile.ts": {
       "stable": "52f6b9e69fc592e962476355ad5eee7766dfb3193213d15de3d4cf46d50d91dd",

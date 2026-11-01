@@ -203,6 +203,44 @@ describe('MessageStore', () => {
       const msgs = await store.getMessages(convId, 2);
       expect(msgs.map((msg) => msg.eventId)).toEqual(['tie-high', 'tie-low']);
     });
+
+    // #295: a page used to be sliced to exactly `limit`, which dropped the rows
+    // sharing the boundary second. Every caller pages with a strict `<` cursor
+    // (`before = rows[rows.length - 1].timestamp`), so those rows were skipped
+    // for good — `setConversationTwebPeerId` re-stamped a partial history.
+    it('returns the whole boundary second so a strict before-cursor cannot skip rows', async() => {
+      const convId = uniqueConvId();
+      for(const mid of [300_003, 300_002, 300_001]) {
+        await store.saveMessage(makeMsg({eventId: `bucket-${mid}`, conversationId: convId, timestamp: 300, mid}));
+      }
+      await store.saveMessage(makeMsg({eventId: 'next-second', conversationId: convId, timestamp: 200, mid: 200_001}));
+
+      const first = await store.getMessages(convId, 2);
+      expect(first.map((msg) => msg.eventId)).toEqual(['bucket-300003', 'bucket-300002', 'bucket-300001']);
+      expect(first).toHaveLength(3); // floor, not cap: the whole second comes along
+    });
+
+    it('walks a same-second history in full with the caller\'s strict cursor', async() => {
+      const convId = uniqueConvId();
+      const expected: Array<number> = [];
+      for(const timestamp of [400, 400, 400, 300, 300, 200, 100]) {
+        const mid = timestamp * 1000 + expected.length;
+        expected.push(mid);
+        await store.saveMessage(makeMsg({eventId: `walk-${mid}`, conversationId: convId, timestamp, mid}));
+      }
+
+      const seen: Array<number> = [];
+      let before: number | undefined;
+      for(let page = 0; page < 10; page++) {
+        const rows = await store.getMessages(convId, 2, before);
+        if(!rows.length) break;
+        seen.push(...rows.map((row) => row.mid!));
+        before = rows[rows.length - 1].timestamp;
+      }
+
+      // newest first, ties broken by mid descending — every row present
+      expect(seen).toEqual(expected.slice().sort((a, b) => b - a));
+    });
   });
 
   describe('getMessagesByOffsetId', () => {
