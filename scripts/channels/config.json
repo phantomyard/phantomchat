@@ -359,8 +359,8 @@
     },
     "src/helpers/generateDicebearAvatar.ts": {
       "stable": "c07aa8a25e731987b4b593f47094109354b0a617881aa7432e47eaf9a30883fd",
-      "preview": "c07aa8a25e731987b4b593f47094109354b0a617881aa7432e47eaf9a30883fd",
-      "reason": "Adds a muted grey avatar palette selected by html[data-ui-theme]. Output with no attribute is byte-identical to before and is never persisted or published. Requires independent content review."
+      "preview": "1046e409b9a65cf4ce3a055e505d6accb4dbbbd43ced693204ea597b72ae0414",
+      "reason": "Adds a muted grey avatar palette with theme-blue eyes selected by html[data-ui-theme]. Output with no attribute is byte-identical to before and is never persisted or published. Requires independent content review."
     },
     "src/components/sidebarLeft/tabs/settings.ts": {
       "stable": "d6d40466f109b248575be83201096e3fcfa0d478f3055e978ef6b9ba568753eb",

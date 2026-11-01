@@ -86,7 +86,12 @@ const corporateGradients: BgGradient[] = [
   {start: '#52525c', end: '#d4d4d8', cloak: '#71717b', stroke: '#e4e4e755'}
 ];
 
+// Squad rings and key nodes stay grey; only the eyes carry the theme's blue, held
+// below its full-strength accent so they do not stand out. The glint replaces the
+// white highlight, which would otherwise be the brightest thing on the avatar.
 const corporateEyes = ['#f5f5f5', '#e4e4e7', '#d4d4d8', '#a1a1aa'];
+const corporateEyeColor = '#2a59cc';
+const corporateEyeGlint = '#346bf1';
 
 function isBoringCorporate(): boolean {
   return typeof document !== 'undefined' && document.documentElement?.dataset?.uiTheme === 'boring-corporate';
@@ -150,6 +155,10 @@ function renderEyeSvg(style: number, color: string, filterId: string): string {
   }
 }
 
+function renderCorporateEyeSvg(style: number, filterId: string): string {
+  return renderEyeSvg(style, corporateEyeColor, filterId).replace(/#ffffff/g, corporateEyeGlint);
+}
+
 function renderPhantomBody(cx: number, cy: number, scale: number, bg: BgGradient, eyeSvg: string): string {
   return `<g transform="translate(${cx}, ${cy}) scale(${scale}) translate(-64, -64)">
     <path d="M 64 20 C 38 20 24 44 24 78 C 24 100 32 116 35 128 L 93 128 C 96 116 104 100 104 78 C 104 44 90 20 64 20 Z" fill="${bg.cloak}" stroke="${bg.stroke}" stroke-width="${1.5 / scale}"/>
@@ -169,7 +178,9 @@ export function generatePhantomAvatarSvg(seed: string): string {
   const eyeColor = eyes[hashes[1] % eyes.length];
   const eyeStyle = hashes[2] % 6;
   const id = (hashes[0].toString(36) + hashes[1].toString(36)).slice(0, 10);
-  const eyeSvg = renderEyeSvg(eyeStyle, eyeColor, `glow-${id}`);
+  const eyeSvg = corporate ?
+    renderCorporateEyeSvg(eyeStyle, `glow-${id}`) :
+    renderEyeSvg(eyeStyle, eyeColor, `glow-${id}`);
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
@@ -224,8 +235,12 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
   const wingmanEyeColor = eyes[(hashes[3] + 5) % eyes.length];
 
   const eyeStyle = hashes[2] % 6;
-  const leaderEyeSvg = renderEyeSvg(eyeStyle, leaderEyeColor, `glow-${id}`);
-  const wingmanEyeSvg = renderEyeSvg((eyeStyle + 1) % 6, wingmanEyeColor, `glow-w-${id}`);
+  const leaderEyeSvg = corporate ?
+    renderCorporateEyeSvg(eyeStyle, `glow-${id}`) :
+    renderEyeSvg(eyeStyle, leaderEyeColor, `glow-${id}`);
+  const wingmanEyeSvg = corporate ?
+    renderCorporateEyeSvg((eyeStyle + 1) % 6, `glow-w-${id}`) :
+    renderEyeSvg((eyeStyle + 1) % 6, wingmanEyeColor, `glow-w-${id}`);
 
   // Deterministic orbital ring rotation
   const rot = (hashes[0] % 12) * 30;
