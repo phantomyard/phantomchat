@@ -257,6 +257,20 @@ describe('group-history-backfill — receiver-side aggregate budget', () => {
     expect(bytes).toBeLessThanOrEqual(mod.HISTORY_BACKFILL_INGEST_MAX_CONTENT_BYTES);
   });
 
+  it('trims from the OLD end, keeping the newest rows', () => {
+    // The slice exists to convey the conversation right before the join, so a
+    // cap must never cut the newest rows (the original bug, one layer down).
+    const many = Array.from({length: 400}, (_, i) => item(i, 1024));
+    const accepted = mod.applyIngestBudget(GROUP_ID, many);
+
+    expect(accepted.length).toBeLessThan(many.length);
+    expect(accepted[accepted.length - 1].rumorId).toBe(many[many.length - 1].rumorId);
+    expect(accepted.map((i) => i.rumorId)).not.toContain(many[0].rumorId);
+    // Still oldest-first reading order.
+    const times = accepted.map((i) => i.createdAt);
+    expect(times).toEqual([...times].sort((x, y) => x - y));
+  });
+
   it('accumulates across payloads instead of resetting per payload', () => {
     // A member repeating a 32 KiB payload must not get a fresh budget each time.
     const payloads = Array.from({length: 8}, () => Array.from({length: 32}, (_, i) => item(i, 1024)));
@@ -264,17 +278,19 @@ describe('group-history-backfill — receiver-side aggregate budget', () => {
     for(const slice of payloads) total += mod.applyIngestBudget(GROUP_ID, slice).length;
 
     expect(total).toBeLessThanOrEqual(mod.HISTORY_BACKFILL_INGEST_MAX_ROWS);
-    expect(mod.applyIngestBudget(GROUP_ID, [item(999)])).toEqual([]);
+    // A slice from an exhausted window is refused whole (the leftover slack is
+    // smaller than one full-size row).
+    expect(mod.applyIngestBudget(GROUP_ID, [item(999, 4096)])).toEqual([]);
   });
 
   it('opens a fresh window once the previous one expires', () => {
     const start = 1_700_000_000_000;
     const many = Array.from({length: 400}, (_, i) => item(i, 1024));
     const first = mod.applyIngestBudget(GROUP_ID, many, start);
-    expect(mod.applyIngestBudget(GROUP_ID, [item(999)], start + 1000)).toEqual([]);
+    expect(mod.applyIngestBudget(GROUP_ID, [item(999, 4096)], start + 1000)).toEqual([]);
 
     const later = start + mod.HISTORY_BACKFILL_INGEST_WINDOW_MS + 1;
-    expect(mod.applyIngestBudget(GROUP_ID, [item(998)], later).length).toBe(1);
+    expect(mod.applyIngestBudget(GROUP_ID, [item(998, 4096)], later).length).toBe(1);
     expect(first.length).toBeGreaterThan(0);
   });
 
@@ -312,6 +328,34 @@ describe('group-history-backfill — pending stage (order tolerance)', () => {
     expect(pending?.items.map((i) => i.rumorId)).toEqual([item(1).rumorId, item(2).rumorId]);
     // Take clears: a second drain cannot re-ingest.
     expect(mod.takePendingBackfill(GROUP_ID)).toBeNull();
+  });
+
+  it('accumulates consecutive chunks of one slice instead of replacing them', () => {
+    // Each control payload is a small chunk, so a cold newcomer would otherwise
+    // end up holding only the last ~4 KiB of its history.
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: MEMBER_PUBKEY, items: [item(1), item(2)]});
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: MEMBER_PUBKEY, items: [item(3), item(4)]});
+
+    const pending = mod.takePendingBackfill(GROUP_ID);
+    expect(pending?.items.map((i) => i.rumorId)).toEqual([1, 2, 3, 4].map((i) => item(i).rumorId));
+  });
+
+  it('dedupes overlapping chunks and keeps the newest window', () => {
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: MEMBER_PUBKEY, items: [item(1), item(2), item(3)]});
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: MEMBER_PUBKEY, items: [item(3), item(4)]});
+
+    const pending = mod.takePendingBackfill(GROUP_ID);
+    expect(pending?.items.map((i) => i.rumorId)).toEqual([1, 2, 3, 4].map((i) => item(i).rumorId));
+  });
+
+  it('starts a fresh stage when the relayer changes', () => {
+    const other = 'b'.repeat(64);
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: MEMBER_PUBKEY, items: [item(1)]});
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: other, items: [item(2)]});
+
+    const pending = mod.takePendingBackfill(GROUP_ID);
+    expect(pending?.relayerPubkey).toBe(other);
+    expect(pending?.items.map((i) => i.rumorId)).toEqual([item(2).rumorId]);
   });
 
   it('expires a staged slice that never finds a record', () => {

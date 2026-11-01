@@ -36,7 +36,13 @@ import type {GroupControlPayload, GroupHistoryItem} from './group-types';
 export const HISTORY_BACKFILL_TARGET_BYTES = 32 * 1024;
 /** Row cap — also stays inside the message-store's per-chat retention cap. */
 export const HISTORY_BACKFILL_MAX_MESSAGES = 400;
-/** Target size of ONE control rumor, so a single wrap stays relay-friendly. */
+/**
+ * SOFT target size of ONE control rumor, so a single wrap stays relay-friendly.
+ * Not a hard bound: a lone item is never split, so a payload may carry one item
+ * up to `HISTORY_BACKFILL_MAX_ITEM_BYTES` (plus its ~270 B of identity) on its
+ * own — 4 KiB is what a multi-item payload aims for, not a ceiling any single
+ * wrap is guaranteed to respect.
+ */
 export const HISTORY_BACKFILL_CHUNK_BYTES = 4 * 1024;
 /**
  * One oversized message (a long paste, a media caption) is carried alone up to
@@ -134,12 +140,20 @@ export interface CollectHistoryOptions {
   targetBytes?: number;
   maxMessages?: number;
   pageSize?: number;
+  /**
+   * Live membership, when the caller has it. Rows authored by a non-member are
+   * skipped rather than carried: the receiver rejects them anyway
+   * (`isWellFormedHistoryItem`), and letting them spend the byte budget shrinks
+   * the delivered window on exactly the groups that most need one.
+   */
+  members?: string[];
 }
 
 /** A row we refuse to relay: synthesized locally, never received, or unusable. */
 function isBackfillable(row: BackfillSourceRow): boolean {
   if(!row || typeof row !== 'object') return false;
-  if(typeof row.eventId !== 'string' || row.eventId.length === 0) return false;
+  // Same shape the receiver demands: a non-hex id could never be deduped there.
+  if(typeof row.eventId !== 'string' || !SECP_PUBKEY_HEX_RE.test(row.eventId)) return false;
   if(typeof row.senderPubkey !== 'string' || !SECP_PUBKEY_HEX_RE.test(row.senderPubkey)) return false;
   if(typeof row.content !== 'string') return false;
   if(typeof row.timestamp !== 'number' || !Number.isFinite(row.timestamp) || row.timestamp <= 0) return false;
@@ -177,8 +191,10 @@ export async function collectGroupHistoryItems(options: CollectHistoryOptions): 
     getByMid,
     targetBytes = HISTORY_BACKFILL_TARGET_BYTES,
     maxMessages = HISTORY_BACKFILL_MAX_MESSAGES,
-    pageSize = HISTORY_BACKFILL_PAGE_SIZE
+    pageSize = HISTORY_BACKFILL_PAGE_SIZE,
+    members
   } = options;
+  const memberSet = Array.isArray(members) && members.length > 0 ? new Set(members) : null;
 
   if(!conversationId || typeof getMessages !== 'function') return [];
   if(maxMessages <= 0 || targetBytes <= 0) return [];
@@ -200,6 +216,7 @@ export async function collectGroupHistoryItems(options: CollectHistoryOptions): 
     for(const row of page) {
       if(newestFirst.length >= maxMessages || bytes >= targetBytes) break;
       if(!isBackfillable(row) || seen.has(row.eventId)) continue;
+      if(memberSet && !memberSet.has(row.senderPubkey)) continue;
       seen.add(row.eventId);
       newestFirst.push(row);
       bytes += utf8ByteLength(row.content);
@@ -367,9 +384,13 @@ const ingestBudgets = new Map<string, IngestBudgetEntry>();
 
 /**
  * Trim `items` to what this device still accepts for `groupId` in the current
- * window, and record the spend. Truncates at the cap (keeping the prefix, i.e.
- * the oldest of the offered window) rather than dropping the payload whole, so
- * a slightly-over slice still lands most of its rows.
+ * window, and record the spend.
+ *
+ * The kept rows are the SUFFIX of the offered window, because the offer is
+ * oldest-first and the slice exists to convey the conversation right before the
+ * join: truncating at the cap must drop the OLDEST rows, never the newest. A
+ * payload is trimmed rather than dropped whole, so a slightly-over slice still
+ * lands the part that matters.
  */
 export function applyIngestBudget(
   groupId: string,
@@ -385,15 +406,17 @@ export function applyIngestBudget(
     {windowStart: now, bytes: 0, rows: 0} :
     {...existing};
 
+  // Walk newest-first so the cap cuts the old end, then emit oldest-first again.
   const allowed: GroupHistoryItem[] = [];
-  for(const item of items) {
+  for(let i = items.length - 1; i >= 0; i--) {
     if(entry.rows >= HISTORY_BACKFILL_INGEST_MAX_ROWS) break;
-    const bytes = historyItemBytes(item);
+    const bytes = historyItemBytes(items[i]);
     if(entry.bytes + bytes > HISTORY_BACKFILL_INGEST_MAX_CONTENT_BYTES) break;
-    allowed.push(item);
+    allowed.push(items[i]);
     entry.rows++;
     entry.bytes += bytes;
   }
+  allowed.reverse();
 
   if(allowed.length > 0) {
     // Re-insert so the map's iteration order stays "least recently used first"
@@ -433,9 +456,48 @@ function prunePendingBackfills(now: number): void {
 }
 
 /**
+ * Keep the NEWEST window of `items` that fits `maxRows` / `maxBytes`, returned
+ * oldest-first. Items are deduped by original rumor id, because two control
+ * payloads that overlap at a chunk boundary, or a relay replay, describe the
+ * same row.
+ */
+function newestWindow(
+  items: GroupHistoryItem[],
+  maxRows: number,
+  maxBytes: number
+): GroupHistoryItem[] {
+  const byRumorId = new Map<string, GroupHistoryItem>();
+  for(const item of items) {
+    if(!item || typeof item.rumorId !== 'string' || byRumorId.has(item.rumorId)) continue;
+    byRumorId.set(item.rumorId, item);
+  }
+  const ordered = [...byRumorId.values()].sort((a, b) => a.createdAt - b.createdAt);
+
+  const kept: GroupHistoryItem[] = [];
+  let bytes = 0;
+  for(let i = ordered.length - 1; i >= 0; i--) {
+    if(kept.length >= maxRows) break;
+    const itemBytes = historyItemBytes(ordered[i]);
+    if(bytes + itemBytes > maxBytes) break;
+    kept.push(ordered[i]);
+    bytes += itemBytes;
+  }
+  kept.reverse();
+  return kept;
+}
+
+/**
  * Hold a slice whose group record has not landed yet. Bounded by
  * {@link HISTORY_BACKFILL_MAX_PENDING_GROUPS} (oldest evicted) and by the same
  * row/byte caps as a live slice, so a flood cannot pin memory.
+ *
+ * REPEATED CALLS ACCUMULATE. Every control payload is a chunk of one slice, and
+ * each chunk is small, so replacing the stage with the newest chunk would leave
+ * a joining device holding only the last ~4 KiB of its history. Chunks from the
+ * same relayer are merged (deduped by rumor id, newest window kept); a chunk
+ * from a DIFFERENT relayer starts a fresh stage, because only the group admin
+ * can legitimately relay and a stage carries exactly one relayer identity for
+ * the drain to re-check.
  */
 export function stagePendingBackfill(
   pending: {groupId: string; relayerPubkey: string; items: GroupHistoryItem[]},
@@ -446,15 +508,14 @@ export function stagePendingBackfill(
   if(typeof relayerPubkey !== 'string' || !SECP_PUBKEY_HEX_RE.test(relayerPubkey)) return;
   prunePendingBackfills(now);
 
-  const capped: GroupHistoryItem[] = [];
-  let bytes = 0;
-  for(const item of Array.isArray(pending.items) ? pending.items : []) {
-    if(capped.length >= HISTORY_BACKFILL_MAX_MESSAGES) break;
-    const itemBytes = historyItemBytes(item);
-    if(bytes + itemBytes > HISTORY_BACKFILL_TARGET_BYTES) break;
-    capped.push(item);
-    bytes += itemBytes;
-  }
+  const existing = pendingBackfills.get(groupId);
+  const carried = existing && existing.relayerPubkey === relayerPubkey ? existing.items : [];
+  const incoming = Array.isArray(pending.items) ? pending.items : [];
+  const capped = newestWindow(
+    [...carried, ...incoming],
+    HISTORY_BACKFILL_MAX_MESSAGES,
+    HISTORY_BACKFILL_TARGET_BYTES
+  );
   if(capped.length === 0) return;
 
   if(!pendingBackfills.has(groupId)) {
@@ -465,6 +526,13 @@ export function stagePendingBackfill(
     }
   }
   pendingBackfills.set(groupId, {groupId, relayerPubkey, items: capped, stagedAt: now});
+}
+
+/** Read the staged slice for one group WITHOUT clearing it. */
+export function peekPendingBackfill(groupId: string, now: number = Date.now()): PendingBackfill | null {
+  if(typeof groupId !== 'string' || !groupId) return null;
+  prunePendingBackfills(now);
+  return pendingBackfills.get(groupId) ?? null;
 }
 
 /** Take (and clear) the staged slice for one group, if any is still live. */

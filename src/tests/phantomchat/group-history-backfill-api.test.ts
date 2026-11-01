@@ -306,6 +306,81 @@ describe('GroupAPI.handleHistoryBackfill — receiver gates', () => {
     expect(mockIngest).toHaveBeenCalledTimes(1);
   });
 
+  it('accumulates staged chunks instead of keeping only the last one', async() => {
+    // Every control payload is one ~4 KiB chunk of a single slice, so replacing
+    // the stage per payload would leave a joining device with the tail only.
+    mockStore.get.mockResolvedValue(null);
+    const chunk = (base: number) => Array.from({length: 4}, (_, i) => validItem({
+      rumorId: `${(base + i).toString(16).padStart(4, '0')}${'7'.repeat(60)}`,
+      createdAt: 1_700_000_000 + base + i
+    }));
+
+    await api.handleControlMessage(rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: chunk(0)
+    }), MEMBER_A);
+    await api.handleControlMessage(rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: chunk(4)
+    }), MEMBER_A);
+    expect(mockIngest).not.toHaveBeenCalled();
+
+    mockStore.get.mockResolvedValue(groupRecord({adminPubkey: MEMBER_A, members: [OWN_PUBKEY, MEMBER_A]}));
+    await api.drainPendingHistoryBackfill(GROUP_ID);
+
+    expect(mockIngest).toHaveBeenCalledTimes(1);
+    expect(mockIngest.mock.calls[0][2]).toHaveLength(8);
+  });
+
+  it('drains a stage on the live path when the record lands mid-slice', async() => {
+    // Chunks 1-2 staged while we had no record; chunk 3 arrives once the record
+    // exists. Nothing else calls the drain at that point, so without a drain on
+    // the live path the staged rows would sit until the TTL and vanish.
+    mockStore.get.mockResolvedValue(null);
+    await api.handleControlMessage(rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: [validItem()]
+    }), MEMBER_A);
+    expect(mockIngest).not.toHaveBeenCalled();
+
+    mockStore.get.mockResolvedValue(groupRecord({adminPubkey: MEMBER_A, members: [OWN_PUBKEY, MEMBER_A]}));
+    await api.handleControlMessage(rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: [validItem({rumorId: '6'.repeat(64), createdAt: 1_700_000_100})]
+    }), MEMBER_A);
+
+    expect(mockIngest).toHaveBeenCalledTimes(2);
+    expect(mockIngest.mock.calls[0][2]).toHaveLength(1);
+    expect(mockIngest.mock.calls[1][2]).toHaveLength(1);
+    // The stage is gone, not merely emptied by the drain.
+    expect(backfill.peekPendingBackfill(GROUP_ID)).toBeNull();
+  });
+
+  it('keeps a staged slice when the drain gates fail, instead of destroying it', async() => {
+    mockStore.get.mockResolvedValue(null);
+    await api.handleControlMessage(rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: [validItem()]
+    }), MEMBER_A);
+
+    // Record lands but names a different admin: the slice must survive, not be
+    // consumed and dropped.
+    mockStore.get.mockResolvedValue(groupRecord({adminPubkey: OUTSIDER, members: [OWN_PUBKEY, MEMBER_A, OUTSIDER]}));
+    await api.drainPendingHistoryBackfill(GROUP_ID);
+    expect(mockIngest).not.toHaveBeenCalled();
+    expect(backfill.peekPendingBackfill(GROUP_ID)?.items).toHaveLength(1);
+  });
+
   it('never materialises a group it has no record of', async() => {
     mockStore.get.mockResolvedValue(null);
 

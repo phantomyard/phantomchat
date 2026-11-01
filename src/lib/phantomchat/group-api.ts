@@ -23,6 +23,7 @@ import {
   collectGroupHistoryItems,
   isWellFormedHistoryItem,
   isWellFormedHistoryItemShape,
+  peekPendingBackfill,
   stagePendingBackfill,
   takePendingBackfill
 } from './group-history-backfill';
@@ -765,10 +766,14 @@ export class GroupAPI {
   private async sendHistoryBackfill(groupId: string, targetPubkey: string): Promise<void> {
     try {
       const msgStore = getMessageStore();
+      const group = await this.store.get(groupId);
       const items = await collectGroupHistoryItems({
         conversationId: `group:${groupId}`,
         getMessages: (conversationId, limit, before) => msgStore.getMessages(conversationId, limit, before),
-        getByMid: (mid) => msgStore.getByMid(mid)
+        getByMid: (mid) => msgStore.getByMid(mid),
+        // Rows authored by someone who has since left are rejected by the
+        // receiver, so spending the budget on them only shortens the slice.
+        members: group?.members
       });
       if(items.length === 0) {
         this.log('[GroupAPI] history backfill: no local history for', groupId.slice(0, 8));
@@ -1598,6 +1603,11 @@ export class GroupAPI {
       return;
     }
 
+    // The record exists, so anything staged while we waited for it can land
+    // now. Draining here is what keeps a stage from outliving its record when
+    // the record arrives in the middle of a multi-chunk slice.
+    await this.drainPendingHistoryBackfill(group.groupId);
+
     await this.ingestHistoryBackfill(group.groupId, group.adminPubkey, group.members, senderPubkey, incoming);
   }
 
@@ -1647,15 +1657,28 @@ export class GroupAPI {
 
   /**
    * Drain a slice that was staged because the group record had not arrived yet.
-   * Called from every point that materialises a record for a group
-   * (`handleGroupCreate`, and the groups CRDT upsert in the sync adapter).
-   * Idempotent: the stage is taken (cleared) before anything is ingested.
+   * Called from every point that can end the wait: `handleGroupCreate`, the
+   * groups CRDT upsert in the sync adapter, and the live backfill path itself
+   * (a record that lands between two chunks must not strand the earlier ones
+   * until the stage's TTL).
+   *
+   * The gates are re-checked BEFORE the stage is taken: a drain that fails
+   * them leaves the slice in place for a later attempt instead of destroying it.
    */
   async drainPendingHistoryBackfill(groupId: string): Promise<void> {
-    const pending = takePendingBackfill(groupId);
+    const pending = peekPendingBackfill(groupId);
     if(!pending) return;
     const group = await this.store.get(groupId);
     if(!group) return;
+    if(pending.relayerPubkey !== group.adminPubkey || !group.members.includes(this.ownPubkey)) {
+      this.log.warn('[GroupAPI] group_history_backfill: staged slice failed the drain gates, keeping it', {
+        groupId: groupId.slice(0, 8),
+        relayerIsAdmin: pending.relayerPubkey === group.adminPubkey,
+        member: group.members.includes(this.ownPubkey)
+      });
+      return;
+    }
+    takePendingBackfill(group.groupId);
     await this.ingestHistoryBackfill(group.groupId, group.adminPubkey, group.members, pending.relayerPubkey, pending.items);
   }
 
