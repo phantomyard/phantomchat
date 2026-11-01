@@ -4,8 +4,8 @@ import {describe, expect, it} from 'vitest';
 import {load} from 'js-yaml';
 
 type Step = {name?: string; if?: string; run?: string; env?: Record<string, string>};
-type Job = {steps: Step[]; if?: string; needs?: string | string[]};
-type Workflow = {on: Record<string, unknown>; permissions?: Record<string, string>; jobs: Record<string, Job>};
+type Job = {steps: Step[]; if?: string; needs?: string | string[]; env?: Record<string, string>; environment?: unknown};
+type Workflow = {on: Record<string, unknown>; permissions?: Record<string, string>; env?: Record<string, string>; jobs: Record<string, Job>};
 const readWorkflow = (name: string) => load(readFileSync(join(process.cwd(), '.github', 'workflows', name), 'utf8')) as Workflow;
 
 describe('independent release controls', () => {
@@ -43,11 +43,14 @@ describe('independent release controls', () => {
     expect(serialized).not.toMatch(/deploy-pages|upload-pages-artifact|actions\/(?:create|upload)-release|electron-builder/);
     expect(serialized).not.toMatch(/scripts\/releases\/registry\.mjs|check-site\.mjs/);
     // A Pages environment attached to a PR job is a publish-shaped hole.
-    expect(steps.some(step => 'environment' in step)).toBe(false);
+    // GitHub only accepts `environment` on a JOB, never on a step, so the
+    // check has to sit there or it passes whatever the workflow says.
+    expect(Object.values(workflow.jobs).some(job => 'environment' in job)).toBe(false);
     // Release mode is env-driven inside build.mjs: any of these turns the dry
-    // build into a promotion build against live bytes.
-    const env = steps.map(step => JSON.stringify(step.env ?? {})).join('\n');
-    expect(env).not.toMatch(/PWA_RELEASE|CHANNEL_BASELINE|PWA_STABLE_DIST/);
+    // build into a promotion build against live bytes. `env` is legal at
+    // workflow, job AND step scope, so match the whole workflow rather than
+    // one scope that a job-level value would slip past.
+    expect(serialized).not.toMatch(/PWA_RELEASE|CHANNEL_BASELINE|PWA_STABLE_DIST/);
     // Exactly one build, and it is the plain channel build off repo config.
     const builds = steps.filter(step => /pnpm (?:run )?build/.test(step.run || ''));
     expect(builds).toHaveLength(1);
