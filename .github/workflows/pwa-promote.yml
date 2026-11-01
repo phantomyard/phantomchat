@@ -1,4 +1,4 @@
-name: PWA — promote to Stable
+name: PWA 2. Promote Preview to Stable — manual
 
 on:
   workflow_dispatch:

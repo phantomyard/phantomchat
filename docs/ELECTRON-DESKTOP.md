@@ -259,16 +259,16 @@ web code keeps its own log that covers both windows and the worker.
 
 ## Release channels (preview / stable)
 
-Desktop builds and publication are independent of PWA publication. Both products
-have manual Preview publication and Stable promotion; pushes/merges never build.
+Desktop builds and publication are independent of PWA publication. Desktop Preview
+and Stable promotion are manual; pushes/merges never build the desktop app.
 
-1. **Build and publish Preview manually.** Run **Electron — build and publish
-   Preview** (`app-release.yml`) and select any reviewed branch. It publishes
+1. **Build and publish Preview manually.** Run **Electron 1. Build + deploy to Preview — manual**
+   (`app-release.yml`) from `main`; other branches skip every job. It publishes
    `phantomchat-v1.1.<N>`, where `<N>` is this workflow's own run number.
    The minor bump avoids downgrade from the former shared PWA counter.
    No PWA run is required. Native runtime/package/signing checks precede the
    GitHub prerelease and its checksummed assets. Stable users see no update.
-2. **Promote to stable** via the **app-promote** workflow (tag optional —
+2. **Promote to stable** via the **Electron 2. Promote Preview to Stable — manual** workflow (tag optional —
    defaults to the newest prerelease; pressing the button is the human act
    that makes it stable). Promotion:
    - verifies every required artifact is present on the release,

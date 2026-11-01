@@ -1,4 +1,4 @@
-name: PWA — build and publish Preview
+name: PWA 1. Build + deploy to Preview — automatic on merge
 
 on:
   push:

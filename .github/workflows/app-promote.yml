@@ -1,4 +1,4 @@
-name: Electron — promote to Stable
+name: Electron 2. Promote Preview to Stable — manual
 
 on:
   workflow_dispatch:
