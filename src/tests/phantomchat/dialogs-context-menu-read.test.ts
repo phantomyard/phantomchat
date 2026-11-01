@@ -3,6 +3,9 @@ import {beforeAll, describe, expect, it, vi} from 'vitest';
 
 const resetUnread = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('@lib/phantomchat/phantomchat-message-handler', () => ({resetUnreadForPeer: resetUnread}));
+
+const setGroupUnreadMark = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('@lib/phantomchat/group-api', () => ({getGroupAPI: () => ({setGroupUnreadMarkByPeerId: setGroupUnreadMark})}));
 vi.mock('@lib/appDialogsManager', () => ({default: {}, DIALOG_LIST_ELEMENT_TAG: 'A'}));
 vi.mock('@lib/appImManager', () => ({default: {}}));
 
@@ -40,6 +43,32 @@ describe('direct-chat Mark as Read context-menu gesture', () => {
     expect(resetUnread).toHaveBeenCalledWith(peerId);
     expect(markDialogUnread).toHaveBeenCalledWith({peerId, read: true});
     expect(resetUnread.mock.invocationCallOrder[0]).toBeLessThan(markDialogUnread.mock.invocationCallOrder[0]);
+  });
+});
+
+// Issue #355 item 1, shape (a). The group branch of onUnreadClick is
+// conversation-scoped: its "mark read" half calls resetUnreadForPeer, which
+// clears every topic in the peer. A topic gesture carries a threadId and must
+// stay thread-scoped, so it has to fall through to the readHistory branch.
+// The seeded shape is the one getAnyDialog really returns for a group topic
+// (`_: 'forumTopic'`, group-range peer, threadId set) — not `_: 'dialog'`.
+describe('group topic Mark as Read context-menu gesture', () => {
+  it('stays thread-scoped instead of clearing the whole group peer', async() => {
+    resetUnread.mockClear();
+    setGroupUnreadMark.mockClear();
+    const peerId = -2_000_000_000_000_042;
+    const threadId = 42;
+    const markDialogUnread = vi.fn().mockResolvedValue(undefined);
+    const readHistory = vi.fn().mockResolvedValue(undefined);
+    const menu = new Menu({appMessagesManager: {markDialogUnread, readHistory}} as any) as any;
+    menu.peerId = peerId;
+    menu.threadId = threadId;
+    menu.dialog = {_: 'forumTopic', peerId, threadId, unread_count: 3, top_message: 77, pFlags: {}};
+    await menu.onUnreadClick();
+    expect(readHistory).toHaveBeenCalledWith({peerId, maxId: 77, threadId});
+    expect(markDialogUnread).not.toHaveBeenCalled();
+    expect(resetUnread).not.toHaveBeenCalled();
+    expect(setGroupUnreadMark).not.toHaveBeenCalled();
   });
 });
 
