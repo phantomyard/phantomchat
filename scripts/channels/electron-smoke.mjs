@@ -2,7 +2,7 @@ import {_electron} from 'playwright';
 import {mkdirSync, mkdtempSync, writeFileSync, rmSync} from 'node:fs';
 import {resolve, join} from 'node:path';
 import assert from 'node:assert/strict';
-import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage, openChannelSettings} from './runtime-identity.mjs';
+import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage, openChannelSettings, releaseChannelGroup, releaseChannelRadio, releaseChannelRow} from './runtime-identity.mjs';
 
 mkdirSync('.channel-build', {recursive: true});
 const dir = mkdtempSync(resolve('.channel-build/electron-'));
@@ -38,10 +38,9 @@ try {
   // radio itself: the input is a zero-size, opacity-0 control (measured 0x0),
   // so `.check()` cannot click it — the Row label around it is the element a
   // user actually hits.
-  const releaseChannel = page.getByRole('form', {name: 'Release channel', exact: true});
-  const radioIn = (name) => releaseChannel.getByRole('radio', {name, exact: true});
-  const channelRow = (name) => radioIn(name)
-    .locator('xpath=ancestor::label[contains(concat(" ", normalize-space(@class), " "), " row ")][1]');
+  const releaseChannel = releaseChannelGroup(page);
+  const radioIn = (name) => releaseChannelRadio(page, name);
+  const channelRow = (name) => releaseChannelRow(page, name);
   assert.equal(await releaseChannel.getByRole('radio').count(), 2);
   assert.equal(await radioIn('Stable').isChecked(), true);
   await page.getByRole('button', {name: 'Check now', exact: true}).waitFor();
