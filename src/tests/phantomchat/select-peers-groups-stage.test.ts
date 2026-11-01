@@ -82,7 +82,11 @@ function harness() {
   return target;
 }
 
-vi.setConfig({testTimeout: 60000});
+// setConfig's testTimeout does NOT cover hooks, and the component import — the
+// slowest part, a cold transform + module-scope solid computations — happens in
+// beforeAll. That import alone measured ~17s on CI hardware (#344 review), so
+// the default 10s hook budget is not enough; keep two orders of headroom.
+vi.setConfig({testTimeout: 120000, hookTimeout: 120000});
 
 describe('peer picker — Groups stage (getMoreGroups)', () => {
   beforeAll(async() => {
@@ -101,7 +105,7 @@ describe('peer picker — Groups stage (getMoreGroups)', () => {
     const {setAppStateSilent} = await import('@stores/appState');
     setAppStateSilent({accountContentSettings: {value: undefined}, appConfig: {}} as any);
     AppSelectPeers = (await import('@components/appSelectPeers')).default;
-  });
+  }, 120000);
 
   beforeEach(() => {
     (rootScope as any).myId = SELF;
@@ -109,7 +113,11 @@ describe('peer picker — Groups stage (getMoreGroups)', () => {
     instance = harness();
   });
 
-  it('imports the real webpSupport probe, not a mock', () => {
+  // Note: this asserts the probe resolves to a boolean, not that it is unmocked —
+  // a mock returning a boolean would pass too. What it pins down is that the real
+  // module was imported and evaluated without throwing in this environment.
+  it('the WebP probe resolves to a boolean through the real module import', () => {
+    expect(webpSupport).not.toBeUndefined();
     expect(typeof webpSupport).toBe('boolean');
   });
 
