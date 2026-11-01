@@ -9,9 +9,12 @@
 
 import {
   addPendingAttachments,
+  createBatchCaptionPicker,
+  getAttachmentCaption,
   getAttachmentKind,
   getAttachmentMediaType,
   getAttachmentSizeLimit,
+  MAX_ATTACHMENT_CAPTION_LENGTH,
   MAX_PENDING_ATTACHMENTS,
   PendingAttachment,
   removePendingAttachment,
@@ -31,6 +34,52 @@ function makeFile(name: string, type: string, size = 1024): File {
 }
 
 const noPreview = (): undefined => undefined;
+
+describe('attachment caption', () => {
+  const plain = {
+    text: 'The avatars on the Archived folder are the wrong size.',
+    hasReply: false,
+    isForwarding: false,
+    hasSuggestedPost: false
+  };
+
+  it('carries the composer text as the caption of the batch', () => {
+    expect(getAttachmentCaption(plain)).toBe(plain.text);
+  });
+
+  it('sends no caption when the composer is empty or blank', () => {
+    expect(getAttachmentCaption({...plain, text: ''})).toBe('');
+    expect(getAttachmentCaption({...plain, text: '   \n  '})).toBe('');
+  });
+
+  it('keeps the text as its own message when the file path cannot carry the flag', () => {
+    // A caption is the body of the file message: it cannot express a reply, a
+    // forwarded batch or a suggested post, so those keep the files-then-text
+    // order instead of silently dropping the linkage.
+    expect(getAttachmentCaption({...plain, hasReply: true})).toBe('');
+    expect(getAttachmentCaption({...plain, isForwarding: true})).toBe('');
+    expect(getAttachmentCaption({...plain, hasSuggestedPost: true})).toBe('');
+  });
+
+  it('falls back to a separate message above the caption ceiling', () => {
+    expect(getAttachmentCaption({
+      ...plain,
+      text: 'x'.repeat(MAX_ATTACHMENT_CAPTION_LENGTH)
+    })).toHaveLength(MAX_ATTACHMENT_CAPTION_LENGTH);
+    expect(getAttachmentCaption({
+      ...plain,
+      text: 'x'.repeat(MAX_ATTACHMENT_CAPTION_LENGTH + 1)
+    })).toBe('');
+  });
+
+  it('gives the caption to exactly one file in the batch', () => {
+    const nextCaption = createBatchCaptionPicker('look at this');
+
+    expect(nextCaption()).toBe('look at this');
+    expect(nextCaption()).toBe('');
+    expect(nextCaption()).toBe('');
+  });
+});
 
 describe('composer attachment batching', () => {
   describe('peer detection', () => {

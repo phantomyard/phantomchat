@@ -43,6 +43,15 @@ export type PendingAttachment = {
   height?: number;
 };
 
+/**
+ * Ceiling for a composer caption that rides along with an attachment.
+ *
+ * The caption is the composer text, so it is bounded by the composer rather than
+ * by the wire: above this the text falls back to its own message instead of
+ * being truncated into a bubble that also has to hold the file.
+ */
+export const MAX_ATTACHMENT_CAPTION_LENGTH = 1024;
+
 export type RejectedAttachmentReason = 'empty' | 'too-large' | 'batch-full' | 'duplicate';
 
 export type RejectedAttachment = {
@@ -224,6 +233,76 @@ export function revokePendingAttachment(item: PendingAttachment): void {
 
 export function revokePendingAttachments(items: PendingAttachment[]): void {
   items.forEach(revokePendingAttachment);
+}
+
+/**
+ * Composer state that decides whether the typed text can travel as a caption.
+ *
+ * A caption is the *body* of the file message, so it is rejected whenever the
+ * text carries a per-message flag the file path cannot express — a reply, a
+ * story reply, a forwarded batch or a suggested post. Those fall back to the
+ * files-then-text order, which is what keeps the linkage.
+ */
+export type AttachmentCaptionContext = {
+  /** Raw composer text. */
+  text: string;
+  /** A reply (or story reply) is armed on the composer. */
+  hasReply: boolean;
+  /** A forwarded batch is staged. */
+  isForwarding: boolean;
+  /** A suggested post is being edited. */
+  hasSuggestedPost: boolean;
+};
+
+/**
+ * Returns the caption to attach to the first file of a batch, or `''` when the
+ * text has to be published as its own message.
+ *
+ * Why this exists: the recipient of a PhantomChat media message gets the file
+ * and nothing else, so a batch sent as `files… then text` reaches an agent as N
+ * context-free media events followed by the instruction that explains them — it
+ * answers the first one blind. Carrying the text as the caption of the file the
+ * batch starts with puts the instruction on the same published message as the
+ * first file, which is the only way it can be read in the same turn.
+ */
+export function getAttachmentCaption({
+  text,
+  hasReply,
+  isForwarding,
+  hasSuggestedPost
+}: AttachmentCaptionContext): string {
+  if(!text.trim()) {
+    return '';
+  }
+
+  if(hasReply || isForwarding || hasSuggestedPost) {
+    return '';
+  }
+
+  if(text.length > MAX_ATTACHMENT_CAPTION_LENGTH) {
+    return '';
+  }
+
+  return text;
+}
+
+/**
+ * Builds the per-item caption accessor for one batch.
+ *
+ * The caption is the body of a single message, so exactly one published file may
+ * carry it: the first one that actually dispatches. Everything after it — and
+ * any retry, where the composer is empty by then — gets nothing, because a
+ * second copy of the text would read as the user having said it twice.
+ */
+export function createBatchCaptionPicker(caption: string): () => string {
+  let pending = caption;
+
+  return () => {
+    const current = pending;
+    pending = '';
+
+    return current;
+  };
 }
 
 export type SendPendingAttachmentsResult = {
