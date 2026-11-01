@@ -18,9 +18,13 @@ import {wrapGroupMessage} from './nostr-crypto';
 import {broadcastGroupControl} from './group-control-messages';
 import {
   HISTORY_BACKFILL_MAX_MESSAGES,
+  applyIngestBudget,
   buildBackfillControlPayloads,
   collectGroupHistoryItems,
-  isWellFormedHistoryItem
+  isWellFormedHistoryItem,
+  isWellFormedHistoryItemShape,
+  stagePendingBackfill,
+  takePendingBackfill
 } from './group-history-backfill';
 import {writeGroupCreateServiceMessage, writeGroupRebindNoticeMessage} from './group-service-messages';
 import {
@@ -1540,50 +1544,119 @@ export class GroupAPI {
   }
 
   /**
-   * Apply a `group_history_backfill` relayed by another member.
+   * Apply a `group_history_backfill` relayed by the group's admin.
    *
    * Gates, in order:
    *   1. ADDRESSED TO US. The wraps are per-recipient, but a payload smuggled
    *      into a third member's wrap must not inject rows into a device that
    *      already holds the history, so the payload must name our own key.
-   *   2. AUTHENTICATED RELAYER. The gift-wrap already proves `senderPubkey`
-   *      signed it; it must also be a CURRENT member of the group (same gate
-   *      the live message path applies), and we must hold a record at all — a
-   *      backfill never materialises a group.
-   *   3. PER-ITEM. Original rumor id, author and payload are shape-checked and
-   *      the author must be a member; already-persisted ids are skipped by the
-   *      ingest loop.
+   *   2. RECORD REQUIRED — BUT NOT IMMEDIATELY. A backfill never materialises a
+   *      group. A newcomer's record arrives through the groups CRDT, which the
+   *      adder publishes AFTER the membership control, so the slice can
+   *      legitimately land first: it is staged (bounded, expiring) and drained
+   *      once the record shows up, instead of being lost forever.
+   *   3. ADMIN-ONLY RELAYER. Adding a member is admin-only, so the adder — and
+   *      therefore the only legitimate relayer — is the group's admin. Without
+   *      this any current member could silently plant rows attributed to
+   *      anyone, at any past timestamp; the live path authenticates authorship
+   *      through the gift-wrap and must not be widened here.
+   *   4. PER-ITEM. Original rumor id, author and payload are shape-checked, the
+   *      author must be a member, a future-dated row is rejected, and
+   *      already-persisted ids are skipped by the ingest loop.
+   *   5. AGGREGATE BUDGET. The receiver enforces its own byte/row ceiling per
+   *      group per window (group-history-backfill.ts) — the sender's caps are
+   *      advisory, these bytes come from another device.
    *
    * Authorship caveat, stated plainly: the relayer holds the plaintext, so an
    * item's `senderPubkey` cannot be cryptographically re-verified. The trust
-   * level is that of a member forwarding content to a new member, not that of
-   * the original signed rumor.
+   * level is that of the group's admin forwarding content to a new member, not
+   * that of the original signed rumor.
    */
   private async handleHistoryBackfill(payload: GroupControlPayload, senderPubkey: string): Promise<void> {
+    if(typeof payload.groupId !== 'string' || payload.groupId.length === 0) {
+      this.log.warn('[GroupAPI] group_history_backfill: missing groupId, dropping');
+      return;
+    }
     if(payload.historyTargetPubkey !== this.ownPubkey) {
       this.log('[GroupAPI] group_history_backfill: not addressed to this device, ignoring', payload.groupId.slice(0, 8));
       return;
     }
-    const group = await this.store.get(payload.groupId);
-    if(!group) {
-      this.log.warn('[GroupAPI] group_history_backfill: unknown group, dropping', payload.groupId.slice(0, 8));
-      return;
-    }
-    if(!group.members.includes(senderPubkey)) {
-      this.log.warn('[GroupAPI] group_history_backfill: relayer is not a member, dropping', senderPubkey.slice(0, 8));
-      return;
-    }
 
     const incoming = Array.isArray(payload.historyItems) ? payload.historyItems : [];
-    const items = incoming
-    .filter((item) => isWellFormedHistoryItem(item, group.members))
-    .slice(0, HISTORY_BACKFILL_MAX_MESSAGES);
-    if(items.length === 0) {
-      this.log.warn('[GroupAPI] group_history_backfill: no well-formed items, dropping', payload.groupId.slice(0, 8));
+    const group = await this.store.get(payload.groupId);
+    if(!group) {
+      // Order tolerance: hold the slice (shape-checked only — there is no
+      // member list to check it against yet) until the record lands.
+      const staged = incoming
+      .filter((item) => isWellFormedHistoryItemShape(item))
+      .slice(0, HISTORY_BACKFILL_MAX_MESSAGES);
+      stagePendingBackfill({groupId: payload.groupId, relayerPubkey: senderPubkey, items: staged});
+      this.log('[GroupAPI] group_history_backfill: no record yet, staged', {
+        groupId: payload.groupId.slice(0, 8),
+        items: staged.length
+      });
       return;
     }
 
-    await ingestBackfilledGroupHistory(this.ownPubkey, payload.groupId, items, this.dispatch);
+    await this.ingestHistoryBackfill(group.groupId, group.adminPubkey, group.members, senderPubkey, incoming);
+  }
+
+  /**
+   * Apply a slice against a group record we hold. Shared by the live path and
+   * the pending-stage drain so both run the same gates.
+   */
+  private async ingestHistoryBackfill(
+    groupId: string,
+    adminPubkey: string,
+    members: string[],
+    relayerPubkey: string,
+    incoming: any[]
+  ): Promise<void> {
+    if(relayerPubkey !== adminPubkey) {
+      this.log.warn('[GroupAPI] group_history_backfill: relayer is not the group admin, dropping', relayerPubkey.slice(0, 8));
+      return;
+    }
+    if(!members.includes(this.ownPubkey)) {
+      this.log.warn('[GroupAPI] group_history_backfill: this device is not a member, dropping', groupId.slice(0, 8));
+      return;
+    }
+
+    const items = incoming
+    .filter((item) => isWellFormedHistoryItem(item, members))
+    .slice(0, HISTORY_BACKFILL_MAX_MESSAGES);
+    if(items.length === 0) {
+      this.log.warn('[GroupAPI] group_history_backfill: no well-formed items, dropping', groupId.slice(0, 8));
+      return;
+    }
+
+    const allowed = applyIngestBudget(groupId, items);
+    if(allowed.length === 0) {
+      this.log.warn('[GroupAPI] group_history_backfill: ingest budget exhausted for now, dropping', groupId.slice(0, 8));
+      return;
+    }
+    if(allowed.length < items.length) {
+      this.log.warn('[GroupAPI] group_history_backfill: ingest budget trimmed the slice', {
+        groupId: groupId.slice(0, 8),
+        offered: items.length,
+        accepted: allowed.length
+      });
+    }
+
+    await ingestBackfilledGroupHistory(this.ownPubkey, groupId, allowed, this.dispatch);
+  }
+
+  /**
+   * Drain a slice that was staged because the group record had not arrived yet.
+   * Called from every point that materialises a record for a group
+   * (`handleGroupCreate`, and the groups CRDT upsert in the sync adapter).
+   * Idempotent: the stage is taken (cleared) before anything is ingested.
+   */
+  async drainPendingHistoryBackfill(groupId: string): Promise<void> {
+    const pending = takePendingBackfill(groupId);
+    if(!pending) return;
+    const group = await this.store.get(groupId);
+    if(!group) return;
+    await this.ingestHistoryBackfill(group.groupId, group.adminPubkey, group.members, pending.relayerPubkey, pending.items);
   }
 
   // ─── Control message handlers ─────────────────────────────────
@@ -1785,6 +1858,10 @@ export class GroupAPI {
     }
 
     this.log('[GroupAPI] group_create received:', payload.groupId);
+
+    // A backfill that arrived before this create was staged rather than
+    // dropped; the record it needed now exists.
+    await this.drainPendingHistoryBackfill(payload.groupId);
   }
 
   // ─── Legacy rebind migration (#188 remainder) ─────────────────────

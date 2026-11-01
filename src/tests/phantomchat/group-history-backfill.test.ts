@@ -189,12 +189,153 @@ describe('group-history-backfill — control payload chunking', () => {
     expect(ids.length).toBe(2);
   });
 
-  it('stops at the wire ceiling', () => {
-    const many = Array.from({length: 400}, (_, i) => item(i, 900));
-    const payloads = mod.buildBackfillControlPayloads(GROUP_ID, OUTSIDER_PUBKEY, many);
-    const carried = payloads.reduce((n, p) => n + p.historyItems!.reduce((m, i) => m + mod.utf8ByteLength(i.payload), 0), 0);
-    expect(carried).toBeLessThanOrEqual(mod.HISTORY_BACKFILL_MAX_WIRE_BYTES);
-    expect(payloads.reduce((n, p) => n + p.historyItems!.length, 0)).toBeLessThan(many.length);
+  it('drops the OLDEST rows when the content budget binds, never the newest', () => {
+    // 400 rows of ~1 KiB content offered against a 32 KiB budget: the slice must
+    // be a contiguous window ENDING at the newest row (the conversation right
+    // before the join is the whole point), not the oldest 32 rows.
+    const many = Array.from({length: 400}, (_, i) => item(i, 1024));
+    const carried = mod.buildBackfillControlPayloads(GROUP_ID, OUTSIDER_PUBKEY, many)
+    .flatMap((p) => p.historyItems!);
+
+    expect(carried.length).toBeGreaterThan(0);
+    expect(carried.length).toBeLessThan(many.length);
+    expect(carried[carried.length - 1].createdAt).toBe(many[many.length - 1].createdAt);
+
+    const firstKept = many.findIndex((i) => i.rumorId === carried[0].rumorId);
+    expect(carried.map((i) => i.rumorId)).toEqual(many.slice(firstKept).map((i) => i.rumorId));
+
+    const contentBytes = carried.reduce((n, i) => n + mod.historyItemBytes(i), 0);
+    expect(contentBytes).toBeLessThanOrEqual(mod.HISTORY_BACKFILL_TARGET_BYTES);
+    // ...and the budget is actually spent, not abandoned a seventh of the way in.
+    expect(contentBytes).toBeGreaterThan(mod.HISTORY_BACKFILL_TARGET_BYTES - 2048);
+  });
+
+  it('keeps the newest rows when the row cap binds', () => {
+    const many = Array.from({length: 900}, (_, i) => item(i, 8));
+    const carried = mod.buildBackfillControlPayloads(GROUP_ID, OUTSIDER_PUBKEY, many)
+    .flatMap((p) => p.historyItems!);
+
+    expect(carried.length).toBe(mod.HISTORY_BACKFILL_MAX_MESSAGES);
+    expect(carried[carried.length - 1].createdAt).toBe(1_700_000_899);
+    expect(carried[0].createdAt).toBe(1_700_000_500);
+  });
+
+  it('emits payloads oldest-first so receivers can append as they arrive', () => {
+    const items = Array.from({length: 120}, (_, i) => item(i));
+    const payloads = mod.buildBackfillControlPayloads(GROUP_ID, OUTSIDER_PUBKEY, items);
+    const carried = payloads.flatMap((p) => p.historyItems!);
+
+    expect(carried.map((i) => i.createdAt)).toEqual([...carried.map((i) => i.createdAt)].sort((a, b) => a - b));
+    expect(payloads[payloads.length - 1].historyItems!.at(-1)!.createdAt).toBe(items[items.length - 1].createdAt);
+  });
+});
+
+describe('group-history-backfill — receiver-side aggregate budget', () => {
+  let mod: typeof import('@lib/phantomchat/group-history-backfill');
+
+  beforeAll(async() => {
+    vi.resetModules();
+    mod = await import('@lib/phantomchat/group-history-backfill');
+  });
+
+  beforeEach(() => mod.resetIngestBudgets());
+
+  const item = (i: number, size = 128) => ({
+    rumorId: `${i.toString(16).padStart(4, '0')}${'9'.repeat(60)}`,
+    senderPubkey: MEMBER_PUBKEY,
+    createdAt: 1_700_000_000 + i,
+    payload: JSON.stringify({content: 'q'.repeat(size), type: 'text', id: `grp-${i}`, timestamp: 1_700_000_000_000})
+  });
+
+  it('trims a slice that exceeds the per-window content cap', () => {
+    const many = Array.from({length: 400}, (_, i) => item(i, 1024));
+    const accepted = mod.applyIngestBudget(GROUP_ID, many);
+
+    expect(accepted.length).toBeGreaterThan(0);
+    expect(accepted.length).toBeLessThan(many.length);
+    const bytes = accepted.reduce((n, i) => n + mod.historyItemBytes(i), 0);
+    expect(bytes).toBeLessThanOrEqual(mod.HISTORY_BACKFILL_INGEST_MAX_CONTENT_BYTES);
+  });
+
+  it('accumulates across payloads instead of resetting per payload', () => {
+    // A member repeating a 32 KiB payload must not get a fresh budget each time.
+    const payloads = Array.from({length: 8}, () => Array.from({length: 32}, (_, i) => item(i, 1024)));
+    let total = 0;
+    for(const slice of payloads) total += mod.applyIngestBudget(GROUP_ID, slice).length;
+
+    expect(total).toBeLessThanOrEqual(mod.HISTORY_BACKFILL_INGEST_MAX_ROWS);
+    expect(mod.applyIngestBudget(GROUP_ID, [item(999)])).toEqual([]);
+  });
+
+  it('opens a fresh window once the previous one expires', () => {
+    const start = 1_700_000_000_000;
+    const many = Array.from({length: 400}, (_, i) => item(i, 1024));
+    const first = mod.applyIngestBudget(GROUP_ID, many, start);
+    expect(mod.applyIngestBudget(GROUP_ID, [item(999)], start + 1000)).toEqual([]);
+
+    const later = start + mod.HISTORY_BACKFILL_INGEST_WINDOW_MS + 1;
+    expect(mod.applyIngestBudget(GROUP_ID, [item(998)], later).length).toBe(1);
+    expect(first.length).toBeGreaterThan(0);
+  });
+
+  it('bounds the number of groups holding a window', () => {
+    for(let g = 0; g < mod.HISTORY_BACKFILL_INGEST_MAX_GROUPS + 8; g++) {
+      mod.applyIngestBudget(`group-${g}`, [item(1)]);
+    }
+    // The evicted (oldest) group starts clean rather than staying wedged.
+    expect(mod.applyIngestBudget('group-0', [item(2)]).length).toBe(1);
+  });
+});
+
+describe('group-history-backfill — pending stage (order tolerance)', () => {
+  let mod: typeof import('@lib/phantomchat/group-history-backfill');
+
+  beforeAll(async() => {
+    vi.resetModules();
+    mod = await import('@lib/phantomchat/group-history-backfill');
+  });
+
+  beforeEach(() => mod.resetPendingBackfills());
+
+  const item = (i: number) => ({
+    rumorId: `${i.toString(16).padStart(4, '0')}${'9'.repeat(60)}`,
+    senderPubkey: MEMBER_PUBKEY,
+    createdAt: 1_700_000_000 + i,
+    payload: JSON.stringify({content: `m${i}`, type: 'text', id: `grp-${i}`, timestamp: 1_700_000_000_000})
+  });
+
+  it('round-trips a slice staged before its group record exists', () => {
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: MEMBER_PUBKEY, items: [item(1), item(2)]});
+
+    const pending = mod.takePendingBackfill(GROUP_ID);
+    expect(pending?.relayerPubkey).toBe(MEMBER_PUBKEY);
+    expect(pending?.items.map((i) => i.rumorId)).toEqual([item(1).rumorId, item(2).rumorId]);
+    // Take clears: a second drain cannot re-ingest.
+    expect(mod.takePendingBackfill(GROUP_ID)).toBeNull();
+  });
+
+  it('expires a staged slice that never finds a record', () => {
+    const start = 1_700_000_000_000;
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: MEMBER_PUBKEY, items: [item(1)]}, start);
+
+    expect(mod.takePendingBackfill(GROUP_ID, start + mod.HISTORY_BACKFILL_PENDING_TTL_MS + 1)).toBeNull();
+  });
+
+  it('rejects a malformed relayer and keeps the row/byte caps', () => {
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: 'not-hex', items: [item(1)]});
+    expect(mod.takePendingBackfill(GROUP_ID)).toBeNull();
+
+    const many = Array.from({length: 900}, (_, i) => item(i));
+    mod.stagePendingBackfill({groupId: GROUP_ID, relayerPubkey: MEMBER_PUBKEY, items: many});
+    expect(mod.takePendingBackfill(GROUP_ID)?.items.length).toBe(mod.HISTORY_BACKFILL_MAX_MESSAGES);
+  });
+
+  it('evicts the oldest group when the stage is full', () => {
+    for(let g = 0; g < mod.HISTORY_BACKFILL_MAX_PENDING_GROUPS + 4; g++) {
+      mod.stagePendingBackfill({groupId: `group-${g}`, relayerPubkey: MEMBER_PUBKEY, items: [item(1)]});
+    }
+    expect(mod.takePendingBackfill('group-0')).toBeNull();
+    expect(mod.takePendingBackfill(`group-${mod.HISTORY_BACKFILL_MAX_PENDING_GROUPS + 3}`)).not.toBeNull();
   });
 });
 
@@ -229,6 +370,13 @@ describe('group-history-backfill — per-item receiver gate', () => {
     expect(mod.isWellFormedHistoryItem(null, members)).toBe(false);
   });
 
+  it('rejects a future-dated item (it would win LWW against real rows)', () => {
+    const nowSec = 1_700_000_000;
+    const future = {...good(), createdAt: nowSec + mod.HISTORY_BACKFILL_MAX_CLOCK_SKEW_SEC + 60};
+    expect(mod.isWellFormedHistoryItem(future, members, {nowSec})).toBe(false);
+    expect(mod.isWellFormedHistoryItem({...good(), createdAt: nowSec + 5}, members, {nowSec})).toBe(true);
+  });
+
   it('rejects an oversized payload', () => {
     const oversized = {...good(), payload: JSON.stringify({content: 'n'.repeat(mod.HISTORY_BACKFILL_MAX_ITEM_BYTES)})};
     expect(mod.isWellFormedHistoryItem(oversized, members)).toBe(false);
@@ -243,6 +391,7 @@ const storeMock = vi.hoisted(() => ({
   getByEventId: vi.fn(async(..._args: any[]): Promise<any> => null),
   hasSeenEventId: vi.fn((): boolean => false),
   setReadCursor: vi.fn(async() => {}),
+  getReadCursor: vi.fn(async(): Promise<number> => 0),
   getMessages: vi.fn(async(): Promise<any[]> => [])
 }));
 
@@ -322,6 +471,7 @@ describe('ingestBackfilledGroupHistory — silent mode', () => {
     storeMock.getByEventId.mockReset().mockResolvedValue(null);
     storeMock.hasSeenEventId.mockReset().mockReturnValue(false);
     storeMock.setReadCursor.mockReset().mockResolvedValue(undefined);
+    storeMock.getReadCursor.mockReset().mockResolvedValue(0);
     storeMock.getTombstone.mockReset().mockResolvedValue(0);
     mockDispatchEvent.mockClear();
   });
@@ -348,11 +498,30 @@ describe('ingestBackfilledGroupHistory — silent mode', () => {
 
     const events = mockDispatchEvent.mock.calls.map((c) => c[0]);
     expect(events).toContain('history_append');
-    // The three things backfill must never do: badge the user, move the read
-    // cursor, or announce old messages as new.
+    // The three things backfill must never do: badge the user, announce old
+    // messages as new, or leave the slice counted as unread.
     expect(events).not.toContain('dialogs_multiupdate');
     expect(dispatch).not.toHaveBeenCalled();
     expect(mockDispatchEvent.mock.calls.map((c) => c[0])).not.toContain('phantomchat_new_message');
+  });
+
+  it('advances the read cursor to the newest backfilled row (no unread badge after reload)', async() => {
+    // `countUnread` is `mid > cursor`, and a newcomer's cursor is 0 — without
+    // this the whole slice comes back as an unread badge on the next reload.
+    storeMock.getByEventId.mockImplementation(async(eventId: string) => (eventId === 'e6'.repeat(32) ? {mid: 5000} : null));
+
+    await ingest(OWN_PUBKEY, GROUP_ID, items(), vi.fn());
+
+    expect(storeMock.setReadCursor).toHaveBeenCalledTimes(1);
+    expect(storeMock.setReadCursor).toHaveBeenCalledWith(`group:${GROUP_ID}`, 5000);
+  });
+
+  it('never drags an already-advanced cursor backwards', async() => {
+    storeMock.getByEventId.mockImplementation(async(eventId: string) => (eventId === 'e6'.repeat(32) ? {mid: 5000} : null));
+    storeMock.getReadCursor.mockResolvedValue(6000);
+
+    await ingest(OWN_PUBKEY, GROUP_ID, items(), vi.fn());
+
     expect(storeMock.setReadCursor).not.toHaveBeenCalled();
   });
 

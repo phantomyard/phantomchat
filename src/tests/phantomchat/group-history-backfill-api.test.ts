@@ -7,8 +7,9 @@
  *  - `addMember` relays a `group_history_backfill` slice addressed to the new
  *    member only, and never at the cost of the membership event (fire-and-
  *    forget, and skipped entirely when the add did not land);
- *  - a received backfill is ingested only when it names THIS device and comes
- *    from a current member of a group we hold a record for;
+ *  - a received backfill is ingested only when it names THIS device, comes from
+ *    the group's ADMIN, and lands against a record we hold — and a slice that
+ *    arrives before the record is staged rather than dropped;
  *  - items authored by a non-member are dropped instead of being rendered under
  *    a stranger's name.
  */
@@ -202,6 +203,7 @@ describe('GroupAPI.addMember — relays a bounded history slice', () => {
 
 describe('GroupAPI.handleHistoryBackfill — receiver gates', () => {
   let api: any;
+  let backfill: typeof import('@lib/phantomchat/group-history-backfill');
 
   const rumorFor = (payload: any) => ({
     id: 'f'.repeat(64),
@@ -218,14 +220,19 @@ describe('GroupAPI.handleHistoryBackfill — receiver gates', () => {
     ...overrides
   });
 
-  beforeEach(() => {
+  beforeEach(async() => {
     vi.clearAllMocks();
-    mockStore.get.mockResolvedValue(groupRecord());
+    backfill = await import('@lib/phantomchat/group-history-backfill');
+    backfill.resetPendingBackfills();
+    backfill.resetIngestBudgets();
+    // MEMBER_A is the group's ADMIN here: adding a member is admin-only, so the
+    // only legitimate relayer is the admin.
+    mockStore.get.mockResolvedValue(groupRecord({adminPubkey: MEMBER_A, members: [OWN_PUBKEY, MEMBER_A]}));
     mockIngest.mockResolvedValue(1);
     api = new GroupAPI(OWN_PUBKEY, new Uint8Array(32).fill(1), async() => {}, vi.fn());
   });
 
-  it('ingests a slice addressed to this device from a current member', async() => {
+  it('ingests a slice addressed to this device from the group admin', async() => {
     await api.handleControlMessage(rumorFor({
       type: 'group_history_backfill',
       groupId: GROUP_ID,
@@ -259,6 +266,46 @@ describe('GroupAPI.handleHistoryBackfill — receiver gates', () => {
     expect(mockIngest).not.toHaveBeenCalled();
   });
 
+  it('ignores a slice relayed by a member who is not the admin', async() => {
+    // Adding a member is admin-only, so a plain member relaying history could
+    // only be planting rows attributed to anyone, at any past timestamp.
+    mockStore.get.mockResolvedValue(groupRecord({adminPubkey: OUTSIDER, members: [OWN_PUBKEY, MEMBER_A, OUTSIDER]}));
+
+    await api.handleControlMessage(rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: [validItem()]
+    }), MEMBER_A);
+
+    expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it('stages a slice that arrives before the record, then drains it once the record lands', async() => {
+    // A newcomer's record arrives through the groups CRDT, AFTER the membership
+    // control — so the backfill legitimately lands first and must not be lost.
+    mockStore.get.mockResolvedValue(null);
+
+    await api.handleControlMessage(rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: [validItem()]
+    }), MEMBER_A);
+    expect(mockIngest).not.toHaveBeenCalled();
+
+    // The groups sync materialises the record and drains the stage.
+    mockStore.get.mockResolvedValue(groupRecord({adminPubkey: MEMBER_A, members: [OWN_PUBKEY, MEMBER_A]}));
+    await api.drainPendingHistoryBackfill(GROUP_ID);
+
+    expect(mockIngest).toHaveBeenCalledTimes(1);
+    expect(mockIngest.mock.calls[0][2]).toHaveLength(1);
+
+    // Take-once: a second drain cannot re-ingest the same slice.
+    await api.drainPendingHistoryBackfill(GROUP_ID);
+    expect(mockIngest).toHaveBeenCalledTimes(1);
+  });
+
   it('never materialises a group it has no record of', async() => {
     mockStore.get.mockResolvedValue(null);
 
@@ -268,6 +315,22 @@ describe('GroupAPI.handleHistoryBackfill — receiver gates', () => {
       historyTargetPubkey: OWN_PUBKEY,
       historyItems: [validItem()]
     }), MEMBER_A);
+
+    expect(mockIngest).not.toHaveBeenCalled();
+    expect(mockStore.save).not.toHaveBeenCalled();
+  });
+
+  it('drops a staged slice whose relayer turns out not to be the admin', async() => {
+    mockStore.get.mockResolvedValue(null);
+    await api.handleControlMessage(rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: [validItem()]
+    }), MEMBER_A);
+
+    mockStore.get.mockResolvedValue(groupRecord({adminPubkey: OUTSIDER, members: [OWN_PUBKEY, MEMBER_A, OUTSIDER]}));
+    await api.drainPendingHistoryBackfill(GROUP_ID);
 
     expect(mockIngest).not.toHaveBeenCalled();
   });
@@ -295,5 +358,30 @@ describe('GroupAPI.handleHistoryBackfill — receiver gates', () => {
     }), MEMBER_A);
 
     expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it('enforces its own aggregate budget across repeated payloads', async() => {
+    // The sender's caps are advisory; these bytes come from another device.
+    const slice = Array.from({length: 64}, (_, i) => validItem({
+      rumorId: i.toString(16).padStart(4, '0').repeat(16),
+      createdAt: 1_700_000_000 + i,
+      payload: JSON.stringify({content: 'p'.repeat(1024), type: 'text', id: `grp-${i}`, timestamp: 1_700_000_000_000})
+    }));
+    const payload = rumorFor({
+      type: 'group_history_backfill',
+      groupId: GROUP_ID,
+      historyTargetPubkey: OWN_PUBKEY,
+      historyItems: slice
+    });
+
+    let accepted = 0;
+    for(let i = 0; i < 6; i++) {
+      await api.handleControlMessage(payload, MEMBER_A);
+      const call = mockIngest.mock.calls[mockIngest.mock.calls.length - 1];
+      if(call) accepted += call[2].length;
+    }
+
+    expect(accepted).toBeLessThan(6 * slice.length);
+    expect(accepted).toBeLessThanOrEqual(backfill.HISTORY_BACKFILL_INGEST_MAX_ROWS);
   });
 });

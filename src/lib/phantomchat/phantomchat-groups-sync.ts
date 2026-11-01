@@ -921,22 +921,23 @@ export async function cleanupGroupChatInjection(groupPeerId: number): Promise<vo
 }
 
 /**
- * Render + persist an incoming group message. Called by
- * `GroupAPI.handleIncomingGroupMessage` after dedup.
- */
-/**
  * Options for {@link handleGroupIncoming}.
  *
- * `silent` is the BACKFILL mode: a slice of history relayed by a member who was
- * already in the group (`group_history_backfill`). The rows are persisted and
- * rendered in place, but nothing about the user's current view may move — no
- * dialog bump, no unread counter, no read cursor, no `phantomchat_new_message`.
- * Anything else would resurrect old messages as if they had just arrived.
+ * `silent` is the BACKFILL mode: a slice of history relayed by the group's
+ * admin to a member who joined after the fact (`group_history_backfill`). The
+ * rows are persisted and rendered in place, but nothing about the user's
+ * current view may move — no dialog bump, no unread counter, no read cursor,
+ * no `phantomchat_new_message`. Anything else would resurrect old messages as
+ * if they had just arrived.
  */
 export interface GroupIncomingOptions {
   silent?: boolean;
 }
 
+/**
+ * Render + persist an incoming group message. Called by
+ * `GroupAPI.handleIncomingGroupMessage` after dedup.
+ */
 export async function handleGroupIncoming(
   ownPubkey: string,
   groupId: string,
@@ -1190,6 +1191,31 @@ export async function ingestBackfilledGroupHistory(
   }
 
   console.log(LOG_PREFIX, 'backfill: ingested', ingested, 'of', items.length, 'item(s) for', groupId.slice(0, 8));
+
+  // The slice is OLD (mids are timestamp-derived, so every backfilled row sorts
+  // before anything that arrived after the join), but silent mode skipped the
+  // per-row cursor advance — leaving a newcomer's cursor at 0 and `countUnread`
+  // reporting the whole slice as unread on the next reload. Advance the cursor
+  // to the newest row of the slice: it is monotone (never moves backwards) and
+  // cannot swallow a live unread, whose mid is strictly newer than every
+  // backfilled one.
+  if(ingested > 0 && items.length > 0) {
+    const conversationId = `group:${groupId}`;
+    try {
+      const newest = items[items.length - 1];
+      const newestRow = await store.getByEventId(newest.rumorId);
+      const newestMid = newestRow?.mid;
+      if(typeof newestMid === 'number' && newestMid > 0) {
+        const cursor = await store.getReadCursor(conversationId);
+        if(newestMid > cursor) {
+          await store.setReadCursor(conversationId, newestMid);
+        }
+      }
+    } catch(err) {
+      console.warn(LOG_PREFIX, 'backfill: read cursor advance failed; slice stays unread', err);
+    }
+  }
+
   return ingested;
 }
 
