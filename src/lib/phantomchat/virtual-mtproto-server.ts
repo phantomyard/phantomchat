@@ -2979,8 +2979,8 @@ export class PhantomChatMTProtoServer {
           await store.setReadCursor(convId, maxId);
           // The receive-side counter is separate from the Worker's dialog.
           // Reconcile it too, or the next arrival resurrects the old count.
-          const {applyRemoteReadState} = await import('./phantomchat-message-handler');
-          await applyRemoteReadState(peerId);
+          const {applyRemoteReadState, getUnreadForPeer} = await import('./phantomchat-message-handler');
+          if(getUnreadForPeer(peerId) > 0) await applyRemoteReadState(peerId);
         }
       } catch(err) {
         console.warn(LOG_PREFIX, 'readHistory: failed to advance cursor', err);

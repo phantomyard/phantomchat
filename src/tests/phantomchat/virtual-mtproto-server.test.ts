@@ -60,8 +60,10 @@ const mockRemoveMapping = vi.hoisted(() => vi.fn());
 const mockRecordDeletedPeer = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 const mockApplyReadState = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockUnreadForPeer = vi.hoisted(() => vi.fn(() => 1));
 vi.mock('@lib/phantomchat/phantomchat-message-handler', () => ({
-  applyRemoteReadState: mockApplyReadState
+  applyRemoteReadState: mockApplyReadState,
+  getUnreadForPeer: mockUnreadForPeer
 }));
 
 // rootScope is reached via dynamic `await import('@lib/rootScope')` inside
@@ -1439,6 +1441,13 @@ describe('PhantomChatMTProtoServer', () => {
       expect(mockStore.setReadCursor).toHaveBeenCalledWith(CONVERSATION_ID, mid);
       expect(mockApplyReadState).toHaveBeenCalledWith(PEER_ID);
       expect(mockStore.setReadCursor.mock.invocationCallOrder[0]).toBeLessThan(mockApplyReadState.mock.invocationCallOrder[0]);
+    });
+
+    it('avoids re-counting the conversation when the receive counter is already zero', async() => {
+      mockUnreadForPeer.mockReturnValueOnce(0);
+      await server.handleMethod('messages.readHistory', {peer: {user_id: PEER_ID}, max_id: 42});
+      expect(mockStore.setReadCursor).toHaveBeenCalledWith(CONVERSATION_ID, 42);
+      expect(mockApplyReadState).not.toHaveBeenCalled();
     });
 
     it('is a no-op when max_id is 0', async () => {
