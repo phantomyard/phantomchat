@@ -1,6 +1,6 @@
 {
-  "stableRef": "ee2ae8078b0a1b193ae94b357d9aaa2c3eb80d6c",
-  "stableVersion": "1.1.103",
+  "stableRef": "2cee0bba600e6918a0c3f0bffc5ba0910e8214d0",
+  "stableVersion": "1.1.106",
   "compatibilityApprovals": {
     "public/channel-switcher.js": {
       "stable": "73edaf28910b166c177f12a1f4971d23d8e27fda57b055ffe181226164836406",
@@ -8,12 +8,12 @@
       "reason": "Routing-only shell API for the shared native-component Updates tab; same preference key, confirmation and navigation semantics. Requires independent content review."
     },
     "electron/build.mjs": {
-      "stable": "93dae478f33aabf64d97c331ec25cab6cab810a8c1ba9bf9871d9a7f439bc994",
+      "stable": "01fdbe467ccd2e720894bbf492029922b49fc2886ecb74ed30c8316b5a48f9de",
       "preview": "01fdbe467ccd2e720894bbf492029922b49fc2886ecb74ed30c8316b5a48f9de",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "package.json": {
-      "stable": "d34fb62184fa6cae05d2a4c1064d6bc30cb35f215e3839b918781dd0ddaedae2",
+      "stable": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
       "preview": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
       "reason": "Desktop build commands only; dependency declarations and stored formats unchanged."
     },
@@ -98,7 +98,7 @@
       "reason": "Built-in folder subtitle reads FOLDER_ID_GROUPS alongside the folder's own dialogs for folder 0, since Chats excludes groups and the Groups bucket would otherwise always be 0. Display string counts only - no storage, IPC or shape change."
     },
     "src/lib/storages/dialogs.ts": {
-      "stable": "2e119e1d896060895d94e8f66b400d8c826f6e77ba1b2b2f9755558f7b0817b5",
+      "stable": "d1a28a33f2ae3903c56a60fadc6caced67f53036b749e87a186a712f3d6ec97c",
       "preview": "d1a28a33f2ae3903c56a60fadc6caced67f53036b749e87a186a712f3d6ec97c",
       "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change. Session stability update: Filter rebuilds read every persisted row instead of index-derived lists. No stored format change. Pin/unread menu update: Group pin badge reads existing dialog pFlags. New Worker method mutates and persists existing folder pinnedOrders on its owning thread, avoiding a cloned RPC array. Existing shared pinnedOrders schema is unchanged. Requires independent exact-head content review. Unpin sort anchor: a group row that is no longer in its folder's pinned order keeps its own sort anchor (index_0, from the top message date) instead of being re-anchored on the Worker's message store, which holds no group message and fell through to \"now\". Chats keep the previous computation unchanged. Existing pinnedOrders and row schemas untouched; no stored-format change. Unpin anchor survives the Chats pass: folder 0 no longer overwrites a group row’s index_0 (its top-message sort anchor) when it refuses the row, so the unpin re-anchor reads the same key the previous commit introduced. Membership, persisted row, pinnedOrders and all schemas unchanged; no stored-format or wire change. Unpin anchor as a fallback, not a precedence: the anchor is now passed to generateIndexForDialog as a fallback date (seconds) so a resolvable top message or a newer draft still wins, and index_0 only replaces the \"now\" stamp. Existing pinnedOrders and row schemas untouched; no stored-format, wire or protocol change. State-restore sort anchor (#332): a restored row keeps a group's index_0 (its top-message sort anchor, kept by the new clearComputedDialogIndexes helper) while index_1..21 are still cleared, so the unpin re-anchor no longer falls through to \"now\". Existing persisted row, folder and pinnedOrders schemas unchanged; no stored-format, wire or protocol change."
     },
@@ -128,7 +128,7 @@
       "reason": "Groups (3) enumeration stage added after Archive so the recipient picker keeps offering existing groups (Chats still hides them by presentation rule). Read-only dialog enumeration; no storage or format change."
     },
     "src/lib/appManagers/appMessagesManager.ts": {
-      "stable": "bb37e2509f93b290a220f7295408b8f8dd5c157f7b03c7c6f9125bee3d5f7f91",
+      "stable": "dc06ae04e02840ac1d76466ffad6443352c11f317ff316726d716c5561bd96e6",
       "preview": "189be63d9e256b959da82f2bb007cdfcd38de72445c72b63574a93ebecfeaf3d",
       "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change. Send finalization now moves the in-memory dialog's top_message from the deleted temp mid to the real mid. It writes only through the existing setDialogTopMessage path; no storage, schema or wire-format change. sendPhantomChatAttachment()'s peer guard and sendFile()'s bridge shortcut now share one isPhantomChatPeerId() predicate instead of two hand-written range tests, so the guard cannot drift from the path it guards. No storage, database or IPC format change. Context-menu read fix: preserve chronological mids, persist the canonical cursor and reconcile existing unread counters/folder badges. No stored-format change. Requires independent exact-head content review. Read-cursor gating now tests the stored mid (readMaxId > 0) instead of the derived wire id, so a cursor at an exact multiple of 2^32 is no longer treated as empty. No storage, schema or wire-format change."
     },
@@ -208,17 +208,17 @@
       "reason": "Read-only archived composer: the chat pane sets `archived-readonly` from the dialog folder_id === 1 on navigation and follows a PhantomChat dialog_folder_update event while open. Presentation only - the send refusal is enforced in GroupAPI (groups) and in the VMT bridge (1:1 chats)."
     },
     "src/lib/phantomchat/phantomchat-groups-sync.ts": {
-      "stable": "9f41d100cee4c00c76069047149f34a45c9dc0647cd5341f55989b4d4a8991d2",
+      "stable": "da4f22f8961bbbfd9af4f79db5a5db3cc3e1a8c3897379768b48c4f120962d0a",
       "preview": "da4f22f8961bbbfd9af4f79db5a5db3cc3e1a8c3897379768b48c4f120962d0a",
       "reason": "Session peer class: the create-dialog index key follows the peer class (Sessions index_4 vs Groups index_3), and `relocateGroupDialog` moves an existing dialog row onto a re-derived peer id for the class reconcile - it awaits the drop of the old row and re-materialises it with the same read markers, unread count, top message, pin, mute, unread mention/reaction counts and archive flag (`carriedDialogState`). Conversation keys and message ids are untouched. `primeGroupKindCache` only seeds the in-process groupId -> kind memo. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Session stability update: Dialog snapshots carry archive state, delayed repaints cancel, synced class changes move the row. No stored format change. Move hardening: the dialog move lands the new row before dropping the old one and rolls back on failure. No stored format change. Pin/unread menu update: Mirrors optional record pin/unread flags into existing tweb pFlags; preserves them on message refresh, fresh sync restore and class relocation. Pin order mutation executes inside the Worker via MessagePort using existing pinnedOrders storage. No message identity, read-cursor, conversation key or wire changes. Requires independent exact-head content review. Live archive move: the row dispatched to the chat list is now the one dialogs storage reindexed (read back after pushDialog) instead of the pre-push clone, so an archived session/group leaves Sessions/Groups immediately and unarchive re-enters without a reload. Downgrade safety unchanged: same folder_id flag, same persisted row, no schema or storage-format change. Pin/unpin dispatch honesty: the row handed to the chat list after a flag change is now the one dialogs storage reindexed (read back after pushDialog) instead of the pre-push clone, so an unpinned group drops out of the pinned block without a reload. Same folder_id/pFlags contract, same persisted row, no schema, storage-format or wire change. Context-menu read fix: preserve chronological mids, persist the canonical cursor and reconcile existing unread counters/folder badges. No stored-format change. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
-      "stable": "ba524c59c1307ffd2335af5449f749a3564052307d7fa38c50324fee23272a75",
+      "stable": "b23eb84b2b32d30fd5c8d02fcc9a582882dbc19fbba654c1be0bd640a091a40e",
       "preview": "b23eb84b2b32d30fd5c8d02fcc9a582882dbc19fbba654c1be0bd640a091a40e",
       "reason": "Session peer-class refactor plus the 1:1 archive guard: the bridge refuses text and media for a peer whose dialog sits in the archive (folder_id 1), the one path every chat send crosses. The guard reads the dialog through the proxied dialogsStorage, so it awaits - a synchronous read was reading folder_id off a Promise and never refused at runtime. Membership stays a pure function of (groupId, kind) and writes remain LWW-merged by updatedAt - no stored-format change. Pin/unread menu update: Explicit group pin/unread RPC handlers update optional record flags; 1:1 behaviour retained. getDialogs maps existing record flags to existing dialog flags without changing schema, cursor or identity. Requires independent exact-head content review. isArchivedPeer now fails open LOUDLY: a missing dialogsStorage.getAnyDialog and a rejected proxied lookup each warn with the peer id instead of silently answering false, so a renamed hook cannot turn the 1:1 archive refusal back into dead code unnoticed. Control flow unchanged - still advisory, still fails open, no stored-format or schema change. Context-menu read fix: preserve chronological mids, persist the canonical cursor and reconcile existing unread counters/folder badges. No stored-format change. Requires independent exact-head content review. Reconcile only non-zero receive counters to avoid a redundant conversation scan while scrolling; no stored-format change."
     },
     "src/components/dialogsContextMenu.ts": {
-      "stable": "d1926701c8d0de5d2ee9548c99aed3efc30de3b6f755af91b2da80bcb340c53d",
+      "stable": "95cb488c369560065eaef66688ec496962cf1011c245d104788ae649a546daf1",
       "preview": "2d39c5d3bcc35b84d0127ff33f64d0e549f904bb9ca854031a707629e71729fe",
       "reason": "Archive/Unarchive are added for every GROUP-CLASS peer (groups and sessions alike) and route to GroupAPI.archiveGroup/unarchiveGroup. The session-specific menu path is removed, so sessions use the ordinary group menu. Presentation only. Pin/unread menu update: Group menu routes pin and read/unread through existing GroupAPI, and chooses read for counted unread as well as manual marks. Admin delete label reads existing identity and GroupRecord. No new persistence outside the optional GroupRecord fields described below. Requires independent exact-head content review. Explicit direct-chat Read gestures reset the existing durable cursor and main-thread receive counter before clearing the Worker flag, tolerating stale Worker counts. No schema or stored-format change. Requires independent exact-head content review. Threaded gestures are excluded from the conversation-scoped explicit-read branch, so a topic Mark as Read falls through to the existing thread-scoped readHistory rather than clearing every topic in the chat. Presentation/control-flow only; no schema or stored-format change."
     },
@@ -283,7 +283,7 @@
       "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text through sendBatchThenText(), which drops the text if the user switched chat mid-upload, and forwards the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review. Composer attachment caption: the typed text now travels as the caption of the first staged file instead of a separate message, so a recipient agent reads the instruction together with the attachment. The text keeps its own message when a caption cannot express the message flags (reply, story reply, forwarded batch, suggested post, or text over MAX_ATTACHMENT_CAPTION_LENGTH). No new store, schema, key or protocol field: the caption is a field that already exists on the existing file rumor. Preview hash refreshed: a failed batch consumes the composer once a file already published the caption, so the retry cannot caption the next file with the same text; the successful path clears it only when a file carried it. Peer guard unchanged."
     },
     "src/lib/phantomchat/phantomchat-message-handler.ts": {
-      "stable": "865f56016aa949b6f7d8a1b570e9665e2e7259d9e5ea340d861b45fa0d010b73",
+      "stable": "9d6ed16c9b03e75a8ddda77de59b2aa883c0928bbfca5cb0fad8d59c2991784e",
       "preview": "9d6ed16c9b03e75a8ddda77de59b2aa883c0928bbfca5cb0fad8d59c2991784e",
       "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Context-menu read fix: preserve chronological mids, persist the canonical cursor and reconcile existing unread counters/folder badges. No stored-format change. Requires independent exact-head content review."
     },
@@ -369,66 +369,66 @@
     },
     "src/lib/storages/clearComputedDialogIndexes.ts": {
       "preview": "eef321475e2849e845e0a49d40ecc32d5a9b2d08f8fa3359360a642b8d4d2397",
-      "stable": "absent",
+      "stable": "eef321475e2849e845e0a49d40ecc32d5a9b2d08f8fa3359360a642b8d4d2397",
       "reason": "New module holding the index-key clear that setDialogsFromState used to inline: index_1..index_21 always dropped, index_0 kept for a group-row sort anchor. Pure in-memory key deletion on an already-persisted object; no new storage, no format change. State-restore sort anchor (#332): a restored row keeps a group's index_0 (its top-message sort anchor, kept by the new clearComputedDialogIndexes helper) while index_1..21 are still cleared, so the unpin re-anchor no longer falls through to \"now\". Existing persisted row, folder and pinnedOrders schemas unchanged; no stored-format, wire or protocol change."
     },
     "electron/updateFeed.ts": {
-      "stable": "0b37a9653792c048340b550c092fe45b60240596435ea2b7cc1259d2d939af8a",
+      "stable": "d54737693d2e205baeb5c9216b0ea88b351441a204e1f636b93222a64020986c",
       "preview": "d54737693d2e205baeb5c9216b0ea88b351441a204e1f636b93222a64020986c",
       "reason": "JSDoc only: why paging exists, reworded because Electron Preview is now manual. No code, wire or storage change."
     },
     "electron/updateSettings.ts": {
-      "stable": "cc27ffb914390f08e5ea0e2bcd2a992f9f9e53ac0f4ee2e22e219bd9d966fcca",
+      "stable": "49fbd8fe4fb3f3fe3a6080763bf562375ab2bee6a86f07eda47369bb24826c8d",
       "preview": "49fbd8fe4fb3f3fe3a6080763bf562375ab2bee6a86f07eda47369bb24826c8d",
       "reason": "JSDoc only: default-channel rationale reworded because Electron Preview is now manual. No code, wire or storage change."
     },
     "src/environment/webpSupport.ts": {
-      "stable": "709c16ccb8ce8ec75588f051b0897333858c94e94c42c5b32c13fa13f2612306",
+      "stable": "a09c39e8f66364581e2a65261c4524acf14f4548eb8b1b2fd1df62bda0c88b6b",
       "preview": "a09c39e8f66364581e2a65261c4524acf14f4548eb8b1b2fd1df62bda0c88b6b",
       "reason": "Detect WebP support only from a string result. A browser that cannot encode WebP answers `toDataURL` with a PNG data URL - a string - so the capability answer was always correct there and is unchanged. Outside a browser the call can return nothing at all (jsdom has no canvas and answers null), and calling `.startsWith` on that threw at module scope, which made every module reaching this file unimportable under jsdom. The stable half is byte-identical, so this is a Preview-only refresh."
     },
     "electron/csp.ts": {
-      "stable": "absent",
+      "stable": "ad7e5e3c8f3a0f9345d2b68d9503315218fc8731105552b447b3bbd92b847d73",
       "preview": "ad7e5e3c8f3a0f9345d2b68d9503315218fc8731105552b447b3bbd92b847d73",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/frontendProxy.test.ts": {
-      "stable": "absent",
+      "stable": "6f4182c45169bb551b23b3cc7de5a385ac630e7b53f42a6170d3025e06a7136e",
       "preview": "6f4182c45169bb551b23b3cc7de5a385ac630e7b53f42a6170d3025e06a7136e",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/frontendProxy.ts": {
-      "stable": "absent",
+      "stable": "331336c552e9a9124efb7b4fe4f5144df08b780f0480b6c2ca5bdf7af60dcbce",
       "preview": "331336c552e9a9124efb7b4fe4f5144df08b780f0480b6c2ca5bdf7af60dcbce",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/main.ts": {
-      "stable": "8332f11f84510e119ee09d3c7c90c31af73d1e77103169a2934786c7346dd74b",
+      "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
       "preview": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/pi-harness/package.json": {
-      "stable": "absent",
+      "stable": "0b6311ad0ea5a1363b6ba2ed2bc174dda3491d62b93410bc94ff4538fb88b258",
       "preview": "0b6311ad0ea5a1363b6ba2ed2bc174dda3491d62b93410bc94ff4538fb88b258",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/pi-harness/pnpm-lock.yaml": {
-      "stable": "absent",
+      "stable": "150e21eac41a689e33014fb3eaf623c042b0b885f65b4bc5b921fc1e58b81a29",
       "preview": "150e21eac41a689e33014fb3eaf623c042b0b885f65b4bc5b921fc1e58b81a29",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/piHarness.ts": {
-      "stable": "absent",
+      "stable": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
       "preview": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/splash.ts": {
-      "stable": "absent",
+      "stable": "350699fa7c10c53259186ddd680cce1a596a86bb5683a9e956fe34e9acee234e",
       "preview": "350699fa7c10c53259186ddd680cce1a596a86bb5683a9e956fe34e9acee234e",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/tsconfig.json": {
-      "stable": "328e04b6b1f77c3667b95401a3d1a5c1930f98255a06c1159af05359e29d41a3",
+      "stable": "71615d13642ac455a34229fbfebe4b27721653c2866f8dddff0daa7aefde7be0",
       "preview": "71615d13642ac455a34229fbfebe4b27721653c2866f8dddff0daa7aefde7be0",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     }
