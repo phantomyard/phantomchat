@@ -185,6 +185,15 @@ export default class AppEditContactTab extends SliderSuperTab {
       this.scrollable.append(section.container);
     }
 
+    // Model and effort, on the PC hosting this External AI and nowhere else.
+    if(userId) {
+      const {getLocalAiApi} = await import('@lib/phantomchat/desktop-api');
+      if(getLocalAiApi()) {
+        const {appendExternalAiFields} = await import('@lib/phantomchat/external-ai-contact-form');
+        await appendExternalAiFields(Number(userId), this.scrollable);
+      }
+    }
+
     if(peerId) {
       const section = new SettingSection();
 
@@ -215,6 +224,13 @@ export default class AppEditContactTab extends SliderSuperTab {
                   if(!chatAPI?.deleteConversation) {
                     toggle();
                     toast(i18n('Contact.Delete.ChatNotReady'));
+                    return;
+                  }
+
+                  // An External AI hosted here has its own, native confirmation.
+                  const {confirmHostedDelete} = await import('@lib/phantomchat/local-ai');
+                  if(!await confirmHostedDelete(pubkey)) {
+                    toggle();
                     return;
                   }
 
@@ -277,6 +293,8 @@ export default class AppEditContactTab extends SliderSuperTab {
         if(isP2PPeer(Number(userId))) {
           const {renameP2PContact} = await import('@lib/phantomchat/rename-p2p-contact');
           await renameP2PContact(Number(userId), this.nameInputField.value, this.lastNameInputField.value);
+          const {renameHostedExternalAi} = await import('@lib/phantomchat/local-ai');
+          await renameHostedExternalAi(Number(userId), this.nameInputField.value, this.lastNameInputField.value);
         } else {
           await this.managers.appUsersManager.addContact(
             userId,
