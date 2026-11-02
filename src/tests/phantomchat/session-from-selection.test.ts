@@ -1,9 +1,9 @@
 /**
  * "Open New Session" on a text selection (owner 2026-11-02).
  *
- * Selecting a message and right-clicking offers Open New Session next to
- * Search Selected Text: the app switches to the Sessions folder, opens the
- * single-contact picker, and the session card lands in that space with the
+ * Selecting a message and right-clicking offers Open New Session: the app
+ * switches to the Sessions folder, opens the single-contact picker, and the
+ * session card lands in that space with the
  * selected text in the COMPOSER — prefilled, never auto-sent, so the user
  * edits the prompt and presses send themselves.
  *
@@ -59,11 +59,13 @@ const entrySlice = () => sliceBetween(contextMenu, ENTRY_START, ENTRY_END);
 const flowSlice = () => sliceBetween(sidebar, FLOW_START, FLOW_END);
 
 describe('text selection menu: Open New Session', () => {
-  it('sits right after Search Selected Text and uses the same selection gate', () => {
-    const search = contextMenu.indexOf("text: 'Chat.SearchSelected'");
+  it('sits right after Copy Selected Text and uses the same selection gate', () => {
+    // Search Selected Text was removed in #403, so the entry now follows the
+    // Copy Selected Text action in the same slot.
+    const copySelected = contextMenu.indexOf("text: 'Chat.CopySelectedText'");
     const open = contextMenu.indexOf("text: 'Chat.OpenNewSession'");
-    expect(search).toBeGreaterThan(-1);
-    expect(open).toBeGreaterThan(search);
+    expect(copySelected).toBeGreaterThan(-1);
+    expect(open).toBeGreaterThan(copySelected);
     expect(entrySlice()).toContain("verify: () => !!(this.message as Message.message).message && this.isTextSelected");
   });
 

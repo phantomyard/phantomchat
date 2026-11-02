@@ -833,14 +833,6 @@ export default class ChatContextMenu {
       onClick: this.onCopyClick,
       verify: () => !this.noForwards && !!(this.message as Message.message).message && this.isTextSelected
     }, {
-      icon: 'search',
-      text: 'Chat.SearchSelected',
-      onClick: () => {
-        const selection = document.getSelection();
-        this.chat.initSearch({query: selection.toString()});
-      },
-      verify: () => !!(this.message as Message.message).message && this.isTextSelected
-    }, {
       // Selection → new session (owner 2026-11-02): the sidebar switches to the
       // Sessions folder, opens the single-contact picker, and the picked
       // contact's new session gets this text PREFILLED in the composer (not

@@ -572,7 +572,6 @@ const lang = {
   'Search.Types.ThisChat': 'This Chat',
   'Search.Types.MyMessages': 'My Messages',
   'Search.Types.PublicPosts': 'Public Posts',
-  'Chat.SearchSelected': 'Search Selected Text',
   'Chat.OpenNewSession': 'Open New Session',
   'Privacy.VoiceMessagesPremiumCaption': 'Subscribe to PhantomChat Premium to restrict who can send you voice or video messages.\n\n**[What is PhantomChat Premium?]()**',
   'Privacy.MessagesInfo': 'You can restrict messages from users who are not in your contacts and whom you haven\'t messaged first.\n\n**[What is PhantomChat Premium?]()**',
