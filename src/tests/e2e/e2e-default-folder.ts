@@ -52,14 +52,17 @@ async function main() {
       assert.equal(ids[0], 0, 'Chats is leftmost: ' + ids);
     };
     const gesture = async(id, text, vertical = false) => {
-      await page.locator(`${rail(vertical)}[data-filter-id="${id}"]`).click({button: 'right', force: true});
+      // Switching to the top strip opens the Ctrl+F tip; its capture
+      // overlay consumes the next input. Dismiss it before the menu gesture.
+      await page.mouse.click(1200, 700);
+      await page.locator(`${rail(vertical)}[data-filter-id="${id}"]`).click({button: 'right'});
       await page.locator('.btn-menu-item').filter({hasText: text}).last().click();
     };
     await ready();
     console.log('browser ready');
     await page.evaluate(async() => {
-      const {setAppSettings} = await import('/src/stores/appSettings.ts');
-      setAppSettings('tabsInSidebar', false);
+      const {setFoldersSidebarEnabled} = await import('/src/lib/folders-sidebar-layout.ts');
+      setFoldersSidebarEnabled(false);
     });
     await page.locator('.menu-horizontal-div-item[data-filter-id="4"]').waitFor({state: 'visible'});
     await selected(0);
@@ -80,8 +83,8 @@ async function main() {
     console.log('PASS horizontal rail: set, immediate selection, reload, remove, Chats fallback');
 
     await page.evaluate(async() => {
-      const {setAppSettings} = await import('/src/stores/appSettings.ts');
-      setAppSettings('tabsInSidebar', true);
+      const {setFoldersSidebarEnabled} = await import('/src/lib/folders-sidebar-layout.ts');
+      setFoldersSidebarEnabled(true);
     });
     await page.locator('.folders-sidebar__folder-item[data-filter-id="4"]').waitFor({state: 'visible'});
     await order(true);
@@ -100,6 +103,10 @@ async function main() {
     await selected(0);
     await order(true);
     console.log('PASS vertical rail: set, immediate selection, reload, remove, Chats fallback');
+  } catch(error) {
+    console.error(await page.evaluate(() => ({menus: [...document.querySelectorAll('.btn-menu')].map((n) => n.textContent), body: document.body.className})));
+    if(process.env.PHANTOMBOT_SCRATCH) await page.screenshot({path: process.env.PHANTOMBOT_SCRATCH + '/default-folder-failure.png'});
+    throw error;
   } finally {
     await context.close();
     await browser.close();
