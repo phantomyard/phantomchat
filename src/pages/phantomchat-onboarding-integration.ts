@@ -320,6 +320,12 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // receives through the same pipeline.
       await startReceiveAfterCursorWarm(startChatAPI);
 
+      // Desktop only (#276): tell the main process who is signed in and start
+      // what it hosts. Fire-and-forget: this must never hold up boot.
+      void import('@lib/phantomchat/local-ai')
+      .then(({initLocalAi}) => initLocalAi(identity.publicKey, bridge.getRelayPool()))
+      .catch((err) => console.warn('[PhantomChatOnboardingIntegration] local AI init failed:', err));
+
       // --- Initialize PhantomChatSync ---
       // Wired after the gate (see the receive-boot note above) so no delivery
       // can reach the sync/projection pipeline before it exists.

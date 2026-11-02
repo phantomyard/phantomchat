@@ -81,6 +81,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # `run` mode (not watch). The vitest config already excludes the
       # browser/Tor e2e suites and runs unit tests under jsdom.
+      # electron/localAi tests run the real tools from the bundled runtime.
+      - run: pnpm --dir electron/pi-harness install --frozen-lockfile --ignore-scripts
       - run: node --test scripts/releases/registry.node-test.mjs
       - run: pnpm exec vitest run
 

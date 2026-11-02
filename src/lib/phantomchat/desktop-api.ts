@@ -43,6 +43,75 @@ export interface PermissionSettings {
   granted: string[];
 }
 
+export type LocalAiOutcome<T> = {ok: true; value: T} | {ok: false; error: string};
+
+export interface LocalAiProvider {
+  id: string;
+  name: string;
+  configured: boolean;
+  source: string | null;
+  featured: boolean;
+  custom: boolean;
+  canUseKey: boolean;
+  canUseOAuth: boolean;
+  baseUrl: string | null;
+}
+
+export interface ExternalAiView {
+  pubkey: string;
+  ownerPubkey: string;
+  name: string;
+  model: string | null;
+  effort: string | null;
+  createdAt: number;
+}
+
+export interface LocalAiModelChoice {
+  value: string;
+  label: string;
+  provider: string;
+  providerName: string;
+}
+
+export interface LocalAiEffortChoices {
+  levels: string[];
+  enabled: boolean;
+}
+
+export type LocalAiEvent =
+  | {type: 'tools-activity'; running: number}
+  | {type: 'auth-prompt'; id: string; message: string; placeholder?: string; secret: boolean};
+
+export interface LocalToolGroupInfo {
+  isSession: boolean;
+  members: string[];
+}
+
+/** External AI and Local PC access (issue #276). The nsec never crosses this bridge. */
+export interface LocalAiApi {
+  'set-context'(ownerPubkey: string, relays: string[]): Promise<void>;
+  'list-providers'(): Promise<LocalAiOutcome<LocalAiProvider[]>>;
+  'configure-phantomops'(token: string): Promise<LocalAiOutcome<void>>;
+  'configure-openai-compatible'(baseUrl: string, key: string, model: string): Promise<LocalAiOutcome<void>>;
+  'set-provider-key'(provider: string, key: string): Promise<LocalAiOutcome<void>>;
+  'sign-in'(provider: string): Promise<LocalAiOutcome<void>>;
+  'remove-provider'(provider: string): Promise<LocalAiOutcome<void>>;
+  'answer-auth-prompt'(id: string, value: string | null): Promise<void>;
+  'list-external-ai'(): Promise<ExternalAiView[]>;
+  'create-external-ai'(): Promise<LocalAiOutcome<ExternalAiView>>;
+  'create-first-external-ai'(): Promise<LocalAiOutcome<ExternalAiView | null>>;
+  'greet-external-ai'(pubkey: string): Promise<void>;
+  'update-external-ai'(pubkey: string, change: {name?: string; model?: string | null; effort?: string | null}): Promise<ExternalAiView | null>;
+  'delete-external-ai'(pubkey: string): Promise<boolean>;
+  'model-choices'(): Promise<LocalAiOutcome<LocalAiModelChoice[]>>;
+  'effort-choices'(model: string | null): Promise<LocalAiOutcome<LocalAiEffortChoices>>;
+  'local-access-enabled'(): Promise<string[]>;
+  'capability'(): Promise<unknown>;
+  'set-local-access'(pubkey: string, on: boolean, name: string): Promise<{enabled: boolean; notify: unknown | null}>;
+  'tool-message'(sender: string, payload: unknown, group: LocalToolGroupInfo | null): Promise<unknown[]>;
+  onEvent(listener: (event: LocalAiEvent) => void): () => void;
+}
+
 export interface PhantomChatDesktopApi {
   getVersion(): Promise<string>;
   getPlatform(): Promise<string>;
@@ -60,6 +129,7 @@ export interface PhantomChatDesktopApi {
    * older packaged bridge degrades instead of throwing.
    */
   resetPermissionSettings?(): Promise<PermissionSettings>;
+  localAi?: LocalAiApi;
 }
 
 export function getDesktopApi(): PhantomChatDesktopApi | null {
@@ -90,4 +160,9 @@ export function hasDesktopPermissionApi(): boolean {
 export function hasDesktopUpdateApi(): boolean {
   const api = getDesktopApi();
   return !!api && typeof api.getUpdateState === 'function' && typeof api.onUpdateState === 'function';
+}
+
+/** The embed's API, or null on the PWA and on desktop builds from before #276. */
+export function getLocalAiApi(): LocalAiApi | null {
+  return getDesktopApi()?.localAi ?? null;
 }

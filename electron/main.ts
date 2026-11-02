@@ -32,6 +32,8 @@ import {
 import {initUpdater} from './updater';
 import {attachWindowDiagnostics, logsDir, startDiagnosticsAfterReady, startDiagnosticsEarly} from './diagnosticsElectron';
 import {LOG_FILE_NAME} from './diagnostics';
+import {createLocalAiHost, registerLocalAiIpc, runPiEmbedProbe} from './localAi/localAiIpc';
+import type {LocalAiHost} from './localAi/localAiHost';
 
 // NOTE: this module is bundled to CommonJS by electron/build.mjs, so the
 // Node globals __dirname/__filename are available at runtime and point at
@@ -179,6 +181,7 @@ function promptForPermission(
 
 let mainWindow: BrowserWindow | null = null;
 let frontend: ReturnType<typeof createFrontendProxy> | undefined;
+let localAi: LocalAiHost | undefined;
 
 // IPC surface — keep it in lockstep with the preload allowlist.
 ipcMain.handle('desktop:get-version', () => app.getVersion());
@@ -331,7 +334,13 @@ app.on('second-instance', () => {
   }
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async() => {
+  // Packaging probe: proves the embed loads in the real main process, not just
+  // that the CLI runs under ELECTRON_RUN_AS_NODE. Keeps its data in a temp folder.
+  if(process.argv.includes('--pi-embed-probe')) {
+    process.exit(await runPiEmbedProbe(__dirname));
+  }
+
   loadPermissionSettings();
   if(!isDev) {
     frontend = createFrontendProxy({
@@ -341,6 +350,8 @@ app.whenReady().then(() => {
     });
     protocol.handle('app', (request) => frontend!.handle(request));
   }
+  localAi = createLocalAiHost(() => mainWindow, __dirname);
+  registerLocalAiIpc(localAi, isDev ? DEV_URL : undefined);
   createWindow();
   startDiagnosticsAfterReady(() => mainWindow);
 
@@ -360,6 +371,10 @@ app.whenReady().then(() => {
 }).catch((err) => {
   console.error(err instanceof Error ? err.message : err);
   app.exit(1);
+});
+
+app.on('before-quit', () => {
+  localAi?.shutdown();
 });
 
 app.on('window-all-closed', () => {
