@@ -34,3 +34,27 @@ describe('readHistory preserves PhantomChat chronological mids across the Worker
     expect(localUpdate).toHaveBeenCalledWith(expect.objectContaining({_: 'updateReadHistoryInbox', max_id: maxId}));
   });
 });
+
+describe('cold reply fetch preserves PhantomChat full mids and conversation context (#325)', () => {
+  it.each([1_000_000_000_000_001, -8_000_000_000_000_001, -12_000_000_000_000_002, 42])('peer %s', async(peerId) => {
+    const mid = 1_793_639_334_616_956;
+    const resolve = vi.fn();
+    const peer = {_: peerId < 0 ? 'inputPeerChat' : 'inputPeerUser', [peerId < 0 ? 'chat_id' : 'user_id']: Math.abs(peerId)};
+    const invokeApiSingle = vi.fn().mockResolvedValue({messages: [{id: mid, mid}], users: [], chats: []});
+    const manager = Object.assign(Object.create(AppMessagesManager.prototype), {
+      needSingleMessages: new Map([[peerId, new Map([[mid, {resolve}]])]]),
+      apiManager: {invokeApiSingle},
+      appPeersManager: {isChannel: () => false, getInputPeerById: () => peer},
+      appMessagesIdsManager: {generateMessageId: (id) => id},
+      saveApiResult: vi.fn(), deletedMessages: new Set(),
+      rootScope: {dispatchEvent: vi.fn()}
+    });
+    await manager.fetchSingleMessages();
+    expect(invokeApiSingle).toHaveBeenCalledWith('messages.getMessages', {
+      id: [{_: 'inputMessageID', id: peerId === 42 ? getServerMessageId(mid) : mid}],
+      ...(peerId === 42 ? {} : {peer})
+    });
+    expect(resolve).toHaveBeenCalledWith(expect.objectContaining({id: mid}));
+    expect(manager.deletedMessages.size).toBe(0);
+  });
+});

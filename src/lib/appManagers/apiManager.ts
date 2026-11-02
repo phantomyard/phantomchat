@@ -689,7 +689,6 @@ export class ApiManager extends ApiManagerMethods {
     'langpack.getDifference': {_: 'langPackDifference', lang_code: 'en', from_version: 0, version: 1, strings: []},
 
     // ─── P1: Core messaging / contacts / groups ───────────────────────
-    'messages.getMessages': {_: 'messages.messages', messages: [], users: [], chats: []},
     'messages.getMessagesViews': {_: 'messages.messagesViews', views: [], chats: [], users: []},
     'messages.getOnlines': {_: 'chatOnlines', onlines: 0},
     'messages.getAllDrafts': {_: 'updates', updates: [], users: [], chats: [], date: 0, seq: 0},
@@ -867,6 +866,7 @@ export class ApiManager extends ApiManagerMethods {
   // Methods that require real data from PhantomChatMTProtoServer via MessagePort bridge
   private static readonly PHANTOMCHAT_BRIDGE_METHODS = new Set([
     'messages.getHistory',
+    'messages.getMessages',
     'messages.getDialogs',
     'messages.getPinnedDialogs',
     // Per-peer dialog reload (reloadConversation). Was an empty static stub, so

@@ -10125,10 +10125,12 @@ export class AppMessagesManager extends AppManager {
 
       for(const [peerId, map] of this.needSingleMessages) {
         const mids = [...map.keys()];
+        const numericPeer = Number(peerId);
+        const isPhantomChatPeer = numericPeer >= 1e15 || isGroupPeer(numericPeer);
         const msgIds: InputMessage[] = mids.map((mid) => {
           return {
             _: 'inputMessageID',
-            id: getServerMessageId(mid)
+            id: isPhantomChatPeer ? mid : getServerMessageId(mid)
           };
         });
 
@@ -10140,9 +10142,13 @@ export class AppMessagesManager extends AppManager {
             id: msgIds
           });
         } else {
-          promise = this.apiManager.invokeApiSingle('messages.getMessages', {
-            id: msgIds
-          });
+          // PhantomChat's local adapter needs the conversation to seek its
+          // existing compound index. Telegram requests keep their wire shape.
+          const params = {
+            id: msgIds,
+            ...(isPhantomChatPeer ? {peer: this.appPeersManager.getInputPeerById(peerId)} : {})
+          };
+          promise = this.apiManager.invokeApiSingle('messages.getMessages', params);
         }
 
         const after = promise.then((getMessagesResult) => {

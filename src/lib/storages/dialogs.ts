@@ -251,9 +251,13 @@ export default class DialogsStorage extends AppManager {
         continue;
       }
 
-      // if(dialog.peerId !== SERVICE_PEER_ID) {
-      dialog.top_message = getServerMessageId(dialog.top_message); // * fix outgoing message to avoid copying dialog
-      // }
+      // PhantomChat mids are chronological IDs, not Telegram wire IDs. Taking
+      // mid % 2^32 here adds a stale anchor to the cold history slice; the first
+      // open then renders only the preview even after IDB returns the full page.
+      const peerId = Number(dialog.peerId);
+      if(peerId < 1e15 && !isGroupPeer(peerId)) {
+        dialog.top_message = getServerMessageId(dialog.top_message);
+      }
 
       if(dialog.topMessage) {
         this.appMessagesManager.saveMessages([dialog.topMessage]);
