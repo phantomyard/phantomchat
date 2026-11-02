@@ -526,19 +526,19 @@
     },
     "electron/localAi/localAccess.test.ts": {
       "stable": "absent",
-      "preview": "0b9423a72f2a2776884cbab72e0a828b387a956c0d9695f606ffd4974fad26f5",
+      "preview": "f97797633fc7a473301bd90e47786898938d704d1886dcd765fd5e0101780a0f",
       "published": "absent",
       "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
     },
     "electron/localAi/localAccess.ts": {
       "stable": "absent",
-      "preview": "e2da21a59fec32d2d08f2fb6b94842f31a1c8b590ccc59bce7a6e2d660d1835d",
+      "preview": "f885ef6c66fa70291dafdbaf93d740ec25907c9c64e76b2da37eb6f2156bfcee",
       "published": "absent",
       "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
     },
     "electron/localAi/localAiHost.ts": {
       "stable": "absent",
-      "preview": "d8f185f37bbab79d9bf67ade6e8a77dfa05b23cec7f54acdf229227c5e950381",
+      "preview": "80e357650fa9c241725c2c0202aa175cfe8e35f3d4a1acda6c9304aa30fb7d46",
       "published": "absent",
       "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
     },
@@ -550,13 +550,13 @@
     },
     "electron/localAi/localTools.test.ts": {
       "stable": "absent",
-      "preview": "51472cf56bde679c7cbf65a5f14257dbb6b29d15437f9c6dace0d50b3f38326d",
+      "preview": "e970518b49e668e7fcaf273ac93795a1658794637d7f6539284e03f0041a977c",
       "published": "absent",
       "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
     },
     "electron/localAi/localTools.ts": {
       "stable": "absent",
-      "preview": "ffc55ed269cd4a91f488a3006c6f177c22b2d0e16e596af75730b1894baaaa99",
+      "preview": "073b2c3a8d4e6cf11f7e7de028e5e2000df986fd611e592b5c44fe9a304924bf",
       "published": "absent",
       "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
     },
