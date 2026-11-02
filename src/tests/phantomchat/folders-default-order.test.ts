@@ -10,9 +10,9 @@ function storage() {
 }
 
 describe('Chats stays leftmost independently of startup preference', () => {
-  it('repairs persisted Sessions-first ordering using real seeding', () => {
+  it('repairs persisted custom/Sessions-first ordering using real seeding', () => {
     const fs = storage();
-    const result = fs.prependFilters([4, 3, 0, 1, 8].map(buildLocalFilter));
+    const result = fs.prependFilters([8, 4, 3, 0, 1].map(buildLocalFilter));
     expect(result.map((f: any) => f.id)).toEqual([0, 3, 4, 1, 8]);
   });
 
