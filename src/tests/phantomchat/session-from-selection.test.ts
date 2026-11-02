@@ -106,6 +106,20 @@ describe('sidebar: the selection flow', () => {
     expect(picker).toBeGreaterThan(column);
   });
 
+  it('only moves the column when it is actually away', () => {
+    const flow = flowSlice();
+    const guard = flow.indexOf('document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)');
+    const call = flow.indexOf('appImManager.selectTab(APP_TABS.CHATLIST)');
+    // `selectTab` also rewrites the hash — `overrideHash(undefined)` for
+    // CHATLIST — so an unconditional call with a DM open at desktop width
+    // clears the hash of a chat that is still on screen, and a reload then
+    // loses it. The class is toggled by `selectTab` itself, so it is the app's
+    // own "left column is the active tab" flag; the call is a no-op when the
+    // column is already there.
+    expect(guard).toBeGreaterThan(-1);
+    expect(call).toBeGreaterThan(guard);
+  });
+
   it('prefills the new session composer and does not send', () => {
     expect(flowSlice()).toContain('chat.input.setInputValue(prefill, true, true)');
     expect(flowSlice()).toContain('chat.input.saveDraft()');

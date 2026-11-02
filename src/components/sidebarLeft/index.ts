@@ -1096,8 +1096,17 @@ export class AppSidebarLeft extends SidebarSlider {
       // The listener fires this flow as `void …`, so a rejection here must not
       // swallow the picker: log it and open the picker anyway, since the folder
       // switch is context for the pick, not a gate on it.
+      //
+      // Only when the column is actually away. `selectTab` also rewrites the
+      // hash (`overrideHash(undefined)` for CHATLIST), so calling it with the
+      // column already shown — a DM open at desktop width — would clear the
+      // hash of a chat that stays open behind the picker, and a reload would
+      // then lose it. The class is the app's own "left column is the active
+      // tab" flag, toggled by `selectTab` itself.
       try {
-        await appImManager.selectTab(APP_TABS.CHATLIST);
+        if(!document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)) {
+          await appImManager.selectTab(APP_TABS.CHATLIST);
+        }
         rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION});
       } catch(err) {
         console.error('[PhantomChat.chat] failed to open the Sessions folder:', err);
