@@ -1651,7 +1651,11 @@ export class AppMessagesManager extends AppManager {
     // Issue #111: counter-suffixed tempMid avoids same-ms collisions when
     // sendGrouped Promise.all's multiple sendFile calls for an album.
     const seq = ++this.phantomchatSendFileCounter;
-    const tempMid = -(Date.now() * 1000 + (seq % 1000));
+    // Positive and on the same `seconds * 1e6 + slot` scale as real mids, so the
+    // optimistic bubble sorts as the newest message. A negative mid sorts as the
+    // OLDEST one in any mid-ordered list (group bubbles, the history slice) and
+    // the bubble renders above the loaded history, out of sight.
+    const tempMid = Date.now() * 1000 + (seq % 1000);
     try {
       const updates: any = await this.apiManager.invokeApi('phantomchatSendFile' as any, {
         peerId,
@@ -3611,6 +3615,29 @@ export class AppMessagesManager extends AppManager {
     }
 
     this.setDialogTopMessage(message);
+  }
+
+  /**
+   * [PhantomChat.chat] Swap a settled optimistic media message for its real mid
+   * in the Worker's history. `appendLocalHistoryMessage` put the temp mid in the
+   * slice; left there, reopening the chat renders it next to the real row, as a
+   * duplicate bubble. Runs for every completion path (send, retry, queue flush).
+   */
+  public replaceLocalTempMessage(peerId: PeerId, tempMid: number, realMid: number) {
+    const storage = this.getHistoryMessagesStorage(peerId);
+    const tempMessage = storage.get(tempMid) as Message.message;
+    if(!tempMessage) return;
+
+    const historyStorage = this.getHistoryStorage(peerId);
+    if(historyStorage.history.delete(tempMid) && historyStorage.count !== null) {
+      --historyStorage.count;
+    }
+    this.deleteMessageFromStorage(storage, tempMid);
+
+    const realMessage = (storage.get(realMid) as Message.message) ||
+      {...tempMessage, id: realMid, mid: realMid};
+    this.appendLocalHistoryMessage(realMessage);
+    this.settleDialogTopAfterSend(realMessage, tempMid);
   }
 
   public cancelPendingMessage(randomId: string) {
