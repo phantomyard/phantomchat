@@ -36,6 +36,7 @@ TESTS=(
   e2e-avatar.ts
   e2e-contacts-and-sending.ts
   e2e-context-menu.ts
+  e2e-default-folder.ts
   e2e-vmtproto-smoke.ts
   e2e-local-relay-smoke.ts
   e2e-p2p-messaging.ts

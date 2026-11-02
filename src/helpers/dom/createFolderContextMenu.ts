@@ -4,6 +4,7 @@ import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import {appSettings, setAppSettings} from '@stores/appSettings';
 import {DEFAULT_CHAT_FOLDER_SETTING_KEY} from '@lib/folders-default';
+import rootScope from '@lib/rootScope';
 import {toastNew} from '@components/toast';
 
 export default function createFolderContextMenu({
@@ -19,9 +20,11 @@ export default function createFolderContextMenu({
   // Archives is a read-only dead end — nobody wants the app to open on it, so
   // Set/Remove default are suppressed there. The rest of the menu still applies.
   const isArchiveFolder = (filterId: number) => filterId === FOLDER_ID_ARCHIVE;
+  const currentDefaultId = () => appSettings[DEFAULT_CHAT_FOLDER_SETTING_KEY] ?? FOLDER_ID_ALL;
   const setDefaultFolder = (filterId: number) => {
     // All Chats is the natural fallback — picking it just clears the preference.
     setAppSettings(DEFAULT_CHAT_FOLDER_SETTING_KEY, filterId === FOLDER_ID_ALL ? undefined : filterId);
+    rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: filterId});
     toastNew({langPackKey: filterId === FOLDER_ID_ALL ? 'ChatList.Filter.RemoveDefaultToast' : 'ChatList.Filter.SetDefaultToast'});
   };
 
@@ -32,14 +35,14 @@ export default function createFolderContextMenu({
       onClick: () => {
         setDefaultFolder(clickFilterId);
       },
-      verify: () => !isArchiveFolder(clickFilterId) && appSettings[DEFAULT_CHAT_FOLDER_SETTING_KEY] !== clickFilterId
+      verify: () => !isArchiveFolder(clickFilterId) && currentDefaultId() !== clickFilterId
     }, {
       icon: 'close',
       text: 'ChatList.Filter.RemoveDefault',
       onClick: () => {
         setDefaultFolder(FOLDER_ID_ALL);
       },
-      verify: () => !isArchiveFolder(clickFilterId) && appSettings[DEFAULT_CHAT_FOLDER_SETTING_KEY] === clickFilterId && clickFilterId !== FOLDER_ID_ALL
+      verify: () => !isArchiveFolder(clickFilterId) && currentDefaultId() === clickFilterId && clickFilterId !== FOLDER_ID_ALL
     }, {
       // Owner batch 6 (2026-10-30): the "Edit folders" entry is gone — folders
       // are code-defined, so there is no folder-editing surface to send anyone
