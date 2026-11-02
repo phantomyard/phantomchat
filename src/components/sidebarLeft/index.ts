@@ -102,6 +102,7 @@ import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import AppPhantomChatQRTab from '@components/sidebarLeft/tabs/phantomchatQR';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
 import {decodePubkey} from '@lib/phantomchat/nostr-identity';
+import {composerDraftFromSelection} from '@lib/phantomchat/group-sessions';
 import {loadCachedProfile} from '@lib/phantomchat/profile-cache';
 
 export const LEFT_COLUMN_ACTIVE_CLASSNAME = 'is-left-column-shown';
@@ -224,6 +225,13 @@ export class AppSidebarLeft extends SidebarSlider {
         const count = folder.unreadPeerIds.size;
         setBadgeContent(this.archivedCount, count ? '' + formatNumber(count, 1) : '');
       }
+    });
+
+    // Selected text → new session (owner 2026-11-02): the chat's text-selection
+    // context menu only knows the selection, so it dispatches this and the flow
+    // that can open the picker lives here, next to the Sessions `+`.
+    rootScope.addEventListener('phantomchat_new_session_from_selection', ({text}) => {
+      void this.openNewSessionFlow(text);
     });
 
     let statusMiddlewareHelper: MiddlewareHelper, fireOnNew: boolean;
@@ -1054,12 +1062,26 @@ export class AppSidebarLeft extends SidebarSlider {
   /**
    * Session space + button (owner batch 11): the single-contact picker, then a
    * SESSION peer. No name prompt, no multi-select — one phantom per session, the
-   * title starts as 'New session' and is replaced with the first 30 characters of
+   * title starts as 'New session' and is replaced with the first 50 characters of
    * the first prompt (GroupAPI.sendMessage). The picker's click handler is
    * replaced by the `onPickPeer` hook, so picking a row creates the session
    * instead of opening a DM.
+   *
+   * `prefillText` (owner 2026-11-02, "Open New Session" on a text selection):
+   * the app first switches to the Sessions folder — the session it is about to
+   * create belongs there, and the picker is only a step on the way — and the
+   * selected text lands in the new session's COMPOSER as a draft, not as a sent
+   * message: the user edits it and sends it themselves. Nothing is pre-sent, so
+   * the title still comes from the first prompt they actually send.
    */
-  private openNewSessionFlow() {
+  private async openNewSessionFlow(prefillText?: string) {
+    const prefill = prefillText ? composerDraftFromSelection(prefillText) : '';
+    if(prefill) {
+      // Same thing the folder rail does on a click, so the space the session
+      // lands in is on screen behind the picker.
+      await appDialogsManager.setFilterIdAndChangeTab(FOLDER_ID_SESSION);
+    }
+
     const tab = this.createTab(AppContactsTab);
     // The hook rides the OPEN, not `init`: createTab hands back the Contacts tab
     // that is already up (`noSame`), and that instance's `init` ran long ago and
@@ -1086,7 +1108,19 @@ export class AppSidebarLeft extends SidebarSlider {
         if(!group) return;
 
         this.closeEverythingInside();
-        appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
+        await appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
+
+        if(!prefill) return;
+
+        // Composer prefill, not a send: wait for the chat pane to finish
+        // loading its own state (a late draft load is a no-op once the input
+        // is non-empty — ChatInput.setDraft bails on a non-empty field), then
+        // write the text and persist it as the session's draft.
+        const chat = appImManager.chat;
+        if(chat?.setPeerPromise) await chat.setPeerPromise.catch(() => {});
+        if(!chat?.input) return;
+        chat.input.setInputValue(prefill, true, true);
+        chat.input.saveDraft();
       } catch(err) {
         console.error('[PhantomChat.chat] failed to create session:', err);
         const {toast} = await import('@components/toast');

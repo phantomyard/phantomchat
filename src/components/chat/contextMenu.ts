@@ -841,6 +841,18 @@ export default class ChatContextMenu {
       },
       verify: () => !!(this.message as Message.message).message && this.isTextSelected
     }, {
+      // Selection → new session (owner 2026-11-02): the sidebar switches to the
+      // Sessions folder, opens the single-contact picker, and the picked
+      // contact's new session gets this text PREFILLED in the composer (not
+      // sent) so it can be edited before the first prompt goes out.
+      icon: 'plusround',
+      text: 'Chat.OpenNewSession',
+      onClick: () => {
+        const selection = document.getSelection();
+        rootScope.dispatchEvent('phantomchat_new_session_from_selection', {text: selection.toString()});
+      },
+      verify: () => !!(this.message as Message.message).message && this.isTextSelected
+    }, {
       icon: 'copy',
       text: 'Message.Context.Selection.Copy',
       onClick: this.onCopyClick,

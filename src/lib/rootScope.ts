@@ -251,6 +251,11 @@ export type BroadcastEvents = {
   'phantomchat_identity_unlocked': {npub: string},
   'phantomchat_identity_updated': {displayName?: string, nip05?: string, picture?: string, about?: string, website?: string, lud16?: string, banner?: string},
   'phantomchat_peer_profile_updated': {peerId: PeerId, pubkey: string, profile: import('./phantomchat/nostr-profile').NostrProfile},
+  // Selected chat text → a new session (#selection): dispatched by the text
+  // selection context menu, handled by the sidebar, which switches to the
+  // Sessions folder, opens the single-contact picker and prefills the new
+  // session's composer with this text (composer-prefilled, never auto-sent).
+  'phantomchat_new_session_from_selection': {text: string},
 
   'phantomchat_mesh_peer_connected': {pubkey: string; latency: number},
   'phantomchat_mesh_peer_disconnected': {pubkey: string},
