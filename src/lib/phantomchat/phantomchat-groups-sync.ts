@@ -193,6 +193,15 @@ function cancelPendingGroupDialogRepaint(groupPeerId: number): void {
   pendingGroupDialogRepaints.delete(groupPeerId);
 }
 
+/** Best-effort: a failed Worker call never breaks the receive path. */
+async function syncWorkerUnreadCount(groupPeerId: number, unreadCount: number): Promise<void> {
+  try {
+    await (rootScope as any).managers.dialogsStorage?.setLocalDialogUnreadCount(groupPeerId, unreadCount);
+  } catch(e: any) {
+    console.debug(LOG_PREFIX, 'setLocalDialogUnreadCount non-critical:', e?.message);
+  }
+}
+
 function dispatchGroupDialogUpdate(groupPeerId: number, dialog: any): void {
   const toPeerId = (Number.prototype as any).toPeerId;
   const asPeerId = toPeerId ? (groupPeerId as any).toPeerId(true) : groupPeerId;
@@ -1126,6 +1135,10 @@ export async function handleGroupIncoming(
   });
   (dialog as any).topMessage = msg;
   dispatchGroupDialogUpdate(groupPeerId, dialog);
+  // Folder badges (Sessions, Groups) count the Worker's dialog, which the dispatch
+  // above never reaches: without this the row shows unread and its folder does not.
+  // Not awaited: a burst of incoming messages must not queue on a Worker round trip.
+  void syncWorkerUnreadCount(groupPeerId, dialog.unread_count);
 
   console.log(LOG_PREFIX, 'rx rendered', {groupPeerId, mid, groupId: groupId.slice(0, 8)});
   dispatch('phantomchat_new_message', {
