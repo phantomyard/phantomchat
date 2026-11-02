@@ -1078,8 +1078,15 @@ export class AppSidebarLeft extends SidebarSlider {
     const prefill = prefillText ? composerDraftFromSelection(prefillText) : '';
     if(prefill) {
       // Same thing the folder rail does on a click, so the space the session
-      // lands in is on screen behind the picker.
-      await appDialogsManager.setFilterIdAndChangeTab(FOLDER_ID_SESSION);
+      // lands in is on screen behind the picker. The listener fires this flow
+      // as `void …`, so a rejection here would leave the user with no picker
+      // and nothing in the console — log it and open the picker anyway, since
+      // the folder switch is context for the pick, not a gate on it.
+      try {
+        await appDialogsManager.setFilterIdAndChangeTab(FOLDER_ID_SESSION);
+      } catch(err) {
+        console.error('[PhantomChat.chat] failed to switch to the Sessions folder:', err);
+      }
     }
 
     const tab = this.createTab(AppContactsTab);
