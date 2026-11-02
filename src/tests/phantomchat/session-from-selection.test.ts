@@ -1,9 +1,9 @@
 /**
  * "Open New Session" on a text selection (owner 2026-11-02).
  *
- * Selecting a message and right-clicking offers Open New Session next to
- * Search Selected Text: the app switches to the Sessions folder, opens the
- * single-contact picker, and the session card lands in that space with the
+ * Selecting a message and right-clicking offers Open New Session: the app
+ * switches to the Sessions folder, opens the single-contact picker, and the
+ * session card lands in that space with the
  * selected text in the COMPOSER — prefilled, never auto-sent, so the user
  * edits the prompt and presses send themselves.
  *
