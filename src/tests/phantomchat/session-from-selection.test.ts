@@ -82,12 +82,28 @@ describe('sidebar: the selection flow', () => {
     expect(sidebar).toContain('void this.openNewSessionFlow(text)');
   });
 
-  it('switches to the Sessions folder before opening the picker', () => {
+  it('switches folder through the rail\'s own path, not by setting filterId', () => {
     const flow = flowSlice();
-    const folder = flow.indexOf('appDialogsManager.setFilterIdAndChangeTab(FOLDER_ID_SESSION)');
+    // The rail dispatches `changing_folder_from_sidebar`, whose handler selects
+    // the folder tab, and the menu's onClick then dispatches
+    // `changing_folder_from_chatlist` (the rail highlight) before switching the
+    // filter. Calling appDialogsManager.setFilterIdAndChangeTab directly moves
+    // `filterId` while leaving the folder menu on the old tab — and the menu's
+    // `wasFilterId === id` early return then turns the NEXT click on Sessions
+    // into a scroll with no switch.
+    expect(flow).toContain("rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION})");
+    expect(flow).not.toContain('appDialogsManager.setFilterIdAndChangeTab(');
+  });
+
+  it('brings the left column forward before the picker', () => {
+    const flow = flowSlice();
+    // The selection menu lives in the chat pane: at phone width the left column
+    // is off screen, so without this the picker opens behind the chat and a
+    // hidden tab is left open. `selectTab(CHATLIST)` is how the app reveals it.
+    const column = flow.indexOf('appImManager.selectTab(APP_TABS.CHATLIST)');
     const picker = flow.indexOf('this.createTab(AppContactsTab)');
-    expect(folder).toBeGreaterThan(-1);
-    expect(picker).toBeGreaterThan(folder);
+    expect(column).toBeGreaterThan(-1);
+    expect(picker).toBeGreaterThan(column);
   });
 
   it('prefills the new session composer and does not send', () => {
@@ -105,15 +121,15 @@ describe('sidebar: the selection flow', () => {
     expect(flowSlice()).toContain('if(!prefill) return;');
   });
 
-  it('still opens the picker when the folder switch rejects', () => {
+  it('still opens the picker when the setup rejects', () => {
     const flow = flowSlice();
-    const folder = flow.indexOf('appDialogsManager.setFilterIdAndChangeTab(FOLDER_ID_SESSION)');
+    const setup = flow.indexOf('appImManager.selectTab(APP_TABS.CHATLIST)');
     const picker = flow.indexOf('this.createTab(AppContactsTab)');
     // The listener fires this flow as `void …`, so an unguarded await here is
     // an unhandled rejection: no picker, no toast, nothing in the console. The
     // switch is context for the pick, not a gate on it.
-    expect(flow.slice(0, folder)).toContain('try {');
-    expect(flow.slice(folder, picker)).toContain('catch(');
+    expect(flow.slice(0, setup)).toContain('try {');
+    expect(flow.slice(setup, picker)).toContain('catch(');
   });
 });
 

@@ -4,7 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import appImManager from '@lib/appImManager';
+import appImManager, {APP_TABS} from '@lib/appImManager';
 import rootScope from '@lib/rootScope';
 import {SearchGroup} from '@components/appSearch';
 import Scrollable, {ScrollableX} from '@components/scrollable';
@@ -1077,15 +1077,30 @@ export class AppSidebarLeft extends SidebarSlider {
   private async openNewSessionFlow(prefillText?: string) {
     const prefill = prefillText ? composerDraftFromSelection(prefillText) : '';
     if(prefill) {
-      // Same thing the folder rail does on a click, so the space the session
-      // lands in is on screen behind the picker. The listener fires this flow
-      // as `void …`, so a rejection here would leave the user with no picker
-      // and nothing in the console — log it and open the picker anyway, since
-      // the folder switch is context for the pick, not a gate on it.
+      // Two things put the Sessions space on screen behind the picker, and both
+      // have to use the paths the folder rail itself uses.
+      //
+      // 1. The column. The picker lives in the left column, but this flow is
+      // dispatched from the chat pane's selection menu — at phone width the
+      // left column is slid out of view, so the picker (and the session's list)
+      // would open behind the chat and the menu item would look like a no-op.
+      // `selectTab(CHATLIST)` is how the app brings the left column forward.
+      //
+      // 2. The folder. The rail calls `setSelectedFolder`, which dispatches
+      // `changing_folder_from_sidebar` — the folder menu's own click path, and
+      // the only one that moves the rail highlight AND the list together.
+      // Calling `setFilterIdAndChangeTab` directly changes `filterId` but leaves
+      // the folder menu on the old tab, and the menu's `wasFilterId === id`
+      // early return then turns the next click on Sessions into a no-op scroll.
+      //
+      // The listener fires this flow as `void …`, so a rejection here must not
+      // swallow the picker: log it and open the picker anyway, since the folder
+      // switch is context for the pick, not a gate on it.
       try {
-        await appDialogsManager.setFilterIdAndChangeTab(FOLDER_ID_SESSION);
+        await appImManager.selectTab(APP_TABS.CHATLIST);
+        rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION});
       } catch(err) {
-        console.error('[PhantomChat.chat] failed to switch to the Sessions folder:', err);
+        console.error('[PhantomChat.chat] failed to open the Sessions folder:', err);
       }
     }
 
