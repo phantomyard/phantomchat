@@ -204,6 +204,40 @@ describe('getGroupHistory — every rebuilt group bubble carries its sender', ()
     expect(result.users.length).toBe(1);
   });
 
+  it.each([
+    {peerId: -6000000000000001, isOutgoing: true},
+    {peerId: -12000000000000002, isOutgoing: true},
+    {peerId: -12000000000000002, isOutgoing: false}
+  ])('preserves the create service row for peer $peerId (outgoing=$isOutgoing)', async({peerId, isOutgoing}) => {
+    mockGetMessagesPage.mockResolvedValue({
+      messages: [{
+        mid: 13, eventId: `group-create-${GROUP_ID}`, conversationId: CONV_ID,
+        senderPubkey: isOutgoing ? OWN_PUBKEY : SENDER_PUBKEY,
+        content: '', timestamp: 1_699_000_003, type: 'text',
+        deliveryState: isOutgoing ? 'sent' : 'delivered', isOutgoing,
+        serviceType: 'chatCreate',
+        servicePayload: {title: 'New session', memberPeerIds: [42]}
+      }],
+      total: 1,
+      offsetIdOffset: 0
+    });
+
+    const result = await buildServer().getGroupHistory(peerId, {limit: 50});
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]).toMatchObject({
+      _: 'messageService',
+      id: 13,
+      peer_id: {_: 'peerChat', chat_id: Math.abs(peerId)},
+      pFlags: isOutgoing ? {out: true} : {},
+      action: {_: 'messageActionChatCreate', title: 'New session', users: [42]}
+    });
+    expect(result.messages[0]).not.toHaveProperty('message');
+    expect(result.users.some((user: any) => user.id === result.messages[0].from_id.user_id)).toBe(true);
+    // The row still anchors pagination; filtering it from history would break
+    // tweb's top_message lookup on a session with no prompts yet.
+    expect(result.count).toBe(1);
+  });
+
   it('reports a row that has lost its sender instead of silently mis-attributing it', async() => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockGetMessagesPage.mockResolvedValue({
