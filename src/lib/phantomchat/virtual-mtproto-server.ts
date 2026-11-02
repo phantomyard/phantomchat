@@ -1361,6 +1361,27 @@ export class PhantomChatMTProtoServer {
           }
         }
 
+        // Creation rows only anchor the dialog before its first prompt. Keep
+        // their service shape, as getDialogs does: an ordinary empty message
+        // leaks a sender header, timestamp and delivery ticks into the chat.
+        // tweb already suppresses our outgoing messageActionChatCreate rows.
+        if(stored.serviceType === 'chatCreate') {
+          messages.push({
+            _: 'messageService',
+            pFlags: isOutgoing ? {out: true} : {},
+            id: mid,
+            peer_id: {_: 'peerChat', chat_id: absPeerId},
+            from_id: {_: 'peerUser', user_id: fromPeerId},
+            date: stored.timestamp,
+            action: {
+              _: 'messageActionChatCreate',
+              title: stored.servicePayload?.title ?? group.name,
+              users: stored.servicePayload?.memberPeerIds ?? []
+            }
+          });
+          continue;
+        }
+
         // Same fileMetadata heal as the 1:1 getHistory path (see there).
         const healed = healStoredFileRow(stored);
         const fm = stored.fileMetadata ?? healed?.fileMetadata;
