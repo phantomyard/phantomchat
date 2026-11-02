@@ -1,6 +1,6 @@
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import DialogsPlaceholder from '@helpers/dialogsPlaceholder';
-import replaceContent from '@helpers/dom/replaceContent';
+import paintDialogTyping from '@lib/phantomchat/dialog-typing-indicator';
 import ListenerSetter from '@helpers/listenerSetter';
 import throttle from '@helpers/schedulers/throttle';
 import {SequentialCursorFetcher, SequentialCursorFetcherResult} from '@helpers/sequentialCursorFetcher';
@@ -318,19 +318,19 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
     const key = this.getDialogKey(dialog);
     const dom = this.getDialogDom(key);
     if(!dom) {
+      // Row is evicted right now (virtual list). initDialog re-derives the
+      // typing line when the row mounts again, so nothing to do here.
       return;
     }
 
-    const oldTypingElement = dom.lastMessageSpan.querySelector('.peer-typing-container') as HTMLElement;
-    const newTypingElement = await appImManager.getPeerTyping(
-      dialog.peerId,
-      oldTypingElement,
-      isForumTopic(dialog) ? dialog.id : undefined
-    );
-    if(!oldTypingElement && newTypingElement) {
-      replaceContent(dom.lastMessageSpan, newTypingElement);
-      dom.lastMessageSpan.classList.add('user-typing');
-    }
+    // Re-derive instead of appending once: the same peer can change action
+    // (typing → sending a photo) and several peers can join/leave a group tick.
+    await paintDialogTyping({
+      dom,
+      peerId: dialog.peerId,
+      threadId: isForumTopic(dialog) ? dialog.id : undefined,
+      getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t)
+    });
   }
 
   public unsetTyping(dialog: T) {
