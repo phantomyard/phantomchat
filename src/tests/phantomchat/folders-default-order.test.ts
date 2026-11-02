@@ -1,7 +1,7 @@
 import {describe, it, expect, vi} from 'vitest';
 import FiltersStorage from '@lib/storages/filters';
 import {buildLocalFilter} from '@lib/storages/filtersLocal';
-import {getFolderItemsInOrder} from '@components/sidebarLeft/foldersSidebarContent/utils';
+import {sortFolderItemsByOrder, getFolderItemsInOrder} from '@components/sidebarLeft/foldersSidebarContent/utils';
 
 function storage() {
   const fs = new FiltersStorage() as any;
@@ -33,5 +33,22 @@ describe('Chats stays leftmost independently of startup preference', () => {
     const result = await getFolderItemsInOrder(filters.map(({id}) => ({id})) as any, managers as any);
     expect(result.map((f) => f.id)).toEqual([0, 4, 3, 8, 1]);
     expect(managers.filtersStorage.getFilter).toHaveBeenCalledWith(0);
+  });
+});
+
+describe('live sidebar order updates', () => {
+  it('keeps Chats first and unknown custom folders before Archived', () => {
+    const items = [8, 4, 1, 0, 9, 3].map((id) => ({id}));
+    expect(sortFolderItemsByOrder(items, [4, 3, 0]).map((f) => f.id))
+    .toEqual([0, 4, 3, 8, 9, 1]);
+    expect(items.map((f) => f.id)).toEqual([8, 4, 1, 0, 9, 3]);
+  });
+  it('keeps custom-folder relative order when the server omits them', () => {
+    expect(sortFolderItemsByOrder([9, 0, 8, 1, 3, 4].map((id) => ({id})), [0, 3, 4, 1]).map((f) => f.id))
+    .toEqual([0, 3, 4, 9, 8, 1]);
+  });
+  it('honors explicit custom order while keeping the fixed endpoints', () => {
+    expect(sortFolderItemsByOrder([0, 3, 4, 8, 9, 1].map((id) => ({id})), [1, 9, 4, 8, 3, 0]).map((f) => f.id))
+    .toEqual([0, 9, 4, 8, 3, 1]);
   });
 });

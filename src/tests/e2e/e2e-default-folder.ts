@@ -42,9 +42,11 @@ async function main() {
       await page.locator('.menu-horizontal-div-item[data-filter-id="4"]').waitFor({state: 'attached'});
       await dismissOverlays(page);
     };
-    const selected = async(id) => {
-      await page.waitForFunction((id) =>
-        document.querySelector('.menu-horizontal-div-item.active')?.getAttribute('data-filter-id') === String(id), id);
+    const selected = async(id, vertical = false) => {
+      await page.waitForFunction(({id, vertical}) =>
+        document.querySelector('.menu-horizontal-div-item.active')?.getAttribute('data-filter-id') === String(id) &&
+        (!vertical || document.querySelector('.folders-sidebar__folder-item--selected[data-filter-id]')?.getAttribute('data-filter-id') === String(id)),
+      {id, vertical});
     };
     const rail = (vertical) => vertical ? '.folders-sidebar__folder-item[data-filter-id]' : '.menu-horizontal-div-item[data-filter-id]';
     const order = async(vertical) => {
@@ -71,10 +73,27 @@ async function main() {
     await gesture(4, 'Set as Default');
     await selected(4);
     await order(false);
+    // Model an existing installation with the old cached English labels.
+    await page.evaluate(async() => {
+      const {default: storage} = await import('/src/lib/commonStateStorage.ts');
+      const pack = structuredClone(await storage.get('langPack'));
+      pack.localVersion = 16;
+      const old = {
+        'ChatList.Filter.RemoveDefault': 'Remove Default',
+        'ChatList.Filter.SetDefaultToast': 'This folder will open on launch',
+        'ChatList.Filter.RemoveDefaultToast': 'All Chats will open on launch'
+      };
+      pack.strings.forEach((string) => {if(old[string.key]) string.value = old[string.key];});
+      await storage.set({langPack: pack});
+    });
     await page.reload({waitUntil: 'load'});
     await ready();
     await selected(4);
     await gesture(4, 'Use Chats as Default');
+    assert.equal(await page.evaluate(async() => {
+      const {default: storage} = await import('/src/lib/commonStateStorage.ts');
+      return (await storage.get('langPack')).localVersion;
+    }), 17, 'existing client refreshes its cached labels');
     await selected(0);
     await order(false);
     await page.reload({waitUntil: 'load'});
@@ -89,18 +108,18 @@ async function main() {
     await page.locator('.folders-sidebar__folder-item[data-filter-id="4"]').waitFor({state: 'visible'});
     await order(true);
     await gesture(4, 'Set as Default', true);
-    await selected(4);
+    await selected(4, true);
     await order(true);
     await page.reload({waitUntil: 'load'});
     await ready();
-    await selected(4);
+    await selected(4, true);
     await order(true);
     await gesture(4, 'Use Chats as Default', true);
-    await selected(0);
+    await selected(0, true);
     await order(true);
     await page.reload({waitUntil: 'load'});
     await ready();
-    await selected(0);
+    await selected(0, true);
     await order(true);
     console.log('PASS vertical rail: set, immediate selection, reload, remove, Chats fallback');
   } catch(error) {

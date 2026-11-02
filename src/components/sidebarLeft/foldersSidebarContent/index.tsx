@@ -1,7 +1,6 @@
 import {batch, createEffect, createSelector, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
 import {createStore, reconcile} from 'solid-js/store';
 import {render} from 'solid-js/web';
-import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import createFolderContextMenu from '@helpers/dom/createFolderContextMenu';
 import ListenerSetter from '@helpers/listenerSetter';
 import {Middleware} from '@helpers/middleware';
@@ -16,7 +15,7 @@ import Scrollable from '@components/scrollable2';
 import extractEmojiFromFilterTitle, {ExtractEmojiFromFilterTitleResult} from '@components/sidebarLeft/foldersSidebarContent/extractEmojiFromFilterTitle';
 import FolderItem from '@components/sidebarLeft/foldersSidebarContent/folderItem';
 import type {FolderItemPayload} from '@components/sidebarLeft/foldersSidebarContent/types';
-import {getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter, folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
+import {sortFolderItemsByOrder, getFolderItemsInOrder, getIconForFilter, getNotificationCountForFilter, folderEmoticonFallback} from '@components/sidebarLeft/foldersSidebarContent/utils';
 import {toggleFoldersSidebar} from '@lib/folders-sidebar-layout';
 
 
@@ -150,27 +149,8 @@ export function FoldersSidebarContent(props: {
     setFolderItems(items);
   }
 
-  async function updateItemsOrder(order: number[]) {
-    order = [FOLDER_ID_ALL, ...order.filter((id) => id !== FOLDER_ID_ALL)];
-    // Archives is always the last space: it is not reorderable, and the server
-    // order array never carries it. (Dropping it entirely used to sort it to
-    // the TOP, because unknown ids sort first below.)
-    indexOfAndSplice(order, FOLDER_ID_ARCHIVE);
-    order.push(FOLDER_ID_ARCHIVE);
-
-    const items = [...folderItems];
-
-    items.sort((a, b) => {
-      const aIndex = order.indexOf(a.id);
-      const bIndex = order.indexOf(b.id);
-
-      if(aIndex === -1) return bIndex === -1 ? 0 : 1;
-      if(bIndex === -1) return -1;
-
-      return aIndex - bIndex;
-    });
-
-    setFolderItems(items);
+  function updateItemsOrder(order: number[]) {
+    setFolderItems(sortFolderItemsByOrder(folderItems, order));
   }
 
   async function setSelectedFolder(folderId: number) {

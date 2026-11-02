@@ -72,3 +72,16 @@ export async function getFolderItemsInOrder(folderItems: FolderItemPayload[], ma
     return filters.get(a.id)?.localId - filters.get(b.id)?.localId;
   });
 }
+
+/** Server order omits local custom folders; keep those before Archived. */
+export function sortFolderItemsByOrder<T extends {id: number}>(items: readonly T[], order: readonly number[]): T[] {
+  const positions = new Map(order.map((id, index) => [id, index]));
+  return [...items].sort((a, b) => {
+    if(a.id === b.id) return 0;
+    if(a.id === FOLDER_ID_ALL) return -1;
+    if(b.id === FOLDER_ID_ALL) return 1;
+    if(a.id === FOLDER_ID_ARCHIVE) return 1;
+    if(b.id === FOLDER_ID_ARCHIVE) return -1;
+    return (positions.get(a.id) ?? order.length) - (positions.get(b.id) ?? order.length);
+  });
+}
