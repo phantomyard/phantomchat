@@ -1651,7 +1651,11 @@ export class AppMessagesManager extends AppManager {
     // Issue #111: counter-suffixed tempMid avoids same-ms collisions when
     // sendGrouped Promise.all's multiple sendFile calls for an album.
     const seq = ++this.phantomchatSendFileCounter;
-    const tempMid = -(Date.now() * 1000 + (seq % 1000));
+    // Positive and on the same `seconds * 1e6 + slot` scale as real mids, so the
+    // optimistic bubble sorts as the newest message. A negative mid sorts as the
+    // OLDEST one in any mid-ordered list (group bubbles, the history slice) and
+    // the bubble renders above the loaded history, out of sight.
+    const tempMid = Date.now() * 1000 + (seq % 1000);
     try {
       const updates: any = await this.apiManager.invokeApi('phantomchatSendFile' as any, {
         peerId,
@@ -3571,8 +3575,11 @@ export class AppMessagesManager extends AppManager {
    * The ordered slice insert below replicates `updateNewMessage`'s logic
    * (see the isExisting/firstSlice block there) so the mid lands in the same
    * position core would have put it.
+   *
+   * `setDialogTopMessage` is unconditional, so a caller whose mid may no longer
+   * be the newest passes `updateTop = false` and settles the top slot itself.
    */
-  public appendLocalHistoryMessage(message: MyMessage) {
+  public appendLocalHistoryMessage(message: MyMessage, updateTop = true) {
     const peerId = message.peerId;
     if(!peerId || message.mid == null) return;
 
@@ -3606,11 +3613,41 @@ export class AppMessagesManager extends AppManager {
       }
     }
 
+    // Forward-only, so it cannot rewind. `setDialogTopMessage` skips maxId with
+    // `updateTop = false` or when the peer has no dialog, so this moves it then.
     if(!historyStorage.maxId || message.mid > historyStorage.maxId) {
       historyStorage._maxId = message.mid;
     }
 
-    this.setDialogTopMessage(message);
+    if(updateTop) {
+      this.setDialogTopMessage(message);
+    }
+  }
+
+  /**
+   * [PhantomChat.chat] Swap a settled optimistic media message for its real mid
+   * in the Worker's history. `appendLocalHistoryMessage` put the temp mid in the
+   * slice; left there, reopening the chat renders it next to the real row, as a
+   * duplicate bubble. Runs for every completion path (send, retry, queue flush).
+   *
+   * An upload takes long enough for newer messages to land, so the real mid only
+   * takes the top slot through `settleDialogTopAfterSend`.
+   */
+  public replaceLocalTempMessage(peerId: PeerId, tempMid: number, realMid: number) {
+    const storage = this.getHistoryMessagesStorage(peerId);
+    const tempMessage = storage.get(tempMid) as Message.message;
+    if(!tempMessage) return;
+
+    const historyStorage = this.getHistoryStorage(peerId);
+    if(historyStorage.history.delete(tempMid) && historyStorage.count !== null) {
+      --historyStorage.count;
+    }
+    this.deleteMessageFromStorage(storage, tempMid);
+
+    const realMessage = (storage.get(realMid) as Message.message) ||
+      {...tempMessage, id: realMid, mid: realMid};
+    this.appendLocalHistoryMessage(realMessage, false);
+    this.settleDialogTopAfterSend(realMessage, tempMid);
   }
 
   public cancelPendingMessage(randomId: string) {

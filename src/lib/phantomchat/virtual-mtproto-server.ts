@@ -434,6 +434,12 @@ export class PhantomChatMTProtoServer {
     // Lazy-import rootScope to avoid pulling it into non-browser test paths.
     import('@lib/rootScope').then(({default: rs}) => {
       if(typeof (rs as any).addEventListener !== 'function') return;
+      (rs as any).addEventListener('phantomchat_file_upload_completed', ({peerId, mid, realMid}: {peerId: number; mid: number; realMid?: number}) => {
+        if(realMid == null) return;
+        void Promise.resolve(
+          (rs as any).managers.appMessagesManager.replaceLocalTempMessage(peerId, mid, realMid)
+        ).catch((e: any) => console.debug(LOG_PREFIX, 'replaceLocalTempMessage failed:', e?.message));
+      });
       (rs as any).addEventListener('phantomchat_retry_file_send', async(e: {peerId: number; mid: number}) => {
         const {getPendingFileSend} = await import('./phantomchat-send-file');
         const pending = getPendingFileSend(e.mid);
