@@ -16,6 +16,14 @@ function validPwaRecord(record) {
     /^pwa-v\d+\.\d+\.\d+$/.test(record.previewRelease) &&
     typeof record.publishedAt === 'string' && Number.isFinite(Date.parse(record.publishedAt));
 }
+// The deploy workflow builds against the DEPLOYED Stable, but the review column
+// that describes that content is `published`, not `stable`. Keeping the
+// repository pin in `pinRef` is the only thing that lets the builder tell the
+// two apart: without it `stableRef` looks like the pin, the builder reads the
+// `stable` column, and every file differing from the pin blocks the lane.
+export function deployBaseline(config, record) {
+  return {...config, pinRef: config.stableRef, stableRef: record.stableRef, stableVersion: record.stableVersion};
+}
 export function selectRelease(releases, kind, input = '') {
   const eligible = releases.filter(r => {
     if(kind === 'electron') return !r.draft && /^phantomchat-v\d+\.\d+\.\d+$/.test(r.tag_name);
@@ -90,12 +98,7 @@ export async function main(command) {
       writeFileSync(`${workspace}/current.json`, JSON.stringify(current.record));
       // Build/check against the actual deployed Stable, not an obsolete source pin.
       const config = JSON.parse(readFileSync('scripts/channels/config.json'));
-      // Keep the repository pin so the builder can tell which review column
-      // describes the deployed commit (`published`) and which the pin (`stable`).
-      config.pinRef = config.stableRef;
-      config.stableRef = current.record.stableRef;
-      config.stableVersion = current.record.stableVersion;
-      writeFileSync(`${workspace}/baseline.json`, JSON.stringify(config));
+      writeFileSync(`${workspace}/baseline.json`, JSON.stringify(deployBaseline(config, current.record)));
       output('baseline', `${workspace}/baseline.json`);
     }
     return;
