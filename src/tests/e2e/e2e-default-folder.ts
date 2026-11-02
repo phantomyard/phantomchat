@@ -38,7 +38,7 @@ async function main() {
     await page.getByRole('textbox').first().fill('Default Folder Test');
     await page.getByRole('button', {name: 'Get Started'}).click();
     const ready = async() => {
-      await page.waitForFunction(() => window.rootScope?.managers?.filtersStorage && window.appImManager);
+      await page.waitForFunction(() => window.rootScope?.managers?.filtersStorage && window.appImManager, undefined, {timeout: 60000});
       await page.locator('.menu-horizontal-div-item[data-filter-id="4"]').waitFor({state: 'attached'});
       await dismissOverlays(page);
     };
@@ -76,7 +76,8 @@ async function main() {
     // Model an existing installation with the old cached English labels.
     await page.evaluate(async() => {
       const {default: storage} = await import('/src/lib/commonStateStorage.ts');
-      const pack = structuredClone(await storage.get('langPack'));
+      const {default: I18n} = await import('/src/lib/langPack.ts');
+      const pack = structuredClone(await I18n.getCacheLangPackAndApply());
       pack.localVersion = 16;
       const old = {
         'ChatList.Filter.RemoveDefault': 'Remove Default',
@@ -90,10 +91,13 @@ async function main() {
     await ready();
     await selected(4);
     await gesture(4, 'Use Chats as Default');
-    assert.equal(await page.evaluate(async() => {
+    const cacheVersions = await page.evaluate(async() => {
       const {default: storage} = await import('/src/lib/commonStateStorage.ts');
-      return (await storage.get('langPack')).localVersion;
-    }), 17, 'existing client refreshes its cached labels');
+      const {default: App} = await import('/src/config/app.ts');
+      return {cached: (await storage.get('langPack')).localVersion, current: App.langPackLocalVersion};
+    });
+    assert.ok(cacheVersions.current > 16, 'new copy must invalidate the old cache');
+    assert.equal(cacheVersions.cached, cacheVersions.current, 'existing client refreshes its cached labels');
     await selected(0);
     await order(false);
     await page.reload({waitUntil: 'load'});

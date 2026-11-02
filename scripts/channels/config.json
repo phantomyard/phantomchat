@@ -35,13 +35,13 @@
     "src/components/sidebarLeft/foldersSidebarContent/index.tsx": {
       "stable": "d15ab3e9ef5340fafc52a400a2877bb8373ef09c8337d55426825258bc932840",
       "preview": "e44e5d825976b4f6cd1fbd0684ebd647221f7f0a7ebc7dcc0e45c5af1f669ce4",
-      "reason": "Default-folder rail presentation only; custom ids missing from server order remain before Archived. Existing filter fields and storage schema unchanged.",
+      "reason": "Folders rail: Archives (id 1) renders as the last space with its own label, keeps its slot in the order array, and its click opens the existing archive tab. Presentation only. Additional change: Default-folder rail presentation only; custom ids missing from server order remain before Archived. Existing filter fields and storage schema unchanged.",
       "published": "d15ab3e9ef5340fafc52a400a2877bb8373ef09c8337d55426825258bc932840"
     },
     "src/components/sidebarLeft/foldersSidebarContent/utils.ts": {
       "stable": "6dd5214356622da838c217fd68d78586170b435753a7cd3ddf7bfd9f8aa15388",
-      "preview": "5260bb379f0c6062fad1c269e115480576ec66d6945e1160e1d4489718e9bc07",
-      "reason": "Default-folder rail presentation only; custom ids missing from server order remain before Archived. Existing filter fields and storage schema unchanged.",
+      "preview": "0656e9772b49d09d1501191e828cf32b2426edeaac73177f16ec26258576507d",
+      "reason": "Rail icon for the Archives space. Presentation only. Additional change: Default-folder rail presentation only; custom ids missing from server order remain before Archived. Existing filter fields and storage schema unchanged.",
       "published": "6dd5214356622da838c217fd68d78586170b435753a7cd3ddf7bfd9f8aa15388"
     },
     "src/components/sidebarLeft/tabs/editFolder.ts": {
@@ -57,31 +57,31 @@
     "src/helpers/dom/createFolderContextMenu.ts": {
       "stable": "66f230181afcacbc0d347a338cdefa9cb6f8a4bd6bbcad853b6a4a163025f128",
       "preview": "759f90a0229cc655e8d9c893bd88014c0048112a1fb27d77f882e4697d321f17",
-      "reason": "Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable.",
+      "reason": "Set/Remove default are suppressed on the archive folder (id 1, now shared by chats, groups and sessions); Mark all as read unchanged. Presentation only. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable.",
       "published": "66f230181afcacbc0d347a338cdefa9cb6f8a4bd6bbcad853b6a4a163025f128"
     },
     "src/lang.ts": {
       "stable": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b",
       "preview": "ff2a7dad863110a10eb74ea6b4c93bccb48b75d68f18a565a8ec3310571c9766",
-      "reason": "Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable.",
+      "reason": "Two PhantomChat strings, text only: the empty-folder placeholder and the archive/session failure toasts. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Preview also adds three theme selector strings, text only. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable.",
       "published": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b"
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
       "published": "3df894fb157c028ee4864b8d5b49df633bd8618b73cd3316dc3b3b409fc46b2e",
       "preview": "06312d6569c18a8837d1eed206a056071a13ebdb6a83e31758108df801218659",
-      "reason": "Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable."
+      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Pin/unread menu update: Presentation only: gives count-less unread marks their own CSS class. Counts, read cursor and persistence are unchanged. Requires independent exact-head content review. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Chat-list subtitle repaint re-derives the '‹peer› is working' line from the live typing store instead of trusting the one peer_typings event that painted it, so a dialog update no longer erases the indicator (or leaves the row blank when no last message resolved). A late paint is dropped when a newer repaint of the same row superseded it. Presentation only: reads the existing typingsInPeer store, no new store, schema, key or protocol. Search-hit guard: the repaint is skipped for non-chat-list rows (message search, peer-profile preview), which have no typing lifecycle. Presentation and scope only; identifies the existing `isSearch` discriminator, no storage, read-state, schema, protocol or preference change. Independent exact-head content review required. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable."
     },
     "src/lib/folders-default.ts": {
       "preview": "d77bf09f6154aa5092129b4d04e780000e633b558146993790729aafd2459375",
-      "reason": "Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable.",
+      "reason": "New pure module: startup-folder decision helpers and launch-hash capture. No I/O, no storage access. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable.",
       "stable": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
       "published": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3"
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f8fc66f7707e106851bbf0aa76b018408bda9c59f6740b9fccf4fa2a89fe0d4e",
       "preview": "ccfcae9477911c032a7e6780e8c26f1f123c7e76fcbfd7478d35dc42b9322126",
-      "reason": "Regenerated local labels: default-folder copy plus existing UITheme strings from lang.ts and key repositioning for ArchiveActionFailed/SessionCreateFailed. No stored format or protocol changes.",
+      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Generated copy of src/lang.ts: Interface Settings renamed to Appearance, three unused menu strings removed. Additional change: Regenerated local labels: default-folder copy plus existing UITheme strings from lang.ts and key repositioning for ArchiveActionFailed/SessionCreateFailed. No stored format or protocol changes.",
       "published": "f8fc66f7707e106851bbf0aa76b018408bda9c59f6740b9fccf4fa2a89fe0d4e"
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
@@ -108,7 +108,7 @@
       "stable": "d1a28a33f2ae3903c56a60fadc6caced67f53036b749e87a186a712f3d6ec97c",
       "published": "d1a28a33f2ae3903c56a60fadc6caced67f53036b749e87a186a712f3d6ec97c",
       "preview": "f38e15a2568390fa3f36c74d010a1f7bfdf3cc54b3cc285ae90a59f309e1e11e",
-      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change. Session stability update: Filter rebuilds read every persisted row instead of index-derived lists. No stored format change. Pin/unread menu update: Group pin badge reads existing dialog pFlags. New Worker method mutates and persists existing folder pinnedOrders on its owning thread, avoiding a cloned RPC array. Existing shared pinnedOrders schema is unchanged. Requires independent exact-head content review. Unpin sort anchor: a group row that is no longer in its folder's pinned order keeps its own sort anchor (index_0, from the top message date) instead of being re-anchored on the Worker's message store, which holds no group message and fell through to \"now\". Chats keep the previous computation unchanged. Existing pinnedOrders and row schemas untouched; no stored-format change. Unpin anchor survives the Chats pass: folder 0 no longer overwrites a group row\u2019s index_0 (its top-message sort anchor) when it refuses the row, so the unpin re-anchor reads the same key the previous commit introduced. Membership, persisted row, pinnedOrders and all schemas unchanged; no stored-format or wire change. Unpin anchor as a fallback, not a precedence: the anchor is now passed to generateIndexForDialog as a fallback date (seconds) so a resolvable top message or a newer draft still wins, and index_0 only replaces the \"now\" stamp. Existing pinnedOrders and row schemas untouched; no stored-format, wire or protocol change. State-restore sort anchor (#332): a restored row keeps a group's index_0 (its top-message sort anchor, kept by the new clearComputedDialogIndexes helper) while index_1..21 are still cleared, so the unpin re-anchor no longer falls through to \"now\". Existing persisted row, folder and pinnedOrders schemas unchanged; no stored-format, wire or protocol change. Sessions rail badge: new setLocalDialogUnreadCount updates the in-memory dialog through the existing unread accounting. Not persisted; no schema, stored-format or wire change."
+      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change. Session stability update: Filter rebuilds read every persisted row instead of index-derived lists. No stored format change. Pin/unread menu update: Group pin badge reads existing dialog pFlags. New Worker method mutates and persists existing folder pinnedOrders on its owning thread, avoiding a cloned RPC array. Existing shared pinnedOrders schema is unchanged. Requires independent exact-head content review. Unpin sort anchor: a group row that is no longer in its folder's pinned order keeps its own sort anchor (index_0, from the top message date) instead of being re-anchored on the Worker's message store, which holds no group message and fell through to \"now\". Chats keep the previous computation unchanged. Existing pinnedOrders and row schemas untouched; no stored-format change. Unpin anchor survives the Chats pass: folder 0 no longer overwrites a group row’s index_0 (its top-message sort anchor) when it refuses the row, so the unpin re-anchor reads the same key the previous commit introduced. Membership, persisted row, pinnedOrders and all schemas unchanged; no stored-format or wire change. Unpin anchor as a fallback, not a precedence: the anchor is now passed to generateIndexForDialog as a fallback date (seconds) so a resolvable top message or a newer draft still wins, and index_0 only replaces the \"now\" stamp. Existing pinnedOrders and row schemas untouched; no stored-format, wire or protocol change. State-restore sort anchor (#332): a restored row keeps a group's index_0 (its top-message sort anchor, kept by the new clearComputedDialogIndexes helper) while index_1..21 are still cleared, so the unpin re-anchor no longer falls through to \"now\". Existing persisted row, folder and pinnedOrders schemas unchanged; no stored-format, wire or protocol change. Sessions rail badge: new setLocalDialogUnreadCount updates the in-memory dialog through the existing unread accounting. Not persisted; no schema, stored-format or wire change."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "487adb45dc21fb3625f50d78ceef164694292f10d7f11f57e20ee9d011572ccc",
@@ -118,7 +118,7 @@
     "src/lib/storages/filters.ts": {
       "stable": "ac8db943fde1e46556002e3be72c7b3b8bac67f9f879c5c94cb8781ab0559346",
       "preview": "096ef49473a926a21647805a7b7e599c03e7252e23d1697e980464b97ced5bda",
-      "reason": "Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable.",
+      "reason": "Folder-id migration without data loss: a persisted id 4 (or the abandoned id 5) that carries peer rules is a USER folder and is renumbered past START_LOCAL_ID with its rules intact; only stock system folders (recognised by shape - a custom folder always has peer rules) are dropped and re-seeded. createDialogFilter never mints an id below START_LOCAL_ID. Code only - no stored format change beyond renumbering a legacy folder id. #319: toggleDialogPin no longer maintains the empty-at-boot pinned_peers mirror for the system folders and measures the folderPin cap against filter.pinnedPeerIds, the live order bucket, instead of against that mirror - so the limit stops being offset by the pins restored on load and stops changing after a reload. Unpin reads its index out of the bucket and splices the bucket; custom folders keep both lists. Code only, no stored-format change: the mirror this stops writing was already discarded on every boot. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable.",
       "published": "ac8db943fde1e46556002e3be72c7b3b8bac67f9f879c5c94cb8781ab0559346"
     },
     "src/components/loadingDialogSkeleton.tsx": {
@@ -150,7 +150,7 @@
     "src/langPackLocalVersion.example.ts": {
       "stable": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536",
       "preview": "2f71f3e2f06b6ad680086b5924deef9a3720b199b7de315896945a37c61e8dda",
-      "reason": "Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged.",
+      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged.",
       "published": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536"
     },
     "src/lib/folders-sidebar-layout.ts": {
@@ -171,7 +171,7 @@
     "src/lib/phantomchat/update-channel-choice.ts": {
       "stable": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
       "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
-      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef \u2014 desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
+      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
     },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
       "stable": "e1a1cc6436f6533390ca9ae6a55b7872de4372d41d58da9c306eda800eec221e",
@@ -458,7 +458,7 @@
     "src/lib/phantomchat/dialog-typing-indicator.ts": {
       "stable": "absent",
       "preview": "ab59c46f3cf144250193bd312ad42bc5e4a3329c8278dfd18d1f3cbc0305113b",
-      "reason": "Presentation-only helper: paints or clears the chat-list row's '\u2039peer\u203a is working' line from the existing typingsInPeer store. No storage, schema, key, identity or protocol change; it only moves text inside an existing span."
+      "reason": "Presentation-only helper: paints or clears the chat-list row's '‹peer› is working' line from the existing typingsInPeer store. No storage, schema, key, identity or protocol change; it only moves text inside an existing span."
     }
   },
   "publishedStableRef": "efd94bf9742a6f1685154f998bb27152b1b81ce0"

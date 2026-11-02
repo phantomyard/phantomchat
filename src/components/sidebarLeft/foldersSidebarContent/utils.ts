@@ -74,7 +74,7 @@ export async function getFolderItemsInOrder(folderItems: FolderItemPayload[], ma
 }
 
 /** Server order omits local custom folders; keep those before Archived. */
-export function sortFolderItemsByOrder<T extends {id: number}>(items: readonly T[], order: readonly number[]): T[] {
+export function sortFolderItemsByOrder<T extends {id?: number}>(items: readonly T[], order: readonly number[]): T[] {
   const positions = new Map(order.map((id, index) => [id, index]));
   return [...items].sort((a, b) => {
     if(a.id === b.id) return 0;

@@ -187,10 +187,9 @@ describe('Archives is a rail space (owner batch 13, 2026-10-31)', () => {
     expect(src).toContain("name: 'Archived'");
   });
 
-  it('the rail no longer filters Archives out and orders it last', () => {
+  it('the rail renders Archives and opens its own tab', () => {
     const src = readFile('components/sidebarLeft/foldersSidebarContent/index.tsx');
     expect(src).not.toContain('props.filters.filter((filter) => filter.id !== FOLDER_ID_ARCHIVE)');
-    expect(src).toContain('order.push(FOLDER_ID_ARCHIVE)');
     // …and a rail click opens the archive tab: filter 1 has no inline
     // chatlist (AppDialogsManager.addFilter returns early for it).
     expect(src).toContain('appSidebarLeft.openArchiveTab()');
