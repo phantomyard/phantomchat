@@ -17,10 +17,10 @@
 export const DEFAULT_SESSION_GROUP_NAME = 'New session';
 
 /** How many characters of the first prompt become the session title. */
-export const SESSION_NAME_PREFIX_LENGTH = 30;
+export const SESSION_NAME_PREFIX_LENGTH = 50;
 
 /**
- * The title a session takes from its first prompt: the first 30 characters,
+ * The title a session takes from its first prompt: the first 50 characters,
  * verbatim — no ellipsis (owner: the trailing `…` cost a character of the name
  * and looked like the prompt was truncated mid-thought). Whitespace is
  * collapsed first so a multi-line prompt does not produce a title full of gaps.
@@ -30,4 +30,14 @@ export function sessionTitleFromPrompt(text: string, limit = SESSION_NAME_PREFIX
   if(!normalized) return '';
   // A hard cut can land on a space — trim it so titles never end in a gap.
   return normalized.slice(0, limit).trim();
+}
+
+/**
+ * Selected chat text → the new session's composer. Trimmed only: a selected
+ * code block or multi-line prompt keeps its line breaks, because that is the
+ * text the user is going to send (whitespace collapsing belongs to titles, not
+ * to the prompt).
+ */
+export function composerDraftFromSelection(text: string): string {
+  return (text || '').replace(/^\s+|\s+$/g, '');
 }

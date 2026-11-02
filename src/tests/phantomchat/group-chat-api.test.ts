@@ -307,7 +307,8 @@ describe('GroupAPI', () => {
     await api.sendFile(SESSION_ID, 'image', imageMeta, 'Add a retry loop to the polls now');
     await settled();
 
-    expect(mockGroupStore.updateInfo).toHaveBeenCalledWith(SESSION_ID, {name: 'Add a retry loop to the polls'});
+    // 33 characters fits inside the 50-character session title cap whole.
+    expect(mockGroupStore.updateInfo).toHaveBeenCalledWith(SESSION_ID, {name: 'Add a retry loop to the polls now'});
   });
 
   it('sendFile leaves a new session unnamed when there is no caption', async() => {

@@ -58,7 +58,7 @@ import {
   isGroupPeer,
   isSessionPeer
 } from '@lib/phantomchat/group-types';
-import {DEFAULT_SESSION_GROUP_NAME, sessionTitleFromPrompt} from '@lib/phantomchat/group-sessions';
+import {DEFAULT_SESSION_GROUP_NAME, SESSION_NAME_PREFIX_LENGTH, sessionTitleFromPrompt, composerDraftFromSelection} from '@lib/phantomchat/group-sessions';
 import {PhantomChatPeerMapper} from '@lib/phantomchat/phantomchat-peer-mapper';
 
 // One peer in each range, derived the way production derives them.
@@ -344,16 +344,28 @@ describe('dialog construction', () => {
 });
 
 describe('session naming', () => {
-  it('takes the first 30 characters of the first prompt, with no ellipsis', () => {
+  it('takes the first 50 characters of the first prompt, with no ellipsis', () => {
     expect(DEFAULT_SESSION_GROUP_NAME).toBe('New session');
-    expect(sessionTitleFromPrompt('Add a retry loop to the polls now')).toBe('Add a retry loop to the polls');
-    expect(sessionTitleFromPrompt('Add a retry loop to the  polls now')).toBe('Add a retry loop to the polls');
+    expect(SESSION_NAME_PREFIX_LENGTH).toBe(50);
+    expect(sessionTitleFromPrompt('Add a retry loop to the polls now')).toBe('Add a retry loop to the polls now');
+    expect(sessionTitleFromPrompt('Add a retry loop to the  polls now')).toBe('Add a retry loop to the polls now');
     expect(sessionTitleFromPrompt('short')).toBe('short');
-    // exactly 30 characters — kept whole, nothing appended
-    expect(sessionTitleFromPrompt('123456789012345678901234567890')).toBe('123456789012345678901234567890');
-    expect(sessionTitleFromPrompt('1234567890123456789012345678901')).toBe('123456789012345678901234567890');
+    // exactly 50 characters — kept whole, nothing appended
+    const fifty = '1'.repeat(50);
+    expect(sessionTitleFromPrompt(fifty)).toBe(fifty);
+    expect(sessionTitleFromPrompt(fifty + '2')).toBe(fifty);
+    // a hard cut that lands on a space does not leave a trailing gap
+    expect(sessionTitleFromPrompt('a'.repeat(49) + ' tail')).toBe('a'.repeat(49));
     expect(sessionTitleFromPrompt('  multi\n  line   prompt  ')).toBe('multi line prompt');
     expect(sessionTitleFromPrompt('')).toBe('');
+  });
+
+  it('prefills the composer with the selection verbatim, only trimmed', () => {
+    // line breaks survive: this is prompt text, not a title
+    expect(composerDraftFromSelection('  line one\n\nline two  ')).toBe('line one\n\nline two');
+    expect(composerDraftFromSelection('single')).toBe('single');
+    expect(composerDraftFromSelection('   \n  ')).toBe('');
+    expect(composerDraftFromSelection(undefined as unknown as string)).toBe('');
   });
 });
 

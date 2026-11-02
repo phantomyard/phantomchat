@@ -4,7 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import appImManager from '@lib/appImManager';
+import appImManager, {APP_TABS} from '@lib/appImManager';
 import rootScope from '@lib/rootScope';
 import {SearchGroup} from '@components/appSearch';
 import Scrollable, {ScrollableX} from '@components/scrollable';
@@ -102,6 +102,8 @@ import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import AppPhantomChatQRTab from '@components/sidebarLeft/tabs/phantomchatQR';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
 import {decodePubkey} from '@lib/phantomchat/nostr-identity';
+import {composerDraftFromSelection} from '@lib/phantomchat/group-sessions';
+import {needsLeftColumnReveal} from '@lib/phantomchat/session-column-reveal';
 import {loadCachedProfile} from '@lib/phantomchat/profile-cache';
 
 export const LEFT_COLUMN_ACTIVE_CLASSNAME = 'is-left-column-shown';
@@ -224,6 +226,13 @@ export class AppSidebarLeft extends SidebarSlider {
         const count = folder.unreadPeerIds.size;
         setBadgeContent(this.archivedCount, count ? '' + formatNumber(count, 1) : '');
       }
+    });
+
+    // Selected text → new session (owner 2026-11-02): the chat's text-selection
+    // context menu only knows the selection, so it dispatches this and the flow
+    // that can open the picker lives here, next to the Sessions `+`.
+    rootScope.addEventListener('phantomchat_new_session_from_selection', ({text}) => {
+      void this.openNewSessionFlow(text);
     });
 
     let statusMiddlewareHelper: MiddlewareHelper, fireOnNew: boolean;
@@ -1054,12 +1063,62 @@ export class AppSidebarLeft extends SidebarSlider {
   /**
    * Session space + button (owner batch 11): the single-contact picker, then a
    * SESSION peer. No name prompt, no multi-select — one phantom per session, the
-   * title starts as 'New session' and is replaced with the first 30 characters of
+   * title starts as 'New session' and is replaced with the first 50 characters of
    * the first prompt (GroupAPI.sendMessage). The picker's click handler is
    * replaced by the `onPickPeer` hook, so picking a row creates the session
    * instead of opening a DM.
+   *
+   * `prefillText` (owner 2026-11-02, "Open New Session" on a text selection):
+   * the app first switches to the Sessions folder — the session it is about to
+   * create belongs there, and the picker is only a step on the way — and the
+   * selected text lands in the new session's COMPOSER as a draft, not as a sent
+   * message: the user edits it and sends it themselves. Nothing is pre-sent, so
+   * the title still comes from the first prompt they actually send.
    */
-  private openNewSessionFlow() {
+  private async openNewSessionFlow(prefillText?: string) {
+    const prefill = prefillText ? composerDraftFromSelection(prefillText) : '';
+    if(prefill) {
+      // Two things put the Sessions space on screen behind the picker, and both
+      // have to use the paths the folder rail itself uses.
+      //
+      // 1. The column. The picker lives in the left column, but this flow is
+      // dispatched from the chat pane's selection menu — at phone width the
+      // left column is slid out of view, so the picker (and the session's list)
+      // would open behind the chat and the menu item would look like a no-op.
+      // `selectTab(CHATLIST)` is how the app brings the left column forward.
+      //
+      // 2. The folder. The rail calls `setSelectedFolder`, which dispatches
+      // `changing_folder_from_sidebar` — the folder menu's own click path, and
+      // the only one that moves the rail highlight AND the list together.
+      // Calling `setFilterIdAndChangeTab` directly changes `filterId` but leaves
+      // the folder menu on the old tab, and the menu's `wasFilterId === id`
+      // early return then turns the next click on Sessions into a no-op scroll.
+      //
+      // The listener fires this flow as `void …`, so a rejection here must not
+      // swallow the picker: log it and open the picker anyway, since the folder
+      // switch is context for the pick, not a gate on it.
+      //
+      // Only when the column is actually away — and "away" is a LAYOUT fact,
+      // not this class. Above 925px the column is `display: flex` and always on
+      // screen, while `is-left-column-shown` only means "the chatlist tab is
+      // active": opening a peer runs `selectTab(CHAT)`, so a DM open at 1280
+      // has the class absent with the column visible. `selectTab` also rewrites
+      // the hash (`overrideHash(undefined)` for CHATLIST), so calling it there
+      // cleared the hash of the DM that stays open behind the picker — reload
+      // lost it if the user backed out of the pick. See the predicate's doc.
+      try {
+        if(needsLeftColumnReveal({
+          isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar,
+          leftColumnShown: document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)
+        })) {
+          await appImManager.selectTab(APP_TABS.CHATLIST);
+        }
+        rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION});
+      } catch(err) {
+        console.error('[PhantomChat.chat] failed to open the Sessions folder:', err);
+      }
+    }
+
     const tab = this.createTab(AppContactsTab);
     // The hook rides the OPEN, not `init`: createTab hands back the Contacts tab
     // that is already up (`noSame`), and that instance's `init` ran long ago and
@@ -1085,8 +1144,20 @@ export class AppSidebarLeft extends SidebarSlider {
         const group = await getGroupStore().get(groupId);
         if(!group) return;
 
+        // Composer prefill, not a send. Written as the session's DRAFT before
+        // the chat opens, never through whichever `ChatInput` is on screen:
+        // opening a session builds the chat pane more than once, and the
+        // instance handed a direct `setInputValue` is not the one that
+        // survives — the text died with it and no draft was stored. The drafts
+        // manager outlives the swap: every composer loads its peer's draft once
+        // it settles (`input.ts:2564`, `setDraft(undefined, false)`), and the
+        // `draft_updated` it dispatches reaches the settled instance anyway.
+        if(prefill) {
+          appImManager.managers.appDraftsManager.setDraft(group.peerId, undefined, prefill);
+        }
+
         this.closeEverythingInside();
-        appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
+        await appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
       } catch(err) {
         console.error('[PhantomChat.chat] failed to create session:', err);
         const {toast} = await import('@components/toast');

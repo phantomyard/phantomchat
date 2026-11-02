@@ -1,0 +1,195 @@
+/**
+ * "Open New Session" on a text selection (owner 2026-11-02).
+ *
+ * Selecting a message and right-clicking offers Open New Session next to
+ * Search Selected Text: the app switches to the Sessions folder, opens the
+ * single-contact picker, and the session card lands in that space with the
+ * selected text in the COMPOSER — prefilled, never auto-sent, so the user
+ * edits the prompt and presses send themselves.
+ *
+ * What these pins protect:
+ *   - the entry carries the SELECTION text (not the whole message) and is only
+ *     offered when text is actually selected;
+ *   - the flow is one dispatch: the chat's context menu cannot open a sidebar
+ *     tab, so the sidebar owns the picker;
+ *   - the text is PREFILLED as a draft AND nothing sends on the user's behalf;
+ *   - the folder switch happens before the picker so the session is created in
+ *     the space the user is looking at.
+ *
+ * A DOM mount of the sidebar + picker tab is disproportionate here; this is a
+ * wiring pin over the real source, the same approach as
+ * archive-context-menu.test.ts.
+ */
+import {describe, it, expect} from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const SRC = path.resolve(__dirname, '../..');
+
+function readFile(relPath: string): string {
+  return fs.readFileSync(path.join(SRC, relPath), 'utf-8');
+}
+
+const contextMenu = readFile('components/chat/contextMenu.ts');
+const sidebar = readFile('components/sidebarLeft/index.ts');
+const lang = readFile('lang.ts');
+const strings = readFile('scripts/out/langPack.strings');
+
+/**
+ * A source slice between two anchors. BOTH anchors are asserted: an `indexOf`
+ * that quietly returns -1 would make `slice(start, -1)` the tail of the file,
+ * and a negative assertion like `expect(flowSlice()).not.toContain('sendMessage')`
+ * would then pass for entirely the wrong reason after a rename.
+ */
+function sliceBetween(source: string, startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker);
+  expect(start, `missing start anchor: ${startMarker}`).toBeGreaterThan(-1);
+  expect(end, `missing end anchor: ${endMarker}`).toBeGreaterThan(-1);
+  expect(end, `end anchor precedes start anchor: ${endMarker}`).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
+
+const ENTRY_START = "text: 'Chat.OpenNewSession'";
+const ENTRY_END = "text: 'Message.Context.Selection.Copy'";
+const FLOW_START = 'private async openNewSessionFlow';
+const FLOW_END = 'private createNewChatsMenuOptions';
+
+const entrySlice = () => sliceBetween(contextMenu, ENTRY_START, ENTRY_END);
+const flowSlice = () => sliceBetween(sidebar, FLOW_START, FLOW_END);
+
+describe('text selection menu: Open New Session', () => {
+  it('sits right after Search Selected Text and uses the same selection gate', () => {
+    const search = contextMenu.indexOf("text: 'Chat.SearchSelected'");
+    const open = contextMenu.indexOf("text: 'Chat.OpenNewSession'");
+    expect(search).toBeGreaterThan(-1);
+    expect(open).toBeGreaterThan(search);
+    expect(entrySlice()).toContain("verify: () => !!(this.message as Message.message).message && this.isTextSelected");
+  });
+
+  it('dispatches the selected text, not the whole message body', () => {
+    expect(entrySlice()).toContain('document.getSelection()');
+    expect(entrySlice()).toContain("rootScope.dispatchEvent('phantomchat_new_session_from_selection', {text: selection.toString()})");
+    // the message text is what Copy/Search pin, so a regression to it would
+    // silently open a session with the entire message in the composer
+    expect(entrySlice()).not.toContain('this.message.message');
+  });
+});
+
+describe('sidebar: the selection flow', () => {
+  it('is reachable from the dispatched event', () => {
+    expect(sidebar).toContain("rootScope.addEventListener('phantomchat_new_session_from_selection', ({text}) => {");
+    expect(sidebar).toContain('void this.openNewSessionFlow(text)');
+  });
+
+  it('switches folder through the rail\'s own path, not by setting filterId', () => {
+    const flow = flowSlice();
+    // The rail dispatches `changing_folder_from_sidebar`, whose handler selects
+    // the folder tab, and the menu's onClick then dispatches
+    // `changing_folder_from_chatlist` (the rail highlight) before switching the
+    // filter. Calling appDialogsManager.setFilterIdAndChangeTab directly moves
+    // `filterId` while leaving the folder menu on the old tab — and the menu's
+    // `wasFilterId === id` early return then turns the NEXT click on Sessions
+    // into a scroll with no switch.
+    expect(flow).toContain("rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION})");
+    expect(flow).not.toContain('appDialogsManager.setFilterIdAndChangeTab(');
+  });
+
+  it('brings the left column forward before the picker', () => {
+    const flow = flowSlice();
+    // The selection menu lives in the chat pane: at phone width the left column
+    // is off screen, so without this the picker opens behind the chat and a
+    // hidden tab is left open. `selectTab(CHATLIST)` is how the app reveals it.
+    const column = flow.indexOf('appImManager.selectTab(APP_TABS.CHATLIST)');
+    const picker = flow.indexOf('this.createTab(AppContactsTab)');
+    expect(column).toBeGreaterThan(-1);
+    expect(picker).toBeGreaterThan(column);
+  });
+
+  it('only moves the column when it is actually away', () => {
+    const flow = flowSlice();
+    // `selectTab` also rewrites the hash — `overrideHash(undefined)` for
+    // CHATLIST — so calling it with the column already on screen clears the
+    // hash of the chat that stays open behind the picker. "On screen" is a
+    // LAYOUT fact: above 925px the column is `display: flex`, while the class
+    // only means "chatlist tab is active" and a DM open at 1280 has it absent
+    // (Robert, #400 at 701b048). So the guard is the layout + class predicate,
+    // and its state table is unit-tested in session-column-reveal.test.ts —
+    // a class-only guard here is what shipped the bug.
+    const reveal = flow.indexOf('needsLeftColumnReveal({');
+    const call = flow.indexOf('appImManager.selectTab(APP_TABS.CHATLIST)');
+    expect(reveal).toBeGreaterThan(-1);
+    expect(call).toBeGreaterThan(reveal);
+    expect(flow).toContain('isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar');
+    expect(flow).toContain('leftColumnShown: document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)');
+  });
+
+  it('prefills the new session composer as a draft and does not send', () => {
+    const flow = flowSlice();
+    // Written to the drafts manager BEFORE the chat opens. A direct
+    // `chat.input.setInputValue` looked right and was thrown away: opening a
+    // session builds the chat pane more than once, and a later instance for
+    // the same peer replaced the one that got the write, leaving an empty
+    // composer and no stored draft (Kai, 1280x800 + 390x800, instrumented).
+    const write = 'appImManager.managers.appDraftsManager.setDraft(group.peerId, undefined, prefill)';
+    const open = 'await appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)})';
+    expect(flow).toContain(write);
+    expect(flow.indexOf(write)).toBeGreaterThan(-1);
+    expect(flow.indexOf(write)).toBeLessThan(flow.indexOf(open));
+    // the pane the write used to go into is exactly what must not come back
+    expect(flow).not.toContain('chat.input.setInputValue(prefill');
+    // composer-prefilled means the text is the user's to send — the flow must
+    // not publish a message on their behalf
+    expect(flow).not.toContain('sendMessage');
+    // and the title therefore still comes from the first prompt they send
+    expect(flow).toContain('DEFAULT_SESSION_GROUP_NAME');
+  });
+
+  it('leaves the plain Session + path untouched (no folder switch, no prefill)', () => {
+    expect(flowSlice()).toContain('const prefill = prefillText ? composerDraftFromSelection(prefillText) : \'\';');
+    expect(flowSlice()).toContain('if(prefill) {');
+  });
+
+  it('wraps the column reveal and folder switch in one try, and opens the picker after it', () => {
+    const flow = flowSlice();
+    // The listener fires this flow as `void …`, so an unguarded await here is
+    // an unhandled rejection: no picker, no toast, nothing in the console. The
+    // switch is context for the pick, not a gate on it. Pinned as the exact
+    // block — a `try {` anywhere earlier in the flow satisfied the loose form
+    // and let the guard regress silently (Kai).
+    const SETUP = [
+      'try {',
+      'if(needsLeftColumnReveal({',
+      'isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar,',
+      'leftColumnShown: document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)',
+      '})) {',
+      'await appImManager.selectTab(APP_TABS.CHATLIST);',
+      '}',
+      "rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION});",
+      '} catch(err) {'
+    ];
+    const normalized = flow.split('\n').map(line => line.trim()).join('\n');
+    expect(normalized).toContain(SETUP.join('\n'));
+    expect(flow.indexOf('this.createTab(AppContactsTab)')).toBeGreaterThan(flow.indexOf("changing_folder_from_sidebar'"));
+  });
+});
+
+describe('the menu label exists in both language sources', () => {
+  it('is a local pack key as well as an official string', () => {
+    expect(lang).toContain("'Chat.OpenNewSession': 'Open New Session'");
+    expect(strings).toContain('"Chat.OpenNewSession" = "Open New Session";');
+  });
+});
+
+describe('the local lang-pack version is bumped for the new key', () => {
+  it('is ahead of the version #390 shipped', () => {
+    const version = readFile('langPackLocalVersion.example.ts');
+    const match = version.match(/const langPackLocalVersion = (\d+);/);
+    expect(match).toBeTruthy();
+    // A new key only reaches a client that reloads its pack: boot compares
+    // langPack.localVersion to App.langPackLocalVersion and does nothing else
+    // (src/index.ts:559-566), and a cached pack renders the literal key for a
+    // string it does not carry. So this number has to move with the key.
+    expect(Number(match![1])).toBeGreaterThan(17);
+  });
+});
