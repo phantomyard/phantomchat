@@ -144,6 +144,24 @@ export interface StoredRowMedia {
 }
 
 /**
+ * Pick which copy of one message to render when history storage and the caller
+ * disagree about its media.
+ *
+ * A media message can have two writers: the receive path that persists the row
+ * and the projection handler that appends its own build of the same mid. If the
+ * stored copy lost its `media` while the caller's copy still has it, rendering
+ * the stored one throws inside wrapDocument (`message.media.document` on
+ * undefined) and safeRenderMessage drops the bubble for good — the message only
+ * comes back when the chat is reopened from IndexedDB. Prefer the caller's
+ * object in that case; otherwise the stored copy wins, because it is the copy
+ * every other reader of this mid sees.
+ */
+export function pickRenderableMessage<T>(stored: T | undefined, fallback: T): T {
+  const hasMedia = (message: T | undefined) => !!(message as {media?: unknown} | undefined)?.media;
+  return stored && (hasMedia(stored) || !hasMedia(fallback)) ? stored : fallback;
+}
+
+/**
  * Derive media + display text from a STORED message row — the single shared
  * contract every stored-row → tweb-message builder must use.
  *

@@ -1141,11 +1141,32 @@ export async function handleGroupIncoming(
   void syncWorkerUnreadCount(groupPeerId, dialog.unread_count);
 
   console.log(LOG_PREFIX, 'rx rendered', {groupPeerId, mid, groupId: groupId.slice(0, 8)});
+  // The projection handler behind `phantomchat_new_message` builds its OWN tweb
+  // message from this payload and appends it to the SAME history storage this
+  // function just wrote to. Everything the render needs therefore has to travel
+  // here, or the two writers disagree about one mid:
+  //   - without `fileMetadata` the copy has no `media`, so bubbles.ts renders it
+  //     through wrapDocument with `message.media === undefined`, throws, and the
+  //     bubble is dropped until the chat is reopened (a voice note that only
+  //     appeared after switching chats and back);
+  //   - without `fromPeerId` the copy attributes the bubble to the GROUP instead
+  //     of the sender, because buildTwebMessage falls back to `peerId`.
   dispatch('phantomchat_new_message', {
     peerId: groupPeerId,
     mid,
+    fromPeerId: senderPeerId,
     senderPubkey,
-    message: {id: messageId, content, type, from: senderPubkey, timestamp: timestampSec, groupId},
+    message: {
+      id: messageId,
+      content,
+      type,
+      from: senderPubkey,
+      timestamp: timestampSec,
+      groupId,
+      // `content` is the caption for a file rumor (see GroupAPI.sendFile), and
+      // the projection reads the bubble text from `fileMetadata.caption`.
+      ...(mediaFm ? {fileMetadata: {...mediaFm, caption: content}} : {})
+    },
     timestamp: timestampSec
   });
 
