@@ -955,6 +955,26 @@ export default class DialogsStorage extends AppManager {
     }, 0);
   }
 
+  /**
+   * [PhantomChat] Record an unread count the main thread decided. Live PhantomChat
+   * messages reach the chat list through a main-thread `dialogs_multiupdate`, so
+   * the row's badge updated while this dialog, and the folder unread sets every
+   * folder badge reads, stayed stale until a reload. No-op without a Worker row.
+   */
+  public setLocalDialogUnreadCount(peerId: PeerId, unreadCount: number, clearUnreadMark?: boolean) {
+    const dialog = this.getDialogOnly(peerId);
+    if(!dialog) {
+      return;
+    }
+
+    const releaseUnreadCount = this.prepareDialogUnreadCountModifying(dialog);
+    dialog.unread_count = unreadCount;
+    if(clearUnreadMark) {
+      delete dialog.pFlags.unread_mark;
+    }
+    releaseUnreadCount();
+  }
+
   public processChangedUnreadOrUnmuted(peerId: PeerId) {
     const dialog = this.getDialogOnly(peerId);
     if(!dialog) {

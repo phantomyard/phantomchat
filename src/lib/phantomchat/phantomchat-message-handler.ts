@@ -346,6 +346,17 @@ export async function reconcileUnreadFromStore(): Promise<void> {
 }
 
 /**
+ * Folder badges count the Worker's dialogs, which a main-thread dialog dispatch
+ * never reaches. Every live change to a row's unread count has to come through
+ * here as well, or the row and its folder disagree until the next reload.
+ */
+async function syncWorkerUnreadCount(peerId: number, unreadCount: number, clearUnreadMark = false): Promise<void> {
+  try {
+    await rootScope.managers.dialogsStorage?.setLocalDialogUnreadCount(peerId as any, unreadCount, clearUnreadMark);
+  } catch(e: any) { console.debug('[MessageHandler] syncWorkerUnreadCount:', e?.message); }
+}
+
+/**
  * Shared badge-repaint tail: rebuild the peer's dialog with the GIVEN unread
  * count and fan it out to the chat list (mirrors → lastDialogs → dispatch).
  * Source priority for the base dialog: apiManagerProxy mirrors, then the
@@ -353,6 +364,10 @@ export async function reconcileUnreadFromStore(): Promise<void> {
  * `resetUnreadForPeer` for why the store fallback makes post-reload work).
  */
 async function dispatchDialogWithUnread(peerId: number, unreadCount: number, conv: ConvRef | null, store: any): Promise<void> {
+  // Not awaited: the row's badge paints synchronously when a chat is opened, and
+  // that must not wait on a Worker round trip.
+  void syncWorkerUnreadCount(peerId, unreadCount, unreadCount === 0);
+
   const proxy = (MOUNT_CLASS_TO as any).apiManagerProxy;
   const mirrored = proxy?.mirrors?.dialogs?.[peerId];
   const cached = lastDialogs.get(peerId);
@@ -736,6 +751,7 @@ export async function handleIncomingMessage(
     unreadCounts.set(peerId, unread);
   }
   persistUnreadCounts();
+  await syncWorkerUnreadCount(peerId, unread);
 
   const dialog = buildTwebDialog(peerId, msg, data.timestamp, unread);
   lastDialogs.set(peerId, dialog);

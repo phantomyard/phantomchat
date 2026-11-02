@@ -1126,6 +1126,13 @@ export async function handleGroupIncoming(
   });
   (dialog as any).topMessage = msg;
   dispatchGroupDialogUpdate(groupPeerId, dialog);
+  // Folder badges (Sessions, Groups) count the Worker's dialog, which the dispatch
+  // above never reaches: without this the row shows unread and its folder does not.
+  try {
+    await (rootScope as any).managers.dialogsStorage?.setLocalDialogUnreadCount(groupPeerId, dialog.unread_count);
+  } catch(e: any) {
+    console.debug(LOG_PREFIX, 'setLocalDialogUnreadCount non-critical:', e?.message);
+  }
 
   console.log(LOG_PREFIX, 'rx rendered', {groupPeerId, mid, groupId: groupId.slice(0, 8)});
   dispatch('phantomchat_new_message', {
