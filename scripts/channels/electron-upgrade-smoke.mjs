@@ -4,7 +4,8 @@
 //
 // PHANTOMCHAT_OLD_APP_DIR is the unpacked app.asar of that release.
 import {_electron} from 'playwright';
-import {existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync} from 'node:fs';
+import {existsSync, mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
+import {removeScratch} from './smoke-cleanup.mjs';
 import {resolve, join} from 'node:path';
 import assert from 'node:assert/strict';
 import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage} from './runtime-identity.mjs';
@@ -156,5 +157,5 @@ try {
   console.log(`Upgrade passed: ${Object.keys(before.stores).length} stores, identity ${identity.npub.slice(0, 12)}…, phantom and message kept`);
 } finally {
   if(desktop) await desktop.close().catch(() => {});
-  rmSync(dir, {recursive: true, force: true});
+  removeScratch(dir);
 }

@@ -1,5 +1,6 @@
 import {_electron} from 'playwright';
-import {mkdirSync, mkdtempSync, writeFileSync, rmSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
+import {removeScratch} from './smoke-cleanup.mjs';
 import {resolve, join} from 'node:path';
 import assert from 'node:assert/strict';
 import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage, openChannelSettings, releaseChannelGroup, releaseChannelRadio, releaseChannelRow} from './runtime-identity.mjs';
@@ -70,6 +71,6 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem('channel-native-fixture')), 'preserved');
   console.log('Electron app:// same-profile Stable → Preview → Stable passed');
 } finally {
-  if(desktop) await desktop.close();
-  rmSync(dir, {recursive: true, force: true});
+  if(desktop) await desktop.close().catch(() => {});
+  removeScratch(dir);
 }

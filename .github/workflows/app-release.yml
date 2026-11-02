@@ -78,6 +78,8 @@ jobs:
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck:electron
+      # electron/localAi tests run the real tools from the bundled runtime.
+      - run: pnpm --dir electron/pi-harness install --frozen-lockfile --ignore-scripts
       - run: node --test scripts/releases/registry.node-test.mjs
       - run: pnpm exec vitest run
 
