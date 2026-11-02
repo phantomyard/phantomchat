@@ -211,6 +211,35 @@ describe('PhantomChatMTProtoServer', () => {
     mockGetPubkey.mockResolvedValue(PEER_PUBKEY);
   });
 
+  describe('messages.getMessages cold reply lookup (#325)', () => {
+    it('seeks the full mid in its conversation and returns the history message shape', async() => {
+      const mid = 1_793_639_334_616_956;
+      mockStore.getMessagesPage.mockResolvedValueOnce({messages: [{...mockMessage, mid}], total: 8, offsetIdOffset: 7});
+      const result = await server.handleMethod('messages.getMessages', {
+        peer: {user_id: PEER_ID}, id: [{_: 'inputMessageID', id: mid}]
+      });
+      expect(mockStore.getMessagesPage).toHaveBeenCalledWith(CONVERSATION_ID, 1, mid, 0);
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]).toMatchObject({id: mid, message: 'hello world', peer_id: {user_id: PEER_ID}});
+      expect(result.users).toHaveLength(1);
+    });
+
+    it('does not return a neighbouring row for a missing anchor', async() => {
+      const result = await server.handleMethod('messages.getMessages', {
+        peer: {user_id: PEER_ID}, id: [{_: 'inputMessageID', id: MID + 10}]
+      });
+      expect(result.messages).toEqual([]);
+    });
+
+    it('ignores unsupported input types and deduplicates repeated ids', async() => {
+      const result = await server.handleMethod('messages.getMessages', {
+        peer: {user_id: PEER_ID}, id: [{_: 'inputMessageReplyTo', id: MID}, {_: 'inputMessageID', id: MID}, {_: 'inputMessageID', id: MID}]
+      });
+      expect(result.messages).toHaveLength(1);
+      expect(mockStore.getMessagesPage).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // ─── getDialogs ───────────────────────────────────────────────────
 
   describe('messages.getDialogs', () => {

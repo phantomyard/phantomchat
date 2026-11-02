@@ -477,6 +477,9 @@ export class PhantomChatMTProtoServer {
       case 'messages.getHistory':
         return this.getHistory(params);
 
+      case 'messages.getMessages':
+        return this.getMessages(params);
+
       case 'messages.search':
         return this.searchMessages(params);
 
@@ -1107,6 +1110,22 @@ export class PhantomChatMTProtoServer {
       count: total,
       offset_id_offset: offsetIdOffset
     };
+  }
+
+  /** Cold reply lookups must read the same rows/builders as history, not the
+   * empty Telegram stub (which permanently marks existing quotes deleted).
+   * The Worker supplies the peer and full mids only for PhantomChat requests.
+   * getHistory seeks the existing conversationMid index; it does not populate
+   * the Worker's history slices. Filter the stale-anchor fallback by exact id.
+   */
+  private async getMessages(params: any): Promise<any> {
+    const ids = [...new Set<number>((params?.id ?? [])
+    .filter((id: any) => id?._ === 'inputMessageID' && Number.isSafeInteger(id.id) && id.id > 0)
+    .map((id: any) => id.id))];
+    const pages = await Promise.all(ids.map((id) => this.getHistory({peer: params?.peer, offset_id: id, limit: 1})));
+    const messages = pages.flatMap((page, i) => page.messages.filter((message: any) => message.id === ids[i]));
+    const uniquePeers = (key: string) => [...new Map(pages.flatMap((page) => page[key]).map((peer: any) => [peer.id, peer])).values()];
+    return {_: 'messages.messages', messages, users: uniquePeers('users'), chats: uniquePeers('chats')};
   }
 
   private async getHistory(params: any): Promise<any> {
