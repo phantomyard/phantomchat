@@ -5,6 +5,9 @@ import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {checkCompatibility, baselineDigestFor} from '../../scripts/channels/check.mjs';
+import {deployBaseline} from '../../scripts/releases/registry.mjs';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {checkPublishedCompatibility} from '../../scripts/channels/check-published.mjs';
 
 let dir: string;
@@ -198,7 +201,7 @@ describe('shared-state release gate', () => {
     baseline.compatibilityApprovals['src/store.ts'] = {...approvals, published: hash('stale')};
     expect(() => checkCompatibility(baseline, 'HEAD', dir, baselineDigestFor(baseline)))
       .toThrow('compatibility review required');
-    // ...and the CLI (the path build.mjs runs) resolves the same column.
+    // ...and the check.mjs CLI resolves the same column.
     writeFileSync(resolve(dir, 'baseline.json'), JSON.stringify({...baseline, compatibilityApprovals: {'src/store.ts': approvals}}));
     const cli = spawnSync(process.execPath, [resolve('scripts/channels/check.mjs')], {
       cwd: dir,
@@ -207,5 +210,33 @@ describe('shared-state release gate', () => {
     });
     expect(cli.stderr).toBe('');
     expect(cli.status).toBe(0);
+  });
+  it('the deploy builder resolves the column from the baseline registry writes', () => {
+    // registry.mjs `baseline` is the only producer of the file build.mjs reads
+    // as CHANNEL_BASELINE, so the pin has to survive that rewrite. If it does
+    // not, both refs look identical, the selector returns `stable`, and the
+    // original outage is back with no other test failing.
+    const config = {stableRef: 'a'.repeat(40), stableVersion: '1.0.1', compatibilityApprovals: {}};
+    const record = {stableRef: 'b'.repeat(40), stableVersion: '1.0.9'};
+    const baseline = deployBaseline(config, record);
+    expect(baseline.pinRef).toBe(config.stableRef);
+    expect(baseline.stableRef).toBe(record.stableRef);
+    expect(baseline.stableVersion).toBe('1.0.9');
+    expect(baselineDigestFor(baseline)).toBe('published');
+    // The deployed commit is unchanged, so a promotion that moves it past the
+    // derived column must still resolve rather than throw.
+    const promoted = {...baseline, stableRef: 'c'.repeat(40)};
+    expect(baselineDigestFor(promoted)).toBe('published');
+    // The repository config is not a baseline: it carries no pinRef, and its
+    // stableRef is the pin.
+    expect(baselineDigestFor(config)).toBe('stable');
+  });
+  it('build.mjs derives its column instead of trusting the default', () => {
+    // build.mjs imports checkCompatibility and calls it directly, so no CLI
+    // test covers the deploy lane's call site. `pnpm run build` cannot run in
+    // a test, so the call shape is what is asserted: dropping the fourth
+    // argument silently restores the pin's column for a deployed baseline.
+    const builder = readFileSync(join(process.cwd(), 'scripts', 'channels', 'build.mjs'), 'utf8');
+    expect(builder).toMatch(/checkCompatibility\(config, candidate, root, baselineDigestFor\(config\)\)/);
   });
 });
