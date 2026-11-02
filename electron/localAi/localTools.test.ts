@@ -55,6 +55,56 @@ describe('LocalToolRunner', () => {
     await theirs;
   });
 
+  it('keeps every run revocable when call ids collide', async() => {
+    const other = 'c'.repeat(64);
+    const finish: Array<() => void> = [];
+    const signals: AbortSignal[] = [];
+    const runner = new LocalToolRunner({
+      logPath: join(dir, 'log'),
+      onActivity: () => {},
+      resolveTool: async() => ({
+        execute: (_id: string, _args: unknown, signal: AbortSignal) => new Promise((resolve) => {
+          signals.push(signal);
+          finish.push(() => resolve({content: []}));
+          signal.addEventListener('abort', () => resolve({content: [], isError: true}));
+        })
+      })
+    });
+
+    // Two contacts on one id, and one contact reusing its own id.
+    const first = runner.run(SENDER, call({callId: 'call-1'}));
+    const second = runner.run(other, call({callId: 'call-1'}));
+    const third = runner.run(other, call({callId: 'call-1'}));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(runner.running).toBe(3);
+
+    finish[0]();
+    await first;
+    expect(runner.running).toBe(2);
+    expect(signals[1].aborted).toBe(false);
+
+    expect(runner.revoke(other)).toBe(2);
+    expect(signals[1].aborted).toBe(true);
+    expect(signals[2].aborted).toBe(true);
+    expect((await second).status).toBe('cancelled');
+    expect((await third).status).toBe('cancelled');
+    expect(runner.running).toBe(0);
+  });
+
+  it('only cancels the contact that made the call when ids collide', async() => {
+    const other = 'c'.repeat(64);
+    const runner = new LocalToolRunner({logPath: join(dir, 'log'), onActivity: () => {}, resolveTool: hanging()});
+    const mine = runner.run(SENDER, call({callId: 'call-1'}));
+    const theirs = runner.run(other, call({callId: 'call-1'}));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(runner.cancel(other, 'call-1')).toBe(true);
+    expect((await theirs).status).toBe('cancelled');
+    expect(runner.running).toBe(1);
+    expect(runner.cancel(other, 'call-1')).toBe(false);
+    expect(runner.cancel(SENDER, 'call-1')).toBe(true);
+    expect((await mine).status).toBe('cancelled');
+  });
+
   it('only lets a contact cancel its own call', async() => {
     const runner = new LocalToolRunner({logPath: join(dir, 'log'), onActivity: () => {}, resolveTool: hanging()});
     const pending = runner.run(SENDER, call());

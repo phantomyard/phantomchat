@@ -24,7 +24,7 @@ export interface LocalAccessState {
   ownerPubkey: string | null;
   /** Contacts with the switch ON, mapped to when it was turned on. */
   enabled: Record<string, number>;
-  /** Handled call ids and their expiry, so a relay replay cannot run a call twice. */
+  /** Handled calls per sender and their expiry, so a relay replay cannot run a call twice. */
   seenCalls: Record<string, number>;
 }
 
@@ -89,6 +89,11 @@ export function parseToolCall(raw: unknown): ToolCall | null {
   return call as unknown as ToolCall;
 }
 
+/** The sender picks callId, so one contact's id must not burn the same id for another. */
+function seenKey(sender: string, callId: string): string {
+  return `${sender}:${callId}`;
+}
+
 /** What the renderer read from its group store for `call.groupId`. */
 export interface CallGroupInfo {
   isSession: boolean;
@@ -113,7 +118,7 @@ export function decideToolCall(input: {
   if(!isEnabled(state, sender)) return 'switch-off';
   if(call.deviceId !== state.deviceId) return 'wrong-device';
   if(call.expiresAt <= now || call.expiresAt > now + MAX_CALL_LIFETIME_MS) return 'expired';
-  if(state.seenCalls[call.callId] !== undefined) return 'replay';
+  if(state.seenCalls[seenKey(sender, call.callId)] !== undefined) return 'replay';
   if(call.groupId !== undefined) {
     // A Session with a contact whose switch is ON counts as that contact. Other
     // members change nothing: the switch belongs to the verified sender.
@@ -122,9 +127,9 @@ export function decideToolCall(input: {
   return 'run';
 }
 
-export function rememberCall(state: LocalAccessState, call: ToolCall, now: number): void {
-  for(const [callId, expiry] of Object.entries(state.seenCalls)) {
-    if(expiry <= now) delete state.seenCalls[callId];
+export function rememberCall(state: LocalAccessState, sender: string, call: ToolCall, now: number): void {
+  for(const [key, expiry] of Object.entries(state.seenCalls)) {
+    if(expiry <= now) delete state.seenCalls[key];
   }
-  state.seenCalls[call.callId] = call.expiresAt;
+  state.seenCalls[seenKey(sender, call.callId)] = call.expiresAt;
 }

@@ -24,12 +24,17 @@ export type ToolResolver = (name: string) => Promise<{
 
 interface InFlight {
   sender: string;
+  callId: string;
   controller: AbortController;
   cancelled: boolean;
 }
 
 export class LocalToolRunner {
-  private readonly inFlight = new Map<string, InFlight>();
+  /**
+   * A set, not a map on callId: the sender picks the id, so two contacts (or one
+   * contact reusing an id) can overlap, and every run must stay revocable.
+   */
+  private readonly inFlight = new Set<InFlight>();
 
   constructor(private readonly options: {
     resolveTool: ToolResolver;
@@ -44,8 +49,8 @@ export class LocalToolRunner {
 
   async run(sender: string, call: ToolCall): Promise<ToolResult> {
     const controller = new AbortController();
-    const entry: InFlight = {sender, controller, cancelled: false};
-    this.inFlight.set(call.callId, entry);
+    const entry: InFlight = {sender, callId: call.callId, controller, cancelled: false};
+    this.inFlight.add(entry);
     this.options.onActivity(this.inFlight.size);
 
     const requested = typeof call.timeoutMs === 'number' && call.timeoutMs > 0 ? call.timeoutMs : DEFAULT_TOOL_TIMEOUT_MS;
@@ -64,7 +69,7 @@ export class LocalToolRunner {
       result = {status: 'error', output: errorText(err)};
     } finally {
       clearTimeout(timer);
-      this.inFlight.delete(call.callId);
+      this.inFlight.delete(entry);
       this.options.onActivity(this.inFlight.size);
     }
 
@@ -76,16 +81,19 @@ export class LocalToolRunner {
 
   /** A contact may only cancel its own call. */
   cancel(sender: string, callId: string): boolean {
-    const entry = this.inFlight.get(callId);
-    if(!entry || entry.sender !== sender) return false;
-    entry.cancelled = true;
-    entry.controller.abort();
-    return true;
+    let found = false;
+    for(const entry of this.inFlight) {
+      if(entry.sender !== sender || entry.callId !== callId) continue;
+      entry.cancelled = true;
+      entry.controller.abort();
+      found = true;
+    }
+    return found;
   }
 
   revoke(sender: string): number {
     let count = 0;
-    for(const entry of this.inFlight.values()) {
+    for(const entry of this.inFlight) {
       if(entry.sender !== sender) continue;
       entry.cancelled = true;
       entry.controller.abort();

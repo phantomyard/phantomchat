@@ -289,7 +289,7 @@ export class LocalAiHost {
         if(!call) return [];
         const decision = decideToolCall({state: this.access, sender, call, group, now: this.now()});
         if(decision !== 'run') return [];
-        rememberCall(this.access, call, this.now());
+        rememberCall(this.access, sender, call, this.now());
         this.saveAccess();
         const result = await this.runner.run(sender, call);
         return chunkResult(call.callId, result);

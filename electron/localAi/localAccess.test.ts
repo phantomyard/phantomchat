@@ -52,7 +52,7 @@ describe('decideToolCall', () => {
 
   it('does not run a replayed call', () => {
     const s = state();
-    rememberCall(s, call(), NOW);
+    rememberCall(s, PHANTOM, call(), NOW);
     expect(decideToolCall({state: s, sender: PHANTOM, call: call(), now: NOW})).toBe('replay');
   });
 
@@ -96,8 +96,16 @@ describe('state', () => {
   it('forgets expired call ids', () => {
     const s = state();
     s.seenCalls.old = NOW - 1;
-    rememberCall(s, call(), NOW);
-    expect(Object.keys(s.seenCalls)).toEqual(['c1']);
+    rememberCall(s, PHANTOM, call(), NOW);
+    expect(Object.keys(s.seenCalls)).toEqual([`${PHANTOM}:c1`]);
+  });
+
+  it('keeps replay memory per sender, so one contact cannot burn an id for another', () => {
+    const s = state();
+    s.enabled[STRANGER] = NOW;
+    rememberCall(s, PHANTOM, call(), NOW);
+    expect(decideToolCall({state: s, sender: PHANTOM, call: call(), now: NOW})).toBe('replay');
+    expect(decideToolCall({state: s, sender: STRANGER, call: call(), now: NOW})).toBe('run');
   });
 });
 
