@@ -103,6 +103,7 @@ import AppPhantomChatQRTab from '@components/sidebarLeft/tabs/phantomchatQR';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
 import {decodePubkey} from '@lib/phantomchat/nostr-identity';
 import {composerDraftFromSelection} from '@lib/phantomchat/group-sessions';
+import {needsLeftColumnReveal} from '@lib/phantomchat/session-column-reveal';
 import {loadCachedProfile} from '@lib/phantomchat/profile-cache';
 
 export const LEFT_COLUMN_ACTIVE_CLASSNAME = 'is-left-column-shown';
@@ -1097,14 +1098,19 @@ export class AppSidebarLeft extends SidebarSlider {
       // swallow the picker: log it and open the picker anyway, since the folder
       // switch is context for the pick, not a gate on it.
       //
-      // Only when the column is actually away. `selectTab` also rewrites the
-      // hash (`overrideHash(undefined)` for CHATLIST), so calling it with the
-      // column already shown — a DM open at desktop width — would clear the
-      // hash of a chat that stays open behind the picker, and a reload would
-      // then lose it. The class is the app's own "left column is the active
-      // tab" flag, toggled by `selectTab` itself.
+      // Only when the column is actually away — and "away" is a LAYOUT fact,
+      // not this class. Above 925px the column is `display: flex` and always on
+      // screen, while `is-left-column-shown` only means "the chatlist tab is
+      // active": opening a peer runs `selectTab(CHAT)`, so a DM open at 1280
+      // has the class absent with the column visible. `selectTab` also rewrites
+      // the hash (`overrideHash(undefined)` for CHATLIST), so calling it there
+      // cleared the hash of the DM that stays open behind the picker — reload
+      // lost it if the user backed out of the pick. See the predicate's doc.
       try {
-        if(!document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)) {
+        if(needsLeftColumnReveal({
+          isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar,
+          leftColumnShown: document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)
+        })) {
           await appImManager.selectTab(APP_TABS.CHATLIST);
         }
         rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION});

@@ -108,16 +108,20 @@ describe('sidebar: the selection flow', () => {
 
   it('only moves the column when it is actually away', () => {
     const flow = flowSlice();
-    const guard = flow.indexOf('document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)');
-    const call = flow.indexOf('appImManager.selectTab(APP_TABS.CHATLIST)');
     // `selectTab` also rewrites the hash — `overrideHash(undefined)` for
-    // CHATLIST — so an unconditional call with a DM open at desktop width
-    // clears the hash of a chat that is still on screen, and a reload then
-    // loses it. The class is toggled by `selectTab` itself, so it is the app's
-    // own "left column is the active tab" flag; the call is a no-op when the
-    // column is already there.
-    expect(guard).toBeGreaterThan(-1);
-    expect(call).toBeGreaterThan(guard);
+    // CHATLIST — so calling it with the column already on screen clears the
+    // hash of the chat that stays open behind the picker. "On screen" is a
+    // LAYOUT fact: above 925px the column is `display: flex`, while the class
+    // only means "chatlist tab is active" and a DM open at 1280 has it absent
+    // (Robert, #400 at 701b048). So the guard is the layout + class predicate,
+    // and its state table is unit-tested in session-column-reveal.test.ts —
+    // a class-only guard here is what shipped the bug.
+    const reveal = flow.indexOf('needsLeftColumnReveal({');
+    const call = flow.indexOf('appImManager.selectTab(APP_TABS.CHATLIST)');
+    expect(reveal).toBeGreaterThan(-1);
+    expect(call).toBeGreaterThan(reveal);
+    expect(flow).toContain('isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar');
+    expect(flow).toContain('leftColumnShown: document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)');
   });
 
   it('prefills the new session composer as a draft and does not send', () => {
@@ -155,7 +159,10 @@ describe('sidebar: the selection flow', () => {
     // and let the guard regress silently (Kai).
     const SETUP = [
       'try {',
-      'if(!document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)) {',
+      'if(needsLeftColumnReveal({',
+      'isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar,',
+      'leftColumnShown: document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)',
+      '})) {',
       'await appImManager.selectTab(APP_TABS.CHATLIST);',
       '}',
       "rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION});",
