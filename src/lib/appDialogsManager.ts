@@ -34,6 +34,7 @@ import appSidebarLeft from '@components/sidebarLeft';
 import {simulateClickEvent} from '@helpers/dom/clickEvent';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import replaceContent from '@helpers/dom/replaceContent';
+import paintDialogTyping from '@lib/phantomchat/dialog-typing-indicator';
 import ConnectionStatusComponent from '@components/connectionStatus';
 import {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
 import {fastRafPromise} from '@helpers/schedulers';
@@ -146,7 +147,9 @@ export type DialogDom = {
   titleWrapOptions?: WrapSomethingOptions;
 
   setLastMessagePromise?: CancellablePromise<void>,
-  setUnreadMessagePromise?: CancellablePromise<void>
+  setUnreadMessagePromise?: CancellablePromise<void>,
+  /** Bumped by every setLastMessageN paint; lets a late typing repaint drop out. */
+  lastMessagePaintToken?: number
 };
 
 interface SortedDialog extends SortedElementBase<PeerId> {
@@ -857,7 +860,7 @@ export class AppDialogsManager {
       launchedWithDeepLink: wasLaunchedWithChatDeepLink()
     });
 
-    const menu = targetFolderId !== FOLDER_ID_ALL && this.filtersRendered[targetFolderId]?.menu;
+    const menu = this.filtersRendered[targetFolderId]?.menu;
     if(menu) {
       this.selectTab(whichChild(menu), animate);
     } else {
@@ -2056,6 +2059,10 @@ export class AppDialogsManager {
 
     const {draftMessage, lastMessage} = this.getLastMessageForDialog(dialog, _lastMessage);
 
+    // Typing repaint token: see the paintDialogTyping call at the end of this
+    // method. Taken before any await so a newer paint invalidates this one.
+    const paintToken = (dom.lastMessagePaintToken = (dom.lastMessagePaintToken ?? 0) + 1);
+
     const isSearch = setUnread !== null && !setUnread;
     // * do not uncomment `setUnread` - unsetTyping right after this call will interrupt setting unread badges
     if(/* setUnread */!isSearch) {
@@ -2070,6 +2077,19 @@ export class AppDialogsManager {
       delete dom.listEl.dataset.mid;
 
       promise.resolve();
+
+      // The row has no last message to show (dialog update before the message
+      // was resolvable). If someone is working, that is exactly what the row
+      // must show — otherwise it is blank while the header says "… is working".
+      if(!isSearch) {
+        paintDialogTyping({
+          dom,
+          peerId,
+          threadId: isForumTopic(dialog) ? dialog.id : undefined,
+          getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t),
+          isStillValid: () => dom.lastMessagePaintToken === paintToken
+        }).catch(noop);
+      }
       return;
     }
 
@@ -2248,6 +2268,27 @@ export class AppDialogsManager {
     } else dom.lastTimeSpan.textContent = '';
 
     promise.resolve();
+
+    // Subtitle is final: re-derive the "‹peer› is working" line from live state
+    // instead of trusting the one peer_typings event that may have painted it
+    // earlier. Every dialog update (message, unread bump, draft) runs through
+    // here and used to wipe the indicator, leaving the row blank while the
+    // header still showed it. Same model as the header's setPeerStatus: paint
+    // from the store, not from an event.
+    //
+    // List rows only: `setLastMessage` also paints message-search hits and the
+    // peer-profile preview, and those rows have no typing lifecycle
+    // (`unsetTyping`) — painting there would replace a search hit with
+    // "is working" and strand it after typing stops.
+    if(!isSearch) {
+      paintDialogTyping({
+        dom,
+        peerId,
+        threadId: isForumTopic(dialog) ? dialog.id : undefined,
+        getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t),
+        isStillValid: () => dom.lastMessagePaintToken === paintToken
+      }).catch(noop);
+    }
   }
 
   public setUnreadMessagesN(options: Parameters<AppDialogsManager['setUnreadMessages']>[0]) {
@@ -2595,19 +2636,18 @@ export class AppDialogsManager {
         isBatch: options.isBatch,
         setUnread: true
       }).then(async() => {
-        // Re-apply active typing state on (re)mount. The virtual list evicts
+        // Re-derive the typing line on (re)mount. The virtual list evicts
         // off-window rows (deferredSortedVirtualList shrink), so a peer_typings
         // event that fired while this row was unmounted never reached it and
         // setLastMessage just overwrote lastMessageSpan with the last message.
         // Restore the indicator here so typing survives scroll eviction in long lists
         // (notably "All Chats", which holds every dialog).
-        const dom = dialogElement.dom;
-        if(dom.lastMessageSpan.querySelector('.peer-typing-container')) return;
-        const typingElement = await appImManager.getPeerTyping(peerId, undefined, options.threadId);
-        if(typingElement) {
-          replaceContent(dom.lastMessageSpan, typingElement);
-          dom.lastMessageSpan.classList.add('user-typing');
-        }
+        await paintDialogTyping({
+          dom: dialogElement.dom,
+          peerId,
+          threadId: options.threadId,
+          getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t)
+        });
       }));
 
       return Promise.all(promises);

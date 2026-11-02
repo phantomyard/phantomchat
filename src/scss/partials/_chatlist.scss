@@ -362,8 +362,22 @@ ul.chatlist {
         //   border-color: var(--background);
         // }
 
+        // The "‹peer› is working" line must follow the row's own subtitle
+        // colour, not a hardcoded white. Active rows are not always dark: the
+        // boring-corporate theme paints them --bc-selected (#ffffff in light),
+        // and `--color: #fff` (consumed by _peerTyping.scss as `color`) made the
+        // indicator white-on-white — the row read as empty while the chat header
+        // still said "‹peer› is working". `inherit` picks up whatever the theme
+        // sets on .row-subtitle (#fff on the default blue active row).
+        // The "‹peer› is working" line must follow the row's own subtitle
+        // colour, not a hardcoded white. Active rows are not always dark: the
+        // boring-corporate theme paints them --bc-selected (#ffffff in light),
+        // and `--color: #fff` (consumed by _peerTyping.scss as `color`) made the
+        // indicator white-on-white — the row read as empty while the chat header
+        // still said "‹peer› is working". `inherit` picks up whatever the theme
+        // sets on .row-subtitle (#fff on the default blue active row).
         .peer-typing-container {
-          --color: #fff;
+          color: inherit;
         }
       }
     }

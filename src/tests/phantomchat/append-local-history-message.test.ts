@@ -153,13 +153,13 @@ describe('replaceLocalTempMessage', () => {
   const TEMP = 1793620000500001;
   const REAL = 1793620000600002;
 
-  function makeSwapManager(mids: number[], stored: Record<number, any>) {
+  function makeSwapManager(mids: number[], stored: Record<number, any>, topMessage: number | null = TEMP) {
     const history = new SlicedArray<number>();
     history.first.push(...mids);
     history.first.setEnd(SliceEnd.Bottom);
     const historyStorage: any = {history, count: mids.length, _maxId: mids[0], get maxId() { return this._maxId; }};
     const storage = new Map<number, any>(Object.entries(stored).map(([k, v]) => [+k, v]));
-    const dialog: any = {top_message: TEMP};
+    const dialog: any = topMessage === null ? undefined : {_: 'dialog', peerId: PEER_ID, top_message: topMessage};
     const manager = Object.create(AppMessagesManager.prototype) as any;
     Object.assign(manager, {
       getHistoryMessagesStorage: () => storage,
@@ -167,9 +167,10 @@ describe('replaceLocalTempMessage', () => {
       getDialogOnly: () => dialog,
       deleteMessageFromStorage: (s: Map<number, any>, mid: number) => s.delete(mid),
       setMessageToStorage: (s: Map<number, any>, m: any) => s.set(m.mid, m),
-      // Only the settle call passes the dialog: the plain append must not be what
-      // moves a top_message still pointing at the temp mid being deleted.
-      setDialogTopMessage: (m: any, d?: any) => { if(d) d.top_message = m.mid; }
+      // setDialogTopMessage is deliberately not stubbed: the swap's rewind came from
+      // its default dialog argument, which a stub hides.
+      dialogsStorage: {generateIndexForDialog: vi.fn()},
+      scheduleHandleNewDialogs: vi.fn()
     });
     return {manager, history, historyStorage, storage, dialog};
   }
@@ -185,6 +186,24 @@ describe('replaceLocalTempMessage', () => {
     expect(ctx.storage.get(REAL)).toMatchObject({id: REAL, mid: REAL, media: temp.media});
     expect(ctx.historyStorage.count).toBe(2);
     expect(ctx.dialog.top_message).toBe(REAL);
+    expect(ctx.historyStorage.maxId).toBe(REAL);
+  });
+
+  it('leaves the dialog on a newer message that arrived during the upload', () => {
+    const NEWER = REAL + 1_000_000;
+    const ctx = makeSwapManager([NEWER, TEMP, 10], {[TEMP]: temp}, NEWER);
+    ctx.manager.replaceLocalTempMessage(PEER_ID, TEMP, REAL);
+
+    expect([...ctx.history.first]).toEqual([NEWER, REAL, 10]);
+    expect(ctx.dialog.top_message).toBe(NEWER);
+    expect(ctx.historyStorage.maxId).toBe(NEWER);
+  });
+
+  it('moves maxId off the deleted temp mid when the peer has no dialog', () => {
+    const ctx = makeSwapManager([TEMP, 10], {[TEMP]: temp}, null);
+    ctx.manager.replaceLocalTempMessage(PEER_ID, TEMP, REAL);
+
+    expect(ctx.historyStorage.maxId).toBe(REAL);
   });
 
   it('keeps a real row already loaded instead of clobbering it', () => {

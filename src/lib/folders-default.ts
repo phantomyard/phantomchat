@@ -12,7 +12,7 @@
  */
 
 import {isChatDeepLink} from '@lib/phantomchat/phantomchat-launch-dialogs';
-import {FOLDER_ID_ALL} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 
 /** StateSettings key under `settings.` where the preferred folder id lives. */
 export const DEFAULT_CHAT_FOLDER_SETTING_KEY = 'defaultChatFolderId' as const;
@@ -44,7 +44,7 @@ export function effectiveDefaultFolderId(
 
   // Storing FOLDER_ID_ALL is normalized to "no preference": All Chats is
   // already the fallback, so there is nothing to remember.
-  if(preferred === FOLDER_ID_ALL) {
+  if(preferred === FOLDER_ID_ALL || preferred === FOLDER_ID_ARCHIVE) {
     return FOLDER_ID_ALL;
   }
 

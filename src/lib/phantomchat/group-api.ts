@@ -413,6 +413,32 @@ export class GroupAPI {
    * 6. Return {messageId, rumorId, timestampMs} so VMT's sendMessage
    *    branch can derive the real mid deterministically.
    */
+  /**
+   * Sessions take their name from the first thing the user puts in them: the
+   * first 30 characters of the first prompt, no ellipsis. Fire-and-forget — the
+   * rename is a control-message broadcast, and the user's send must never wait
+   * on it.
+   *
+   * Shared by `sendMessage` (text) and `sendFile` (attachment caption) because
+   * whichever of the two lands first is the session's first prompt. Naming only
+   * the text path left an attachment-first session called "New session"
+   * forever, since the guard below never fires once a name is set.
+   *
+   * A captionless attachment is deliberately NOT a naming event: there is no
+   * text to name it from, so the title waits for the first text that arrives.
+   *
+   * The guard is `name === DEFAULT_SESSION_GROUP_NAME`, so this fires exactly
+   * once and is a no-op for every later message, every other group, and every
+   * later caption.
+   */
+  private maybeAutoNameSession(group: GroupRecord, text: string): void {
+    if(group.kind !== 'session' || group.name !== DEFAULT_SESSION_GROUP_NAME) return;
+    const nextName = sessionTitleFromPrompt(text);
+    if(!nextName) return;
+    this.renameGroup(group.groupId, nextName)
+    .catch((err) => this.log.warn('[GroupAPI] session auto-name failed (non-critical):', err));
+  }
+
   async sendMessage(groupId: string, content: string, typeOrOptions?: string | GroupSendOptions): Promise<GroupSendResult> {
     const group = await this.store.get(groupId);
     if(!group) throw new Error(`Group not found: ${groupId}`);
@@ -444,17 +470,9 @@ export class GroupAPI {
     const replyToRumorId = opts.replyToRumorId;
 
     // Sessions take their name from the FIRST prompt (first 30 characters, no
-    // ellipsis). Fire-and-forget: the rename is a control-message broadcast, and
-    // the user's send must never wait on it. The guard is `name === 'New
-    // session'`, so it fires exactly once and is a no-op for every later
-    // message, every other group, and every file/voice send.
-    if(msgType === 'text' && group.kind === 'session' && group.name === DEFAULT_SESSION_GROUP_NAME) {
-      const nextName = sessionTitleFromPrompt(content);
-      if(nextName) {
-        this.renameGroup(groupId, nextName)
-        .catch((err) => this.log.warn('[GroupAPI] session auto-name failed (non-critical):', err));
-      }
-    }
+    // ellipsis). Only text names a session here; see `sendFile` for the
+    // attachment-caption half — the two share `maybeAutoNameSession`.
+    if(msgType === 'text') this.maybeAutoNameSession(group, content);
 
     // Pin a single timestamp for the whole send so the payload, handler and
     // any downstream mid derivation all agree. Anchoring via `Date.now()`
@@ -549,6 +567,11 @@ export class GroupAPI {
     if(group.archivedAt) {
       throw new Error('sendFile: group is archived (read-only)');
     }
+
+    // A caption is a prompt: an attachment sent as a session's first message
+    // names the session, exactly like text does. A captionless attachment is
+    // left as "New session" — there is nothing to name it from.
+    this.maybeAutoNameSession(group, caption);
 
     const timestampMs = Date.now();
     const messageId = `grp-${timestampMs}-${Math.random().toString(36).slice(2, 8)}`;

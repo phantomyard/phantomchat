@@ -36,6 +36,7 @@ TESTS=(
   e2e-avatar.ts
   e2e-contacts-and-sending.ts
   e2e-context-menu.ts
+  e2e-default-folder.ts
   e2e-vmtproto-smoke.ts
   e2e-local-relay-smoke.ts
   e2e-p2p-messaging.ts
@@ -49,6 +50,10 @@ TESTS=(
   # removed, so leaving it out of this list left the regression guarded by
   # nothing (#311).
   e2e-group-preview-typing.ts
+  # 2026-11-02: the "‹peer› is working" line on the SELECTED row rendered
+  # white-on-white under the default boring-corporate theme, so opening a chat
+  # made its row look empty. Pins the contrast on the active row in every theme.
+  e2e-chatlist-typing-contrast.ts
   e2e-relay-status.ts
   e2e-relay-publish.ts
   e2e-persistence-status.ts
