@@ -1138,20 +1138,20 @@ export class AppSidebarLeft extends SidebarSlider {
         const group = await getGroupStore().get(groupId);
         if(!group) return;
 
+        // Composer prefill, not a send. Written as the session's DRAFT before
+        // the chat opens, never through whichever `ChatInput` is on screen:
+        // opening a session builds the chat pane more than once, and the
+        // instance handed a direct `setInputValue` is not the one that
+        // survives — the text died with it and no draft was stored. The drafts
+        // manager outlives the swap: every composer loads its peer's draft once
+        // it settles (`input.ts:2564`, `setDraft(undefined, false)`), and the
+        // `draft_updated` it dispatches reaches the settled instance anyway.
+        if(prefill) {
+          appImManager.managers.appDraftsManager.setDraft(group.peerId, undefined, prefill);
+        }
+
         this.closeEverythingInside();
         await appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
-
-        if(!prefill) return;
-
-        // Composer prefill, not a send: wait for the chat pane to finish
-        // loading its own state (a late draft load is a no-op once the input
-        // is non-empty — ChatInput.setDraft bails on a non-empty field), then
-        // write the text and persist it as the session's draft.
-        const chat = appImManager.chat;
-        if(chat?.setPeerPromise) await chat.setPeerPromise.catch(() => {});
-        if(!chat?.input) return;
-        chat.input.setInputValue(prefill, true, true);
-        chat.input.saveDraft();
       } catch(err) {
         console.error('[PhantomChat.chat] failed to create session:', err);
         const {toast} = await import('@components/toast');

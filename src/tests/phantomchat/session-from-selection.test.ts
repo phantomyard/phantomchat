@@ -120,30 +120,50 @@ describe('sidebar: the selection flow', () => {
     expect(call).toBeGreaterThan(guard);
   });
 
-  it('prefills the new session composer and does not send', () => {
-    expect(flowSlice()).toContain('chat.input.setInputValue(prefill, true, true)');
-    expect(flowSlice()).toContain('chat.input.saveDraft()');
+  it('prefills the new session composer as a draft and does not send', () => {
+    const flow = flowSlice();
+    // Written to the drafts manager BEFORE the chat opens. A direct
+    // `chat.input.setInputValue` looked right and was thrown away: opening a
+    // session builds the chat pane more than once, and a later instance for
+    // the same peer replaced the one that got the write, leaving an empty
+    // composer and no stored draft (Kai, 1280x800 + 390x800, instrumented).
+    const write = 'appImManager.managers.appDraftsManager.setDraft(group.peerId, undefined, prefill)';
+    const open = 'await appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)})';
+    expect(flow).toContain(write);
+    expect(flow.indexOf(write)).toBeGreaterThan(-1);
+    expect(flow.indexOf(write)).toBeLessThan(flow.indexOf(open));
+    // the pane the write used to go into is exactly what must not come back
+    expect(flow).not.toContain('chat.input.setInputValue(prefill');
     // composer-prefilled means the text is the user's to send — the flow must
     // not publish a message on their behalf
-    expect(flowSlice()).not.toContain('sendMessage');
+    expect(flow).not.toContain('sendMessage');
     // and the title therefore still comes from the first prompt they send
-    expect(flowSlice()).toContain('DEFAULT_SESSION_GROUP_NAME');
+    expect(flow).toContain('DEFAULT_SESSION_GROUP_NAME');
   });
 
   it('leaves the plain Session + path untouched (no folder switch, no prefill)', () => {
     expect(flowSlice()).toContain('const prefill = prefillText ? composerDraftFromSelection(prefillText) : \'\';');
-    expect(flowSlice()).toContain('if(!prefill) return;');
+    expect(flowSlice()).toContain('if(prefill) {');
   });
 
-  it('still opens the picker when the setup rejects', () => {
+  it('wraps the column reveal and folder switch in one try, and opens the picker after it', () => {
     const flow = flowSlice();
-    const setup = flow.indexOf('appImManager.selectTab(APP_TABS.CHATLIST)');
-    const picker = flow.indexOf('this.createTab(AppContactsTab)');
     // The listener fires this flow as `void …`, so an unguarded await here is
     // an unhandled rejection: no picker, no toast, nothing in the console. The
-    // switch is context for the pick, not a gate on it.
-    expect(flow.slice(0, setup)).toContain('try {');
-    expect(flow.slice(setup, picker)).toContain('catch(');
+    // switch is context for the pick, not a gate on it. Pinned as the exact
+    // block — a `try {` anywhere earlier in the flow satisfied the loose form
+    // and let the guard regress silently (Kai).
+    const SETUP = [
+      'try {',
+      'if(!document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)) {',
+      'await appImManager.selectTab(APP_TABS.CHATLIST);',
+      '}',
+      "rootScope.dispatchEventSingle('changing_folder_from_sidebar', {id: FOLDER_ID_SESSION});",
+      '} catch(err) {'
+    ];
+    const normalized = flow.split('\n').map(line => line.trim()).join('\n');
+    expect(normalized).toContain(SETUP.join('\n'));
+    expect(flow.indexOf('this.createTab(AppContactsTab)')).toBeGreaterThan(flow.indexOf("changing_folder_from_sidebar'"));
   });
 });
 
