@@ -45,7 +45,7 @@ describe('cold reply fetch preserves PhantomChat full mids and conversation cont
       needSingleMessages: new Map([[peerId, new Map([[mid, {resolve}]])]]),
       apiManager: {invokeApiSingle},
       appPeersManager: {isChannel: () => false, getInputPeerById: () => peer},
-      appMessagesIdsManager: {generateMessageId: (id) => id},
+      appMessagesIdsManager: {generateMessageId: (id: number) => id},
       saveApiResult: vi.fn(), deletedMessages: new Set(),
       rootScope: {dispatchEvent: vi.fn()}
     });

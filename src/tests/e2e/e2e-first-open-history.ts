@@ -108,6 +108,7 @@ async function main() {
 
     for(const mode of ['desktop auto-open', 'mobile row click', 'explicit setPeer']) {
       await A.page.setViewportSize(mode === 'desktop auto-open' ? {width: 1280, height: 900} : {width: 500, height: 900});
+      await A.page.evaluate(() => history.replaceState(null, '', location.pathname + location.search));
       await A.page.reload({waitUntil: 'domcontentloaded'});
       await A.page.waitForFunction(() => !!window.appImManager?.setPeer);
       await A.page.waitForTimeout(5000);
