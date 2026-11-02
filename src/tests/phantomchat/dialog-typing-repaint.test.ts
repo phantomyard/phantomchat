@@ -86,8 +86,28 @@ vi.mock('@components/sidebarLeft', () => ({
   default: {}
 }));
 
+// The subtitle path formats the timestamp with a locale-aware helper that
+// throws under jsdom's ICU; the search-hit case below needs the paint to reach
+// its end, so stub just the formatter.
+vi.mock('@helpers/date', async(importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {...actual, formatDateAccordingToTodayNew: (): string => '12:00'};
+});
+
 const PEER_ID = 4242;
 const EMPTY_ROW = {_: 'dialog', peerId: PEER_ID, folder_id: 0, unread_count: 0, pFlags: {}} as any;
+
+// A message-search hit: same `setLastMessage` path, but the row shows the
+// matched snippet rather than a chat-list subtitle.
+const SEARCH_HIT = {
+  _: 'message',
+  mid: 778899,
+  message: 'needle in text',
+  date: 1700000000,
+  fromId: PEER_ID,
+  peerId: PEER_ID,
+  pFlags: {}
+} as any;
 
 function typingContainer(text = 'Robbie is working') {
   const container = document.createElement('span');
@@ -232,5 +252,33 @@ describe('chat-list typing indicator across a subtitle repaint', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(dialogElement.dom.lastMessageSpan.textContent).toBe('Robbie is working');
+  });
+
+  it('leaves a search hit alone when that peer is working', async() => {
+    // Message search and the peer-profile preview paint through the same
+    // method with `setUnread: false`. Those rows have no typing lifecycle, so
+    // painting the indicator there replaced the matched snippet with
+    // "Robbie is working" and stranded it after typing stopped.
+    getPeerTyping.mockClear();
+    getPeerTyping.mockImplementation(async() => typingContainer());
+    adm.getLastMessageForDialog = (): {lastMessage?: any, draftMessage?: any} => ({lastMessage: SEARCH_HIT, draftMessage: undefined});
+
+    const dialogElement = makeDialogElement();
+    // Search rows paint with a real PeerId; stub the two methods this path reads.
+    const searchPeer = {isAnyChat: (): boolean => false, toPeerId: (): number => PEER_ID};
+    await adm.setLastMessageN({
+      dialog: {...EMPTY_ROW, peerId: searchPeer} as any,
+      dialogElement,
+      highlightWord: 'needle',
+      setUnread: false
+    });
+
+    // Give a stray paint every chance to land before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(dialogElement.dom.lastMessageSpan.textContent).toContain('needle in text');
+    expect(dialogElement.dom.lastMessageSpan.textContent).not.toContain('is working');
+    expect(dialogElement.dom.lastMessageSpan.classList.contains('user-typing')).toBe(false);
+    expect(getPeerTyping).not.toHaveBeenCalled();
   });
 });

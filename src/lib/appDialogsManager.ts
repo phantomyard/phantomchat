@@ -2081,13 +2081,15 @@ export class AppDialogsManager {
       // The row has no last message to show (dialog update before the message
       // was resolvable). If someone is working, that is exactly what the row
       // must show — otherwise it is blank while the header says "… is working".
-      paintDialogTyping({
-        dom,
-        peerId,
-        threadId: isForumTopic(dialog) ? dialog.id : undefined,
-        getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t),
-        isStillValid: () => dom.lastMessagePaintToken === paintToken
-      }).catch(noop);
+      if(!isSearch) {
+        paintDialogTyping({
+          dom,
+          peerId,
+          threadId: isForumTopic(dialog) ? dialog.id : undefined,
+          getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t),
+          isStillValid: () => dom.lastMessagePaintToken === paintToken
+        }).catch(noop);
+      }
       return;
     }
 
@@ -2273,13 +2275,20 @@ export class AppDialogsManager {
     // here and used to wipe the indicator, leaving the row blank while the
     // header still showed it. Same model as the header's setPeerStatus: paint
     // from the store, not from an event.
-    paintDialogTyping({
-      dom,
-      peerId,
-      threadId: isForumTopic(dialog) ? dialog.id : undefined,
-      getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t),
-      isStillValid: () => dom.lastMessagePaintToken === paintToken
-    }).catch(noop);
+    //
+    // List rows only: `setLastMessage` also paints message-search hits and the
+    // peer-profile preview, and those rows have no typing lifecycle
+    // (`unsetTyping`) — painting there would replace a search hit with
+    // "is working" and strand it after typing stops.
+    if(!isSearch) {
+      paintDialogTyping({
+        dom,
+        peerId,
+        threadId: isForumTopic(dialog) ? dialog.id : undefined,
+        getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t),
+        isStillValid: () => dom.lastMessagePaintToken === paintToken
+      }).catch(noop);
+    }
   }
 
   public setUnreadMessagesN(options: Parameters<AppDialogsManager['setUnreadMessages']>[0]) {
