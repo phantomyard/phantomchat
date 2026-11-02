@@ -960,6 +960,8 @@ export default class DialogsStorage extends AppManager {
    * messages reach the chat list through a main-thread `dialogs_multiupdate`, so
    * the row's badge updated while this dialog, and the folder unread sets every
    * folder badge reads, stayed stale until a reload. No-op without a Worker row.
+   * Writes the Worker's in-memory dialog only: nothing is persisted, the count is
+   * re-derived from the store on the next reload or Worker restart.
    */
   public setLocalDialogUnreadCount(peerId: PeerId, unreadCount: number, clearUnreadMark?: boolean) {
     const dialog = this.getDialogOnly(peerId);

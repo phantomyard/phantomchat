@@ -222,6 +222,48 @@ describe('Sessions folder badge follows live unread state', () => {
     expect(worker.getFolderUnreadCount(FOLDER_ID_ALL).unreadCount).toBe(1);
   });
 
+  it('a read landing during a slow Worker sync leaves the row and the badge at zero', async() => {
+    // Hold the receive's positive-count sync, as a slow Worker round trip would.
+    let releaseSync: () => void;
+    const held = new Promise<void>((resolve) => releaseSync = resolve);
+    const setLocal = worker.setLocalDialogUnreadCount.bind(worker);
+    const setLocalDialogUnreadCount = vi.fn((peerId: number, unread: number, clearMark?: boolean) => {
+      setLocal(peerId, unread, clearMark);
+      return unread > 0 ? held : Promise.resolve();
+    });
+    mocks.managers.dialogsStorage = {setLocalDialogUnreadCount};
+
+    const receiving = handler.handleIncomingMessage({
+      peerId: USER_PEER_ID,
+      mid: 3,
+      senderPubkey: SENDER_PUBKEY,
+      timestamp: 1_699_000_200,
+      message: {id: 'dm-race', content: 'hi', type: 'text', from: SENDER_PUBKEY, timestamp: 1_699_000_200}
+    } as any, OWN_PUBKEY);
+    await vi.waitFor(() => expect(setLocalDialogUnreadCount).toHaveBeenCalledWith(USER_PEER_ID, expect.any(Number), false));
+
+    await handler.applyRemoteReadState(USER_PEER_ID);
+    releaseSync();
+    await receiving;
+    await new Promise((resolve) => setTimeout(resolve, 600)); // past the delayed mount repaint
+
+    const painted = mocks.dispatchEvent.mock.calls
+    .filter(([name]) => name === 'dialogs_multiupdate')
+    .map(([, updates]) => updates.get(USER_PEER_ID)?.dialog)
+    .filter(Boolean);
+    expect(painted.length).toBeGreaterThan(0);
+    expect(painted[painted.length - 1].unread_count).toBe(0);
+    expect(userRow.unread_count).toBe(0);
+  });
+
+  it('a slow Worker does not hold up group receive', async() => {
+    mocks.managers.dialogsStorage = {setLocalDialogUnreadCount: vi.fn(() => new Promise(() => {}))};
+    const dispatch = vi.fn();
+    void handleGroupIncoming(OWN_PUBKEY, GROUP_ID, rumor('ab'.repeat(32), SENDER_PUBKEY), SENDER_PUBKEY, dispatch);
+
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledWith('phantomchat_new_message', expect.anything()));
+  });
+
   it('a Worker with no row for the peer is left alone', () => {
     expect(() => worker.setLocalDialogUnreadCount(-12000000000000999, 1)).not.toThrow();
     expect(sessionsBadge()).toBe(0);

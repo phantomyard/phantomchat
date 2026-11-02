@@ -751,7 +751,9 @@ export async function handleIncomingMessage(
     unreadCounts.set(peerId, unread);
   }
   persistUnreadCounts();
-  await syncWorkerUnreadCount(peerId, unread);
+  // Not awaited: `unread` is handed to the dialog below, and a read landing during
+  // a Worker round trip would otherwise be repainted over by this stale value.
+  void syncWorkerUnreadCount(peerId, unread);
 
   const dialog = buildTwebDialog(peerId, msg, data.timestamp, unread);
   lastDialogs.set(peerId, dialog);
