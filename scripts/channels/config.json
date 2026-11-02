@@ -64,8 +64,9 @@
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
-      "preview": "3df894fb157c028ee4864b8d5b49df633bd8618b73cd3316dc3b3b409fc46b2e",
-      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Pin/unread menu update: Presentation only: gives count-less unread marks their own CSS class. Counts, read cursor and persistence are unchanged. Requires independent exact-head content review. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required."
+      "published": "3df894fb157c028ee4864b8d5b49df633bd8618b73cd3316dc3b3b409fc46b2e",
+      "preview": "01a1ffe9ba94ef24627a320a00c3efb915d8da8e0a37efc1c61ba270091fcfeb",
+      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Pin/unread menu update: Presentation only: gives count-less unread marks their own CSS class. Counts, read cursor and persistence are unchanged. Requires independent exact-head content review. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Chat-list subtitle repaint re-derives the '‹peer› is working' line from the live typing store instead of trusting the one peer_typings event that painted it, so a dialog update no longer erases the indicator (or leaves the row blank when no last message resolved). A late paint is dropped when a newer repaint of the same row superseded it. Presentation only: reads the existing typingsInPeer store, no new store, schema, key or protocol. Search-hit guard: the repaint is skipped for non-chat-list rows (message search, peer-profile preview), which have no typing lifecycle. Presentation and scope only; identifies the existing `isSearch` discriminator, no storage, read-state, schema, protocol or preference change. Independent exact-head content review required."
     },
     "src/lib/folders-default.ts": {
       "preview": "357ab8507abbf45454bcbe3b99f6181280e23005e7b3729d40361dac4bbbedb3",
@@ -242,8 +243,8 @@
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
-      "preview": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
-      "reason": "Chatlist row insertion: a dialog added by live traffic now detaches the loading placeholder and notifies the length consumer, so an empty-space pane is torn down. Presentation only; no storage or protocol change."
+      "preview": "4cb19003c186c87e89d3808a45355c1d90dd0a053577df639d556f69b3b73340",
+      "reason": "Chatlist row insertion: a dialog added by live traffic now detaches the loading placeholder and notifies the length consumer, so an empty-space pane is torn down. Presentation only; no storage or protocol change. Chat-list setTyping now re-renders the typing line in place through the shared paint helper instead of only when no element existed, so a peer changing action (typing, then sending a photo) updates the row. Presentation only; no storage or protocol change."
     },
     "src/lib/phantomchat/phantomchat-typing-receive.ts": {
       "stable": "7a169408c0cba07bfd01e004d073fb63ec9686a224807e9347c9565c1ddd50b5",
@@ -445,6 +446,11 @@
       "stable": "absent",
       "preview": "bfe461c5a781e1c741b0425c4494d136238fe1c77611583ac0f08c2d81ee8a7b",
       "reason": "Deliberately NEW file: the collection budget (32 KiB content bytes, 400 rows, 4 KiB per control rumor, 8 KiB per item measured on the PAYLOAD not the envelope), a chunker that spends the budget newest-first so every ceiling drops the oldest rows and the slice always ends at the message right before the join, the receiver-side per-item shape gate, the per-group per-window ingest budget and the bounded pending stage for slices that arrive before the group record. The stage accumulates the chunks of one relayer and is bounded by group count and TTL. Pure functions over the caller's message-store reads plus two bounded, expiring in-memory maps - no storage, no schema, no wire-format change to existing types."
+    },
+    "src/lib/phantomchat/dialog-typing-indicator.ts": {
+      "stable": "absent",
+      "preview": "ab59c46f3cf144250193bd312ad42bc5e4a3329c8278dfd18d1f3cbc0305113b",
+      "reason": "Presentation-only helper: paints or clears the chat-list row's '‹peer› is working' line from the existing typingsInPeer store. No storage, schema, key, identity or protocol change; it only moves text inside an existing span."
     }
   },
   "publishedStableRef": "efd94bf9742a6f1685154f998bb27152b1b81ce0"
