@@ -14,13 +14,17 @@ import {
   effectiveDefaultFolderId,
   startupFolderId
 } from '@lib/folders-default';
-import {FOLDER_ID_ALL, FOLDER_ID_GROUPS} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS} from '@appManagers/constants';
 
-const AVAILABLE = [FOLDER_ID_ALL, FOLDER_ID_GROUPS, 10];
+const AVAILABLE = [FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, 10];
 
 describe('effectiveDefaultFolderId', () => {
   it('falls back to All Chats when nothing is preferred', () => {
     expect(effectiveDefaultFolderId(undefined, AVAILABLE)).toBe(FOLDER_ID_ALL);
+  });
+
+  it('rejects a stale Archived preference', () => {
+    expect(effectiveDefaultFolderId(FOLDER_ID_ARCHIVE, [0, 1, 3, 4])).toBe(FOLDER_ID_ALL);
   });
 
   it('normalizes an All Chats preference to the fallback', () => {
@@ -62,7 +66,7 @@ describe('startupFolderId', () => {
   it('falls back to All Chats when the preferred folder vanished before boot', () => {
     expect(startupFolderId({
       preferred: 10,
-      availableFilterIds: [FOLDER_ID_ALL, FOLDER_ID_GROUPS],
+      availableFilterIds: [FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS],
       launchedWithDeepLink: false
     })).toBe(FOLDER_ID_ALL);
   });

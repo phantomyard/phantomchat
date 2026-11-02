@@ -1149,8 +1149,6 @@
 "Allow" = "Allow";
 "HistoryCleared" = "History was cleared";
 "Archive" = "Archive";
-"ArchiveActionFailed" = "Could not update this conversation";
-"SessionCreateFailed" = "Could not create the session";
 "Unarchive" = "Unarchive";
 "Delete" = "Delete";
 "Reply" = "Reply";
@@ -1633,6 +1631,8 @@
 "PrivacyClearPayment" = "Payment info";
 "Clear" = "Clear";
 "Save" = "Save";
+"ArchiveActionFailed" = "Could not update this conversation";
+"SessionCreateFailed" = "Could not create the session";
 "PaymentCheckoutName" = "Name";
 "ClearRecentStickersAlertTitle" = "Clear recent stickers";
 "ClearRecentStickersAlertMessage" = "Do you want to clear all your recent stickers?";
@@ -1741,6 +1741,9 @@
 "FwdMessageToSavedMessages" = "Message forwarded to **Saved Messages**.";
 "FwdMessagesToSavedMessages" = "Messages forwarded to **Saved Messages**.";
 "ColorTheme" = "Color theme";
+"UITheme" = "Theme";
+"UITheme.FunAndRelaxed" = "Fun and Relaxed";
+"UITheme.BoringCorporate" = "Boring Corporate";
 "SendAsFile" = "Send as file";
 "SendAsFiles" = "Send as files";
 "ChatThemeChangedYou" = "You changed the chat theme to %1$s";
@@ -2914,9 +2917,9 @@
 "ChatList.Filter.Confirm.Remove.Header" = "Remove Folder";
 "ChatList.Filter.Confirm.Remove.Text" = "Are you sure you want to remove this folder? Your chats will not be deleted.";
 "ChatList.Filter.SetDefault" = "Set as Default";
-"ChatList.Filter.RemoveDefault" = "Remove Default";
-"ChatList.Filter.SetDefaultToast" = "This folder will open on launch";
-"ChatList.Filter.RemoveDefaultToast" = "All Chats will open on launch";
+"ChatList.Filter.RemoveDefault" = "Use Chats as Default";
+"ChatList.Filter.SetDefaultToast" = "This folder is now the default on this device";
+"ChatList.Filter.RemoveDefaultToast" = "Chats is now the default on this device";
 "EditFolder.Icon" = "Folder Icon";
 "EditFolder.IconNone" = "Default";
 "EditFolder.IconTip" = "Pick an icon for this folder. Its name and chats stay unchanged; without an icon the folder gets an automatic one.";

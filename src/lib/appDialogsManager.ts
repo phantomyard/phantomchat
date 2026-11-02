@@ -860,7 +860,7 @@ export class AppDialogsManager {
       launchedWithDeepLink: wasLaunchedWithChatDeepLink()
     });
 
-    const menu = targetFolderId !== FOLDER_ID_ALL && this.filtersRendered[targetFolderId]?.menu;
+    const menu = this.filtersRendered[targetFolderId]?.menu;
     if(menu) {
       this.selectTab(whichChild(menu), animate);
     } else {

@@ -151,7 +151,7 @@ export function FoldersSidebarContent(props: {
   }
 
   async function updateItemsOrder(order: number[]) {
-    order = [...order];
+    order = [FOLDER_ID_ALL, ...order.filter((id) => id !== FOLDER_ID_ALL)];
     // Archives is always the last space: it is not reorderable, and the server
     // order array never carries it. (Dropping it entirely used to sort it to
     // the TOP, because unknown ids sort first below.)
@@ -164,8 +164,8 @@ export function FoldersSidebarContent(props: {
       const aIndex = order.indexOf(a.id);
       const bIndex = order.indexOf(b.id);
 
-      if(aIndex === -1) return -1;
-      if(bIndex === -1) return 1;
+      if(aIndex === -1) return bIndex === -1 ? 0 : 1;
+      if(bIndex === -1) return -1;
 
       return aIndex - bIndex;
     });

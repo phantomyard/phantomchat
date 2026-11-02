@@ -57,16 +57,18 @@ export function folderEmoticonFallback(filter: MyDialogFilter): string | undefin
 export async function getFolderItemsInOrder(folderItems: FolderItemPayload[], managers: AppManagers) {
   const filters = new Map<number, MyDialogFilter>();
 
-  const filtersPromises = folderItems
-  .filter((item) => item.id)
-  .map((item) => managers.filtersStorage.getFilter(item.id));
+  const filtersPromises = folderItems.map((item) => managers.filtersStorage.getFilter(item.id));
   const filtersArr = await Promise.all(filtersPromises);
   for(const filter of filtersArr) {
     filters.set(filter.id, filter);
   }
 
   return folderItems.sort((a, b) => {
-    if(!a.id || !b.id) return 0;
+    if(a.id === b.id) return 0;
+    if(a.id === FOLDER_ID_ALL) return -1;
+    if(b.id === FOLDER_ID_ALL) return 1;
+    if(a.id === FOLDER_ID_ARCHIVE) return 1;
+    if(b.id === FOLDER_ID_ARCHIVE) return -1;
     return filters.get(a.id)?.localId - filters.get(b.id)?.localId;
   });
 }

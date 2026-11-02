@@ -173,8 +173,8 @@ export default class FiltersStorage extends AppManager {
     const allIdx = filters.findIndex(
       (f) => f._ === 'dialogFilterDefault' || (f as MyDialogFilter).id === FOLDER_ID_ALL
     );
-    if(allIdx !== -1) filters[allIdx] = allChatsFilter;
-    else filters.unshift(allChatsFilter);
+    if(allIdx !== -1) filters.splice(allIdx, 1);
+    filters.unshift(allChatsFilter);
 
     // Helper: if a previously-persisted filter has a user-renamed literal
     // title, keep it; otherwise re-seed with the fresh default. Legacy
@@ -298,7 +298,8 @@ export default class FiltersStorage extends AppManager {
   private onUpdateDialogFilterOrder = (update: Update.updateDialogFilterOrder) => {
     // console.log('updateDialogFilterOrder', update);
 
-    const order = update.order.slice();
+    // Chats is the fixed first space; startup preference never reorders it.
+    const order = [FOLDER_ID_ALL, ...update.order.filter((id) => id !== FOLDER_ID_ALL)];
     if(!order.includes(FOLDER_ID_ARCHIVE)) {
       order.splice(order[0] === FOLDER_ID_ALL ? 1 : 0, 0, FOLDER_ID_ARCHIVE);
     }
