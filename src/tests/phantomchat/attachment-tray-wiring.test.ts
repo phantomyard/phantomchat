@@ -86,9 +86,23 @@ describe('attachment tray wiring', () => {
     expect(body.indexOf('getPendingAttachmentCaption()')).toBeLessThan(body.indexOf('this.sendPendingAttachments(caption)'));
     // Once the wording travels inside the first file's message, the composer is
     // consumed rather than publishing the same text again.
-    expect(body).toContain('this.onMessageSent(true, true)');
+    expect(body).toContain('this.consumeComposerAfterBatch()');
     // The peer-switch guard still wraps the coalesced path.
     expect(body).toContain('peerIdBeforeBatch');
+  });
+
+  it('drops the stored draft before emptying the composer after a caption', () => {
+    // `clearInput()` ends by asking `setDraft()` for this peer's stored draft,
+    // and the debounced `saveDraft` wrote the very text that just became a
+    // caption — so emptying the field alone puts the published wording back in
+    // the composer (and back in the chat list's draft preview). The text path
+    // is covered by `sendText({clearDraft: true})`; the bridge send has no such
+    // flag, so the batch has to clear the draft itself, before the field is
+    // emptied.
+    const consume = methodBody(inputTs, 'private consumeComposerAfterBatch');
+    expect(consume).toContain('appDraftsManager.clearDraft(');
+    expect(consume).toContain('peerId: this.chat.peerId');
+    expect(consume.indexOf('clearDraft(')).toBeLessThan(consume.indexOf('onMessageSent('));
   });
 
   it('attaches the caption to one file, not to every publish in the batch', () => {
@@ -109,6 +123,8 @@ describe('attachment tray wiring', () => {
     expect(body.indexOf('if(batch.failed)')).toBeGreaterThan(-1);
     expect(body.indexOf('if(batch.failed)')).toBeLessThan(body.indexOf('shouldConsumeComposerAfterFailedBatch('));
     expect(body).toContain('shouldConsumeComposerAfterFailedBatch(batch, peerIdBeforeBatch, this.chat.peerId)');
+    // Both consume paths share the one helper that also drops the stored draft.
+    expect(body.match(/this\.consumeComposerAfterBatch\(\)/g)).toHaveLength(2);
     // ...and the successful path only clears it when a file actually carried it.
     expect(body).toContain('if(batch.captionPublished)');
   });

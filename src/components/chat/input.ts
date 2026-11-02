@@ -4079,6 +4079,33 @@ export default class ChatInput {
     return result;
   }
 
+  /**
+   * Consumes the composer after a staged batch published the typed text as a
+   * file's caption.
+   *
+   * `onMessageSent` -> `clearInput()` -> `setDraft(undefined)` reads the stored
+   * draft back into the field, and the debounced `saveDraft` has already stored
+   * the text that just became a caption — so clearing the field alone restores
+   * exactly the wording that was published, both in the composer and in the
+   * chat list's draft preview. The text path never meets this because
+   * `sendText` passes `clearDraft`; the PhantomChat bridge send has no such flag
+   * (`sendFileViaBridge` never touches drafts), so the batch drops the draft
+   * itself, before the field is emptied.
+   *
+   * Callers keep their own peer guard: a chat opened mid-batch must not have its
+   * draft cleared, so this runs against the current (and therefore the batch's)
+   * peer only.
+   */
+  private consumeComposerAfterBatch() {
+    this.managers.appDraftsManager.clearDraft({
+      peerId: this.chat.peerId,
+      threadId: this.chat.threadId,
+      monoforumThreadId: this.chat.monoforumThreadId
+    });
+
+    this.onMessageSent(true, true);
+  }
+
   public async sendMessage(force = false) {
     const {editMsgId, chat} = this;
     if(chat.type === ChatType.Scheduled && !force && !editMsgId) {
@@ -4116,7 +4143,7 @@ export default class ChatInput {
             // retry the tray offers would otherwise caption the next file with
             // it, and the recipient answers each media message as its own turn.
             if(shouldConsumeComposerAfterFailedBatch(batch, peerIdBeforeBatch, this.chat.peerId)) {
-              this.onMessageSent(true, true);
+              this.consumeComposerAfterBatch();
             }
 
             return;
@@ -4128,7 +4155,7 @@ export default class ChatInput {
             // mid-batch leaves the composer alone (the input instance is
             // reused, so the newly opened chat's draft must not be cleared).
             if(this.chat.peerId === peerIdBeforeBatch) {
-              this.onMessageSent(true, true);
+              this.consumeComposerAfterBatch();
             }
 
             return;
