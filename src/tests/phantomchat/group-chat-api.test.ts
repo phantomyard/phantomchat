@@ -276,6 +276,82 @@ describe('GroupAPI', () => {
     expect(publishedEvents.length).toBe(0);
   });
 
+  // ─── session naming from the FIRST prompt, whichever send path carries it ──
+  //
+  // A session is created as 'New session' and renamed from its first prompt.
+  // The rename used to live inline in sendMessage's text branch only, so an
+  // attachment (with or without a caption) sent first left the title at 'New
+  // session' forever — the `name === 'New session'` guard made every later
+  // text a no-op too. Both paths now share `maybeAutoNameSession`.
+
+  const SESSION_ID = 'c'.repeat(64) + 'd'.repeat(32);
+  const sessionRecord = (overrides: Partial<GroupRecord> = {}) => ({
+    groupId: SESSION_ID, name: 'New session', kind: 'session' as const,
+    adminPubkey: OWN_PUBKEY, members: [MEMBER_A, OWN_PUBKEY], peerId: -2e15,
+    createdAt: Date.now(), updatedAt: Date.now(),
+    ...overrides
+  } as GroupRecord);
+
+  const imageMeta = {
+    url: 'blossom://x', sha256: 'a'.repeat(64), keyHex: 'k'.repeat(64),
+    ivHex: 'i'.repeat(32), mimeType: 'image/png', size: 10
+  };
+
+  // The rename is fire-and-forget, so let its promise chain settle first.
+  const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('sendFile names a new session from the attachment caption', async() => {
+    mockGroupStore.get.mockResolvedValue(sessionRecord());
+    mockGroupStore.updateInfo.mockResolvedValue(undefined);
+
+    await api.sendFile(SESSION_ID, 'image', imageMeta, 'Add a retry loop to the polls now');
+    await settled();
+
+    expect(mockGroupStore.updateInfo).toHaveBeenCalledWith(SESSION_ID, {name: 'Add a retry loop to the polls'});
+  });
+
+  it('sendFile leaves a new session unnamed when there is no caption', async() => {
+    mockGroupStore.get.mockResolvedValue(sessionRecord());
+    mockGroupStore.updateInfo.mockResolvedValue(undefined);
+
+    await api.sendFile(SESSION_ID, 'image', imageMeta, '');
+    await settled();
+
+    // A captionless attachment has nothing to name the session from; the first
+    // text that arrives names it instead.
+    expect(mockGroupStore.updateInfo).not.toHaveBeenCalled();
+  });
+
+  it('sendFile does not rename a session that already has a name', async() => {
+    mockGroupStore.get.mockResolvedValue(sessionRecord({name: 'Auth work'}));
+    mockGroupStore.updateInfo.mockResolvedValue(undefined);
+
+    await api.sendFile(SESSION_ID, 'image', imageMeta, 'a much later caption');
+    await settled();
+
+    expect(mockGroupStore.updateInfo).not.toHaveBeenCalled();
+  });
+
+  it('sendFile does not name an ordinary group from a caption', async() => {
+    mockGroupStore.get.mockResolvedValue(sessionRecord({kind: 'group' as const, name: 'Team'}));
+    mockGroupStore.updateInfo.mockResolvedValue(undefined);
+
+    await api.sendFile(SESSION_ID, 'image', imageMeta, 'this is a caption, not a title');
+    await settled();
+
+    expect(mockGroupStore.updateInfo).not.toHaveBeenCalled();
+  });
+
+  it('sendMessage still names a new session from its first text', async() => {
+    mockGroupStore.get.mockResolvedValue(sessionRecord());
+    mockGroupStore.updateInfo.mockResolvedValue(undefined);
+
+    await api.sendMessage(SESSION_ID, 'Fix the login bug please');
+    await settled();
+
+    expect(mockGroupStore.updateInfo).toHaveBeenCalledWith(SESSION_ID, {name: 'Fix the login bug please'});
+  });
+
   it('Test 5: incoming rumor with group tag routes to group handler', () => {
     const handleSpy = vi.spyOn(api, 'handleIncomingGroupMessage');
     const rumor = {id: 'r1', kind: 14, content: '{}', pubkey: MEMBER_A,
