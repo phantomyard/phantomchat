@@ -42,7 +42,14 @@ export const REQUIRED_BRIDGE_METHODS = [
   'messages.editMessage',
   'messages.sendMessage',
   'messages.getHistory',
-  'messages.getDialogs'
+  'messages.getDialogs',
+  // #399: dropping this registration was silent. read-history-full-mid.test.ts
+  // stubs invokeApiSingle, so it pins the argument shape but never the routing,
+  // and deleting the line left the whole unit suite green. validateBridgeMethods
+  // runs against the real PHANTOMCHAT_BRIDGE_METHODS at the first intercept
+  // (apiManager.ts phantomchatIntercept), so listing the method here makes that
+  // deletion fail loudly at runtime instead of returning an empty history.
+  'messages.getMessages'
 ] as const;
 
 /** App message ID format: `chat-<peerId>-<sequence>`. Used for delivery

@@ -1,5 +1,9 @@
 // @ts-nocheck
 import {describe, it, expect} from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const readSource = (rel: string) => fs.readFileSync(path.resolve(__dirname, '../..', rel), 'utf-8');
 
 /**
  * Virtual MTProto Middleware Invariant Tests
@@ -325,43 +329,51 @@ describe('Production config currently satisfies the rules', () => {
   // These tests guard against silent drift: if a future change breaks
   // the current middleware config, CI fails immediately rather than
   // after an E2E / release regression.
+  //
+  // #399: they read the REAL literals out of apiManager.ts. The previous
+  // versions mirrored the arrays by hand, so they validated a copy and kept
+  // passing while the real config drifted — `messages.getMessages` and five
+  // other registered methods were missing from the mirror.
+
+  const apiManagerSrc = readSource('lib/appManagers/apiManager.ts');
+
+  /** Entries of an `X = [...]` / `X = new Set([...])` literal, comments dropped. */
+  const literalEntries = (name: string): string[] => {
+    const at = apiManagerSrc.indexOf(name + ' = ');
+    if(at < 0) throw new Error('literal not found in apiManager.ts: ' + name);
+    const setClose = apiManagerSrc.indexOf(']);', at);
+    const arrayClose = apiManagerSrc.indexOf('];', at);
+    const end = setClose < 0 || (arrayClose >= 0 && arrayClose < setClose) ? arrayClose : setClose;
+    if(end < 0) throw new Error('literal end not found in apiManager.ts: ' + name);
+    const body = apiManagerSrc.slice(at, end)
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+    return (body.match(/'[^']*'/g) ?? []).map((q) => q.slice(1, -1));
+  };
 
   it('PHANTOMCHAT_ACTION_PREFIXES in apiManager.ts contains no forbidden prefixes', () => {
-    // Mirrors the declaration in src/lib/appManagers/apiManager.ts.
-    // Keep this list in sync with the real array — the production code
-    // also validates at runtime via phantomchatIntercept.
-    const productionPrefixes = [
-      '.set', '.save', '.delete', '.read', '.mark',
-      '.toggle', '.send', '.block', '.unblock', '.join', '.leave',
-      '.report', '.update', '.install', '.add', '.remove',
-      '.accept', '.discard', '.confirm', '.cancel', '.clear',
-      '.pin', '.unpin', '.reset', '.reorder', '.edit',
-      '.hide'
-    ];
+    const productionPrefixes = literalEntries('PHANTOMCHAT_ACTION_PREFIXES');
+    expect(productionPrefixes.length).toBeGreaterThan(0);
     const result = validateActionPrefixes(productionPrefixes);
     expect(result.ok, result.ok ? '' : result.reason).toBe(true);
   });
 
   it('PHANTOMCHAT_BRIDGE_METHODS in apiManager.ts includes all required methods', () => {
-    // Mirrors the declaration in src/lib/appManagers/apiManager.ts.
-    const productionMethods = new Set([
-      'messages.getHistory',
-      'messages.getDialogs',
-      'messages.getPinnedDialogs',
-      'messages.search',
-      'messages.deleteMessages',
-      'messages.sendMessage',
-      'messages.sendMedia',
-      'messages.editMessage',
-      'messages.createChat',
-      'channels.createChannel',
-      'channels.inviteToChannel',
-      'contacts.getContacts',
-      'users.getUsers',
-      'users.getFullUser',
-      'phantomchatSendFile'
-    ]);
+    const productionMethods = new Set(literalEntries('PHANTOMCHAT_BRIDGE_METHODS'));
+    expect(productionMethods.size).toBeGreaterThan(0);
     const result = validateBridgeMethods(productionMethods);
     expect(result.ok, result.ok ? '' : result.reason).toBe(true);
+  });
+
+  it('every required bridge method is actually registered', () => {
+    // #399: REQUIRED_BRIDGE_METHODS is enforced at runtime against the real
+    // array, so a required-but-unregistered method throws on the first
+    // intercept for every user. Deleting the `messages.getMessages`
+    // registration used to leave the whole unit suite green.
+    const productionMethods = new Set(literalEntries('PHANTOMCHAT_BRIDGE_METHODS'));
+    for(const required of REQUIRED_BRIDGE_METHODS) {
+      expect(productionMethods.has(required), 'not registered: ' + required).toBe(true);
+    }
   });
 });

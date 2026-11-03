@@ -337,8 +337,8 @@
     },
     "src/lib/phantomchat/bridge-invariants.ts": {
       "stable": "5d85c3945e5e186c10930638d43280049904eb8a2d8f3eea784db97c96b27c0a",
-      "preview": "5d85c3945e5e186c10930638d43280049904eb8a2d8f3eea784db97c96b27c0a",
-      "reason": "isPhantomChatPeerId() added here as the single bridge-peer predicate: P2P ids plus group peers, shared by the composer tray, the attachment entry point and sendFile(). Pure boolean, no storage or IPC access. Requires independent content review."
+      "preview": "0ba0652f004062b02f84e6fba5f5b247dcb03cbc31f456ea59f095f834803e4d",
+      "reason": "Bridge-required method list gains messages.getMessages, the registration whose deletion was silent under the #398 tests. validateBridgeMethods already runs against the real array at the first intercept, so the added entry changes no runtime behaviour except turning a missing registration into a loud failure. Test-only companion change reads the real apiManager.ts literals instead of a hand-kept mirror. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/composer-attachments.ts": {
       "stable": "771e662360e113c572d6ec5692b8653268dc450897bf8b050e2690abb4b51060",
