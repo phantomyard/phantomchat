@@ -9,7 +9,7 @@
  * https://github.com/zhukov/webogram/blob/master/LICENSE
  */
 
-import type {Chat, ForumTopic as MTForumTopic, DialogPeer, Message, MessagesForumTopics, MessagesPeerDialogs, Update, Peer, MessagesMessages, MessagesSavedDialogs} from '@layer';
+import type {Chat, ForumTopic as MTForumTopic, DialogPeer, Message, MessagesForumTopics, MessagesPeerDialogs, Update, Peer, MessagesMessages, MessagesSavedDialogs, DraftMessage} from '@layer';
 import type {AppMessagesManager, Dialog, ForumTopic, MyMessage, SavedDialog} from '@appManagers/appMessagesManager';
 import type {AccountDatabase} from '@config/databases/state';
 import tsNow from '@helpers/tsNow';
@@ -1482,6 +1482,27 @@ export default class DialogsStorage extends AppManager {
   /**
    * Won't save migrated from peer, forbidden peers, left and kicked
    */
+  /**
+   * PhantomChat: the virtual MTProto server (createTwebDialog) never carries a
+   * `draft` on dialogs. Stock tweb treats every incoming dialog's draft as the
+   * server truth, so each getDialogs / reloadConversation re-save would DELETE
+   * the locally-saved draft (silently: notify is off, so the "Draft:" preview
+   * lingered while the input came back empty). An absent draft now means
+   * "no server opinion — keep local"; only an explicit draft (incl.
+   * draftMessageEmpty) overwrites or clears it.
+   */
+  public reconcileDialogDraft(dialog: {draft?: DraftMessage}, peerId: PeerId, topicId?: number) {
+    if(dialog.draft === undefined) {
+      return this.appDraftsManager.getDraft(peerId, topicId);
+    }
+
+    return this.appDraftsManager.saveDraft({
+      peerId,
+      threadId: topicId,
+      draft: dialog.draft
+    });
+  }
+
   public saveDialog({
     dialog,
     folderId,
@@ -1611,11 +1632,7 @@ export default class DialogsStorage extends AppManager {
     }
 
     if(!isSaved) {
-      dialog.draft = this.appDraftsManager.saveDraft({
-        peerId,
-        threadId: topicId,
-        draft: dialog.draft
-      });
+      dialog.draft = this.reconcileDialogDraft(dialog, peerId, topicId);
     } else {
       dialog.savedPeerId = savedPeerId;
     }
