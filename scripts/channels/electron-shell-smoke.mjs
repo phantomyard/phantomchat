@@ -2,7 +2,8 @@
 // the real Stable site: first launch, app:// origin, CSP, desktop bridge, the
 // update check's version file, offline relaunch, and first launch with no network.
 import {_electron} from 'playwright';
-import {mkdirSync, mkdtempSync, writeFileSync, rmSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
+import {removeScratch} from './smoke-cleanup.mjs';
 import {resolve, join} from 'node:path';
 import assert from 'node:assert/strict';
 
@@ -62,5 +63,5 @@ try {
   console.log(`Desktop shell passed against the live site (version ${version}), online and offline`);
 } finally {
   if(running) await running.desktop.close().catch(() => {});
-  rmSync(dir, {recursive: true, force: true});
+  removeScratch(dir);
 }
