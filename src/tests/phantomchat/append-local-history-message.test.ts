@@ -132,6 +132,7 @@ describe('optimistic media temp mid', () => {
     Object.assign(manager, {
       appPeersManager: {getPeerMigratedTo: () => 0},
       apiManager: {invokeApi},
+      getHistoryMessagesStorage: () => new Map(),
       phantomchatSendFileCounter: 0,
       log: Object.assign(vi.fn(), {error: vi.fn()}),
       rootScope: {dispatchEvent: vi.fn()}
@@ -222,5 +223,60 @@ describe('replaceLocalTempMessage', () => {
 
     expect([...ctx.history.first]).toEqual([10]);
     expect(ctx.storage.has(REAL)).toBe(false);
+  });
+});
+
+/** #396 residuals from the temp-mid swap. */
+describe('temp-mid swap residuals (#396)', () => {
+  const TEMP = 1793620000500001;
+  const REAL = 1793620000600002;
+
+  function swapCtx(mids: number[], stored: Record<number, any>, count: number) {
+    const history = new SlicedArray<number>();
+    history.first.push(...mids);
+    history.first.setEnd(SliceEnd.Bottom);
+    const historyStorage: any = {history, count, _maxId: mids[0], get maxId() { return this._maxId; }};
+    const storage = new Map<number, any>(Object.entries(stored).map(([k, v]) => [+k, v]));
+    const manager = Object.create(AppMessagesManager.prototype) as any;
+    Object.assign(manager, {
+      getHistoryMessagesStorage: () => storage,
+      getHistoryStorage: () => historyStorage,
+      getDialogOnly: (): any => undefined,
+      deleteMessageFromStorage: (s: Map<number, any>, mid: number) => s.delete(mid),
+      setMessageToStorage: (s: Map<number, any>, m: any) => s.set(m.mid, m),
+      dialogsStorage: {generateIndexForDialog: vi.fn()},
+      scheduleHandleNewDialogs: vi.fn()
+    });
+    return {manager, historyStorage};
+  }
+
+  it('does not drift the count when a rebuilt slice already dropped the temp mid', () => {
+    // The temp row is still stored, its mid is no longer in the slice, the
+    // real mid is not there either: the swap replaces one counted row.
+    const ctx = swapCtx([10, 7], {[TEMP]: {...makeMsg(TEMP), id: TEMP}}, 3);
+    ctx.manager.replaceLocalTempMessage(PEER_ID, TEMP, REAL);
+    expect(ctx.historyStorage.count).toBe(3);
+  });
+
+  it('never mints a temp mid over a row already in storage', async() => {
+    const nowMs = 1793620000500;
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const occupied = nowMs * 1000 + 1;
+    const storage = new Map<number, any>([[occupied, makeMsg(occupied)]]);
+    const invokeApi = vi.fn().mockResolvedValue({});
+    const manager = Object.create(AppMessagesManager.prototype) as any;
+    Object.assign(manager, {
+      appPeersManager: {getPeerMigratedTo: () => 0},
+      apiManager: {invokeApi},
+      getHistoryMessagesStorage: () => storage,
+      phantomchatSendFileCounter: 0,
+      log: Object.assign(vi.fn(), {error: vi.fn()}),
+      rootScope: {dispatchEvent: vi.fn()}
+    });
+    await manager.sendFileViaBridge({peerId: PEER_ID, file: new Blob(['x'], {type: 'image/png'})});
+    const tempMid = invokeApi.mock.calls[0][1].tempMid as number;
+    vi.restoreAllMocks();
+    expect(tempMid).not.toBe(occupied);
+    expect(storage.has(tempMid)).toBe(false);
   });
 });

@@ -1655,7 +1655,13 @@ export class AppMessagesManager extends AppManager {
     // optimistic bubble sorts as the newest message. A negative mid sorts as the
     // OLDEST one in any mid-ordered list (group bubbles, the history slice) and
     // the bubble renders above the loaded history, out of sight.
-    const tempMid = Date.now() * 1000 + (seq % 1000);
+    let tempMid = Date.now() * 1000 + (seq % 1000);
+    // Same shape as a real media mid, minted by an independent counter, so two
+    // album items in one millisecond can land on a mid already in storage. Never
+    // mint over an existing row (#396): setMessageToStorage would overwrite it
+    // and the swap would later delete it.
+    const tempStorage = this.getHistoryMessagesStorage(peerId);
+    while(tempStorage.has(tempMid)) ++tempMid;
     try {
       const updates: any = await this.apiManager.invokeApi('phantomchatSendFile' as any, {
         peerId,
@@ -3639,14 +3645,23 @@ export class AppMessagesManager extends AppManager {
     if(!tempMessage) return;
 
     const historyStorage = this.getHistoryStorage(peerId);
-    if(historyStorage.history.delete(tempMid) && historyStorage.count !== null) {
-      --historyStorage.count;
-    }
+    // One count adjustment for the whole swap (#396). The temp row was counted
+    // when it was appended, and a swap replaces it, so the count only drops
+    // when the real mid was already in the slice as well (a duplicate goes).
+    // Deciding per step drifted to +1 when a slice rebuilt mid-upload had
+    // already dropped the temp mid: no decrement, then an increment for the
+    // real mid.
+    const countBefore = historyStorage.count;
+    const tempRemoved = historyStorage.history.delete(tempMid);
+    const realAlreadyPresent = !!historyStorage.history.findSlice(realMid);
     this.deleteMessageFromStorage(storage, tempMid);
 
     const realMessage = (storage.get(realMid) as Message.message) ||
       {...tempMessage, id: realMid, mid: realMid};
     this.appendLocalHistoryMessage(realMessage, false);
+    if(countBefore !== null && countBefore !== undefined) {
+      historyStorage.count = countBefore - (tempRemoved && realAlreadyPresent ? 1 : 0);
+    }
     this.settleDialogTopAfterSend(realMessage, tempMid);
   }
 

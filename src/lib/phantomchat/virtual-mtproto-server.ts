@@ -436,8 +436,11 @@ export class PhantomChatMTProtoServer {
       if(typeof (rs as any).addEventListener !== 'function') return;
       (rs as any).addEventListener('phantomchat_file_upload_completed', ({peerId, mid, realMid}: {peerId: number; mid: number; realMid?: number}) => {
         if(realMid == null) return;
+        // Optional-chained (#396): a managers object not populated yet must not
+        // throw synchronously out of the dispatch, past the .catch, into the
+        // sibling listeners of the same event.
         void Promise.resolve(
-          (rs as any).managers.appMessagesManager.replaceLocalTempMessage(peerId, mid, realMid)
+          (rs as any).managers?.appMessagesManager?.replaceLocalTempMessage?.(peerId, mid, realMid)
         ).catch((e: any) => console.debug(LOG_PREFIX, 'replaceLocalTempMessage failed:', e?.message));
       });
       (rs as any).addEventListener('phantomchat_retry_file_send', async(e: {peerId: number; mid: number}) => {
@@ -2462,7 +2465,7 @@ export class PhantomChatMTProtoServer {
       // cached mid slice never referenced it) and only reappeared after a full
       // app restart forced a real getHistory from IndexedDB.
       void Promise.resolve(
-        rs.managers.appMessagesManager.appendLocalHistoryMessage(msg)
+        rs.managers?.appMessagesManager?.appendLocalHistoryMessage?.(msg)
       ).catch((e: any) => console.debug(LOG_PREFIX, 'appendLocalHistoryMessage failed:', e?.message));
 
       // Bump (or create) the sidebar dialog for the outgoing message.
