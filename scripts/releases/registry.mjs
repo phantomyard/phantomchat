@@ -5,7 +5,7 @@ import {readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, existsSync, read
 import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {checkCompatibility} from '../channels/check.mjs';
+import {atBaseline, baselineDigestFor, checkCompatibility} from '../channels/check.mjs';
 
 const gh = (...args) => execFileSync('gh', args, {encoding: 'utf8', maxBuffer: 32 * 1024 * 1024}).trim();
 const repo = () => process.env.GITHUB_REPOSITORY || 'phantomyard/phantomchat';
@@ -23,6 +23,13 @@ function validPwaRecord(record) {
 // `stable` column, and every file differing from the pin blocks the lane.
 export function deployBaseline(config, record) {
   return {...config, pinRef: config.stableRef, stableRef: record.stableRef, stableVersion: record.stableVersion};
+}
+// An explicit older promotion reviews selected -> current Preview. The column
+// has to follow that base: `stable` only when it IS the pin, `published` when
+// it is the deployed Stable, and fail closed on any other commit (#374).
+export function checkPromotion(config, selectedSource, currentSource, cwd = process.cwd()) {
+  const base = atBaseline(config, selectedSource);
+  return checkCompatibility(base, currentSource, cwd, baselineDigestFor(base));
 }
 export function selectRelease(releases, kind, input = '') {
   const eligible = releases.filter(r => {
@@ -129,13 +136,14 @@ export async function main(command) {
       // An explicit older release must be compatible with the CURRENT Preview,
       // not just the Preview that existed when that release was built.
       if(current.record.source !== selected.record.source) {
-        const approvals = JSON.parse(readFileSync('scripts/channels/config.json'));
-        checkCompatibility({...approvals, stableRef: selected.record.source}, current.record.source);
+        checkPromotion(JSON.parse(readFileSync('scripts/channels/config.json')), selected.record.source, current.record.source);
       }
       cpSync(`${live}/site`, `${workspace}/payload/site`, {recursive: true});
       cpSync(`${source}/stable-candidate`, `${workspace}/payload/stable-candidate`, {recursive: true});
       replaceRoot(`${workspace}/payload/site`, `${source}/stable-candidate`);
       tag = `pwa-v${selected.record.version}-stable-${process.env.GITHUB_RUN_ID}`;
+      output('stable_ref', selected.record.source);
+      output('stable_version', selected.record.version);
       record = {...current.record, operation: 'stable', stableRef: selected.record.source, stableVersion: selected.record.version};
       delete record.publishedAt;
     }

@@ -20,18 +20,31 @@ export function baselineDigestFor(config) {
   // precisely the files that changed.
   return config.stableRef === pin ? 'stable' : 'published';
 }
-export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd(), baselineDigest = 'stable') {
-  const git = (...args) => execFileSync('git', args, {cwd});
-  const files = git('diff', '--name-only', config.stableRef, candidate, '--', 'src', 'public', 'index.html', 'pnpm-lock.yaml', 'package.json', 'electron').toString().trim().split('\n').filter(Boolean);
-  const blocked = files.filter(file => {
+// Re-points a config at another Stable baseline while remembering the
+// repository pin, so baselineDigestFor can tell the two apart. Every caller
+// that swaps stableRef goes through here: a bare {...config, stableRef} makes
+// the swapped ref look like the pin and selects the wrong column (#374, #377).
+export function atBaseline(config, stableRef) {
+  return {...config, pinRef: config.pinRef ?? config.stableRef, stableRef};
+}
+export function fileDigest(ref, file, cwd = process.cwd()) {
+  try { return createHash('sha256').update(execFileSync('git', ['show', `${ref}:${file}`], {cwd, stdio: ['ignore', 'pipe', 'ignore']})).digest('hex'); }
+  catch { return 'absent'; }
+}
+// The files whose exact bytes need a compatibility review between two refs.
+export function gatedFiles(stableRef, candidate = 'HEAD', cwd = process.cwd()) {
+  const files = execFileSync('git', ['diff', '--name-only', stableRef, candidate, '--', 'src', 'public', 'index.html', 'pnpm-lock.yaml', 'package.json', 'electron'], {cwd}).toString().trim().split('\n').filter(Boolean);
+  return {files, gated: files.filter(file => {
     if(file.startsWith('src/tests/')) return false;
     // Only presentation assets are intrinsically storage-neutral. JS/TS,
     // HTML and JSON (including schemas and manifests) require explicit review.
-    if(/\.(scss|css|svg|png|jpe?g|webp|woff2?|ttf|ico)$/.test(file)) return false;
-    const digest = ref => {
-      try { return createHash('sha256').update(git('show', `${ref}:${file}`)).digest('hex'); }
-      catch { return 'absent'; }
-    };
+    return !/\.(scss|css|svg|png|jpe?g|webp|woff2?|ttf|ico)$/.test(file);
+  })};
+}
+export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd(), baselineDigest = 'stable') {
+  const {files, gated} = gatedFiles(config.stableRef, candidate, cwd);
+  const blocked = gated.filter(file => {
+    const digest = ref => fileDigest(ref, file, cwd);
     const approval = config.compatibilityApprovals[file];
     // `published` is the same review recorded against the DEPLOYED Stable when
     // that is a different commit from the repo pin. A row without it was only

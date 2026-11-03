@@ -170,9 +170,19 @@ There is no automatic recovery deploy and no inference that a failed run shipped
 After a PWA promotion, the next Preview build checks compatibility against the
 **actually deployed Stable source**, loaded from the last successful archive.
 Exact-content compatibility approvals must be refreshed in a reviewed PR when
-that baseline changes; stale approvals fail closed. Explicit older PWA promotion
+that baseline changes; stale approvals fail closed. A PWA promotion does that
+refresh itself as its last step: `scripts/channels/repin.mjs` reads the newly
+deployed Stable from `channels.json` (the source `check-published.mjs` uses),
+re-derives the `published` digest of every row and `publishedStableRef`, and
+the workflow opens the result as a PR. `stable` and `preview` are never
+rewritten; a gated file with no row, or whose candidate bytes no row approves,
+stops the re-pin by name. Until that PR merges, every PR's deployed-baseline
+check and main's deploy stay red. The promote run does not wait for the merge:
+it would hold the shared publication lock. A PR opened with `github.token`
+starts no CI, so set the `REPIN_PR_TOKEN` secret or close and reopen the PR. Explicit older PWA promotion
 also checks the selected Stable source against current Preview using the chosen
-branch's reviewed exact-content approvals, then verifies assembled entry assets.
+branch's reviewed exact-content approvals (the `stable` column when the selected
+source is the pin, `published` otherwise), then verifies assembled entry assets.
 It never silently rolls Preview back. Archives with missing/corrupt assets or
 unsafe paths/links fail before Pages publication. The original source pin remains
 Electron's independent embedded Stable frontend baseline; changing PWA Stable
