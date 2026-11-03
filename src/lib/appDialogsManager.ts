@@ -2032,7 +2032,7 @@ export class AppDialogsManager {
     dialogElement,
     highlightWord,
     isBatch = false,
-    setUnread = false,
+    setUnread = null,
     noForwardIcon
   }: {
     dialog: PossibleDialog,
@@ -2040,6 +2040,12 @@ export class AppDialogsManager {
     dialogElement?: DialogElement,
     highlightWord?: string,
     isBatch?: boolean,
+    /**
+     * `true` = list row that also writes unread, `null` (the default) = list
+     * row, `false` = message-search hit or profile preview: no unread write and
+     * no typing line. Search rows must say so explicitly; a caller that omits
+     * the field gets a list row rather than silently losing the indicator.
+     */
     setUnread?: boolean,
     noForwardIcon?: boolean
   }) {
@@ -2675,7 +2681,8 @@ export class AppDialogsManager {
       dialog: {_: 'dialog', peerId} as any,
       lastMessage: message,
       dialogElement: ret,
-      highlightWord: query
+      highlightWord: query,
+      setUnread: false
     });
 
     if(message.peerId !== peerId) {
