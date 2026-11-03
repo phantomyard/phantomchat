@@ -562,6 +562,7 @@ export class AppMessagesManager extends AppManager {
   // apiManagerProxy.mirrors.messages, leaving only one bubble on the sender
   // for an N-image paste. The counter guarantees uniqueness regardless of
   // clock resolution.
+  private phantomchatSendFileLastMid = 0;
   private phantomchatSendFileCounter = 0;
 
   private typings: {[key: string]: {action: SendMessageAction, timeout?: number}} = {};
@@ -1661,7 +1662,11 @@ export class AppMessagesManager extends AppManager {
     // mint over an existing row (#396): setMessageToStorage would overwrite it
     // and the swap would later delete it.
     const tempStorage = this.getHistoryMessagesStorage(peerId);
+    // Reserve before the Worker await, including skipped slots and counter wrap.
+    // The high-water mark also prevents an in-flight id being minted again.
+    tempMid = Math.max(tempMid, (this.phantomchatSendFileLastMid || 0) + 1);
     while(tempStorage.has(tempMid)) ++tempMid;
+    this.phantomchatSendFileLastMid = tempMid;
     try {
       const updates: any = await this.apiManager.invokeApi('phantomchatSendFile' as any, {
         peerId,

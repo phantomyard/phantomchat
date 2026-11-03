@@ -200,6 +200,7 @@ function writeEventWatermark(groupId: string, field: WatermarkKey, tsSec: number
  * dated after that watermark but before the synced rename reverts the name.
  */
 export function raiseInfoWatermark(groupId: string, field: InfoField, tsSec: number): void {
+  tsSec = Math.min(tsSec, Math.floor(Date.now() / 1000));
   if(!(tsSec > readEventWatermark(groupId, infoWatermarkKey(field)))) return;
   writeEventWatermark(groupId, infoWatermarkKey(field), tsSec);
 }
@@ -1061,7 +1062,7 @@ export class GroupAPI {
     // Apply locally first so admin's UI updates immediately even before
     // the publish completes. Tags are sanitized to the known vocabulary, and
     // an explicit empty list clears them.
-    await this.store.updateInfo(groupId, info);
+    await this.store.updateInfo(groupId, info, infoTsSec);
 
     // Advance the local watermarks to the event we just published, one per
     // sub-field actually named here.
@@ -1565,7 +1566,7 @@ export class GroupAPI {
         }
         break;
       case 'group_info_update':
-        appliedInfo = await this.handleInfoUpdate(payload, senderPubkey, infoFresh);
+        appliedInfo = await this.handleInfoUpdate(payload, senderPubkey, infoFresh, ts);
         applied = appliedInfo.length > 0;
         break;
       case 'group_admin_transfer':
@@ -2874,7 +2875,7 @@ export class GroupAPI {
     return true;
   }
 
-  private async handleInfoUpdate(payload: GroupControlPayload, senderPubkey: string, fields: InfoField[]): Promise<InfoField[]> {
+  private async handleInfoUpdate(payload: GroupControlPayload, senderPubkey: string, fields: InfoField[], tsSec: number): Promise<InfoField[]> {
     const group = await this.store.get(payload.groupId);
     if(!group) {
       this.log('[GroupAPI] group_info_update for unknown group, ignoring:', payload.groupId.slice(0, 8));
@@ -2906,7 +2907,7 @@ export class GroupAPI {
     if(updates.description !== undefined) appliedFields.push('description');
     if(updates.avatar !== undefined) appliedFields.push('avatar');
     if(appliedFields.length === 0) return [];
-    await this.store.updateInfo(payload.groupId, updates);
+    await this.store.updateInfo(payload.groupId, updates, tsSec);
 
     // Drop the avatarNew memo so a changed avatar renders on the next
     // cycle instead of lagging up to the 30s TTL.

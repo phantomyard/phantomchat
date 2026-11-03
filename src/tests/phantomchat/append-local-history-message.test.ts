@@ -258,7 +258,7 @@ describe('temp-mid swap residuals (#396)', () => {
     expect(ctx.historyStorage.count).toBe(3);
   });
 
-  it('never mints a temp mid over a row already in storage', async() => {
+  it.each([0, 998, 999])('reserves concurrent temp mids past occupied rows and counter wrap (%i)', async(counter) => {
     const nowMs = 1793620000500;
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
     const occupied = nowMs * 1000 + 1;
@@ -269,12 +269,17 @@ describe('temp-mid swap residuals (#396)', () => {
       appPeersManager: {getPeerMigratedTo: () => 0},
       apiManager: {invokeApi},
       getHistoryMessagesStorage: () => storage,
-      phantomchatSendFileCounter: 0,
+      phantomchatSendFileCounter: counter,
       log: Object.assign(vi.fn(), {error: vi.fn()}),
       rootScope: {dispatchEvent: vi.fn()}
     });
-    await manager.sendFileViaBridge({peerId: PEER_ID, file: new Blob(['x'], {type: 'image/png'})});
-    const tempMid = invokeApi.mock.calls[0][1].tempMid as number;
+    await Promise.all([
+      manager.sendFileViaBridge({peerId: PEER_ID, file: new Blob(['x'], {type: 'image/png'})}),
+      manager.sendFileViaBridge({peerId: PEER_ID, file: new Blob(['y'], {type: 'image/png'})})
+    ]);
+    const minted = invokeApi.mock.calls.map((call: any[]) => call[1].tempMid);
+    expect(new Set(minted).size).toBe(2);
+    const tempMid = minted[0] as number;
     vi.restoreAllMocks();
     expect(tempMid).not.toBe(occupied);
     expect(storage.has(tempMid)).toBe(false);

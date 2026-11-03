@@ -136,6 +136,19 @@ describe('GroupStore', () => {
     expect(updated!.updatedAt).toBeGreaterThan(1000);
   });
 
+  it('persists field source times without bumping them on unrelated writes', async() => {
+    const group = makeGroup();
+    await store.save(group);
+    await store.updateInfo(group.groupId, {name: 'Renamed'}, 7000);
+    await store.updateInfo(group.groupId, {description: 'About'}, 8000);
+    await store.updateInfo(group.groupId, {pinnedAt: Date.now()});
+    await store.updateMembers(group.groupId, group.members);
+    const updated = await store.get(group.groupId);
+    expect(updated.infoUpdatedAt).toEqual({name: 7000, description: 8000});
+    await store.updateInfo(group.groupId, {avatar: 'image'}, Math.floor(Date.now() / 1000) + 1000);
+    expect((await store.get(group.groupId)).infoUpdatedAt.avatar).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+  });
+
   it('getLegacyDeleteCutoff returns the install stamp recorded at DB creation (stable across calls)', async() => {
     const first = await store.getLegacyDeleteCutoff();
     expect(first).toBeGreaterThan(0);

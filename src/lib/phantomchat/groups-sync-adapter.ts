@@ -47,7 +47,7 @@ export type GroupsAdapterDeps = {
   setTombstone: (conversationId: string, deletedAtSeconds: number) => Promise<void>;
   /** Raise-only stamp of a group info sub-field's anti-replay watermark
    * (GroupAPI.raiseInfoWatermark). Called after an upsert that changed that
-   * field, with the merged entry's updatedAt in seconds. */
+   * field, with that field's source-event timestamp in seconds. */
   raiseInfoWatermark?: (groupId: string, field: 'name' | 'description' | 'avatar', tsSec: number) => void | Promise<void>;
   logPrefix?: string;
 };
@@ -342,7 +342,11 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
             for(const field of ['name', 'description', 'avatar'] as const) {
               if(record[field] === undefined || record[field] === localRecord?.[field]) continue;
               try {
-                await deps.raiseInfoWatermark(id, field, entry.updatedAt);
+                // Legacy snapshots lack field provenance. Do not invent a
+                // rename time from a membership/pin/merge timestamp.
+                const stamp = record.infoUpdatedAt?.[field];
+                if(!Number.isFinite(stamp) || !(stamp > 0)) continue;
+                await deps.raiseInfoWatermark(id, field, Math.min(stamp, Math.floor(Date.now() / 1000)));
               } catch(err) {
                 console.warn(tag, 'info watermark raise failed for', id, field, err);
               }
