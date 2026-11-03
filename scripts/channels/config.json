@@ -685,7 +685,7 @@
     },
     "electron/phantombot/dispatch.test.ts": {
       "stable": "absent",
-      "preview": "df828742b3200835334da7af2b523699b5d5a1cf2172f35dbd97e0a77ff99f31",
+      "preview": "58276c83bcf5aaa8f7f790c38271a2c193ed112ffe6e7e404ec80cd4ba8f19e6",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/dispatch.ts": {
