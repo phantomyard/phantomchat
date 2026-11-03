@@ -62,9 +62,9 @@
     },
     "src/lang.ts": {
       "stable": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b",
-      "preview": "32c978cefd184728a6df266b1c3d56eaeaa8d961bcd407ad31a98880e00558f5",
-      "reason": "Two PhantomChat strings, text only: the empty-folder placeholder and the archive/session failure toasts. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Preview also adds three theme selector strings, text only. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable. Preview adds one PhantomChat string, text only: \"Open New Session\" for the message text-selection menu entry that starts a new session from the selected text. Preview removes the unused \"Search Selected Text\" label for the message text-selection menu entry that was deleted. Text only; no key, placeholder, storage or protocol change. Key, placeholders, protocol and storage formats unchanged.",
-      "published": "ff2a7dad863110a10eb74ea6b4c93bccb48b75d68f18a565a8ec3310571c9766"
+      "preview": "6cbb04065cb056b0f599ef1bc225fe5ff30f67ed2cfa9d530f166e8366dd92c7",
+      "published": "32c978cefd184728a6df266b1c3d56eaeaa8d961bcd407ad31a98880e00558f5",
+      "reason": "Two new UI strings, ContactName and ContactLocalTools. Text only."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
@@ -96,9 +96,9 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "20ecf8550de094f7d0cd8275896bf73bd1cb43e85c2f008429b7ef0c120acba4",
-      "preview": "86f74f4d1e1c40528189822da3b0658b130adf104b65d57f99f1ee799edfd1fc",
-      "reason": "The Session space + opens the Contacts picker in pick mode and creates a session from the pick; presentation and navigation only, no stored format change. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Comment-only: session title length now reads 50 characters. Also routes the chat text-selection menu's Open New Session into the existing Session + flow: switch to the Sessions folder, open the same single-contact picker, and prefill the created session's composer with the selected text through the existing ChatInput API (a draft, never an auto-send), so the title still comes from the first prompt the user sends. Folder, peer-creation and navigation semantics unchanged; no storage, schema or protocol change. Review round: the pre-picker folder switch is guarded, so a rejected switch still opens the picker instead of leaving an unhandled rejection from the listener's void call. Review round 2: the switch goes through the folder rail's own path (changing_folder_from_sidebar), because setFilterIdAndChangeTab moves filterId without moving the folder menu, whose wasFilterId === id early return then turns the next click on Sessions into a scroll with no switch; and selectTab(CHATLIST) brings the left column forward first, since the selection menu lives in the chat pane and at phone width the picker opened behind the chat. Review round 3: that reveal is guarded by the is-left-column-shown flag, so a DM open at desktop width keeps its hash (selectTab(CHATLIST) clears it via overrideHash(undefined)) and a reload still restores the chat. Review round 4: the composer prefill is written as the session's draft through appDraftsManager.setDraft before the chat opens, because the ChatInput instance that received setInputValue is replaced by a later instance for the same peer and the text was discarded with it; the composer loads its peer's draft once it settles. Navigation and draft-write only, through the existing drafts API; no storage, schema or protocol change. Round 5: the left-column reveal before the session picker is gated on the layout (mediaSizes.isLessThanFloatingLeftSidebar) as well as the is-left-column-shown class, via the new pure predicate in lib/phantomchat/session-column-reveal.ts. Above 925px the column is display:flex and the class only means \"chatlist tab is active\", so the class-only guard ran selectTab(CHATLIST) with a DM open at 1280 and overrideHash(undefined) cleared that chat's hash. No storage, schema or database change.",
-      "published": "f5fc478a6aaef2398b35983edebbdb5dc0c37dfcf0c27bb5216bd18213f0271e"
+      "preview": "6dc7abb86723a45dbbe23dcd917fe65b2383273833f309917306e3523411eef9",
+      "published": "86f74f4d1e1c40528189822da3b0658b130adf104b65d57f99f1ee799edfd1fc",
+      "reason": "An npub pasted into search opens the New Contact modal prefilled instead of adding directly. Presentation and navigation only, with no storage access."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
@@ -378,9 +378,9 @@
     },
     "src/helpers/generateDicebearAvatar.ts": {
       "stable": "c07aa8a25e731987b4b593f47094109354b0a617881aa7432e47eaf9a30883fd",
-      "preview": "2ad4b0aeef7973f2d6f98d51ef258d6b68beb0e0d832cad54a0b1faec48da40f",
-      "reason": "Adds a muted grey avatar palette with theme-blue eyes selected by html[data-ui-theme]. Output with no attribute is byte-identical to before and is never persisted or published. Requires independent content review.",
-      "published": "2ad4b0aeef7973f2d6f98d51ef258d6b68beb0e0d832cad54a0b1faec48da40f"
+      "preview": "274b1b6908fac5b2fd3c415646c2a955c292a980087b3725b1a4e1483e54b471",
+      "published": "2ad4b0aeef7973f2d6f98d51ef258d6b68beb0e0d832cad54a0b1faec48da40f",
+      "reason": "Adds a deterministic Human avatar SVG with a separate in-memory cache key. Phantom and group output is byte-identical. No storage."
     },
     "src/lib/storages/clearComputedDialogIndexes.ts": {
       "preview": "eef321475e2849e845e0a49d40ecc32d5a9b2d08f8fa3359360a642b8d4d2397",
@@ -610,9 +610,9 @@
     },
     "src/components/sidebarLeft/tabs/contacts.ts": {
       "stable": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
-      "preview": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
-      "published": "490724da1f28091d99ce4bb8fbbaadf4503ba65e75f3e6cc5c8cb9c6cb8b09ab",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "8952a764dc43ba50a7623ef119f33b1936d466bd8eb411384bf7f66c255ce7d7",
+      "published": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
+      "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call."
     },
     "src/components/sidebarLeft/tabs/phantomchatDesktopProviders.ts": {
       "stable": "absent",
@@ -628,9 +628,9 @@
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "published": "6b869567153c24212945a7fc493a5a69ce630b805b204a11fbcc26cfd5e9edb8",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "c8fefdd3971c107b902cabbdda573f5d22ce5c80ebe127fd661364cffa46cb0b",
+      "published": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
+      "reason": "Form now has Contact Name, Local tools and Notifications. A rename uses the existing renameP2PContact with an empty last name, which writes the same displayName field Stable reads. Local tools writes only the new contact-prefs database. Notes are no longer edited; existing notes are untouched."
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
       "stable": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
@@ -712,7 +712,42 @@
       "stable": "absent",
       "preview": "c23aa6bdab1d2865f3d7bdd62c62ab6a90466d3badbab4852eab8ad87a15a09d",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/desktopIntegration.ts": {
+      "stable": "9061869db34828bc5ee3fb65e476451d903b6da6747e8461df927b9812e23f91",
+      "preview": "ce0a400fb5909945e3197a19f67aba42ae519f881bb97e405dedeaf6bc7817ed",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/updateCapability.ts": {
+      "stable": "1b6f0a83b3a75635651c55ec789f4382847f254bedffa47583d9eac06afcbfd8",
+      "preview": "38b7930dc30d3f2fe5e3489e083e34a82161a2f53ef6df71064d7f28c1ba68d0",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/updateRestart.ts": {
+      "stable": "6efcb085196e81694a58d488f5f1b1efe1e5005162be3b9f8ce1287edba11a5a",
+      "preview": "103be527517c3641a99e19004593e3d47f920bdbc3fee58d46a21f1bbd2cc884",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "src/components/avatarNew.tsx": {
+      "stable": "06a5a2a61f5e6b06bb9cf145483849d56075894ccf0936406d4e52ac36911d61",
+      "preview": "7c914382885b9147d86088c6da720fd3831265045324ae483742d9b09c1ba13b",
+      "reason": "Reads the new contact-prefs database (read only) to give contacts saved as Human the bust avatar. Without a row, or on Stable, the phantom sigil renders as before. No existing storage is written."
+    },
+    "src/components/phantomchat/AddContact.tsx": {
+      "stable": "b99c7d369a4ded6f1501b61f80997136767ecc921150947d862cc6e839c82936",
+      "preview": "absent",
+      "reason": "Deleted. It was never imported or mounted anywhere, and it had no storage of its own."
+    },
+    "src/components/popups/addContact.ts": {
+      "stable": "d3b3ef4664b82602239a5ba99cdd3ab8e2997fbc7136a41a7d4dd2ece457fded",
+      "preview": "919aa8a8419ec836ca29b13016ee1b79266ef37aa811927fc04b25ee35fbdd87",
+      "reason": "New Contact modal (Phantom, Human or Provider). It writes only the new contact-prefs database, which Stable ignores, then adds through the same addP2PContact call with deliberate: true as before. Mute uses the existing togglePeerMute. Mappings, sync payloads and schemas are unchanged."
+    },
+    "src/lib/phantomchat/contact-prefs.ts": {
+      "stable": "absent",
+      "preview": "35560afad32a559c0dcc47c4d38269553c8b30d73c158d4b2fa4bcf689eed5fd",
+      "reason": "New module. Contact type and Local tools live in a NEW IndexedDB database, phantomchat-contact-prefs (version 1, one store keyed by pubkey). It does not touch phantomchat-virtual-peers or any existing database, so its version is unchanged. Stable never opens the new database and ignores it."
     }
   },
-  "publishedStableRef": "7a4591c4ba9c03dbf6b6904d0c5dffe3a73ff916"
+  "publishedStableRef": "071901f2b0564138ecb3ff55d5e51c0c0609a914"
 }
