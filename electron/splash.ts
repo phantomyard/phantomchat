@@ -15,7 +15,7 @@ export const SPLASH_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PhantomChat</title>
+<title>Phantomyard Desktop</title>
 <style>
   :root {color-scheme: light dark;}
   body {margin: 0; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font: 15px system-ui, sans-serif; text-align: center; padding: 0 24px; box-sizing: border-box;}
@@ -27,7 +27,7 @@ export const SPLASH_HTML = `<!doctype html>
 </head>
 <body>
 <h1 id="title">Looking for updates…</h1>
-<p id="detail">Getting PhantomChat ready. This only happens the first time.</p>
+<p id="detail">Getting Phantomyard Desktop ready. This only happens the first time.</p>
 <button id="retry" type="button" hidden>Try again</button>
 <script>
   const target = location.pathname === '${SPLASH_PATH}' ? '/index.html' : location.href;
@@ -45,7 +45,7 @@ export const SPLASH_HTML = `<!doctype html>
       }
     } catch{}
     title.textContent = 'No connection';
-    detail.textContent = 'PhantomChat needs the internet to finish getting ready. Anything already on this device is safe. Retrying…';
+    detail.textContent = 'Phantomyard Desktop needs the internet to finish getting ready. Anything already on this device is safe. Retrying…';
     retry.hidden = false;
     timer = setTimeout(attempt, 5000);
   }

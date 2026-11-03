@@ -367,9 +367,9 @@
     },
     "index.html": {
       "stable": "4de92dc7976fd19e38b6f79b91672a92c9dcb37e0878e7f1474a5376cf0a7062",
-      "preview": "4d4e505c45a3804382e5a0320a3088814c38b8e38275463e2b967d85af8a8bf1",
-      "reason": "Boot-only read of the device-local phantomchat:ui-theme key to set html[data-ui-theme] before first paint. Preview treats an absent, unknown or unreadable key as Boring Corporate; Stable treats it as Fun and Relaxed, so a device that never picked a theme shows that channel's default. Same key, no storage schema change, nothing written at boot. Requires independent content review.",
-      "published": "4d4e505c45a3804382e5a0320a3088814c38b8e38275463e2b967d85af8a8bf1"
+      "preview": "183ed9950be9bca9772e8636114954c92d09b438dccbe36090911acba23ef505",
+      "published": "4d4e505c45a3804382e5a0320a3088814c38b8e38275463e2b967d85af8a8bf1",
+      "reason": "Boot-only read of the device-local phantomchat:ui-theme key to set html[data-ui-theme] before first paint. Preview treats an absent, unknown or unreadable key as Boring Corporate; Stable treats it as Fun and Relaxed, so a device that never picked a theme shows that channel's default. Same key, no storage schema change, nothing written at boot. Plus a display-only inline script: when window.phantomchatDesktop exists (desktop app) it sets document.title and the boot-splash heading to Phantomyard Desktop. Reads no storage, writes none. Requires independent content review."
     },
     "src/components/sidebarLeft/tabs/generalSettings.ts": {
       "stable": "11be3e8069e654e20612cee8f959fad88f6b66ea4030956eed673911089e67e3",
@@ -429,8 +429,8 @@
     },
     "electron/splash.ts": {
       "stable": "350699fa7c10c53259186ddd680cce1a596a86bb5683a9e956fe34e9acee234e",
-      "preview": "350699fa7c10c53259186ddd680cce1a596a86bb5683a9e956fe34e9acee234e",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+      "preview": "ccd99fabc654d03f747b8690cac4aa98a8cc95d358ec278c08f36d71dd8ec067",
+      "reason": "Desktop shell only, never part of the web bundle: first-launch splash text now says Phantomyard Desktop. No browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/tsconfig.json": {
       "stable": "71615d13642ac455a34229fbfebe4b27721653c2866f8dddff0daa7aefde7be0",
@@ -586,9 +586,9 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "6dd785e74c6915a7960058c230676043dc453df628fa26345fd4dc15d143a7c5",
-      "published": "e290edb93354cdc4265e583b531e88377625ed66ded51d43d0211c6ccbe3696d",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "b190745bbcf42df090f94960afea35a654943dfd4a78e8eaeeb89caabcff942e",
+      "published": "6dd785e74c6915a7960058c230676043dc453df628fa26345fd4dc15d143a7c5",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change."
     },
     "electron/piHarness.ts": {
       "stable": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
