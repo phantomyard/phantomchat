@@ -22,6 +22,18 @@ export interface IncomingMessageData {
   peerId: number;
   mid: number;
   timestamp: number;
+  /**
+   * Sender's own peer id when it differs from `peerId` — group and session
+   * peers put the CONVERSATION in `peerId`, so without this the built message
+   * attributes the bubble to the group (bubbles.ts derives the title and
+   * avatar from `fromId`). P2P peers leave it undefined.
+   */
+  fromPeerId?: number;
+  /**
+   * True when the event is our own echo (same device or another device of
+   * ours). Absent means incoming — the DM receive path never sets it.
+   */
+  isOutgoing?: boolean;
   message: {content: string; type?: string; fileMetadata?: PhantomChatFileMetadata; groupId?: string};
 }
 
@@ -465,10 +477,10 @@ export function buildTwebMessage(data: IncomingMessageData): any {
   const msg = mapper.createTwebMessage({
     mid: data.mid,
     peerId: data.peerId,
-    fromPeerId: data.peerId,
+    fromPeerId: data.fromPeerId ?? data.peerId,
     date: data.timestamp,
     text: media ? (data.message.fileMetadata?.caption || '') : data.message.content,
-    isOutgoing: false,
+    isOutgoing: data.isOutgoing ?? false,
     media
   });
   assertInvariant('Rule6/TwebMessageShape', validateTwebMessage(msg));
