@@ -87,7 +87,7 @@ function composer(batch: {captionPublished: boolean, failed?: any}) {
     sendSilent: true,
     attachmentTray: {hasFiles: () => true},
     getPendingAttachmentCaption: () => 'please look at these',
-    sendPendingAttachments: vi.fn(async() => ({sent: [], remaining: [], ...batch})),
+    sendPendingAttachments: vi.fn(async() => ({sent: [] as any[], remaining: [] as any[], ...batch})),
     managers: {
       appDraftsManager: {clearDraft: vi.fn()},
       appMessagesManager: {readAllHistory: vi.fn()},

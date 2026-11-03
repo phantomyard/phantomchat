@@ -42,7 +42,7 @@ vi.mock('@lib/phantomchat/group-control-messages', () => ({
   isControlEvent: (rumor: {tags?: string[][]}) =>
     rumor.tags?.some((t: string[]) => t[0] === 'control' && t[1] === 'true') ?? false,
   getGroupIdFromRumor: (rumor: {tags?: string[][]}) => rumor.tags?.find((t: string[]) => t[0] === 'group')?.[1] ?? null,
-  broadcastGroupControl: vi.fn(() => []),
+  broadcastGroupControl: vi.fn((): any[] => []),
   wrapGroupControl: vi.fn(), unwrapGroupControl: vi.fn()
 }));
 vi.mock('@lib/rootScope', () => ({
