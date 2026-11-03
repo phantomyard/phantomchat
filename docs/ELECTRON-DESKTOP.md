@@ -33,7 +33,7 @@ enforced on every `app://` response.
 ```bash
 pnpm install
 pnpm run app:dev          # vite dev server + electron window (hot reload)
-pnpm run app:start        # production build loaded in electron, unpackaged
+pnpm run app:start        # shell built and run unpackaged; it loads the live PWA
 pnpm run typecheck:electron
 ```
 
@@ -51,12 +51,9 @@ of scope). The rpm build needs `rpmbuild` on the machine: `sudo apt install
 rpm` (Ubuntu/Debian). Artifacts are unsigned (acceptable on Linux) and
 always ship with `SHA256SUMS.txt`.
 
-**Local builds need `APP_VERSION`.** Without it the bundle bakes build 0.
-A profile that has already run a release stores its build number, sees a
-"newer" build was there before, and deactivates itself (the "another tab is
-running a newer version" popup). Build local test packages with a version
-at least as high as the installed one:
-`APP_VERSION=1.0.<n> pnpm run app:build`.
+The app ships no frontend, so there is no build number to bake into a local
+package: the version shown in the app is the live PWA's. `APP_VERSION` is not
+read by any desktop build.
 
 ## Thin shell
 
@@ -68,7 +65,11 @@ config, phantombot or Chromium. New frontends must feature-check the desktop bri
 because they can land on an older app.
 
 The first launch opens the bootstrap in `electron/splash.ts`, which stores the
-entry document and hands over. An install arriving from a bundled release takes
+entry document and hands over. Later launches skip the splash only when the
+entry document AND the scripts and stylesheets it loads are on disk, so an
+interrupted first load returns to the splash offline instead of booting blank.
+Offline `HEAD` and `Range` requests answer from a stored copy; media whose
+only fetch so far was ranged has no copy and still fails offline. An install arriving from a bundled release takes
 the same path: its identity, phantoms, history and settings already sit on this
 origin and carry over untouched, so nobody reconfigures anything.
 `scripts/channels/electron-upgrade-smoke.mjs` proves that with a profile made by
@@ -183,8 +184,8 @@ installs its own menu entry and is removed cleanly with
 Build on macOS so Electron Builder can create the DMG:
 
 ```bash
-APP_VERSION=1.0.<n> pnpm run app:build:mac
-APP_VERSION=1.0.<n> pnpm run app:pack:mac  # unpacked app, faster iteration
+pnpm run app:build:mac
+pnpm run app:pack:mac  # unpacked app, faster iteration
 ```
 
 CI builds `PhantomChat-<version>-arm64.dmg` natively on Apple Silicon and
@@ -207,7 +208,6 @@ locally with `codesign --verify` and `spctl --assess`.
 Build on Windows so Electron Builder can create the NSIS installers:
 
 ```powershell
-$env:APP_VERSION = '1.0.<n>'
 pnpm run app:build:win
 pnpm run app:pack:win  # unpacked app, faster iteration
 ```

@@ -61,6 +61,8 @@ const mockRecordDeletedPeer = vi.hoisted(() => vi.fn().mockResolvedValue(undefin
 
 const mockApplyReadState = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockUnreadForPeer = vi.hoisted(() => vi.fn(() => 1));
+// #418: captures what the send path hands the upload/publish orchestrator.
+const mockSendFileViaPhantomChat = vi.hoisted(() => vi.fn().mockResolvedValue({ok: false}));
 vi.mock('@lib/phantomchat/phantomchat-message-handler', () => ({
   applyRemoteReadState: mockApplyReadState,
   getUnreadForPeer: mockUnreadForPeer
@@ -167,6 +169,16 @@ beforeAll(async() => {
         mapEventIdToMid: vi.fn().mockResolvedValue(999000000001)
       })
     }
+  }));
+
+  vi.doMock('@lib/phantomchat/phantomchat-send-file', () => ({
+    sendFileViaPhantomChat: mockSendFileViaPhantomChat
+  }));
+  // Only encryptFile is stubbed (the group send stops there instead of
+  // reaching Blossom); bytesToHex etc. stay real.
+  vi.doMock('@lib/phantomchat/file-crypto', async() => ({
+    ...(await vi.importActual<any>('@lib/phantomchat/file-crypto')),
+    encryptFile: vi.fn().mockRejectedValue(new Error('test: no upload'))
   }));
 
   const serverMod = await import('@lib/phantomchat/virtual-mtproto-server');
@@ -1098,6 +1110,50 @@ describe('PhantomChatMTProtoServer', () => {
       } finally {
         delete scope.managers;
       }
+    });
+
+    describe('#418 voice waveform leaves the send path as base64', () => {
+      // The recorder hands a Uint8Array over the bridge. JSON.stringify turns
+      // that into {"0":n,...}, which every receiver's string guard drops.
+      const RAW = new Uint8Array([0, 31, 7, 255, 128]);
+      const B64 = btoa(String.fromCharCode(...RAW));
+
+      beforeEach(() => {
+        (mockChatAPI as any).relayPool = {getPrivateKey: () => new Uint8Array(32).fill(1)};
+      });
+
+      it('1:1: the orchestrator receives the base64 string, not the raw bytes', async () => {
+        mockSendFileViaPhantomChat.mockClear();
+        await server.handleMethod('phantomchatSendFile', {
+          peerId: PEER_ID,
+          type: 'voice',
+          tempMid: 1,
+          duration: 2,
+          waveform: RAW,
+          blob: new Blob(['x'], {type: 'audio/ogg'})
+        });
+
+        expect(mockSendFileViaPhantomChat).toHaveBeenCalledTimes(1);
+        expect(mockSendFileViaPhantomChat.mock.calls[0][1].waveform).toBe(B64);
+      });
+
+      it('group: the wire/store value (also fed to the bubble) is the base64 string', async () => {
+        const GROUP_PEER = -(2 * 10 ** 15 + 42);
+        mockGroupStore.getByPeerId.mockResolvedValue({groupId: 'g1', peerId: GROUP_PEER});
+        const bubble = vi.spyOn(server, 'injectOutgoingBubble').mockResolvedValue(undefined);
+        if(typeof URL.createObjectURL !== 'function') (URL as any).createObjectURL = () => 'blob:test';
+        await server.handleMethod('phantomchatSendFile', {
+          peerId: GROUP_PEER,
+          type: 'voice',
+          tempMid: 2,
+          duration: 2,
+          waveform: RAW,
+          blob: new Blob(['x'], {type: 'audio/ogg'})
+        });
+
+        expect(bubble).toHaveBeenCalledTimes(1);
+        expect((bubble.mock.calls[0][0] as any).media.waveform).toBe(B64);
+      });
     });
 
     it('returns empty updates when ownPubkey is not set', async () => {

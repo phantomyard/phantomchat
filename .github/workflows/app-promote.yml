@@ -37,6 +37,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          PROMOTE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           chmod +x scripts/promote-release.sh
           ./scripts/promote-release.sh "$RELEASE_TAG" "$GITHUB_REPOSITORY"

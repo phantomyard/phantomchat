@@ -15,7 +15,7 @@
  */
 import {createHash} from 'node:crypto';
 import {mkdir, readFile, readdir, rename, rm, stat, utimes, writeFile} from 'node:fs/promises';
-import {existsSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {buildCsp} from './csp';
 import {READY_PATH, SPLASH_HTML, SPLASH_PATH} from './splash';
@@ -69,7 +69,10 @@ export function createFrontendProxy({origin, cacheDir, fetch}: FrontendProxyOpti
     try {
       const [body, meta] = await Promise.all([readFile(file.body), readFile(file.meta, 'utf8')]);
       const now = new Date();
+      // Touch both halves: hasEntry needs the pair, and pruning one alone
+      // would orphan the other.
       void utimes(file.body, now, now).catch(() => {});
+      void utimes(file.meta, now, now).catch(() => {});
       return {body, contentType: JSON.parse(meta).contentType};
     } catch{
       return undefined;
@@ -97,6 +100,48 @@ export function createFrontendProxy({origin, cacheDir, fetch}: FrontendProxyOpti
       status: 200,
       headers: {'Content-Type': entry.contentType, ...securityHeaders(html)}
     });
+  };
+
+  // A cached copy is the whole file, so a Range is cut from it locally.
+  const cachedPartial = (entry: CacheEntry, method: string, range: string | null): Response => {
+    const size = entry.body.length;
+    const headers: Record<string, string> = {'Content-Type': entry.contentType, 'Accept-Ranges': 'bytes', ...securityHeaders()};
+    const match = range && /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+    if(range && !match) return new Response(null, {status: 416, headers: {...headers, 'Content-Range': `bytes */${size}`}});
+    let start = 0, end = size - 1;
+    if(match) {
+      if(match[1] === '') start = Math.max(0, size - Number(match[2]));
+      else {
+        start = Number(match[1]);
+        if(match[2] !== '') end = Math.min(end, Number(match[2]));
+      }
+      if(start > end || start >= size) return new Response(null, {status: 416, headers: {...headers, 'Content-Range': `bytes */${size}`}});
+      headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+    }
+    headers['Content-Length'] = String(end - start + 1);
+    const body = method === 'HEAD' ? null : new Uint8Array(entry.body.subarray(start, end + 1));
+    return new Response(body, {status: match ? 206 : 200, headers});
+  };
+
+  // The entry document is only usable offline when what it loads is on disk
+  // too; an interrupted first load must go back to the splash, not boot blank.
+  const entryAssets = (html: string): string[] => {
+    const paths = new Set<string>();
+    const pattern = /<(?:script|link)\b[^>]*?\b(?:src|href)\s*=\s*["']([^"']+)["'][^>]*>/gi;
+    for(const [tag, ref] of html.matchAll(pattern)) {
+      if(/^<link/i.test(tag) && !/\brel\s*=\s*["']?(?:stylesheet|modulepreload)\b/i.test(tag)) continue;
+      let url: URL;
+      try { url = new URL(ref, origin + ENTRY_PATH); } catch{ continue; }
+      if(url.origin === origin) paths.add(url.pathname);
+    }
+    return [...paths];
+  };
+  const hasCopy = (pathname: string) => existsSync(fileFor(pathname).body) && existsSync(fileFor(pathname).meta);
+  const hasEntry = (): boolean => {
+    if(!hasCopy(ENTRY_PATH)) return false;
+    let html: string;
+    try { html = readFileSync(fileFor(ENTRY_PATH).body, 'utf8'); } catch{ return false; }
+    return entryAssets(html).every(hasCopy);
   };
 
   const fetchUpstream = async(url: string, method: string, headers: HeadersInit, hasCopy: boolean, revalidate: boolean) => {
@@ -148,13 +193,24 @@ export function createFrontendProxy({origin, cacheDir, fetch}: FrontendProxyOpti
     const isDocument = DOCUMENT.test(pathname);
     const range = request.headers.get('range');
     if(method === 'HEAD' || range) {
-      const response = await fetchUpstream(target.href, method, range ? {Range: range} : {}, false, false);
-      const headers: Record<string, string> = securityHeaders();
-      for(const name of ['content-type', 'content-range', 'accept-ranges']) {
-        const value = response.headers.get(name);
-        if(value) headers[name] = value;
-      }
-      return new Response(method === 'HEAD' ? null : await response.arrayBuffer(), {status: response.status, headers});
+      try {
+        const response = await fetchUpstream(target.href, method, range ? {Range: range} : {}, false, false);
+        if(response.status < 500) {
+          const headers: Record<string, string> = securityHeaders();
+          for(const name of ['content-type', 'content-range', 'accept-ranges']) {
+            const value = response.headers.get(name);
+            if(value) headers[name] = value;
+          }
+          return new Response(method === 'HEAD' ? null : await response.arrayBuffer(), {status: response.status, headers});
+        }
+      } catch{}
+      // Offline or upstream down: answer from the copy a plain GET stored, as
+      // the GET path does, instead of letting the rejection escape (#356). This
+      // branch never writes the cache, so media first fetched with a Range
+      // header has no copy and still fails offline.
+      const cached = await readCache(pathname);
+      if(!cached) return new Response('frontend unavailable', {status: 502, headers: securityHeaders()});
+      return cachedPartial(cached, method, range);
     }
 
     const isImmutable = HASHED_ASSET.test(pathname);
@@ -188,6 +244,6 @@ export function createFrontendProxy({origin, cacheDir, fetch}: FrontendProxyOpti
   return {
     handle,
     /** False on first launch, which starts on the splash instead of a blank window. */
-    hasEntry: () => existsSync(fileFor(ENTRY_PATH).body) && existsSync(fileFor(ENTRY_PATH).meta)
+    hasEntry
   };
 }
