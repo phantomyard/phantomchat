@@ -1198,7 +1198,7 @@ export class GroupAPI {
    * deletion, violating INV-group-no-orphan-mirror-peer), and drop the
    * chat-list dialog row.
    */
-  private async teardownGroupLocally(groupId: string): Promise<void> {
+  private async teardownGroupLocally(groupId: string, eventAtSec?: number): Promise<void> {
     // Peer id is class-dependent (a session lives in its own range), so read the
     // record BEFORE deleting it — after the delete there is nothing left to ask.
     let stored: GroupRecord | null = null;
@@ -1216,7 +1216,13 @@ export class GroupAPI {
     // holding neither a live record nor the delete fact — exactly the state a
     // stale record elsewhere resurrects the group from. Monotonic: a re-delete
     // only moves it forward.
-    const deletedAt = Math.floor(Date.now() / 1000);
+    //
+    // A teardown driven by a received kick/delete is stamped with THAT event's
+    // time, not "now" (#369): a device catching up on backlog would otherwise
+    // date the tombstone after a re-invite that was sent after the kick, and
+    // the tombstone gate would drop it. Capped at the local clock.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const deletedAt = typeof eventAtSec === 'number' && eventAtSec > 0 ? Math.min(eventAtSec, nowSec) : nowSec;
     await this.store.recordDeletedGroup(groupId, deletedAt);
     await this.store.delete(groupId);
     await this.tombstoneGroupConversation(groupId, deletedAt);
@@ -1925,19 +1931,34 @@ export class GroupAPI {
     // concurrently during backlog replay. The quarantined fact becomes trusted
     // only now, when the create supplies the matching admin key. Never let an
     // unmatched sender manufacture durable deletion state.
-    if(this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt)) {
-      await this.teardownGroupLocally(payload.groupId);
+    const reordered = this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt);
+    if(reordered) {
+      await this.teardownGroupLocally(payload.groupId, reordered.createdAt);
       this.log('[GroupAPI] verified reordered group_delete before create:', payload.groupId.slice(0, 8));
       return;
     }
 
     await this.store.save(record);
+    // A create carries the full member list as of its own time, so it is a
+    // membership fact: raise the members watermark to it (raise-only, capped
+    // at the local clock). Without this a kick OLDER than the create (sent
+    // before a re-invite, delivered after it) tore down the live record,
+    // because only an applied group_add_member had ever advanced this
+    // watermark (#369 cause 2). The usual grace still applies, so a kick
+    // within WATERMARK_GRACE_SEC of the create keeps winning the tie.
+    {
+      const createdAtCapped = Math.min(createdAt, Math.floor(Date.now() / 1000));
+      if(createdAtCapped > readEventWatermark(payload.groupId, 'members')) {
+        writeEventWatermark(payload.groupId, 'members', createdAtCapped);
+      }
+    }
 
     // Close the interleaving where group_delete starts after the check above
     // but before save completes. handleGroupDelete stages its fact before its
     // first await, so this second check observes that race deterministically.
-    if(this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt)) {
-      await this.teardownGroupLocally(payload.groupId);
+    const concurrent = this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt);
+    if(concurrent) {
+      await this.teardownGroupLocally(payload.groupId, concurrent.createdAt);
       this.log('[GroupAPI] verified concurrent group_delete during create:', payload.groupId.slice(0, 8));
       return;
     }
@@ -2673,6 +2694,12 @@ export class GroupAPI {
       // re-invite still works: a fresh group_create (ts > deletedAt) passes
       // the tombstone gate, outranks the durable row on strict LWW, and
       // apply() drops the row on the deliberate re-create.
+      // Covered orderings (#369): the teardown is stamped with the kick's own
+      // time, so a create sent after the kick passes the tombstone gate even
+      // when this device processes the kick late; and an applied create raises
+      // the members watermark, so a kick sent before the create but delivered
+      // after it is dropped as stale. Not covered: a kick and a create within
+      // WATERMARK_GRACE_SEC of each other, where the kick wins the tie.
       //
       // SENDER AUTHENTICATION (Lena's review of #183): promoting this path
       // to a durable cross-device delete fact means an unauthenticated
@@ -2707,7 +2734,7 @@ export class GroupAPI {
         return false;
       }
       this.clearPendingGroupDeletes(payload.groupId);
-      await this.teardownGroupLocally(payload.groupId);
+      await this.teardownGroupLocally(payload.groupId, createdAt);
       this.log('[GroupAPI] removed from group:', payload.groupId);
       return true;
     }
