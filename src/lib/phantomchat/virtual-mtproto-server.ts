@@ -806,6 +806,29 @@ export class PhantomChatMTProtoServer {
     };
   }
 
+  /**
+   * Sender for an outgoing row on a read path: ourselves, exactly as
+   * injectOutgoingBubble stamps the live bubble (#391). Leaving it undefined is
+   * not "unattributed": tweb's saveMessages falls back to `fromId = peer_id`,
+   * which for a group renders the chat as the author, and every read path
+   * pushes its own copy of the same mid into one cache, so a single
+   * unattributed copy wins the header. Clamped to 0 (no from_id) when our own
+   * pubkey cannot be mapped, with a breadcrumb.
+   */
+  private async ownFromPeerId(where: string): Promise<number> {
+    if(this.ownPubkey) {
+      try {
+        const peerId = await this.mapper.mapPubkey(this.ownPubkey);
+        if(peerId) return peerId;
+      } catch(err) {
+        console.error(LOG_PREFIX, where + ': mapPubkey(self) failed, outgoing row left without a sender', (err as any)?.message);
+        return 0;
+      }
+    }
+    console.error(LOG_PREFIX, where + ': own pubkey unresolved, outgoing row left without a sender');
+    return 0;
+  }
+
   private async getDialogs(_params: any, onlyPeerIds?: ReadonlySet<number>): Promise<any> {
     const store = getMessageStore();
     const dialogs: any[] = [];
@@ -884,7 +907,7 @@ export class PhantomChatMTProtoServer {
           const msg = this.mapper.createTwebMessage({
             mid,
             peerId,
-            fromPeerId: isOutgoing ? undefined : peerId,
+            fromPeerId: isOutgoing ? await this.ownFromPeerId('getDialogs') : peerId,
             date: latest.timestamp,
             text: rowMedia.text,
             isOutgoing,
@@ -975,7 +998,7 @@ export class PhantomChatMTProtoServer {
             topDate = latest.timestamp;
 
             const isOutgoing = latest.isOutgoing ?? (latest.senderPubkey === this.ownPubkey);
-            const fromUserId = isOutgoing ? 0 :
+            const fromUserId = isOutgoing ? await this.ownFromPeerId('getDialogs') :
               await this.mapper.mapPubkey(latest.senderPubkey);
 
             if(latest.serviceType === 'chatCreate') {
@@ -997,7 +1020,7 @@ export class PhantomChatMTProtoServer {
               messages.push(serviceMsg);
               topMsg = serviceMsg;
             } else {
-              const fromPeerId = isOutgoing ? undefined : fromUserId;
+              const fromPeerId = fromUserId;
               const rowMedia = storedRowMedia(latest, mid);
               // Fire-and-forget on the response path (same rationale as the
               // 1:1 branch above): repairs must not hold the boot dialog batch.
@@ -1190,7 +1213,7 @@ export class PhantomChatMTProtoServer {
         }
         const mid = stored.mid;
         const isOutgoing = stored.isOutgoing ?? (stored.senderPubkey === this.ownPubkey);
-        const fromPeerId = isOutgoing ? undefined : absPeerId;
+        const fromPeerId = isOutgoing ? await this.ownFromPeerId('getHistory') : absPeerId;
 
         // Heal rows written without nested fileMetadata (queue-flush regression
         // / interrupted durable-write-first) and hybrid rows whose fileMetadata
@@ -1396,7 +1419,7 @@ export class PhantomChatMTProtoServer {
             pFlags: isOutgoing ? {out: true} : {},
             id: mid,
             peer_id: {_: 'peerChat', chat_id: absPeerId},
-            from_id: {_: 'peerUser', user_id: fromPeerId},
+            from_id: {_: 'peerUser', user_id: fromPeerId ?? 0},
             date: stored.timestamp,
             action: {
               _: 'messageActionChatCreate',
@@ -1482,7 +1505,7 @@ export class PhantomChatMTProtoServer {
             }
             const mid = stored.mid;
             const isOutgoing = stored.isOutgoing ?? (stored.senderPubkey === this.ownPubkey);
-            const fromPeerId = isOutgoing ? undefined : peerId;
+            const fromPeerId = isOutgoing ? await this.ownFromPeerId('searchMessages') : peerId;
 
             // Search results feed tweb's saveMessages — a media-less copy here
             // would land in the render cache and clobber a media-bearing bubble.
