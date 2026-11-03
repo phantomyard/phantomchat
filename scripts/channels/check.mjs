@@ -4,21 +4,18 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 
-// Rows carry two review columns: `stable` against the repository pin and
-// `published` against the DEPLOYED Stable, which a PWA promotion moves without
-// minting a phantomchat-v tag. The deploy baseline rewrites stableRef to the
-// deployed commit, so it must be compared against the column derived for it.
+// Rows carry `stable` (the repository pin's bytes) and `preview` (the reviewed
+// candidate bytes). Against the pin both must match exactly. Against the
+// DEPLOYED Stable, which a PWA promotion moves without minting a phantomchat-v
+// tag, the baseline bytes are whatever was promoted, so only the candidate
+// side is checked: every file that differs from the deployed Stable needs a
+// row approving its exact candidate bytes. That is computed live, so a
+// promotion needs no config change and no re-pin PR (#301).
 export function baselineDigestFor(config) {
   // A baseline without pinRef is the repository config itself: stableRef IS
   // the pin. registry.mjs sets pinRef when it substitutes the deployed SHA.
   const pin = config.pinRef ?? config.stableRef;
-  // Anything else IS the deployed Stable, whether or not publishedStableRef
-  // has caught up with it. A PWA promotion moves the deployed commit without
-  // re-deriving that field, so refusing an unrecognised baseline here would
-  // take the whole publish lane down on the next merge. Selecting the column
-  // instead leaves the exact per-file digest check below to fail closed on
-  // precisely the files that changed.
-  return config.stableRef === pin ? 'stable' : 'published';
+  return config.stableRef === pin ? 'stable' : 'deployed';
 }
 // Re-points a config at another Stable baseline while remembering the
 // repository pin, so baselineDigestFor can tell the two apart. Every caller
@@ -46,20 +43,11 @@ export function checkCompatibility(config, candidate = 'HEAD', cwd = process.cwd
   const blocked = gated.filter(file => {
     const digest = ref => fileDigest(ref, file, cwd);
     const approval = config.compatibilityApprovals[file];
-    // `published` is the same review recorded against the DEPLOYED Stable when
-    // that is a different commit from the repo pin. A row without it was only
-    // ever reviewed at the pin, which is the same thing while the two agree.
-    const approved = approval?.[baselineDigest] ?? approval?.stable;
-    return !approval || approved !== digest(config.stableRef) || approval.preview !== digest(candidate);
+    if(!approval || approval.preview !== digest(candidate)) return true;
+    return baselineDigest === 'stable' && approval.stable !== digest(config.stableRef);
   });
   if(blocked.length) {
-    // A deployed baseline that has moved past the derived column is the one
-    // failure an operator can only fix by hand, so name it in the error
-    // rather than leaving a bare digest mismatch.
-    const stale = baselineDigest === 'published' && config.publishedStableRef && config.publishedStableRef !== config.stableRef
-      ? `\nThe published column was derived from ${config.publishedStableRef}; re-derive scripts/channels/config.json against ${config.stableRef}.`
-      : '';
-    throw new Error(`Shared-state compatibility review required (exact Stable/Preview hashes):\n${blocked.join('\n')}${stale}`);
+    throw new Error(`Shared-state compatibility review required (exact Stable/Preview hashes):\n${blocked.join('\n')}`);
   }
   return files;
 }

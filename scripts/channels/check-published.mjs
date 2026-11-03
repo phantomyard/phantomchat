@@ -19,14 +19,9 @@ export async function fetchPublishedChannels(fetcher = fetch) {
 export async function checkPublishedCompatibility(config, candidate = 'HEAD', cwd = process.cwd(), fetcher = fetch) {
   const channels = await fetchPublishedChannels(fetcher);
   console.log(`Checking published Stable ${channels.stable} against ${candidate}`);
-  // The deployed Stable moves on every PWA promotion, which mints no Electron
-  // release tag and therefore cannot move the repo pin. Rows carry the digests
-  // reviewed against that deployment in `published`; the pin keeps `stable`.
-  if(config.publishedStableRef && config.publishedStableRef !== channels.stable) {
-    console.log(`The published column was derived from ${config.publishedStableRef}; re-derive it if this fails.`);
-  }
-  // Same column choice as the deploy gate. After a rollback to the pin the
-  // deployed Stable IS the pin, and only `stable` describes it (#377).
+  // The deployed Stable moves on every PWA promotion without moving the repo
+  // pin. Same rule as the deploy gate: after a rollback to the pin the deployed
+  // Stable IS the pin and the exact `stable` digests apply (#377).
   const baseline = atBaseline(config, channels.stable);
   return checkCompatibility(baseline, candidate, cwd, baselineDigestFor(baseline));
 }
