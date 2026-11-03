@@ -20,7 +20,9 @@ concurrency:
 
 jobs:
   promote:
-    runs-on: ubuntu-latest
+    # Playwright 1.59 can't install Chromium deps on Ubuntu 26 (ubuntu-latest
+    # since Nov 2026). Unpin once Playwright supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: github-pages
