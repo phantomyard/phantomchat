@@ -84,6 +84,28 @@
       </div>
     </div>
     <script>
+      // Inside the desktop app (preload exposes window.phantomchatDesktop before
+      // any page script runs) the visible name is "Phantomyard Desktop": window
+      // title and boot splash. Display text only; productName, appId, data
+      // folder and update feeds stay "PhantomChat". The browser PWA is unchanged.
+      (function(){
+        var api=window.phantomchatDesktop;
+        if(!api||typeof api!=='object')return;
+        var name='Phantomyard Desktop';
+        document.title=name;
+        var title=document.querySelector('#phantomchat-boot-splash .nbs-title');
+        if(title){
+          var accent=document.createElement('span');
+          accent.textContent='Desktop';
+          title.replaceChildren(document.createTextNode('Phantomyard '),accent);
+        }
+        var msg=document.querySelector('#phantomchat-boot-splash .nbs-msg');
+        if(msg)msg.textContent=name+' starting up…';
+        var logo=document.querySelector('#phantomchat-boot-splash .nbs-logo-img');
+        if(logo)logo.setAttribute('alt',name);
+      })();
+    </script>
+    <script>
       // Splash stays visible until src/index.ts calls window.__hideBootSplash().
       // Early versions tried to MutationObserver for app-ready DOM markers, but
       // Telegram Web K ships #auth-pages / #main-columns / #page-chats as static

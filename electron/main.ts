@@ -265,7 +265,7 @@ function createWindow(): void {
     height: 800,
     minWidth: 420,
     minHeight: 560,
-    title: 'PhantomChat',
+    title: 'Phantomyard Desktop',
     autoHideMenuBar: true,
     backgroundColor: '#ffffff',
     webPreferences: {
