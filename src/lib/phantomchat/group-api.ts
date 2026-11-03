@@ -11,6 +11,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import rootScope from '@lib/rootScope';
+import makeError from '@helpers/makeError';
 import {getGroupStore} from './group-store';
 import {groupIdToPeerId, isGroupPeer} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
@@ -33,7 +34,7 @@ import {
   sessionTitleFromPrompt
 } from './group-sessions';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
-import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, cleanupGroupChatInjection, ensureGroupChatInjected, ingestBackfilledGroupHistory, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
+import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, groupSpaceFolderId, cleanupGroupChatInjection, ensureGroupChatInjected, ingestBackfilledGroupHistory, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {reconcileGroupPeerClasses} from './group-class-reconcile';
 import {getMessageStore} from './message-store';
 import {isSafeGroupAvatarUrl} from './blossom-servers';
@@ -918,6 +919,24 @@ export class GroupAPI {
   async setGroupPinnedByPeerId(peerId: number, pinned: boolean): Promise<void> {
     const group = await this.store.getByPeerId(peerId);
     if(!group?.groupId) return;
+
+    // The pin cap (#319). Group and session pins never reach tweb's
+    // toggleDialogPin, which is where the cap lives for chats, so it is checked
+    // here against the same live set: the space's pinned-order bucket (the
+    // array filters bind `pinnedPeerIds` to). Same limit types as tweb:
+    // `folderPin` in Archive, `pin` elsewhere. Already pinned = no new slot.
+    if(pinned && !group.pinnedAt) {
+      const managers = (rootScope as any).managers;
+      const folderId = groupSpaceFolderId(peerId, group.archivedAt);
+      const [max, orders] = await Promise.all([
+        managers.apiManager.getLimit(group.archivedAt ? 'folderPin' : 'pin'),
+        managers.dialogsStorage.getPinnedOrders(folderId)
+      ]);
+      const taken = ((orders || []) as number[]).filter((id) => +id !== peerId).length;
+      if(typeof max === 'number' && taken >= max) {
+        throw makeError('PINNED_DIALOGS_TOO_MUCH');
+      }
+    }
 
     await this.store.updateInfo(group.groupId, {pinnedAt: pinned ? Date.now() : null});
     schedulePublish('groups');

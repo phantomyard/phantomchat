@@ -121,6 +121,11 @@ export default class DialogsContextMenu {
         const {getGroupAPI} = await import('@lib/phantomchat/group-api');
         await getGroupAPI().setGroupPinnedByPeerId(peerId, pinned);
       } catch(err) {
+        // The space is at its pin limit (#319): same popup a chat pin shows.
+        if((err as ApiError)?.type === 'PINNED_DIALOGS_TOO_MUCH') {
+          showLimitPopup('pin');
+          return;
+        }
         console.error('[PhantomChat.chat] group pin toggle failed:', err);
       }
     })();
