@@ -61,7 +61,7 @@ if(process.argv.includes('--log-path')) {
 // lock, no window, no diagnostics).
 const isPhantombotProbe = process.argv.includes('--phantombot-probe');
 if(isPhantombotProbe) {
-  void runPhantombotProbe(hostBinaryPath(app.isPackaged, process.resourcesPath, __dirname)).then((code) => process.exit(code));
+  void runPhantombotProbe(hostBinaryPath(app.isPackaged, process.resourcesPath, __dirname)).then((code) => process.exit(code), () => process.exit(1));
 }
 
 // Standard, secure scheme so the renderer gets a proper origin (localStorage,

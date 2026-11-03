@@ -1,5 +1,5 @@
 import {describe, expect, it, vi} from 'vitest';
-import {createDispatcher, parseRequest, type EngineLike, type HostMessage} from './dispatch';
+import {createDispatcher, MAX_RUNNING_TURNS, parseRequest, type EngineLike, type HostMessage} from './dispatch';
 
 function fakeEngine() {
   const turnCalls: unknown[] = [];
@@ -104,6 +104,46 @@ describe('phantombot host dispatcher', () => {
     await d.handle({id: 2, method: 'turn.cancel', params: {turnId: 't1'}});
     await turn;
     expect(out).toContainEqual({id: 2, result: true});
+    expect(d.runningTurns).toBe(0);
+  });
+
+  it('refuses a model call past the cap with busy, and frees the slot when one ends', async() => {
+    const {engine, persona} = fakeEngine();
+    const releases: Array<() => void> = [];
+    persona.turn.mockImplementation(() => {
+      const gate = new Promise<void>((r) => releases.push(r));
+      return {
+        async *[Symbol.asyncIterator]() {
+          await gate;
+        },
+        result: async() => ({text: '', held: false, conversation: 'app:x'}),
+        cancel: () => {}
+      } as any;
+    });
+    let releaseAsk: () => void;
+    persona.askJson.mockImplementationOnce(() => new Promise((r) => releaseAsk = () => r({value: 1})) as any);
+    const out: HostMessage[] = [];
+    const d = createDispatcher(engine, info, (m) => out.push(m));
+    const running = [d.handle({id: 0, method: 'persona.askJson', params: {persona: 'local', options: {message: 'j'}}})];
+    for(let i = 1; i < MAX_RUNNING_TURNS; i++) {
+      running.push(d.handle({id: i, method: 'persona.turn', params: {persona: 'local', turnId: `t${i}`, options: {message: 'x'}}}));
+    }
+    await Promise.resolve();
+    for(const [id, method, params] of [
+      [90, 'persona.turn', {persona: 'local', turnId: 'over', options: {message: 'x'}}],
+      [91, 'persona.askJson', {persona: 'local', options: {message: 'x'}}],
+      [92, 'persona.decide', {persona: 'local', options: {questions: []}}]
+    ] as const) {
+      await d.handle({id, method, params});
+      expect(out).toContainEqual({id, error: {code: 'busy', message: expect.stringContaining('already running')}});
+    }
+    expect(persona.decide).not.toHaveBeenCalled();
+    releaseAsk!();
+    await running[0];
+    await d.handle({id: 93, method: 'persona.decide', params: {persona: 'local', options: {questions: []}}});
+    expect(out).toContainEqual({id: 93, result: {answers: {}, latencyMs: 1}});
+    releases.forEach((r) => r());
+    await Promise.all(running);
     expect(d.runningTurns).toBe(0);
   });
 

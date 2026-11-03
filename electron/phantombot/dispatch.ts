@@ -10,7 +10,9 @@
  * Trust: turns default to `source: "principal"`. The only caller is the
  * principal's own PhantomChat, behind the main process's origin check.
  * `"untrusted"` stays available for a future feature that relays someone
- * else's text, and is then screened by the engine's threat judge.
+ * else's text, and is then screened by the engine's threat judge. That
+ * caller is the live site, so a PWA deploy (no desktop release) can run
+ * principal turns with `tools: "full"`; see docs/ELECTRON-DESKTOP.md.
  */
 import {isPhantombotMethod, type PhantombotMethod} from './methods';
 
@@ -62,6 +64,13 @@ export interface HostInfo {
   pi: string;
   bun: string;
 }
+
+/**
+ * Model calls (turn, askJson, decide) allowed at once. The bridge is reachable
+ * by any PWA deploy, so a retry loop or per-conversation fan-out on the page
+ * must not become unbounded spend on the user's provider keys.
+ */
+export const MAX_RUNNING_TURNS = 4;
 
 export class BridgeError extends Error {
   constructor(readonly code: string, message: string) {
@@ -156,6 +165,20 @@ export function parseRequest(value: unknown): HostRequest {
 
 export function createDispatcher(engine: EngineLike, info: HostInfo, emit: (message: HostMessage) => void) {
   const turns = new Map<string, TurnStreamLike>();
+  let modelCalls = 0;
+
+  /** Run one model call under the cap, refusing with `busy` when it is full. */
+  async function capped<T>(work: () => Promise<T>): Promise<T> {
+    if(modelCalls >= MAX_RUNNING_TURNS) {
+      throw new BridgeError('busy', `${MAX_RUNNING_TURNS} model calls already running; wait or cancel one`);
+    }
+    modelCalls++;
+    try {
+      return await work();
+    } finally {
+      modelCalls--;
+    }
+  }
 
   async function run(request: HostRequest): Promise<unknown> {
     const p = request.params;
@@ -192,14 +215,17 @@ export function createDispatcher(engine: EngineLike, info: HostInfo, emit: (mess
         const id = turnId(p);
         if(turns.has(id)) throw invalid(`turn ${id} is already running`);
         const persona = engine.persona(personaName(p));
-        const stream = persona.turn(turnOptions(p.options));
-        turns.set(id, stream);
-        try {
-          for await (const data of stream) emit({event: 'turn', turnId: id, data});
-          return await stream.result();
-        } finally {
-          turns.delete(id);
-        }
+        const options = turnOptions(p.options);
+        return capped(async() => {
+          const stream = persona.turn(options);
+          turns.set(id, stream);
+          try {
+            for await (const data of stream) emit({event: 'turn', turnId: id, data});
+            return await stream.result();
+          } finally {
+            turns.delete(id);
+          }
+        });
       }
       case 'persona.askJson': {
         const raw = optRecord(p, 'options');
@@ -214,12 +240,14 @@ export function createDispatcher(engine: EngineLike, info: HostInfo, emit: (mess
         }
         // The page validates the shape it asked for; the engine needs only parsed JSON.
         options.schema = (value: unknown) => value;
-        return engine.persona(personaName(p)).askJson(options);
+        const persona = engine.persona(personaName(p));
+        return capped(() => persona.askJson(options));
       }
       case 'persona.decide': {
         const options = optRecord(p, 'options');
         if(!options) throw invalid('options must be an object');
-        return engine.persona(personaName(p)).decide(options);
+        const persona = engine.persona(personaName(p));
+        return capped(() => persona.decide(options));
       }
       case 'turn.cancel': {
         const stream = turns.get(turnId(p));

@@ -105,7 +105,15 @@ or its local PC tools needs no desktop build. Only a phantombot update does.
   null on the web and on older installs.
 - **Trust.** Turns default to `source: "principal"`: the only caller is the
   principal's own app. Pass `"untrusted"` for text someone else wrote, and the
-  engine's threat judge screens it.
+  engine's threat judge screens it. The app's own frame is the live site
+  (`app://localhost` proxies `https://chat.phantomyard.ai`), so **a PWA deploy,
+  with no desktop release, signature or in-app prompt, can run principal turns
+  with `tools: "full"` (local PC execution) and write vault secrets on every
+  installed app.** That is accepted by design: the site is trusted as the
+  principal. A gate, if one is wanted later, belongs in the PWA over this bridge.
+- **Concurrency.** At most `MAX_RUNNING_TURNS` (4) model calls (`persona.turn`,
+  `persona.askJson`, `persona.decide`) run at once; the next is refused with
+  `code: "busy"`. Wait for one to finish or `turn.cancel` it.
 - **Data.** The engine's root is `<userData>/phantombot`: personas, encrypted
   vaults and memory, separate from any phantombot installed on the machine.
   Provider keys go into the vault (`persona.configure` or `persona.secrets.set`)
