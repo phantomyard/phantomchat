@@ -19,17 +19,16 @@ export function validPwaRecord(record) {
     /^pwa-v\d+\.\d+\.\d+$/.test(record.previewRelease) &&
     typeof record.publishedAt === 'string' && Number.isFinite(Date.parse(record.publishedAt));
 }
-// The deploy workflow builds against the DEPLOYED Stable, but the review column
-// that describes that content is `published`, not `stable`. Keeping the
-// repository pin in `pinRef` is the only thing that lets the builder tell the
-// two apart: without it `stableRef` looks like the pin, the builder reads the
-// `stable` column, and every file differing from the pin blocks the lane.
+// The deploy workflow builds against the DEPLOYED Stable, which the `stable`
+// digests do not describe. Keeping the repository pin in `pinRef` is the only
+// thing that lets the builder tell the two apart: without it `stableRef` looks
+// like the pin, the builder demands the `stable` digests, and every file
+// differing from the pin blocks the lane.
 export function deployBaseline(config, record) {
   return {...config, pinRef: config.stableRef, stableRef: record.stableRef, stableVersion: record.stableVersion};
 }
-// An explicit older promotion reviews selected -> current Preview. The column
-// has to follow that base: `stable` only when it IS the pin, `published` when
-// it is the deployed Stable, and fail closed on any other commit (#374).
+// An explicit older promotion reviews selected -> current Preview. Exact
+// `stable` digests apply only when the base IS the pin (#374).
 export function checkPromotion(config, selectedSource, currentSource, cwd = process.cwd()) {
   const base = atBaseline(config, selectedSource);
   return checkCompatibility(base, currentSource, cwd, baselineDigestFor(base));

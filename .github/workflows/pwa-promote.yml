@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write   # the re-pin PR (#301)
   packages: write   # PWA builds live in GitHub Packages (ghcr.io)
   pages: write
   id-token: write
@@ -61,43 +60,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
-      # #301: the promotion moved the deployed Stable, so every PR (and main's
-      # next deploy) fails the deployed-baseline gate until the `published`
-      # column is re-derived. main is protected, so this opens a PR; it does not
-      # wait for the merge, because waiting would hold the pwa-publication lock
-      # and stall every Preview deploy behind a human review. A PR opened with
-      # github.token starts no workflows, so its required checks never run:
-      # set REPIN_PR_TOKEN, or close and reopen the PR to start CI.
-      - name: Open the re-pin PR for the promoted Stable
-        env:
-          GH_TOKEN: ${{ secrets.REPIN_PR_TOKEN || github.token }}
-          EXPECTED_STABLE: ${{ steps.release.outputs.stable_ref }}
-          STABLE_VERSION: ${{ steps.release.outputs.stable_version }}
-        run: |
-          node scripts/channels/repin.mjs
-          if git diff --quiet -- scripts/channels/config.json; then
-            echo "Approvals already describe ${EXPECTED_STABLE}; no re-pin PR needed." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          branch="repin/pwa-v${STABLE_VERSION}-${GITHUB_RUN_ID}"
-          # Branch + commit through the API: this workflow never pushes refs
-          # with git (release-tag namespace guard), and the API commit is
-          # exactly the one file.
-          base=$(git rev-parse HEAD)
-          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/heads/${branch}" -f sha="$base" >/dev/null
-          # The payload goes through a file: the table is too big for an argv.
-          base64 -w0 scripts/channels/config.json | jq -Rs \
-            --arg branch "$branch" \
-            --arg sha "$(git rev-parse "${base}:scripts/channels/config.json")" \
-            --arg message "chore(channels): re-pin approvals to Stable ${STABLE_VERSION} (${EXPECTED_STABLE:0:7})" \
-            '{branch: $branch, sha: $sha, message: $message, content: .}' > "$RUNNER_TEMP/repin.json"
-          gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/scripts/channels/config.json" --input "$RUNNER_TEMP/repin.json" >/dev/null
-          url=$(gh pr create --base main --head "$branch" \
-            --title "chore(channels): re-pin approvals to Stable ${STABLE_VERSION} (${EXPECTED_STABLE:0:7})" \
-            --body "Opened by PWA promote run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} (#301).
-
-          Re-derives the \`published\` column of \`scripts/channels/config.json\` from the newly deployed Stable \`${EXPECTED_STABLE}\`. \`stable\` and \`preview\` are unchanged, and \`repin.mjs\` refuses files that need a real review.
-
-          **Until this merges, the deployed-baseline gate is red on every PR and on main's deploy.** If CI has not started, close and reopen this PR.")
-          echo "::warning::Re-pin PR ${url} must merge before main can deploy again."
-          echo "Re-pin PR: ${url}. main's deploy and every PR's published-baseline check stay red until it merges." >> "$GITHUB_STEP_SUMMARY"
