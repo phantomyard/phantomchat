@@ -2338,8 +2338,15 @@ export class PhantomChatMTProtoServer {
             _: 'documentAttributeAudio',
             pFlags: {voice: true},
             duration: media.duration,
-            // tweb's AudioElement decodes packed bytes, not base64.
-            waveform: media.waveform ? base64ToBytes(media.waveform) : undefined
+            // tweb's AudioElement decodes packed bytes, not base64. Normalise
+            // first (the param type is not enforced at runtime) and never let
+            // a bad waveform drop the whole optimistic bubble: no bars beats
+            // no bubble.
+            waveform: (() => {
+              const b64 = waveformToBase64(media.waveform);
+              if(!b64) return undefined;
+              try { return base64ToBytes(b64); } catch{ return undefined; }
+            })()
           });
         }
         if(media.type === 'image') {
