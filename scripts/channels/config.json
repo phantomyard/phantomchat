@@ -139,7 +139,7 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536",
-      "preview": "cc59af03165e0e158a9b92775ce9dacbf298c0ce25f943a69e068169ccb8dc23",
+      "preview": "a2f86dc2b7277bb3a21bebf90205f14a8f05c3209be37c192d0f9c4abbb1cbc6",
       "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged. Preview bumps the local language-pack version 17 -> 18 with this PR's new \"Open New Session\" key, because a cached v17 pack renders the literal key (boot reloads local strings on a version mismatch only, and the update check is a no-op with MTProto off). Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Contacts redesign: bumps the local language-pack version 18 -> 19 so cached clients load ContactName and ContactLocalTools instead of rendering the raw keys. Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged."
     },
     "src/lib/folders-sidebar-layout.ts": {
