@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  packages: write   # PWA builds live in GitHub Packages (ghcr.io)
   pages: write
   id-token: write
 

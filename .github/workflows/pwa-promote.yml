@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: 'PWA release (pwa-v...). Empty selects newest successfully published Preview.'
+        description: 'PWA build tag (pwa-v...) in the phantomchat-pwa package. Empty selects newest successfully published Preview.'
         required: false
         default: ''
 
 permissions:
   contents: write
   pull-requests: write   # the re-pin PR (#301)
+  packages: write   # PWA builds live in GitHub Packages (ghcr.io)
   pages: write
   id-token: write
 

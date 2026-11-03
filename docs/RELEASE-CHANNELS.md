@@ -149,12 +149,14 @@ Only dispatch trusted, reviewed branches for PWA publication: these jobs execute
 the selected branch code with publication credentials. Electron signing and
 publication jobs are restricted to main; this does not restrict PWA Preview.
 
-PWA archives are durable GitHub **draft releases**, with `bundle.tar.gz` and
-`SHA256SUMS.txt`, not expiring Actions artifacts. They remain drafts permanently:
-normal published PWA releases/tags would pollute Electron's `releases.atom` feed.
-A draft's JSON body records source/version, Stable source/version, Preview release,
-operation and successful Pages publication time. Unpublished/failed candidates
-are excluded from default selection. Never publish these drafts manually.
+PWA archives live in GitHub Packages (`ghcr.io/phantomyard/phantomchat-pwa`),
+one OCI artifact per build with a digest-checked `bundle.tar.gz` layer. They
+never appear on the Releases page: a published PWA release would pollute
+Electron's `releases.atom` feed. The manifest's record annotation holds
+source/version, Stable source/version, Preview release, operation and successful
+Pages publication time. Unpublished/failed candidates are excluded from
+selection. `live` tags the deployed site, `preview` the newest published Preview;
+see [RELEASE.md](RELEASE.md) for pruning and the one-off draft import.
 The archive includes the full site snapshot plus the already-built Stable
 candidate, so promotion uses exact verified assets without path rewriting.
 Preview publication preserves the last published Stable files byte-for-byte;
