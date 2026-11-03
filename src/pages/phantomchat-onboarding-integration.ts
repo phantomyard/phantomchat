@@ -600,6 +600,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             recordDeletedGroup: (groupId, deletedAtSeconds) => getGroupStore().recordDeletedGroup(groupId, deletedAtSeconds),
             getLegacyDeleteCutoff: () => getGroupStore().getLegacyDeleteCutoff(),
             clearDeletedGroup: (groupId) => getGroupStore().clearDeletedGroup(groupId),
+            raiseInfoWatermark: async(groupId, field, tsSec) => {
+              const {raiseInfoWatermark} = await import('@lib/phantomchat/group-api');
+              raiseInfoWatermark(groupId, field, tsSec);
+            },
             upsertGroup: async(record: GroupRecord) => {
               // Class first: the peerId is derived FROM it, and a session that
               // resolved to a classic group peerId would be a different chat.

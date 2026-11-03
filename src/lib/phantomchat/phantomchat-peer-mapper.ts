@@ -181,8 +181,9 @@ export class PhantomChatPeerMapper {
     // group messages this resolves the sender to the user's own User in the
     // dialog preview ("<my name>: text"); without it, the preview falls
     // back to the chat peer and shows the group title as the sender.
-    // For 1-on-1 outgoing, callers omit `fromPeerId` and `pFlags.out` alone
-    // remains the ownership signal — preserving the prior behavior.
+    // Every VMT read path and the live bubble pass our own peerId for an
+    // outgoing row, 1:1 included (the DM voice-note player header reads
+    // `fromId`); a caller that passes nothing gets no from_id.
     let from_id: Peer | undefined;
     if(opts.fromPeerId) {
       from_id = {_: 'peerUser', user_id: opts.fromPeerId} as Peer.peerUser;

@@ -308,7 +308,7 @@ describe('GroupAPI', () => {
     await settled();
 
     // 33 characters fits inside the 50-character session title cap whole.
-    expect(mockGroupStore.updateInfo).toHaveBeenCalledWith(SESSION_ID, {name: 'Add a retry loop to the polls now'});
+    expect(mockGroupStore.updateInfo).toHaveBeenCalledWith(SESSION_ID, {name: 'Add a retry loop to the polls now'}, expect.any(Number));
   });
 
   it('sendFile leaves a new session unnamed when there is no caption', async() => {
@@ -350,7 +350,7 @@ describe('GroupAPI', () => {
     await api.sendMessage(SESSION_ID, 'Fix the login bug please');
     await settled();
 
-    expect(mockGroupStore.updateInfo).toHaveBeenCalledWith(SESSION_ID, {name: 'Fix the login bug please'});
+    expect(mockGroupStore.updateInfo).toHaveBeenCalledWith(SESSION_ID, {name: 'Fix the login bug please'}, expect.any(Number));
   });
 
   it('Test 5: incoming rumor with group tag routes to group handler', () => {

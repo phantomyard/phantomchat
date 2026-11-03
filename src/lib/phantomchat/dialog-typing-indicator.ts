@@ -65,8 +65,11 @@ export default async function paintDialogTyping({
   }
 
   if(!typingElement) {
-    // Never delete content here: with no typings the subtitle has to keep
-    // whatever the last-message pass just wrote.
+    // Never delete the subtitle here: with no typings it has to keep whatever
+    // the last-message pass just wrote. A typing container still mounted in
+    // the span is stale, though, and the event path does not rewrite the span
+    // first, so take it out or the row keeps "is working" with no marker.
+    previous?.remove();
     span.classList.remove(DIALOG_TYPING_ROW_CLASS);
     return false;
   }

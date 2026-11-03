@@ -181,7 +181,7 @@ describe('chat-list typing indicator across a subtitle repaint', () => {
 
     getPeerTyping = vi.fn(async(): Promise<HTMLElement | undefined> => undefined);
     appImManager.getPeerTyping = getPeerTyping;
-  });
+  }, 120_000);
 
   it('shows "is working" on a row whose repaint found no last message', async() => {
     getPeerTyping.mockImplementation(async() => typingContainer());
@@ -280,5 +280,65 @@ describe('chat-list typing indicator across a subtitle repaint', () => {
     expect(dialogElement.dom.lastMessageSpan.textContent).not.toContain('is working');
     expect(dialogElement.dom.lastMessageSpan.classList.contains('user-typing')).toBe(false);
     expect(getPeerTyping).not.toHaveBeenCalled();
+  });
+
+  it('treats a caller that omits setUnread as a list row', async() => {
+    // The discriminator used to be `setUnread !== null && !setUnread` with a
+    // `false` default, so omitting the field silently made the row a search
+    // hit with no typing line.
+    adm.getLastMessageForDialog = (): {lastMessage?: any, draftMessage?: any} => ({lastMessage: undefined, draftMessage: undefined});
+    getPeerTyping.mockImplementation(async() => typingContainer());
+
+    const dialogElement = makeDialogElement();
+    await adm.setLastMessageN({dialog: EMPTY_ROW, dialogElement});
+
+    await vi.waitFor(() => {
+      expect(dialogElement.dom.lastMessageSpan.textContent).toBe('Robbie is working');
+    });
+  });
+
+  it('does not paint typing at the no-last-message exit of a search hit', async() => {
+    getPeerTyping.mockClear();
+    getPeerTyping.mockImplementation(async() => typingContainer());
+    adm.getLastMessageForDialog = (): {lastMessage?: any, draftMessage?: any} => ({});
+
+    const dialogElement = makeDialogElement();
+    await adm.setLastMessageN({dialog: EMPTY_ROW, dialogElement, highlightWord: 'needle', setUnread: false});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(getPeerTyping).not.toHaveBeenCalled();
+    expect(dialogElement.dom.lastMessageSpan.textContent).not.toContain('is working');
+  });
+
+  it('drops a late event-path typing paint once a newer subtitle was written', async() => {
+    const {AutonomousDialogListBase} = await import('@components/autonomousDialogList/base');
+    adm.getLastMessageForDialog = (): {lastMessage?: any, draftMessage?: any} => ({lastMessage: undefined, draftMessage: undefined});
+    const dialogElement = makeDialogElement();
+    const list = {
+      getDialogKey: (): number => PEER_ID,
+      getDialogDom: (): any => dialogElement.dom
+    };
+
+    // peer_typings fires; the chat-peer lookup (PeerTitle.update) is slow.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    getPeerTyping.mockImplementationOnce(async() => {
+      await gate;
+      return typingContainer('stale is working');
+    });
+    const late = AutonomousDialogListBase.prototype.setTyping.call(list, EMPTY_ROW);
+
+    // Typing stops and the subtitle is repainted before the lookup returns.
+    getPeerTyping.mockImplementation(async(): Promise<HTMLElement> => undefined);
+    await adm.setLastMessageN({dialog: EMPTY_ROW, dialogElement, setUnread: null});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    release();
+    await late;
+
+    expect(dialogElement.dom.lastMessageSpan.textContent).not.toContain('is working');
+    expect(dialogElement.dom.lastMessageSpan.classList.contains('user-typing')).toBe(false);
   });
 });

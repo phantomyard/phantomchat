@@ -97,4 +97,19 @@ describe('paintDialogTyping', () => {
 
     expect(getPeerTyping).toHaveBeenCalledWith(PEER_ID, undefined, 987);
   });
+
+  it('removes a still-mounted container when typing has stopped', async() => {
+    // Event path (AutonomousDialogList.setTyping): nothing rewrote the span
+    // first, so the container from the earlier paint is still there.
+    const dom = makeDom('last message');
+    dom.lastMessageSpan.append(typingContainer('Robbie is working'));
+    dom.lastMessageSpan.classList.add(DIALOG_TYPING_ROW_CLASS);
+
+    const painted = await paintDialogTyping({dom, peerId: PEER_ID, getPeerTyping: async(): Promise<HTMLElement> => undefined});
+
+    expect(painted).toBe(false);
+    expect(dom.lastMessageSpan.querySelector('.' + DIALOG_TYPING_CONTAINER_CLASS)).toBeNull();
+    expect(dom.lastMessageSpan.textContent).toBe('last message');
+    expect(dom.lastMessageSpan.classList.contains(DIALOG_TYPING_ROW_CLASS)).toBe(false);
+  });
 });

@@ -490,6 +490,13 @@
       flex: 0 0 25%;
     }
 
+    // Archive is open: the tile is the selection, so the folder chip that
+    // HorizontalMenu still marks `.active` (it returns there on close) must
+    // not read as selected too.
+    .is-archive-selected .chatlist-folder-badge.active:not(.chatlist-archive-badge) {
+      color: var(--folders-sidebar-item-color);
+    }
+
     .chatlist-sidebar-toggle {
       flex: 0 0 auto;
       width: 3.5rem;

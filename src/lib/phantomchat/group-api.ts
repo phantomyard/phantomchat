@@ -11,6 +11,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import rootScope from '@lib/rootScope';
+import makeError from '@helpers/makeError';
 import {getGroupStore} from './group-store';
 import {groupIdToPeerId, isGroupPeer} from './group-types';
 import {schedulePublish} from './phantomchat-sync-triggers';
@@ -33,7 +34,7 @@ import {
   sessionTitleFromPrompt
 } from './group-sessions';
 import {GroupDeliveryTracker} from './group-delivery-tracker';
-import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, cleanupGroupChatInjection, ensureGroupChatInjected, ingestBackfilledGroupHistory, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
+import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, groupSpaceFolderId, cleanupGroupChatInjection, ensureGroupChatInjected, ingestBackfilledGroupHistory, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {reconcileGroupPeerClasses} from './group-class-reconcile';
 import {getMessageStore} from './message-store';
 import {isSafeGroupAvatarUrl} from './blossom-servers';
@@ -51,7 +52,7 @@ type GroupEventField = 'members' | 'info' | 'admin';
  * time (`phantomchatGroupEdit.ts` sends `{avatar}` alone, `{name}` alone), so
  * `info` ordering is decided per sub-field, never as one blob.
  */
-type InfoField = 'name' | 'description' | 'avatar';
+export type InfoField = 'name' | 'description' | 'avatar';
 /** Persisted watermark key: the coarse field-set, or one info sub-field. */
 type WatermarkKey = GroupEventField | `info:${InfoField}`;
 
@@ -190,6 +191,18 @@ function writeEventWatermark(groupId: string, field: WatermarkKey, tsSec: number
   try {
     localStorage.setItem(WATERMARK_PREFIX + groupId + ':' + field, String(tsSec));
   } catch{ /* best-effort — private mode etc. */ }
+}
+
+/**
+ * Raise one info sub-field's watermark to `tsSec` (raise-only). Groups sync is
+ * the second writer of group info: without this a device that learns a rename
+ * only through sync keeps its old watermark, and a relayed group_info_update
+ * dated after that watermark but before the synced rename reverts the name.
+ */
+export function raiseInfoWatermark(groupId: string, field: InfoField, tsSec: number): void {
+  tsSec = Math.min(tsSec, Math.floor(Date.now() / 1000));
+  if(!(tsSec > readEventWatermark(groupId, infoWatermarkKey(field)))) return;
+  writeEventWatermark(groupId, infoWatermarkKey(field), tsSec);
 }
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -908,6 +921,24 @@ export class GroupAPI {
     const group = await this.store.getByPeerId(peerId);
     if(!group?.groupId) return;
 
+    // The pin cap (#319). Group and session pins never reach tweb's
+    // toggleDialogPin, which is where the cap lives for chats, so it is checked
+    // here against the same live set: the space's pinned-order bucket (the
+    // array filters bind `pinnedPeerIds` to). Same limit types as tweb:
+    // `folderPin` in Archive, `pin` elsewhere. Already pinned = no new slot.
+    if(pinned && !group.pinnedAt) {
+      const managers = (rootScope as any).managers;
+      const folderId = groupSpaceFolderId(peerId, group.archivedAt);
+      const [max, orders] = await Promise.all([
+        managers.apiManager.getLimit(group.archivedAt ? 'folderPin' : 'pin'),
+        managers.dialogsStorage.getPinnedOrders(folderId)
+      ]);
+      const taken = ((orders || []) as number[]).filter((id) => +id !== peerId).length;
+      if(typeof max === 'number' && taken >= max) {
+        throw makeError('PINNED_DIALOGS_TOO_MUCH');
+      }
+    }
+
     await this.store.updateInfo(group.groupId, {pinnedAt: pinned ? Date.now() : null});
     schedulePublish('groups');
     const updated = await this.store.get(group.groupId);
@@ -1031,7 +1062,7 @@ export class GroupAPI {
     // Apply locally first so admin's UI updates immediately even before
     // the publish completes. Tags are sanitized to the known vocabulary, and
     // an explicit empty list clears them.
-    await this.store.updateInfo(groupId, info);
+    await this.store.updateInfo(groupId, info, infoTsSec);
 
     // Advance the local watermarks to the event we just published, one per
     // sub-field actually named here.
@@ -1168,7 +1199,7 @@ export class GroupAPI {
    * deletion, violating INV-group-no-orphan-mirror-peer), and drop the
    * chat-list dialog row.
    */
-  private async teardownGroupLocally(groupId: string): Promise<void> {
+  private async teardownGroupLocally(groupId: string, eventAtSec?: number): Promise<void> {
     // Peer id is class-dependent (a session lives in its own range), so read the
     // record BEFORE deleting it — after the delete there is nothing left to ask.
     let stored: GroupRecord | null = null;
@@ -1186,7 +1217,13 @@ export class GroupAPI {
     // holding neither a live record nor the delete fact — exactly the state a
     // stale record elsewhere resurrects the group from. Monotonic: a re-delete
     // only moves it forward.
-    const deletedAt = Math.floor(Date.now() / 1000);
+    //
+    // A teardown driven by a received kick/delete is stamped with THAT event's
+    // time, not "now" (#369): a device catching up on backlog would otherwise
+    // date the tombstone after a re-invite that was sent after the kick, and
+    // the tombstone gate would drop it. Capped at the local clock.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const deletedAt = typeof eventAtSec === 'number' && eventAtSec > 0 ? Math.min(eventAtSec, nowSec) : nowSec;
     await this.store.recordDeletedGroup(groupId, deletedAt);
     await this.store.delete(groupId);
     await this.tombstoneGroupConversation(groupId, deletedAt);
@@ -1529,7 +1566,7 @@ export class GroupAPI {
         }
         break;
       case 'group_info_update':
-        appliedInfo = await this.handleInfoUpdate(payload, senderPubkey, infoFresh);
+        appliedInfo = await this.handleInfoUpdate(payload, senderPubkey, infoFresh, ts);
         applied = appliedInfo.length > 0;
         break;
       case 'group_admin_transfer':
@@ -1895,19 +1932,34 @@ export class GroupAPI {
     // concurrently during backlog replay. The quarantined fact becomes trusted
     // only now, when the create supplies the matching admin key. Never let an
     // unmatched sender manufacture durable deletion state.
-    if(this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt)) {
-      await this.teardownGroupLocally(payload.groupId);
+    const reordered = this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt);
+    if(reordered) {
+      await this.teardownGroupLocally(payload.groupId, reordered.createdAt);
       this.log('[GroupAPI] verified reordered group_delete before create:', payload.groupId.slice(0, 8));
       return;
     }
 
     await this.store.save(record);
+    // A create carries the full member list as of its own time, so it is a
+    // membership fact: raise the members watermark to it (raise-only, capped
+    // at the local clock). Without this a kick OLDER than the create (sent
+    // before a re-invite, delivered after it) tore down the live record,
+    // because only an applied group_add_member had ever advanced this
+    // watermark (#369 cause 2). The usual grace still applies, so a kick
+    // within WATERMARK_GRACE_SEC of the create keeps winning the tie.
+    {
+      const createdAtCapped = Math.min(createdAt, Math.floor(Date.now() / 1000));
+      if(createdAtCapped > readEventWatermark(payload.groupId, 'members')) {
+        writeEventWatermark(payload.groupId, 'members', createdAtCapped);
+      }
+    }
 
     // Close the interleaving where group_delete starts after the check above
     // but before save completes. handleGroupDelete stages its fact before its
     // first await, so this second check observes that race deterministically.
-    if(this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt)) {
-      await this.teardownGroupLocally(payload.groupId);
+    const concurrent = this.consumeVerifiedPendingDelete(payload.groupId, record.adminPubkey, createdAt);
+    if(concurrent) {
+      await this.teardownGroupLocally(payload.groupId, concurrent.createdAt);
       this.log('[GroupAPI] verified concurrent group_delete during create:', payload.groupId.slice(0, 8));
       return;
     }
@@ -2643,6 +2695,12 @@ export class GroupAPI {
       // re-invite still works: a fresh group_create (ts > deletedAt) passes
       // the tombstone gate, outranks the durable row on strict LWW, and
       // apply() drops the row on the deliberate re-create.
+      // Covered orderings (#369): the teardown is stamped with the kick's own
+      // time, so a create sent after the kick passes the tombstone gate even
+      // when this device processes the kick late; and an applied create raises
+      // the members watermark, so a kick sent before the create but delivered
+      // after it is dropped as stale. Not covered: a kick and a create within
+      // WATERMARK_GRACE_SEC of each other, where the kick wins the tie.
       //
       // SENDER AUTHENTICATION (Lena's review of #183): promoting this path
       // to a durable cross-device delete fact means an unauthenticated
@@ -2677,7 +2735,7 @@ export class GroupAPI {
         return false;
       }
       this.clearPendingGroupDeletes(payload.groupId);
-      await this.teardownGroupLocally(payload.groupId);
+      await this.teardownGroupLocally(payload.groupId, createdAt);
       this.log('[GroupAPI] removed from group:', payload.groupId);
       return true;
     }
@@ -2817,7 +2875,7 @@ export class GroupAPI {
     return true;
   }
 
-  private async handleInfoUpdate(payload: GroupControlPayload, senderPubkey: string, fields: InfoField[]): Promise<InfoField[]> {
+  private async handleInfoUpdate(payload: GroupControlPayload, senderPubkey: string, fields: InfoField[], tsSec: number): Promise<InfoField[]> {
     const group = await this.store.get(payload.groupId);
     if(!group) {
       this.log('[GroupAPI] group_info_update for unknown group, ignoring:', payload.groupId.slice(0, 8));
@@ -2849,7 +2907,7 @@ export class GroupAPI {
     if(updates.description !== undefined) appliedFields.push('description');
     if(updates.avatar !== undefined) appliedFields.push('avatar');
     if(appliedFields.length === 0) return [];
-    await this.store.updateInfo(payload.groupId, updates);
+    await this.store.updateInfo(payload.groupId, updates, tsSec);
 
     // Drop the avatarNew memo so a changed avatar renders on the next
     // cycle instead of lagging up to the 30s TTL.
