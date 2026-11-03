@@ -372,7 +372,20 @@ export default class DialogsStorage extends AppManager {
   }
 
   /** Mutate the Worker's order here; MessagePort callers only receive a copy. */
+  //
+  // A move, not a single-bucket write (#315): a group-class row lives in exactly
+  // one space (Groups, Sessions or Archive) and changes space on archive,
+  // unarchive and class repair, so its entry is taken out of every space bucket
+  // before it is put into `folderId`. Writing only the destination left the
+  // entry behind in the space the row left (pinned block with no badge there).
+  // All (0) is not a space a row moves between and is left alone; the buckets
+  // are spliced in place because filters bind `pinnedPeerIds` to them.
   public setDialogPinnedOrder(peerId: PeerId, folderId: number, pinned: boolean) {
+    for(const spaceId of [FOLDER_ID_GROUPS, FOLDER_ID_SESSION, FOLDER_ID_ARCHIVE]) {
+      const bucket = this.pinnedOrders[spaceId];
+      const at = bucket ? bucket.indexOf(peerId) : -1;
+      if(at !== -1) bucket.splice(at, 1);
+    }
     const orders = this.getPinnedOrders(folderId);
     const index = orders.indexOf(peerId);
     if(index !== -1) orders.splice(index, 1);

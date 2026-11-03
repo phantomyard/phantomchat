@@ -37,3 +37,20 @@ describe('phantomchat_file_upload_completed', () => {
     expect(replaceLocalTempMessage).not.toHaveBeenCalled();
   });
 });
+
+describe('phantomchat_file_upload_completed before managers exist (#396)', () => {
+  it('does not throw out of the dispatch when rootScope.managers is unset', async() => {
+    const {default: rs} = await import('@lib/rootScope') as any;
+    const {PhantomChatMTProtoServer} = await import('@lib/phantomchat/virtual-mtproto-server');
+    new PhantomChatMTProtoServer().setChatAPI({});
+    await vi.waitFor(() => expect(listeners.has('phantomchat_file_upload_completed')).toBe(true));
+    const fire = listeners.get('phantomchat_file_upload_completed')!;
+    const saved = rs.managers;
+    rs.managers = undefined;
+    try {
+      expect(() => fire({peerId: 1, mid: 2, realMid: 3})).not.toThrow();
+    } finally {
+      rs.managers = saved;
+    }
+  });
+});

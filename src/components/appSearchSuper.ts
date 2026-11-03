@@ -886,6 +886,7 @@ export default class AppSearchSuper {
       lastMessage: message,
       dialogElement,
       highlightWord: this.searchContext.query,
+      setUnread: false,
       noForwardIcon: isSaved
     });
 

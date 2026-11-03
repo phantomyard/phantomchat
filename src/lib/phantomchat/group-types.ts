@@ -158,6 +158,8 @@ export interface GroupRecord {
   peerId: number;
   createdAt: number;
   updatedAt: number;
+  /** Source-event seconds per info field; unrelated group writes must not advance these. */
+  infoUpdatedAt?: Partial<Record<'name' | 'description' | 'avatar', number>>;
   /**
    * Unix-millis timestamp of the USER-INITIATED create (#180) — the proof
    * that may clear a durable delete in the groups CRDT merge. Stamped ONLY
