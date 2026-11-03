@@ -1197,43 +1197,6 @@ PeerProfile.Notifications = () => {
   );
 };
 
-/**
- * The per-contact "Local PC access" switch (#276). Desktop only, and main owns the
- * state: the toggle shows what main answered, so a declined Allow dialog puts it
- * straight back to OFF.
- */
-PeerProfile.LocalPcAccess = () => {
-  const context = useContext(PeerProfileContext);
-  const userId = () => (context.peerId as number) > 0 ? context.peerId.toUserId() : undefined;
-
-  const [state, {mutate}] = createResource(async() => {
-    const id = userId();
-    if(!id || context.threadId) return;
-    const {localAccessState} = await import('@lib/phantomchat/local-ai');
-    return localAccessState(Number(id));
-  });
-
-  return (
-    <Show when={context.isDialog && state()?.available}>
-      <Row>
-        <Row.CheckboxFieldToggle>
-          <CheckboxFieldTsx
-            checked={!!state()?.enabled}
-            onChange={async(checked) => {
-              const {setLocalAccess} = await import('@lib/phantomchat/local-ai');
-              const enabled = await setLocalAccess(Number(userId()), checked);
-              mutate({available: true, enabled});
-            }}
-            toggle
-          />
-        </Row.CheckboxFieldToggle>
-        <Row.Icon icon="lock" />
-        <Row.Title>Local PC access</Row.Title>
-      </Row>
-    </Show>
-  );
-};
-
 PeerProfile.BotVerification = () => {
   const context = useContext(PeerProfileContext);
   const {wrapAdaptiveCustomEmoji, wrapRichText, i18n} = useHotReloadGuard();
@@ -1593,7 +1556,6 @@ PeerProfile.MainSection = () => {
         <PeerProfile.BusinessHours />
         <PeerProfile.BusinessLocation />
         <PeerProfile.Notifications />
-        <PeerProfile.LocalPcAccess />
       </Show>
     </Section>
   );

@@ -56,45 +56,7 @@ export interface PhantomChatDesktopApi {
    * defaults", since grants can exist for permissions the tab never lists.
    */
   resetPermissionSettings(): Promise<PermissionSettings>;
-  /** External AI and Local PC access (issue #276). Absent on older installs. */
-  localAi: Record<(typeof LOCAL_AI_CHANNELS)[number], (...args: unknown[]) => Promise<any>> & {
-    onEvent(listener: (event: unknown) => void): () => void;
-  };
 }
-
-// The allowlist for the embed: main re-checks every argument and the calling frame.
-const LOCAL_AI_CHANNELS = [
-  'set-context',
-  'list-providers',
-  'configure-phantomops',
-  'configure-openai-compatible',
-  'set-provider-key',
-  'sign-in',
-  'remove-provider',
-  'answer-auth-prompt',
-  'list-external-ai',
-  'create-external-ai',
-  'create-first-external-ai',
-  'greet-external-ai',
-  'update-external-ai',
-  'delete-external-ai',
-  'model-choices',
-  'effort-choices',
-  'local-access-enabled',
-  'capability',
-  'set-local-access',
-  'tool-message'
-] as const;
-
-const localAi = Object.fromEntries(LOCAL_AI_CHANNELS.map((channel) => [
-  channel,
-  (...args: unknown[]) => ipcRenderer.invoke(`desktop:local-ai:${channel}`, ...args)
-])) as unknown as PhantomChatDesktopApi['localAi'];
-localAi.onEvent = (listener) => {
-  const handler = (_event: unknown, event: unknown) => listener(event);
-  ipcRenderer.on('desktop:local-ai-event', handler);
-  return () => ipcRenderer.removeListener('desktop:local-ai-event', handler);
-};
 
 const api: PhantomChatDesktopApi = {
   getVersion: () => ipcRenderer.invoke('desktop:get-version'),
@@ -112,8 +74,7 @@ const api: PhantomChatDesktopApi = {
   getPermissionSettings: () => ipcRenderer.invoke('desktop:get-permission-settings'),
   setPermissionSetting: (permission: string, setting: PermissionSetting) =>
     ipcRenderer.invoke('desktop:set-permission-setting', permission, setting),
-  resetPermissionSettings: () => ipcRenderer.invoke('desktop:reset-permission-settings'),
-  localAi
+  resetPermissionSettings: () => ipcRenderer.invoke('desktop:reset-permission-settings')
 };
 
 contextBridge.exposeInMainWorld('phantomchatDesktop', api);

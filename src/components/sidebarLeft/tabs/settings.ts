@@ -11,7 +11,6 @@ import Row from '@components/row';
 import SettingSection from '@components/settingSection';
 import AppPhantomChatRelaySettingsTab from '@components/sidebarLeft/tabs/phantomchatRelaySettings';
 import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
-import {getLocalAiApi} from '@lib/phantomchat/desktop-api';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import showLogOutPopup from '@components/popups/logOut';
 import showResetLocalDataPopup from '@components/popups/resetLocalData';
@@ -206,23 +205,6 @@ export default class AppSettingsTab extends SliderSuperTab {
         listenerSetter: this.listenerSetter
       });
       buttonsDiv.append(updatesRow.container);
-    }
-
-    // Desktop only (issue #276): AI providers for External AI contacts. A browser
-    // has nothing to host them, so the row does not exist there.
-    if(getLocalAiApi()) {
-      const providersRow = new Row({
-        title: 'Providers',
-        icon: 'bots',
-        clickable: async() => {
-          const {default: AppPhantomChatDesktopProvidersTab} =
-            await import('@components/sidebarLeft/tabs/phantomchatDesktopProviders');
-          const tab = this.slider.createTab(AppPhantomChatDesktopProvidersTab);
-          tab.open();
-        },
-        listenerSetter: this.listenerSetter
-      });
-      buttonsDiv.append(providersRow.container);
     }
 
     const buttonsSection = new SettingSection();
