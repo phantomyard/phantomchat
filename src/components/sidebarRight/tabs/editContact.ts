@@ -10,7 +10,6 @@ import EditPeer from '@components/editPeer';
 import Row, {CreateRowFromCheckboxField} from '@components/row';
 import CheckboxField from '@components/checkboxField';
 import Button, {replaceButtonIcon} from '@components/button';
-import PeerTitle from '@components/peerTitle';
 import rootScope from '@lib/rootScope';
 import PopupPeer from '@components/popups/peer';
 import PopupElement, {addCancelButton} from '@components/popups';
@@ -18,22 +17,20 @@ import {i18n} from '@lib/langPack';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
-import formatUserPhone from '@components/wrappers/formatUserPhone';
 import SettingSection from '@components/settingSection';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {wrapEmojiTextWithEntities} from '@lib/richTextProcessor/wrapEmojiText';
 import EditFolderInput from '@components/sidebarLeft/tabs/editFolderInput';
-import {InputFieldEmoji} from '@components/inputFieldEmoji';
 import {toastNew, toast} from '@components/toast';
 import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
 import appSidebarRight from '..';
 
 export default class AppEditContactTab extends SliderSuperTab {
   private nameInputField: InputField;
-  private lastNameInputField: InputField;
-  private noteInputField: InputFieldEmoji;
   private editPeer: EditPeer;
   private sharePhoneCheckboxField: CheckboxField;
+  private localToolsCheckboxField?: CheckboxField;
+  private contactPubkey: string | null = null;
   public peerId: PeerId;
 
   public async init() {
@@ -63,49 +60,44 @@ export default class AppEditContactTab extends SliderSuperTab {
       const inputWrapper = document.createElement('div');
       inputWrapper.classList.add('input-wrapper');
 
+      // Contacts redesign: one Contact Name field (no last name, no note).
+      // A legacy contact's first + last name are shown joined, and saving
+      // writes the whole name to the first-name slot.
       this.nameInputField = new InputField({
-        label: 'FirstName',
+        label: 'ContactName',
         name: 'contact-name',
         maxLength: 70,
         required: true
       });
-      this.lastNameInputField = new InputField({
-        label: 'LastName',
-        name: 'contact-lastname',
-        maxLength: 70
-      });
 
+      let isBot = false;
       if(userId) {
         const user = await this.managers.appUsersManager.getUser(userId);
 
         if(user) {
-          if(isNew && !user.first_name && !user.last_name) {
+          isBot = !!user.pFlags?.bot;
+          const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ');
+          if(isNew && !fullName) {
             this.nameInputField.setDraftValue('');
-            this.lastNameInputField.setDraftValue('');
           } else {
-            this.nameInputField.setOriginalValue(user.first_name || '');
-            this.lastNameInputField.setOriginalValue(user.last_name || '');
+            this.nameInputField.setOriginalValue(fullName);
           }
         }
       }
 
-      inputWrapper.append(this.nameInputField.container, this.lastNameInputField.container);
-      inputFields.push(this.nameInputField, this.lastNameInputField);
+      inputWrapper.append(this.nameInputField.container);
+      inputFields.push(this.nameInputField);
 
-      if(userId) {
-        const fullUser = await this.managers.appProfileManager.getCachedFullUser(userId);
-        this.noteInputField = new InputFieldEmoji({
-          label: 'ContactNoteRow',
-          name: 'contact-note',
-          maxLength: 128,
-          withLinebreaks: true
-        });
-        if(fullUser?.note) {
-          this.noteInputField.setRichOriginalValue(fullUser.note);
-        }
-        inputFields.push(this.noteInputField);
-        inputWrapper.append(this.noteInputField.container);
-      }
+      // Contact type decides whether Local tools is offered at all.
+      const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
+      const contactPubkey = userId && isP2PPeerId(Number(userId)) ? await getPubkey(Number(userId)) : null;
+      const prefsMod = await import('@lib/phantomchat/contact-prefs');
+      const prefs = contactPubkey ? await prefsMod.getContactPrefs(contactPubkey) : undefined;
+      const contactKind = prefsMod.resolveContactKind(prefs?.kind, isBot);
+      this.contactPubkey = contactPubkey;
+      this.localToolsCheckboxField = contactPubkey && prefsMod.kindSupportsLocalTools(contactKind) ?
+        new CheckboxField({text: 'ContactLocalTools', checked: !!prefs?.localTools}) :
+        undefined;
 
       this.editPeer = new EditPeer({
         peerId: peerId,
@@ -144,17 +136,29 @@ export default class AppEditContactTab extends SliderSuperTab {
           }
         });
 
-        const profileNameDiv = document.createElement('div');
-        profileNameDiv.classList.add('profile-name');
-        profileNameDiv.append(new PeerTitle({
-          peerId
-        }).element);
+        section.content.append(div, inputWrapper);
 
-        const profileSubtitleDiv = document.createElement('div');
-        profileSubtitleDiv.classList.add('profile-subtitle');
-        profileSubtitleDiv.append(i18n('EditContact.OriginalName'));
-
-        section.content.append(div, profileNameDiv, profileSubtitleDiv, inputWrapper);
+        if(this.localToolsCheckboxField) {
+          // Saved on toggle, like Notifications: the Save button only tracks
+          // the text fields.
+          const field = this.localToolsCheckboxField;
+          const pubkey = this.contactPubkey;
+          field.input.addEventListener('change', (e) => {
+            if(!e.isTrusted) return;
+            prefsMod.setContactPrefs(pubkey, {localTools: field.checked}).catch((err) => {
+              console.error('[PhantomChat] failed to save Local tools', err);
+              field.checked = !field.checked;
+              toastNew({langPackKey: 'Error.AnError'});
+            });
+          });
+          const localToolsRow = new Row({
+            checkboxField: this.localToolsCheckboxField,
+            withCheckboxSubtitle: true,
+            listenerSetter: this.listenerSetter
+          });
+          localToolsRow.container.setAttribute('data-testid', 'edit-contact-local-tools');
+          section.content.append(localToolsRow.container);
+        }
 
         const notificationsRow = new Row({
           checkboxField: notificationsCheckboxField,
@@ -166,18 +170,6 @@ export default class AppEditContactTab extends SliderSuperTab {
         notificationsCheckboxField.checked = enabled;
 
         section.content.append(notificationsRow.container);
-
-        if(userId) {
-          const user = await this.managers.appUsersManager.getUser(userId);
-          if(user?.phone) {
-            const phoneRow = new Row({
-              icon: 'phone',
-              title: formatUserPhone(user.phone),
-              subtitleLangKey: 'Phone'
-            });
-            section.content.append(phoneRow.container);
-          }
-        }
       } else {
         section.content.append(inputWrapper);
       }
@@ -219,6 +211,8 @@ export default class AppEditContactTab extends SliderSuperTab {
                   }
 
                   await chatAPI.deleteConversation(pubkey);
+                  const {clearContactPrefs} = await import('@lib/phantomchat/contact-prefs');
+                  await clearContactPrefs(pubkey);
                 } else {
                   if(userId) {
                     await this.managers.appUsersManager.deleteContacts([userId]);
@@ -276,19 +270,17 @@ export default class AppEditContactTab extends SliderSuperTab {
         const {isP2PPeer} = await import('@lib/phantomchat/phantomchat-bridge');
         if(isP2PPeer(Number(userId))) {
           const {renameP2PContact} = await import('@lib/phantomchat/rename-p2p-contact');
-          await renameP2PContact(Number(userId), this.nameInputField.value, this.lastNameInputField.value);
+          if(this.nameInputField.isChanged()) {
+            await renameP2PContact(Number(userId), this.nameInputField.value, '');
+          }
         } else {
           await this.managers.appUsersManager.addContact(
             userId,
             this.nameInputField.value,
-            this.lastNameInputField.value,
+            '',
             (await this.managers.appUsersManager.getUser(userId)).phone,
             this.sharePhoneCheckboxField?.checked
           )
-        }
-
-        if(this.noteInputField?.isChanged()) {
-          await this.managers.appProfileManager.updateUserNote(userId, this.noteInputField.richValue).catch(() => {});
         }
       } catch(error) {
         console.error(error)

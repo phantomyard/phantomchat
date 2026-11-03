@@ -1,0 +1,213 @@
+/**
+ * Contacts redesign (Phantom | Human | Provider): the per-contact prefs store,
+ * the Human avatar, and the New Contact modal's per-type fields.
+ */
+import 'fake-indexeddb/auto';
+import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
+import {
+  getContactPrefs,
+  setContactPrefs,
+  clearContactPrefs,
+  resolveContactKind,
+  kindSupportsLocalTools,
+  _resetContactPrefsForTests
+} from '@lib/phantomchat/contact-prefs';
+import {
+  generateDicebearAvatar,
+  generateHumanAvatarSvg,
+  generatePhantomAvatarSvg,
+  clearDicebearCache
+} from '@helpers/generateDicebearAvatar';
+import {npubEncode} from '@lib/phantomchat/nostr-identity';
+
+const HEX = '17162c921dc4d2518f9a101db33695df1afb56ab82f5ff3e5da6eec3ca5cd917';
+const NPUB = npubEncode(HEX);
+
+let blobCounter = 0;
+vi.stubGlobal('URL', Object.assign(function() {} as any, {
+  createObjectURL: (_blob: Blob) => `blob:mock-${++blobCounter}`,
+  revokeObjectURL: (_url: string) => {}
+}));
+
+const addP2PContact = vi.fn(async(opts: any) => ({
+  hexPubkey: HEX,
+  peerId: 1000000000000001,
+  peerIdTweb: 1000000000000001,
+  displayName: opts.nickname || 'P2P User',
+  isNew: true
+}));
+vi.mock('@lib/phantomchat/add-p2p-contact', () => ({addP2PContact: (o: any) => addP2PContact(o)}));
+
+async function freshDb() {
+  _resetContactPrefsForTests();
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise<void>((resolve) => {
+    const req = indexedDB.deleteDatabase('phantomchat-contact-prefs');
+    req.onsuccess = req.onerror = req.onblocked = () => resolve();
+  });
+}
+
+describe('contact-prefs store', () => {
+  beforeEach(freshDb);
+
+  it('round-trips kind and localTools, and survives a cache reset', async() => {
+    await setContactPrefs(HEX, {kind: 'phantom', localTools: true});
+    _resetContactPrefsForTests();
+    const row = await getContactPrefs(HEX);
+    expect(row?.kind).toBe('phantom');
+    expect(row?.localTools).toBe(true);
+  });
+
+  it('merges a partial patch instead of wiping the other field', async() => {
+    await setContactPrefs(HEX, {kind: 'provider', localTools: true});
+    await setContactPrefs(HEX, {localTools: false});
+    const row = await getContactPrefs(HEX);
+    expect(row?.kind).toBe('provider');
+    expect(row?.localTools).toBe(false);
+  });
+
+  it('rejects an unknown kind and a non-hex pubkey', async() => {
+    await expect(setContactPrefs(HEX, {kind: 'robot' as any})).rejects.toThrow();
+    await expect(setContactPrefs(NPUB, {kind: 'human'})).rejects.toThrow();
+  });
+
+  it('clear removes the row', async() => {
+    await setContactPrefs(HEX, {kind: 'human'});
+    await clearContactPrefs(HEX);
+    _resetContactPrefsForTests();
+    expect(await getContactPrefs(HEX)).toBeUndefined();
+  });
+
+  it('a stored kind wins; otherwise only a bot flag means phantom', () => {
+    expect(resolveContactKind('human', true)).toBe('human');
+    expect(resolveContactKind(undefined, true)).toBe('phantom');
+    expect(resolveContactKind(undefined, false)).toBeUndefined();
+  });
+
+  it('Local tools only for Phantom and Provider', () => {
+    expect(kindSupportsLocalTools('phantom')).toBe(true);
+    expect(kindSupportsLocalTools('provider')).toBe(true);
+    expect(kindSupportsLocalTools('human')).toBe(false);
+    expect(kindSupportsLocalTools(undefined)).toBe(false);
+  });
+});
+
+describe('Human avatar', () => {
+  beforeEach(() => clearDicebearCache());
+
+  it('is deterministic and different from the phantom sigil', () => {
+    const a = generateHumanAvatarSvg(HEX);
+    expect(generateHumanAvatarSvg(HEX)).toBe(a);
+    expect(a).not.toBe(generatePhantomAvatarSvg(HEX));
+    expect(a).toContain('Shoulders');
+  });
+
+  it('is cached separately from the phantom avatar for the same key', async() => {
+    const phantom = await generateDicebearAvatar(HEX);
+    const human = await generateDicebearAvatar(HEX, false, true);
+    expect(human).not.toBe(phantom);
+    expect(await generateDicebearAvatar(HEX, false, true)).toBe(human);
+    // A group never renders as a human.
+    expect(await generateDicebearAvatar(HEX, true, true)).toBe(await generateDicebearAvatar(HEX, true));
+  });
+});
+
+describe('New Contact modal', () => {
+  const managers: any = {appMessagesManager: {togglePeerMute: vi.fn(async() => {})}};
+  const q = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
+  const visible = (id: string) => !!q(id) && (q(id).closest('label') || q(id)).style.display !== 'none';
+
+  beforeEach(async() => {
+    await freshDb();
+    addP2PContact.mockClear();
+    managers.appMessagesManager.togglePeerMute.mockClear();
+    delete (window as any).phantomchatDesktop;
+    document.body.innerHTML = '';
+  });
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  async function open(npub?: string) {
+    const {showAddContactPopup} = await import('@components/popups/addContact');
+    const added = vi.fn();
+    showAddContactPopup({managers, npub, onContactAdded: added});
+    await new Promise((r) => setTimeout(r, 0));
+    return added;
+  }
+
+  it('offers Phantom and Human in the browser, never Provider or Scan', async() => {
+    await open();
+    expect(q('add-contact-kind-phantom')).toBeTruthy();
+    expect(q('add-contact-kind-human')).toBeTruthy();
+    expect(q('add-contact-kind-provider')).toBeNull();
+    expect(q('add-contact-scan-local').style.display).toBe('none');
+  });
+
+  it('Phantom shows Local tools; Human hides it', async() => {
+    await open();
+    expect(visible('add-contact-local-tools')).toBe(true);
+    q('add-contact-kind-human').click();
+    expect(visible('add-contact-local-tools')).toBe(false);
+    expect(visible('add-contact-notifications')).toBe(true);
+  });
+
+  it('has no last-name or notes field', async() => {
+    await open();
+    const dialog = q('add-contact-dialog');
+    expect(dialog.querySelectorAll('input[type="text"]').length).toBe(2); // name + npub
+  });
+
+  it('adding a Human saves the kind before the add and never stores Local tools', async() => {
+    const added = await open(NPUB);
+    q('add-contact-kind-human').click();
+    (q('add-contact-name') as HTMLInputElement).value = 'Corinne';
+    let kindAtAdd: string | undefined;
+    addP2PContact.mockImplementationOnce(async(opts: any) => {
+      kindAtAdd = (await getContactPrefs(HEX))?.kind;
+      return {hexPubkey: HEX, peerId: 1, peerIdTweb: 1, displayName: opts.nickname, isNew: true};
+    });
+    q('add-contact-submit').click();
+    await vi.waitFor(() => expect(added).toHaveBeenCalled());
+    expect(kindAtAdd).toBe('human');
+    expect(addP2PContact.mock.calls[0][0]).toMatchObject({pubkey: NPUB, nickname: 'Corinne', deliberate: true});
+    expect((await getContactPrefs(HEX))?.localTools).toBe(false);
+    expect(managers.appMessagesManager.togglePeerMute).not.toHaveBeenCalled();
+  });
+
+  it('Phantom with Local tools on and Notifications off is stored and muted', async() => {
+    const added = await open(NPUB);
+    (q('add-contact-local-tools') as HTMLInputElement).checked = true;
+    (q('add-contact-notifications') as HTMLInputElement).checked = false;
+    q('add-contact-submit').click();
+    await vi.waitFor(() => expect(added).toHaveBeenCalled());
+    const row = await getContactPrefs(HEX);
+    expect(row).toMatchObject({kind: 'phantom', localTools: true});
+    expect(managers.appMessagesManager.togglePeerMute).toHaveBeenCalledWith({peerId: 1000000000000001, mute: true});
+  });
+
+  it('rejects a bad npub without adding', async() => {
+    await open('npub1nope');
+    q('add-contact-submit').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q('add-contact-error').textContent).toBe('Invalid npub format');
+    expect(addP2PContact).not.toHaveBeenCalled();
+  });
+
+  it('opens only one modal at a time', async() => {
+    await open();
+    await open();
+    expect(document.querySelectorAll('.popup-add-contact-overlay').length).toBe(1);
+  });
+
+  it('shows Provider only when the desktop engine can list providers', async() => {
+    (window as any).phantomchatDesktop = {phantombot: {call: vi.fn(async() => ({ok: false, error: {code: 'unknown_method'}}))}};
+    await open();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q('add-contact-kind-provider')).toBeNull();
+    document.body.innerHTML = '';
+    (window as any).phantomchatDesktop = {phantombot: {call: vi.fn(async() => ({ok: true, value: [] as unknown[]}))}};
+    await open();
+    await vi.waitFor(() => expect(q('add-contact-kind-provider')).toBeTruthy());
+  });
+});

@@ -5,110 +5,235 @@
  */
 
 import type {AppManagers} from '@lib/managers';
+import type {ContactKind} from '@lib/phantomchat/contact-prefs';
+
+/**
+ * New-contact modal (contacts redesign). The user first picks what the
+ * contact IS, and each type shows only its own fields:
+ *
+ *   Phantom  — npub (+ Scan, desktop only), Phantom avatar, Contact Name,
+ *              Local tools, Notifications
+ *   Human    — npub, Human avatar, Contact Name, Notifications
+ *   Provider — desktop only: provider, token, model, Phantom avatar,
+ *              Contact Name, Local tools, Notifications
+ *
+ * Scan and Provider need desktop capabilities that ship with the bundled
+ * phantombot update; until the desktop app reports them they stay hidden
+ * rather than offering a button that cannot work.
+ */
+
+export interface AddContactSubmit {
+  npub: string;
+  nickname: string;
+  kind: ContactKind;
+  notifications: boolean;
+  localTools: boolean;
+}
 
 export interface ShowAddContactOptions {
   managers: AppManagers;
-  /**
-   * Optional handler invoked when the user submits a valid npub. Receives the
-   * raw `npub1...` string and the (possibly empty) nickname. When provided,
-   * the popup delegates all side-effects (peer mapping, Worker injection,
-   * dialog dispatch, chat opening) to this callback — this is how the
-   * Contacts tab preserves its existing `handleNpubInput` behavior.
-   *
-   * When omitted, a built-in default is used that mirrors the core steps
-   * (decode, map, store nickname, open chat).
-   */
-  onSubmit?: (npub: string, nickname: string) => Promise<void>;
-  onContactAdded?: (peerId: PeerId) => void;
+  /** Prefill the npub field (e.g. an npub pasted into a search box). */
+  npub?: string;
+  /** Called with the new contact's peer id once it has been added. */
+  onContactAdded?: (peerId: PeerId, displayName: string) => void;
+}
+
+type DesktopApi = {
+  phantombot?: {call(method: string, params?: Record<string, unknown>): Promise<{ok: boolean}>};
+  localPersonas?: unknown;
+};
+
+function desktopApi(): DesktopApi | undefined {
+  return typeof window !== 'undefined' ? (window as any).phantomchatDesktop : undefined;
+}
+
+/** Desktop app with the local-persona scan bridge (ships with the phantombot update). */
+export function canScanLocalPersonas(api = desktopApi()): boolean {
+  return !!api && typeof (api as any).localPersonas?.list === 'function';
+}
+
+/** Desktop app whose bundled engine can list providers (phantombot #753). */
+export async function canAddProviders(api = desktopApi()): Promise<boolean> {
+  if(!api?.phantombot?.call) return false;
+  try {
+    const res = await api.phantombot.call('providers.list');
+    return !!res?.ok;
+  } catch{
+    return false;
+  }
+}
+
+export function isValidNpub(value: string): boolean {
+  const v = (value || '').trim();
+  return v.startsWith('npub1') && v.length >= 60;
+}
+
+const KIND_LABELS: Record<ContactKind, string> = {
+  phantom: 'Phantom',
+  human: 'Human',
+  provider: 'Provider'
+};
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cssText?: string, text?: string): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if(cssText) node.style.cssText = cssText;
+  if(text !== undefined) node.textContent = text;
+  return node;
+}
+
+const INPUT_CSS = 'width:100%;padding:12px;border:1px solid var(--border-color);border-radius:8px;font-size:14px;box-sizing:border-box;background:var(--surface-color);color:var(--primary-text-color);';
+const BTN_CSS = 'padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:14px;';
+
+function makeToggle(label: string, checked: boolean, testId: string) {
+  const row = el('label', 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 2px;font-size:14px;color:var(--primary-text-color);cursor:pointer;');
+  row.append(el('span', undefined, label));
+  const input = el('input');
+  input.type = 'checkbox';
+  input.checked = checked;
+  input.setAttribute('data-testid', testId);
+  row.append(input);
+  return {row, input};
 }
 
 /**
- * Show the Add Contact modal popup. Extracted from AppContactsTab so both
- * the Contacts tab and the FAB pencil menu can open it without coupling.
+ * Show the Add Contact modal. Both entry points (tools menu, Contacts tab +)
+ * and an npub pasted into a search box open this same modal.
  */
 export function showAddContactPopup(opts: ShowAddContactOptions): void {
-  const {managers, onSubmit, onContactAdded} = opts;
+  const {managers, onContactAdded} = opts;
+  // One modal at a time: a search box fires on every keystroke past 60 chars.
+  if(document.querySelector('.popup-add-contact-overlay')) return;
 
-  const overlay = document.createElement('div');
+  const overlay = el('div', 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center;');
   overlay.classList.add('popup-add-contact-overlay');
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center;';
 
-  const dialog = document.createElement('div');
-  dialog.style.cssText = 'background:var(--surface-color);border-radius:12px;padding:24px;width:340px;max-width:90vw;';
+  const dialog = el('div', 'background:var(--surface-color);border-radius:12px;padding:24px;width:360px;max-width:90vw;max-height:90vh;overflow:auto;box-sizing:border-box;');
+  dialog.setAttribute('data-testid', 'add-contact-dialog');
 
-  const title = document.createElement('h3');
-  title.textContent = 'Add Contact';
-  title.style.cssText = 'margin:0 0 16px;font-size:18px;color:var(--primary-text-color);';
+  const title = el('h3', 'margin:0 0 16px;font-size:18px;color:var(--primary-text-color);', 'New Contact');
 
-  const desc = document.createElement('p');
-  desc.textContent = 'Enter an npub address to start a conversation';
-  desc.style.cssText = 'margin:0 0 16px;font-size:14px;color:var(--secondary-text-color);';
+  // --- Type selector ---------------------------------------------------
+  const segment = el('div', 'display:flex;gap:4px;padding:4px;border-radius:10px;background:var(--light-secondary-text-color, rgba(127,127,127,.12));margin-bottom:16px;');
+  segment.setAttribute('role', 'tablist');
+  const segButtons = new Map<ContactKind, HTMLButtonElement>();
+  let kind: ContactKind = 'phantom';
 
-  const nicknameInput = document.createElement('input');
-  nicknameInput.type = 'text';
-  nicknameInput.placeholder = 'Nickname (optional)';
-  nicknameInput.classList.add('input-clear');
-  nicknameInput.style.cssText = 'width:100%;padding:12px;border:1px solid var(--border-color);border-radius:8px;font-size:14px;box-sizing:border-box;background:var(--surface-color);color:var(--primary-text-color);margin-bottom:8px;';
+  const addSegButton = (k: ContactKind) => {
+    const b = el('button', BTN_CSS + 'flex:1;padding:8px 6px;background:transparent;color:var(--primary-text-color);', KIND_LABELS[k]);
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('data-testid', `add-contact-kind-${k}`);
+    b.addEventListener('click', () => setKind(k));
+    segButtons.set(k, b);
+    segment.append(b);
+  };
+  addSegButton('phantom');
+  addSegButton('human');
 
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.placeholder = 'npub1...';
-  input.classList.add('input-clear');
-  input.style.cssText = 'width:100%;padding:12px;border:1px solid var(--border-color);border-radius:8px;font-size:14px;box-sizing:border-box;background:var(--surface-color);color:var(--primary-text-color);';
+  // --- Avatar + name ---------------------------------------------------
+  const avatarRow = el('div', 'display:flex;align-items:center;gap:12px;margin-bottom:12px;');
+  const avatar = el('img', 'width:64px;height:64px;border-radius:50%;flex:none;background:var(--light-secondary-text-color, rgba(127,127,127,.12));');
+  avatar.alt = '';
+  avatar.setAttribute('data-testid', 'add-contact-avatar');
+  const nameInput = el('input', INPUT_CSS);
+  nameInput.type = 'text';
+  nameInput.placeholder = 'Contact Name';
+  nameInput.maxLength = 70;
+  nameInput.classList.add('input-clear');
+  nameInput.setAttribute('data-testid', 'add-contact-name');
+  avatarRow.append(avatar, nameInput);
 
-  const errorEl = document.createElement('div');
-  errorEl.style.cssText = 'color:var(--danger-color);font-size:12px;margin-top:8px;min-height:18px;';
+  // --- npub row (Phantom + Human) --------------------------------------
+  const npubRow = el('div', 'display:flex;gap:8px;align-items:center;');
+  const npubInput = el('input', INPUT_CSS + 'flex:1;min-width:0;');
+  npubInput.type = 'text';
+  npubInput.placeholder = 'npub Key (npub1...)';
+  npubInput.classList.add('input-clear');
+  npubInput.setAttribute('data-testid', 'add-contact-npub');
+  if(opts.npub) npubInput.value = opts.npub.trim();
 
-  const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:16px;justify-content:flex-end;';
+  // Scan: find phantombot personas installed on this PC (desktop only).
+  const scanBtn = el('button', BTN_CSS + 'flex:none;', 'Scan');
+  scanBtn.type = 'button';
+  scanBtn.classList.add('btn-primary', 'btn-transparent');
+  scanBtn.setAttribute('data-testid', 'add-contact-scan-local');
+  const scanAvailable = canScanLocalPersonas();
 
-  const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.classList.add('btn-primary', 'btn-transparent');
-  cancelBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:14px;';
-  cancelBtn.addEventListener('click', () => overlay.remove());
-
-  const addBtn = document.createElement('button');
-  addBtn.textContent = 'Add';
-  addBtn.classList.add('btn-primary', 'btn-color-primary');
-  addBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:14px;color:#fff;';
-  addBtn.addEventListener('click', async() => {
-    const val = input.value.trim();
-    if(!val.startsWith('npub1') || val.length < 60) {
-      errorEl.textContent = 'Invalid npub format';
-      return;
-    }
-    addBtn.disabled = true;
-    addBtn.textContent = 'Adding...';
-    try {
-      if(onSubmit) {
-        await onSubmit(val, nicknameInput.value);
-      } else {
-        await addNpubContact(managers, val, nicknameInput.value, onContactAdded);
-      }
-      overlay.remove();
-    } catch(err) {
-      console.error('[AddContactPopup]', err);
-      errorEl.textContent = 'Failed to add contact';
-      addBtn.disabled = false;
-      addBtn.textContent = 'Add';
-    }
-  });
-
-  // Scan QR — launches fullscreen camera overlay, decodes via jsQR.
-  const qrBtn = document.createElement('button');
-  qrBtn.textContent = 'Scan QR';
+  // QR: scan a printed / on-screen npub with the camera. Kept from the old
+  // modal — on a phone it is how most contacts get added.
+  const qrBtn = el('button', BTN_CSS + 'flex:none;padding:8px 10px;', 'QR');
+  qrBtn.type = 'button';
+  qrBtn.title = 'Scan QR code';
   qrBtn.classList.add('btn-primary', 'btn-transparent');
   qrBtn.setAttribute('data-testid', 'add-contact-scan-qr');
-  qrBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:14px;';
+  npubRow.append(npubInput, qrBtn, scanBtn);
+
+  // --- Toggles ---------------------------------------------------------
+  const localTools = makeToggle('Local tools', false, 'add-contact-local-tools');
+  const notifications = makeToggle('Notifications', true, 'add-contact-notifications');
+  const toggles = el('div', 'margin-top:8px;');
+  toggles.append(localTools.row, notifications.row);
+
+  const errorEl = el('div', 'color:var(--danger-color);font-size:12px;margin-top:8px;min-height:18px;');
+  errorEl.setAttribute('data-testid', 'add-contact-error');
+
+  const btnRow = el('div', 'display:flex;gap:8px;margin-top:16px;justify-content:flex-end;');
+  const cancelBtn = el('button', BTN_CSS, 'Cancel');
+  cancelBtn.type = 'button';
+  cancelBtn.classList.add('btn-primary', 'btn-transparent');
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  const addBtn = el('button', BTN_CSS + 'color:#fff;', 'Add');
+  addBtn.type = 'button';
+  addBtn.classList.add('btn-primary', 'btn-color-primary');
+  addBtn.setAttribute('data-testid', 'add-contact-submit');
+  btnRow.append(cancelBtn, addBtn);
+
+  // --- Behaviour -------------------------------------------------------
+  let avatarToken = 0;
+  const renderAvatar = async() => {
+    const token = ++avatarToken;
+    const value = npubInput.value.trim();
+    let seed = '';
+    if(isValidNpub(value)) {
+      try {
+        const {decodePubkey} = await import('@lib/phantomchat/nostr-identity');
+        seed = decodePubkey(value);
+      } catch{}
+    }
+    const {generateDicebearAvatar} = await import('@helpers/generateDicebearAvatar');
+    const url = await generateDicebearAvatar(seed || 'new-contact', false, kind === 'human');
+    if(token === avatarToken) avatar.src = url;
+  };
+
+  const setKind = (k: ContactKind) => {
+    kind = k;
+    segButtons.forEach((b, key) => {
+      const on = key === k;
+      b.setAttribute('aria-selected', String(on));
+      b.style.background = on ? 'var(--primary-color)' : 'transparent';
+      b.style.color = on ? '#fff' : 'var(--primary-text-color)';
+    });
+    // Local tools: Phantom + Provider only. Scan: Phantom, desktop only.
+    localTools.row.style.display = k === 'human' ? 'none' : '';
+    scanBtn.style.display = k === 'phantom' && scanAvailable ? '' : 'none';
+    errorEl.textContent = '';
+    void renderAvatar();
+  };
+
+  npubInput.addEventListener('input', () => {
+    errorEl.textContent = '';
+    void renderAvatar();
+  });
+
   qrBtn.addEventListener('click', async() => {
     try {
       const {launchQRScanner} = await import('@components/phantomchat/QRScanner');
       launchQRScanner({
         onDetected: (npub: string) => {
-          input.value = npub;
-          nicknameInput.focus();
+          npubInput.value = npub;
           errorEl.textContent = '';
+          void renderAvatar();
+          nameInput.focus();
         }
       });
     } catch(err) {
@@ -117,36 +242,82 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
     }
   });
 
+  scanBtn.addEventListener('click', () => {
+    // Wired up with the desktop local-persona bridge (phantombot side).
+    errorEl.textContent = 'Scan needs the latest Phantomyard Desktop';
+  });
+
+  addBtn.addEventListener('click', async() => {
+    const submit: AddContactSubmit = {
+      npub: npubInput.value.trim(),
+      nickname: nameInput.value.trim(),
+      kind,
+      notifications: notifications.input.checked,
+      localTools: kind !== 'human' && localTools.input.checked
+    };
+    if(!isValidNpub(submit.npub)) {
+      errorEl.textContent = 'Invalid npub format';
+      return;
+    }
+    addBtn.disabled = true;
+    addBtn.textContent = 'Adding...';
+    try {
+      const result = await addTypedContact(managers, submit);
+      overlay.remove();
+      onContactAdded?.(result.peerIdTweb, result.displayName);
+    } catch(err) {
+      console.error('[AddContactPopup]', err);
+      errorEl.textContent = 'Failed to add contact';
+      addBtn.disabled = false;
+      addBtn.textContent = 'Add';
+    }
+  });
+
   overlay.addEventListener('click', (e) => {
     if(e.target === overlay) overlay.remove();
   });
 
-  btnRow.append(qrBtn, cancelBtn, addBtn);
-  dialog.append(title, desc, nicknameInput, input, errorEl, btnRow);
+  dialog.append(title, segment, avatarRow, npubRow, toggles, errorEl, btnRow);
   overlay.append(dialog);
   document.body.append(overlay);
-  input.focus();
+  setKind('phantom');
+  (opts.npub ? nameInput : npubInput).focus();
+
+  // Provider is desktop-only and needs the bundled engine's provider list.
+  void canAddProviders().then((ok) => {
+    if(ok && overlay.isConnected && !segButtons.has('provider')) {
+      addSegButton('provider');
+      setKind(kind);
+    }
+  });
 }
 
 /**
- * Default npub → peer resolution used when the caller does not supply an
- * `onSubmit` override. Delegates to the canonical `addP2PContact` helper
- * which ensures mirrors, Worker state, message-store, dialog and ChatAPI
- * are all consistent before the chat is opened.
+ * Save the contact's type + Local tools BEFORE the add, so the first render
+ * of the new chat already uses the right avatar; then add through the
+ * canonical helper and apply the Notifications choice.
  */
-async function addNpubContact(
-  _managers: AppManagers,
-  npub: string,
-  nickname: string,
-  onContactAdded?: (peerId: PeerId) => void
-): Promise<void> {
+export async function addTypedContact(managers: AppManagers, submit: AddContactSubmit) {
+  const {decodePubkey} = await import('@lib/phantomchat/nostr-identity');
+  const hex = decodePubkey(submit.npub);
+  const {setContactPrefs} = await import('@lib/phantomchat/contact-prefs');
+  await setContactPrefs(hex, {kind: submit.kind, localTools: submit.localTools});
+
   const {addP2PContact} = await import('@lib/phantomchat/add-p2p-contact');
   const result = await addP2PContact({
-    pubkey: npub,
-    nickname,
+    pubkey: submit.npub,
+    nickname: submit.nickname,
     openChat: true,
     source: 'add-contact-popup',
     deliberate: true
   });
-  onContactAdded?.(result.peerIdTweb);
+
+  if(!submit.notifications) {
+    try {
+      await managers.appMessagesManager.togglePeerMute({peerId: result.peerIdTweb, mute: true});
+    } catch(err) {
+      console.warn('[AddContactPopup] could not mute new contact', err);
+    }
+  }
+  return result;
 }

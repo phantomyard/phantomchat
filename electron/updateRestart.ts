@@ -168,8 +168,8 @@ run_install() {
   case "$AGENT" in
     none)    bash -c "$CMD" ;;
     pkexec)  pkexec --disable-internal-agent bash -c "$CMD" ;;
-    kdesudo) kdesudo --comment "PhantomChat would like to update" -c "$CMDSTR" ;;
-    gksudo)  gksudo --message "PhantomChat would like to update" "$CMDSTR" ;;
+    kdesudo) kdesudo --comment "Phantomyard Desktop would like to update" -c "$CMDSTR" ;;
+    gksudo)  gksudo --message "Phantomyard Desktop would like to update" "$CMDSTR" ;;
     beesu)   beesu "$CMDSTR" ;;
     *) echo "unknown privilege agent: $AGENT"; return 1 ;;
   esac
@@ -194,7 +194,7 @@ if [ "$STILL_RUNNING" = 0 ]; then
   nohup "$EXE" >/dev/null 2>&1 &
 fi
 if command -v notify-send >/dev/null 2>&1; then
-  notify-send "PhantomChat update failed" "The update could not be installed. See $LOG" || true
+  notify-send "Phantomyard Desktop update failed" "The update could not be installed. See $LOG" || true
 fi
 exit 1
 `;
