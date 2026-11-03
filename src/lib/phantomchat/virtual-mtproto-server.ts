@@ -13,10 +13,11 @@ import {getMessageStore} from './message-store';
 import type {StoredMessage} from './message-store';
 import {loadCachedPeerProfile, refreshPeerProfileFromRelays} from './peer-profile-cache';
 import type {NostrBotCommand} from './nostr-profile';
-import {buildPhantomChatMedia, healStoredFileRow, storedRowMedia} from './phantomchat-media-shape';
+import {buildPhantomChatMedia, healStoredFileRow, storedRowMedia, waveformToBase64} from './phantomchat-media-shape';
 import type {HealedFileRow, PhantomChatFileMetadata} from './phantomchat-media-shape';
 import {getPubkey, getMapping, removeMapping, recordDeletedPeer} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
+import base64ToBytes from '@helpers/string/base64ToBytes';
 import {isGroupPeer} from './group-types';
 import {FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import rootScope from '@lib/rootScope';
@@ -436,8 +437,11 @@ export class PhantomChatMTProtoServer {
       if(typeof (rs as any).addEventListener !== 'function') return;
       (rs as any).addEventListener('phantomchat_file_upload_completed', ({peerId, mid, realMid}: {peerId: number; mid: number; realMid?: number}) => {
         if(realMid == null) return;
+        // Optional-chained (#396): a managers object not populated yet must not
+        // throw synchronously out of the dispatch, past the .catch, into the
+        // sibling listeners of the same event.
         void Promise.resolve(
-          (rs as any).managers.appMessagesManager.replaceLocalTempMessage(peerId, mid, realMid)
+          (rs as any).managers?.appMessagesManager?.replaceLocalTempMessage?.(peerId, mid, realMid)
         ).catch((e: any) => console.debug(LOG_PREFIX, 'replaceLocalTempMessage failed:', e?.message));
       });
       (rs as any).addEventListener('phantomchat_retry_file_send', async(e: {peerId: number; mid: number}) => {
@@ -806,6 +810,29 @@ export class PhantomChatMTProtoServer {
     };
   }
 
+  /**
+   * Sender for an outgoing row on a read path: ourselves, exactly as
+   * injectOutgoingBubble stamps the live bubble (#391). Leaving it undefined is
+   * not "unattributed": tweb's saveMessages falls back to `fromId = peer_id`,
+   * which for a group renders the chat as the author, and every read path
+   * pushes its own copy of the same mid into one cache, so a single
+   * unattributed copy wins the header. Clamped to 0 (no from_id) when our own
+   * pubkey cannot be mapped, with a breadcrumb.
+   */
+  private async ownFromPeerId(where: string): Promise<number> {
+    if(this.ownPubkey) {
+      try {
+        const peerId = await this.mapper.mapPubkey(this.ownPubkey);
+        if(peerId) return peerId;
+      } catch(err) {
+        console.error(LOG_PREFIX, where + ': mapPubkey(self) failed, outgoing row left without a sender', (err as any)?.message);
+        return 0;
+      }
+    }
+    console.error(LOG_PREFIX, where + ': own pubkey unresolved, outgoing row left without a sender');
+    return 0;
+  }
+
   private async getDialogs(_params: any, onlyPeerIds?: ReadonlySet<number>): Promise<any> {
     const store = getMessageStore();
     const dialogs: any[] = [];
@@ -884,7 +911,7 @@ export class PhantomChatMTProtoServer {
           const msg = this.mapper.createTwebMessage({
             mid,
             peerId,
-            fromPeerId: isOutgoing ? undefined : peerId,
+            fromPeerId: isOutgoing ? await this.ownFromPeerId('getDialogs') : peerId,
             date: latest.timestamp,
             text: rowMedia.text,
             isOutgoing,
@@ -975,7 +1002,7 @@ export class PhantomChatMTProtoServer {
             topDate = latest.timestamp;
 
             const isOutgoing = latest.isOutgoing ?? (latest.senderPubkey === this.ownPubkey);
-            const fromUserId = isOutgoing ? 0 :
+            const fromUserId = isOutgoing ? await this.ownFromPeerId('getDialogs') :
               await this.mapper.mapPubkey(latest.senderPubkey);
 
             if(latest.serviceType === 'chatCreate') {
@@ -997,7 +1024,7 @@ export class PhantomChatMTProtoServer {
               messages.push(serviceMsg);
               topMsg = serviceMsg;
             } else {
-              const fromPeerId = isOutgoing ? undefined : fromUserId;
+              const fromPeerId = fromUserId;
               const rowMedia = storedRowMedia(latest, mid);
               // Fire-and-forget on the response path (same rationale as the
               // 1:1 branch above): repairs must not hold the boot dialog batch.
@@ -1190,7 +1217,7 @@ export class PhantomChatMTProtoServer {
         }
         const mid = stored.mid;
         const isOutgoing = stored.isOutgoing ?? (stored.senderPubkey === this.ownPubkey);
-        const fromPeerId = isOutgoing ? undefined : absPeerId;
+        const fromPeerId = isOutgoing ? await this.ownFromPeerId('getHistory') : absPeerId;
 
         // Heal rows written without nested fileMetadata (queue-flush regression
         // / interrupted durable-write-first) and hybrid rows whose fileMetadata
@@ -1396,7 +1423,7 @@ export class PhantomChatMTProtoServer {
             pFlags: isOutgoing ? {out: true} : {},
             id: mid,
             peer_id: {_: 'peerChat', chat_id: absPeerId},
-            from_id: {_: 'peerUser', user_id: fromPeerId},
+            from_id: {_: 'peerUser', user_id: fromPeerId ?? 0},
             date: stored.timestamp,
             action: {
               _: 'messageActionChatCreate',
@@ -1482,7 +1509,7 @@ export class PhantomChatMTProtoServer {
             }
             const mid = stored.mid;
             const isOutgoing = stored.isOutgoing ?? (stored.senderPubkey === this.ownPubkey);
-            const fromPeerId = isOutgoing ? undefined : peerId;
+            const fromPeerId = isOutgoing ? await this.ownFromPeerId('searchMessages') : peerId;
 
             // Search results feed tweb's saveMessages — a media-less copy here
             // would land in the render cache and clobber a media-bearing bubble.
@@ -2337,7 +2364,15 @@ export class PhantomChatMTProtoServer {
             _: 'documentAttributeAudio',
             pFlags: {voice: true},
             duration: media.duration,
-            waveform: media.waveform
+            // tweb's AudioElement decodes packed bytes, not base64. Normalise
+            // first (the param type is not enforced at runtime) and never let
+            // a bad waveform drop the whole optimistic bubble: no bars beats
+            // no bubble.
+            waveform: (() => {
+              const b64 = waveformToBase64(media.waveform);
+              if(!b64) return undefined;
+              try { return base64ToBytes(b64); } catch{ return undefined; }
+            })()
           });
         }
         if(media.type === 'image') {
@@ -2439,7 +2474,7 @@ export class PhantomChatMTProtoServer {
       // cached mid slice never referenced it) and only reappeared after a full
       // app restart forced a real getHistory from IndexedDB.
       void Promise.resolve(
-        rs.managers.appMessagesManager.appendLocalHistoryMessage(msg)
+        rs.managers?.appMessagesManager?.appendLocalHistoryMessage?.(msg)
       ).catch((e: any) => console.debug(LOG_PREFIX, 'appendLocalHistoryMessage failed:', e?.message));
 
       // Bump (or create) the sidebar dialog for the outgoing message.
@@ -2566,7 +2601,9 @@ export class PhantomChatMTProtoServer {
     const width: number | undefined = params?.width;
     const height: number | undefined = params?.height;
     const duration: number | undefined = params?.duration;
-    const waveform: string | undefined = params?.waveform;
+    // The composer hands the recorder's Uint8Array over the bridge; the wire
+    // and the store carry base64 (see waveformToBase64).
+    const waveform: string | undefined = waveformToBase64(params?.waveform);
     // Issue #111: groupedId is the sender-local optimistic album id from
     // appMessagesManager.sendGrouped. Forwarded to injectOutgoingBubble so
     // bubbles in the same album render attached.
@@ -2697,7 +2734,9 @@ export class PhantomChatMTProtoServer {
     const width: number | undefined = params?.width;
     const height: number | undefined = params?.height;
     const duration: number | undefined = params?.duration;
-    const waveform: string | undefined = params?.waveform;
+    // The composer hands the recorder's Uint8Array over the bridge; the wire
+    // and the store carry base64 (see waveformToBase64).
+    const waveform: string | undefined = waveformToBase64(params?.waveform);
     const groupedId: string | undefined = typeof params?.groupedId === 'string' ? params.groupedId : undefined;
 
     let groupId: string;

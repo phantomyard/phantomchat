@@ -117,6 +117,7 @@ import {fillForumTabRegister} from '@components/forumTab/fillRegister';
 import LazyLoadQueue from '@components/lazyLoadQueue';
 import {fastSmoothScrollToStart} from '@helpers/fastSmoothScroll';
 import ArchiveDialog, {archiveDialogTagName} from '@components/archiveDialog';
+import {syncArchiveTileSelection} from '@lib/phantomchat/archive-tile-selection';
 import {createArchiveDialogContextMenu} from '@components/archiveDialogContextMenu';
 import ButtonIcon from '@components/buttonIcon';
 import {attachClickEvent as attachButtonClickEvent} from '@helpers/dom/clickEvent';
@@ -590,6 +591,8 @@ export class AppDialogsManager {
 
   private lazyLoadQueue: LazyLoadQueue;
   private archiveFolderUnread: HTMLElement;
+  private archiveFolderButton: HTMLElement;
+  private foldersRow: HTMLElement;
 
   public start() {
     const managers = this.managers = getProxiedManagers();
@@ -684,7 +687,7 @@ export class AppDialogsManager {
     // tabs strip. CSS shows the row on .has-horizontal-folders alone (the rail
     // is not on screen); only this button is additionally hidden under
     // .has-folders-sidebar, so it can never sit next to a rail it toggles away.
-    const foldersRow = document.createElement('div');
+    const foldersRow = this.foldersRow = document.createElement('div');
     foldersRow.classList.add('chatlist-folders-row');
     const foldersSidebarToggle = ButtonIcon('rightpanel chatlist-sidebar-toggle');
     // Loaded lazily: folders-sidebar-layout pulls appImManager, which pulls this
@@ -695,18 +698,19 @@ export class AppDialogsManager {
     foldersRow.append(foldersSidebarToggle, this.folders.menuScrollContainer);
     // Archive owns a separate sidebar tab; keep it outside the horizontal
     // menu's indexed children so selecting it cannot switch the wrong list.
-    const archiveButton = document.createElement('button');
+    const archiveButton = this.archiveFolderButton = document.createElement('button');
     archiveButton.type = 'button';
     archiveButton.classList.add('chatlist-folder-badge', 'chatlist-archive-badge');
     archiveButton.dataset.filterId = '' + FOLDER_ID_ARCHIVE;
     const archiveLabel = document.createElement('span');
     archiveLabel.classList.add('text-super');
-    archiveLabel.textContent = 'Archived';
+    _i18n(archiveLabel, 'ChatList.Filter.Archive');
     this.archiveFolderUnread = createBadge('div', 18, 'primary');
     archiveButton.append(Icon('archive', 'chatlist-folder-icon'), archiveLabel, this.archiveFolderUnread);
     ripple(archiveButton);
     attachButtonClickEvent(archiveButton, () => appSidebarLeft.openArchiveTab());
     foldersRow.append(archiveButton);
+    syncArchiveTileSelection(foldersRow, archiveButton, this.filterId);
     bottomPart.prepend(foldersRow);
     const selectTab = this.selectTab = horizontalMenuObjArgs({
       tabs: this.folders.menu,
@@ -844,6 +848,7 @@ export class AppDialogsManager {
 
   public setFilterId(filterId: number) {
     this.filterId = filterId;
+    syncArchiveTileSelection(this.foldersRow, this.archiveFolderButton, filterId);
   }
 
   /**
@@ -2032,7 +2037,7 @@ export class AppDialogsManager {
     dialogElement,
     highlightWord,
     isBatch = false,
-    setUnread = false,
+    setUnread = null,
     noForwardIcon
   }: {
     dialog: PossibleDialog,
@@ -2040,6 +2045,12 @@ export class AppDialogsManager {
     dialogElement?: DialogElement,
     highlightWord?: string,
     isBatch?: boolean,
+    /**
+     * `true` = list row that also writes unread, `null` (the default) = list
+     * row, `false` = message-search hit or profile preview: no unread write and
+     * no typing line. Search rows must say so explicitly; a caller that omits
+     * the field gets a list row rather than silently losing the indicator.
+     */
     setUnread?: boolean,
     noForwardIcon?: boolean
   }) {
@@ -2675,7 +2686,8 @@ export class AppDialogsManager {
       dialog: {_: 'dialog', peerId} as any,
       lastMessage: message,
       dialogElement: ret,
-      highlightWord: query
+      highlightWord: query,
+      setUnread: false
     });
 
     if(message.peerId !== peerId) {

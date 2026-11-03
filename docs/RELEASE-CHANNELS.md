@@ -149,12 +149,14 @@ Only dispatch trusted, reviewed branches for PWA publication: these jobs execute
 the selected branch code with publication credentials. Electron signing and
 publication jobs are restricted to main; this does not restrict PWA Preview.
 
-PWA archives are durable GitHub **draft releases**, with `bundle.tar.gz` and
-`SHA256SUMS.txt`, not expiring Actions artifacts. They remain drafts permanently:
-normal published PWA releases/tags would pollute Electron's `releases.atom` feed.
-A draft's JSON body records source/version, Stable source/version, Preview release,
-operation and successful Pages publication time. Unpublished/failed candidates
-are excluded from default selection. Never publish these drafts manually.
+PWA archives live in GitHub Packages (`ghcr.io/phantomyard/phantomchat-pwa`),
+one OCI artifact per build with a digest-checked `bundle.tar.gz` layer. They
+never appear on the Releases page: a published PWA release would pollute
+Electron's `releases.atom` feed. The manifest's record annotation holds
+source/version, Stable source/version, Preview release, operation and successful
+Pages publication time. Unpublished/failed candidates are excluded from
+selection. `live` tags the deployed site, `preview` the newest published Preview;
+see [RELEASE.md](RELEASE.md) for pruning and the one-off draft import.
 The archive includes the full site snapshot plus the already-built Stable
 candidate, so promotion uses exact verified assets without path rewriting.
 Preview publication preserves the last published Stable files byte-for-byte;
@@ -169,10 +171,15 @@ There is no automatic recovery deploy and no inference that a failed run shipped
 
 After a PWA promotion, the next Preview build checks compatibility against the
 **actually deployed Stable source**, loaded from the last successful archive.
-Exact-content compatibility approvals must be refreshed in a reviewed PR when
-that baseline changes; stale approvals fail closed. Explicit older PWA promotion
+Against the pin a row must match both its exact `stable` and `preview`
+digests. Against any other deployed Stable, which a PWA promotion moves, every
+file that differs from it needs a row approving its exact candidate (`preview`)
+bytes. That rule is computed live from `channels.json`, so a promotion changes
+nothing in `scripts/channels/config.json` and opens no PR (#301). Explicit older PWA promotion
 also checks the selected Stable source against current Preview using the chosen
-branch's reviewed exact-content approvals, then verifies assembled entry assets.
+branch's reviewed exact-content approvals (the full `stable` + `preview` rule
+when the selected source is the pin, the `preview` rule otherwise), then
+verifies assembled entry assets.
 It never silently rolls Preview back. Archives with missing/corrupt assets or
 unsafe paths/links fail before Pages publication. The original source pin remains
 Electron's independent embedded Stable frontend baseline; changing PWA Stable

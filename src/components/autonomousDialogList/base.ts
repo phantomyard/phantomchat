@@ -325,11 +325,16 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
 
     // Re-derive instead of appending once: the same peer can change action
     // (typing → sending a photo) and several peers can join/leave a group tick.
+    // Takes a paint token like setLastMessage does: getPeerTyping awaits the
+    // peer title for a chat, so a subtitle written meanwhile (typing already
+    // stopped) must win over this late paint.
+    const paintToken = (dom.lastMessagePaintToken = (dom.lastMessagePaintToken ?? 0) + 1);
     await paintDialogTyping({
       dom,
       peerId: dialog.peerId,
       threadId: isForumTopic(dialog) ? dialog.id : undefined,
-      getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t)
+      getPeerTyping: (p, c, t) => appImManager.getPeerTyping(p, c, t),
+      isStillValid: () => dom.lastMessagePaintToken === paintToken
     });
   }
 

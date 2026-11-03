@@ -45,6 +45,10 @@ export type GroupsAdapterDeps = {
   /** Local teardown: delete record + cleanup mirror. */
   removeGroup: (groupId: string) => Promise<void>;
   setTombstone: (conversationId: string, deletedAtSeconds: number) => Promise<void>;
+  /** Raise-only stamp of a group info sub-field's anti-replay watermark
+   * (GroupAPI.raiseInfoWatermark). Called after an upsert that changed that
+   * field, with that field's source-event timestamp in seconds. */
+  raiseInfoWatermark?: (groupId: string, field: 'name' | 'description' | 'avatar', tsSec: number) => void | Promise<void>;
   logPrefix?: string;
 };
 
@@ -330,6 +334,24 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
             record.deliberateAddAt = entry.deliberateAddAt * 1000;
           }
           await deps.upsertGroup(record);
+          // Sync is the second writer of group info. Advance the info
+          // watermarks the way the send path does, for the fields this upsert
+          // actually changed, so an older relayed group_info_update cannot
+          // revert a name this device only learned through sync (#364).
+          if(deps.raiseInfoWatermark) {
+            for(const field of ['name', 'description', 'avatar'] as const) {
+              if(record[field] === undefined || record[field] === localRecord?.[field]) continue;
+              try {
+                // Legacy snapshots lack field provenance. Do not invent a
+                // rename time from a membership/pin/merge timestamp.
+                const stamp = record.infoUpdatedAt?.[field];
+                if(!Number.isFinite(stamp) || !(stamp > 0)) continue;
+                await deps.raiseInfoWatermark(id, field, Math.min(stamp, Math.floor(Date.now() / 1000)));
+              } catch(err) {
+                console.warn(tag, 'info watermark raise failed for', id, field, err);
+              }
+            }
+          }
         }
       } catch(err) {
         console.warn(tag, 'apply failed for', id, err);

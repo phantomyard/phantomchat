@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: 'PWA release (pwa-v...). Empty selects newest successfully published Preview.'
+        description: 'PWA build tag (pwa-v...) in the phantomchat-pwa package. Empty selects newest successfully published Preview.'
         required: false
         default: ''
 
 permissions:
   contents: write
+  packages: write   # PWA builds live in GitHub Packages (ghcr.io)
   pages: write
   id-token: write
 
@@ -19,7 +20,9 @@ concurrency:
 
 jobs:
   promote:
-    runs-on: ubuntu-latest
+    # Playwright 1.59 can't install Chromium deps on Ubuntu 26 (ubuntu-latest
+    # since Nov 2026). Unpin once Playwright supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: github-pages

@@ -40,11 +40,17 @@ describe('release tag namespace', () => {
     expect(source, `${file} pushes a ref to origin`).not.toMatch(/\bgit\s+push\b[^\n]*origin/);
   });
 
-  it('PWA archive releases remain drafts outside the desktop updater feed', () => {
+  it('PWA builds never touch Releases, so they stay out of the desktop updater feed', () => {
+    // PWA builds live in GitHub Packages. The registry may only READ releases
+    // (Electron selection and the one-off legacy draft import), never write one.
     const registry = readFileSync(join(process.cwd(), 'scripts/releases/registry.mjs'), 'utf8');
-    expect(registry).toContain("'--draft'");
-    expect(registry).not.toContain("'--draft=false'");
+    expect(registry).not.toMatch(/'release',\s*'(create|edit|upload|delete)'/);
     expect(registry).not.toContain("'--prerelease'");
+    for(const workflow of ['deploy.yml', 'pwa-promote.yml']) {
+      const source = readFileSync(join(process.cwd(), '.github/workflows', workflow), 'utf8');
+      expect(source, `${workflow} writes a release`).not.toMatch(/gh\s+release\s+(create|edit|upload)/);
+      expect(source, `${workflow} cannot write the build store`).toMatch(/packages:\s*write/);
+    }
   });
 
   it('publish-release.sh only ever creates a namespaced tag', () => {

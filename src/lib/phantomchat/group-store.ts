@@ -173,10 +173,15 @@ export class GroupStore {
       archivedAt?: number | null,
       pinnedAt?: number | null,
       unreadMarkAt?: number | null
-    }
+    },
+    infoTsSec = Math.floor(Date.now() / 1000)
   ): Promise<void> {
     const existing = await this.get(groupId);
     if(!existing) throw new Error(`Group not found: ${groupId}`);
+    for(const field of ['name', 'description', 'avatar'] as const) {
+      if(updates[field] === undefined) continue;
+      existing.infoUpdatedAt = {...existing.infoUpdatedAt, [field]: Math.min(infoTsSec, Math.floor(Date.now() / 1000))};
+    }
     if(updates.name !== undefined) existing.name = updates.name;
     if(updates.description !== undefined) existing.description = updates.description;
     if(updates.avatar !== undefined) existing.avatar = updates.avatar;

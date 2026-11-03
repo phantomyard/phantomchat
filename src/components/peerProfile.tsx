@@ -568,7 +568,8 @@ PeerProfile.PersonalChannel = () => {
           peerId
         } as any,
         lastMessage: message,
-        dialogElement
+        dialogElement,
+        setUnread: false
       });
 
       setSubtitleChildren?.(dialogElement.subtitle);

@@ -84,7 +84,9 @@ jobs:
   linux:
     if: github.ref == 'refs/heads/main'
     needs: version
-    runs-on: ubuntu-latest
+    # Playwright 1.59 can't install Chromium deps on Ubuntu 26 (ubuntu-latest
+    # since Nov 2026). Unpin once Playwright supports it.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout selected commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -849,9 +851,16 @@ jobs:
             ORIGIN_LINE="Originating commit: ${SHA} — ${PR_TITLE}"
             PR_LINK_LINE="Commit: ${SERVER_URL}/${REPO}/commit/${SHA}"
           fi
+          # The release smokes run against the live site, so record which
+          # frontend that was (#356). Informational only: never block on it.
+          FRONTEND_LINE="Live frontend when these notes were written: unavailable"
+          if channels=$(curl -fsS --max-time 20 "https://chat.phantomyard.ai/channels.json?provenance=${RUN_ID}"); then
+            FRONTEND_LINE="Live frontend when these notes were written: Stable $(jq -r .stable <<<"$channels"), Preview $(jq -r .preview <<<"$channels")"
+          fi
           cat > release-notes.md <<EOF
           Desktop release from workflow run #${RUN_NUMBER} (run id ${RUN_ID}).
           ${ORIGIN_LINE}
+          ${FRONTEND_LINE}
 
           Build run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}
           ${PR_LINK_LINE}

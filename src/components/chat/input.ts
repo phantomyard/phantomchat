@@ -4095,13 +4095,24 @@ export default class ChatInput {
    * Callers keep their own peer guard: a chat opened mid-batch must not have its
    * draft cleared, so this runs against the current (and therefore the batch's)
    * peer only.
+   *
+   * `keepSendState` is the failed-batch case (#339): only the wording is spent.
+   * The files left in the tray are retried with whatever the composer holds at
+   * that point, so the reply target, `scheduleDate` and `sendSilent` must
+   * survive — `onMessageSent` clears all three, which re-sent a reply as a
+   * stand-alone message, a scheduled batch immediately and a silent one loudly.
    */
-  private consumeComposerAfterBatch() {
+  private consumeComposerAfterBatch(keepSendState = false) {
     this.managers.appDraftsManager.clearDraft({
       peerId: this.chat.peerId,
       threadId: this.chat.threadId,
       monoforumThreadId: this.chat.monoforumThreadId
     });
+
+    if(keepSendState) {
+      void this.clearInput();
+      return;
+    }
 
     this.onMessageSent(true, true);
   }
@@ -4143,7 +4154,7 @@ export default class ChatInput {
             // retry the tray offers would otherwise caption the next file with
             // it, and the recipient answers each media message as its own turn.
             if(shouldConsumeComposerAfterFailedBatch(batch, peerIdBeforeBatch, this.chat.peerId)) {
-              this.consumeComposerAfterBatch();
+              this.consumeComposerAfterBatch(true);
             }
 
             return;

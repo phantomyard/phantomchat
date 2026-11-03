@@ -327,3 +327,23 @@ describe('message in an archived session', () => {
     expect(dialog.index_4).toBeDefined();
   });
 });
+
+describe('relocateGroupDialog moves the pin entry with the row (#315)', () => {
+  it('a pinned group re-keyed to a session leaves Groups\' order and heads Sessions\'', async() => {
+    const {default: DialogsStorage} = await import('@lib/storages/dialogs');
+    const orders = new DialogsStorage();
+    (orders as any).pinnedOrders = {0: [], 1: [], 3: [FROM, 5], 4: [6]};
+    (orders as any).appStateManager = {pushToState: vi.fn()};
+    (dialogsStorage as any).setDialogPinnedOrder = vi.fn(async(id: number, folder: number, pinned: boolean) => orders.setDialogPinnedOrder(id as any, folder, pinned));
+    rows.set(FROM, {...oldRow(), pFlags: {pinned: true}});
+
+    try {
+      await sync.relocateGroupDialog(record.groupId, FROM, TO, record);
+      expect(orders.getPinnedOrders(3)).toEqual([5]);
+      expect(orders.getPinnedOrders(4)).toEqual([TO, 6]);
+      expect(orders.getPinnedOrders(1)).toEqual([]);
+    } finally {
+      delete (dialogsStorage as any).setDialogPinnedOrder;
+    }
+  });
+});

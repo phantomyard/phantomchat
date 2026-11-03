@@ -14,6 +14,7 @@ import {getMessageStore, StoredMessage} from './message-store';
 import {getMessageRequestStore} from './message-requests';
 import {isControlEvent, getGroupIdFromRumor} from './group-control-messages';
 import {getMsSlotFromTags} from './nostr-crypto';
+import {waveformToBase64} from './phantomchat-media-shape';
 import type {ChatMessage, ChatMessageType} from './chat-api';
 import rootScope from '@lib/rootScope';
 
@@ -163,7 +164,7 @@ export function extractFileMetadata(
         keyHex: fileParsed.key || fileParsed.keyHex || '',
         ivHex: fileParsed.iv || fileParsed.ivHex || '',
         duration: typeof fileParsed.duration === 'number' ? fileParsed.duration : undefined,
-        waveform: typeof fileParsed.waveform === 'string' ? fileParsed.waveform : undefined,
+        waveform: waveformToBase64(fileParsed.waveform),
         caption: typeof fileParsed.caption === 'string' && fileParsed.caption ? fileParsed.caption : undefined,
         // Authoritative sender-tagged media class (image/video/voice/file).
         // Absent on pre-`mediaType` messages → buildPhantomChatMedia falls
