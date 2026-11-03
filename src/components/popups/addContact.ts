@@ -296,21 +296,44 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
  * Save the contact's type + Local tools BEFORE the add, so the first render
  * of the new chat already uses the right avatar; then add through the
  * canonical helper and apply the Notifications choice.
+ *
+ * The prefs are cosmetic: a store that cannot write (private window, quota)
+ * never blocks the add. If the add itself fails, the prefs go back to what
+ * they were before (or the new row is removed), so a failed add changes
+ * nothing.
  */
 export async function addTypedContact(managers: AppManagers, submit: AddContactSubmit) {
   const {decodePubkey} = await import('@lib/phantomchat/nostr-identity');
   const hex = decodePubkey(submit.npub);
-  const {setContactPrefs} = await import('@lib/phantomchat/contact-prefs');
-  await setContactPrefs(hex, {kind: submit.kind, localTools: submit.localTools});
+  const {getContactPrefs, setContactPrefs, restoreContactPrefs} = await import('@lib/phantomchat/contact-prefs');
+  let previous: Awaited<ReturnType<typeof getContactPrefs>>;
+  let wrote = false;
+  try {
+    previous = await getContactPrefs(hex);
+    await setContactPrefs(hex, {kind: submit.kind, localTools: submit.localTools});
+    wrote = true;
+  } catch(err) {
+    console.warn('[AddContactPopup] could not save contact prefs', err);
+  }
 
   const {addP2PContact} = await import('@lib/phantomchat/add-p2p-contact');
-  const result = await addP2PContact({
-    pubkey: submit.npub,
-    nickname: submit.nickname,
-    openChat: true,
-    source: 'add-contact-popup',
-    deliberate: true
-  });
+  let result: Awaited<ReturnType<typeof addP2PContact>>;
+  try {
+    result = await addP2PContact({
+      pubkey: submit.npub,
+      nickname: submit.nickname,
+      openChat: true,
+      source: 'add-contact-popup',
+      deliberate: true
+    });
+  } catch(err) {
+    if(wrote) {
+      await restoreContactPrefs(hex, previous).catch((restoreErr) => {
+        console.warn('[AddContactPopup] could not undo contact prefs', restoreErr);
+      });
+    }
+    throw err;
+  }
 
   if(!submit.notifications) {
     try {

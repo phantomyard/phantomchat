@@ -125,6 +125,29 @@ export async function setContactPrefs(
   return next;
 }
 
+/**
+ * Put a contact's prefs back to an earlier snapshot: `previous` undefined means
+ * there was no row, so the row is removed. Used to undo a prefs write when the
+ * contact add it was made for fails.
+ */
+export async function restoreContactPrefs(pubkey: string, previous: ContactPrefs | undefined): Promise<void> {
+  if(!previous) return clearContactPrefs(pubkey);
+  const key = normalizePubkey(pubkey);
+  if(!key) return;
+  const record: ContactPrefs = {...previous, pubkey: key};
+  const db = await openDB();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(record);
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error || new Error('contact-prefs restore aborted'));
+  });
+  cache.set(key, record);
+  listeners.forEach((listener) => {
+    try { listener(record); } catch{}
+  });
+}
+
 /** Drop a contact's prefs (used when the contact itself is deleted). */
 export async function clearContactPrefs(pubkey: string): Promise<void> {
   const key = normalizePubkey(pubkey);

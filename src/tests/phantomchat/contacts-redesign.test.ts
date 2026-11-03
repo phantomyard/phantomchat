@@ -186,6 +186,46 @@ describe('New Contact modal', () => {
     expect(managers.appMessagesManager.togglePeerMute).toHaveBeenCalledWith({peerId: 1000000000000001, mute: true});
   });
 
+  it('a failed add puts an existing contact\'s prefs back', async() => {
+    await setContactPrefs(HEX, {kind: 'phantom', localTools: true});
+    const before = await getContactPrefs(HEX);
+    addP2PContact.mockImplementationOnce(async() => { throw new Error('relay down'); });
+    const {addTypedContact} = await import('@components/popups/addContact');
+    await expect(addTypedContact(managers, {
+      npub: NPUB, nickname: 'X', kind: 'human', localTools: false, notifications: true
+    })).rejects.toThrow('relay down');
+    expect(await getContactPrefs(HEX)).toEqual(before);
+    _resetContactPrefsForTests();
+    expect(await getContactPrefs(HEX)).toEqual(before);
+  });
+
+  it('a failed add of a new npub leaves no prefs row behind', async() => {
+    addP2PContact.mockImplementationOnce(async() => { throw new Error('relay down'); });
+    const {addTypedContact} = await import('@components/popups/addContact');
+    await expect(addTypedContact(managers, {
+      npub: NPUB, nickname: 'X', kind: 'phantom', localTools: true, notifications: true
+    })).rejects.toThrow('relay down');
+    expect(await getContactPrefs(HEX)).toBeUndefined();
+    _resetContactPrefsForTests();
+    expect(await getContactPrefs(HEX)).toBeUndefined();
+  });
+
+  it('a prefs store that cannot write never blocks the add', async() => {
+    _resetContactPrefsForTests();
+    const openSpy = vi.spyOn(indexedDB, 'open').mockImplementation(() => { throw new Error('QuotaExceededError'); });
+    try {
+      const {addTypedContact} = await import('@components/popups/addContact');
+      const result = await addTypedContact(managers, {
+        npub: NPUB, nickname: 'Corinne', kind: 'human', localTools: false, notifications: true
+      } as any);
+      expect(result.hexPubkey).toBe(HEX);
+      expect(addP2PContact).toHaveBeenCalledTimes(1);
+    } finally {
+      openSpy.mockRestore();
+      _resetContactPrefsForTests();
+    }
+  });
+
   it('rejects a bad npub without adding', async() => {
     await open('npub1nope');
     q('add-contact-submit').click();
