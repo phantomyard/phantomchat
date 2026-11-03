@@ -4,7 +4,8 @@
 # Contract:
 #  - Takes an existing GitHub release (tag), verifies EVERY required platform
 #    artifact and its SHA-256 checksum is present, then flips the release to
-#    the stable latest: prerelease flag cleared, marked latest.
+#    the stable latest: prerelease flag cleared, marked latest, and the
+#    notes' "Release ring" paragraph rewritten to say STABLE (issue #413).
 #  - Never rebuilds, re-signs, retags or re-uploads anything. The exact
 #    artifacts and checksums tested on preview become stable.
 #  - Promoting an older known-good tag by name is the rollback path.
@@ -44,7 +45,7 @@ fail() { echo "PROMOTE FAILED: $*" >&2; exit 1; }
 command -v gh >/dev/null || fail "gh CLI not available"
 
 # --- the release must exist and be a prerelease candidate -------------------
-STATE_JSON="$(gh release view "$TAG" --repo "$REPO" --json isPrerelease,isDraft,assets 2>/dev/null)" \
+STATE_JSON="$(gh release view "$TAG" --repo "$REPO" --json isPrerelease,isDraft,assets,body 2>/dev/null)" \
   || fail "release ${TAG} not found in ${REPO}"
 
 IS_PRERELEASE="$(echo "$STATE_JSON" | jq -r .isPrerelease)"
@@ -107,10 +108,26 @@ done
 echo "Update feeds declare version ${FEED_VERSION}."
 
 echo "All required artifacts present and checksums verified."
-echo "Promoting ${TAG} to stable latest (metadata only — artifacts are untouched)..."
+echo "Promoting ${TAG} to stable latest (metadata and notes only — artifacts are untouched)..."
 
-# --- promotion: metadata-only change ----------------------------------------
-gh release edit "$TAG" --repo "$REPO" --prerelease=false --latest=true \
+# --- release notes: say STABLE once it is stable (issue #413) ---------------
+# app-release.yml writes the notes for a PREVIEW release and ends them with a
+# "Release ring: PREVIEW ..." paragraph telling the reader to promote it. Left
+# alone, every promoted release (and every rollback) says it is not stable on
+# the page that shows it as latest. Everything from the ring line on is
+# replaced, so a re-run rewrites the same block instead of stacking another.
+RING_NOTE="Release ring: STABLE. Promoted to stable on $(date -u +%Y-%m-%d) (${PROMOTE_RUN_URL:-manual promotion}).
+These are the same artifacts and checksums as the preview build, unchanged."
+NOTES_FILE="${WORKDIR}/release-notes.md"
+# $(...) strips trailing newlines, so the ring block always sits one blank line down.
+NOTES_HEAD="$(echo "$STATE_JSON" | jq -r '.body // ""' | awk '/^Release ring: (PREVIEW|STABLE)\./ {exit} {print}')"
+printf '%s\n\n%s\n' "$NOTES_HEAD" "$RING_NOTE" > "$NOTES_FILE"
+if grep -q 'This is a prerelease' "$NOTES_FILE"; then
+  fail "release notes still describe ${TAG} as a prerelease after the rewrite"
+fi
+
+# --- promotion: metadata + notes, artifacts untouched -------------------------
+gh release edit "$TAG" --repo "$REPO" --prerelease=false --latest=true --notes-file "$NOTES_FILE" \
   || fail "gh release edit failed"
 
 echo "Promoted ${TAG} to stable latest."
@@ -123,3 +140,9 @@ LATEST_TAG="$(gh api "repos/${REPO}/releases/latest" --jq .tag_name 2>/dev/null)
 [[ "$LATEST_TAG" == "$TAG" ]] \
   || fail "postcondition failed: latest release is ${LATEST_TAG}, expected ${TAG} (the promotion metadata was applied — inspect the release before retrying)"
 echo "Verified: ${TAG} is the stable latest."
+PROMOTED_BODY="$(gh release view "$TAG" --repo "$REPO" --json body --jq .body 2>/dev/null)" \
+  || fail "postcondition check failed: could not read the notes of ${TAG} back (the promotion itself already succeeded)"
+if grep -q 'This is a prerelease' <<<"$PROMOTED_BODY" || ! grep -q '^Release ring: STABLE\.' <<<"$PROMOTED_BODY"; then
+  fail "postcondition failed: the notes of ${TAG} do not say it is stable (the promotion metadata was applied — fix the notes by hand)"
+fi
+echo "Verified: the notes of ${TAG} say it is stable."

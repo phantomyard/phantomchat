@@ -5,7 +5,8 @@ import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {checkCompatibility, baselineDigestFor} from '../../scripts/channels/check.mjs';
-import {deployBaseline} from '../../scripts/releases/registry.mjs';
+import {checkPromotion, deployBaseline} from '../../scripts/releases/registry.mjs';
+import {repin} from '../../scripts/channels/repin.mjs';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {checkPublishedCompatibility} from '../../scripts/channels/check-published.mjs';
@@ -238,5 +239,63 @@ describe('shared-state release gate', () => {
     // argument silently restores the pin's column for a deployed baseline.
     const builder = readFileSync(join(process.cwd(), 'scripts', 'channels', 'build.mjs'), 'utf8');
     expect(builder).toMatch(/checkCompatibility\(config, candidate, root, baselineDigestFor\(config\)\)/);
+  });
+
+  // pin (v1) -> deployed Stable (v2) -> newly promoted Stable (v3) -> main (v4)
+  const promotionHistory = () => {
+    const config = fixture();
+    const git = (...args: string[]) => execFileSync('git', args, {cwd: dir}).toString().trim();
+    const deployed = git('rev-parse', 'HEAD');
+    for(const version of [3, 4]) {
+      writeFileSync(resolve(dir, 'src/store.ts'), `const version = ${version};\n`);
+      git('commit', '-qam', `v${version}`);
+    }
+    const promoted = git('rev-parse', 'HEAD~1');
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    const v = (n: number) => hash(`const version = ${n};\n`);
+    config.compatibilityApprovals['src/store.ts'] = {stable: v(1), published: v(2), preview: v(4)};
+    return {config: {...config, publishedStableRef: deployed}, pin: config.stableRef, deployed, promoted, v};
+  };
+  const channelsAt = (stable: string): typeof fetch => async() => new Response(JSON.stringify({stable, preview: stable}));
+
+  it('the PR gate reads the pin column after a rollback to the pin (#377)', async() => {
+    const {config, pin} = promotionHistory();
+    // Deployed IS the pin: only `stable` describes it. The old hardcoded
+    // `published` compared v1 against a v2 digest and blocked.
+    await expect(checkPublishedCompatibility(config, 'HEAD', dir, channelsAt(pin))).resolves.toEqual(['src/store.ts']);
+  });
+
+  it('an explicit older promotion checks the column that describes its base (#374)', () => {
+    const {config, deployed, pin} = promotionHistory();
+    // Base = the deployed Stable, whose review lives in `published`.
+    expect(checkPromotion(config, deployed, 'HEAD', dir)).toEqual(['src/store.ts']);
+    // Base = the pin still reads `stable`.
+    expect(checkPromotion(config, pin, 'HEAD', dir)).toEqual(['src/store.ts']);
+    // A genuinely drifted candidate still blocks.
+    const drifted = {...config, compatibilityApprovals: {'src/store.ts': {...config.compatibilityApprovals['src/store.ts'], preview: 'f'.repeat(64)}}};
+    expect(() => checkPromotion(drifted, deployed, 'HEAD', dir)).toThrow('compatibility review required');
+  });
+
+  it('re-pin re-derives `published` from the promoted Stable and nothing else (#301)', async() => {
+    const {config, promoted, v} = promotionHistory();
+    config.compatibilityApprovals['src/untouched.ts'] = {stable: 'absent', published: 'stale', preview: 'absent', reason: 'kept'} as never;
+    // Before: the promotion leaves the gate red on a file this PR never touched.
+    await expect(checkPublishedCompatibility(config, 'HEAD', dir, channelsAt(promoted))).rejects.toThrow('src/store.ts');
+    const next = repin(config, promoted, 'HEAD', dir);
+    expect(next.publishedStableRef).toBe(promoted);
+    expect(next.compatibilityApprovals['src/store.ts']).toEqual({stable: v(1), published: v(3), preview: v(4)});
+    // Every row is regenerated, not only the ones a failing run named.
+    expect(next.compatibilityApprovals['src/untouched.ts']).toEqual({stable: 'absent', published: 'absent', preview: 'absent', reason: 'kept'});
+    await expect(checkPublishedCompatibility(next, 'HEAD', dir, channelsAt(promoted))).resolves.toEqual(['src/store.ts']);
+    // The input is not mutated.
+    expect(config.compatibilityApprovals['src/store.ts'].published).toBe(v(2));
+  });
+
+  it('re-pin refuses content nobody reviewed instead of stamping it', () => {
+    const {config, promoted} = promotionHistory();
+    const unreviewed = {...config, compatibilityApprovals: {'src/store.ts': {...config.compatibilityApprovals['src/store.ts'], preview: 'f'.repeat(64)}}};
+    expect(() => repin(unreviewed, promoted, 'HEAD', dir)).toThrow('candidate bytes not approved: src/store.ts');
+    expect(() => repin({...config, compatibilityApprovals: {}}, promoted, 'HEAD', dir)).toThrow('no approval row: src/store.ts');
+    expect(() => repin(config, 'main', 'HEAD', dir)).toThrow('full commit SHA');
   });
 });

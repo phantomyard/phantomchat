@@ -409,13 +409,13 @@
     },
     "electron/frontendProxy.test.ts": {
       "stable": "6f4182c45169bb551b23b3cc7de5a385ac630e7b53f42a6170d3025e06a7136e",
-      "preview": "6f4182c45169bb551b23b3cc7de5a385ac630e7b53f42a6170d3025e06a7136e",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+      "preview": "93979f617bf251c00bc64bf7bc63dd4b6fe5a1eaba9c4b9512ebecb973df60a1",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. Adds offline HEAD/Range and interrupted-first-load cases (#356); test-only."
     },
     "electron/frontendProxy.ts": {
       "stable": "331336c552e9a9124efb7b4fe4f5144df08b780f0480b6c2ca5bdf7af60dcbce",
-      "preview": "331336c552e9a9124efb7b4fe4f5144df08b780f0480b6c2ca5bdf7af60dcbce",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+      "preview": "c57589189ab867af5efb55b15e281a6083ae24278c03a91b50a555fe5cf9b534",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. Offline HEAD/Range requests answer from the stored whole-file copy (206 slice / 416 / 502) instead of rejecting; hasEntry also requires the entry document's same-origin scripts and stylesheets on disk; readCache touches the meta file as well as the body (#356). Desktop shell only: same cache dir and file naming, no browser storage, schema or wire change."
     },
     "electron/pi-harness/package.json": {
       "stable": "0b6311ad0ea5a1363b6ba2ed2bc174dda3491d62b93410bc94ff4538fb88b258",
