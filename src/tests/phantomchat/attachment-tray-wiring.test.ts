@@ -123,8 +123,10 @@ describe('attachment tray wiring', () => {
     expect(body.indexOf('if(batch.failed)')).toBeGreaterThan(-1);
     expect(body.indexOf('if(batch.failed)')).toBeLessThan(body.indexOf('shouldConsumeComposerAfterFailedBatch('));
     expect(body).toContain('shouldConsumeComposerAfterFailedBatch(batch, peerIdBeforeBatch, this.chat.peerId)');
-    // Both consume paths share the one helper that also drops the stored draft.
-    expect(body.match(/this\.consumeComposerAfterBatch\(\)/g)).toHaveLength(2);
+    // Both consume paths share the one helper that also drops the stored draft;
+    // the failed path keeps reply/schedule/silent for the retry (#339).
+    expect(body.match(/this\.consumeComposerAfterBatch\(true\)/g)).toHaveLength(1);
+    expect(body.match(/this\.consumeComposerAfterBatch\(\)/g)).toHaveLength(1);
     // ...and the successful path only clears it when a file actually carried it.
     expect(body).toContain('if(batch.captionPublished)');
   });
