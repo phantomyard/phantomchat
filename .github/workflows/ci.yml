@@ -58,10 +58,15 @@ jobs:
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:channels
-      - name: Check compatibility with published Stable
-        run: node scripts/channels/check-published.mjs
+      # Both type checks run BEFORE the channel gates below, so a drifted
+      # baseline can never mask a genuine type error: when the published
+      # check fails first, the tsc steps are skipped and the job reports
+      # "typecheck failed" for something that is not a type error (#342).
       - run: npx tsc --noEmit
       - run: pnpm run typecheck:electron
+      # Named for what it tests: a re-pin PR should not read as a type failure.
+      - name: Check channel approvals against the deployed PWA
+        run: node scripts/channels/check-published.mjs
 
   test:
     runs-on: ubuntu-latest
