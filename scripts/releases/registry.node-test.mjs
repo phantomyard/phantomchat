@@ -7,7 +7,7 @@ import {execFileSync, execFile} from 'node:child_process';
 import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import {promisify} from 'node:util';
-import {selectRelease, digest, verifyArchive, pruneVersions} from './registry.mjs';
+import {selectRelease, digest, verifyArchive, pruneVersions, ensureStore} from './registry.mjs';
 
 // In-memory OCI registry: just the endpoints oci.mjs uses.
 function mockRegistry() {
@@ -36,6 +36,8 @@ function mockRegistry() {
           if(![manifest.config, ...manifest.layers].every(b => blobs.has(b.digest))) { res.writeHead(400); return res.end(); }
           manifests.set(m[1], body); res.writeHead(201); return res.end();
         }
+        // Like ghcr: a package that does not exist yet answers `denied`, not 404.
+        if(!manifests.size) { res.writeHead(403); return res.end('{"errors":[{"code":"DENIED"}]}'); }
         if(!manifests.has(m[1])) { res.writeHead(404); return res.end(); }
         return res.end(manifests.get(m[1]));
       }
@@ -133,7 +135,7 @@ if(a[1] === 'download') {
       writeFileSync(`${dir}/dist/preview/index.html`, preview);
       writeFileSync(`${dir}/dist-stable-candidate/index.html`, `promoted-${preview}`);
     };
-    // First run on an empty store imports the legacy drafts.
+    // First run on a package that does not exist yet (403) imports the legacy drafts.
     await run('baseline');
     assert.equal(record('live').operation, 'stable');
     assert.equal(record('preview').previewRelease, 'pwa-v1.0.90');
@@ -195,6 +197,19 @@ if(a[1] === 'download') {
     registry.server.close();
     rmSync(dir, {recursive: true, force: true});
   }
+});
+test('store bootstrap imports only when the package is absent, never on other lookup failures', async() => {
+  const failing = status => ({get: async() => { throw Object.assign(new Error(`HTTP ${status}`), {status}); }});
+  let imported = 0;
+  const list = () => { imported++; return []; };
+  for(const status of [401, 403]) {
+    await assert.rejects(ensureStore(failing(status), '/nonexistent', list), /no legacy draft release/);
+  }
+  assert.equal(imported, 2);
+  for(const status of [500, 502, undefined]) await assert.rejects(ensureStore(failing(status), '/nonexistent', list), /HTTP/);
+  assert.equal(imported, 2);
+  await ensureStore({get: async() => ({tag: 'live'})}, '/nonexistent', list);
+  assert.equal(imported, 2);
 });
 test('prune keeps live, preview and the newest builds; drops superseded manifests', () => {
   const v = (id, tags) => ({id, created_at: `2026-11-0${id}T00:00:00Z`, metadata: {container: {tags}}});

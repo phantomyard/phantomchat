@@ -64,7 +64,7 @@ export class OciStore {
     if(!TAG.test(tag)) throw new Error(`Invalid PWA build tag: ${tag}`);
     const res = await this.request(`/manifests/${tag}`, {headers: {Accept: MANIFEST}});
     if(res.status === 404) return null;
-    if(!res.ok) throw new Error(`Manifest ${tag} read failed: HTTP ${res.status}`);
+    if(!res.ok) throw Object.assign(new Error(`Manifest ${tag} read failed: HTTP ${res.status}`), {status: res.status});
     const manifest = await res.json();
     if(manifest.artifactType !== ARTIFACT || manifest.layers?.length !== 1 || manifest.layers[0].mediaType !== LAYER) {
       throw new Error(`${tag} is not a PWA build artifact`);

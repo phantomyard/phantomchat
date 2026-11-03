@@ -62,7 +62,10 @@ The workflows use `github.token` with `packages: write`; no extra secret.
 
 The first run on an empty package imports the deployed site and newest
 Preview from the legacy draft releases, then never reads drafts again; the
-drafts can be deleted once that run has published.
+drafts can be deleted once that run has published. A package that does not
+exist yet answers 401/403 rather than 404, so the bootstrap lookup reads those
+as "not created yet" and the import's push creates it; any other lookup failure
+fails the run instead of re-importing over `live`.
 
 The release namespace tests guard workflow tag creation and PWA build isolation;
 `publish-release.sh` validates the desktop namespace. Missing/corrupt assets or
