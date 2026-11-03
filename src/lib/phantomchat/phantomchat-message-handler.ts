@@ -29,6 +29,11 @@ export interface IncomingMessageData {
    * avatar from `fromId`). P2P peers leave it undefined.
    */
   fromPeerId?: number;
+  /**
+   * True when the event is our own echo (same device or another device of
+   * ours). Absent means incoming — the DM receive path never sets it.
+   */
+  isOutgoing?: boolean;
   message: {content: string; type?: string; fileMetadata?: PhantomChatFileMetadata; groupId?: string};
 }
 
@@ -475,7 +480,7 @@ export function buildTwebMessage(data: IncomingMessageData): any {
     fromPeerId: data.fromPeerId ?? data.peerId,
     date: data.timestamp,
     text: media ? (data.message.fileMetadata?.caption || '') : data.message.content,
-    isOutgoing: false,
+    isOutgoing: data.isOutgoing ?? false,
     media
   });
   assertInvariant('Rule6/TwebMessageShape', validateTwebMessage(msg));

@@ -82,6 +82,10 @@ interface ParsedGroupRumor {
     ivHex: string;
     mimeType: string;
     size: number;
+    /** Caption carried on the file metadata itself. `content` is the caption on
+     *  the send path today, but a sender that captions the metadata alone used
+     *  to be dropped by the whitelist below, so the bubble lost its text. */
+    caption?: string;
     width?: number;
     height?: number;
     duration?: number;
@@ -125,6 +129,7 @@ function parseGroupRumorContent(raw: string): ParsedGroupRumor | null {
           ivHex: fm.ivHex,
           mimeType: fm.mimeType,
           size: fm.size,
+          ...(typeof fm.caption === 'string' ? {caption: fm.caption} : {}),
           ...(typeof fm.width === 'number' ? {width: fm.width} : {}),
           ...(typeof fm.height === 'number' ? {height: fm.height} : {}),
           ...(typeof fm.duration === 'number' ? {duration: fm.duration} : {}),
@@ -1150,11 +1155,15 @@ export async function handleGroupIncoming(
   //     bubble is dropped until the chat is reopened (a voice note that only
   //     appeared after switching chats and back);
   //   - without `fromPeerId` the copy attributes the bubble to the GROUP instead
-  //     of the sender, because buildTwebMessage falls back to `peerId`.
+  //     of the sender, because buildTwebMessage falls back to `peerId`;
+  //   - without `isOutgoing` an own echo (cross-device send, or a self-wrap the
+  //     replay dedup did not catch) is projected as INCOMING, so it renders on
+  //     the peer's side until a reopen re-reads the row.
   dispatch('phantomchat_new_message', {
     peerId: groupPeerId,
     mid,
     fromPeerId: senderPeerId,
+    isOutgoing,
     senderPubkey,
     message: {
       id: messageId,
@@ -1164,8 +1173,10 @@ export async function handleGroupIncoming(
       timestamp: timestampSec,
       groupId,
       // `content` is the caption for a file rumor (see GroupAPI.sendFile), and
-      // the projection reads the bubble text from `fileMetadata.caption`.
-      ...(mediaFm ? {fileMetadata: {...mediaFm, caption: content}} : {})
+      // the projection reads the bubble text from `fileMetadata.caption`. Keep
+      // whatever the metadata already carried when `content` is empty, so a
+      // sender that captions the metadata alone does not lose it here.
+      ...(mediaFm ? {fileMetadata: {...mediaFm, caption: content || mediaFm.caption}} : {})
     },
     timestamp: timestampSec
   });

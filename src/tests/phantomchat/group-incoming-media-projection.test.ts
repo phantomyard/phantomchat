@@ -203,6 +203,35 @@ describe('group receive → projection payload', () => {
     expect(msg.message).toBe('listen to this');
   });
 
+  it('carries the direction so an own echo does not project as incoming', async() => {
+    const dispatch = vi.fn();
+    await handleGroupIncoming(OWN_PUBKEY, GROUP_ID, voiceRumor(RUMOR_ID), OWN_PUBKEY, dispatch);
+
+    const payload = newMessagePayload(dispatch);
+    expect(payload.isOutgoing, 'the direction must travel with the payload').toBe(true);
+    expect(buildTwebMessage(payload).pFlags.out, 'an own echo renders on our side').toBe(true);
+  });
+
+  it('projects a peer message as incoming', async() => {
+    const dispatch = vi.fn();
+    await handleGroupIncoming(OWN_PUBKEY, GROUP_ID, voiceRumor(RUMOR_ID), SENDER_PUBKEY, dispatch);
+
+    expect(buildTwebMessage(newMessagePayload(dispatch)).pFlags.out).toBeUndefined();
+  });
+
+  it('keeps a caption that only the metadata carries', async() => {
+    const dispatch = vi.fn();
+    const rumor = voiceRumor('cd'.repeat(32));
+    const parsed = JSON.parse(rumor.content);
+    parsed.content = '';
+    parsed.fileMetadata = {...FILE_METADATA, caption: 'from the metadata'};
+    rumor.content = JSON.stringify(parsed);
+
+    await handleGroupIncoming(OWN_PUBKEY, GROUP_ID, rumor, SENDER_PUBKEY, dispatch);
+
+    expect(buildTwebMessage(newMessagePayload(dispatch)).message).toBe('from the metadata');
+  });
+
   it('does not add a media payload to a text message', async() => {
     const dispatch = vi.fn();
     const rumor = {
@@ -224,13 +253,20 @@ describe('group receive → projection payload', () => {
 
 describe('pickRenderableMessage — one mid, two writers', () => {
   let pickRenderableMessage: typeof import('@lib/phantomchat/phantomchat-media-shape')['pickRenderableMessage'];
+  let hasRenderableMedia: typeof import('@lib/phantomchat/phantomchat-media-shape')['hasRenderableMedia'];
+  let healLossyCopy: typeof import('@lib/phantomchat/phantomchat-media-shape')['healLossyCopy'];
 
   beforeAll(async() => {
-    ({pickRenderableMessage} = await import('@lib/phantomchat/phantomchat-media-shape'));
+    ({
+      pickRenderableMessage,
+      hasRenderableMedia,
+      healLossyCopy
+    } = await import('@lib/phantomchat/phantomchat-media-shape'));
   });
 
-  const withMedia = {mid: 7, media: {_: 'messageMediaDocument'}};
-  const mediaLess = {mid: 7};
+  const media = {_: 'messageMediaDocument', document: {_: 'document'}};
+  const withMedia = {mid: 7, peerId: -100, media};
+  const mediaLess = {mid: 7, peerId: -100};
 
   it('falls back to the caller when the stored copy lost its media', () => {
     expect(pickRenderableMessage(mediaLess, withMedia)).toBe(withMedia);
@@ -246,5 +282,61 @@ describe('pickRenderableMessage — one mid, two writers', () => {
 
   it('falls back when history storage has no copy at all', () => {
     expect(pickRenderableMessage(undefined, withMedia)).toBe(withMedia);
+  });
+
+  // Album rendering calls this per mid while holding ONE message (the root).
+  // Returning the root for a sibling mid would stamp the album slot with the
+  // root's document and leave the sibling's file missing — silently wrong.
+  it('never substitutes a DIFFERENT message, even when that one renders', () => {
+    const siblingStored = {mid: 8, peerId: -100};
+    const siblingWithMedia = {mid: 8, peerId: -100, media};
+    expect(pickRenderableMessage(siblingStored, withMedia)).toBe(siblingStored);
+    expect(pickRenderableMessage(undefined, withMedia)).toBe(withMedia);
+  });
+
+  it('does not substitute a same-mid message from another peer', () => {
+    const otherPeerCopy = {...withMedia, peerId: -200};
+    expect(pickRenderableMessage(mediaLess, otherPeerCopy)).toBe(mediaLess);
+  });
+
+  it('treats a hollow media object as unrenderable', () => {
+    // `media` set but no document: wrapDocument dereferences
+    // `media.document || media.webpage.document` and throws on exactly this.
+    const hollow = {mid: 7, peerId: -100, media: {_: 'messageMediaEmpty'}};
+    expect(hasRenderableMedia(hollow)).toBe(false);
+    expect(hasRenderableMedia(withMedia)).toBe(true);
+    expect(hasRenderableMedia(mediaLess)).toBe(false);
+    expect(pickRenderableMessage(hollow, withMedia)).toBe(withMedia);
+  });
+
+  describe('healLossyCopy', () => {
+    const ROW = {type: 'file', content: 'the caption', fileMetadata: FILE_METADATA};
+
+    it('re-derives media from the raw stored row', async() => {
+      const healed: any = await healLossyCopy(mediaLess, 7, async() => ROW as any);
+      expect(hasRenderableMedia(healed)).toBe(true);
+      expect(healed.media.document.attributes?.[0]?.pFlags?.voice).toBe(true);
+      expect(healed.message).toBe('the caption');
+      expect(healed.mid, 'the copy keeps its identity').toBe(7);
+    });
+
+    it('leaves a copy with media alone and never touches the store', async() => {
+      const load = vi.fn();
+      expect(await healLossyCopy(withMedia, 7, load)).toBe(withMedia);
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it('returns the copy untouched when the row is gone or media-less', async() => {
+      expect(await healLossyCopy(mediaLess, 7, async() => null)).toBe(mediaLess);
+      expect(await healLossyCopy(mediaLess, 7, async() => ({type: 'text', content: 'hi'}))).toBe(mediaLess);
+    });
+
+    it('swallows a failing lookup rather than breaking the render', async() => {
+      const copy = {...mediaLess, message: 'keep me'};
+      const healed: any = await healLossyCopy(copy, 7, async() => {
+        throw new Error('idb closed');
+      });
+      expect(healed).toBe(copy);
+    });
   });
 });

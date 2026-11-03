@@ -15,7 +15,7 @@ import Chat from '@components/chat/chat';
 import LazyLoadQueue from '@components/lazyLoadQueue';
 import TranslatableMessage from '@components/translatableMessage';
 import wrapDocument from '@components/wrappers/document';
-import {pickRenderableMessage} from '@lib/phantomchat/phantomchat-media-shape';
+import {hasRenderableMedia, healLossyCopy, pickRenderableMessage} from '@lib/phantomchat/phantomchat-media-shape';
 import {Middleware} from '@helpers/middleware';
 
 export default async function wrapGroupedDocuments({
@@ -81,12 +81,25 @@ export default async function wrapGroupedDocuments({
     // A media message can have two writers for one mid (the receive path that
     // persists it, and the projection handler that appends its own build). If
     // the stored copy lost its media, rendering it throws inside wrapDocument
-    // and the bubble is dropped silently until the chat is reopened — see
-    // pickRenderableMessage.
-    const message = pickRenderableMessage(
-      chat.getMessageByPeer(peerId, mid) as Message.message | undefined,
-      rootMessage
+    // and the bubble is dropped silently until the chat is reopened.
+    //
+    // `rootMessage` may only stand in for its OWN mid. For an album sibling it
+    // is a different message, and the container below is tagged
+    // `dataset.mid = mid` — rendering the root's document here would show the
+    // wrong file in this slot (see pickRenderableMessage). A sibling with no
+    // stored copy at all is skipped rather than mis-filled.
+    const stored = chat.getMessageByPeer(peerId, mid) as Message.message | undefined;
+    const picked = pickRenderableMessage(
+      stored,
+      mid === rootMessage.mid ? rootMessage : undefined
     );
+    if(!picked) return;
+    // Degraded path only: the stored copy lost its media, so re-derive it from
+    // the row the receive path persisted instead of borrowing another message.
+    const message = hasRenderableMedia(picked) ? picked : await healLossyCopy(picked, mid, async(mid) => {
+      const {getMessageStore} = await import('@lib/phantomchat/message-store');
+      return getMessageStore().getByMid(mid);
+    });
     const div = await wrapDocument({
       message,
       middleware,
@@ -168,7 +181,7 @@ export default async function wrapGroupedDocuments({
     return container;
   });
 
-  const containers = await Promise.all(promises);
+  const containers = (await Promise.all(promises)).filter(Boolean);
   messageDiv.append(...containers);
 
   if(mids.length > 1) {

@@ -143,6 +143,29 @@ export interface StoredRowMedia {
   healed: HealedFileRow | undefined;
 }
 
+/** Anything the render path can hand around: a tweb message or a test double. */
+export interface RenderableMessageLike {
+  mid?: number;
+  peerId?: any;
+  media?: any;
+}
+
+/**
+ * Whether `wrapDocument` can render this message at all.
+ *
+ * Not a truthiness test on `.media`: `wrapDocument` dereferences
+ * `media.document` and `media.webpage.document` (components/wrappers/
+ * document.ts), so a copy whose `media` survived as a hollow object — or as
+ * `messageMediaEmpty` — still throws there and the bubble is dropped just as
+ * hard as with `media` undefined. Every "is this row renderable" decision has
+ * to use this one predicate.
+ */
+export function hasRenderableMedia(message: RenderableMessageLike | undefined): boolean {
+  const media = message?.media;
+  if(!media) return false;
+  return !!(media.document || media.webpage?.document);
+}
+
 /**
  * Pick which copy of one message to render when history storage and the caller
  * disagree about its media.
@@ -150,15 +173,66 @@ export interface StoredRowMedia {
  * A media message can have two writers: the receive path that persists the row
  * and the projection handler that appends its own build of the same mid. If the
  * stored copy lost its `media` while the caller's copy still has it, rendering
- * the stored one throws inside wrapDocument (`message.media.document` on
- * undefined) and safeRenderMessage drops the bubble for good — the message only
- * comes back when the chat is reopened from IndexedDB. Prefer the caller's
- * object in that case; otherwise the stored copy wins, because it is the copy
- * every other reader of this mid sees.
+ * the stored one throws inside wrapDocument and safeRenderMessage drops the
+ * bubble for good — the message only comes back when the chat is reopened from
+ * IndexedDB. Prefer the caller's object in that case; otherwise the stored copy
+ * wins, because it is the copy every other reader of this mid sees.
+ *
+ * `fallback` may only ever stand in for the SAME message. Album rendering calls
+ * this per mid with the message the bubble was handed, and for a sibling mid
+ * that object is a DIFFERENT message: returning it would wrap the root's
+ * document under the sibling's mid, so the slot shows the wrong file and the
+ * real one stays missing — silently wrong instead of visibly missing. So when a
+ * stored copy exists at all it is only swapped for a same-identity one
+ * (`mid`, plus `peerId` when both carry it; an unknown `mid` never matches).
+ * When storage has no copy the caller's object is the only one left and is used
+ * as-is — callers must therefore only hand in a fallback for the mid they are
+ * rendering.
  */
-export function pickRenderableMessage<T>(stored: T | undefined, fallback: T): T {
-  const hasMedia = (message: T | undefined) => !!(message as {media?: unknown} | undefined)?.media;
-  return stored && (hasMedia(stored) || !hasMedia(fallback)) ? stored : fallback;
+export function pickRenderableMessage<T extends RenderableMessageLike>(
+  stored: T | undefined,
+  fallback: T | undefined
+): T | undefined {
+  if(!stored) return fallback;
+  if(hasRenderableMedia(stored)) return stored;
+  if(!fallback || !hasRenderableMedia(fallback)) return stored;
+  return isSameMessage(stored, fallback) ? fallback : stored;
+}
+
+function isSameMessage(a: RenderableMessageLike, b: RenderableMessageLike): boolean {
+  if(a.mid === undefined || b.mid === undefined || a.mid !== b.mid) return false;
+  if(a.peerId === undefined || b.peerId === undefined) return true;
+  return a.peerId === b.peerId;
+}
+
+/**
+ * Heal a stored copy whose `media` was lost, re-deriving it from the RAW stored
+ * row — the contract this module already owns (`storedRowMedia`).
+ *
+ * Only for a copy that is already known to be unrenderable: the loader is
+ * allowed to hit IndexedDB, so callers must not invoke this on the happy path.
+ * Returns the copy untouched when the row is gone or itself has no media.
+ */
+export async function healLossyCopy<T extends RenderableMessageLike & {message?: string}>(
+  copy: T,
+  mid: number,
+  loadStoredRow: (mid: number) => Promise<{
+    type?: string;
+    content?: string;
+    fileMetadata?: PhantomChatFileMetadata;
+  } | null | undefined>
+): Promise<T> {
+  if(hasRenderableMedia(copy)) return copy;
+  let row: Awaited<ReturnType<typeof loadStoredRow>>;
+  try {
+    row = await loadStoredRow(mid);
+  } catch{
+    return copy;
+  }
+  if(!row) return copy;
+  const {media, text} = storedRowMedia(row, mid);
+  if(!media) return copy;
+  return {...copy, media, ...(text ? {message: text} : {})} as T;
 }
 
 /**
