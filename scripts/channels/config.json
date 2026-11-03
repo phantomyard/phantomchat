@@ -681,7 +681,7 @@
     "electron/phantombot/client.ts": {
       "stable": "absent",
       "preview": "f2054eee92d148f2bd8248b5bad468898774badf78d78fd09de9fcdb0b63c6ab",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability accepted by design (#411): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/dispatch.test.ts": {
       "stable": "absent",
@@ -691,7 +691,7 @@
     "electron/phantombot/dispatch.ts": {
       "stable": "absent",
       "preview": "741f6be27dabacb021b0a7947e9dc8af7a24a85392d00ef73fe569a3113f20df",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability accepted by design (#411): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/host.ts": {
       "stable": "absent",
@@ -701,7 +701,7 @@
     "electron/phantombot/methods.ts": {
       "stable": "absent",
       "preview": "831b14df0a10d63170e0e808adcddb141ae394d693f4ba3b614ae8c983e013ae",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability accepted by design (#411): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/pin.json": {
       "stable": "absent",

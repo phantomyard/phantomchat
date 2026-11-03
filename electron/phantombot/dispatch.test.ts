@@ -134,7 +134,9 @@ describe('phantombot host dispatcher', () => {
       [91, 'persona.askJson', {persona: 'local', options: {message: 'x'}}],
       [92, 'persona.decide', {persona: 'local', options: {questions: []}}]
     ] as const) {
-      await d.handle({id, method, params});
+      // Not awaited: if the cap regresses, the call runs instead of hanging the test.
+      void d.handle({id, method, params});
+      await new Promise((r) => setTimeout(r, 0));
       expect(out).toContainEqual({id, error: {code: 'busy', message: expect.stringContaining('already running')}});
     }
     expect(persona.decide).not.toHaveBeenCalled();
@@ -145,6 +147,18 @@ describe('phantombot host dispatcher', () => {
     releases.forEach((r) => r());
     await Promise.all(running);
     expect(d.runningTurns).toBe(0);
+  });
+
+  it('frees the slot when a model call rejects', async() => {
+    const {engine, persona} = fakeEngine();
+    persona.askJson.mockRejectedValue(Object.assign(new Error('bad json'), {code: 'invalid_json'}));
+    const out: HostMessage[] = [];
+    const d = createDispatcher(engine, info, (m) => out.push(m));
+    for(let i = 0; i <= MAX_RUNNING_TURNS; i++) {
+      await d.handle({id: i, method: 'persona.askJson', params: {persona: 'local', options: {message: 'x'}}});
+    }
+    // A leaked slot per rejection would turn the last call into busy.
+    expect(out.map((m: any) => m.error?.code)).toEqual(Array(MAX_RUNNING_TURNS + 1).fill('invalid_json'));
   });
 
   it('writes secrets into the vault and never returns one', async() => {

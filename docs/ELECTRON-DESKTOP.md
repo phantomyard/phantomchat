@@ -109,8 +109,11 @@ or its local PC tools needs no desktop build. Only a phantombot update does.
   (`app://localhost` proxies `https://chat.phantomyard.ai`), so **a PWA deploy,
   with no desktop release, signature or in-app prompt, can run principal turns
   with `tools: "full"` (local PC execution) and write vault secrets on every
-  installed app.** That is accepted by design: the site is trusted as the
-  principal. A gate, if one is wanted later, belongs in the PWA over this bridge.
+  installed app.** The principal signed off on this explicitly
+  ([#411 sign-off](https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821)): the site is trusted as the principal. The
+  top-frame check, method/size checks, the model-call cap and secrets never
+  leaving the bridge stay in place, and `"untrusted"` remains judge-screened.
+  A gate, if one is wanted later, belongs in the PWA over this bridge.
 - **Concurrency.** At most `MAX_RUNNING_TURNS` (4) model calls (`persona.turn`,
   `persona.askJson`, `persona.decide`) run at once; the next is refused with
   `code: "busy"`. Wait for one to finish or `turn.cancel` it.
