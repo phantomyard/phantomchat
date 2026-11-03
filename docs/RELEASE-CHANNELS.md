@@ -152,8 +152,13 @@ publication jobs are restricted to main; this does not restrict PWA Preview.
 PWA archives are durable GitHub **draft releases**, with `bundle.tar.gz` and
 `SHA256SUMS.txt`, not expiring Actions artifacts. They remain drafts permanently:
 normal published PWA releases/tags would pollute Electron's `releases.atom` feed.
-A draft's JSON body records source/version, Stable source/version, Preview release,
-operation and successful Pages publication time. Unpublished/failed candidates
+A draft's body is a readable summary (title `PWA Preview <version>` or
+`PWA Stable <version> (promoted)`, commit links, publication time) with the
+machine record hidden in a trailing `<!-- pwa-record {...} -->` comment. That
+JSON records source/version, Stable source/version, Preview release,
+operation and successful Pages publication time; older bare-JSON bodies still
+parse. `node scripts/releases/registry.mjs restyle` (dry run; set
+`RESTYLE_APPLY=1` to write) rewrites old drafts into this format. Unpublished/failed candidates
 are excluded from default selection. Never publish these drafts manually.
 The archive includes the full site snapshot plus the already-built Stable
 candidate, so promotion uses exact verified assets without path rewriting.

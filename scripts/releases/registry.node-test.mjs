@@ -4,7 +4,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, readdirSync
 import {tmpdir} from 'node:os';
 import {resolve, join} from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {selectRelease, digest, verifyArchive} from './registry.mjs';
+import {selectRelease, digest, verifyArchive, parseRecord, renderRecord, releaseTitle} from './registry.mjs';
 
 const pwa = (id, operation = 'preview') => ({id, draft: true, tag_name: `pwa-v1.0.${id}`,
   record: {schema: 1, source: 'a'.repeat(40), stableRef: 'b'.repeat(40), version: `1.0.${id}`, stableVersion: '1.0.1', previewRelease: `pwa-v1.0.${id}`, publishedAt: `2026-10-${id}T12:00:00Z`, operation}});
@@ -21,6 +21,23 @@ test('default selection isolates products, excludes drafts/unpublished candidate
   releases.push({id: 26, draft: false, prerelease: false, tag_name: 'phantomchat-v1.0.26', published_at: '2026-10-26T12:00:00Z'});
   assert.throws(() => selectRelease(releases, 'electron'), /already Stable/);
   assert.equal(selectRelease(releases, 'electron', 'phantomchat-v1.0.24').id, 24);
+});
+test('draft bodies are readable, carry the exact record, and legacy JSON bodies still parse', () => {
+  const record = {...pwa(21).record, note: 'x --> y'};
+  const body = renderRecord(record, 'o/r');
+  assert.ok(!body.trimStart().startsWith('{'), 'body must not open with raw JSON');
+  assert.match(body, /Built from \| 1\.0\.21 \(\[`aaaaaaa`\]\(https:\/\/github.com\/o\/r\/commit\/a{40}\)\)/);
+  assert.match(body, /Live since \| 2026-10-21 12:00:00 UTC/);
+  assert.equal(body.split('-->').length, 2, 'record must not close its comment early');
+  assert.deepEqual(parseRecord(body), record);
+  assert.deepEqual(parseRecord(JSON.stringify(record)), record);
+  assert.equal(parseRecord('Desktop release notes'), undefined);
+  assert.equal(parseRecord(null), undefined);
+  assert.equal(releaseTitle(record), 'PWA Preview 1.0.21');
+  const stable = {...record, operation: 'stable', stableVersion: '1.0.19'};
+  assert.equal(releaseTitle(stable), 'PWA Stable 1.0.19 (promoted)');
+  assert.match(renderRecord(stable, 'o/r'), /Promoted to Stable \| 1\.0\.19/);
+  assert.match(renderRecord({...record, publishedAt: undefined}), /not published yet/);
 });
 test('archive checksum and tar entry safety fail closed', () => {
   const dir = mkdtempSync(join(tmpdir(), 'registry-test-'));
@@ -60,7 +77,7 @@ if(a[1] === 'create') {
   if(list.some(r => r.tag_name === tag)) throw Error('duplicate');
   const dest = path.join(path.dirname(file), 'assets-' + tag); fs.mkdirSync(dest);
   for(const asset of a.slice(-2)) fs.copyFileSync(asset, path.join(dest, path.basename(asset)));
-  list.push({id:list.length + 1, tag_name:tag, draft:true, body:fs.readFileSync(option('--notes-file'),'utf8'), assetsDir:dest});
+  list.push({id:list.length + 1, tag_name:tag, name:option('--title'), draft:true, body:fs.readFileSync(option('--notes-file'),'utf8'), assetsDir:dest});
 } else if(a[1] === 'edit') list.find(r => r.tag_name === tag).body = fs.readFileSync(option('--notes-file'),'utf8');
 else if(a[1] === 'download') {
   const r = list.find(r => r.tag_name === tag);
@@ -82,11 +99,15 @@ fs.writeFileSync(file, JSON.stringify(list));
     };
     build('original-stable', 'preview-one');
     run('prepare-preview');
+    const created = JSON.parse(readFileSync(`${dir}/state.json`))[0];
+    assert.equal(created.name, 'PWA Preview 1.0.100');
+    assert.ok(!created.body.startsWith('{') && created.body.includes('not published yet'));
     // Unpublished archive must not become a baseline.
     clean();
     run('baseline');
     assert.throws(() => readFileSync(`${dir}/.release-work/current.json`));
     env.RELEASE_TAG = 'pwa-v1.0.100'; run('published');
+    assert.match(JSON.parse(readFileSync(`${dir}/state.json`))[0].body, /Live since \| \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC/);
     clean();
     env.GITHUB_RUN_ID = '101'; env.GITHUB_RUN_NUMBER = '101';
     run('baseline');

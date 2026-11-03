@@ -31,6 +31,42 @@ export function checkPromotion(config, selectedSource, currentSource, cwd = proc
   const base = atBaseline(config, selectedSource);
   return checkCompatibility(base, currentSource, cwd, baselineDigestFor(base));
 }
+// The record rides inside an HTML comment so the Releases page shows a
+// readable summary instead of raw JSON. `>` is escaped so the payload can
+// never close the comment early. Bodies that are bare JSON (drafts made before
+// this format) still parse, so no existing archive becomes unselectable.
+const RECORD_MARK = '<!-- pwa-record ';
+export function parseRecord(body) {
+  if(typeof body !== 'string') return undefined;
+  const start = body.indexOf(RECORD_MARK);
+  const text = start === -1 ? body : body.slice(start + RECORD_MARK.length, body.indexOf(' -->', start));
+  try { return JSON.parse(text); } catch { return undefined; }
+}
+export function releaseTitle(record) {
+  return record.operation === 'stable'
+    ? `PWA Stable ${record.stableVersion} (promoted)`
+    : `PWA Preview ${record.version}`;
+}
+export function renderRecord(record, repository = repo()) {
+  const commit = sha => `[\`${sha.slice(0, 7)}\`](https://github.com/${repository}/commit/${sha})`;
+  const stable = record.operation === 'stable';
+  const rows = stable
+    ? [['Promoted to Stable', `${record.stableVersion} (${commit(record.stableRef)})`],
+      ['Preview at the time', `${record.version} (${commit(record.source)})`]]
+    : [['Built from', `${record.version} (${commit(record.source)})`],
+      ['Stable at the time', `${record.stableVersion} (${commit(record.stableRef)})`]];
+  rows.push(['Live since', record.publishedAt ? record.publishedAt.replace('T', ' ').replace(/\.\d+Z$|Z$/, ' UTC') : 'not published yet']);
+  return [
+    `PhantomChat web app (chat.phantomyard.ai), ${stable ? 'Stable promotion' : 'Preview build'}.`,
+    '',
+    '| | |', '|---|---|', ...rows.map(([k, v]) => `| ${k} | ${v} |`),
+    '',
+    'Internal archive: the deploy and promote workflows read this draft. Keep it a draft; do not publish or delete it.',
+    '',
+    `${RECORD_MARK}${JSON.stringify(record).replace(/>/g, '\\u003e')} -->`,
+    '',
+  ].join('\n');
+}
 export function selectRelease(releases, kind, input = '') {
   const eligible = releases.filter(r => {
     if(kind === 'electron') return !r.draft && /^phantomchat-v\d+\.\d+\.\d+$/.test(r.tag_name);
@@ -54,7 +90,8 @@ function releases() {
   const rows = gh('api', '--paginate', `repos/${repo()}/releases?per_page=100`,
     '--jq', '.[] | {id,tag_name,draft,prerelease,published_at,body} | @json');
   return rows.split('\n').filter(Boolean).map(row => JSON.parse(row)).map(r => {
-    try { r.record = JSON.parse(r.body); } catch { /* Desktop/historical release. */ }
+    const record = parseRecord(r.body);
+    if(record !== undefined) r.record = record; // else Desktop/historical release.
     return r;
   });
 }
@@ -153,8 +190,9 @@ export async function main(command) {
     execFileSync('tar', ['-czf', `${workspace}/bundle.tar.gz`, '-C', `${workspace}/payload`, 'site', 'stable-candidate']);
     writeFileSync(`${workspace}/SHA256SUMS.txt`, `${digest(`${workspace}/bundle.tar.gz`)}  bundle.tar.gz\n`);
     writeFileSync(`${workspace}/record.json`, JSON.stringify(record));
+    writeFileSync(`${workspace}/notes.md`, renderRecord(record));
     gh('release', 'create', tag, '--repo', repo(), '--draft', '--target', process.env.GITHUB_SHA,
-      '--title', `PWA ${record.operation}: ${record.version}`, '--notes-file', `${workspace}/record.json`,
+      '--title', releaseTitle(record), '--notes-file', `${workspace}/notes.md`,
       `${workspace}/bundle.tar.gz`, `${workspace}/SHA256SUMS.txt`);
     output('tag', tag);
     return;
@@ -164,8 +202,23 @@ export async function main(command) {
     const release = all.find(r => r.tag_name === tag && r.draft && r.record?.schema === 1);
     if(!release || release.record.publishedAt) throw new Error('Missing/unexpected unpublished PWA archive');
     release.record.publishedAt = new Date().toISOString();
-    writeFileSync(`${workspace}/published.json`, JSON.stringify(release.record));
-    gh('release', 'edit', tag, '--repo', repo(), '--notes-file', `${workspace}/published.json`);
+    writeFileSync(`${workspace}/published.md`, renderRecord(release.record));
+    gh('release', 'edit', tag, '--repo', repo(), '--notes-file', `${workspace}/published.md`);
+    return;
+  }
+  if(command === 'restyle') {
+    // One-off: rewrite existing drafts into the readable format. The record
+    // itself is carried over unchanged and re-parsed before each write.
+    const apply = process.env.RESTYLE_APPLY === '1';
+    for(const r of all.filter(r => r.draft && /^pwa-v/.test(r.tag_name) && r.record?.schema === 1)) {
+      const body = renderRecord(r.record);
+      if(JSON.stringify(parseRecord(body)) !== JSON.stringify(r.record)) throw new Error(`Round-trip mismatch for ${r.tag_name}`);
+      if(body === r.body) continue;
+      console.log(`${apply ? 'restyle' : 'would restyle'} ${r.tag_name} -> ${releaseTitle(r.record)}`);
+      if(!apply) continue;
+      writeFileSync(`${workspace}/restyle.md`, body);
+      gh('release', 'edit', r.tag_name, '--repo', repo(), '--title', releaseTitle(r.record), '--notes-file', `${workspace}/restyle.md`);
+    }
     return;
   }
   throw new Error(`Unknown command ${command}`);
