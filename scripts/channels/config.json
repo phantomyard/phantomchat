@@ -70,7 +70,7 @@
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
       "published": "06312d6569c18a8837d1eed206a056071a13ebdb6a83e31758108df801218659",
       "preview": "06312d6569c18a8837d1eed206a056071a13ebdb6a83e31758108df801218659",
-      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Pin/unread menu update: Presentation only: gives count-less unread marks their own CSS class. Counts, read cursor and persistence are unchanged. Requires independent exact-head content review. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Chat-list subtitle repaint re-derives the '\u2039peer\u203a is working' line from the live typing store instead of trusting the one peer_typings event that painted it, so a dialog update no longer erases the indicator (or leaves the row blank when no last message resolved). A late paint is dropped when a newer repaint of the same row superseded it. Presentation only: reads the existing typingsInPeer store, no new store, schema, key or protocol. Search-hit guard: the repaint is skipped for non-chat-list rows (message search, peer-profile preview), which have no typing lifecycle. Presentation and scope only; identifies the existing `isSearch` discriminator, no storage, read-state, schema, protocol or preference change. Independent exact-head content review required. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable."
+      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Pin/unread menu update: Presentation only: gives count-less unread marks their own CSS class. Counts, read cursor and persistence are unchanged. Requires independent exact-head content review. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Chat-list subtitle repaint re-derives the '‹peer› is working' line from the live typing store instead of trusting the one peer_typings event that painted it, so a dialog update no longer erases the indicator (or leaves the row blank when no last message resolved). A late paint is dropped when a newer repaint of the same row superseded it. Presentation only: reads the existing typingsInPeer store, no new store, schema, key or protocol. Search-hit guard: the repaint is skipped for non-chat-list rows (message search, peer-profile preview), which have no typing lifecycle. Presentation and scope only; identifies the existing `isSearch` discriminator, no storage, read-state, schema, protocol or preference change. Independent exact-head content review required. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable."
     },
     "src/lib/folders-default.ts": {
       "preview": "d77bf09f6154aa5092129b4d04e780000e633b558146993790729aafd2459375",
@@ -109,7 +109,7 @@
       "stable": "d1a28a33f2ae3903c56a60fadc6caced67f53036b749e87a186a712f3d6ec97c",
       "published": "f38e15a2568390fa3f36c74d010a1f7bfdf3cc54b3cc285ae90a59f309e1e11e",
       "preview": "7e017269dfc0a82f6e23a7690c6579889c465d2ee62ebcf14d23d1ff25361152",
-      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change. Session stability update: Filter rebuilds read every persisted row instead of index-derived lists. No stored format change. Pin/unread menu update: Group pin badge reads existing dialog pFlags. New Worker method mutates and persists existing folder pinnedOrders on its owning thread, avoiding a cloned RPC array. Existing shared pinnedOrders schema is unchanged. Requires independent exact-head content review. Unpin sort anchor: a group row that is no longer in its folder's pinned order keeps its own sort anchor (index_0, from the top message date) instead of being re-anchored on the Worker's message store, which holds no group message and fell through to \"now\". Chats keep the previous computation unchanged. Existing pinnedOrders and row schemas untouched; no stored-format change. Unpin anchor survives the Chats pass: folder 0 no longer overwrites a group row\u2019s index_0 (its top-message sort anchor) when it refuses the row, so the unpin re-anchor reads the same key the previous commit introduced. Membership, persisted row, pinnedOrders and all schemas unchanged; no stored-format or wire change. Unpin anchor as a fallback, not a precedence: the anchor is now passed to generateIndexForDialog as a fallback date (seconds) so a resolvable top message or a newer draft still wins, and index_0 only replaces the \"now\" stamp. Existing pinnedOrders and row schemas untouched; no stored-format, wire or protocol change. State-restore sort anchor (#332): a restored row keeps a group's index_0 (its top-message sort anchor, kept by the new clearComputedDialogIndexes helper) while index_1..21 are still cleared, so the unpin re-anchor no longer falls through to \"now\". Existing persisted row, folder and pinnedOrders schemas unchanged; no stored-format, wire or protocol change. Sessions rail badge: new setLocalDialogUnreadCount updates the in-memory dialog through the existing unread accounting. Not persisted; no schema, stored-format or wire change. Issue #325: restore PhantomChat top_message without Telegram modulo conversion; reads existing full mids, no schema, key, or persisted format changes."
+      "reason": "Comment plus one predicate: the Archive count comes from the locally filtered list because PhantomChat virtual messages.getDialogs answers every folder with the global set, and Sessions (4) joins Groups in the local isEnd latch since its membership is decided locally. No stored-format change. Session stability update: Filter rebuilds read every persisted row instead of index-derived lists. No stored format change. Pin/unread menu update: Group pin badge reads existing dialog pFlags. New Worker method mutates and persists existing folder pinnedOrders on its owning thread, avoiding a cloned RPC array. Existing shared pinnedOrders schema is unchanged. Requires independent exact-head content review. Unpin sort anchor: a group row that is no longer in its folder's pinned order keeps its own sort anchor (index_0, from the top message date) instead of being re-anchored on the Worker's message store, which holds no group message and fell through to \"now\". Chats keep the previous computation unchanged. Existing pinnedOrders and row schemas untouched; no stored-format change. Unpin anchor survives the Chats pass: folder 0 no longer overwrites a group row’s index_0 (its top-message sort anchor) when it refuses the row, so the unpin re-anchor reads the same key the previous commit introduced. Membership, persisted row, pinnedOrders and all schemas unchanged; no stored-format or wire change. Unpin anchor as a fallback, not a precedence: the anchor is now passed to generateIndexForDialog as a fallback date (seconds) so a resolvable top message or a newer draft still wins, and index_0 only replaces the \"now\" stamp. Existing pinnedOrders and row schemas untouched; no stored-format, wire or protocol change. State-restore sort anchor (#332): a restored row keeps a group's index_0 (its top-message sort anchor, kept by the new clearComputedDialogIndexes helper) while index_1..21 are still cleared, so the unpin re-anchor no longer falls through to \"now\". Existing persisted row, folder and pinnedOrders schemas unchanged; no stored-format, wire or protocol change. Sessions rail badge: new setLocalDialogUnreadCount updates the in-memory dialog through the existing unread accounting. Not persisted; no schema, stored-format or wire change. Issue #325: restore PhantomChat top_message without Telegram modulo conversion; reads existing full mids, no schema, key, or persisted format changes."
     },
     "src/components/autonomousDialogList/dialogs.ts": {
       "stable": "487adb45dc21fb3625f50d78ceef164694292f10d7f11f57e20ee9d011572ccc",
@@ -173,7 +173,7 @@
     "src/lib/phantomchat/update-channel-choice.ts": {
       "stable": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
       "preview": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
-      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef \u2014 desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
+      "reason": "Dependency-free helpers for the single Release channel radio: what it shows, and how one choice is pushed to whichever update surfaces exist (application channel shell and Electron installer ring). No DOM, no Electron import, no app singletons, no storage; the ring/window wiring stays in the copied tab. Deliberately a NEW file absent at stableRef — desktop-update-view.ts exists in Stable and cannot host an export the copied tab needs."
     },
     "src/components/sidebarLeft/foldersSidebarContent/folderItem.tsx": {
       "stable": "e1a1cc6436f6533390ca9ae6a55b7872de4372d41d58da9c306eda800eec221e",
@@ -184,12 +184,6 @@
       "stable": "72a2f374976954e0691bc7d4fc813ee4eadefcdcf41fe7b7792ad4dff71c0ebb",
       "preview": "72a2f374976954e0691bc7d4fc813ee4eadefcdcf41fe7b7792ad4dff71c0ebb",
       "reason": "Adds an optional `glyph` field to the folder-item payload so Sessions can draw a literal # (the icon font has no hashtag). Presentation type only."
-    },
-    "src/components/sidebarLeft/tabs/contacts.ts": {
-      "stable": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
-      "preview": "490724da1f28091d99ce4bb8fbbaadf4503ba65e75f3e6cc5c8cb9c6cb8b09ab",
-      "reason": "Contacts can be opened as a single-contact picker: a click hands the peer to the caller instead of opening a DM. The hook is set per OPEN (setPickPeerHook) and cleared in onClose, and init now only overrides it when it is given params - open() passes none, so the hook installed just before open survives instead of being nulled (and pick mode cannot leak into a later ordinary visit). Default behaviour with no hook is unchanged, and no storage is touched. #276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage.",
-      "published": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc"
     },
     "src/lib/appManagers/constants.ts": {
       "stable": "205f5d3ab19e662b7aed54d66a2c4acaf455d934c2d3d1a1a57ab6b873dcc444",
@@ -254,7 +248,7 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "45f335a7f71e0df445b7a88425a4bd2fc75e71881ebc755943ecd92fb2d98567",
+      "preview": "c59ff335fb6c047323fc280819169c05f4681c51c4961a91f5b10ec4c19eaf1b",
       "reason": "The post-sync convergence block runs the class reconcile before the orphan-dialog sweep, so a record re-keyed by the reconcile is not mistaken for an orphan. Same call order otherwise; no storage or wire change. Session stability update: Sync upsert moves the row on a class change; orphan sweep waits for a definitive read. No stored format change. Move hardening: the synced move and record save run as one unit. No stored format change. Pin/unread menu update: Existing groups sync upsert applies changed optional pin/unread flags to live dialogs. Existing group peer derivation, record persistence, membership and tombstone handling remain unchanged. Requires independent exact-head content review. #276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage.",
       "published": "c59ff335fb6c047323fc280819169c05f4681c51c4961a91f5b10ec4c19eaf1b"
     },
@@ -388,12 +382,6 @@
       "reason": "Adds a muted grey avatar palette with theme-blue eyes selected by html[data-ui-theme]. Output with no attribute is byte-identical to before and is never persisted or published. Requires independent content review.",
       "published": "2ad4b0aeef7973f2d6f98d51ef258d6b68beb0e0d832cad54a0b1faec48da40f"
     },
-    "src/components/sidebarLeft/tabs/settings.ts": {
-      "stable": "d6d40466f109b248575be83201096e3fcfa0d478f3055e978ef6b9ba568753eb",
-      "preview": "83d9927f58716a4c7b040ad3fdd00f7f08d23a6dd5612bf100b51f71a03ec4a1",
-      "reason": "Removes the Interface Settings row; the same tab now opens from the hamburger menu as Appearance. Navigation only, no stored format change. #276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage.",
-      "published": "d6d40466f109b248575be83201096e3fcfa0d478f3055e978ef6b9ba568753eb"
-    },
     "src/lib/storages/clearComputedDialogIndexes.ts": {
       "preview": "eef321475e2849e845e0a49d40ecc32d5a9b2d08f8fa3359360a642b8d4d2397",
       "stable": "eef321475e2849e845e0a49d40ecc32d5a9b2d08f8fa3359360a642b8d4d2397",
@@ -429,12 +417,6 @@
       "preview": "331336c552e9a9124efb7b4fe4f5144df08b780f0480b6c2ca5bdf7af60dcbce",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
-    "electron/main.ts": {
-      "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "e290edb93354cdc4265e583b531e88377625ed66ded51d43d0211c6ccbe3696d",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. #276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage.",
-      "published": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303"
-    },
     "electron/pi-harness/package.json": {
       "stable": "0b6311ad0ea5a1363b6ba2ed2bc174dda3491d62b93410bc94ff4538fb88b258",
       "preview": "0b6311ad0ea5a1363b6ba2ed2bc174dda3491d62b93410bc94ff4538fb88b258",
@@ -444,12 +426,6 @@
       "stable": "150e21eac41a689e33014fb3eaf623c042b0b885f65b4bc5b921fc1e58b81a29",
       "preview": "150e21eac41a689e33014fb3eaf623c042b0b885f65b4bc5b921fc1e58b81a29",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
-    },
-    "electron/piHarness.ts": {
-      "stable": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
-      "preview": "a01b3fd7df5145b8429794354f1d4eb4de65af8882a305e183e92b3f36fbda84",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. #276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage.",
-      "published": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7"
     },
     "electron/splash.ts": {
       "stable": "350699fa7c10c53259186ddd680cce1a596a86bb5683a9e956fe34e9acee234e",
@@ -476,7 +452,7 @@
     "src/lib/phantomchat/dialog-typing-indicator.ts": {
       "stable": "absent",
       "preview": "ab59c46f3cf144250193bd312ad42bc5e4a3329c8278dfd18d1f3cbc0305113b",
-      "reason": "Presentation-only helper: paints or clears the chat-list row's '\u2039peer\u203a is working' line from the existing typingsInPeer store. No storage, schema, key, identity or protocol change; it only moves text inside an existing span.",
+      "reason": "Presentation-only helper: paints or clears the chat-list row's '‹peer› is working' line from the existing typingsInPeer store. No storage, schema, key, identity or protocol change; it only moves text inside an existing span.",
       "published": "ab59c46f3cf144250193bd312ad42bc5e4a3329c8278dfd18d1f3cbc0305113b"
     },
     "src/lib/rootScope.ts": {
@@ -493,168 +469,6 @@
       "stable": "absent",
       "preview": "1ea0115bef2cafc88a91148c83b7161bc08a3a7f69eabf2f5d74548215b91c89",
       "reason": "New pure predicate deciding whether the selection flow brings the left column forward before opening the session picker: layout width plus the is-left-column-shown class. No storage, schema or database access; imported only by sidebarLeft/index.ts and its tests."
-    },
-    "electron/localAi/customProviders.ts": {
-      "stable": "absent",
-      "preview": "17e8cbddd094a760beac5377a8b364bfa433b78c3d4eda7be7065caf0cdb11fc",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/externalAiContact.test.ts": {
-      "stable": "absent",
-      "preview": "8fc2e267efa10754312d91cd96570e4ec992e973bb2c413372f69f38c4b5e1fd",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/externalAiContact.ts": {
-      "stable": "absent",
-      "preview": "2f233aba8cb9cf1c4b16c9b05e5c58f875829ea5989d0dfb83ae14a038ae9f82",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/externalAiStore.test.ts": {
-      "stable": "absent",
-      "preview": "45307c20545525469eb77dd80a06c578a4bfa011d5feba5ff2313542fb36f9e0",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/externalAiStore.ts": {
-      "stable": "absent",
-      "preview": "a307bc857aa2350130f3799391e52afe06f418615147ca2c296b1945ca7c0365",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/localAccess.test.ts": {
-      "stable": "absent",
-      "preview": "f97797633fc7a473301bd90e47786898938d704d1886dcd765fd5e0101780a0f",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/localAccess.ts": {
-      "stable": "absent",
-      "preview": "f885ef6c66fa70291dafdbaf93d740ec25907c9c64e76b2da37eb6f2156bfcee",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/localAiHost.ts": {
-      "stable": "absent",
-      "preview": "80e357650fa9c241725c2c0202aa175cfe8e35f3d4a1acda6c9304aa30fb7d46",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/localAiIpc.ts": {
-      "stable": "absent",
-      "preview": "9c41894c19618e7b4ec1edd6570765bbe29cc26fb8cd2dd3849b971a6d0f83c1",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/localTools.test.ts": {
-      "stable": "absent",
-      "preview": "e970518b49e668e7fcaf273ac93795a1658794637d7f6539284e03f0041a977c",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/localTools.ts": {
-      "stable": "absent",
-      "preview": "073b2c3a8d4e6cf11f7e7de028e5e2000df986fd611e592b5c44fe9a304924bf",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/piRuntime.ts": {
-      "stable": "absent",
-      "preview": "6dbd1ee7ff00b51b4b1266d4f77efe3f1ed195f0b2634b12f2bdfff90f401235",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/relayLink.ts": {
-      "stable": "absent",
-      "preview": "a55991be18b84597b63996afc700d8227711d3a807f538c2d36463ed5e8b6e46",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/routing.test.ts": {
-      "stable": "absent",
-      "preview": "f6532dc35044ad194240fb9b279acc9f248670af1f059b28ef4dc6a83219bc41",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/routing.ts": {
-      "stable": "absent",
-      "preview": "5561d058f26535c128e36bc4ab2dc1d9f5bce15753cb42d40770b2f744a7e36b",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/scrub.ts": {
-      "stable": "absent",
-      "preview": "c4f86cbe5f9c4c7cdab3f83e80c6d0cd6a0627be69ef68363125a11ee93d18ee",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/localAi/toolProtocol.ts": {
-      "stable": "absent",
-      "preview": "c58f185f586bc1f8405b6561740217174064281652440f55a61029b49ddda481",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "electron/preload.ts": {
-      "stable": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "preview": "cd93993091f51db76eb53468f2cee3ae4ed58cca61f52e7c2b9d5db21540a8eb",
-      "published": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/components/peerProfile.tsx": {
-      "stable": "a82fed09c559efc369350bea28ef5eeee1352480863d306dd0edb026d3c3ea1e",
-      "preview": "a7706c48b9540a8494e4bfb308e2f4bbbbea090e9db9c1e8b807e049f97bce97",
-      "published": "a82fed09c559efc369350bea28ef5eeee1352480863d306dd0edb026d3c3ea1e",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/components/sidebarLeft/tabs/phantomchatDesktopProviders.ts": {
-      "stable": "absent",
-      "preview": "a44bdc23e85414d7b87b9411845f08bc1afbd6e4d8a24f19e9d4203408326916",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/components/sidebarRight/tabs/editContact.ts": {
-      "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "6b869567153c24212945a7fc493a5a69ce630b805b204a11fbcc26cfd5e9edb8",
-      "published": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/lib/phantomchat/chat-api-receive.ts": {
-      "stable": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
-      "preview": "0e988d2df6fa22297430b77c2956edc4e708849936c447fcfb5da84ab8d44f75",
-      "published": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/lib/phantomchat/desktop-api.ts": {
-      "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "preview": "00342c79353341d2703feb22e5769e13b3fcbb5de45c8f47d91f1c790c0fd6f6",
-      "published": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/lib/phantomchat/external-ai-contact-form.ts": {
-      "stable": "absent",
-      "preview": "4d530e2c8a19b61945b02f9181877a164d88291469174bf190dd9a1b5a3a82b7",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/lib/phantomchat/local-ai.ts": {
-      "stable": "absent",
-      "preview": "7725badd4587760d2ca5b008e5ef6984d0652bbf1adf81b26c8cb80e8380e2fb",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/lib/phantomchat/local-tools-indicator.ts": {
-      "stable": "absent",
-      "preview": "9ba46218bc36b0118972ed02875694428404b9cfe31b9d8dbfa9f74cdb9355e3",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
-    },
-    "src/lib/phantomchat/local-tools-wire.ts": {
-      "stable": "absent",
-      "preview": "c3a7953493ed292df7da904aec1087b5538aef6f2788e85abc7796a7ffc4d2c3",
-      "published": "absent",
-      "reason": "#276: desktop-only embed. Adds no IndexedDB or localStorage schema; External AI contacts use the existing contact path, and tool rumors are dropped before storage."
     },
     "src/components/wrappers/groupedDocuments.ts": {
       "stable": "9cd87624e4352b47ed3d82afd1ca22948fa094864b6c1410980d5e8bd95c8757",

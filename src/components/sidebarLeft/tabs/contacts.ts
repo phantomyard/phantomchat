@@ -211,10 +211,6 @@ export default class AppContactsTab extends SliderSuperTab {
           return;
         }
 
-        // An External AI hosted here has its own, native confirmation.
-        const {confirmHostedDelete} = await import('@lib/phantomchat/local-ai');
-        if(!await confirmHostedDelete(pubkey)) return;
-
         await chatAPI.deleteConversation(pubkey);
       } else {
         await this.managers.appUsersManager.deleteContacts([peerId.toUserId()]);

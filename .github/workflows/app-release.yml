@@ -78,8 +78,6 @@ jobs:
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck:electron
-      # electron/localAi tests run the real tools from the bundled runtime.
-      - run: pnpm --dir electron/pi-harness install --frozen-lockfile --ignore-scripts
       - run: node --test scripts/releases/registry.node-test.mjs
       - run: pnpm exec vitest run
 
@@ -133,9 +131,7 @@ jobs:
       - name: Prove the packaged app runs its Pi harness
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          xvfb-run -a "release/${VERSION}/linux-unpacked/phantomchat" --no-sandbox --pi-version
-          xvfb-run -a "release/${VERSION}/linux-unpacked/phantomchat" --no-sandbox --pi-embed-probe
+        run: xvfb-run -a "release/${VERSION}/linux-unpacked/phantomchat" --no-sandbox --pi-version
 
       # The update feed (issue #164). electron-builder writes latest-linux.yml
       # during packaging because electron-builder.yml now carries a publish
@@ -243,9 +239,7 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          release/"${VERSION}"/mac*/PhantomChat.app/Contents/MacOS/PhantomChat --pi-version
-          release/"${VERSION}"/mac*/PhantomChat.app/Contents/MacOS/PhantomChat --pi-embed-probe
+        run: release/"${VERSION}"/mac*/PhantomChat.app/Contents/MacOS/PhantomChat --pi-version
 
       # The macOS update feed (issue #169). electron-builder writes
       # latest-mac.yml next to the artifacts; assert it rather than assume it,
@@ -448,8 +442,6 @@ jobs:
           $exe = Get-ChildItem "release/$env:VERSION/win-*unpacked/PhantomChat.exe" | Select-Object -First 1
           $probe = Start-Process -FilePath $exe.FullName -ArgumentList '--pi-version' -Wait -PassThru
           if($probe.ExitCode -ne 0) { throw "Pi harness exited $($probe.ExitCode)" }
-          $probe = Start-Process -FilePath $exe.FullName -ArgumentList '--pi-embed-probe' -Wait -PassThru
-          if($probe.ExitCode -ne 0) { throw "Pi embed probe exited $($probe.ExitCode)" }
 
       - name: Install, launch and uninstall packaged app
         shell: pwsh

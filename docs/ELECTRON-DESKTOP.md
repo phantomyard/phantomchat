@@ -74,11 +74,8 @@ origin and carry over untouched, so nobody reconfigures anything.
 `scripts/channels/electron-upgrade-smoke.mjs` proves that with a profile made by
 v1.1.86, the last bundled release, so keep that release published.
 
-The Pi harness (#276) ships in `resources/pi`, from its own package in
-`electron/pi-harness`. The main process loads its SDK on first use for External AI
-contacts and Local PC access: see [EXTERNAL-AI.md](EXTERNAL-AI.md). `--pi-version` and
-`--pi-embed-probe` are the packaging probes: the second loads the SDK inside the real
-main process and runs one tool, with its data in a temp folder.
+The Pi harness (#276) ships inert in `resources/pi`, from its own package in
+`electron/pi-harness`. Nothing starts it except the `--pi-version` packaging probe.
 
 The UI is served from `app://localhost`. That scheme is registered
 with `allowServiceWorkers` (see `electron/scheme.ts`), and the Cache API
