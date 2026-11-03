@@ -181,7 +181,7 @@ solid-js/store  → src/vendor/solid/store
 - **CI** runs typechecks and tests on PRs. A merge to main also builds and publishes PWA Preview. It never builds Electron.
 - **Actions names:** `ci.yml` = "PR checks — automatic on every PR"; `deploy.yml` = "PWA 1. Build + deploy to Preview — automatic on merge"; `pwa-promote.yml` = "PWA 2. Promote Preview to Stable — manual"; `app-release.yml` = "Electron 1. Build + deploy to Preview — manual" (runs from main only); `app-promote.yml` = "Electron 2. Promote Preview to Stable — manual". Do not rename these files: versions come from each workflow's run number. Blank promotion input selects the newest successfully published Preview for that product.
 - PWA versions use `1.0.<deploy run_number>`; desktop versions independently use `1.1.<app-release run_number>`. Do not hand-edit `package.json` to ship.
-- PWA archives remain draft releases forever, outside Electron's public update feed. No bare tags. See [docs/RELEASE.md](docs/RELEASE.md).
+- PWA builds live in GitHub Packages (`ghcr.io/phantomyard/phantomchat-pwa`), never on the Releases page (Electron's update feed). No bare tags, no PWA releases. See [docs/RELEASE.md](docs/RELEASE.md).
 - Andrew owns manual publication/promotion. A merge publishes PWA Preview only; it never authorizes Electron Preview or any Stable promotion.
 
 ## Architecture Notes

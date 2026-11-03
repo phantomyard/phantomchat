@@ -49,13 +49,22 @@ Electron Preview's updater consumes the public `releases.atom` feed. An entry
 without every desktop update feed/payload can poison Preview with 404s.
 Only real `phantomchat-v*` desktop releases belong in that public feed.
 
-PWA archives use durable **draft releases**, not expiring Actions artifacts.
-They contain checksummed full-site snapshots and prepared Stable bundles. Keep
-these drafts unpublished forever; never create standalone PWA git tags or publish
-PWA releases. Their JSON audit records become eligible for selection only after
-successful Pages publication. Failed/unpublished candidates are ignored.
+PWA builds live in **GitHub Packages** (`ghcr.io/phantomyard/phantomchat-pwa`),
+never on the Releases page, and never as git tags. Each build is one OCI
+artifact tagged `pwa-v1.0.N` (or `pwa-v1.0.N-stable-<run>` for a promotion):
+a digest-checked full-site snapshot plus the prepared Stable bundle, with the
+JSON record in a manifest annotation. A record becomes eligible for selection
+only after successful Pages publication, which also moves the `live` tag (the
+deployed site) and, for a Preview, the `preview` tag. Failed/unpublished
+candidates are ignored. Each publication prunes the package to `live`,
+`preview` and the newest five builds; promote or roll back only to those.
+The workflows use `github.token` with `packages: write`; no extra secret.
 
-The release namespace tests guard workflow tag creation and PWA draft isolation;
+The first run on an empty package imports the deployed site and newest
+Preview from the legacy draft releases, then never reads drafts again; the
+drafts can be deleted once that run has published.
+
+The release namespace tests guard workflow tag creation and PWA build isolation;
 `publish-release.sh` validates the desktop namespace. Missing/corrupt assets or
 unsafe archive paths fail before publication. No promotion rebuilds app code.
 
