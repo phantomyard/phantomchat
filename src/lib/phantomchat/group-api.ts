@@ -51,7 +51,7 @@ type GroupEventField = 'members' | 'info' | 'admin';
  * time (`phantomchatGroupEdit.ts` sends `{avatar}` alone, `{name}` alone), so
  * `info` ordering is decided per sub-field, never as one blob.
  */
-type InfoField = 'name' | 'description' | 'avatar';
+export type InfoField = 'name' | 'description' | 'avatar';
 /** Persisted watermark key: the coarse field-set, or one info sub-field. */
 type WatermarkKey = GroupEventField | `info:${InfoField}`;
 
@@ -190,6 +190,17 @@ function writeEventWatermark(groupId: string, field: WatermarkKey, tsSec: number
   try {
     localStorage.setItem(WATERMARK_PREFIX + groupId + ':' + field, String(tsSec));
   } catch{ /* best-effort — private mode etc. */ }
+}
+
+/**
+ * Raise one info sub-field's watermark to `tsSec` (raise-only). Groups sync is
+ * the second writer of group info: without this a device that learns a rename
+ * only through sync keeps its old watermark, and a relayed group_info_update
+ * dated after that watermark but before the synced rename reverts the name.
+ */
+export function raiseInfoWatermark(groupId: string, field: InfoField, tsSec: number): void {
+  if(!(tsSec > readEventWatermark(groupId, infoWatermarkKey(field)))) return;
+  writeEventWatermark(groupId, infoWatermarkKey(field), tsSec);
 }
 
 // ─── Types ────────────────────────────────────────────────────────
