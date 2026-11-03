@@ -11,5 +11,5 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": ["**/*.ts"],
-  "exclude": ["pi-harness/node_modules", "dist"]
+  "exclude": ["dist", "phantombot/host.ts"]
 }

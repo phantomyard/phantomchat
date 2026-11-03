@@ -18,7 +18,8 @@ import {attachEditableContextMenu} from './contextMenu';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
 import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontendProxy';
 import {SPLASH_PATH} from './splash';
-import {piCliPath, runPiVersion} from './piHarness';
+import {hostBinaryPath, isAllowedCaller, checkRequest, PhantombotHostClient} from './phantombot/client';
+import {runPhantombotProbe} from './phantombot/probe';
 import {
   resolvePermissionRequest,
   isPermissionCheckAllowed,
@@ -55,9 +56,12 @@ if(process.argv.includes('--log-path')) {
   process.exit(0);
 }
 
-// Packaging probe: proves the bundled Pi harness runs on this install.
-if(process.argv.includes('--pi-version')) {
-  process.exit(runPiVersion(process.execPath, piCliPath(app.isPackaged, process.resourcesPath, __dirname)));
+// Packaging probe: proves the bundled phantombot engine runs on this install.
+// It is async, so the rest of startup is skipped while it runs (no instance
+// lock, no window, no diagnostics).
+const isPhantombotProbe = process.argv.includes('--phantombot-probe');
+if(isPhantombotProbe) {
+  void runPhantombotProbe(hostBinaryPath(app.isPackaged, process.resourcesPath, __dirname)).then((code) => process.exit(code), () => process.exit(1));
 }
 
 // Standard, secure scheme so the renderer gets a proper origin (localStorage,
@@ -73,8 +77,10 @@ const DEV_URL = process.env.VITE_DEV_SERVER_URL;
 
 // Single instance: a second launch focuses the existing window instead of
 // forking a second app instance (matches the PWA tab model).
-const hasInstanceLock = app.requestSingleInstanceLock();
-if(!hasInstanceLock) {
+const hasInstanceLock = !isPhantombotProbe && app.requestSingleInstanceLock();
+if(isPhantombotProbe) {
+  // Nothing else to start: the probe exits the process when it is done.
+} else if(!hasInstanceLock) {
   app.quit();
 } else {
   // Freeze/crash logging (issue #243). Must run before 'ready',
@@ -179,6 +185,7 @@ function promptForPermission(
 
 let mainWindow: BrowserWindow | null = null;
 let frontend: ReturnType<typeof createFrontendProxy> | undefined;
+let phantombot: PhantombotHostClient | undefined;
 
 // IPC surface — keep it in lockstep with the preload allowlist.
 ipcMain.handle('desktop:get-version', () => app.getVersion());
@@ -214,6 +221,27 @@ ipcMain.handle('desktop:set-permission-setting', (_event, permission: unknown, s
   }
   savePermissionSettings();
   return permissionSettings;
+});
+
+// The phantombot bridge: one general channel into the bundled engine, so a
+// new PWA feature needs no new desktop build. Only the app's own top frame may
+// call it (isAllowedCaller); the method allowlist and shape checks run here and
+// again in the host. Turn events go back to the frame that started the turn.
+ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: unknown) => {
+  if(!isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined)) {
+    return {ok: false, error: {code: 'forbidden', message: 'not available to this page'}};
+  }
+  const request = checkRequest(method, params);
+  if('code' in request) return {ok: false, error: request};
+  phantombot ??= new PhantombotHostClient({
+    binary: hostBinaryPath(app.isPackaged, process.resourcesPath, __dirname),
+    root: join(app.getPath('userData'), 'phantombot'),
+    log: (line) => console.log('[phantombot]', line)
+  });
+  const sender = event.sender;
+  return phantombot.call(request.method, request.params, (turnId, data) => {
+    if(!sender.isDestroyed()) sender.send('desktop:phantombot-event', {turnId, event: data});
+  });
 });
 
 /**
@@ -332,6 +360,7 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
+  if(isPhantombotProbe) return;
   loadPermissionSettings();
   if(!isDev) {
     frontend = createFrontendProxy({
@@ -360,6 +389,17 @@ app.whenReady().then(() => {
 }).catch((err) => {
   console.error(err instanceof Error ? err.message : err);
   app.exit(1);
+});
+
+// Let the engine cancel its turns and release its root before the app goes.
+let phantombotStopped = false;
+app.on('before-quit', (event) => {
+  if(phantombotStopped || !phantombot?.running) return;
+  event.preventDefault();
+  void phantombot.shutdown().finally(() => {
+    phantombotStopped = true;
+    app.quit();
+  });
 });
 
 app.on('window-all-closed', () => {

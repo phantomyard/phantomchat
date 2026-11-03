@@ -9,7 +9,7 @@
     },
     "electron/build.mjs": {
       "stable": "01fdbe467ccd2e720894bbf492029922b49fc2886ecb74ed30c8316b5a48f9de",
-      "preview": "01fdbe467ccd2e720894bbf492029922b49fc2886ecb74ed30c8316b5a48f9de",
+      "preview": "b79a1416e6903f7aa22e77def7d9ab2fc75064180d905d922341e94047ffa19f",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "package.json": {
@@ -419,12 +419,12 @@
     },
     "electron/pi-harness/package.json": {
       "stable": "0b6311ad0ea5a1363b6ba2ed2bc174dda3491d62b93410bc94ff4538fb88b258",
-      "preview": "0b6311ad0ea5a1363b6ba2ed2bc174dda3491d62b93410bc94ff4538fb88b258",
+      "preview": "absent",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/pi-harness/pnpm-lock.yaml": {
       "stable": "150e21eac41a689e33014fb3eaf623c042b0b885f65b4bc5b921fc1e58b81a29",
-      "preview": "150e21eac41a689e33014fb3eaf623c042b0b885f65b4bc5b921fc1e58b81a29",
+      "preview": "absent",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/splash.ts": {
@@ -434,7 +434,7 @@
     },
     "electron/tsconfig.json": {
       "stable": "71615d13642ac455a34229fbfebe4b27721653c2866f8dddff0daa7aefde7be0",
-      "preview": "71615d13642ac455a34229fbfebe4b27721653c2866f8dddff0daa7aefde7be0",
+      "preview": "517adf662d585ad7323abec2d55e980287480c1a806c86753f897c7783b67ddc",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "src/components/chat/topbar.ts": {
@@ -586,19 +586,19 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
+      "preview": "6dd785e74c6915a7960058c230676043dc453df628fa26345fd4dc15d143a7c5",
       "published": "e290edb93354cdc4265e583b531e88377625ed66ded51d43d0211c6ccbe3696d",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
     },
     "electron/piHarness.ts": {
       "stable": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
-      "preview": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
+      "preview": "absent",
       "published": "a01b3fd7df5145b8429794354f1d4eb4de65af8882a305e183e92b3f36fbda84",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
     },
     "electron/preload.ts": {
       "stable": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "preview": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
+      "preview": "3e254912cc264d69d7620cc31b2e884dd99e7d5f5a1d13ef9b8253f29f6894d5",
       "published": "cd93993091f51db76eb53468f2cee3ae4ed58cca61f52e7c2b9d5db21540a8eb",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
     },
@@ -640,9 +640,9 @@
     },
     "src/lib/phantomchat/desktop-api.ts": {
       "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "preview": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
+      "preview": "4ff95798c656d47e9b6c8aaec5e0fab81632e555273a7f48d490f0f714869414",
       "published": "00342c79353341d2703feb22e5769e13b3fcbb5de45c8f47d91f1c790c0fd6f6",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access."
     },
     "src/lib/phantomchat/external-ai-contact-form.ts": {
       "stable": "absent",
@@ -667,6 +667,51 @@
       "preview": "absent",
       "published": "c3a7953493ed292df7da904aec1087b5538aef6f2788e85abc7796a7ffc4d2c3",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+    },
+    "electron/phantombot/build-host.mjs": {
+      "stable": "absent",
+      "preview": "f2e915087e4c3e9effa305b2c0894defbdec1da59c4ba839987789d54049918b",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/phantombot/client.test.ts": {
+      "stable": "absent",
+      "preview": "a35c6931e911fd8ef9f54ed6d476718af31a30a92e1c04bf36ff44bd4939dd49",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/phantombot/client.ts": {
+      "stable": "absent",
+      "preview": "f2054eee92d148f2bd8248b5bad468898774badf78d78fd09de9fcdb0b63c6ab",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+    },
+    "electron/phantombot/dispatch.test.ts": {
+      "stable": "absent",
+      "preview": "58276c83bcf5aaa8f7f790c38271a2c193ed112ffe6e7e404ec80cd4ba8f19e6",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/phantombot/dispatch.ts": {
+      "stable": "absent",
+      "preview": "741f6be27dabacb021b0a7947e9dc8af7a24a85392d00ef73fe569a3113f20df",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+    },
+    "electron/phantombot/host.ts": {
+      "stable": "absent",
+      "preview": "b07a1b941d16b643a1dd078267a10bfc3d713cffa42d3f021c101521678a4dba",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/phantombot/methods.ts": {
+      "stable": "absent",
+      "preview": "831b14df0a10d63170e0e808adcddb141ae394d693f4ba3b614ae8c983e013ae",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+    },
+    "electron/phantombot/pin.json": {
+      "stable": "absent",
+      "preview": "48df04d60126b7e4287c938db075292ee84442827768df5419b1703522e95bed",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/phantombot/probe.ts": {
+      "stable": "absent",
+      "preview": "c23aa6bdab1d2865f3d7bdd62c62ab6a90466d3badbab4852eab8ad87a15a09d",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     }
   },
   "publishedStableRef": "7a4591c4ba9c03dbf6b6904d0c5dffe3a73ff916"

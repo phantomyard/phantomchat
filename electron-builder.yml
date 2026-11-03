@@ -15,16 +15,16 @@ directories:
 # from the live PWA, so a website change never needs a new signed build.
 files:
   - electron/dist/**
-  - "!electron/dist/pi/**"
+  - "!electron/dist/phantombot/**"
   - "!**/node_modules/**"
 
 extraResources:
   - from: electron/build/icon.png
     to: icon.png
-  # The Pi harness for Local PC access (#276). Outside the asar: Node cannot run
-  # its ES modules from inside one.
-  - from: electron/dist/pi
-    to: pi
+  # The phantombot engine host (one compiled Bun binary with Pi embedded). It
+  # is executed, so it lives outside the asar.
+  - from: electron/dist/phantombot
+    to: phantombot
 
 asar: true
 compression: normal
