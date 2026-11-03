@@ -94,11 +94,13 @@ export async function importLegacy(store, all, directory) {
     console.log(`Imported legacy ${release.tag_name} as ${tags.join(', ')}`);
   }
 }
-// ghcr answers 401/403 `denied`, not 404, for a package that does not exist
-// yet, so on the first run absence has to be read from those statuses too. The
-// import's own push then creates the package, and a real credential problem
-// surfaces as that push's status. Anything else (5xx, network) still throws:
-// re-importing over an existing `live` would roll the site back.
+// With a PAT, ghcr answers 404 MANIFEST_UNKNOWN for a package that does not
+// exist yet (measured on #427). The workflow's github.token is unmeasured and a
+// registry may answer 401/403 `denied` there instead, so the bootstrap lookup
+// also reads those as "not created yet". The import's own push then creates
+// the package, and a real credential problem surfaces as that push's status.
+// Anything else (5xx, network) still throws: re-importing over an existing
+// `live` would roll the site back.
 export const ABSENT_STORE = new Set([401, 403]);
 export async function ensureStore(store, directory, list = releases) {
   let live;

@@ -36,7 +36,7 @@ function mockRegistry() {
           if(![manifest.config, ...manifest.layers].every(b => blobs.has(b.digest))) { res.writeHead(400); return res.end(); }
           manifests.set(m[1], body); res.writeHead(201); return res.end();
         }
-        // Like ghcr: a package that does not exist yet answers `denied`, not 404.
+        // A token without a grant on an absent package may get `denied`, not 404.
         if(!manifests.size) { res.writeHead(403); return res.end('{"errors":[{"code":"DENIED"}]}'); }
         if(!manifests.has(m[1])) { res.writeHead(404); return res.end(); }
         return res.end(manifests.get(m[1]));
@@ -135,7 +135,7 @@ if(a[1] === 'download') {
       writeFileSync(`${dir}/dist/preview/index.html`, preview);
       writeFileSync(`${dir}/dist-stable-candidate/index.html`, `promoted-${preview}`);
     };
-    // First run on a package that does not exist yet (403) imports the legacy drafts.
+    // First run on a package that does not exist yet (answering 403) imports the legacy drafts.
     await run('baseline');
     assert.equal(record('live').operation, 'stable');
     assert.equal(record('preview').previewRelease, 'pwa-v1.0.90');
