@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # list draft releases for the one-off legacy import (#427); drafts are hidden from read tokens
   packages: write   # PWA builds live in GitHub Packages (ghcr.io)
   pages: write
   id-token: write
