@@ -100,8 +100,16 @@ jobs:
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
 
-      - name: Build electron main/preload + Pi harness
+      # Bun compiles the phantombot engine host (electron/phantombot). Same pinned
+      # action commit phantombot's own release uses; the version must equal
+      # electron/phantombot/pin.json, which build-host.mjs checks.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      - name: Build electron main/preload + phantombot host
         run: node electron/build.mjs
+        env:
+          ARCH: x64
 
       - run: pnpm exec playwright install-deps chromium
       - run: xvfb-run -a node scripts/channels/electron-shell-smoke.mjs
@@ -128,10 +136,10 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
 
-      - name: Prove the packaged app runs its Pi harness
+      - name: Prove the packaged app runs its phantombot engine
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: xvfb-run -a "release/${VERSION}/linux-unpacked/phantomchat" --no-sandbox --pi-version
+        run: xvfb-run -a "release/${VERSION}/linux-unpacked/phantomchat" --no-sandbox --phantombot-probe
 
       # The update feed (issue #164). electron-builder writes latest-linux.yml
       # during packaging because electron-builder.yml now carries a publish
@@ -194,8 +202,16 @@ jobs:
       - run: cp src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
 
-      - name: Build electron main/preload + Pi harness
+      # Bun compiles the phantombot engine host (electron/phantombot). Same pinned
+      # action commit phantombot's own release uses; the version must equal
+      # electron/phantombot/pin.json, which build-host.mjs checks.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      - name: Build electron main/preload + phantombot host
         run: node electron/build.mjs
+        env:
+          ARCH: ${{ matrix.arch }}
 
       - run: node scripts/channels/electron-shell-smoke.mjs
       - run: node scripts/channels/electron-smoke.mjs
@@ -235,11 +251,14 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
 
       # Signed with the hardened runtime here, as users will get it.
-      - name: Prove the packaged app runs its Pi harness
+      - name: Prove the packaged app runs its phantombot engine
         shell: bash
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: release/"${VERSION}"/mac*/PhantomChat.app/Contents/MacOS/PhantomChat --pi-version
+        run: |
+          release/"${VERSION}"/mac*/PhantomChat.app/Contents/MacOS/PhantomChat --phantombot-probe
+          # The host must carry our Developer ID signature, or notarization refuses the app.
+          codesign --verify --strict --verbose=2 release/"${VERSION}"/mac*/PhantomChat.app/Contents/Resources/phantombot/phantombot-host
 
       # The macOS update feed (issue #169). electron-builder writes
       # latest-mac.yml next to the artifacts; assert it rather than assume it,
@@ -418,8 +437,16 @@ jobs:
       - run: Copy-Item src/langPackLocalVersion.example.ts src/langPackLocalVersion.ts
       - run: pnpm install --frozen-lockfile
 
-      - name: Build electron main/preload + Pi harness
+      # Bun compiles the phantombot engine host (electron/phantombot). Same pinned
+      # action commit phantombot's own release uses; the version must equal
+      # electron/phantombot/pin.json, which build-host.mjs checks.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      - name: Build electron main/preload + phantombot host
         run: node electron/build.mjs
+        env:
+          ARCH: ${{ matrix.arch }}
 
       # Unsigned here on purpose: Authenticode signing happens once, in the
       # publish job, against the installers that are actually published.
@@ -434,14 +461,14 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Prove the packaged app runs its Pi harness
+      - name: Prove the packaged app runs its phantombot engine
         shell: pwsh
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           $exe = Get-ChildItem "release/$env:VERSION/win-*unpacked/PhantomChat.exe" | Select-Object -First 1
-          $probe = Start-Process -FilePath $exe.FullName -ArgumentList '--pi-version' -Wait -PassThru
-          if($probe.ExitCode -ne 0) { throw "Pi harness exited $($probe.ExitCode)" }
+          $probe = Start-Process -FilePath $exe.FullName -ArgumentList '--phantombot-probe' -Wait -PassThru
+          if($probe.ExitCode -ne 0) { throw "phantombot probe exited $($probe.ExitCode)" }
 
       - name: Install, launch and uninstall packaged app
         shell: pwsh

@@ -56,7 +56,21 @@ export interface PhantomChatDesktopApi {
    * defaults", since grants can exist for permissions the tab never lists.
    */
   resetPermissionSettings(): Promise<PermissionSettings>;
+  /**
+   * The bundled phantombot engine. One general entry point so a new PWA
+   * feature needs no new desktop build: `call(method, params)` runs one
+   * allowlisted engine method (electron/phantombot/methods.ts) and resolves
+   * `{ok, value}` or `{ok: false, error: {code, message}}`; it never rejects.
+   * A `persona.turn` streams `{turnId, event}` to `onEvent` until it resolves.
+   * Absent on installs packaged before it shipped.
+   */
+  phantombot: {
+    call(method: string, params?: Record<string, unknown>): Promise<PhantombotResult>;
+    onEvent(listener: (message: {turnId: string; event: unknown}) => void): () => void;
+  };
 }
+
+export type PhantombotResult = {ok: true; value: unknown} | {ok: false; error: {code: string; message: string}};
 
 const api: PhantomChatDesktopApi = {
   getVersion: () => ipcRenderer.invoke('desktop:get-version'),
@@ -74,7 +88,15 @@ const api: PhantomChatDesktopApi = {
   getPermissionSettings: () => ipcRenderer.invoke('desktop:get-permission-settings'),
   setPermissionSetting: (permission: string, setting: PermissionSetting) =>
     ipcRenderer.invoke('desktop:set-permission-setting', permission, setting),
-  resetPermissionSettings: () => ipcRenderer.invoke('desktop:reset-permission-settings')
+  resetPermissionSettings: () => ipcRenderer.invoke('desktop:reset-permission-settings'),
+  phantombot: {
+    call: (method: string, params?: Record<string, unknown>) => ipcRenderer.invoke('desktop:phantombot:call', method, params),
+    onEvent: (listener: (message: {turnId: string; event: unknown}) => void) => {
+      const handler = (_event: unknown, message: {turnId: string; event: unknown}) => listener(message);
+      ipcRenderer.on('desktop:phantombot-event', handler);
+      return () => ipcRenderer.removeListener('desktop:phantombot-event', handler);
+    }
+  }
 };
 
 contextBridge.exposeInMainWorld('phantomchatDesktop', api);

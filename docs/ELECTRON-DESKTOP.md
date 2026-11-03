@@ -42,7 +42,7 @@ pnpm run typecheck:electron
 ### Linux
 
 ```bash
-pnpm run app:build        # electron bundle + Pi harness + AppImage/.deb/.rpm into release/<version>/
+pnpm run app:build        # electron bundle + phantombot host + AppImage/.deb/.rpm into release/<version>/
 pnpm run app:pack         # same but unpacked dir only (faster iteration)
 ```
 
@@ -64,7 +64,7 @@ The desktop app ships no frontend. `electron/frontendProxy.ts` serves
 `app://localhost` from `https://chat.phantomyard.ai`, so a PWA deploy reaches
 desktop with no build, signature or notarization, and the update pill works as it
 does on the web. Rebuild the app only for changes to `electron/`, the builder
-config, Pi or Chromium. New frontends must feature-check the desktop bridge,
+config, phantombot or Chromium. New frontends must feature-check the desktop bridge,
 because they can land on an older app.
 
 The first launch opens the bootstrap in `electron/splash.ts`, which stores the
@@ -74,8 +74,45 @@ origin and carry over untouched, so nobody reconfigures anything.
 `scripts/channels/electron-upgrade-smoke.mjs` proves that with a profile made by
 v1.1.86, the last bundled release, so keep that release published.
 
-The Pi harness (#276) ships inert in `resources/pi`, from its own package in
-`electron/pi-harness`. Nothing starts it except the `--pi-version` packaging probe.
+## phantombot engine
+
+The app ships the phantombot engine (`phantombot/engine`) as one compiled Bun
+binary, `resources/phantombot/phantombot-host[.exe]`, with Pi embedded. The PWA
+reaches it through one general bridge, so a new PWA feature that uses the engine
+or its local PC tools needs no desktop build. Only a phantombot update does.
+
+- **Pinned.** `electron/phantombot/pin.json` holds the phantombot tag, its commit
+  and the Bun version. `electron/phantombot/build-host.mjs` checks phantombot out
+  at that commit, installs with its own lockfile, and compiles `host.ts` with
+  `bun build --compile` for the job's OS and arch. To update phantombot, change
+  the pin and cut a desktop release. Builds need Bun on PATH;
+  `PHANTOMBOT_HOST=skip node electron/build.mjs` builds main/preload only.
+- **One binary, three roles.** `phantombot-host __pi …` is the embedded Pi (the
+  engine's native harness re-executes the binary as Pi, as it does the CLI),
+  `__escort` is the claude escort hook, and `--root <dir>` serves the engine.
+- **Protocol.** JSON lines on stdin/stdout: `{id, method, params}` in,
+  `{id, result}` or `{id, error: {code, message}}` out, and
+  `{event: "turn", turnId, data}` while a `persona.turn` streams. Requests run
+  concurrently, so a caller awaits each one it depends on. Closing stdin cancels
+  turns and releases the root. Methods are in `electron/phantombot/methods.ts`
+  and map one to one onto the engine API.
+- **Bridge.** `window.phantomchatDesktop.phantombot.call(method, params)` resolves
+  `{ok, value}` or `{ok: false, error}` and never rejects; `onEvent` receives
+  turn events. Main answers only the app's own top frame (`app://localhost`,
+  or the dev server in development), and checks the method and request size
+  before the host checks them again. The PWA finds it with
+  `getDesktopPhantombot()` from `src/lib/phantomchat/desktop-api.ts`, which is
+  null on the web and on older installs.
+- **Trust.** Turns default to `source: "principal"`: the only caller is the
+  principal's own app. Pass `"untrusted"` for text someone else wrote, and the
+  engine's threat judge screens it.
+- **Data.** The engine's root is `<userData>/phantombot`: personas, encrypted
+  vaults and memory, separate from any phantombot installed on the machine.
+  Provider keys go into the vault (`persona.configure` or `persona.secrets.set`)
+  and never come back over the bridge.
+- **Probe.** `--phantombot-probe` starts the packaged host on a temp root and
+  runs info, a persona, a vault write and read-back, and a memory search. The
+  release jobs run it on every package. No model is called.
 
 The UI is served from `app://localhost`. That scheme is registered
 with `allowServiceWorkers` (see `electron/scheme.ts`), and the Cache API

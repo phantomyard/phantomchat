@@ -60,6 +60,23 @@ export interface PhantomChatDesktopApi {
    * older packaged bridge degrades instead of throwing.
    */
   resetPermissionSettings?(): Promise<PermissionSettings>;
+  /**
+   * The phantombot engine bundled in the desktop app: one general bridge
+   * (see electron/phantombot/methods.ts for the methods). Turns default to the
+   * principal. Optional: installs packaged before it shipped do not have it.
+   */
+  phantombot?: DesktopPhantombotApi;
+}
+
+export type DesktopPhantombotResult =
+  | {ok: true; value: unknown}
+  | {ok: false; error: {code: string; message: string}};
+
+export interface DesktopPhantombotApi {
+  /** Run one engine method. Never rejects: failures come back as `{ok: false}`. */
+  call(method: string, params?: Record<string, unknown>): Promise<DesktopPhantombotResult>;
+  /** Events of running `persona.turn` calls. Returns an unsubscribe function. */
+  onEvent(listener: (message: {turnId: string; event: unknown}) => void): () => void;
 }
 
 export function getDesktopApi(): PhantomChatDesktopApi | null {
@@ -90,4 +107,10 @@ export function hasDesktopPermissionApi(): boolean {
 export function hasDesktopUpdateApi(): boolean {
   const api = getDesktopApi();
   return !!api && typeof api.getUpdateState === 'function' && typeof api.onUpdateState === 'function';
+}
+
+/** The desktop app's phantombot bridge, or null in the PWA and on older installs. */
+export function getDesktopPhantombot(): DesktopPhantombotApi | null {
+  const bridge = getDesktopApi()?.phantombot;
+  return bridge && typeof bridge.call === 'function' && typeof bridge.onEvent === 'function' ? bridge : null;
 }

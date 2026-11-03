@@ -2,13 +2,13 @@
  * PhantomChat desktop — Electron build script.
  *
  * 1. Bundles electron/main.ts and electron/preload.ts to CJS in electron/dist/.
- * 2. Copies the Pi harness next to them.
+ * 2. Compiles the phantombot engine host into electron/dist/phantombot/.
  *
  * The frontend is not part of this build: the app loads it from the live PWA.
  */
 import {build} from 'esbuild';
-import {execSync} from 'child_process';
-import {cpSync, mkdirSync, realpathSync, rmSync} from 'fs';
+import {mkdirSync} from 'fs';
+import {buildHost} from './phantombot/build-host.mjs';
 import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
 
@@ -39,15 +39,9 @@ await build({
   outfile: join(dist, 'preload.cjs')
 });
 
-// --- Pi harness (issue #276) ------------------------------------------------
-// Shipped as plain files in resources/pi (electron-builder extraResources): Node
-// cannot run an ES module tree from inside app.asar.
-// It has its own package and lockfile, so PWA builds never install it.
-const harness = join(here, 'pi-harness');
-execSync('pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts --prod', {cwd: harness, stdio: 'inherit'});
-const pi = realpathSync(join(harness, 'node_modules/@earendil-works/pi-coding-agent'));
-const piOut = join(dist, 'pi');
-rmSync(piOut, {recursive: true, force: true});
-mkdirSync(piOut, {recursive: true});
-cpSync(join(pi, 'package.json'), join(piOut, 'package.json'));
-cpSync(join(pi, 'dist', 'bundle'), join(piOut, 'dist', 'bundle'), {recursive: true});
+// --- phantombot engine host ------------------------------------------------
+// One compiled Bun binary (engine + embedded Pi), shipped as a plain file in
+// resources/phantombot (electron-builder extraResources): it is executed, so it
+// cannot live inside app.asar. See electron/phantombot/build-host.mjs.
+// PHANTOMBOT_HOST=skip builds main/preload only (typecheck-style local builds).
+if(process.env.PHANTOMBOT_HOST !== 'skip') buildHost();
