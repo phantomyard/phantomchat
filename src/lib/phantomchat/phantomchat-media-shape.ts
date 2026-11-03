@@ -11,6 +11,40 @@
 
 import base64ToBytes from '@helpers/string/base64ToBytes';
 
+/**
+ * Normalise a voice-note waveform to the base64 string the wire and the
+ * message store expect. The composer's recorder hands over a `Uint8Array`
+ * (5-bit packed, Telegram style), and before this helper that value went onto
+ * the wire as-is: `JSON.stringify` turns a `Uint8Array` into `{"0":n,"1":n}`,
+ * and every receiver's `typeof waveform === 'string'` guard dropped it. The
+ * sender's own stored row kept the raw bytes, which `base64ToBytes` cannot
+ * read, so its bubble lost the bars as soon as the optimistic one was swapped
+ * out. Accepts a string, a `Uint8Array`, a number array, or that
+ * index-keyed object (already on relays), and returns undefined for anything
+ * else or an empty value.
+ */
+export function waveformToBase64(raw: unknown): string | undefined {
+  if(typeof raw === 'string') return raw || undefined;
+  let bytes: Uint8Array | undefined;
+  if(raw instanceof Uint8Array) {
+    bytes = raw;
+  } else if(Array.isArray(raw)) {
+    bytes = Uint8Array.from(raw as number[]);
+  } else if(raw && typeof raw === 'object') {
+    const values = Object.keys(raw)
+    .filter((k) => /^\d+$/.test(k))
+    .sort((a, b) => +a - +b)
+    .map((k) => (raw as Record<string, unknown>)[k]);
+    if(values.length && values.every((v) => typeof v === 'number')) {
+      bytes = Uint8Array.from(values as number[]);
+    }
+  }
+  if(!bytes?.length) return undefined;
+  let bin = '';
+  for(let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i] & 0xff);
+  return btoa(bin);
+}
+
 export interface PhantomChatFileMetadata {
   url: string;
   sha256: string;
@@ -102,19 +136,7 @@ export function healStoredFileRow(stored: {
   // Waveform travels as a base64 string on healthy rows, but some send paths
   // serialized it as a raw byte array on the wire. Convert so the bubble's
   // amplitude bars survive the heal.
-  let waveform: string | undefined;
-  if(typeof parsed.waveform === 'string') {
-    waveform = parsed.waveform;
-  } else if(Array.isArray(parsed.waveform) && parsed.waveform.length) {
-    try {
-      const bytes = Uint8Array.from(parsed.waveform);
-      let bin = '';
-      for(let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-      waveform = btoa(bin);
-    } catch{
-      waveform = undefined;
-    }
-  }
+  const waveform = waveformToBase64(parsed.waveform);
 
   return {
     caption,
@@ -306,10 +328,13 @@ export function buildPhantomChatMedia(mid: number, fm: PhantomChatFileMetadata):
     // expects packed *bytes* — a string decodes to all-zero (flat, no bars).
     // Decode here so the bubble draws the amplitude bars. Omit on failure so a
     // bad blob never throws the whole media-shape build (bubble still plays).
+    // Stored rows written before waveformToBase64 existed can hold the raw
+    // recorder bytes rather than a string — normalise first.
     let waveform: Uint8Array | undefined;
-    if(fm.waveform) {
+    const waveformB64 = waveformToBase64(fm.waveform);
+    if(waveformB64) {
       try {
-        waveform = base64ToBytes(fm.waveform);
+        waveform = base64ToBytes(waveformB64);
       } catch{
         waveform = undefined;
       }

@@ -43,7 +43,7 @@ import {FOLDER_ID_ARCHIVE, FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManage
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
-import {buildPhantomChatMedia} from './phantomchat-media-shape';
+import {buildPhantomChatMedia, waveformToBase64} from './phantomchat-media-shape';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '@lib/rootScope';
 import {isConversationSelected} from '@lib/phantomchat/selected-conversation';
@@ -122,6 +122,7 @@ function parseGroupRumorContent(raw: string): ParsedGroupRumor | null {
         const servers = Array.isArray(fm.servers) ?
           fm.servers.filter((u: unknown): u is string => typeof u === 'string' && u.startsWith('http')) :
           undefined;
+        const waveform = waveformToBase64(fm.waveform);
         fileMetadata = {
           url: fm.url,
           sha256: fm.sha256,
@@ -133,7 +134,7 @@ function parseGroupRumorContent(raw: string): ParsedGroupRumor | null {
           ...(typeof fm.width === 'number' ? {width: fm.width} : {}),
           ...(typeof fm.height === 'number' ? {height: fm.height} : {}),
           ...(typeof fm.duration === 'number' ? {duration: fm.duration} : {}),
-          ...(typeof fm.waveform === 'string' ? {waveform: fm.waveform} : {}),
+          ...(waveform ? {waveform} : {}),
           ...(servers && servers.length ? {servers} : {})
         };
       }
@@ -1054,6 +1055,17 @@ export async function handleGroupIncoming(
     }
   }
 
+  // The group rumor carries the authoritative media class at the payload's
+  // top level (`type`), not inside fileMetadata. Thread it onto the metadata
+  // so buildPhantomChatMedia classifies voice notes correctly instead of
+  // re-guessing from mime (mirrors the DM `mediaType` wire field). Persist it
+  // too: a history reload rebuilds the bubble from the stored row, and a
+  // voice note without duration/waveform (e.g. MP3 TTS) otherwise comes back
+  // as a generic "file-<mid>" attachment.
+  const mediaFm = fileMetadata && type !== 'text' ?
+    {...fileMetadata, mediaType: (fileMetadata as any).mediaType ?? type} :
+    fileMetadata;
+
   try {
     await store.saveMessage({
       eventId: rumorId,
@@ -1068,7 +1080,7 @@ export async function handleGroupIncoming(
       twebPeerId: groupPeerId,
       isOutgoing,
       ...(replyToMid !== undefined ? {replyToMid} : {}),
-      ...(fileMetadata ? {fileMetadata} : {})
+      ...(mediaFm ? {fileMetadata: mediaFm} : {})
     });
   } catch(err) {
     console.warn(LOG_PREFIX, 'rx: saveMessage failed; continuing', {err});
@@ -1079,13 +1091,6 @@ export async function handleGroupIncoming(
   // path (buildPhantomChatMedia → messageMediaPhoto / messageMediaDocument with
   // a `phantomchatFileMetadata` sidecar that the download manager reads to
   // fetch+decrypt the encrypted Blossom blob on demand).
-  // The group rumor carries the authoritative media class at the payload's
-  // top level (`type`), not inside fileMetadata. Thread it onto the metadata
-  // so buildPhantomChatMedia classifies voice notes correctly instead of
-  // re-guessing from mime (mirrors the DM `mediaType` wire field).
-  const mediaFm = fileMetadata && type !== 'text' ?
-    {...fileMetadata, mediaType: (fileMetadata as any).mediaType ?? type} :
-    fileMetadata;
   const media = mediaFm ? buildPhantomChatMedia(mid, mediaFm) : undefined;
 
   const msg = mapper.createTwebMessage({

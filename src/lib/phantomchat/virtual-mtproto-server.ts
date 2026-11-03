@@ -13,10 +13,11 @@ import {getMessageStore} from './message-store';
 import type {StoredMessage} from './message-store';
 import {loadCachedPeerProfile, refreshPeerProfileFromRelays} from './peer-profile-cache';
 import type {NostrBotCommand} from './nostr-profile';
-import {buildPhantomChatMedia, healStoredFileRow, storedRowMedia} from './phantomchat-media-shape';
+import {buildPhantomChatMedia, healStoredFileRow, storedRowMedia, waveformToBase64} from './phantomchat-media-shape';
 import type {HealedFileRow, PhantomChatFileMetadata} from './phantomchat-media-shape';
 import {getPubkey, getMapping, removeMapping, recordDeletedPeer} from './virtual-peers-db';
 import {swallowHandler} from './log-swallow';
+import base64ToBytes from '@helpers/string/base64ToBytes';
 import {isGroupPeer} from './group-types';
 import {FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import rootScope from '@lib/rootScope';
@@ -2337,7 +2338,8 @@ export class PhantomChatMTProtoServer {
             _: 'documentAttributeAudio',
             pFlags: {voice: true},
             duration: media.duration,
-            waveform: media.waveform
+            // tweb's AudioElement decodes packed bytes, not base64.
+            waveform: media.waveform ? base64ToBytes(media.waveform) : undefined
           });
         }
         if(media.type === 'image') {
@@ -2566,7 +2568,9 @@ export class PhantomChatMTProtoServer {
     const width: number | undefined = params?.width;
     const height: number | undefined = params?.height;
     const duration: number | undefined = params?.duration;
-    const waveform: string | undefined = params?.waveform;
+    // The composer hands the recorder's Uint8Array over the bridge; the wire
+    // and the store carry base64 (see waveformToBase64).
+    const waveform: string | undefined = waveformToBase64(params?.waveform);
     // Issue #111: groupedId is the sender-local optimistic album id from
     // appMessagesManager.sendGrouped. Forwarded to injectOutgoingBubble so
     // bubbles in the same album render attached.
@@ -2697,7 +2701,9 @@ export class PhantomChatMTProtoServer {
     const width: number | undefined = params?.width;
     const height: number | undefined = params?.height;
     const duration: number | undefined = params?.duration;
-    const waveform: string | undefined = params?.waveform;
+    // The composer hands the recorder's Uint8Array over the bridge; the wire
+    // and the store carry base64 (see waveformToBase64).
+    const waveform: string | undefined = waveformToBase64(params?.waveform);
     const groupedId: string | undefined = typeof params?.groupedId === 'string' ? params.groupedId : undefined;
 
     let groupId: string;
