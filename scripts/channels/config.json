@@ -559,7 +559,7 @@
     },
     "src/components/sidebarLeft/tabs/contacts.ts": {
       "stable": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
-      "preview": "8952a764dc43ba50a7623ef119f33b1936d466bd8eb411384bf7f66c255ce7d7",
+      "preview": "29fc221d981810856207951189af92689074f4127a7c506a00d5d71f41119282",
       "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call."
     },
     "src/components/sidebarLeft/tabs/phantomchatDesktopProviders.ts": {
@@ -574,7 +574,7 @@
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "e377dfcf1a477c2b3240724b6b912e458b6b014fa9e5ca834910c39e14c3fd30",
+      "preview": "2b7bf49885d85353d2b3406bd7acdf75522c3df12da8a6300fa08611a3910182",
       "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact first deletes its bundled-engine persona via the desktop bridge, and a failed persona delete keeps the prefs row and fails the contact delete. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change."
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
@@ -734,7 +734,7 @@
     },
     "src/lib/phantomchat/provider-contacts.ts": {
       "stable": "absent",
-      "preview": "c18317937476b6ae09f85285792b1f914ff545a369efa113bd295c9ad4415500",
+      "preview": "5c8a35c014a698e5c6934d61eb9e4b50bb54de3f85c327e800c53fa776f2d1b1",
       "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts."
     }
   }
