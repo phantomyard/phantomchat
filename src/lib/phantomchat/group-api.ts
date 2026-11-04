@@ -241,6 +241,20 @@ const SECP_PUBKEY_HEX_RE = /^[0-9a-f]{64}$/;
 const PENDING_GROUP_DELETE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PENDING_GROUP_DELETES = 512;
 const MAX_PENDING_GROUP_DELETES_PER_SENDER = 32;
+const PENDING_INFO_UPDATE_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_PENDING_INFO_GROUPS = 256;
+const MAX_PENDING_INFO_PER_GROUP = 8;
+
+type PendingInfoUpdate = {
+  payload: GroupControlPayload;
+  senderPubkey: string;
+  ts: number;
+  receivedAt: number;
+};
+
+function stableInfoKey(p: GroupControlPayload): string {
+  return JSON.stringify([p.groupName, p.groupDescription, p.groupAvatar]);
+}
 
 interface PendingGroupDelete {
   groupId: string;
@@ -260,6 +274,7 @@ export class GroupAPI {
   private groupDelivery: GroupDeliveryTracker;
   private sentMessageIds: Set<string> = new Set();
   private pendingGroupDeletes: Map<string, PendingGroupDelete> = new Map();
+  private pendingInfoUpdates: Map<string, PendingInfoUpdate[]> = new Map();
   private log: Logger;
 
   /** Optional test hook for incoming group messages. Production render is
@@ -1912,6 +1927,13 @@ export class GroupAPI {
       return;
     }
 
+    // Stamp the record with the create EVENT's time, not the receive time.
+    // A device that rebuilds a group from a backlog replay (a fresh login)
+    // otherwise holds the create-time name ("New session") stamped as the
+    // NEWEST copy, which won the groups CRDT whole-record compare and synced
+    // the stale name back over a rename on every device. Capped at the local
+    // clock so a future-dated create cannot outrank later edits.
+    const createdAtMs = Math.min(createdAt * 1000, Date.now());
     const record: GroupRecord = {
       groupId: payload.groupId,
       name: payload.groupName || 'Group',
@@ -1921,8 +1943,8 @@ export class GroupAPI {
       adminPubkey: boundAdmin ?? (payload.adminPubkey || senderPubkey),
       members: payload.memberPubkeys || [],
       peerId,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: createdAtMs,
+      updatedAt: createdAtMs,
       // The creator's class, carried by the create: it is what the peerId above
       // was derived from.
       ...(kind === 'session' ? {kind} : {})
@@ -1996,9 +2018,79 @@ export class GroupAPI {
 
     this.log('[GroupAPI] group_create received:', payload.groupId);
 
+    // A rename that arrived before this create was staged rather than
+    // dropped; apply it now that the record exists.
+    await this.drainPendingInfoUpdates(payload.groupId);
+
     // A backfill that arrived before this create was staged rather than
     // dropped; the record it needed now exists.
     await this.drainPendingHistoryBackfill(payload.groupId);
+  }
+
+  // ─── Early info updates ───────────────────────────────────────
+  //
+  // Control handlers run concurrently during backlog replay, so a rename can
+  // reach a fresh device before the group_create that carries the record.
+  // Dropping it left the device on the create-time name ("New session").
+  // Stage it instead and replay it through the normal gate (per-field
+  // watermark + admin check) once the record exists. Nothing is trusted at
+  // stage time; a staged update that fails the gate on drain is discarded.
+
+  private pruneEarlyInfoUpdates(now = Date.now()): void {
+    for(const [groupId, list] of this.pendingInfoUpdates) {
+      const kept = list.filter((p) => now - p.receivedAt <= PENDING_INFO_UPDATE_TTL_MS);
+      if(kept.length === 0) this.pendingInfoUpdates.delete(groupId);
+      else if(kept.length !== list.length) this.pendingInfoUpdates.set(groupId, kept);
+    }
+  }
+
+  private stageEarlyInfoUpdate(payload: GroupControlPayload, senderPubkey: string, ts: number): void {
+    this.pruneEarlyInfoUpdates();
+    const groupId = payload.groupId;
+    const list = this.pendingInfoUpdates.get(groupId) ?? [];
+    if(list.some((p) => p.ts === ts && p.senderPubkey === senderPubkey &&
+      stableInfoKey(p.payload) === stableInfoKey(payload))) return;
+    if(!this.pendingInfoUpdates.has(groupId) && this.pendingInfoUpdates.size >= MAX_PENDING_INFO_GROUPS) {
+      // Evict the group whose newest staged update is oldest.
+      let victim: string | undefined;
+      let victimAt = Infinity;
+      for(const [id, l] of this.pendingInfoUpdates) {
+        const at = Math.max(...l.map((p) => p.receivedAt));
+        if(at < victimAt) { victimAt = at; victim = id; }
+      }
+      if(victim) this.pendingInfoUpdates.delete(victim);
+    }
+    list.push({payload, senderPubkey, ts, receivedAt: Date.now()});
+    // Keep the newest events: an older one only matters for a field no newer
+    // staged event carries, and the cap is far above a real backlog's count.
+    list.sort((a, b) => a.ts - b.ts);
+    while(list.length > MAX_PENDING_INFO_PER_GROUP) list.shift();
+    this.pendingInfoUpdates.set(groupId, list);
+  }
+
+  /**
+   * Apply info updates staged because their group had not arrived yet. Called
+   * from handleGroupCreate and from the groups CRDT upsert (a record can also
+   * first arrive through sync). Oldest first, each through the per-field
+   * watermark gate, so the result equals in-order delivery.
+   */
+  async drainPendingInfoUpdates(groupId: string): Promise<void> {
+    this.pruneEarlyInfoUpdates();
+    const list = this.pendingInfoUpdates.get(groupId);
+    if(!list || list.length === 0) return;
+    if(!(await this.store.get(groupId))) return;
+    this.pendingInfoUpdates.delete(groupId);
+    for(const p of [...list].sort((a, b) => a.ts - b.ts)) {
+      const fresh = freshInfoFields(groupId, p.payload, p.ts);
+      if(fresh.length === 0) continue;
+      try {
+        const applied = await this.handleInfoUpdate(p.payload, p.senderPubkey, fresh, p.ts);
+        const capped = Math.min(p.ts, Math.floor(Date.now() / 1000));
+        for(const field of applied) writeEventWatermark(groupId, infoWatermarkKey(field), capped);
+      } catch(err) {
+        this.log.warn('[GroupAPI] staged group_info_update apply failed:', groupId.slice(0, 8), err);
+      }
+    }
   }
 
   // ─── Legacy rebind migration (#188 remainder) ─────────────────────
@@ -2878,7 +2970,11 @@ export class GroupAPI {
   private async handleInfoUpdate(payload: GroupControlPayload, senderPubkey: string, fields: InfoField[], tsSec: number): Promise<InfoField[]> {
     const group = await this.store.get(payload.groupId);
     if(!group) {
-      this.log('[GroupAPI] group_info_update for unknown group, ignoring:', payload.groupId.slice(0, 8));
+      this.log('[GroupAPI] group_info_update for unknown group, staging until the record arrives:', payload.groupId.slice(0, 8));
+      this.stageEarlyInfoUpdate(payload, senderPubkey, tsSec);
+      // The record may have been saved (and the stage drained) while the
+      // lookup above was in flight; drain again so this one is not stranded.
+      await this.drainPendingInfoUpdates(payload.groupId);
       return [];
     }
     // Only the current admin may broadcast info changes — same sender

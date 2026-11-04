@@ -22,7 +22,8 @@
  * reporting the delete.
  */
 import type {LocalAdapter} from './crdt-sync';
-import type {SyncMap} from './sync-crdt';
+import type {SyncEntry, SyncMap} from './sync-crdt';
+import {mergeMaps} from './sync-crdt';
 import type {GroupRecord} from './group-types';
 import type {DeletedGroupRecord} from './group-store';
 import {intendedGroupKind} from './group-class-reconcile';
@@ -245,7 +246,12 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
         const stampAdvanced =
           typeof entry.deliberateAddAt === 'number' &&
           entry.deliberateAddAt > (prev?.deliberateAddAt ?? 0);
-        if(!wasLive || entry.updatedAt > prev.updatedAt || stampAdvanced) {
+        // An info-only change (mergeGroupsMaps kept a newer name from the
+        // losing side) leaves updatedAt equal to this device's copy, so it
+        // must trigger the upsert on its own or the name never lands here.
+        const infoChanged = wasLive && !!entry.data && !!prev.data &&
+          INFO_FIELDS.some((f) => entry.data[f] !== prev.data[f]);
+        if(!wasLive || entry.updatedAt > prev.updatedAt || stampAdvanced || infoChanged) {
           if(!entry.data) continue;
           // REBIND RESURRECTION GUARD (duplicate-groups regression 2026-10-04):
           // a rebind successor record carries a FRESH bound id — the durable
@@ -360,6 +366,42 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
   };
 
   return {read, apply};
+}
+
+const INFO_FIELDS = ['name', 'description', 'avatar'] as const;
+
+/**
+ * Groups merge: the generic union merge, then per-field last-writer-wins for
+ * name / description / avatar on live/live pairs, by `infoUpdatedAt[field]`.
+ *
+ * Whole-record LWW alone let any newer copy carry an OLD name: a device that
+ * rebuilt a session from a replayed group_create held "New session" with a
+ * fresh `updatedAt`, beat the renamed copy, and synced the stale name to every
+ * device. A field's value now comes from whichever side changed THAT field
+ * last. A missing stamp counts as 0 (never edited), and a tie keeps the
+ * record winner's value, so legacy records behave exactly as before.
+ */
+export function mergeGroupsMaps(local: SyncMap<GroupRecord>, remote: SyncMap<GroupRecord>): SyncMap<GroupRecord> {
+  const out = mergeMaps(local, remote);
+  for(const id of Object.keys(out)) {
+    const a = local[id];
+    const b = remote[id];
+    const winner = out[id];
+    if(!a || !b || a.deleted || b.deleted || winner.deleted) continue;
+    if(!a.data || !b.data || !winner.data) continue;
+    const loser = winner.data === a.data ? b.data : a.data;
+    let merged: GroupRecord | null = null;
+    for(const field of INFO_FIELDS) {
+      const winStamp = winner.data.infoUpdatedAt?.[field] ?? 0;
+      const loseStamp = loser.infoUpdatedAt?.[field] ?? 0;
+      if(!(loseStamp > winStamp) || loser[field] === undefined) continue;
+      merged = merged ?? {...winner.data, infoUpdatedAt: {...winner.data.infoUpdatedAt}};
+      merged[field] = loser[field];
+      merged.infoUpdatedAt![field] = loseStamp;
+    }
+    if(merged) out[id] = {...winner, data: merged} as SyncEntry<GroupRecord>;
+  }
+  return out;
 }
 
 export const GROUPS_SYNC_D_TAG = 'phantomchat.chat/groups';
