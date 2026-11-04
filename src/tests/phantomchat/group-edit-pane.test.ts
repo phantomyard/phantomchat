@@ -99,6 +99,7 @@ describe('mounted group edit pane', () => {
   it('removes description and hides unavailable Leave Group for admins', async() => {
     await mount();
     expect(document.querySelectorAll('input')).toHaveLength(1);
+    expect(document.querySelector('input')!.getAttribute('aria-label')).toBe('PhantomChat.GroupEdit.Name');
     expect(document.body.textContent).not.toContain('ChatList.Context.LeaveGroup');
     expect(document.body.textContent).toContain('PhantomChat.GroupEdit.DeleteGroup');
   });
@@ -124,10 +125,8 @@ describe('mounted group edit pane', () => {
     expect(mocks.sidebar).toHaveBeenCalledWith(false);
   });
 
-  it('does not submit unchanged, blank, composing or repeated Enter', async() => {
+  it('ignores composing, IME and repeated Enter', async() => {
     await mount();
-    enter(document.querySelector('input')!);
-    enter(rename('   '));
     const input = rename('Renamed');
     enter(input, {isComposing: true});
     enter(input, {keyCode: 229});
@@ -135,6 +134,30 @@ describe('mounted group edit pane', () => {
     await Promise.resolve();
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.close).not.toHaveBeenCalled();
+  });
+
+  it('closes on an unchanged or blank name without submitting anything', async() => {
+    await mount();
+    enter(document.querySelector('input')!);
+    await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledOnce());
+    expect(mocks.update).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    enter(rename('   '));
+    await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledOnce());
+    // A cleared field must never be persisted over the chat title.
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(group.name).toBe('Original');
+  });
+
+  it('keeps the check button present and clickable before any edit', async() => {
+    await mount();
+    const save = document.querySelector('.save') as HTMLButtonElement;
+    expect(save).not.toBeNull();
+    expect(save.disabled).toBe(false);
+    expect(save.classList.contains('is-visible')).toBe(false);
+    save.click();
+    await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledOnce());
   });
 
   it('shares the in-flight guard between Enter and Save', async() => {
@@ -168,7 +191,9 @@ describe('mounted group edit pane', () => {
     await mount();
     const remove = [...document.querySelectorAll('button')].find(b => b.textContent === 'close')!;
     remove.click();
-    await vi.waitFor(() => expect(document.querySelector('.save')!.classList.contains('is-visible')).toBe(true));
+    // The removal handler is async (confirmation popup): wait for the roster
+    // re-render so the staged diff exists before Enter runs.
+    await vi.waitFor(() => expect(document.body.textContent).not.toContain('P2P MEMBER'));
     enter(document.querySelector('input')!);
     await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledOnce());
     expect(mocks.remove).toHaveBeenCalledOnce();

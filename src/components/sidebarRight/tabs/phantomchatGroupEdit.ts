@@ -19,7 +19,7 @@ import rootScope from '@lib/rootScope';
 import {i18n, LangPackKey} from '@lib/langPack';
 import {toastNew} from '@components/toast';
 import appSidebarRight from '..';
-import {getGroupMemberChanges} from './phantomchatGroupEditState';
+import {getGroupEditSavePlan, getGroupMemberChanges} from './phantomchatGroupEditState';
 
 export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
   public groupPeerId: number;
@@ -63,7 +63,6 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
     const isAdmin = ownPubkey === group.adminPubkey;
     const originalMembers = [...group.members];
     let draftMembers = [...originalMembers];
-    let refreshSave = () => {};
     let renderMembers = () => {};
 
     // Commit the current member diff through GroupAPI. Shared by the check
@@ -145,7 +144,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       const inputWrapper = document.createElement('div');
       inputWrapper.classList.add('input-wrapper');
 
-      const nameInput = new InputField({label: 'CreateGroup.NameHolder', maxLength: 128});
+      const nameInput = new InputField({label: 'PhantomChat.GroupEdit.Name' as LangPackKey, maxLength: 128});
       nameInput.setOriginalValue(group.name);
 
       inputWrapper.append(nameInput.container);
@@ -154,46 +153,43 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       const saveBtn = ButtonCorner({icon: 'check'});
       this.content.append(saveBtn);
 
-      // Save only appears when something actually changed (name
-      // or a staged member removal via the per-row X) AND the name is
-      // non-empty — a visible button that silently does nothing on click is
-      // worse than a hidden one. The picker's arrow commits immediately, so
-      // it re-hides the button via refreshSave too.
-      refreshSave = () => {
-        const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
-        const dirty = !!nameInput.value.trim() &&
-          (nameInput.value.trim() !== group.name ||
-          added.length > 0 || removed.length > 0);
-        saveBtn.classList.toggle('is-visible', dirty);
-      };
-      this.listenerSetter.add(nameInput.input)('input', refreshSave);
+      // The check button stays visible and enabled at all times: it persists
+      // whatever the field currently holds, so a pasted name saves on the
+      // click/Enter that follows without waiting for a keystroke to mark the
+      // field dirty. Nothing to persist still closes the pane (see below).
 
       let saving = false;
+      const closeEditor = () => {
+        this.close();
+        appSidebarRight.toggleSidebar(false);
+      };
       const save = async() => {
-        const name = nameInput.value.trim();
-        const {added, removed} = getGroupMemberChanges(originalMembers, draftMembers);
-        if(saving || !name || (name === group.name && !added.length && !removed.length)) return;
+        if(saving) return;
+        const plan = getGroupEditSavePlan(group.name, nameInput.value, originalMembers, draftMembers);
+        // Close the editor on save: an empty screen where the pane was
+        // reads as "saved", whereas staying open reads as "nothing happened".
+        // Same on a no-op press — the button is a done affordance, not a
+        // no-op that looks broken.
+        if(!plan.hasChanges) {
+          closeEditor();
+          return;
+        }
         saving = true;
         const toggle = toggleDisability([saveBtn], true);
         try {
           await applyMemberChanges();
-          if(name !== group.name) {
-            await getGroupAPI().updateGroupInfo(this.groupId, {name});
+          if(plan.nameChanged) {
+            await getGroupAPI().updateGroupInfo(this.groupId, {name: plan.name});
+            group.name = plan.name;
           }
-          group.name = name;
           group.members = [...draftMembers];
-
-          // Close the editor on save: an empty screen where the pane was
-          // reads as "saved", whereas staying open reads as "nothing happened".
-          this.close();
-          appSidebarRight.toggleSidebar(false);
+          closeEditor();
         } catch(err) {
           console.error('[PhantomChatGroupEdit] save failed:', err);
           toastNew({langPackKey: 'Error.AnError'});
         } finally {
           saving = false;
           toggle();
-          refreshSave();
         }
       };
       attachClickEvent(saveBtn, save, {listenerSetter: this.listenerSetter});
@@ -265,7 +261,6 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
             });
             draftMembers = draftMembers.filter((member) => member !== pubkey);
             renderMembers();
-            refreshSave();
           } catch{
             // user cancelled
           }
@@ -287,7 +282,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
     let addRow: Row;
     if(isAdmin) {
       addRow = new Row({
-        titleLangKey: 'PhantomChat.GroupEdit.GroupMembers',
+        titleLangKey: 'PhantomChat.GroupEdit.AddMembers',
         clickable: true,
         listenerSetter: this.listenerSetter
       });
@@ -300,7 +295,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         this.slider.createTab(AppAddMembersTab).open({
           type: 'chat',
           skippable: false,
-          title: 'PhantomChat.GroupEdit.GroupMembers',
+          title: 'PhantomChat.GroupEdit.AddMembers',
           placeholder: 'SendMessageTo' as LangPackKey,
           selectedPeerIds,
           takeOutOnClose: true,
@@ -326,15 +321,10 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
                 originalMembers.splice(0, originalMembers.length, ...draftMembers);
               } catch{}
               renderMembers();
-              refreshSave();
               toastNew({langPackKey: 'Error.AnError'});
               throw err;
             }
             renderMembers();
-            // The picker's arrow is the apply affordance members expect: it
-            // commits the membership change right away instead of waiting
-            // for the editor's check button.
-            refreshSave();
           }
         });
       }, {listenerSetter: this.listenerSetter});
