@@ -59,8 +59,8 @@
     },
     "src/lang.ts": {
       "stable": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b",
-      "preview": "32c978cefd184728a6df266b1c3d56eaeaa8d961bcd407ad31a98880e00558f5",
-      "reason": "Two PhantomChat strings, text only: the empty-folder placeholder and the archive/session failure toasts. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Preview also adds three theme selector strings, text only. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable. Preview adds one PhantomChat string, text only: \"Open New Session\" for the message text-selection menu entry that starts a new session from the selected text. Preview removes the unused \"Search Selected Text\" label for the message text-selection menu entry that was deleted. Text only; no key, placeholder, storage or protocol change. Key, placeholders, protocol and storage formats unchanged."
+      "preview": "6cbb04065cb056b0f599ef1bc225fe5ff30f67ed2cfa9d530f166e8366dd92c7",
+      "reason": "Two new UI strings, ContactName and ContactLocalTools. Text only."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
@@ -74,8 +74,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f8fc66f7707e106851bbf0aa76b018408bda9c59f6740b9fccf4fa2a89fe0d4e",
-      "preview": "68d5ea446fdd871b244bb9a07a73752445947c58965a0a58e023a48a335b2498",
-      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Generated copy of src/lang.ts: Interface Settings renamed to Appearance, three unused menu strings removed. Additional change: Regenerated local labels: default-folder copy plus existing UITheme strings from lang.ts and key repositioning for ArchiveActionFailed/SessionCreateFailed. No stored format or protocol changes. Regenerated copy of lang.ts: the single new \"Open New Session\" label for the text-selection menu. Regenerated copy also drops the unused \"Search Selected Text\" label together with its menu entry. Text only; no stored format or protocol change."
+      "preview": "5fdc96025d882bafbb2b1fa9760a2a33ee476d64670509f797dddc94cebd916a",
+      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Generated copy of src/lang.ts: Interface Settings renamed to Appearance, three unused menu strings removed. Additional change: Regenerated local labels: default-folder copy plus existing UITheme strings from lang.ts and key repositioning for ArchiveActionFailed/SessionCreateFailed. No stored format or protocol changes. Regenerated copy of lang.ts: the single new \"Open New Session\" label for the text-selection menu. Regenerated copy also drops the unused \"Search Selected Text\" label together with its menu entry. Text only; no stored format or protocol change. Regenerated copy of lang.ts: adds ContactName and ContactLocalTools. Text only; no stored format or protocol change."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
@@ -89,8 +89,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "20ecf8550de094f7d0cd8275896bf73bd1cb43e85c2f008429b7ef0c120acba4",
-      "preview": "86f74f4d1e1c40528189822da3b0658b130adf104b65d57f99f1ee799edfd1fc",
-      "reason": "The Session space + opens the Contacts picker in pick mode and creates a session from the pick; presentation and navigation only, no stored format change. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Comment-only: session title length now reads 50 characters. Also routes the chat text-selection menu's Open New Session into the existing Session + flow: switch to the Sessions folder, open the same single-contact picker, and prefill the created session's composer with the selected text through the existing ChatInput API (a draft, never an auto-send), so the title still comes from the first prompt the user sends. Folder, peer-creation and navigation semantics unchanged; no storage, schema or protocol change. Review round: the pre-picker folder switch is guarded, so a rejected switch still opens the picker instead of leaving an unhandled rejection from the listener's void call. Review round 2: the switch goes through the folder rail's own path (changing_folder_from_sidebar), because setFilterIdAndChangeTab moves filterId without moving the folder menu, whose wasFilterId === id early return then turns the next click on Sessions into a scroll with no switch; and selectTab(CHATLIST) brings the left column forward first, since the selection menu lives in the chat pane and at phone width the picker opened behind the chat. Review round 3: that reveal is guarded by the is-left-column-shown flag, so a DM open at desktop width keeps its hash (selectTab(CHATLIST) clears it via overrideHash(undefined)) and a reload still restores the chat. Review round 4: the composer prefill is written as the session's draft through appDraftsManager.setDraft before the chat opens, because the ChatInput instance that received setInputValue is replaced by a later instance for the same peer and the text was discarded with it; the composer loads its peer's draft once it settles. Navigation and draft-write only, through the existing drafts API; no storage, schema or protocol change. Round 5: the left-column reveal before the session picker is gated on the layout (mediaSizes.isLessThanFloatingLeftSidebar) as well as the is-left-column-shown class, via the new pure predicate in lib/phantomchat/session-column-reveal.ts. Above 925px the column is display:flex and the class only means \"chatlist tab is active\", so the class-only guard ran selectTab(CHATLIST) with a DM open at 1280 and overrideHash(undefined) cleared that chat's hash. No storage, schema or database change."
+      "preview": "6dc7abb86723a45dbbe23dcd917fe65b2383273833f309917306e3523411eef9",
+      "reason": "An npub pasted into search opens the New Contact modal prefilled instead of adding directly. Presentation and navigation only, with no storage access."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
@@ -139,8 +139,8 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536",
-      "preview": "f6d4e1797fb3a04276828470d7ca8d81b05937f1b7bbade8a530c896b348e9fc",
-      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged. Preview bumps the local language-pack version 17 -> 18 with this PR's new \"Open New Session\" key, because a cached v17 pack renders the literal key (boot reloads local strings on a version mismatch only, and the update check is a no-op with MTProto off). Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged."
+      "preview": "a2f86dc2b7277bb3a21bebf90205f14a8f05c3209be37c192d0f9c4abbb1cbc6",
+      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged. Preview bumps the local language-pack version 17 -> 18 with this PR's new \"Open New Session\" key, because a cached v17 pack renders the literal key (boot reloads local strings on a version mismatch only, and the update check is a no-op with MTProto off). Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Contacts redesign: bumps the local language-pack version 18 -> 19 so cached clients load ContactName and ContactLocalTools instead of rendering the raw keys. Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged."
     },
     "src/lib/folders-sidebar-layout.ts": {
       "stable": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
@@ -229,8 +229,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "4ac1592f274f20dd9726ac3d1e8350aad2aaff8923e90498024b86f188ec8d3c",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. #364 (app-bugs batch): wires the groups adapter's raiseInfoWatermark dep to GroupAPI.raiseInfoWatermark via the existing lazy import. No new store, key, schema or protocol. Independent exact-head content review required."
+      "preview": "34462fafe0844d1b0722e08cf47cead4ee6249c3e881ed8facc40bc8eaf05ede",
+      "reason": "Boot: one fire-and-forget import of local-tools, which is a no-op without the desktop Local tools bridge. No storage change."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
@@ -354,8 +354,8 @@
     },
     "src/helpers/generateDicebearAvatar.ts": {
       "stable": "c07aa8a25e731987b4b593f47094109354b0a617881aa7432e47eaf9a30883fd",
-      "preview": "2ad4b0aeef7973f2d6f98d51ef258d6b68beb0e0d832cad54a0b1faec48da40f",
-      "reason": "Adds a muted grey avatar palette with theme-blue eyes selected by html[data-ui-theme]. Output with no attribute is byte-identical to before and is never persisted or published. Requires independent content review."
+      "preview": "274b1b6908fac5b2fd3c415646c2a955c292a980087b3725b1a4e1483e54b471",
+      "reason": "Adds a deterministic Human avatar SVG with a separate in-memory cache key. Phantom and group output is byte-identical. No storage."
     },
     "src/lib/storages/clearComputedDialogIndexes.ts": {
       "preview": "eef321475e2849e845e0a49d40ecc32d5a9b2d08f8fa3359360a642b8d4d2397",
@@ -539,7 +539,7 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "b190745bbcf42df090f94960afea35a654943dfd4a78e8eaeeb89caabcff942e",
+      "preview": "f83ddd03ecf8cbba7e6e5c20ae6c29d09f37f40bf40a44dfe57f832e95d4ef1b",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change."
     },
     "electron/piHarness.ts": {
@@ -549,7 +549,7 @@
     },
     "electron/preload.ts": {
       "stable": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "preview": "3e254912cc264d69d7620cc31b2e884dd99e7d5f5a1d13ef9b8253f29f6894d5",
+      "preview": "e1cfcfe2ec635fa9fd7764f0d077d0e4bd1eb84720bdd665856b03823dec288c",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
     },
     "src/components/peerProfile.tsx": {
@@ -559,8 +559,8 @@
     },
     "src/components/sidebarLeft/tabs/contacts.ts": {
       "stable": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
-      "preview": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "29fc221d981810856207951189af92689074f4127a7c506a00d5d71f41119282",
+      "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call. Deleting a contact from the contacts list goes through the shared deleteP2PContact: it first revokes that contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its phantomchat-contact-prefs row, then deletes the conversation. A failed revoke or persona delete throws and keeps the contact. No new store, field or schema; on the web the revoke is a no-op."
     },
     "src/components/sidebarLeft/tabs/phantomchatDesktopProviders.ts": {
       "stable": "absent",
@@ -574,17 +574,17 @@
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "2b7bf49885d85353d2b3406bd7acdf75522c3df12da8a6300fa08611a3910182",
+      "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact first deletes its bundled-engine persona via the desktop bridge, and a failed persona delete keeps the prefs row and fails the contact delete. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change."
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
       "stable": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
-      "preview": "efa9a28fd018937cff9d945fb327bcbcadb48220a89b06b053df936bb6a027e4",
-      "reason": "#418 voice waveform: the waveform crosses the wire and the store as base64 (the recorder's Uint8Array was JSON-serialised to an index-keyed object), and group receive persists the rumor's mediaType inside the existing fileMetadata JSON blob. No storage format or schema change. Older/pinned Stable receiving an index-keyed waveform drops it at its typeof-string guard: flat line, no crash. Pinned Stable 2cee0bba buildPhantomChatMedia already reads mediaType, so it classifies a new group row as voice, not file. Earlier: Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "05fa5cfe426c9b5db77ace3d56e06f79e32cd2d5dab9a8e94ab65ededbe5b9fb",
+      "reason": "Receive path drops rumors tagged phantomchat-local-tools before any store write (they were never stored before either: Stable renders them as unknown control messages and drops them). No schema or database change."
     },
     "src/lib/phantomchat/desktop-api.ts": {
       "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "preview": "4ff95798c656d47e9b6c8aaec5e0fab81632e555273a7f48d490f0f714869414",
+      "preview": "60830a55022dafc584c43b07d44ab5966827487f1eab54f7763af9b3abf8545a",
       "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access."
     },
     "src/lib/phantomchat/external-ai-contact-form.ts": {
@@ -604,8 +604,8 @@
     },
     "src/lib/phantomchat/local-tools-wire.ts": {
       "stable": "absent",
-      "preview": "absent",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "c3a7953493ed292df7da904aec1087b5538aef6f2788e85abc7796a7ffc4d2c3",
+      "reason": "New pure module: the local-tools tag check and wire format. No storage."
     },
     "electron/phantombot/build-host.mjs": {
       "stable": "absent",
@@ -619,32 +619,32 @@
     },
     "electron/phantombot/client.ts": {
       "stable": "absent",
-      "preview": "f2054eee92d148f2bd8248b5bad468898774badf78d78fd09de9fcdb0b63c6ab",
+      "preview": "01c8ec76d363bad3f3e730df3dfde4abb2763ffcfb7c37235480be4e44bd46cf",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/dispatch.test.ts": {
       "stable": "absent",
-      "preview": "58276c83bcf5aaa8f7f790c38271a2c193ed112ffe6e7e404ec80cd4ba8f19e6",
+      "preview": "b176042800f81a18182035a7462c104ea9f46ef719e7ebc31ebb34a508ba4148",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/dispatch.ts": {
       "stable": "absent",
-      "preview": "741f6be27dabacb021b0a7947e9dc8af7a24a85392d00ef73fe569a3113f20df",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+      "preview": "147e65b202d907a2e280eef1524f4f96d0c2cb49e27e0aa0fc7e1f54b41e7f46",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls and 8 concurrent tool runs. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/host.ts": {
       "stable": "absent",
-      "preview": "b07a1b941d16b643a1dd078267a10bfc3d713cffa42d3f021c101521678a4dba",
+      "preview": "45e2a7067f3b54f98d543aef8974d0f32234d642ba64a157496f9ccf54f162e1",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/methods.ts": {
       "stable": "absent",
-      "preview": "831b14df0a10d63170e0e808adcddb141ae394d693f4ba3b614ae8c983e013ae",
+      "preview": "c6d198a7841f0a03f93ae07a2f3125df85ad367355911238958dab9e0d9f1851",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/pin.json": {
       "stable": "absent",
-      "preview": "48df04d60126b7e4287c938db075292ee84442827768df5419b1703522e95bed",
+      "preview": "a344a869527dd8bb2bb601eb93f7399907a4ad6fe3bd303c627cd4268d8863a7",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/probe.ts": {
@@ -661,6 +661,81 @@
       "stable": "absent",
       "preview": "d206f04b20dadab1229920f4f8fcc7e30c1efe69ec6651df6b85dbd604f2f341",
       "reason": "#358 (app-bugs batch): new presentation helper toggling CSS classes on the folders strip. No storage or state. Independent exact-head content review required."
+    },
+    "electron/desktopIntegration.ts": {
+      "stable": "9061869db34828bc5ee3fb65e476451d903b6da6747e8461df927b9812e23f91",
+      "preview": "ce0a400fb5909945e3197a19f67aba42ae519f881bb97e405dedeaf6bc7817ed",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/updateCapability.ts": {
+      "stable": "1b6f0a83b3a75635651c55ec789f4382847f254bedffa47583d9eac06afcbfd8",
+      "preview": "38b7930dc30d3f2fe5e3489e083e34a82161a2f53ef6df71064d7f28c1ba68d0",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/updateRestart.ts": {
+      "stable": "6efcb085196e81694a58d488f5f1b1efe1e5005162be3b9f8ce1287edba11a5a",
+      "preview": "103be527517c3641a99e19004593e3d47f920bdbc3fee58d46a21f1bbd2cc884",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "src/components/avatarNew.tsx": {
+      "stable": "06a5a2a61f5e6b06bb9cf145483849d56075894ccf0936406d4e52ac36911d61",
+      "preview": "7c914382885b9147d86088c6da720fd3831265045324ae483742d9b09c1ba13b",
+      "reason": "Reads the new contact-prefs database (read only) to give contacts saved as Human the bust avatar. Without a row, or on Stable, the phantom sigil renders as before. No existing storage is written."
+    },
+    "src/components/phantomchat/AddContact.tsx": {
+      "stable": "b99c7d369a4ded6f1501b61f80997136767ecc921150947d862cc6e839c82936",
+      "preview": "absent",
+      "reason": "Deleted. It was never imported or mounted anywhere, and it had no storage of its own."
+    },
+    "src/components/popups/addContact.ts": {
+      "stable": "d3b3ef4664b82602239a5ba99cdd3ab8e2997fbc7136a41a7d4dd2ece457fded",
+      "preview": "41fcc20191a37e3b1917e56cf440dbcf0568f1d0f974429e2e0095b7e460520e",
+      "reason": "New-contact modal: Provider and Scan (desktop only) plus the Phantom Local tools gate. Writes only phantomchat-contact-prefs (new optional persona field, same version 1 store) and the existing addP2PContact path."
+    },
+    "src/lib/phantomchat/contact-prefs.ts": {
+      "stable": "absent",
+      "preview": "0b31179f1b4f613f5d1866f8c393b7cb9cffe01d038a00222d2eba20dc9fc2fd",
+      "reason": "New module. Contact type, Local tools and (Provider) persona name live in a NEW IndexedDB database, phantomchat-contact-prefs (version 1, one store keyed by pubkey). The persona field is optional and older rows lack it. It does not touch phantomchat-virtual-peers or any existing database. Stable never opens the new database and ignores it."
+    },
+    "electron/localPersonas/scan.test.ts": {
+      "stable": "absent",
+      "preview": "f397048aff8e8013d25ca4a07f66edc39964c9ffde7c72a041eab3f0ea824948",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localPersonas/scan.ts": {
+      "stable": "absent",
+      "preview": "e68497127425500aa9679aaeb9284215cf28827970555e51786de336379d1335",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localTools/host.test.ts": {
+      "stable": "absent",
+      "preview": "8adcc2335f6939c33c5b714773bff405f7105bd9f51fcd677c08a989f79363e7",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localTools/host.ts": {
+      "stable": "absent",
+      "preview": "b018270c51418cb9acd0dea8dd66796dfee3ecd7b8f0184e77085d38ff571b6a",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localTools/localAccess.test.ts": {
+      "stable": "absent",
+      "preview": "f97797633fc7a473301bd90e47786898938d704d1886dcd765fd5e0101780a0f",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localTools/localAccess.ts": {
+      "stable": "absent",
+      "preview": "f5c8bc0ca3b1ba22b707ae9b89b42033569a1e49823c605170059f65fb6cc784",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "src/lib/phantomchat/local-tools.ts": {
+      "stable": "absent",
+      "preview": "5bf7cd4bff968631bb2588f016ef61301fbd8b93e02c10badf780942a47f519c",
+      "reason": "New module, desktop only: sends and receives Local tools rumors through window.phantomchatDesktop.localTools. No storage of its own; reads the existing group store and message-requests block list read-only. No-op on the web and older installs."
+    },
+    "src/lib/phantomchat/provider-contacts.ts": {
+      "stable": "absent",
+      "preview": "5c8a35c014a698e5c6934d61eb9e4b50bb54de3f85c327e800c53fa776f2d1b1",
+      "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts. forgetContact (shared by contact info and the contacts list) first revokes the contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its prefs row; the caller deletes the conversation last. A failed revoke or persona delete throws and keeps the contact, its persona and its conversation."
     }
   }
 }

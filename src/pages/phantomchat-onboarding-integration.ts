@@ -320,6 +320,13 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // receives through the same pipeline.
       await startReceiveAfterCursorWarm(startChatAPI);
 
+      // Desktop only (phantombot #747): Local tools for Phantom contacts. Tell
+      // main who is signed in and the allowed phantoms that this PC is back.
+      // Fire-and-forget: this must never hold up boot.
+      void import('@lib/phantomchat/local-tools')
+      .then(({initLocalTools}) => initLocalTools(identity.publicKey, bridge.getRelayPool()))
+      .catch((err) => console.warn('[PhantomChatOnboardingIntegration] local tools init failed:', err));
+
       // --- Initialize PhantomChatSync ---
       // Wired after the gate (see the receive-boot note above) so no delivery
       // can reach the sync/projection pipeline before it exists.

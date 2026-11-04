@@ -586,6 +586,8 @@ const lang = {
     'other_value': ' (%d years old)'
   },
   'ContactNoteRow': 'Notes',
+  'ContactName': 'Contact Name',
+  'ContactLocalTools': 'Local tools',
   'ContactNoteRowDesc': 'only visible to you',
   'SuggestBirthdayRow': 'Suggest Date of Birth',
   'Privacy.BirthdayCaption': 'You can restrict who can see your birthday with granular precision.',

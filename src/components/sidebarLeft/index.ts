@@ -1219,25 +1219,19 @@ export class AppSidebarLeft extends SidebarSlider {
     });
   }
 
+  // A pasted npub opens the New Contact modal prefilled (contacts redesign):
+  // adding straight from the search box skipped the contact-type choice.
   private async handleNpubInput(npub: string) {
-    try {
-      const {addP2PContact} = await import('@lib/phantomchat/add-p2p-contact');
-      const {toast} = await import('@components/toast');
-
-      const result = await addP2PContact({
-        pubkey: npub,
-        openChat: true,
-        source: 'sidebar-search',
-        deliberate: true
-      });
-
-      toast('Contact added: ' + result.displayName);
-      simulateClickEvent(this.backBtn);
-    } catch(err) {
-      console.error('[PhantomChat.chat] failed to add contact from npub:', err);
-      const {toast} = await import('@components/toast');
-      toast('Invalid npub format');
-    }
+    const {showAddContactPopup} = await import('@components/popups/addContact');
+    showAddContactPopup({
+      managers: this.managers,
+      npub,
+      onContactAdded: async(_peerId, displayName) => {
+        const {toast} = await import('@components/toast');
+        toast('Contact added: ' + displayName);
+        simulateClickEvent(this.backBtn);
+      }
+    });
   }
 
   public initSearch() {

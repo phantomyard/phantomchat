@@ -172,11 +172,11 @@ export function describeNotifyReason(input: CapabilityInput): string {
   const {platform, env, isPackaged, appPath} = input;
   if(!isPackaged) return 'Development build — updates are not installed automatically.';
   if(platform === 'darwin' && isRunningFromReadOnlyImage(appPath)) {
-    return 'PhantomChat is running from its disk image. Drag it to your Applications folder to get automatic updates.';
+    return 'Phantomyard Desktop is running from its disk image. Drag it to your Applications folder to get automatic updates.';
   }
   if(platform === 'linux' && isPackageInstall(input) && !input.privilegeAgentPresent) {
     return 'Installing updates needs your package-manager password, but no desktop authorization tool (pkexec) was found on this system. You will be told when a new version is available.';
   }
-  if(platform === 'linux' && !env.APPIMAGE) return 'This copy is managed by your package manager, so PhantomChat will not replace it. You will be told when a new version is available.';
+  if(platform === 'linux' && !env.APPIMAGE) return 'This copy is managed by your package manager, so Phantomyard Desktop will not replace it. You will be told when a new version is available.';
   return 'This install cannot update itself automatically. You will be told when a new version is available.';
 }

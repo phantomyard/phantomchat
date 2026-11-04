@@ -108,7 +108,7 @@ export function installDesktopEntry(): number {
   }
 
   refreshDesktopDatabase();
-  console.log(`PhantomChat installed: ${desktopDest}`);
+  console.log(`Phantomyard Desktop installed: ${desktopDest}`);
   return 0;
 }
 
@@ -125,7 +125,7 @@ export function uninstallDesktopEntry(): number {
   }
 
   if(removed) refreshDesktopDatabase();
-  console.log(removed ? 'PhantomChat desktop integration removed.' : 'PhantomChat was not installed.');
+  console.log(removed ? 'Phantomyard Desktop integration removed.' : 'Phantomyard Desktop was not installed.');
   return 0;
 }
 

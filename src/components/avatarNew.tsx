@@ -739,7 +739,18 @@ export const AvatarNew = (props: {
       }
 
       if(avatarSeed) {
-        const dicebearUrl = await generateDicebearAvatar(avatarSeed, isGroup);
+        // Contacts redesign: a contact saved as Human gets the bust avatar.
+        // Everything else (phantoms, providers, legacy contacts) keeps the
+        // phantom sigil, so no existing contact changes look.
+        let isHuman = false;
+        if(!isGroup && hexPubkey) {
+          try {
+            const {getContactPrefs} = await import('@lib/phantomchat/contact-prefs');
+            isHuman = (await getContactPrefs(hexPubkey))?.kind === 'human';
+          } catch{}
+          if(!middleware()) return;
+        }
+        const dicebearUrl = await generateDicebearAvatar(avatarSeed, isGroup, isHuman);
         if(!middleware()) return;
         const img = document.createElement('img');
         img.className = 'avatar-photo';

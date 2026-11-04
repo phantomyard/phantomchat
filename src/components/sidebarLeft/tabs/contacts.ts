@@ -211,7 +211,11 @@ export default class AppContactsTab extends SliderSuperTab {
           return;
         }
 
-        await chatAPI.deleteConversation(pubkey);
+        // Same path as contact info: revokes Local tools, deletes a Provider's
+        // persona and the prefs, then the conversation.
+        const {deleteP2PContact} = await import('@lib/phantomchat/provider-contacts');
+        const bridge = (window as any).phantomchatDesktop?.phantombot;
+        await deleteP2PContact(pubkey, chatAPI, bridge?.call);
       } else {
         await this.managers.appUsersManager.deleteContacts([peerId.toUserId()]);
         await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});
@@ -385,32 +389,21 @@ export default class AppContactsTab extends SliderSuperTab {
     }
   }
 
-  private async handleNpubInput(npub: string, nickname?: string) {
-    try {
-      const {addP2PContact} = await import('@lib/phantomchat/add-p2p-contact');
-      const {toast} = await import('@components/toast');
-
-      const result = await addP2PContact({
-        pubkey: npub,
-        nickname,
-        openChat: true,
-        source: 'contacts-tab',
-        deliberate: true
-      });
-
-      toast('Contact added: ' + result.displayName);
-      this.close();
-    } catch(err) {
-      console.error('[PhantomChat.chat] failed to add contact from npub:', err);
-      const {toast} = await import('@components/toast');
-      toast('Invalid npub format');
-    }
+  // A pasted npub opens the New Contact modal prefilled, so every add goes
+  // through the same Phantom | Human | Provider choice.
+  private handleNpubInput(npub: string) {
+    this.showAddContactPopup(npub);
   }
 
-  private showAddContactPopup() {
+  private showAddContactPopup(npub?: string) {
     showAddContactPopupShared({
       managers: this.managers,
-      onSubmit: (npub, nickname) => this.handleNpubInput(npub, nickname)
+      npub,
+      onContactAdded: async(_peerId, displayName) => {
+        const {toast} = await import('@components/toast');
+        toast('Contact added: ' + displayName);
+        this.close();
+      }
     });
   }
 

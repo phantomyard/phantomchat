@@ -14,6 +14,7 @@ import {getMessageStore, StoredMessage} from './message-store';
 import {getMessageRequestStore} from './message-requests';
 import {isControlEvent, getGroupIdFromRumor} from './group-control-messages';
 import {getMsSlotFromTags} from './nostr-crypto';
+import {isLocalToolsRumor} from './local-tools-wire';
 import {waveformToBase64} from './phantomchat-media-shape';
 import type {ChatMessage, ChatMessageType} from './chat-api';
 import rootScope from '@lib/rootScope';
@@ -229,6 +230,17 @@ export async function handleRelayMessage(
       'from:', msg.from?.slice(0, 8) + '...'
     );
     return {action: 'skipped', reason: 'created_at_out_of_window'};
+  }
+
+  // 0b. Local tools traffic (phantombot #747) is never a chat message. It is
+  //     taken off here, before anything can render it, on every client; only
+  //     the desktop app acts on it. Not awaited: a tool call can run minutes.
+  if(isLocalToolsRumor(msg.tags)) {
+    if(msg.from !== ctx.ownId) {
+      void import('./local-tools').then(({handleLocalToolsRumor}) => handleLocalToolsRumor(msg))
+      .catch((err) => ctx.log.warn('[ChatAPI] local tools message failed:', err));
+    }
+    return {action: 'skipped', reason: 'local_tools'};
   }
 
   // 1. Check for delete notification

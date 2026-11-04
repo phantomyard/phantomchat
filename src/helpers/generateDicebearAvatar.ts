@@ -307,20 +307,68 @@ export function generatePhantomSquadAvatarSvg(seed: string): string {
   return corporate ? wearCostume(svg) : svg;
 }
 
+// Human contacts (contacts redesign): same seeded palettes as the Phantom
+// sigil so a contact keeps its colour, but a head-and-shoulders bust instead
+// of the hooded phantom, so people and phantoms read apart at a glance.
+const hairColors = ['#1f1300', '#3b2414', '#5a3825', '#8a5a2b', '#c18f4a', '#e6c27a', '#2b2b2b', '#8c8c8c'];
+const skinTones = ['#f6d7c3', '#eec1a1', '#d9a47e', '#b97e57', '#8d5a3b', '#5e3b26'];
+
+export function generateHumanAvatarSvg(seed: string): string {
+  const clean = (seed || '').trim().toLowerCase().replace(/^-/, '') || 'human-seed';
+  const hashes = hashString(clean);
+  const corporate = isBoringCorporate();
+  const gradients = corporate ? corporateGradients : bgGradients;
+
+  const bg = gradients[hashes[0] % gradients.length];
+  const skin = corporate ? '#d4d4d8' : skinTones[hashes[1] % skinTones.length];
+  const hair = corporate ? '#3f3f46' : hairColors[hashes[2] % hairColors.length];
+  const hairStyle = hashes[3] % 3;
+  const id = (hashes[0].toString(36) + hashes[1].toString(36)).slice(0, 10);
+
+  const hairSvg = hairStyle === 0 ?
+    `<path d="M 40 54 C 40 34 52 26 64 26 C 76 26 88 34 88 54 C 82 44 74 40 64 40 C 54 40 46 44 40 54 Z" fill="${hair}"/>` :
+    hairStyle === 1 ?
+      `<path d="M 38 62 C 36 34 50 24 64 24 C 78 24 92 34 90 62 L 86 62 C 86 48 78 40 64 40 C 50 40 42 48 42 62 Z" fill="${hair}"/>` :
+      `<path d="M 42 50 C 44 34 54 28 64 28 C 74 28 84 34 86 50 Z" fill="${hair}"/>`;
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg-${id}" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${bg.start}"/>
+      <stop offset="100%" stop-color="${bg.end}"/>
+    </linearGradient>
+    <clipPath id="clip-${id}">
+      <circle cx="64" cy="64" r="64"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#clip-${id})">
+    <circle cx="64" cy="64" r="64" fill="url(#bg-${id})"/>
+    <circle cx="64" cy="64" r="62" fill="none" stroke="${bg.stroke}" stroke-width="2" opacity="0.5"/>
+    <!-- Shoulders -->
+    <path d="M 22 128 C 22 100 40 86 64 86 C 88 86 106 100 106 128 Z" fill="${bg.cloak}" stroke="${bg.stroke}" stroke-width="1.5"/>
+    <!-- Neck + head -->
+    <rect x="56" y="74" width="16" height="16" rx="6" fill="${skin}"/>
+    <ellipse cx="64" cy="56" rx="22" ry="25" fill="${skin}"/>
+    ${hairSvg}
+  </g>
+</svg>`;
+}
+
 /**
  * Generate a deterministic Phantom avatar blob URL from a hex pubkey or seed.
  * Results are cached in memory — same seed + isGroup flag always returns same blob URL.
  */
-export async function generateDicebearAvatar(hex: string, isGroup = false): Promise<string> {
+export async function generateDicebearAvatar(hex: string, isGroup = false, isHuman = false): Promise<string> {
   const normalizedHex = typeof hex === 'string' ? hex.replace(/^-/, '') : String(hex).replace(/^-/, '');
-  const baseKey = isGroup ? `group:${normalizedHex}` : normalizedHex;
+  const human = isHuman && !isGroup;
+  const baseKey = isGroup ? `group:${normalizedHex}` : human ? `human:${normalizedHex}` : normalizedHex;
   const cacheKey = isBoringCorporate() ? `corporate:${baseKey}` : baseKey;
   const cached = cache.get(cacheKey);
   if(cached) {
     return cached;
   }
 
-  const svg = isGroup ? generatePhantomSquadAvatarSvg(normalizedHex) : generatePhantomAvatarSvg(normalizedHex);
+  const svg = isGroup ? generatePhantomSquadAvatarSvg(normalizedHex) : human ? generateHumanAvatarSvg(normalizedHex) : generatePhantomAvatarSvg(normalizedHex);
   const blob = new Blob([svg], {type: 'image/svg+xml'});
   const url = URL.createObjectURL(blob);
   cache.set(cacheKey, url);
