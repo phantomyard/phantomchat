@@ -11,7 +11,7 @@
  *    OS browser
  */
 import {app, BrowserWindow, session, shell, protocol, net, ipcMain, dialog} from 'electron';
-import {readFileSync, writeFileSync, renameSync, mkdirSync} from 'fs';
+import {readFileSync, writeFileSync, renameSync, mkdirSync, existsSync} from 'fs';
 import {join} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
 import {attachEditableContextMenu} from './contextMenu';
@@ -20,6 +20,7 @@ import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontend
 import {SPLASH_PATH} from './splash';
 import {hostBinaryPath, isAllowedCaller, checkRequest, PhantombotHostClient} from './phantombot/client';
 import {runPhantombotProbe} from './phantombot/probe';
+import {allowOnLocalPersona, findPhantombot, listLocalPersonas, phantombotCandidates} from './localPersonas/scan';
 import {
   resolvePermissionRequest,
   isPermissionCheckAllowed,
@@ -233,15 +234,46 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
   }
   const request = checkRequest(method, params);
   if('code' in request) return {ok: false, error: request};
+  const sender = event.sender;
+  return ensurePhantombot().call(request.method, request.params, (turnId, data) => {
+    if(!sender.isDestroyed()) sender.send('desktop:phantombot-event', {turnId, event: data});
+  });
+});
+
+function ensurePhantombot(): PhantombotHostClient {
   phantombot ??= new PhantombotHostClient({
     binary: hostBinaryPath(app.isPackaged, process.resourcesPath, __dirname),
     root: join(app.getPath('userData'), 'phantombot'),
-    log: (line) => console.log('[phantombot]', line)
+    log: (line) => console.log('[phantombot]', line),
+    // Provider contacts' channels: every window hears restarts and failures.
+    onChannelStatus: (persona, status) => {
+      for(const win of BrowserWindow.getAllWindows()) {
+        if(!win.isDestroyed()) win.webContents.send('desktop:phantombot-event', {persona, phantomchat: status});
+      }
+    }
   });
-  const sender = event.sender;
-  return phantombot.call(request.method, request.params, (turnId, data) => {
-    if(!sender.isDestroyed()) sender.send('desktop:phantombot-event', {turnId, event: data});
-  });
+  return phantombot;
+}
+
+// Scan (contacts redesign): the phantombot installed on this PC, not the
+// bundled engine. Same caller check as the bridge.
+function installedPhantombot(): string | undefined {
+  return findPhantombot(phantombotCandidates(process.env, process.platform, app.getPath('home')));
+}
+ipcMain.handle('desktop:local-personas:list', (event, ownNpub: unknown) => {
+  if(!isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined)) {
+    return {ok: false, error: {code: 'failed', message: 'not available to this page'}};
+  }
+  return listLocalPersonas(installedPhantombot(), typeof ownNpub === 'string' ? ownNpub : '');
+});
+ipcMain.handle('desktop:local-personas:allow', (event, persona: unknown, ownNpub: unknown) => {
+  if(!isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined)) {
+    return {ok: false, error: {code: 'failed', message: 'not available to this page'}};
+  }
+  if(typeof persona !== 'string' || typeof ownNpub !== 'string') {
+    return {ok: false, error: {code: 'failed', message: 'persona and npub must be strings'}};
+  }
+  return allowOnLocalPersona(installedPhantombot(), persona, ownNpub);
 });
 
 /**
@@ -371,6 +403,11 @@ app.whenReady().then(() => {
     protocol.handle('app', (request) => frontend!.handle(request));
   }
   createWindow();
+  // Provider contacts answer while the app is open, before any page call:
+  // the host starts every hosted channel that has an allowlist.
+  if(existsSync(join(app.getPath('userData'), 'phantombot'))) {
+    void ensurePhantombot().call('info', {});
+  }
   startDiagnosticsAfterReady(() => mainWindow);
 
   // After the window exists: the updater pushes state to it, and a check is

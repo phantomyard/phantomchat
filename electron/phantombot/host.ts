@@ -20,7 +20,17 @@ import {EMBEDDED_PI_SUBCOMMAND, EMBEDDED_PI_VERSION, runEmbeddedPi} from '../lib
 import {ESCORT_SUBCOMMAND, runEscortHook} from '../lib/escort.ts';
 import {createEngine} from '../engine/index.ts';
 import {VERSION} from '../version.ts';
-import {createDispatcher, type HostMessage} from './dispatch.ts';
+import {
+  createBashTool,
+  createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool
+} from '@earendil-works/pi-coding-agent';
+import {homedir} from 'node:os';
+import {createDispatcher, type HostMessage, type LocalToolName, type ToolRunner} from './dispatch.ts';
 
 const info = {phantombot: VERSION, pi: EMBEDDED_PI_VERSION, bun: Bun.version};
 
@@ -56,8 +66,10 @@ async function serve(): Promise<void> {
   };
 
   const engine = await createEngine({root, log: 'stderr'});
-  const dispatcher = createDispatcher(engine, info, emit);
+  const dispatcher = createDispatcher(engine, info, emit, piToolRunner(homedir()));
   process.stdout.write(JSON.stringify({ready: info}) + '\n');
+  // Provider contacts answer as soon as the app is up, not on first page call.
+  void autostartChannels(engine, dispatcher);
 
   const pending = new Set<Promise<void>>();
   const decoder = new TextDecoder();
@@ -86,4 +98,56 @@ async function serve(): Promise<void> {
   await Promise.allSettled(pending);
   await engine.close();
   process.exit(0);
+}
+
+/** Pi's own built-in tools, one at a time, with no model and no agent loop. */
+function piToolRunner(cwd: string): ToolRunner {
+  const factories: Record<LocalToolName, (cwd: string) => any> = {
+    bash: createBashTool,
+    read: createReadTool,
+    write: createWriteTool,
+    edit: createEditTool,
+    ls: createLsTool,
+    find: createFindTool,
+    grep: createGrepTool
+  };
+  return async(tool, args, signal) => {
+    const raw = await factories[tool](cwd).execute(`local-${Date.now()}`, args, signal, () => {});
+    const output = Array.isArray(raw?.content) ?
+      raw.content.filter((part: any) => part?.type === 'text').map((part: any) => part.text).join('') :
+      '';
+    // bash reports its exit code in structuredContent; truncation in either.
+    const structured = raw?.structuredContent;
+    const truncated = !!(structured?.truncated || raw?.details?.truncation?.truncated);
+    return {
+      status: raw?.isError ? 'error' : 'ok',
+      output,
+      ...(typeof structured?.exit_code === 'number' ? {exit: structured.exit_code} : {}),
+      ...(truncated ? {truncated: true} : {})
+    };
+  };
+}
+
+/** Start every persona whose channel is set up (an allowlist exists). */
+async function autostartChannels(
+  engine: Awaited<ReturnType<typeof createEngine>>,
+  dispatcher: ReturnType<typeof createDispatcher>
+): Promise<void> {
+  let names: string[];
+  try {
+    names = await engine.personas.list();
+  } catch(err) {
+    process.stderr.write(JSON.stringify({level: 'warn', msg: 'autostart: list failed', error: String(err)}) + '\n');
+    return;
+  }
+  for(const name of names) {
+    try {
+      const persona = engine.persona(name);
+      const chat = await persona.phantomchat.info();
+      if(!chat.configured || chat.allowedNpubs.length === 0) continue;
+      await dispatcher.handle({id: -1, method: 'persona.phantomchat.start', params: {persona: name}});
+    } catch(err) {
+      process.stderr.write(JSON.stringify({level: 'warn', msg: 'autostart failed', persona: name, error: String(err)}) + '\n');
+    }
+  }
 }

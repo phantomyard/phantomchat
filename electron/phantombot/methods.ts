@@ -6,12 +6,21 @@
  *
  * No method returns a secret: `secrets.set` writes into the persona's
  * encrypted vault, and the vault is never read back over the bridge.
+ * `providers.check` takes a key and answers with a verdict and model ids only.
+ *
+ * `tools.run` runs one of Pi's built-in tools on this PC, for the Local tools
+ * protocol (docs/LOCAL-TOOLS.md). The page decides who may call it; the bridge
+ * is the principal's own app either way, which can already run `tools: "full"`
+ * turns.
  */
 export const PHANTOMBOT_METHODS = [
   'info',
   'personas.list',
   'personas.exists',
   'personas.create',
+  'personas.delete',
+  'providers.list',
+  'providers.check',
   'persona.configure',
   'persona.secrets.set',
   'persona.secrets.has',
@@ -21,7 +30,15 @@ export const PHANTOMBOT_METHODS = [
   'persona.turn',
   'persona.askJson',
   'persona.decide',
-  'turn.cancel'
+  'turn.cancel',
+  'persona.phantomchat.info',
+  'persona.phantomchat.allow',
+  'persona.phantomchat.disallow',
+  'persona.phantomchat.start',
+  'persona.phantomchat.stop',
+  'persona.phantomchat.status',
+  'tools.run',
+  'tools.cancel'
 ] as const;
 
 export type PhantombotMethod = (typeof PHANTOMBOT_METHODS)[number];

@@ -66,6 +66,29 @@ export interface PhantomChatDesktopApi {
    * principal. Optional: installs packaged before it shipped do not have it.
    */
   phantombot?: DesktopPhantombotApi;
+  /**
+   * Scan: personas of the phantombot installed on this PC (contacts redesign).
+   * Optional: installs packaged before it shipped do not have it.
+   */
+  localPersonas?: DesktopLocalPersonasApi;
+}
+
+export interface LocalPersonaListing {
+  persona: string;
+  npub: string | null;
+  phantomchat: boolean;
+  /** My npub is already on its allowlist. */
+  allowed: boolean;
+}
+
+export type LocalPersonasResult<T> =
+  | {ok: true; value: T}
+  | {ok: false; error: {code: 'not_installed' | 'outdated' | 'failed'; message: string}};
+
+export interface DesktopLocalPersonasApi {
+  list(ownNpub: string): Promise<LocalPersonasResult<LocalPersonaListing[]>>;
+  /** Allow my npub on `persona`, then restart the installed phantombot. */
+  allow(persona: string, ownNpub: string): Promise<LocalPersonasResult<{npub: string; added: boolean; restarted: boolean; restartError?: string}>>;
 }
 
 export type DesktopPhantombotResult =
@@ -75,8 +98,11 @@ export type DesktopPhantombotResult =
 export interface DesktopPhantombotApi {
   /** Run one engine method. Never rejects: failures come back as `{ok: false}`. */
   call(method: string, params?: Record<string, unknown>): Promise<DesktopPhantombotResult>;
-  /** Events of running `persona.turn` calls. Returns an unsubscribe function. */
-  onEvent(listener: (message: {turnId: string; event: unknown}) => void): () => void;
+  /**
+   * Events of running `persona.turn` calls, and hosted PhantomChat channel
+   * state (`{persona, phantomchat}`). Returns an unsubscribe function.
+   */
+  onEvent(listener: (message: {turnId: string; event: unknown} | {persona: string; phantomchat: unknown}) => void): () => void;
 }
 
 export function getDesktopApi(): PhantomChatDesktopApi | null {

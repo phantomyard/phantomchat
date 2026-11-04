@@ -29,6 +29,8 @@ export interface HostClientOptions {
   spawn?: Spawn;
   /** One stderr line from the host (the engine's redacted JSON log). */
   log?: (line: string) => void;
+  /** A hosted PhantomChat channel changed state (started, failed, restarted). */
+  onChannelStatus?: (persona: string, status: unknown) => void;
 }
 
 class HostError extends Error {
@@ -135,6 +137,10 @@ export class PhantombotHostClient {
     if(!message || typeof message !== 'object') return;
     if(message.event === 'turn' && typeof message.turnId === 'string') {
       this.turnListeners.get(message.turnId)?.(message.turnId, message.data);
+      return;
+    }
+    if(message.event === 'phantomchat' && typeof message.persona === 'string') {
+      this.options.onChannelStatus?.(message.persona, message.data);
       return;
     }
     if(typeof message.id !== 'number') return;

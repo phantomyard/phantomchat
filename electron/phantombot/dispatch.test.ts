@@ -1,6 +1,8 @@
 import {describe, expect, it, vi} from 'vitest';
 import {createDispatcher, MAX_RUNNING_TURNS, parseRequest, type EngineLike, type HostMessage} from './dispatch';
 
+const NPUB = 'npub1' + 'q'.repeat(58);
+
 function fakeEngine() {
   const turnCalls: unknown[] = [];
   let cancelled = false;
@@ -22,13 +24,35 @@ function fakeEngine() {
       };
     }),
     askJson: vi.fn(async(options: any) => ({value: options.schema({a: 1}), text: '{"a":1}', held: false, attempts: 1})),
-    decide: vi.fn(async() => ({answers: {}, latencyMs: 1}))
+    decide: vi.fn(async() => ({answers: {}, latencyMs: 1})),
+    phantomchat: {
+      info: vi.fn(async() => ({npub: NPUB, configured: true, allowedNpubs: [NPUB]})),
+      allow: vi.fn(async(npub: string) => ({npub, added: true, restart: 'none'})),
+      disallow: vi.fn(async() => ({removed: true, restart: 'none'})),
+      start: vi.fn(async() => ({state: 'running', npub: NPUB, relays: 3})),
+      stop: vi.fn(async() => {}),
+      status: vi.fn(() => ({state: 'stopped'})),
+      onStatus: vi.fn((listener: (s: unknown) => void) => {
+        statusListeners.add(listener);
+        return () => statusListeners.delete(listener);
+      })
+    }
   };
+  const statusListeners = new Set<(s: unknown) => void>();
   const engine: EngineLike = {
-    personas: {list: vi.fn(async() => ['local']), exists: vi.fn(async() => true), create: vi.fn(async() => ({}))},
+    personas: {
+      list: vi.fn(async() => ['local']),
+      exists: vi.fn(async() => true),
+      create: vi.fn(async() => ({})),
+      delete: vi.fn(async() => true)
+    },
+    providers: {
+      list: vi.fn(async() => [{id: 'openrouter', label: 'OpenRouter'}]),
+      check: vi.fn(async() => ({status: 'verified', detail: 'HTTP 200', models: [{id: 'm', supportsImages: false}]}))
+    },
     persona: vi.fn(() => persona)
   };
-  return {engine, persona, turnCalls, wasCancelled: () => cancelled};
+  return {engine, persona, turnCalls, statusListeners, wasCancelled: () => cancelled};
 }
 
 const info = {phantombot: '1.1.464', pi: '1.4.0', bun: '1.4.4'};
@@ -180,5 +204,96 @@ describe('phantombot host dispatcher', () => {
     const {engine} = fakeEngine();
     const [reply] = await send(engine, {id: 1, method: 'persona.askJson', params: {persona: 'local', options: {message: 'x', jsonSchema: {type: 'object'}}}});
     expect(reply).toMatchObject({id: 1, result: {value: {a: 1}}});
+  });
+
+  describe('contacts methods', () => {
+    it('lists providers and checks a key, passing baseUrl only when given', async() => {
+      const {engine} = fakeEngine();
+      expect(await send(engine, {id: 1, method: 'providers.list'})).toEqual([
+        {id: 1, result: [{id: 'openrouter', label: 'OpenRouter'}]}
+      ]);
+      await send(engine, {id: 2, method: 'providers.check', params: {provider: 'openrouter', apiKey: 'k'}});
+      expect(engine.providers.check).toHaveBeenLastCalledWith('openrouter', 'k', undefined);
+      await send(engine, {id: 3, method: 'providers.check', params: {provider: 'openai-compatible', baseUrl: 'http://x'}});
+      expect(engine.providers.check).toHaveBeenLastCalledWith('openai-compatible', '', {baseUrl: 'http://x'});
+    });
+
+    it('refuses an allowlist entry that is not an npub', async() => {
+      const {engine, persona} = fakeEngine();
+      const out = await send(engine, {id: 1, method: 'persona.phantomchat.allow', params: {persona: 'p', npub: 'nsec1abc'}});
+      expect(out[0]).toMatchObject({id: 1, error: {code: 'invalid_argument'}});
+      expect(persona.phantomchat.allow).not.toHaveBeenCalled();
+      await send(engine, {id: 2, method: 'persona.phantomchat.allow', params: {persona: 'p', npub: NPUB}});
+      expect(persona.phantomchat.allow).toHaveBeenCalledWith(NPUB, undefined);
+    });
+
+    it('forwards channel status as events after start, and stops after delete', async() => {
+      const {engine, statusListeners} = fakeEngine();
+      const out: HostMessage[] = [];
+      const d = createDispatcher(engine, info, (m) => out.push(m));
+      await d.handle({id: 1, method: 'persona.phantomchat.start', params: {persona: 'p', displayName: 'Claude'}});
+      await d.handle({id: 2, method: 'persona.phantomchat.start', params: {persona: 'p'}});
+      expect(statusListeners.size).toBe(1);
+      for(const l of statusListeners) l({state: 'failed', error: 'relay'});
+      expect(out).toContainEqual({event: 'phantomchat', persona: 'p', data: {state: 'failed', error: 'relay'}});
+      await d.handle({id: 3, method: 'personas.delete', params: {persona: 'p'}});
+      expect(statusListeners.size).toBe(0);
+      expect(engine.personas.delete).toHaveBeenCalledWith('p');
+    });
+  });
+
+  describe('tools.run', () => {
+    it('runs only the seven protocol tools', async() => {
+      const {engine} = fakeEngine();
+      const runTool = vi.fn(async() => ({status: 'ok' as const, output: 'hi', exit: 0}));
+      const out: HostMessage[] = [];
+      const d = createDispatcher(engine, info, (m) => out.push(m), runTool);
+      await d.handle({id: 1, method: 'tools.run', params: {callId: 'c1', tool: 'bash', args: {command: 'echo hi'}}});
+      await d.handle({id: 2, method: 'tools.run', params: {callId: 'c2', tool: 'rm', args: {}}});
+      expect(out[0]).toEqual({id: 1, result: {status: 'ok', output: 'hi', exit: 0}});
+      expect(out[1]).toMatchObject({id: 2, error: {code: 'invalid_argument'}});
+      expect(runTool).toHaveBeenCalledTimes(1);
+    });
+
+    it('says not_supported without a runner', async() => {
+      const {engine} = fakeEngine();
+      expect((await send(engine, {id: 1, method: 'tools.run', params: {callId: 'c', tool: 'ls'}}))[0])
+      .toMatchObject({error: {code: 'not_supported'}});
+    });
+
+    it('cancel aborts the run and reports cancelled; a thrown tool is an error result', async() => {
+      const {engine} = fakeEngine();
+      const runTool = vi.fn((_t: string, _a: unknown, signal: AbortSignal) => new Promise<any>((resolve, reject) => {
+        if((_a as any).fail) return reject(new Error('boom'));
+        signal.addEventListener('abort', () => resolve({status: 'ok', output: 'partial'}));
+      }));
+      const out: HostMessage[] = [];
+      const d = createDispatcher(engine, info, (m) => out.push(m), runTool as any);
+      const running = d.handle({id: 1, method: 'tools.run', params: {callId: 'c1', tool: 'bash', args: {}}});
+      await d.handle({id: 2, method: 'tools.cancel', params: {callId: 'c1'}});
+      await running;
+      await d.handle({id: 3, method: 'tools.run', params: {callId: 'c3', tool: 'read', args: {fail: true}}});
+      expect(out).toContainEqual({id: 2, result: true});
+      expect(out).toContainEqual({id: 1, result: {status: 'cancelled', output: 'partial'}});
+      expect(out).toContainEqual({id: 3, result: {status: 'error', output: 'boom'}});
+    });
+
+    it('times out at the requested limit', async() => {
+      vi.useFakeTimers();
+      try {
+        const {engine} = fakeEngine();
+        const runTool = vi.fn((_t: string, _a: unknown, signal: AbortSignal) => new Promise<any>((resolve) => {
+          signal.addEventListener('abort', () => resolve({status: 'ok', output: ''}));
+        }));
+        const out: HostMessage[] = [];
+        const d = createDispatcher(engine, info, (m) => out.push(m), runTool as any);
+        const running = d.handle({id: 1, method: 'tools.run', params: {callId: 'c1', tool: 'bash', args: {}, timeoutMs: 1000}});
+        await vi.advanceTimersByTimeAsync(1000);
+        await running;
+        expect(out).toEqual([{id: 1, result: {status: 'timeout', output: ''}}]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

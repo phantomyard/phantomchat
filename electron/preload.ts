@@ -61,14 +61,26 @@ export interface PhantomChatDesktopApi {
    * feature needs no new desktop build: `call(method, params)` runs one
    * allowlisted engine method (electron/phantombot/methods.ts) and resolves
    * `{ok, value}` or `{ok: false, error: {code, message}}`; it never rejects.
-   * A `persona.turn` streams `{turnId, event}` to `onEvent` until it resolves.
+   * A `persona.turn` streams `{turnId, event}` to `onEvent` until it resolves;
+   * a hosted PhantomChat channel's state arrives as `{persona, phantomchat}`.
    * Absent on installs packaged before it shipped.
    */
   phantombot: {
     call(method: string, params?: Record<string, unknown>): Promise<PhantombotResult>;
-    onEvent(listener: (message: {turnId: string; event: unknown}) => void): () => void;
+    onEvent(listener: (message: PhantombotEvent) => void): () => void;
+  };
+  /**
+   * Scan: the phantombot installed on this PC (not the bundled engine). Lists
+   * its personas, or adds `ownNpub` to one's allowlist and restarts it.
+   * Absent on installs packaged before it shipped.
+   */
+  localPersonas: {
+    list(ownNpub: string): Promise<unknown>;
+    allow(persona: string, ownNpub: string): Promise<unknown>;
   };
 }
+
+export type PhantombotEvent = {turnId: string; event: unknown} | {persona: string; phantomchat: unknown};
 
 export type PhantombotResult = {ok: true; value: unknown} | {ok: false; error: {code: string; message: string}};
 
@@ -91,11 +103,15 @@ const api: PhantomChatDesktopApi = {
   resetPermissionSettings: () => ipcRenderer.invoke('desktop:reset-permission-settings'),
   phantombot: {
     call: (method: string, params?: Record<string, unknown>) => ipcRenderer.invoke('desktop:phantombot:call', method, params),
-    onEvent: (listener: (message: {turnId: string; event: unknown}) => void) => {
-      const handler = (_event: unknown, message: {turnId: string; event: unknown}) => listener(message);
+    onEvent: (listener: (message: PhantombotEvent) => void) => {
+      const handler = (_event: unknown, message: PhantombotEvent) => listener(message);
       ipcRenderer.on('desktop:phantombot-event', handler);
       return () => ipcRenderer.removeListener('desktop:phantombot-event', handler);
     }
+  },
+  localPersonas: {
+    list: (ownNpub: string) => ipcRenderer.invoke('desktop:local-personas:list', ownNpub),
+    allow: (persona: string, ownNpub: string) => ipcRenderer.invoke('desktop:local-personas:allow', persona, ownNpub)
   }
 };
 
