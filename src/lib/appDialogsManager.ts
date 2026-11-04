@@ -35,7 +35,7 @@ import {simulateClickEvent} from '@helpers/dom/clickEvent';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import replaceContent from '@helpers/dom/replaceContent';
 import paintDialogTyping from '@lib/phantomchat/dialog-typing-indicator';
-import {shouldOpenEditorOnSelectedChat} from '@lib/phantomchat/group-edit-click';
+import {handleSelectedChatClick} from '@lib/phantomchat/group-edit-click';
 import ConnectionStatusComponent from '@components/connectionStatus';
 import {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
 import {fastRafPromise} from '@helpers/schedulers';
@@ -1871,18 +1871,22 @@ export class AppDialogsManager {
           threadId,
           type: ChatType.Chat
         }));
-      if(shouldOpenEditorOnSelectedChat({
-        peerId: +peerId,
-        lastMsgId,
-        threadId,
-        monoforumParentPeerId,
-        isActive: isSelectedChat,
-        shiftKey: e.shiftKey
-      })) {
-        cancelEvent(e);
-        // Dynamic import: the editor module pulls in the sidebar and the whole
-        // chat graph, which would create an import cycle with this manager.
-        void import('@components/peerActionsMenu').then((m) => m.openPeerEditor(peerId));
+      if(handleSelectedChatClick(
+        e,
+        {
+          peerId: +peerId,
+          lastMsgId,
+          threadId,
+          monoforumParentPeerId,
+          isActive: isSelectedChat
+        },
+        (editorPeerId) => {
+          // Dynamic import: the editor module pulls in the sidebar and the
+          // whole chat graph, which would create an import cycle with this
+          // manager.
+          void import('@components/peerActionsMenu').then((m) => m.openPeerEditor(editorPeerId));
+        }
+      )) {
         return;
       }
 

@@ -1,6 +1,6 @@
 import {describe, it, expect} from 'vitest';
 import fs from 'fs';
-import {shouldOpenEditorOnSelectedChat} from '@lib/phantomchat/group-edit-click';
+import {handleSelectedChatClick, shouldOpenEditorOnSelectedChat} from '@lib/phantomchat/group-edit-click';
 import {getGroupEditSavePlan} from '@components/sidebarRight/tabs/phantomchatGroupEditState';
 import {SESSION_PEER_BASE, GROUP_PEER_BASE} from '@lib/phantomchat/group-types';
 
@@ -24,11 +24,55 @@ describe('chat list click on the already-open chat', () => {
     expect(shouldOpenEditorOnSelectedChat({...base, isActive: false})).toBe(false);
   });
 
-  it('keeps message jumps, threads, forum parents and shift-clicks untouched', () => {
+  it('keeps message jumps, threads, forum parents and modified clicks untouched', () => {
     expect(shouldOpenEditorOnSelectedChat({...base, lastMsgId: 42})).toBe(false);
     expect(shouldOpenEditorOnSelectedChat({...base, threadId: 42})).toBe(false);
     expect(shouldOpenEditorOnSelectedChat({...base, monoforumParentPeerId: 42})).toBe(false);
     expect(shouldOpenEditorOnSelectedChat({...base, shiftKey: true})).toBe(false);
+    expect(shouldOpenEditorOnSelectedChat({...base, ctrlKey: true})).toBe(false);
+    expect(shouldOpenEditorOnSelectedChat({...base, metaKey: true})).toBe(false);
+  });
+
+  it('routes ctrl- and cmd-clicks through the listener to the new-tab path, plain clicks to the editor', () => {
+    const route = {peerId: groupPeerId, isActive: true};
+    const clicked = {mode: 'none'};
+    const opened: number[] = [];
+
+    const row = document.createElement('div');
+    row.className = 'active';
+    document.body.append(row);
+
+    // The handler the manager installs for this rule, driven by real events.
+    const listener = (e: MouseEvent) => {
+      if(handleSelectedChatClick(e, route, (peerId) => opened.push(peerId))) return;
+      if(e.ctrlKey || e.metaKey) {
+        clicked.mode = 'new-tab';
+        return;
+      }
+
+      clicked.mode = 'other';
+    };
+
+    row.addEventListener('mousedown', listener);
+
+    for(const mods of [{ctrlKey: true}, {metaKey: true}]) {
+      clicked.mode = 'none';
+      const event = new MouseEvent('mousedown', {bubbles: true, cancelable: true, ...mods});
+      row.dispatchEvent(event);
+      expect(clicked.mode).toBe('new-tab');
+      expect(event.defaultPrevented).toBe(false);
+    }
+
+    expect(opened).toEqual([]);
+
+    clicked.mode = 'none';
+    const plain = new MouseEvent('mousedown', {bubbles: true, cancelable: true});
+    row.dispatchEvent(plain);
+    expect(opened).toEqual([groupPeerId]);
+    expect(clicked.mode).toBe('none');
+    expect(plain.defaultPrevented).toBe(true);
+
+    row.remove();
   });
 
   it('does not hijack P2P or MTProto peers', () => {
@@ -38,9 +82,11 @@ describe('chat list click on the already-open chat', () => {
 
   it('is wired into the chat list click handler through the shared editor entry point', () => {
     const source = read('src/lib/appDialogsManager.ts');
-    expect(source).toContain('shouldOpenEditorOnSelectedChat({');
+    expect(source).toContain('handleSelectedChatClick(');
     expect(source).toContain("elem.classList.contains('active')");
-    expect(source).toContain("import('@components/peerActionsMenu').then((m) => m.openPeerEditor(peerId))");
+    expect(source).toContain("import('@components/peerActionsMenu').then((m) => m.openPeerEditor(editorPeerId))");
+    // ctrl/meta must still reach the existing open-in-new-tab branch below.
+    expect(source.indexOf('if(e.ctrlKey || e.metaKey)')).toBeGreaterThan(source.indexOf('handleSelectedChatClick('));
   });
 });
 
