@@ -59,13 +59,18 @@ describe('WS-A: Telegram-only UI cleanup', () => {
     expect(sidebarSrc).not.toContain('PhantomChatFeatures');
   });
 
-  it('sidebar hamburger menu no longer offers Add Contact', () => {
-    expect(sidebarSrc).not.toContain("text: 'AddContact'");
-  });
-
   it('sidebar report bug uses showReportBugPopup (URL in reportBug.ts)', () => {
     expect(sidebarSrc).toContain('showReportBugPopup');
     expect(sidebarSrc).not.toContain('bugs.telegram.org');
+  });
+
+  it('sidebar offers AddContact in the bottom section, above Appearance', () => {
+    // Appearance used to open the bottom block; the entry now does, so the
+    // separator travels with it and Appearance follows straight after.
+    expect(sidebarSrc).toContain('}, addContactBtn, appearanceBtn, sidebarBtn, {');
+    expect(sidebarSrc).toContain("text: 'AddContact'");
+    // one entry only — the create-new submenu never offered it as well
+    expect(sidebarSrc.split("text: 'AddContact'").length - 1).toBe(1);
   });
 });
 
