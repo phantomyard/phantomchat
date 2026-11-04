@@ -155,7 +155,10 @@ describe('mounted group edit pane', () => {
     const save = document.querySelector('.save') as HTMLButtonElement;
     expect(save).not.toBeNull();
     expect(save.disabled).toBe(false);
-    expect(save.classList.contains('is-visible')).toBe(false);
+    // `.btn-corner` sits one button-height below the pane unless `.is-visible`
+    // is on it, so that class must be there from the start (jsdom computes no
+    // stylesheets — the rendered position is proven in the browser check).
+    expect(save.classList.contains('is-visible')).toBe(true);
     save.click();
     await vi.waitFor(() => expect(mocks.close).toHaveBeenCalledOnce());
   });

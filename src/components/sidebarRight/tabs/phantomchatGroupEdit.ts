@@ -150,13 +150,15 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       inputWrapper.append(nameInput.container);
       editSection.content.append(inputWrapper);
 
-      const saveBtn = ButtonCorner({icon: 'check'});
-      this.content.append(saveBtn);
-
       // The check button stays visible and enabled at all times: it persists
       // whatever the field currently holds, so a pasted name saves on the
       // click/Enter that follows without waiting for a keystroke to mark the
-      // field dirty. Nothing to persist still closes the pane (see below).
+      // field dirty. `.btn-corner` rests one button-height BELOW the pane and
+      // only `.is-visible` brings it back to translateY 0, so the class is set
+      // once here instead of being toggled on a dirty check.
+      const saveBtn = ButtonCorner({icon: 'check'});
+      saveBtn.classList.add('is-visible');
+      this.content.append(saveBtn);
 
       let saving = false;
       const closeEditor = () => {

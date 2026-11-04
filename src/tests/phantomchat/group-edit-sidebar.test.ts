@@ -93,7 +93,11 @@ describe('group/session editor labels', () => {
   });
 
   it('keeps the check button always visible instead of gating it on a dirty field', () => {
+    // `.btn-corner` rests one button-height below the pane and only
+    // `.is-visible` brings it back, so the editor sets the class once at
+    // creation rather than toggling it from a dirty check.
     expect(tabSource).not.toContain("saveBtn.classList.toggle('is-visible'");
+    expect(tabSource).toContain("saveBtn.classList.add('is-visible')");
     expect(tabSource).toContain('this.content.append(saveBtn)');
   });
 });

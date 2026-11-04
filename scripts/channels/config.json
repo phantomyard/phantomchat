@@ -139,8 +139,8 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536",
-      "preview": "a2f86dc2b7277bb3a21bebf90205f14a8f05c3209be37c192d0f9c4abbb1cbc6",
-      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged. Preview bumps the local language-pack version 17 -> 18 with this PR's new \"Open New Session\" key, because a cached v17 pack renders the literal key (boot reloads local strings on a version mismatch only, and the update check is a no-op with MTProto off). Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Contacts redesign: bumps the local language-pack version 18 -> 19 so cached clients load ContactName and ContactLocalTools instead of rendering the raw keys. Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged."
+      "preview": "480e5808cdb22ebed3b8e443723d4f3114dfae7aaa7ee30368b9adc493851a49",
+      "reason": "Local language-pack version 19 -> 20 so a cached client reloads the pack for this PR's two new editor labels (Name, Add Members). Version constant only; no other content, storage or schema change."
     },
     "src/lib/folders-sidebar-layout.ts": {
       "stable": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
@@ -269,8 +269,8 @@
     },
     "src/components/sidebarRight/tabs/phantomchatGroupEdit.ts": {
       "stable": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
-      "preview": "db692ddf39af2e31201e4eb6825722f9b84b2fdbcea97784697e3c10b245dc6b",
-      "reason": "Group/session editor presentation only: 'Name' and 'Add Members' labels, and the check button is always visible/enabled and saves the current field value. Persistence still goes through the same group-api calls; no storage format change."
+      "preview": "bc654f3a8fd62d3dcd668c483fdb7a40191f20c98c143abd00a24595437d5411",
+      "reason": "Group/session editor presentation only: 'Name' and 'Add Members' labels; the check button is always on screen (`.is-visible` set once at creation, since `.btn-corner` otherwise rests a button-height below the pane) and saves the current field value. Persistence still goes through the same group-api calls; no storage format change."
     },
     "src/components/chat/input.ts": {
       "stable": "00902fb8dd1f3fb11ad72d8746fcbde66f54daf52e8d6c77f2c664f208e8bdb5",
