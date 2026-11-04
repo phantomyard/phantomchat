@@ -1859,7 +1859,10 @@ export class AppDialogsManager {
       });
 
       // Clicking the row of the chat that is already open opens its edit
-      // sidebar (name + members) instead of pointlessly re-selecting it.
+      // sidebar (name + members) instead of pointlessly re-selecting it — but
+      // only while the list and the chat are on screen side by side. Below the
+      // floating-left-sidebar breakpoint the chat replaces the list, so that
+      // click has to fall through to `openChat` to get back to the bubbles.
       // Groups and sessions share one peer class, so this covers both. The
       // open chat is read from the live app state (with the row's `active`
       // class as fallback) so this also works in the folder lists, whose rows
@@ -1878,7 +1881,8 @@ export class AppDialogsManager {
           lastMsgId,
           threadId,
           monoforumParentPeerId,
-          isActive: isSelectedChat
+          isActive: isSelectedChat,
+          isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar
         },
         (editorPeerId) => {
           // Dynamic import: the editor module pulls in the sidebar and the
