@@ -59,13 +59,13 @@
     },
     "src/lang.ts": {
       "stable": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b",
-      "preview": "6cbb04065cb056b0f599ef1bc225fe5ff30f67ed2cfa9d530f166e8366dd92c7",
-      "reason": "Two new UI strings, ContactName and ContactLocalTools. Text only."
+      "preview": "5206ff18cad9b410e80e10feeb59339689a29545ecbafd8980ed487a42bf477a",
+      "reason": "Shared language pack source. Only change: two group/session editor labels ('Name' and 'Add Members') replace the old 'Group Name'/'Group Members' wording. No storage, schema or protocol strings touched."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
-      "preview": "c2f7de210e5d524d12fefdd2e3a06103842c1eb833318ae025c63af73b10122a",
-      "reason": "Removes the session badge and the session avatar-slot class so a session row renders exactly like a group row; the empty-state glyph is keyed to folder ids 0/3/4/1. Presentation only. Selection update: Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Pin/unread menu update: Presentation only: gives count-less unread marks their own CSS class. Counts, read cursor and persistence are unchanged. Requires independent exact-head content review. Compact top folder controls: icon/label badges and archive unread counter wired to the existing archive-tab action and folder_unread event. Hide both sidebar layout controls below the rail breakpoint. Presentation and navigation only; no storage, read-state, schema, protocol, or preference changes. Independent exact-head content review required. Chat-list subtitle repaint re-derives the '‹peer› is working' line from the live typing store instead of trusting the one peer_typings event that painted it, so a dialog update no longer erases the indicator (or leaves the row blank when no last message resolved). A late paint is dropped when a newer repaint of the same row superseded it. Presentation only: reads the existing typingsInPeer store, no new store, schema, key or protocol. Search-hit guard: the repaint is skipped for non-chat-list rows (message search, peer-profile preview), which have no typing lifecycle. Presentation and scope only; identifies the existing `isSearch` discriminator, no storage, read-state, schema, protocol or preference change. Independent exact-head content review required. Additional change: Default-folder selection and rail ordering only. Reuses device-local defaultChatFolderId and existing filtersArr/localId fields; no schema, protocol or encryption changes. Chats-first normalization is readable by pinned and published Stable. #358/#386 (app-bugs batch): archive tile label through the lang pack (existing ChatList.Filter.Archive key) and an active class driven from setFilterId; setLastMessage's setUnread defaults to null (list row) with search callers passing false. Presentation only; no storage, read-state, schema or protocol change. Independent exact-head content review required."
+      "preview": "a12a68e0afed480e79e16c7e0d33336232c80ac3f52db430ae354421d58129a4",
+      "reason": "Chat-list click routing only: a left click on the row of the chat that is ALREADY open opens the existing edit sidebar through the shared openPeerEditor entry point. Message jumps, thread/forum rows, shift-clicks and non-group peers keep their behaviour. No storage, schema or sync change."
     },
     "src/lib/folders-default.ts": {
       "preview": "d77bf09f6154aa5092129b4d04e780000e633b558146993790729aafd2459375",
@@ -74,8 +74,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f8fc66f7707e106851bbf0aa76b018408bda9c59f6740b9fccf4fa2a89fe0d4e",
-      "preview": "5fdc96025d882bafbb2b1fa9760a2a33ee476d64670509f797dddc94cebd916a",
-      "reason": "Two PhantomChat strings: the empty-folder placeholder (\"Nothing here yet\") and the archive/session failure toasts. Text only - no logic, no storage. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Generated copy of src/lang.ts: Interface Settings renamed to Appearance, three unused menu strings removed. Additional change: Regenerated local labels: default-folder copy plus existing UITheme strings from lang.ts and key repositioning for ArchiveActionFailed/SessionCreateFailed. No stored format or protocol changes. Regenerated copy of lang.ts: the single new \"Open New Session\" label for the text-selection menu. Regenerated copy also drops the unused \"Search Selected Text\" label together with its menu entry. Text only; no stored format or protocol change. Regenerated copy of lang.ts: adds ContactName and ContactLocalTools. Text only; no stored format or protocol change."
+      "preview": "9696ee0f0f98be25da2677bdadb3d920846c85a326a7930764dde316ac91d2e0",
+      "reason": "Generated artifact of src/lang.ts (node src/scripts/format_lang.js). Only change: the same two editor labels ('Name', 'Add Members'). No other key changes."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
@@ -269,8 +269,8 @@
     },
     "src/components/sidebarRight/tabs/phantomchatGroupEdit.ts": {
       "stable": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
-      "preview": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
-      "reason": "Group editor UI and save trigger only: removes the description input and unavailable admin Leave Group action; Enter reuses the existing check-button save path. Writes use the unchanged GroupAPI updateGroupInfo({name}) and membership APIs with existing GroupRecord fields. Renames preserve stored descriptions. No schema, identity, CRDT, storage-key or protocol changes. Real Chromium GroupAPI/IndexedDB rename and description-preservation check passed. Requires independent content review of this exact pair."
+      "preview": "db692ddf39af2e31201e4eb6825722f9b84b2fdbcea97784697e3c10b245dc6b",
+      "reason": "Group/session editor presentation only: 'Name' and 'Add Members' labels, and the check button is always visible/enabled and saves the current field value. Persistence still goes through the same group-api calls; no storage format change."
     },
     "src/components/chat/input.ts": {
       "stable": "00902fb8dd1f3fb11ad72d8746fcbde66f54daf52e8d6c77f2c664f208e8bdb5",
@@ -736,6 +736,16 @@
       "stable": "absent",
       "preview": "5c8a35c014a698e5c6934d61eb9e4b50bb54de3f85c327e800c53fa776f2d1b1",
       "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts. forgetContact (shared by contact info and the contacts list) first revokes the contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its prefs row; the caller deletes the conversation last. A failed revoke or persona delete throws and keeps the contact, its persona and its conversation."
+    },
+    "src/components/sidebarRight/tabs/phantomchatGroupEditState.ts": {
+      "stable": "73bab35262b8dd1318cecdfd23e3293811e1a7a0b72113afae1d0f52ef724607",
+      "preview": "7f3d69b7e26a258e88b7b7553d785e83b53314287de61ec530cb0fcc64415595",
+      "reason": "Adds getGroupEditSavePlan: the pure decision behind the editor check button (name change plus member diff). No I/O, storage or network access."
+    },
+    "src/lib/phantomchat/group-edit-click.ts": {
+      "stable": "absent",
+      "preview": "4abb9bc91cb6effbcf4c2f612919d4b656e208b24be2885a6be91720502ac0c9",
+      "reason": "New pure predicate deciding when a chat-list click on an already-open group/session peer opens the edit sidebar. No storage, network, protocol or IndexedDB access."
     }
   }
 }
