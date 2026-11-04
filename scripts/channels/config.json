@@ -742,6 +742,11 @@
       "preview": "179586f1012ce51f24fdbf4e6e5f1f0004b598d8a2016c792dbe3edd28f43501",
       "reason": "Drops theme_color so an installed PWA with no theme-color meta (Boring Corporate) gets the OS title bar instead of #1f9bdf blue. Presentation only; no storage, schema or protocol change."
     },
+    "public/site_apple.webmanifest": {
+      "stable": "b6c55a9a4729aee1162c984cf5e48234b905b01d8bbbf289635565a6bf071872",
+      "preview": "1e9315d499fda304ca00f3c6fecd9d53ecddba2ff46160832cc074055a776335",
+      "reason": "Drops theme_color (#ffffff) from the manifest macOS desktop browsers load, so an installed PWA with no theme-color meta (Boring Corporate) gets the OS title bar instead of a white one. Presentation only; no storage, schema or protocol change."
+    },
     "src/helpers/themeColorMeta.ts": {
       "stable": "d7eb723c29809631db3b77a1459c91ac6667a0acb976e6664aac0936c3ea3bed",
       "preview": "cc4c820752bdf0ca6cef1fa0b249584ff7850951a73e9c4a1a956ccdf0d2becf",
