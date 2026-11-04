@@ -35,6 +35,7 @@ import {simulateClickEvent} from '@helpers/dom/clickEvent';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import replaceContent from '@helpers/dom/replaceContent';
 import paintDialogTyping from '@lib/phantomchat/dialog-typing-indicator';
+import {handleSelectedChatClick} from '@lib/phantomchat/group-edit-click';
 import ConnectionStatusComponent from '@components/connectionStatus';
 import {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
 import {fastRafPromise} from '@helpers/schedulers';
@@ -1856,6 +1857,38 @@ export class AppDialogsManager {
         lastMsgId,
         threadId: threadId
       });
+
+      // Clicking the row of the chat that is already open opens its edit
+      // sidebar (name + members) instead of pointlessly re-selecting it.
+      // Groups and sessions share one peer class, so this covers both. The
+      // open chat is read from the live app state (with the row's `active`
+      // class as fallback) so this also works in the folder lists, whose rows
+      // are rebuilt without the class.
+      const isSelectedChat = elem.classList.contains('active') ||
+        (!!appImManager.chat && appImManager.isSamePeer(appImManager.chat, {
+          peerId: monoforumParentPeerId || peerId,
+          monoforumThreadId: monoforumParentPeerId ? peerId : undefined,
+          threadId,
+          type: ChatType.Chat
+        }));
+      if(handleSelectedChatClick(
+        e,
+        {
+          peerId: +peerId,
+          lastMsgId,
+          threadId,
+          monoforumParentPeerId,
+          isActive: isSelectedChat
+        },
+        (editorPeerId) => {
+          // Dynamic import: the editor module pulls in the sidebar and the
+          // whole chat graph, which would create an import cycle with this
+          // manager.
+          void import('@components/peerActionsMenu').then((m) => m.openPeerEditor(editorPeerId));
+        }
+      )) {
+        return;
+      }
 
       const isSponsored = elem.dataset.sponsored === 'true';
       if(isSponsored) {

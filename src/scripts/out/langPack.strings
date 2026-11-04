@@ -1194,7 +1194,8 @@
 "Contact.Delete.CouldNotResolve" = "Could not resolve contact to delete";
 "Contact.Delete.ConfirmationDesc" = "will be deleted along with the entire conversation history. This cannot be undone.";
 "PhantomChat.GroupEdit.AdminSubtitle" = "admin";
-"PhantomChat.GroupEdit.GroupMembers" = "Group Members";
+"PhantomChat.GroupEdit.Name" = "Name";
+"PhantomChat.GroupEdit.AddMembers" = "Add Members";
 "PhantomChat.GroupEdit.MakeAdmin" = "Make Admin";
 "PhantomChat.GroupEdit.MakeAdminDescription" = "Transfer admin rights to {0}? They will be able to edit the group, manage members and delete it.";
 "PhantomChat.GroupEdit.AdminLeaveHint" = "Admins can't leave the group. Transfer admin first, then leave.";
