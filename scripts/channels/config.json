@@ -24,8 +24,8 @@
     },
     "src/helpers/themeController.ts": {
       "stable": "dcd3c9503ce0809df894a5e441390ebb6d624f6faf286c35b567014d0b4cb195",
-      "preview": "dcd3c9503ce0809df894a5e441390ebb6d624f6faf286c35b567014d0b4cb195",
-      "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required."
+      "preview": "d643fb8cb2f8b32223ab3543c01533d063bbcb389d4457dee0b16a93b98b863a",
+      "reason": "Restore original Stable UI colours; reverse prior stock Preview palette at render time only, preserving custom settings and persisted data. Independent review remains required. Boring Corporate: setThemeColor removes the theme-color meta (OS title bar) unless an explicit override such as fullscreen-call black is passed. Presentation only; no storage or persisted data change."
     },
     "src/helpers/understatedTheme.ts": {
       "stable": "df03917d332cbbf38e347f6f2e625e6f3e36a96b934bf2c80358d02f3869742d",
@@ -344,8 +344,8 @@
     },
     "index.html": {
       "stable": "4de92dc7976fd19e38b6f79b91672a92c9dcb37e0878e7f1474a5376cf0a7062",
-      "preview": "183ed9950be9bca9772e8636114954c92d09b438dccbe36090911acba23ef505",
-      "reason": "Boot-only read of the device-local phantomchat:ui-theme key to set html[data-ui-theme] before first paint. Preview treats an absent, unknown or unreadable key as Boring Corporate; Stable treats it as Fun and Relaxed, so a device that never picked a theme shows that channel's default. Same key, no storage schema change, nothing written at boot. Plus a display-only inline script: when window.phantomchatDesktop exists (desktop app) it sets document.title and the boot-splash heading to Phantomyard Desktop. Reads no storage, writes none. Requires independent content review."
+      "preview": "feb1e187f466de36930eec53a999ca179f521b3f66b1d17cae391340486c4314",
+      "reason": "Boot-only read of the device-local phantomchat:ui-theme key to set html[data-ui-theme] before first paint. Preview treats an absent, unknown or unreadable key as Boring Corporate; Stable treats it as Fun and Relaxed, so a device that never picked a theme shows that channel's default. Same key, no storage schema change, nothing written at boot. Plus a display-only inline script: when window.phantomchatDesktop exists (desktop app) it sets document.title and the boot-splash heading to Phantomyard Desktop. Reads no storage, writes none. Requires independent content review. Plus a display-only inline script after the theme-color pair: under Boring Corporate it removes the theme-color metas so the OS draws the title bar. Reads no storage, writes none."
     },
     "src/components/sidebarLeft/tabs/generalSettings.ts": {
       "stable": "11be3e8069e654e20612cee8f959fad88f6b66ea4030956eed673911089e67e3",
@@ -736,6 +736,21 @@
       "stable": "absent",
       "preview": "5c8a35c014a698e5c6934d61eb9e4b50bb54de3f85c327e800c53fa776f2d1b1",
       "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts. forgetContact (shared by contact info and the contacts list) first revokes the contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its prefs row; the caller deletes the conversation last. A failed revoke or persona delete throws and keeps the contact, its persona and its conversation."
+    },
+    "public/site.webmanifest": {
+      "stable": "336f1323ef345b18b5238edfbd416113ea5aa84ba9c5998b67010a9d7bbcdc95",
+      "preview": "179586f1012ce51f24fdbf4e6e5f1f0004b598d8a2016c792dbe3edd28f43501",
+      "reason": "Drops theme_color so an installed PWA with no theme-color meta (Boring Corporate) gets the OS title bar instead of #1f9bdf blue. Presentation only; no storage, schema or protocol change."
+    },
+    "public/site_apple.webmanifest": {
+      "stable": "b6c55a9a4729aee1162c984cf5e48234b905b01d8bbbf289635565a6bf071872",
+      "preview": "1e9315d499fda304ca00f3c6fecd9d53ecddba2ff46160832cc074055a776335",
+      "reason": "Drops theme_color (#ffffff) from the manifest macOS desktop browsers load, so an installed PWA with no theme-color meta (Boring Corporate) gets the OS title bar instead of a white one. Presentation only; no storage, schema or protocol change."
+    },
+    "src/helpers/themeColorMeta.ts": {
+      "stable": "d7eb723c29809631db3b77a1459c91ac6667a0acb976e6664aac0936c3ea3bed",
+      "preview": "cc4c820752bdf0ca6cef1fa0b249584ff7850951a73e9c4a1a956ccdf0d2becf",
+      "reason": "applyThemeColorToMeta accepts null to remove every theme-color meta, and recreates one unscoped meta when a colour is set with none present. Presentation only; no storage."
     }
   }
 }
