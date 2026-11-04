@@ -129,7 +129,10 @@ function makeToggle(label: string, checked: boolean, testId: string) {
   const caption = el('span', 'min-width:0;', label);
   // The app's switch markup (see checkboxField.ts). A bare <input type="checkbox">
   // is invisible here: _checkbox.scss hides it and draws .checkbox-toggle instead.
-  const field = el('label', 'margin:0;');
+  // pointer-events:all is required: .checkbox-field-toggle is pointer-events:none
+  // app-wide (the app re-enables it only inside .row.accordion-toggler), so without
+  // it a click on the switch falls through to the row and nothing toggles.
+  const field = el('label', 'margin:0;pointer-events:all;');
   field.classList.add('checkbox-field', 'checkbox-field-toggle', 'checkbox-without-caption');
   const input = el('input');
   input.classList.add('checkbox-field-input');
@@ -142,7 +145,10 @@ function makeToggle(label: string, checked: boolean, testId: string) {
   circle.classList.add('checkbox-toggle-circle');
   toggle.append(circle);
   field.append(input, toggle);
-  caption.addEventListener('click', () => {
+  // A click on the switch or the label activates the input natively through the
+  // label; the row handler must not toggle it a second time or the two cancel out.
+  row.addEventListener('click', (e) => {
+    if((e.target as HTMLElement).closest('label')) return;
     input.checked = !input.checked;
   });
   row.append(caption, field);

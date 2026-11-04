@@ -311,6 +311,35 @@ describe('New Contact modal', () => {
     expect(q('add-contact-notifications').closest('.checkbox-field-toggle')).toBeTruthy();
   });
 
+  it('flips the switch when the switch itself is clicked', async() => {
+    await open();
+    const input = q('add-contact-notifications') as HTMLInputElement;
+    const toggle = input.closest('.checkbox-field-toggle')!.querySelector('.checkbox-toggle') as HTMLElement;
+    expect(input.checked).toBe(true);
+    toggle.click();
+    expect(input.checked).toBe(false);
+    toggle.click();
+    expect(input.checked).toBe(true);
+  });
+
+  it('flips the switch when the row caption is clicked', async() => {
+    await open();
+    const input = q('add-contact-notifications') as HTMLInputElement;
+    const row = q('add-contact-notifications-row');
+    expect(input.checked).toBe(true);
+    row.click();
+    expect(input.checked).toBe(false);
+  });
+
+  it('leaves the switch label clickable, overriding the app-wide pointer-events:none', async() => {
+    await open();
+    // .checkbox-field-toggle is pointer-events:none in _checkbox.scss; jsdom does
+    // not compute stylesheets, so assert the inline override that keeps the switch
+    // clickable in a real browser.
+    const field = q('add-contact-notifications').closest('.checkbox-field-toggle') as HTMLElement;
+    expect(field.style.pointerEvents).toBe('all');
+  });
+
   it('has no last-name or notes field', async() => {
     await open();
     const dialog = q('add-contact-dialog');
