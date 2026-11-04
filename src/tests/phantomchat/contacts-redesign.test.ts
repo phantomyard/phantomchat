@@ -44,13 +44,11 @@ const addP2PContact = vi.fn(async(opts: any) => ({
 }));
 vi.mock('@lib/phantomchat/add-p2p-contact', () => ({addP2PContact: (o: any) => addP2PContact(o)}));
 
-// openAddContactPane talks to the right sidebar; the real one needs the whole app.
-const fakeSidebar = vi.hoisted(() => ({
-  isTabExists: vi.fn((): boolean => false),
-  createTab: vi.fn(),
-  toggleSidebar: vi.fn()
-}));
-vi.mock('@components/sidebarRight', () => ({default: fakeSidebar}));
+// openAddContactPane talks to the left sidebar; the real one needs the whole app.
+const fakeSidebar = vi.hoisted(() => ({createTab: vi.fn()}));
+const fakeRightSidebar = vi.hoisted(() => ({toggleSidebar: vi.fn(), createTab: vi.fn()}));
+vi.mock('@components/sidebarLeft', () => ({default: fakeSidebar}));
+vi.mock('@components/sidebarRight', () => ({default: fakeRightSidebar}));
 // The pane's InputField / Row / CheckboxField pull in the worker proxy, which jsdom cannot start.
 vi.mock('@lib/apiManagerProxy', () => {
   const anyObj: any = new Proxy(function() {}, {
@@ -276,7 +274,7 @@ function desktopLocalTools(allow: boolean) {
 describe('New Contact pane', () => {
   // The pane module's component graph is slow to transform on a cold run.
   beforeAll(async() => {
-    await import('@components/sidebarRight/tabs/addContact');
+    await import('@components/sidebarLeft/tabs/addContact');
   }, 60000);
 
   const managers: any = {appMessagesManager: {togglePeerMute: vi.fn(async() => {})}};
@@ -294,11 +292,11 @@ describe('New Contact pane', () => {
     document.body.innerHTML = '';
   });
 
-  // The pane is a right-sidebar tab; its form is mounted here on its own so
-  // the test does not need the sidebar. onDone is the pane's close.
+  // The pane is a left-column tab; its form is mounted here on its own so the
+  // test does not need the sidebar. onDone is the pane's close.
   let done: ReturnType<typeof vi.fn>;
   async function open(npub?: string) {
-    const {createAddContactForm} = await import('@components/sidebarRight/tabs/addContact');
+    const {createAddContactForm} = await import('@components/sidebarLeft/tabs/addContact');
     const added = vi.fn();
     done = vi.fn();
     const form = createAddContactForm({managers, npub, onContactAdded: added, onDone: done, isAlive: () => true});
@@ -473,7 +471,7 @@ describe('New Contact pane', () => {
     await setContactPrefs(HEX, {kind: 'phantom', localTools: true});
     const before = await getContactPrefs(HEX);
     addP2PContact.mockImplementationOnce(async() => { throw new Error('relay down'); });
-    const {addTypedContact} = await import('@components/sidebarRight/tabs/addContact');
+    const {addTypedContact} = await import('@components/sidebarLeft/tabs/addContact');
     await expect(addTypedContact(managers, {
       npub: NPUB, nickname: 'X', kind: 'human', localTools: false, notifications: true
     })).rejects.toThrow('relay down');
@@ -484,7 +482,7 @@ describe('New Contact pane', () => {
 
   it('a failed add of a new npub leaves no prefs row behind', async() => {
     addP2PContact.mockImplementationOnce(async() => { throw new Error('relay down'); });
-    const {addTypedContact} = await import('@components/sidebarRight/tabs/addContact');
+    const {addTypedContact} = await import('@components/sidebarLeft/tabs/addContact');
     await expect(addTypedContact(managers, {
       npub: NPUB, nickname: 'X', kind: 'phantom', localTools: true, notifications: true
     })).rejects.toThrow('relay down');
@@ -497,7 +495,7 @@ describe('New Contact pane', () => {
     _resetContactPrefsForTests();
     const openSpy = vi.spyOn(indexedDB, 'open').mockImplementation(() => { throw new Error('QuotaExceededError'); });
     try {
-      const {addTypedContact} = await import('@components/sidebarRight/tabs/addContact');
+      const {addTypedContact} = await import('@components/sidebarLeft/tabs/addContact');
       const result = await addTypedContact(managers, {
         npub: NPUB, nickname: 'Corinne', kind: 'human', localTools: false, notifications: true
       } as any);
@@ -517,23 +515,27 @@ describe('New Contact pane', () => {
     expect(addP2PContact).not.toHaveBeenCalled();
   });
 
-  it('opens one pane at a time, and opens it before showing the sidebar', async() => {
-    const {openAddContactPane, default: AppAddContactTab} = await import('@components/sidebarRight/tabs/addContact');
-    const order: string[] = [];
+  it('opens in the LEFT column, as a tab the slider de-duplicates', async() => {
+    const {openAddContactPane, default: AppAddContactTab} = await import('@components/sidebarLeft/tabs/addContact');
     const tabs: any[] = [];
-    fakeSidebar.isTabExists.mockImplementation(() => tabs.length > 0);
     fakeSidebar.createTab.mockImplementation((ctor: any) => {
       expect(ctor).toBe(AppAddContactTab);
-      const tab = {open: vi.fn(async() => { order.push('open'); }), options: undefined as any};
+      const tab = {open: vi.fn(async() => {}), options: undefined as any};
       tabs.push(tab);
       return tab;
     });
-    fakeSidebar.toggleSidebar.mockImplementation(() => { order.push('show'); });
-    await openAddContactPane({managers, npub: NPUB});
+    fakeRightSidebar.createTab.mockClear();
+    fakeRightSidebar.toggleSidebar.mockClear();
     await openAddContactPane({managers, npub: NPUB});
     expect(tabs.length).toBe(1);
     expect(tabs[0].options).toMatchObject({npub: NPUB});
-    expect(order.slice(0, 2)).toEqual(['open', 'show']);
+    expect(tabs[0].open).toHaveBeenCalledTimes(1);
+    // Nothing reaches for the right column any more.
+    expect(fakeRightSidebar.createTab).not.toHaveBeenCalled();
+    expect(fakeRightSidebar.toggleSidebar).not.toHaveBeenCalled();
+    // `noSame` is what makes the slider hand back the pane already on top
+    // instead of stacking one per keystroke past 60 characters.
+    expect((AppAddContactTab as any).noSame).toBe(true);
   });
 
   it('Provider: no Validate button; save checks the token, names the persona from the contact name and allows my npub', async() => {

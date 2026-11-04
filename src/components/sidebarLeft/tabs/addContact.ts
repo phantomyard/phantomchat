@@ -14,16 +14,15 @@ import InputField from '@components/inputField';
 import Row from '@components/row';
 import CheckboxField from '@components/checkboxField';
 import ButtonCorner from '@components/buttonCorner';
-import {replaceButtonIcon} from '@components/button';
-import {attachClickEvent} from '@helpers/dom/clickEvent';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import Icon from '@components/icon';
 
 /**
- * New Contact pane (contacts redesign). It slides in from the right like the
- * contact and group Edit panes and is built from the same parts: close
- * button + title header, SettingSection, InputField, checkbox Rows and the
- * round check button in the corner. The user first picks what the contact
+ * New Contact pane (contacts redesign). It opens in the LEFT column, over the
+ * chat list, like the Contacts tab and the Edit panes, and is built from the
+ * same parts: close button + title header, SettingSection, InputField,
+ * checkbox Rows and the round check button in the corner. The user first
+ * picks what the contact
  * IS, and each type shows only its own fields:
  *
  *   Phantom  — npub (+ Scan, desktop only), Phantom avatar, Contact Name,
@@ -165,7 +164,7 @@ export interface AddContactForm {
 
 /**
  * Build the New Contact form. Kept apart from the pane so it can be tested
- * without the right sidebar; the pane only mounts it.
+ * without a sidebar; the pane only mounts it.
  */
 export function createAddContactForm(opts: AddContactFormOptions): AddContactForm {
   const {managers, onContactAdded} = opts;
@@ -588,53 +587,31 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
 }
 
 /**
- * The New Contact pane: a right-sidebar tab like AppEditContactTab and
- * AppPhantomChatGroupEditTab, with the same close button, title and corner
- * check button.
+ * The New Contact pane: a LEFT-column tab, opened over the chat list the way
+ * the Contacts tab and the Edit panes are, with the same close button, title
+ * and corner check button. It shares the form's parts with the contact and
+ * group Edit panes; only the column it slides in from differs.
  */
 export default class AppAddContactTab extends SliderSuperTab {
+  public static noSame = true;
   public options: ShowAddContactOptions;
   public form: AddContactForm;
-  /** Opened over the chat list (phone): closing must go back to it. */
-  public fromChatList = false;
-  private added = false;
-  private backToChatList: () => void;
 
-  public async init() {
-    // Closing the right sidebar always selects the CHAT tab. On a phone the
-    // pane opens over the chat list with no chat behind it, so without this a
-    // close (X, back, Escape) lands on an empty chat screen. A successful add
-    // opens the new chat, which is the right place to land.
-    const {default: appImManager, APP_TABS} = await import('@lib/appImManager');
-    this.backToChatList = () => appImManager.selectTab(APP_TABS.CHATLIST);
-
+  public init() {
     this.container.classList.add('edit-peer-container', 'edit-contact-container', 'add-contact-container');
     this.title.textContent = 'New Contact';
-
-    const appSidebarRight = (await import('@components/sidebarRight')).default;
-    const closePane = () => {
-      this.close();
-      appSidebarRight.toggleSidebar(false);
-    };
-
-    // Close, not back: the pane is a whole task, as in the Edit panes.
-    const newCloseBtn = this.closeBtn.cloneNode(true) as HTMLElement;
-    this.closeBtn.replaceWith(newCloseBtn);
-    this.closeBtn = newCloseBtn;
-    replaceButtonIcon(this.closeBtn, 'close');
-    attachClickEvent(this.closeBtn, closePane, {listenerSetter: this.listenerSetter});
 
     let alive = true;
     this.middlewareHelper.get().onDestroy(() => {
       alive = false;
     });
 
+    // Close, not back-to-somewhere: the left column already holds whatever the
+    // pane was opened over (chat list, Contacts), and a tab close returns to
+    // it. A successful add opens the new chat, which leaves the column too.
     this.form = createAddContactForm({
       ...this.options,
-      onDone: () => {
-        this.added = true;
-        closePane();
-      },
+      onDone: () => this.close(),
       isAlive: () => alive && this.container.isConnected
     });
     this.scrollable.append(this.form.section);
@@ -644,34 +621,21 @@ export default class AppAddContactTab extends SliderSuperTab {
   protected onOpenAfterTimeout() {
     this.form?.focus();
   }
-
-  protected onClose() {
-    if(this.fromChatList && !this.added) this.backToChatList?.();
-  }
 }
 
 /**
- * Open the New Contact pane. Every entry point (tools menu, Contacts tab +,
- * an npub pasted into a search box) opens this same pane.
+ * Open the New Contact pane in the left column. Every entry point (tools menu,
+ * Contacts tab +, an npub pasted into a search box) opens this same pane.
  */
 export async function openAddContactPane(opts: ShowAddContactOptions): Promise<void> {
-  const appSidebarRight = (await import('@components/sidebarRight')).default;
-  // One pane at a time: a search box fires on every keystroke past 60 chars.
-  if(appSidebarRight.isTabExists(AppAddContactTab)) {
-    appSidebarRight.toggleSidebar(true);
-    return;
-  }
-  const tab = appSidebarRight.createTab(AppAddContactTab, true);
-  tab.options = opts;
-  // 'is-left-column-shown' (LEFT_COLUMN_ACTIVE_CLASSNAME in sidebarLeft) is
-  // set while the chat list is the selected tab. Read as a string so this
-  // module does not import the whole left sidebar.
-  tab.fromChatList = document.body.classList.contains('is-left-column-shown');
-  // Await open() BEFORE showing the sidebar: with an empty history,
-  // toggleSidebar(true) falls back to the native peer-info tab (see
-  // openPeerEditor in peerActionsMenu.ts).
+  const {default: appSidebarLeft} = await import('@components/sidebarLeft');
+  const tab = appSidebarLeft.createTab(AppAddContactTab, true);
+  // `noSame` above hands back the pane that is already on top, so a search box
+  // that fires on every keystroke past 60 characters stacks one pane, not ten.
+  // That instance's form was built from the options it opened with and its
+  // `init` is already consumed, so only a fresh tab takes the new options.
+  tab.options ??= opts;
   await tab.open();
-  appSidebarRight.toggleSidebar(true);
 }
 
 /**

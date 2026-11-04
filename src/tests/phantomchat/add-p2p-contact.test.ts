@@ -105,7 +105,7 @@ describe('Call sites route through addP2PContact', () => {
   // place a user-gesture add calls addP2PContact. That routing is pinned in
   // the next test.
   const cases: Array<{label: string; file: string}> = [
-    {label: 'New Contact pane',      file: 'components/sidebarRight/tabs/addContact.ts'},
+    {label: 'New Contact pane',      file: 'components/sidebarLeft/tabs/addContact.ts'},
     {label: 'KeyExchange scanner',   file: 'components/phantomchat/KeyExchange.tsx'}
   ];
 

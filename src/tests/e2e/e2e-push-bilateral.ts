@@ -148,7 +148,7 @@ async function addPeerAsContact(page: Page, peerNpub: string, peerName: string):
   await page.locator('.btn-menu-item', {hasText: 'Add to contacts'}).first().click({timeout: 5000});
   await page.waitForTimeout(600);
 
-  // The New Contact pane slides in on the right.
+  // The New Contact pane opens in the left column, over the chat list.
   await page.waitForSelector('.add-contact-container [data-testid="add-contact-npub"]', {timeout: 8000});
 
   if(peerName) {

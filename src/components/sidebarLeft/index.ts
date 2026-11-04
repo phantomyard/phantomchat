@@ -661,7 +661,7 @@ export class AppSidebarLeft extends SidebarSlider {
       separator: true,
       onClick: async() => {
         closeTabsBefore(async() => {
-          const {openAddContactPane} = await import('@components/sidebarRight/tabs/addContact');
+          const {openAddContactPane} = await import('@components/sidebarLeft/tabs/addContact');
           void openAddContactPane({managers: this.managers});
         });
       }
@@ -1225,7 +1225,7 @@ export class AppSidebarLeft extends SidebarSlider {
   // A pasted npub opens the New Contact pane prefilled (contacts redesign):
   // adding straight from the search box skipped the contact-type choice.
   private async handleNpubInput(npub: string) {
-    const {openAddContactPane} = await import('@components/sidebarRight/tabs/addContact');
+    const {openAddContactPane} = await import('@components/sidebarLeft/tabs/addContact');
     await openAddContactPane({
       managers: this.managers,
       npub,

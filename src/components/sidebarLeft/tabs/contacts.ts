@@ -394,9 +394,9 @@ export default class AppContactsTab extends SliderSuperTab {
     void this.showAddContactPane(npub);
   }
 
-  // The pane slides in from the right like the contact and group Edit panes.
+  // The pane opens over this tab in the left column, like the other panes.
   private async showAddContactPane(npub?: string) {
-    const {openAddContactPane} = await import('@components/sidebarRight/tabs/addContact');
+    const {openAddContactPane} = await import('@components/sidebarLeft/tabs/addContact');
     await openAddContactPane({
       managers: this.managers,
       npub,
