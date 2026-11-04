@@ -574,7 +574,7 @@
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "ee3ed0391a978730116160f83812060814c997994b80863c7c7fe061c7f9a879",
+      "preview": "bd8b4d6247b884576e90964404185120c49cede092c9e632a9164dfc2264d0cc",
       "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact also deletes its bundled-engine persona via the desktop bridge. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change."
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
@@ -689,7 +689,7 @@
     },
     "src/components/popups/addContact.ts": {
       "stable": "d3b3ef4664b82602239a5ba99cdd3ab8e2997fbc7136a41a7d4dd2ece457fded",
-      "preview": "680e55d913518c01c98659e5d0cd3274bc7711559dc85c48195ad936b91246ac",
+      "preview": "41fcc20191a37e3b1917e56cf440dbcf0568f1d0f974429e2e0095b7e460520e",
       "reason": "New-contact modal: Provider and Scan (desktop only) plus the Phantom Local tools gate. Writes only phantomchat-contact-prefs (new optional persona field, same version 1 store) and the existing addP2PContact path."
     },
     "src/lib/phantomchat/contact-prefs.ts": {
