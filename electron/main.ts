@@ -21,6 +21,7 @@ import {SPLASH_PATH} from './splash';
 import {hostBinaryPath, isAllowedCaller, checkRequest, PhantombotHostClient} from './phantombot/client';
 import {runPhantombotProbe} from './phantombot/probe';
 import {allowOnLocalPersona, findPhantombot, listLocalPersonas, phantombotCandidates} from './localPersonas/scan';
+import {LocalToolsHost, type ToolResult} from './localTools/host';
 import {
   resolvePermissionRequest,
   isPermissionCheckAllowed,
@@ -260,6 +261,60 @@ function ensurePhantombot(): PhantombotHostClient {
 function installedPhantombot(): string | undefined {
   return findPhantombot(phantombotCandidates(process.env, process.platform, app.getPath('home')));
 }
+// Local tools for Phantom contacts (phantombot #747): the gate and protocol
+// live here, the tools run in the bundled engine. The renderer unwraps and
+// verifies each rumor (it holds the key) and sends what this returns.
+let localTools: LocalToolsHost | undefined;
+function ensureLocalTools(): LocalToolsHost {
+  localTools ??= new LocalToolsHost({
+    dataDir: join(app.getPath('userData'), 'local-tools'),
+    tools: {
+      run: async(runId, tool, args, timeoutMs) => {
+        const res = await ensurePhantombot().call('tools.run', {callId: runId, tool, args, ...(timeoutMs ? {timeoutMs} : {})});
+        return res.ok ? res.value as ToolResult : {status: 'error', output: res.error.message};
+      },
+      cancel: async(runId) => {
+        await ensurePhantombot().call('tools.cancel', {callId: runId});
+      }
+    },
+    confirm: async(name) => {
+      const options = {
+        type: 'warning' as const,
+        message: `Allow ${name} to use this PC?`,
+        detail: `${name} will be able to run commands and read and change any file on this PC, without asking again. You can turn this off at any time in contact info.`,
+        buttons: ['Allow', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true
+      };
+      const {response} = await (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options));
+      return response === 0;
+    }
+  });
+  return localTools;
+}
+function fromApp(event: Electron.IpcMainInvokeEvent): boolean {
+  return isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined);
+}
+ipcMain.handle('desktop:local-tools:set-owner', (event, owner: unknown) => {
+  if(!fromApp(event) || typeof owner !== 'string') return {enabled: [], capability: null};
+  const host = ensureLocalTools();
+  host.setOwner(owner);
+  return {enabled: host.enabled(), capability: host.capability()};
+});
+ipcMain.handle('desktop:local-tools:enabled', (event) => fromApp(event) ? ensureLocalTools().enabled() : []);
+ipcMain.handle('desktop:local-tools:set', (event, pubkey: unknown, on: unknown, name: unknown) => {
+  if(!fromApp(event) || typeof pubkey !== 'string' || typeof on !== 'boolean') return {enabled: false, notify: null};
+  return ensureLocalTools().setLocalAccess(pubkey, on, typeof name === 'string' && name ? name.slice(0, 80) : 'This contact');
+});
+ipcMain.handle('desktop:local-tools:message', (event, sender: unknown, payload: unknown, group: unknown) => {
+  if(!fromApp(event) || typeof sender !== 'string') return [];
+  const g = group && typeof group === 'object' &&
+    typeof (group as any).isSession === 'boolean' && Array.isArray((group as any).members) ?
+    {isSession: (group as any).isSession as boolean, members: ((group as any).members as unknown[]).filter((m): m is string => typeof m === 'string')} :
+    null;
+  return ensureLocalTools().handleMessage(sender, payload, g);
+});
 ipcMain.handle('desktop:local-personas:list', (event, ownNpub: unknown) => {
   if(!isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined)) {
     return {ok: false, error: {code: 'failed', message: 'not available to this page'}};

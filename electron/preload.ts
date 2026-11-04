@@ -78,6 +78,16 @@ export interface PhantomChatDesktopApi {
     list(ownNpub: string): Promise<unknown>;
     allow(persona: string, ownNpub: string): Promise<unknown>;
   };
+  /**
+   * Local tools for Phantom contacts (phantombot #747). The gate and protocol
+   * are main's; the page unwraps, verifies and sends. Absent on older installs.
+   */
+  localTools: {
+    setOwner(ownerPubkey: string): Promise<unknown>;
+    enabled(): Promise<string[]>;
+    set(pubkey: string, on: boolean, contactName: string): Promise<unknown>;
+    message(sender: string, payload: unknown, group: unknown): Promise<unknown[]>;
+  };
 }
 
 export type PhantombotEvent = {turnId: string; event: unknown} | {persona: string; phantomchat: unknown};
@@ -112,6 +122,12 @@ const api: PhantomChatDesktopApi = {
   localPersonas: {
     list: (ownNpub: string) => ipcRenderer.invoke('desktop:local-personas:list', ownNpub),
     allow: (persona: string, ownNpub: string) => ipcRenderer.invoke('desktop:local-personas:allow', persona, ownNpub)
+  },
+  localTools: {
+    setOwner: (ownerPubkey: string) => ipcRenderer.invoke('desktop:local-tools:set-owner', ownerPubkey),
+    enabled: () => ipcRenderer.invoke('desktop:local-tools:enabled'),
+    set: (pubkey: string, on: boolean, contactName: string) => ipcRenderer.invoke('desktop:local-tools:set', pubkey, on, contactName),
+    message: (sender: string, payload: unknown, group: unknown) => ipcRenderer.invoke('desktop:local-tools:message', sender, payload, group)
   }
 };
 

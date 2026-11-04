@@ -112,6 +112,15 @@ describe('Human avatar', () => {
   });
 });
 
+function desktopLocalTools(allow: boolean) {
+  return {
+    setOwner: vi.fn(async() => ({enabled: [], capability: null})),
+    enabled: vi.fn(async() => [] as string[]),
+    set: vi.fn(async(_pubkey: string, on: boolean) => ({enabled: allow && on, notify: null})),
+    message: vi.fn(async() => [] as unknown[])
+  };
+}
+
 describe('New Contact modal', () => {
   const managers: any = {appMessagesManager: {togglePeerMute: vi.fn(async() => {})}};
   const q = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
@@ -144,7 +153,11 @@ describe('New Contact modal', () => {
     expect(q('add-contact-scan-local').style.display).toBe('none');
   });
 
-  it('Phantom shows Local tools; Human hides it', async() => {
+  it('Phantom shows Local tools only with the desktop gate; Human never', async() => {
+    await open();
+    expect(visible('add-contact-local-tools')).toBe(false);
+    document.querySelector('.popup-add-contact-overlay')?.remove();
+    (window as any).phantomchatDesktop = {localTools: desktopLocalTools(true)};
     await open();
     expect(visible('add-contact-local-tools')).toBe(true);
     q('add-contact-kind-human').click();
@@ -175,15 +188,27 @@ describe('New Contact modal', () => {
     expect(managers.appMessagesManager.togglePeerMute).not.toHaveBeenCalled();
   });
 
-  it('Phantom with Local tools on and Notifications off is stored and muted', async() => {
+  it('Phantom with Local tools on and Notifications off is stored, allowed by main, and muted', async() => {
+    const localTools = desktopLocalTools(true);
+    (window as any).phantomchatDesktop = {localTools};
     const added = await open(NPUB);
     (q('add-contact-local-tools') as HTMLInputElement).checked = true;
     (q('add-contact-notifications') as HTMLInputElement).checked = false;
     q('add-contact-submit').click();
     await vi.waitFor(() => expect(added).toHaveBeenCalled());
-    const row = await getContactPrefs(HEX);
-    expect(row).toMatchObject({kind: 'phantom', localTools: true});
-    expect(managers.appMessagesManager.togglePeerMute).toHaveBeenCalledWith({peerId: 1000000000000001, mute: true});
+    await vi.waitFor(() => expect(managers.appMessagesManager.togglePeerMute).toHaveBeenCalledWith({peerId: 1000000000000001, mute: true}));
+    expect(localTools.set).toHaveBeenCalledWith(HEX, true, expect.any(String));
+    expect(await getContactPrefs(HEX)).toMatchObject({kind: 'phantom', localTools: true});
+  });
+
+  it('a Cancel in main\'s Allow dialog leaves Local tools off; the contact is still added', async() => {
+    (window as any).phantomchatDesktop = {localTools: desktopLocalTools(false)};
+    const added = await open(NPUB);
+    (q('add-contact-local-tools') as HTMLInputElement).checked = true;
+    q('add-contact-submit').click();
+    await vi.waitFor(() => expect(added).toHaveBeenCalled());
+    await vi.waitFor(async() => expect((await getContactPrefs(HEX))?.localTools).toBe(false));
+    expect(addP2PContact).toHaveBeenCalled();
   });
 
   it('a failed add puts an existing contact\'s prefs back', async() => {

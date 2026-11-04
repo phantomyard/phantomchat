@@ -174,6 +174,7 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   scanBtn.classList.add('btn-primary', 'btn-transparent');
   scanBtn.setAttribute('data-testid', 'add-contact-scan-local');
   const scanAvailable = canScanLocalPersonas();
+  const localToolsAvailable = typeof (desktopApi() as any)?.localTools?.message === 'function';
 
   // QR: scan a printed / on-screen npub with the camera. Kept from the old
   // modal — on a phone it is how most contacts get added.
@@ -257,7 +258,9 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
       b.style.color = on ? '#fff' : 'var(--primary-text-color)';
     });
     // Local tools: Phantom + Provider only. Scan: Phantom, desktop only.
-    localTools.row.style.display = k === 'human' ? 'none' : '';
+    // Local tools: Provider (this PC's engine), or Phantom on a desktop build
+    // with the Local tools gate. Never Human.
+    localTools.row.style.display = k === 'provider' || (k === 'phantom' && localToolsAvailable) ? '' : 'none';
     scanBtn.style.display = k === 'phantom' && scanAvailable ? '' : 'none';
     npubRow.style.display = k === 'provider' ? 'none' : 'flex';
     providerBox.style.display = k === 'provider' ? 'flex' : 'none';
@@ -555,6 +558,18 @@ export async function addTypedContact(managers: AppManagers, submit: AddContactS
       });
     }
     throw err;
+  }
+
+  // Phantom + Local tools: main's gate decides (native Allow dialog). A
+  // Cancel turns the saved switch back off; the contact is added either way.
+  if(submit.kind === 'phantom' && submit.localTools) {
+    try {
+      const {getLocalToolsApi, setPhantomLocalTools} = await import('@lib/phantomchat/local-tools');
+      const on = getLocalToolsApi() ? await setPhantomLocalTools(hex, true, submit.nickname || 'This contact') : false;
+      if(!on && wrote) await setContactPrefs(hex, {localTools: false});
+    } catch(err) {
+      console.warn('[AddContactPopup] could not turn on Local tools', err);
+    }
   }
 
   if(!submit.notifications) {

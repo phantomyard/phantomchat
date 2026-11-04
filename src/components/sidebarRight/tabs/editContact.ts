@@ -95,8 +95,18 @@ export default class AppEditContactTab extends SliderSuperTab {
       const prefs = contactPubkey ? await prefsMod.getContactPrefs(contactPubkey) : undefined;
       const contactKind = prefsMod.resolveContactKind(prefs?.kind, isBot);
       this.contactPubkey = contactPubkey;
-      this.localToolsCheckboxField = contactPubkey && prefsMod.kindSupportsLocalTools(contactKind) ?
-        new CheckboxField({text: 'ContactLocalTools', checked: !!prefs?.localTools}) :
+      // Phantom: the switch is main's Local tools gate (phantombot #747), so it
+      // only exists in a desktop build that has it, and main's list is the
+      // truth. Provider: the contact runs on this PC's bundled engine.
+      const localToolsMod = contactKind === 'phantom' ? await import('@lib/phantomchat/local-tools') : undefined;
+      const localToolsApi = localToolsMod?.getLocalToolsApi();
+      const offerLocalTools = !!contactPubkey && prefsMod.kindSupportsLocalTools(contactKind) &&
+        (contactKind !== 'phantom' || !!localToolsApi);
+      const localToolsOn = localToolsApi && contactPubkey ?
+        (await localToolsApi.enabled().catch((): string[] => [])).includes(contactPubkey) :
+        !!prefs?.localTools;
+      this.localToolsCheckboxField = offerLocalTools ?
+        new CheckboxField({text: 'ContactLocalTools', checked: localToolsOn}) :
         undefined;
 
       this.editPeer = new EditPeer({
@@ -143,13 +153,24 @@ export default class AppEditContactTab extends SliderSuperTab {
           // the text fields.
           const field = this.localToolsCheckboxField;
           const pubkey = this.contactPubkey;
-          field.input.addEventListener('change', (e) => {
+          field.input.addEventListener('change', async(e) => {
             if(!e.isTrusted) return;
-            prefsMod.setContactPrefs(pubkey, {localTools: field.checked}).catch((err) => {
+            const wanted = field.checked;
+            try {
+              let on = wanted;
+              if(localToolsMod && localToolsApi) {
+                const user = await this.managers.appUsersManager.getUser(userId).catch((): undefined => undefined);
+                const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || 'This contact';
+                // ON asks in a native dialog; a Cancel leaves it off.
+                on = await localToolsMod.setPhantomLocalTools(pubkey, wanted, name);
+                field.checked = on;
+              }
+              await prefsMod.setContactPrefs(pubkey, {localTools: on});
+            } catch(err) {
               console.error('[PhantomChat] failed to save Local tools', err);
-              field.checked = !field.checked;
+              field.checked = !wanted;
               toastNew({langPackKey: 'Error.AnError'});
-            });
+            }
           });
           const localToolsRow = new Row({
             checkboxField: this.localToolsCheckboxField,
