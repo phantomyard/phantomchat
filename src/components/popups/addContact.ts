@@ -258,9 +258,11 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
       b.style.color = on ? '#fff' : 'var(--primary-text-color)';
     });
     // Local tools: Phantom + Provider only. Scan: Phantom, desktop only.
-    // Local tools: Provider (this PC's engine), or Phantom on a desktop build
-    // with the Local tools gate. Never Human.
-    localTools.row.style.display = k === 'provider' || (k === 'phantom' && localToolsAvailable) ? '' : 'none';
+    // Local tools: Phantom on a desktop build with the Local tools gate. A
+    // Provider runs on this PC's engine with its tools, and the engine has no
+    // per-channel switch yet, so it shows none rather than one that does
+    // nothing. Never Human.
+    localTools.row.style.display = k === 'phantom' && localToolsAvailable ? '' : 'none';
     scanBtn.style.display = k === 'phantom' && scanAvailable ? '' : 'none';
     npubRow.style.display = k === 'provider' ? 'none' : 'flex';
     providerBox.style.display = k === 'provider' ? 'flex' : 'none';
@@ -452,7 +454,7 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
         nickname: nameInput.value.trim() || p.label,
         kind: 'provider',
         notifications: notifications.input.checked,
-        localTools: localTools.input.checked,
+        localTools: false,
         persona: created.persona
       });
       overlay.remove();

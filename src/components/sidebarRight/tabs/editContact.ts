@@ -97,11 +97,11 @@ export default class AppEditContactTab extends SliderSuperTab {
       this.contactPubkey = contactPubkey;
       // Phantom: the switch is main's Local tools gate (phantombot #747), so it
       // only exists in a desktop build that has it, and main's list is the
-      // truth. Provider: the contact runs on this PC's bundled engine.
+      // truth.
       const localToolsMod = contactKind === 'phantom' ? await import('@lib/phantomchat/local-tools') : undefined;
       const localToolsApi = localToolsMod?.getLocalToolsApi();
-      const offerLocalTools = !!contactPubkey && prefsMod.kindSupportsLocalTools(contactKind) &&
-        (contactKind !== 'phantom' || !!localToolsApi);
+      // Provider: no switch until the engine can turn a hosted channel's tools off.
+      const offerLocalTools = !!contactPubkey && contactKind === 'phantom' && !!localToolsApi;
       const localToolsOn = localToolsApi && contactPubkey ?
         (await localToolsApi.enabled().catch((): string[] => [])).includes(contactPubkey) :
         !!prefs?.localTools;

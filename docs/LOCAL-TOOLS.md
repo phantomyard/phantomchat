@@ -19,6 +19,10 @@ deletes the persona: nsec, key, memory and history. The host starts every
 persona with an allowlist when the app launches. Providers that need a base
 URL are not offered yet: the engine's brain settings have no endpoint field.
 
+A Provider contact runs on this PC with the persona's full tools, like a
+phantom answering its principal. It has no Local tools switch yet: the
+engine's hosted channel has no per-channel tools setting to turn off.
+
 ## Scan
 
 The Phantom type's Scan button reads the phantombot **installed** on this PC
