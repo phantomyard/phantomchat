@@ -196,8 +196,8 @@ describe('WS-C: Add Contact in Contacts tab', () => {
     expect(contactsSrc).not.toContain('PopupCreateContact');
   });
 
-  it('has showAddContactPopup method', () => {
-    expect(contactsSrc).toContain('showAddContactPopup');
+  it('has showAddContactPane method', () => {
+    expect(contactsSrc).toContain('showAddContactPane');
   });
 
   it('has npub input validation', () => {
@@ -205,7 +205,7 @@ describe('WS-C: Add Contact in Contacts tab', () => {
   });
 
   it('has add contact button', () => {
-    expect(contactsSrc).toContain('showAddContactPopup');
+    expect(contactsSrc).toContain('openAddContactPane');
   });
 
   it('keeps handleNpubInput method', () => {

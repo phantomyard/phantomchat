@@ -101,18 +101,18 @@ describe('addP2PContact — canonical helper', () => {
 
 describe('Call sites route through addP2PContact', () => {
   // The Contacts tab and the sidebar npub search no longer add directly
-  // (contacts redesign): both open the New Contact modal, which is the one
+  // (contacts redesign): both open the New Contact pane, which is the one
   // place a user-gesture add calls addP2PContact. That routing is pinned in
   // the next test.
   const cases: Array<{label: string; file: string}> = [
-    {label: 'Add Contact popup',     file: 'components/popups/addContact.ts'},
+    {label: 'New Contact pane',      file: 'components/sidebarRight/tabs/addContact.ts'},
     {label: 'KeyExchange scanner',   file: 'components/phantomchat/KeyExchange.tsx'}
   ];
 
   for(const file of ['components/sidebarLeft/tabs/contacts.ts', 'components/sidebarLeft/index.ts']) {
-    it(`${file} adds only through the New Contact modal`, () => {
+    it(`${file} adds only through the New Contact pane`, () => {
       const src = read(file);
-      expect(src).toMatch(/showAddContactPopup/);
+      expect(src).toMatch(/openAddContactPane/);
       expect(src).not.toMatch(/addP2PContact/);
     });
   }

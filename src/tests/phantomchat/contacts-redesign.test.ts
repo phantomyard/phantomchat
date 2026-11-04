@@ -3,7 +3,7 @@
  * the Human avatar, and the New Contact modal's per-type fields.
  */
 import 'fake-indexeddb/auto';
-import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
+import {describe, it, expect, beforeAll, beforeEach, afterEach, vi} from 'vitest';
 import {
   getContactPrefs,
   setContactPrefs,
@@ -43,6 +43,41 @@ const addP2PContact = vi.fn(async(opts: any) => ({
   isNew: true
 }));
 vi.mock('@lib/phantomchat/add-p2p-contact', () => ({addP2PContact: (o: any) => addP2PContact(o)}));
+
+// openAddContactPane talks to the right sidebar; the real one needs the whole app.
+const fakeSidebar = vi.hoisted(() => ({
+  isTabExists: vi.fn((): boolean => false),
+  createTab: vi.fn(),
+  toggleSidebar: vi.fn()
+}));
+vi.mock('@components/sidebarRight', () => ({default: fakeSidebar}));
+// The pane's InputField / Row / CheckboxField pull in the worker proxy, which jsdom cannot start.
+vi.mock('@lib/apiManagerProxy', () => {
+  const anyObj: any = new Proxy(function() {}, {
+    get: (_t, prop) => prop === 'then' ? undefined : anyObj,
+    apply: () => anyObj
+  });
+  return {default: anyObj};
+});
+// Row's import graph needs the app state store (see group-edit-pane.test.ts,
+// which stubs it too). The stub keeps what the pane relies on: a label row
+// that carries the checkbox field and its Enabled / Disabled subtitle.
+vi.mock('@components/row', () => ({default: class {
+  container = document.createElement('label');
+  constructor(options: any) {
+    this.container.classList.add('row');
+    const subtitle = document.createElement('div');
+    subtitle.className = 'row-subtitle';
+    const field = options.checkboxField;
+    if(field) {
+      this.container.append(field.label);
+      if(options.withCheckboxSubtitle) {
+        field.input.addEventListener('change', () => subtitle.textContent = field.input.checked ? 'Enabled' : 'Disabled');
+      }
+    }
+    this.container.append(subtitle);
+  }
+}}));
 
 async function freshDb() {
   _resetContactPrefsForTests();
@@ -238,7 +273,12 @@ function desktopLocalTools(allow: boolean) {
   };
 }
 
-describe('New Contact modal', () => {
+describe('New Contact pane', () => {
+  // The pane module's component graph is slow to transform on a cold run.
+  beforeAll(async() => {
+    await import('@components/sidebarRight/tabs/addContact');
+  }, 60000);
+
   const managers: any = {appMessagesManager: {togglePeerMute: vi.fn(async() => {})}};
   const q = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
   const visible = (id: string) => !!q(id) && (q(id).closest('[data-testid$="-row"]') as HTMLElement || q(id)).style.display !== 'none';
@@ -254,10 +294,15 @@ describe('New Contact modal', () => {
     document.body.innerHTML = '';
   });
 
+  // The pane is a right-sidebar tab; its form is mounted here on its own so
+  // the test does not need the sidebar. onDone is the pane's close.
+  let done: ReturnType<typeof vi.fn>;
   async function open(npub?: string) {
-    const {showAddContactPopup} = await import('@components/popups/addContact');
+    const {createAddContactForm} = await import('@components/sidebarRight/tabs/addContact');
     const added = vi.fn();
-    showAddContactPopup({managers, npub, onContactAdded: added});
+    done = vi.fn();
+    const form = createAddContactForm({managers, npub, onContactAdded: added, onDone: done, isAlive: () => true});
+    document.body.append(form.section, form.submitBtn);
     await new Promise((r) => setTimeout(r, 0));
     return added;
   }
@@ -273,7 +318,7 @@ describe('New Contact modal', () => {
   it('Phantom shows Local tools only with the desktop gate; Human never', async() => {
     await open();
     expect(visible('add-contact-local-tools')).toBe(false);
-    document.querySelector('.popup-add-contact-overlay')?.remove();
+    document.body.innerHTML = '';
     (window as any).phantomchatDesktop = {localTools: desktopLocalTools(true)};
     await open();
     expect(visible('add-contact-local-tools')).toBe(true);
@@ -298,46 +343,84 @@ describe('New Contact modal', () => {
     expect(scan.style.display).toBe('flex');
   });
 
-  it('never reuses the app-wide block button inside the dialog', async() => {
+  it('never reuses the app-wide block button inside the form', async() => {
     await open();
     const dialog = q('add-contact-dialog');
     // .btn-primary is width:100%/height:54px, so a control carrying it blows the
-    // row past the dialog width and adds a horizontal scrollbar.
+    // row past the pane width and adds a horizontal scrollbar.
     expect(dialog.querySelectorAll('.btn-primary, .btn-transparent').length).toBe(0);
   });
 
-  it('renders each toggle as the app switch, not a bare checkbox', async() => {
+  it('is built from the Edit pane parts: input fields, checkbox Rows, corner check button', async() => {
     await open();
-    expect(q('add-contact-notifications').closest('.checkbox-field-toggle')).toBeTruthy();
+    expect(q('add-contact-name').closest('.input-field')).toBeTruthy();
+    expect(q('add-contact-npub').closest('.input-field')).toBeTruthy();
+    expect(q('add-contact-name').closest('.input-wrapper')).toBeTruthy();
+    for(const id of ['add-contact-notifications', 'add-contact-local-tools']) {
+      expect(q(id).closest('.checkbox-field')).toBeTruthy();
+      expect(q(id).closest('.row')).toBe(q(id + '-row'));
+    }
+    const submit = q('add-contact-submit');
+    expect(submit.classList.contains('btn-corner')).toBe(true);
+    expect(submit.classList.contains('is-visible')).toBe(true);
+    expect(q('add-contact-avatar').closest('.avatar-edit')).toBeTruthy();
   });
 
-  it('flips the switch when the switch itself is clicked', async() => {
+  it('shows the Edit pane\'s Enabled / Disabled subtitle from the start', async() => {
+    await open();
+    expect(q('add-contact-notifications-row').querySelector('.row-subtitle')?.textContent).toBeTruthy();
+  });
+
+  it('flips a toggle when its row is clicked', async() => {
     await open();
     const input = q('add-contact-notifications') as HTMLInputElement;
-    const toggle = input.closest('.checkbox-field-toggle')!.querySelector('.checkbox-toggle') as HTMLElement;
     expect(input.checked).toBe(true);
-    toggle.click();
+    q('add-contact-notifications-row').click();
     expect(input.checked).toBe(false);
-    toggle.click();
+    q('add-contact-notifications-row').click();
     expect(input.checked).toBe(true);
   });
 
-  it('flips the switch when the row caption is clicked', async() => {
-    await open();
-    const input = q('add-contact-notifications') as HTMLInputElement;
-    const row = q('add-contact-notifications-row');
-    expect(input.checked).toBe(true);
-    row.click();
-    expect(input.checked).toBe(false);
+  it('closes the pane after a successful add, and only then', async() => {
+    const added = await open('npub1nope');
+    q('add-contact-submit').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(done).not.toHaveBeenCalled();
+    (q('add-contact-npub') as HTMLInputElement).value = NPUB;
+    q('add-contact-submit').click();
+    await vi.waitFor(() => expect(added).toHaveBeenCalled());
+    expect(done).toHaveBeenCalledTimes(1);
   });
 
-  it('leaves the switch label clickable, overriding the app-wide pointer-events:none', async() => {
-    await open();
-    // .checkbox-field-toggle is pointer-events:none in _checkbox.scss; jsdom does
-    // not compute stylesheets, so assert the inline override that keeps the switch
-    // clickable in a real browser.
-    const field = q('add-contact-notifications').closest('.checkbox-field-toggle') as HTMLElement;
-    expect(field.style.pointerEvents).toBe('all');
+  it('keeps the pane open with an error when the add fails', async() => {
+    addP2PContact.mockImplementationOnce(async() => { throw new Error('relay down'); });
+    await open(NPUB);
+    q('add-contact-submit').click();
+    await vi.waitFor(() => expect(q('add-contact-error').textContent).toBe('Failed to add contact'));
+    expect(done).not.toHaveBeenCalled();
+    expect((q('add-contact-submit') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('adds once when the button and Enter are both pressed', async() => {
+    let release!: () => void;
+    addP2PContact.mockImplementationOnce(async(opts: any) => {
+      await new Promise<void>((r) => release = r);
+      return {hexPubkey: HEX, peerId: 1, peerIdTweb: 1, displayName: opts.nickname, isNew: true};
+    });
+    const added = await open(NPUB);
+    q('add-contact-submit').click();
+    // Enter does not go through the (now disabled) button.
+    q('add-contact-npub').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+    await vi.waitFor(() => expect(addP2PContact).toHaveBeenCalled());
+    release();
+    await vi.waitFor(() => expect(added).toHaveBeenCalled());
+    expect(addP2PContact).toHaveBeenCalledTimes(1);
+  });
+
+  it('Enter in the npub field adds', async() => {
+    const added = await open(NPUB);
+    q('add-contact-npub').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+    await vi.waitFor(() => expect(added).toHaveBeenCalled());
   });
 
   it('has no last-name or notes field', async() => {
@@ -390,7 +473,7 @@ describe('New Contact modal', () => {
     await setContactPrefs(HEX, {kind: 'phantom', localTools: true});
     const before = await getContactPrefs(HEX);
     addP2PContact.mockImplementationOnce(async() => { throw new Error('relay down'); });
-    const {addTypedContact} = await import('@components/popups/addContact');
+    const {addTypedContact} = await import('@components/sidebarRight/tabs/addContact');
     await expect(addTypedContact(managers, {
       npub: NPUB, nickname: 'X', kind: 'human', localTools: false, notifications: true
     })).rejects.toThrow('relay down');
@@ -401,7 +484,7 @@ describe('New Contact modal', () => {
 
   it('a failed add of a new npub leaves no prefs row behind', async() => {
     addP2PContact.mockImplementationOnce(async() => { throw new Error('relay down'); });
-    const {addTypedContact} = await import('@components/popups/addContact');
+    const {addTypedContact} = await import('@components/sidebarRight/tabs/addContact');
     await expect(addTypedContact(managers, {
       npub: NPUB, nickname: 'X', kind: 'phantom', localTools: true, notifications: true
     })).rejects.toThrow('relay down');
@@ -414,7 +497,7 @@ describe('New Contact modal', () => {
     _resetContactPrefsForTests();
     const openSpy = vi.spyOn(indexedDB, 'open').mockImplementation(() => { throw new Error('QuotaExceededError'); });
     try {
-      const {addTypedContact} = await import('@components/popups/addContact');
+      const {addTypedContact} = await import('@components/sidebarRight/tabs/addContact');
       const result = await addTypedContact(managers, {
         npub: NPUB, nickname: 'Corinne', kind: 'human', localTools: false, notifications: true
       } as any);
@@ -434,10 +517,23 @@ describe('New Contact modal', () => {
     expect(addP2PContact).not.toHaveBeenCalled();
   });
 
-  it('opens only one modal at a time', async() => {
-    await open();
-    await open();
-    expect(document.querySelectorAll('.popup-add-contact-overlay').length).toBe(1);
+  it('opens one pane at a time, and opens it before showing the sidebar', async() => {
+    const {openAddContactPane, default: AppAddContactTab} = await import('@components/sidebarRight/tabs/addContact');
+    const order: string[] = [];
+    const tabs: any[] = [];
+    fakeSidebar.isTabExists.mockImplementation(() => tabs.length > 0);
+    fakeSidebar.createTab.mockImplementation((ctor: any) => {
+      expect(ctor).toBe(AppAddContactTab);
+      const tab = {open: vi.fn(async() => { order.push('open'); }), options: undefined as any};
+      tabs.push(tab);
+      return tab;
+    });
+    fakeSidebar.toggleSidebar.mockImplementation(() => { order.push('show'); });
+    await openAddContactPane({managers, npub: NPUB});
+    await openAddContactPane({managers, npub: NPUB});
+    expect(tabs.length).toBe(1);
+    expect(tabs[0].options).toMatchObject({npub: NPUB});
+    expect(order.slice(0, 2)).toEqual(['open', 'show']);
   });
 
   it('shows Provider only when the desktop engine can list providers', async() => {

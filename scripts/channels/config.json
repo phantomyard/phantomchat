@@ -89,8 +89,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "20ecf8550de094f7d0cd8275896bf73bd1cb43e85c2f008429b7ef0c120acba4",
-      "preview": "21a5d90228c83411482dc2a2ba8dffd624dc28d3de51d7ced4bdef7add08df74",
-      "reason": "An npub pasted into search opens the New Contact modal prefilled instead of adding directly. Presentation and navigation only, with no storage access. The hamburger menu's Add to Contacts entry now opens the bottom section, directly above Appearance, instead of sitting with the Contacts navigation items. Navigation only; no storage, schema or protocol change."
+      "preview": "858a651f452d36e795e638ac031b64107d40ad3353192762bf0cfc0e7abe857a",
+      "reason": "An npub pasted into search opens the New Contact modal prefilled instead of adding directly. Presentation and navigation only, with no storage access. The hamburger menu's Add to Contacts entry now opens the bottom section, directly above Appearance, instead of sitting with the Contacts navigation items. Navigation only; no storage, schema or protocol change. Additional change: Add to contacts, the Contacts + button and a pasted npub open the New Contact right-side pane (openAddContactPane) instead of the modal. Presentation only; no storage, schema or protocol change."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
@@ -559,8 +559,8 @@
     },
     "src/components/sidebarLeft/tabs/contacts.ts": {
       "stable": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
-      "preview": "29fc221d981810856207951189af92689074f4127a7c506a00d5d71f41119282",
-      "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call. Deleting a contact from the contacts list goes through the shared deleteP2PContact: it first revokes that contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its phantomchat-contact-prefs row, then deletes the conversation. A failed revoke or persona delete throws and keeps the contact. No new store, field or schema; on the web the revoke is a no-op."
+      "preview": "adbf968d00472e214b46a1a95556254bff836752f3144d86e63302ce8d58429a",
+      "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call. Deleting a contact from the contacts list goes through the shared deleteP2PContact: it first revokes that contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its phantomchat-contact-prefs row, then deletes the conversation. A failed revoke or persona delete throws and keeps the contact. No new store, field or schema; on the web the revoke is a no-op. Additional change: Add to contacts, the Contacts + button and a pasted npub open the New Contact right-side pane (openAddContactPane) instead of the modal. Presentation only; no storage, schema or protocol change."
     },
     "src/components/sidebarLeft/tabs/phantomchatDesktopProviders.ts": {
       "stable": "absent",
@@ -689,8 +689,8 @@
     },
     "src/components/popups/addContact.ts": {
       "stable": "d3b3ef4664b82602239a5ba99cdd3ab8e2997fbc7136a41a7d4dd2ece457fded",
-      "preview": "6e5fe4977e316c6df7336605ad181024c02555aa738c140f9d2b6d36ff23e799",
-      "reason": "New-contact modal: Provider and Scan (desktop only) plus the Phantom Local tools gate. Writes only phantomchat-contact-prefs (new optional persona field, same version 1 store) and the existing addP2PContact path. Additional change: layout only. Dialog controls no longer carry the app-wide .btn-primary block button, which forced width:100%/height:54px on controls sharing a row with a field and pushed the npub field down to a few pixels behind a horizontal scrollbar. QR and Scan are now icon buttons sitting inside the npub field's trailing edge, and both toggles render the app switch instead of a checkbox that _checkbox.scss hides. No storage, IPC, engine or contact-kind behaviour change. Additional change: the toggle row keeps its switch clickable. The field label sets pointer-events:all because .checkbox-field-toggle is pointer-events:none app-wide, and the row handler ignores clicks inside that label so the native label activation and the row toggle cannot cancel each other. Presentation only, no storage or behaviour change."
+      "preview": "absent",
+      "reason": "New-contact modal: Provider and Scan (desktop only) plus the Phantom Local tools gate. Writes only phantomchat-contact-prefs (new optional persona field, same version 1 store) and the existing addP2PContact path. Additional change: layout only. Dialog controls no longer carry the app-wide .btn-primary block button, which forced width:100%/height:54px on controls sharing a row with a field and pushed the npub field down to a few pixels behind a horizontal scrollbar. QR and Scan are now icon buttons sitting inside the npub field's trailing edge, and both toggles render the app switch instead of a checkbox that _checkbox.scss hides. No storage, IPC, engine or contact-kind behaviour change. Additional change: the toggle row keeps its switch clickable. The field label sets pointer-events:all because .checkbox-field-toggle is pointer-events:none app-wide, and the row handler ignores clicks inside that label so the native label activation and the row toggle cannot cancel each other. Presentation only, no storage or behaviour change. Additional change: moved to src/components/sidebarRight/tabs/addContact.ts, where the same form now renders in a right-side pane instead of a modal. No storage, IPC, engine or contact-kind behaviour change."
     },
     "src/lib/phantomchat/contact-prefs.ts": {
       "stable": "absent",
@@ -761,6 +761,11 @@
       "stable": "absent",
       "preview": "e54a1a8f559880c38393d9acf63e2e9599b830127fc3563cc7c7539019cb0d97",
       "reason": "New pure predicate plus its click handler, deciding when a plain chat-list click on an already-open group/session peer opens the edit sidebar. shouldOpenEditorOnSelectedChat takes the row state and the event's shift/ctrl/meta flags and declines modified clicks so the caller's own branches - including the existing open-in-new-tab - still run; handleSelectedChatClick applies that decision, cancels the event only when it consumes the click and hands the peer to openEditor. No storage, network, protocol or IndexedDB access."
+    },
+    "src/components/sidebarRight/tabs/addContact.ts": {
+      "stable": "absent",
+      "preview": "657446e293edb7510d569441fd9bc8efbf15409b7dbf9b21d571843ded637500",
+      "reason": "New Contact pane: the former popups/addContact.ts form (Phantom | Human | Provider, Scan and Provider desktop only, Phantom Local tools gate) moved into a right-sidebar tab like the contact and group Edit panes, built from InputField, checkbox Rows and the corner check button. Writes only phantomchat-contact-prefs (version 1 store, optional persona field) and the existing addP2PContact path, exactly as the modal did. Closing the pane over the chat list returns to the chat list. Presentation only; no storage, schema or protocol change."
     }
   }
 }
