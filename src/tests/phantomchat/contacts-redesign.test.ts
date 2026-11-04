@@ -241,7 +241,7 @@ function desktopLocalTools(allow: boolean) {
 describe('New Contact modal', () => {
   const managers: any = {appMessagesManager: {togglePeerMute: vi.fn(async() => {})}};
   const q = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
-  const visible = (id: string) => !!q(id) && (q(id).closest('label') || q(id)).style.display !== 'none';
+  const visible = (id: string) => !!q(id) && (q(id).closest('[data-testid$="-row"]') as HTMLElement || q(id)).style.display !== 'none';
 
   beforeEach(async() => {
     await freshDb();
@@ -280,6 +280,35 @@ describe('New Contact modal', () => {
     q('add-contact-kind-human').click();
     expect(visible('add-contact-local-tools')).toBe(false);
     expect(visible('add-contact-notifications')).toBe(true);
+  });
+
+  it('draws QR and Scan as icon buttons inside the npub field', async() => {
+    (window as any).phantomchatDesktop = {localPersonas: {list: vi.fn(async() => ({ok: true, value: [] as unknown[]})), allow: vi.fn()}};
+    await open();
+    const npub = q('add-contact-npub');
+    const field = npub.parentElement;
+    const qr = q('add-contact-scan-qr');
+    const scan = q('add-contact-scan-local');
+    expect(qr.parentElement).toBe(field);
+    expect(scan.parentElement).toBe(field);
+    expect(qr.textContent).not.toContain('QR'); // an icon glyph, not the word "QR"
+    expect(qr.querySelector('.tgico')).toBeTruthy();
+    expect(scan.querySelector('.tgico')).toBeTruthy();
+    expect(scan.getAttribute('aria-label')).toBeTruthy();
+    expect(scan.style.display).toBe('flex');
+  });
+
+  it('never reuses the app-wide block button inside the dialog', async() => {
+    await open();
+    const dialog = q('add-contact-dialog');
+    // .btn-primary is width:100%/height:54px, so a control carrying it blows the
+    // row past the dialog width and adds a horizontal scrollbar.
+    expect(dialog.querySelectorAll('.btn-primary, .btn-transparent').length).toBe(0);
+  });
+
+  it('renders each toggle as the app switch, not a bare checkbox', async() => {
+    await open();
+    expect(q('add-contact-notifications').closest('.checkbox-field-toggle')).toBeTruthy();
   });
 
   it('has no last-name or notes field', async() => {

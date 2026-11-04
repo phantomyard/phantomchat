@@ -689,8 +689,8 @@
     },
     "src/components/popups/addContact.ts": {
       "stable": "d3b3ef4664b82602239a5ba99cdd3ab8e2997fbc7136a41a7d4dd2ece457fded",
-      "preview": "41fcc20191a37e3b1917e56cf440dbcf0568f1d0f974429e2e0095b7e460520e",
-      "reason": "New-contact modal: Provider and Scan (desktop only) plus the Phantom Local tools gate. Writes only phantomchat-contact-prefs (new optional persona field, same version 1 store) and the existing addP2PContact path."
+      "preview": "d143456749d310de939243ba61f00fa065b27270042ca503a6fc018148cd50ab",
+      "reason": "New-contact modal: Provider and Scan (desktop only) plus the Phantom Local tools gate. Writes only phantomchat-contact-prefs (new optional persona field, same version 1 store) and the existing addP2PContact path. Additional change: layout only. Dialog controls no longer carry the app-wide .btn-primary block button, which forced width:100%/height:54px on controls sharing a row with a field and pushed the npub field down to a few pixels behind a horizontal scrollbar. QR and Scan are now icon buttons sitting inside the npub field's trailing edge, and both toggles render the app switch instead of a checkbox that _checkbox.scss hides. No storage, IPC, engine or contact-kind behaviour change."
     },
     "src/lib/phantomchat/contact-prefs.ts": {
       "stable": "absent",
