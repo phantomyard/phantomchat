@@ -8,6 +8,7 @@
  * Every step goes through one `call` (window.phantomchatDesktop.phantombot.call),
  * so tests drive it with a fake.
  */
+import {clearContactPrefs, getContactPrefs} from '@lib/phantomchat/contact-prefs';
 import type {DesktopPhantombotResult} from '@lib/phantomchat/desktop-api';
 
 export type BridgeCall = (method: string, params?: Record<string, unknown>) => Promise<DesktopPhantombotResult>;
@@ -154,4 +155,19 @@ export async function createProviderContact(call: BridgeCall, input: CreateProvi
 /** Delete a Provider contact's persona: its nsec, vault, memory and history. */
 export async function deleteProviderPersona(call: BridgeCall, persona: string): Promise<void> {
   await value(call, 'personas.delete', {persona});
+}
+
+/**
+ * The prefs half of deleting a contact. A Provider contact's persona goes
+ * first: the prefs row is the only record of its name, so if the persona
+ * cannot be deleted (or there is no engine to ask) the row stays, the caller
+ * sees the error, and a retry is still possible.
+ */
+export async function forgetContact(pubkey: string, call: BridgeCall | undefined): Promise<void> {
+  const prefs = await getContactPrefs(pubkey);
+  if(prefs?.kind === 'provider' && prefs.persona) {
+    if(!call) throw new ProviderContactError('not_supported', 'this app cannot reach the engine that runs this contact');
+    await deleteProviderPersona(call, prefs.persona);
+  }
+  await clearContactPrefs(pubkey);
 }

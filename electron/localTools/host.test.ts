@@ -2,7 +2,7 @@ import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {chunkResult, LocalToolsHost, type EngineTools} from './host';
+import {chunkResult, LocalToolsHost, MAX_RUNNING_TOOLS, type EngineTools} from './host';
 
 const OWNER = 'a'.repeat(64);
 const PHANTOM = 'b'.repeat(64);
@@ -81,6 +81,24 @@ describe('Local tools host', () => {
     await host.handleMessage(PHANTOM, {t: 'cancel', callId: 'same'}, null);
     const [result] = await mine;
     expect(JSON.parse((result as any).data).status).toBe('cancelled');
+  });
+
+  it('refuses a call past the cap with busy, and a finished call frees its slot', async() => {
+    const {host, tools} = setup();
+    await host.setLocalAccess(PHANTOM, true, 'Kai');
+    const running = Array.from({length: MAX_RUNNING_TOOLS}, (_, i) => host.handleMessage(PHANTOM, call(`h${i}`, {hang: true}), null));
+    await vi.waitFor(() => expect(host.runningCount).toBe(MAX_RUNNING_TOOLS));
+    const [refused] = await host.handleMessage(PHANTOM, call('over'), null);
+    expect(JSON.parse((refused as any).data)).toMatchObject({status: 'error', output: expect.stringContaining('busy')});
+    expect(tools.run).toHaveBeenCalledTimes(MAX_RUNNING_TOOLS);
+    await host.handleMessage(PHANTOM, {t: 'cancel', callId: 'h0'}, null);
+    await running[0];
+    expect(host.runningCount).toBe(MAX_RUNNING_TOOLS - 1);
+    // Not remembered when refused, so the same call runs once a slot is free.
+    const [ran] = await host.handleMessage(PHANTOM, call('over'), null);
+    expect(JSON.parse((ran as any).data).status).toBe('ok');
+    await host.setLocalAccess(PHANTOM, false, 'Kai');
+    await Promise.all(running);
   });
 
   it('a new identity starts with every switch off; the log has no command', async() => {

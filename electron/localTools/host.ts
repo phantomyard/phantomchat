@@ -19,6 +19,11 @@ import {
 
 export const RESULT_CHUNK_CHARS = 24_000;
 export const LOCAL_ACCESS_FILE = 'local-access.json';
+/**
+ * Calls allowed to run at once across every contact. Each is a real process in
+ * the bundled engine that may live up to its timeout, beside the model turns.
+ */
+export const MAX_RUNNING_TOOLS = 8;
 
 export interface ToolResult {
   status: 'ok' | 'error' | 'cancelled' | 'timeout';
@@ -156,6 +161,10 @@ export class LocalToolsHost {
         const call = parseToolCall(payload);
         if(!call) return [];
         if(decideToolCall({state: this.state, sender, call, group, now: this.now()}) !== 'run') return [];
+        // Refused before it is remembered, so the same call can be sent again.
+        if(this.running.size >= MAX_RUNNING_TOOLS) {
+          return chunkResult(call.callId, {status: 'error', output: `busy: ${MAX_RUNNING_TOOLS} tool calls already running on this PC`});
+        }
         rememberCall(this.state, sender, call, this.now());
         this.save();
         return chunkResult(call.callId, await this.run(sender, call));

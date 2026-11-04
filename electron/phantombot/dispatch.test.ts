@@ -1,5 +1,5 @@
 import {describe, expect, it, vi} from 'vitest';
-import {createDispatcher, MAX_RUNNING_TURNS, parseRequest, type EngineLike, type HostMessage} from './dispatch';
+import {createDispatcher, MAX_RUNNING_TOOLS, MAX_RUNNING_TURNS, parseRequest, type EngineLike, type HostMessage} from './dispatch';
 
 const NPUB = 'npub1' + 'q'.repeat(58);
 
@@ -276,6 +276,28 @@ describe('phantombot host dispatcher', () => {
       expect(out).toContainEqual({id: 2, result: true});
       expect(out).toContainEqual({id: 1, result: {status: 'cancelled', output: 'partial'}});
       expect(out).toContainEqual({id: 3, result: {status: 'error', output: 'boom'}});
+    });
+
+    it('refuses a tool run past the cap with busy, and frees the slot when one ends', async() => {
+      const {engine} = fakeEngine();
+      const runTool = vi.fn((_t: string, _a: unknown, signal: AbortSignal) => new Promise<any>((resolve) => {
+        signal.addEventListener('abort', () => resolve({status: 'ok', output: ''}));
+      }));
+      const out: HostMessage[] = [];
+      const d = createDispatcher(engine, info, (m) => out.push(m), runTool as any);
+      const running: Promise<void>[] = [];
+      for(let i = 0; i < MAX_RUNNING_TOOLS; i++) {
+        running.push(d.handle({id: i, method: 'tools.run', params: {callId: `c${i}`, tool: 'bash', args: {}}}));
+      }
+      await d.handle({id: 100, method: 'tools.run', params: {callId: 'over', tool: 'bash', args: {}}});
+      expect(out).toEqual([{id: 100, error: {code: 'busy', message: expect.stringContaining('already running')}}]);
+      expect(runTool).toHaveBeenCalledTimes(MAX_RUNNING_TOOLS);
+      await d.handle({id: 101, method: 'tools.cancel', params: {callId: 'c0'}});
+      await running[0];
+      const again = d.handle({id: 102, method: 'tools.run', params: {callId: 'again', tool: 'bash', args: {}}});
+      expect(runTool).toHaveBeenCalledTimes(MAX_RUNNING_TOOLS + 1);
+      d.cancelAll();
+      await Promise.all([...running, again]);
     });
 
     it('times out at the requested limit', async() => {

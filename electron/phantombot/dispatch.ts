@@ -107,6 +107,13 @@ export interface HostInfo {
  */
 export const MAX_RUNNING_TURNS = 4;
 
+/**
+ * Local tool runs (tools.run) allowed at once. Each one is a real process on the
+ * principal's PC that may live up to MAX_TOOL_TIMEOUT_MS, so a page loop must not
+ * fan out into an unbounded number of them.
+ */
+export const MAX_RUNNING_TOOLS = 8;
+
 export class BridgeError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
@@ -245,6 +252,9 @@ export function createDispatcher(
     if(!runTool) throw new BridgeError('not_supported', 'this host cannot run local tools');
     const id = callId(p);
     if(tools.has(id)) throw invalid(`tool call ${id} is already running`);
+    if(tools.size >= MAX_RUNNING_TOOLS) {
+      throw new BridgeError('busy', `${MAX_RUNNING_TOOLS} tool calls already running; wait or cancel one`);
+    }
     const tool = p.tool;
     if(typeof tool !== 'string' || !(LOCAL_TOOL_NAMES as readonly string[]).includes(tool)) {
       throw invalid(`tool must be one of ${LOCAL_TOOL_NAMES.join(', ')}`);

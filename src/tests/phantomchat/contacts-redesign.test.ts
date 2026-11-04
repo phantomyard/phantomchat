@@ -19,6 +19,7 @@ import {
   clearDicebearCache
 } from '@helpers/generateDicebearAvatar';
 import {npubEncode} from '@lib/phantomchat/nostr-identity';
+import {forgetContact} from '@lib/phantomchat/provider-contacts';
 
 const HEX = '17162c921dc4d2518f9a101db33695df1afb56ab82f5ff3e5da6eec3ca5cd917';
 const NPUB = npubEncode(HEX);
@@ -49,6 +50,22 @@ async function freshDb() {
 
 describe('contact-prefs store', () => {
   beforeEach(freshDb);
+
+  it('keeps a Provider contact\'s prefs and throws when its persona delete fails', async() => {
+    await setContactPrefs(HEX, {kind: 'provider', persona: 'claude-2'});
+    const failing = vi.fn(async() => ({ok: false as const, error: {code: 'failed', message: 'engine down'}}));
+    await expect(forgetContact(HEX, failing)).rejects.toThrow('engine down');
+    expect(failing).toHaveBeenCalledWith('personas.delete', {persona: 'claude-2'});
+    _resetContactPrefsForTests();
+    expect((await getContactPrefs(HEX))?.persona).toBe('claude-2');
+    // No engine to ask is a failure too, never a silent forget.
+    await expect(forgetContact(HEX, undefined)).rejects.toThrow();
+    expect((await getContactPrefs(HEX))?.persona).toBe('claude-2');
+
+    const ok = vi.fn(async() => ({ok: true as const, value: null as unknown}));
+    await forgetContact(HEX, ok);
+    expect(await getContactPrefs(HEX)).toBeUndefined();
+  });
 
   it('round-trips kind and localTools, and survives a cache reset', async() => {
     await setContactPrefs(HEX, {kind: 'phantom', localTools: true});
