@@ -90,7 +90,7 @@
     "src/components/sidebarLeft/index.ts": {
       "stable": "20ecf8550de094f7d0cd8275896bf73bd1cb43e85c2f008429b7ef0c120acba4",
       "preview": "21a5d90228c83411482dc2a2ba8dffd624dc28d3de51d7ced4bdef7add08df74",
-      "reason": "An npub pasted into search opens the New Contact modal prefilled instead of adding directly. Presentation and navigation only, with no storage access. An npub pasted into search opens the New Contact modal prefilled instead of adding directly. Presentation and navigation only, with no storage access. The hamburger menu entry now opens the bottom section, directly above Appearance, instead of sitting with the Contacts navigation items. Navigation only; no storage, schema or protocol change."
+      "reason": "An npub pasted into search opens the New Contact modal prefilled instead of adding directly. Presentation and navigation only, with no storage access. The hamburger menu's Add to Contacts entry now opens the bottom section, directly above Appearance, instead of sitting with the Contacts navigation items. Navigation only; no storage, schema or protocol change."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
