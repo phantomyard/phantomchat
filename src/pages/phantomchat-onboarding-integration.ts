@@ -33,7 +33,7 @@ import {FOLDER_SYNC_TRIGGER_EVENTS} from '@lib/phantomchat/folders-sync-types';
 import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/nostr-crypto';
 import {CrdtSync, isInconclusiveReconcile} from '@lib/phantomchat/crdt-sync';
 import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTACTS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/contacts-sync-adapter';
-import {createGroupsAdapter, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
+import {createGroupsAdapter, mergeGroupsMaps, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
 import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
 import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
@@ -662,6 +662,12 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                 const {getGroupAPI} = await import('@lib/phantomchat/group-api');
                 await getGroupAPI().drainPendingHistoryBackfill(rec.groupId);
               } catch(e) { console.warn('[groups-sync] pending backfill drain failed', e); }
+              // Same for a rename that beat its record here (staged in
+              // handleInfoUpdate). No-op when nothing is staged.
+              try {
+                const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+                await getGroupAPI().drainPendingInfoUpdates(rec.groupId);
+              } catch(e) { console.warn('[groups-sync] pending info drain failed', e); }
             },
             removeGroup: async(groupId) => {
               // Read the class before the delete — it is what the peerId (and
@@ -683,6 +689,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           const groupsSync = new CrdtSync({
             dTag: GROUPS_SYNC_D_TAG, version: GROUPS_SYNC_VERSION,
             acceptedVersions: GROUPS_SYNC_ACCEPTED_VERSIONS,
+            // Per-field name/description/avatar merge on top of record LWW:
+            // a newer copy must not carry an older name (see mergeGroupsMaps).
+            merge: mergeGroupsMaps,
             chatAPI: crdtChatAPI, adapter: groupsAdapter, ...crdtCrypto
           });
 
