@@ -59,6 +59,10 @@ describe('WS-A: Telegram-only UI cleanup', () => {
     expect(sidebarSrc).not.toContain('PhantomChatFeatures');
   });
 
+  it('sidebar hamburger menu no longer offers Add Contact', () => {
+    expect(sidebarSrc).not.toContain("text: 'AddContact'");
+  });
+
   it('sidebar report bug uses showReportBugPopup (URL in reportBug.ts)', () => {
     expect(sidebarSrc).toContain('showReportBugPopup');
     expect(sidebarSrc).not.toContain('bugs.telegram.org');

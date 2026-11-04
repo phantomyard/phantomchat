@@ -725,16 +725,6 @@ export class AppSidebarLeft extends SidebarSlider {
       text: 'Contacts',
       onClick: onContactsClick
     }, {
-      // Owner batch 2 (2026-10-30): adding a contact lives only here now.
-      icon: 'adduser',
-      text: 'AddContact',
-      onClick: async() => {
-        closeTabsBefore(async() => {
-          const {showAddContactPopup} = await import('@components/popups/addContact');
-          showAddContactPopup({managers: this.managers});
-        });
-      }
-    }, {
       icon: 'card',
       regularText: 'My QR Code',
       onClick: () => {
@@ -1167,9 +1157,9 @@ export class AppSidebarLeft extends SidebarSlider {
     tab.open();
   }
 
-  // "Create a new": group and private chat only. Adding a contact lives solely in
-  // the main tools menu (see the AddContact entry above), so it is not offered
-  // twice — the submenu would otherwise be a second path to the same popup.
+  // "Create a new": group and private chat only. Adding a contact lives in the
+  // Contacts tab, so it is not offered here — the submenu stays a single path
+  // for starting a conversation.
   private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean): ButtonMenuItemOptionsVerifiable[]  {
     const closeTabsBefore = async(clb: () => void) => {
       if(closeBefore) {
