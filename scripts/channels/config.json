@@ -560,7 +560,7 @@
     "src/components/sidebarLeft/tabs/contacts.ts": {
       "stable": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
       "preview": "29fc221d981810856207951189af92689074f4127a7c506a00d5d71f41119282",
-      "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call."
+      "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call. Deleting a contact from the contacts list goes through the shared deleteP2PContact: it first revokes that contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its phantomchat-contact-prefs row, then deletes the conversation. A failed revoke or persona delete throws and keeps the contact. No new store, field or schema; on the web the revoke is a no-op."
     },
     "src/components/sidebarLeft/tabs/phantomchatDesktopProviders.ts": {
       "stable": "absent",
@@ -735,7 +735,7 @@
     "src/lib/phantomchat/provider-contacts.ts": {
       "stable": "absent",
       "preview": "5c8a35c014a698e5c6934d61eb9e4b50bb54de3f85c327e800c53fa776f2d1b1",
-      "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts."
+      "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts. forgetContact (shared by contact info and the contacts list) first revokes the contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its prefs row; the caller deletes the conversation last. A failed revoke or persona delete throws and keeps the contact, its persona and its conversation."
     }
   }
 }
