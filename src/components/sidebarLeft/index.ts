@@ -653,10 +653,23 @@ export class AppSidebarLeft extends SidebarSlider {
       });
     };
 
+    // Owner batch 2 (2026-10-30): adding a contact. Moved to the head of the
+    // bottom section (2026-11-04) so the top of the menu stays navigation only.
+    const addContactBtn: ButtonMenuItemOptionsVerifiable = {
+      icon: 'adduser',
+      text: 'AddContact',
+      separator: true,
+      onClick: async() => {
+        closeTabsBefore(async() => {
+          const {showAddContactPopup} = await import('@components/popups/addContact');
+          showAddContactPopup({managers: this.managers});
+        });
+      }
+    };
+
     const appearanceBtn: ButtonMenuItemOptionsVerifiable = {
       icon: 'darkmode',
       text: 'PhantomChat.GeneralSettingsViewController',
-      separator: true,
       onClick: () => {
         closeTabsBefore(() => {
           this.createTab(AppGeneralSettingsTab).open(AppGeneralSettingsTab.getInitArgs());
@@ -725,16 +738,6 @@ export class AppSidebarLeft extends SidebarSlider {
       text: 'Contacts',
       onClick: onContactsClick
     }, {
-      // Owner batch 2 (2026-10-30): adding a contact lives only here now.
-      icon: 'adduser',
-      text: 'AddContact',
-      onClick: async() => {
-        closeTabsBefore(async() => {
-          const {showAddContactPopup} = await import('@components/popups/addContact');
-          showAddContactPopup({managers: this.managers});
-        });
-      }
-    }, {
       icon: 'card',
       regularText: 'My QR Code',
       onClick: () => {
@@ -766,7 +769,7 @@ export class AppSidebarLeft extends SidebarSlider {
           });
         }, 0);
       }
-    }, appearanceBtn, sidebarBtn, {
+    }, addContactBtn, appearanceBtn, sidebarBtn, {
       icon: 'animations',
       text: 'LiteMode.Title',
       onClick: () => {
@@ -1167,9 +1170,9 @@ export class AppSidebarLeft extends SidebarSlider {
     tab.open();
   }
 
-  // "Create a new": group and private chat only. Adding a contact lives solely in
-  // the main tools menu (see the AddContact entry above), so it is not offered
-  // twice — the submenu would otherwise be a second path to the same popup.
+  // "Create a new": group and private chat only. Adding a contact lives in the
+  // hamburger menu's bottom section, so it is not offered here — the submenu
+  // would otherwise be a second path to the same popup.
   private createNewChatsMenuOptions(closeBefore?: boolean, singular?: boolean): ButtonMenuItemOptionsVerifiable[]  {
     const closeTabsBefore = async(clb: () => void) => {
       if(closeBefore) {
