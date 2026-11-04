@@ -546,7 +546,7 @@ describe('New Contact pane', () => {
       calls.push([method, params]);
       switch(method) {
         case 'providers.list': return {ok: true, value: [{id: 'phantomops', label: 'PhantomOps', checkable: true, autoModel: true, defaultModel: 'auto'}]};
-        case 'providers.check': return {ok: true, value: {status: 'verified', models: []}};
+        case 'providers.check': return {ok: true, value: {status: 'verified', models: [] as unknown[]}};
         case 'personas.list': return {ok: true, value: ['phantomops']};
         case 'persona.phantomchat.start': return {ok: true, value: {npub: PROVIDER_NPUB, state: 'running'}};
         default: return {ok: true, value: {}};
@@ -578,7 +578,7 @@ describe('New Contact pane', () => {
     (window as any).__phantomchatOwnPubkey = HEX;
     const call = vi.fn(async(method: string) => {
       if(method === 'providers.list') return {ok: true, value: [{id: 'phantomops', label: 'PhantomOps', checkable: true, autoModel: true, defaultModel: 'auto'}]};
-      if(method === 'providers.check') return {ok: true, value: {status: 'invalid', detail: '401', models: []}};
+      if(method === 'providers.check') return {ok: true, value: {status: 'invalid', detail: '401', models: [] as unknown[]}};
       return {ok: true, value: {}};
     });
     (window as any).phantomchatDesktop = {phantombot: {call}};
