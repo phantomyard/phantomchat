@@ -229,8 +229,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "4ac1592f274f20dd9726ac3d1e8350aad2aaff8923e90498024b86f188ec8d3c",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. #364 (app-bugs batch): wires the groups adapter's raiseInfoWatermark dep to GroupAPI.raiseInfoWatermark via the existing lazy import. No new store, key, schema or protocol. Independent exact-head content review required."
+      "preview": "34462fafe0844d1b0722e08cf47cead4ee6249c3e881ed8facc40bc8eaf05ede",
+      "reason": "Boot: one fire-and-forget import of local-tools, which is a no-op without the desktop Local tools bridge. No storage change."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
@@ -539,7 +539,7 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "b190745bbcf42df090f94960afea35a654943dfd4a78e8eaeeb89caabcff942e",
+      "preview": "f83ddd03ecf8cbba7e6e5c20ae6c29d09f37f40bf40a44dfe57f832e95d4ef1b",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change."
     },
     "electron/piHarness.ts": {
@@ -549,7 +549,7 @@
     },
     "electron/preload.ts": {
       "stable": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "preview": "3e254912cc264d69d7620cc31b2e884dd99e7d5f5a1d13ef9b8253f29f6894d5",
+      "preview": "e1cfcfe2ec635fa9fd7764f0d077d0e4bd1eb84720bdd665856b03823dec288c",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
     },
     "src/components/peerProfile.tsx": {
@@ -574,17 +574,17 @@
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "c8fefdd3971c107b902cabbdda573f5d22ce5c80ebe127fd661364cffa46cb0b",
-      "reason": "Form now has Contact Name, Local tools and Notifications. A rename uses the existing renameP2PContact with an empty last name, which writes the same displayName field Stable reads. Local tools writes only the new contact-prefs database. Notes are no longer edited; existing notes are untouched."
+      "preview": "ee3ed0391a978730116160f83812060814c997994b80863c7c7fe061c7f9a879",
+      "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact also deletes its bundled-engine persona via the desktop bridge. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change."
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
       "stable": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
-      "preview": "efa9a28fd018937cff9d945fb327bcbcadb48220a89b06b053df936bb6a027e4",
-      "reason": "#418 voice waveform: the waveform crosses the wire and the store as base64 (the recorder's Uint8Array was JSON-serialised to an index-keyed object), and group receive persists the rumor's mediaType inside the existing fileMetadata JSON blob. No storage format or schema change. Older/pinned Stable receiving an index-keyed waveform drops it at its typeof-string guard: flat line, no crash. Pinned Stable 2cee0bba buildPhantomChatMedia already reads mediaType, so it classifies a new group row as voice, not file. Earlier: Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "05fa5cfe426c9b5db77ace3d56e06f79e32cd2d5dab9a8e94ab65ededbe5b9fb",
+      "reason": "Receive path drops rumors tagged phantomchat-local-tools before any store write (they were never stored before either: Stable renders them as unknown control messages and drops them). No schema or database change."
     },
     "src/lib/phantomchat/desktop-api.ts": {
       "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "preview": "4ff95798c656d47e9b6c8aaec5e0fab81632e555273a7f48d490f0f714869414",
+      "preview": "60830a55022dafc584c43b07d44ab5966827487f1eab54f7763af9b3abf8545a",
       "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access."
     },
     "src/lib/phantomchat/external-ai-contact-form.ts": {
@@ -604,8 +604,8 @@
     },
     "src/lib/phantomchat/local-tools-wire.ts": {
       "stable": "absent",
-      "preview": "absent",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "c3a7953493ed292df7da904aec1087b5538aef6f2788e85abc7796a7ffc4d2c3",
+      "reason": "New pure module: the local-tools tag check and wire format. No storage."
     },
     "electron/phantombot/build-host.mjs": {
       "stable": "absent",
@@ -619,32 +619,32 @@
     },
     "electron/phantombot/client.ts": {
       "stable": "absent",
-      "preview": "f2054eee92d148f2bd8248b5bad468898774badf78d78fd09de9fcdb0b63c6ab",
+      "preview": "01c8ec76d363bad3f3e730df3dfde4abb2763ffcfb7c37235480be4e44bd46cf",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/dispatch.test.ts": {
       "stable": "absent",
-      "preview": "58276c83bcf5aaa8f7f790c38271a2c193ed112ffe6e7e404ec80cd4ba8f19e6",
+      "preview": "e94e7c80b91f73f2fffe97ad1a9437c62a4754963a2126806a79ce37366c9e15",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/dispatch.ts": {
       "stable": "absent",
-      "preview": "741f6be27dabacb021b0a7947e9dc8af7a24a85392d00ef73fe569a3113f20df",
+      "preview": "8aa09316434610c6795d3b3868e565ff85aa6bf07fad6174e4731633f1beee3b",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/host.ts": {
       "stable": "absent",
-      "preview": "b07a1b941d16b643a1dd078267a10bfc3d713cffa42d3f021c101521678a4dba",
+      "preview": "45e2a7067f3b54f98d543aef8974d0f32234d642ba64a157496f9ccf54f162e1",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/methods.ts": {
       "stable": "absent",
-      "preview": "831b14df0a10d63170e0e808adcddb141ae394d693f4ba3b614ae8c983e013ae",
+      "preview": "c6d198a7841f0a03f93ae07a2f3125df85ad367355911238958dab9e0d9f1851",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/pin.json": {
       "stable": "absent",
-      "preview": "48df04d60126b7e4287c938db075292ee84442827768df5419b1703522e95bed",
+      "preview": "a344a869527dd8bb2bb601eb93f7399907a4ad6fe3bd303c627cd4268d8863a7",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/probe.ts": {
@@ -689,13 +689,53 @@
     },
     "src/components/popups/addContact.ts": {
       "stable": "d3b3ef4664b82602239a5ba99cdd3ab8e2997fbc7136a41a7d4dd2ece457fded",
-      "preview": "a08e7b31d4fdad3e947161216d913a53f42afbc945c43695a8dfc1b7b1623adf",
-      "reason": "New Contact modal (Phantom, Human or Provider). It writes only the new contact-prefs database, which Stable ignores, then adds through the same addP2PContact call with deliberate: true as before. Mute uses the existing togglePeerMute. Mappings, sync payloads and schemas are unchanged."
+      "preview": "680e55d913518c01c98659e5d0cd3274bc7711559dc85c48195ad936b91246ac",
+      "reason": "New-contact modal: Provider and Scan (desktop only) plus the Phantom Local tools gate. Writes only phantomchat-contact-prefs (new optional persona field, same version 1 store) and the existing addP2PContact path."
     },
     "src/lib/phantomchat/contact-prefs.ts": {
       "stable": "absent",
-      "preview": "8b971dfd18da7fdbcbde3f3295555e28360f8ac13c3ff75c24c0de8a36523df3",
-      "reason": "New module. Contact type and Local tools live in a NEW IndexedDB database, phantomchat-contact-prefs (version 1, one store keyed by pubkey). It does not touch phantomchat-virtual-peers or any existing database, so its version is unchanged. Stable never opens the new database and ignores it."
+      "preview": "0b31179f1b4f613f5d1866f8c393b7cb9cffe01d038a00222d2eba20dc9fc2fd",
+      "reason": "New module. Contact type, Local tools and (Provider) persona name live in a NEW IndexedDB database, phantomchat-contact-prefs (version 1, one store keyed by pubkey). The persona field is optional and older rows lack it. It does not touch phantomchat-virtual-peers or any existing database. Stable never opens the new database and ignores it."
+    },
+    "electron/localPersonas/scan.test.ts": {
+      "stable": "absent",
+      "preview": "f397048aff8e8013d25ca4a07f66edc39964c9ffde7c72a041eab3f0ea824948",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localPersonas/scan.ts": {
+      "stable": "absent",
+      "preview": "e68497127425500aa9679aaeb9284215cf28827970555e51786de336379d1335",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localTools/host.test.ts": {
+      "stable": "absent",
+      "preview": "a539b3f21619b9c8eeeea7ce64e3ba0ce41f75db94695647afb13943943872f3",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localTools/host.ts": {
+      "stable": "absent",
+      "preview": "682b98170f48b4f2f28a3420f7f388d2d406cdbd7ce3e67db0e1120322323f06",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localTools/localAccess.test.ts": {
+      "stable": "absent",
+      "preview": "f97797633fc7a473301bd90e47786898938d704d1886dcd765fd5e0101780a0f",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "electron/localTools/localAccess.ts": {
+      "stable": "absent",
+      "preview": "f5c8bc0ca3b1ba22b707ae9b89b42033569a1e49823c605170059f65fb6cc784",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+    },
+    "src/lib/phantomchat/local-tools.ts": {
+      "stable": "absent",
+      "preview": "5bf7cd4bff968631bb2588f016ef61301fbd8b93e02c10badf780942a47f519c",
+      "reason": "New module, desktop only: sends and receives Local tools rumors through window.phantomchatDesktop.localTools. No storage of its own; reads the existing group store and message-requests block list read-only. No-op on the web and older installs."
+    },
+    "src/lib/phantomchat/provider-contacts.ts": {
+      "stable": "absent",
+      "preview": "c35b372d7de4f20aaa56e34e78ebf21cb5dc58f087b817bf3e783e62262d8d4d",
+      "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call. No browser storage, schema or database access; the web build never calls it."
     }
   }
 }
