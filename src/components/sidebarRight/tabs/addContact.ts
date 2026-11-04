@@ -63,13 +63,19 @@ type DesktopApi = {
   };
 };
 
-/** My own npub, for Scan's and a Provider's allowlist. */
-async function getOwnNpub(): Promise<string> {
-  const {loadIdentity} = await import('@lib/phantomchat/identity');
+/**
+ * My own npub, for Scan's and a Provider's allowlist. Read from
+ * window.__phantomchatOwnPubkey, the runtime source set at onboarding:
+ * loadIdentity() reads a store production never writes and returns null in
+ * a real session.
+ */
+export async function getOwnNpub(): Promise<string> {
+  const ownPubkey = typeof window !== 'undefined' ?
+    (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey :
+    undefined;
+  if(!ownPubkey) throw new Error('Your identity is not loaded yet');
   const {npubEncode} = await import('@lib/phantomchat/nostr-identity');
-  const identity = await loadIdentity();
-  if(!identity?.publicKey) throw new Error('no identity');
-  return npubEncode(identity.publicKey);
+  return npubEncode(ownPubkey);
 }
 
 function desktopApi(): DesktopApi | undefined {
@@ -119,7 +125,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cssText?: string, tex
 const SIDE_CSS = 'margin:0 .5rem;';
 const SEGMENT_CSS = 'flex:1;min-width:0;padding:8px 6px;border:none;border-radius:8px;background:transparent;color:var(--primary-text-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
 const SELECT_CSS = 'width:100%;height:3.375rem;padding:0 .875rem;border:1px solid var(--input-search-border-color, var(--border-color));border-radius:var(--border-radius-medium, .75rem);font-size:1rem;box-sizing:border-box;background:var(--surface-color);color:var(--primary-text-color);';
-const OUTLINE_CSS = 'flex:none;height:3.375rem;padding:0 14px;border:1px solid var(--border-color);border-radius:var(--border-radius-medium, .75rem);background:transparent;color:var(--primary-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
 const LIST_BTN_CSS = 'padding:10px 14px;border:1px solid var(--border-color);border-radius:var(--border-radius-medium, .75rem);background:transparent;color:var(--primary-text-color);font-size:14px;text-align:left;cursor:pointer;';
 const NOTE_CSS = 'font-size:.875rem;color:var(--secondary-text-color);';
 const ICON_BTN_CSS = 'position:absolute;top:50%;transform:translateY(-50%);z-index:2;display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:none;border-radius:8px;background:transparent;color:var(--secondary-text-color);font-size:20px;line-height:1;cursor:pointer;';
@@ -230,22 +235,17 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
   providerBox.setAttribute('data-testid', 'add-contact-provider');
   const providerSelect = el('select', SELECT_CSS);
   providerSelect.setAttribute('data-testid', 'add-contact-provider-select');
-  const tokenRow = el('div', 'display:flex;gap:8px;align-items:center;');
   const tokenField = makeField('Token', 'add-contact-provider-token');
-  tokenField.container.style.cssText = 'flex:1;min-width:0;margin:0;';
+  tokenField.container.style.margin = '0';
   const tokenInput = tokenField.input as HTMLInputElement;
   tokenInput.type = 'password';
   tokenInput.autocomplete = 'off';
-  const validateBtn = el('button', OUTLINE_CSS, 'Validate');
-  validateBtn.type = 'button';
-  validateBtn.setAttribute('data-testid', 'add-contact-provider-validate');
-  tokenRow.append(tokenField.container, validateBtn);
   const providerStatus = el('div', NOTE_CSS + 'min-height:16px;');
   providerStatus.setAttribute('data-testid', 'add-contact-provider-status');
   const modelSelect = el('select', SELECT_CSS);
   modelSelect.setAttribute('data-testid', 'add-contact-provider-model');
   modelSelect.style.display = 'none';
-  providerBox.append(providerSelect, tokenRow, providerStatus, modelSelect);
+  providerBox.append(providerSelect, tokenField.container, providerStatus, modelSelect);
 
   inputWrapper.append(nameField.container, npubField.container, scanList, providerBox);
 
@@ -431,36 +431,28 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     if(checked) resetCheck();
   });
 
-  validateBtn.addEventListener('click', async() => {
-    const p = currentProvider();
-    if(!p) return;
-    validateBtn.disabled = true;
-    providerStatus.textContent = 'Checking...';
-    try {
-      const {checkProviderKey} = await import('@lib/phantomchat/provider-contacts');
-      const token = tokenInput.value.trim();
-      const result = await checkProviderKey(call, p.id, token);
-      checked = {provider: p.id, token, result};
-      providerStatus.textContent = result.status === 'verified' ? 'Token verified' :
-        result.status === 'invalid' ? `Token rejected (${result.detail})` :
-        `Could not verify (${result.detail || 'no check for this provider'})`;
-      if(p.autoModel || result.status === 'invalid') return;
-      const ids = result.models.map((m) => m.id);
-      if(p.defaultModel && !ids.includes(p.defaultModel)) ids.unshift(p.defaultModel);
-      modelSelect.replaceChildren(...ids.map((id) => {
-        const o = el('option', undefined, id);
-        o.value = id;
-        return o;
-      }));
-      if(p.defaultModel) modelSelect.value = p.defaultModel;
-      modelSelect.style.display = ids.length ? '' : 'none';
-      if(!ids.length) providerStatus.textContent += '; no models listed';
-    } catch(err) {
-      providerStatus.textContent = err instanceof Error ? err.message : 'Check failed';
-    } finally {
-      validateBtn.disabled = false;
-    }
-  });
+  /** Check the token with the provider; lists its models in the picker. */
+  const checkToken = async(p: ProviderOption, token: string): Promise<ProviderCheckResult> => {
+    providerStatus.textContent = 'Checking token...';
+    const {checkProviderKey} = await import('@lib/phantomchat/provider-contacts');
+    const result = await checkProviderKey(call, p.id, token);
+    checked = {provider: p.id, token, result};
+    providerStatus.textContent = result.status === 'verified' ? 'Token verified' :
+      result.status === 'invalid' ? `Token rejected (${result.detail})` :
+      `Could not verify (${result.detail || 'no check for this provider'})`;
+    if(p.autoModel || result.status === 'invalid') return result;
+    const ids = result.models.map((m) => m.id);
+    if(p.defaultModel && !ids.includes(p.defaultModel)) ids.unshift(p.defaultModel);
+    modelSelect.replaceChildren(...ids.map((id) => {
+      const o = el('option', undefined, id);
+      o.value = id;
+      return o;
+    }));
+    if(p.defaultModel) modelSelect.value = p.defaultModel;
+    modelSelect.style.display = ids.length ? '' : 'none';
+    if(!ids.length) providerStatus.textContent += '; no models listed';
+    return result;
+  };
 
   // One add at a time: the corner button and Enter both land here.
   let busy = false;
@@ -483,15 +475,33 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
       return;
     }
     const token = tokenInput.value.trim();
-    if(!checked || checked.provider !== p.id || checked.token !== token) {
-      errorEl.textContent = 'Validate the token first';
+    if(!token) {
+      errorEl.textContent = 'Enter the token';
       return;
     }
-    if(checked.result.status === 'invalid') {
+    // The token is checked on save; a check for this exact provider and
+    // token is reused, so a second press after picking a model is instant.
+    let result = checked && checked.provider === p.id && checked.token === token ? checked.result : undefined;
+    const firstCheck = !result;
+    if(!result) {
+      try {
+        result = await checkToken(p, token);
+      } catch(err) {
+        errorEl.textContent = err instanceof Error && err.message ? err.message : 'Could not check the token';
+        return;
+      }
+    }
+    if(result.status === 'invalid') {
       errorEl.textContent = 'The provider rejected this token';
       return;
     }
-    const model = p.autoModel ? p.defaultModel : modelSelect.value;
+    // A provider with several models: the first check fills the picker, and
+    // the user confirms the model with a second press.
+    if(!p.autoModel && firstCheck && modelSelect.options.length > 1) {
+      errorEl.textContent = 'Choose a model, then save';
+      return;
+    }
+    const model = p.autoModel ? p.defaultModel : (modelSelect.value || p.defaultModel);
     if(!model) {
       errorEl.textContent = 'Choose a model';
       return;

@@ -30,8 +30,9 @@ function fakeBridge(fail: Record<string, string> = {}, start: any = {state: 'run
 describe('provider contacts', () => {
   it('names personas after the contact, avoiding taken names', () => {
     expect(providerPersonaName('Claude', ['claude'])).toBe('claude-2');
-    expect(providerPersonaName('My GPT 5!', [])).toBe('my-gpt-5');
+    expect(providerPersonaName('My GPT 5!', [])).toBe('mygpt5');
     expect(providerPersonaName('???', [])).toBe('provider');
+    expect(providerPersonaName('Phantom Ops', [])).toBe('phantomops');
   });
 
   it('lists only providers the engine can run without a base URL', async() => {

@@ -77,9 +77,9 @@ export async function checkProviderKey(call: BridgeCall, provider: string, apiKe
   return {status, detail: typeof raw?.detail === 'string' ? raw.detail : '', models};
 }
 
-/** A persona name for the engine, from the contact's display name. */
+/** A persona name for the engine: the contact name lowercased, with spaces and every character outside a-z0-9 removed. */
 export function providerPersonaName(displayName: string, existing: readonly string[], random = Math.random): string {
-  const slug = (displayName || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  const slug = (displayName || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '').slice(0, 40);
   const base = slug || 'provider';
   const taken = new Set(existing.map((n) => n.toLowerCase()));
   if(!taken.has(base)) return base;

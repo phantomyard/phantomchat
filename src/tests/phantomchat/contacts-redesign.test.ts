@@ -536,6 +536,66 @@ describe('New Contact pane', () => {
     expect(order.slice(0, 2)).toEqual(['open', 'show']);
   });
 
+  it('Provider: no Validate button; save checks the token, names the persona from the contact name and allows my npub', async() => {
+    // A real session: loadIdentity() is null, the own pubkey is only on window.
+    (window as any).__phantomchatOwnPubkey = HEX;
+    const OWN = NPUB;
+    const PROVIDER_NPUB = npubEncode('a'.repeat(64));
+    const calls: Array<[string, any]> = [];
+    const call = vi.fn(async(method: string, params?: any) => {
+      calls.push([method, params]);
+      switch(method) {
+        case 'providers.list': return {ok: true, value: [{id: 'phantomops', label: 'PhantomOps', checkable: true, autoModel: true, defaultModel: 'auto'}]};
+        case 'providers.check': return {ok: true, value: {status: 'verified', models: [] as unknown[]}};
+        case 'personas.list': return {ok: true, value: ['phantomops']};
+        case 'persona.phantomchat.start': return {ok: true, value: {npub: PROVIDER_NPUB, state: 'running'}};
+        default: return {ok: true, value: {}};
+      }
+    });
+    (window as any).phantomchatDesktop = {phantombot: {call}};
+    try {
+      const added = await open();
+      await vi.waitFor(() => expect(q('add-contact-kind-provider')).toBeTruthy());
+      q('add-contact-kind-provider').click();
+      await vi.waitFor(() => expect((q('add-contact-provider-select') as HTMLSelectElement).options.length).toBe(1));
+      expect(q('add-contact-provider-validate')).toBeNull();
+      (q('add-contact-name') as HTMLInputElement).value = 'Phantom Ops!';
+      (q('add-contact-provider-token') as HTMLInputElement).value = 'pok_test';
+      addP2PContact.mockImplementationOnce(async(opts: any) => ({hexPubkey: 'a'.repeat(64), peerId: 2, peerIdTweb: 2, displayName: opts.nickname, isNew: true}));
+      q('add-contact-submit').click();
+      await vi.waitFor(() => expect(added).toHaveBeenCalled());
+      expect(q('add-contact-error').textContent).toBe('');
+      const methods = calls.map(([m]) => m);
+      expect(methods.indexOf('providers.check')).toBeLessThan(methods.indexOf('personas.create'));
+      expect(calls.find(([m]) => m === 'personas.create')?.[1]).toMatchObject({persona: 'phantomops-2'});
+      expect(calls.find(([m]) => m === 'persona.phantomchat.allow')?.[1]).toMatchObject({npub: OWN});
+    } finally {
+      delete (window as any).__phantomchatOwnPubkey;
+    }
+  });
+
+  it('Provider: a rejected token stops the save before any persona exists', async() => {
+    (window as any).__phantomchatOwnPubkey = HEX;
+    const call = vi.fn(async(method: string) => {
+      if(method === 'providers.list') return {ok: true, value: [{id: 'phantomops', label: 'PhantomOps', checkable: true, autoModel: true, defaultModel: 'auto'}]};
+      if(method === 'providers.check') return {ok: true, value: {status: 'invalid', detail: '401', models: [] as unknown[]}};
+      return {ok: true, value: {}};
+    });
+    (window as any).phantomchatDesktop = {phantombot: {call}};
+    try {
+      await open();
+      await vi.waitFor(() => expect(q('add-contact-kind-provider')).toBeTruthy());
+      q('add-contact-kind-provider').click();
+      await vi.waitFor(() => expect((q('add-contact-provider-select') as HTMLSelectElement).options.length).toBe(1));
+      (q('add-contact-provider-token') as HTMLInputElement).value = 'pok_bad';
+      q('add-contact-submit').click();
+      await vi.waitFor(() => expect(q('add-contact-error').textContent).toBe('The provider rejected this token'));
+      expect(call.mock.calls.map(([m]) => m)).not.toContain('personas.create');
+    } finally {
+      delete (window as any).__phantomchatOwnPubkey;
+    }
+  });
+
   it('shows Provider only when the desktop engine can list providers', async() => {
     (window as any).phantomchatDesktop = {phantombot: {call: vi.fn(async() => ({ok: false, error: {code: 'unknown_method'}}))}};
     await open();

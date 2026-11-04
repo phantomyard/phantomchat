@@ -734,8 +734,8 @@
     },
     "src/lib/phantomchat/provider-contacts.ts": {
       "stable": "absent",
-      "preview": "5c8a35c014a698e5c6934d61eb9e4b50bb54de3f85c327e800c53fa776f2d1b1",
-      "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts. forgetContact (shared by contact info and the contacts list) first revokes the contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its prefs row; the caller deletes the conversation last. A failed revoke or persona delete throws and keeps the contact, its persona and its conversation."
+      "preview": "86595df283823679fafab1fbda9f2435ba99c7ca9e39a4d56a820a63d5958550",
+      "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts. forgetContact (shared by contact info and the contacts list) first revokes the contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its prefs row; the caller deletes the conversation last. A failed revoke or persona delete throws and keeps the contact, its persona and its conversation. Additional change: a Provider persona name is the contact name lowercased with spaces and every character outside a-z0-9 removed (was hyphenated). Engine persona naming only; no storage, schema or protocol change."
     },
     "public/site.webmanifest": {
       "stable": "336f1323ef345b18b5238edfbd416113ea5aa84ba9c5998b67010a9d7bbcdc95",
@@ -764,8 +764,8 @@
     },
     "src/components/sidebarRight/tabs/addContact.ts": {
       "stable": "absent",
-      "preview": "657446e293edb7510d569441fd9bc8efbf15409b7dbf9b21d571843ded637500",
-      "reason": "New Contact pane: the former popups/addContact.ts form (Phantom | Human | Provider, Scan and Provider desktop only, Phantom Local tools gate) moved into a right-sidebar tab like the contact and group Edit panes, built from InputField, checkbox Rows and the corner check button. Writes only phantomchat-contact-prefs (version 1 store, optional persona field) and the existing addP2PContact path, exactly as the modal did. Closing the pane over the chat list returns to the chat list. Presentation only; no storage, schema or protocol change."
+      "preview": "7d811f3a50cbbb7aafda9e7f2ca53a29cf964c467ce004c0b75263c4028f7b06",
+      "reason": "New Contact pane: the former popups/addContact.ts form (Phantom | Human | Provider, Scan and Provider desktop only, Phantom Local tools gate) moved into a right-sidebar tab like the contact and group Edit panes, built from InputField, checkbox Rows and the corner check button. Writes only phantomchat-contact-prefs (version 1 store, optional persona field) and the existing addP2PContact path, exactly as the modal did. Closing the pane over the chat list returns to the chat list. Presentation only; no storage, schema or protocol change. Additional change: a Provider add reads my npub from window.__phantomchatOwnPubkey (loadIdentity() returns null in a real session, so Provider and Scan failed with 'no identity'), the Validate button is gone and the token is checked on save (a rejected token stops before any persona is created). No storage, schema or protocol change."
     }
   }
 }
