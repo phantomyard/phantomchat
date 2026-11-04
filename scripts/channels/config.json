@@ -574,8 +574,8 @@
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "bd8b4d6247b884576e90964404185120c49cede092c9e632a9164dfc2264d0cc",
-      "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact also deletes its bundled-engine persona via the desktop bridge. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change."
+      "preview": "e377dfcf1a477c2b3240724b6b912e458b6b014fa9e5ca834910c39e14c3fd30",
+      "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact first deletes its bundled-engine persona via the desktop bridge, and a failed persona delete keeps the prefs row and fails the contact delete. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change."
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
       "stable": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
@@ -624,13 +624,13 @@
     },
     "electron/phantombot/dispatch.test.ts": {
       "stable": "absent",
-      "preview": "e94e7c80b91f73f2fffe97ad1a9437c62a4754963a2126806a79ce37366c9e15",
+      "preview": "b176042800f81a18182035a7462c104ea9f46ef719e7ebc31ebb34a508ba4148",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/dispatch.ts": {
       "stable": "absent",
-      "preview": "8aa09316434610c6795d3b3868e565ff85aa6bf07fad6174e4731633f1beee3b",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+      "preview": "147e65b202d907a2e280eef1524f4f96d0c2cb49e27e0aa0fc7e1f54b41e7f46",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls and 8 concurrent tool runs. See docs/ELECTRON-DESKTOP.md (Trust)."
     },
     "electron/phantombot/host.ts": {
       "stable": "absent",
@@ -709,12 +709,12 @@
     },
     "electron/localTools/host.test.ts": {
       "stable": "absent",
-      "preview": "a539b3f21619b9c8eeeea7ce64e3ba0ce41f75db94695647afb13943943872f3",
+      "preview": "8adcc2335f6939c33c5b714773bff405f7105bd9f51fcd677c08a989f79363e7",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/localTools/host.ts": {
       "stable": "absent",
-      "preview": "682b98170f48b4f2f28a3420f7f388d2d406cdbd7ce3e67db0e1120322323f06",
+      "preview": "b018270c51418cb9acd0dea8dd66796dfee3ecd7b8f0184e77085d38ff571b6a",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/localTools/localAccess.test.ts": {
@@ -734,8 +734,8 @@
     },
     "src/lib/phantomchat/provider-contacts.ts": {
       "stable": "absent",
-      "preview": "c35b372d7de4f20aaa56e34e78ebf21cb5dc58f087b817bf3e783e62262d8d4d",
-      "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call. No browser storage, schema or database access; the web build never calls it."
+      "preview": "776b684868ed19a7498371d45c3adfbbc83a443b7c1f3cd78bbce8f85ed5a4e7",
+      "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts."
     }
   }
 }
