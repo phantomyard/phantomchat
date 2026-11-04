@@ -734,7 +734,7 @@
     },
     "src/lib/phantomchat/provider-contacts.ts": {
       "stable": "absent",
-      "preview": "776b684868ed19a7498371d45c3adfbbc83a443b7c1f3cd78bbce8f85ed5a4e7",
+      "preview": "c18317937476b6ae09f85285792b1f914ff545a369efa113bd295c9ad4415500",
       "reason": "New module, desktop only: drives Provider contacts through window.phantomchatDesktop.phantombot.call, and on contact delete reads then clears that contact's phantomchat-contact-prefs row through the existing contact-prefs API (no new store, field or schema). The web build never creates Provider contacts."
     }
   }
