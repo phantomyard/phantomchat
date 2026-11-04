@@ -211,7 +211,18 @@ export default class AppEditContactTab extends SliderSuperTab {
                   }
 
                   await chatAPI.deleteConversation(pubkey);
-                  const {clearContactPrefs} = await import('@lib/phantomchat/contact-prefs');
+                  const {clearContactPrefs, getContactPrefs} = await import('@lib/phantomchat/contact-prefs');
+                  const prefs = await getContactPrefs(pubkey);
+                  // A Provider contact IS a persona of this PC's bundled
+                  // engine: deleting the contact destroys its nsec, key,
+                  // memory and history too.
+                  const bridge = (window as any).phantomchatDesktop?.phantombot;
+                  if(prefs?.kind === 'provider' && prefs.persona && bridge?.call) {
+                    const {deleteProviderPersona} = await import('@lib/phantomchat/provider-contacts');
+                    await deleteProviderPersona(bridge.call, prefs.persona).catch((err) => {
+                      console.warn('[PhantomChat] could not delete provider persona', err);
+                    });
+                  }
                   await clearContactPrefs(pubkey);
                 } else {
                   if(userId) {

@@ -26,6 +26,11 @@ export interface ContactPrefs {
   kind?: ContactKind;
   /** Local tools on this PC offered to the contact. Phantom/Provider only. */
   localTools?: boolean;
+  /**
+   * Provider contacts: the persona of the desktop app's bundled engine that
+   * IS this contact. Deleting the contact deletes it. Only on that PC.
+   */
+  persona?: string;
   updatedAt: number;
 }
 
@@ -91,12 +96,15 @@ export async function getContactPrefs(pubkey: string): Promise<ContactPrefs | un
  */
 export async function setContactPrefs(
   pubkey: string,
-  patch: {kind?: ContactKind; localTools?: boolean}
+  patch: {kind?: ContactKind; localTools?: boolean; persona?: string}
 ): Promise<ContactPrefs> {
   const key = normalizePubkey(pubkey);
   if(!/^[0-9a-f]{64}$/.test(key)) throw new Error('contact-prefs: expected a hex pubkey');
   if(patch.kind !== undefined && !isContactKind(patch.kind)) {
     throw new Error('contact-prefs: unknown contact kind');
+  }
+  if(patch.persona !== undefined && !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(patch.persona)) {
+    throw new Error('contact-prefs: bad persona name');
   }
   const db = await openDB();
   const next = await new Promise<ContactPrefs>((resolve, reject) => {
@@ -111,6 +119,7 @@ export async function setContactPrefs(
         pubkey: key,
         kind: patch.kind ?? existing?.kind,
         localTools: patch.localTools ?? existing?.localTools,
+        ...(patch.persona ?? existing?.persona ? {persona: patch.persona ?? existing?.persona} : {}),
         updatedAt: Date.now()
       };
       store.put(record);

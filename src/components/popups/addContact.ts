@@ -6,6 +6,8 @@
 
 import type {AppManagers} from '@lib/managers';
 import type {ContactKind} from '@lib/phantomchat/contact-prefs';
+import type {LocalPersonaListing} from '@lib/phantomchat/desktop-api';
+import type {ProviderCheckResult, ProviderOption} from '@lib/phantomchat/provider-contacts';
 
 /**
  * New-contact modal (contacts redesign). The user first picks what the
@@ -28,6 +30,8 @@ export interface AddContactSubmit {
   kind: ContactKind;
   notifications: boolean;
   localTools: boolean;
+  /** Provider contacts: the bundled-engine persona behind the npub. */
+  persona?: string;
 }
 
 export interface ShowAddContactOptions {
@@ -39,9 +43,21 @@ export interface ShowAddContactOptions {
 }
 
 type DesktopApi = {
-  phantombot?: {call(method: string, params?: Record<string, unknown>): Promise<{ok: boolean}>};
-  localPersonas?: unknown;
+  phantombot?: {call(method: string, params?: Record<string, unknown>): Promise<any>};
+  localPersonas?: {
+    list(ownNpub: string): Promise<any>;
+    allow(persona: string, ownNpub: string): Promise<any>;
+  };
 };
+
+/** My own npub, for Scan's and a Provider's allowlist. */
+async function getOwnNpub(): Promise<string> {
+  const {loadIdentity} = await import('@lib/phantomchat/identity');
+  const {npubEncode} = await import('@lib/phantomchat/nostr-identity');
+  const identity = await loadIdentity();
+  if(!identity?.publicKey) throw new Error('no identity');
+  return npubEncode(identity.publicKey);
+}
 
 function desktopApi(): DesktopApi | undefined {
   return typeof window !== 'undefined' ? (window as any).phantomchatDesktop : undefined;
@@ -168,6 +184,33 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   qrBtn.setAttribute('data-testid', 'add-contact-scan-qr');
   npubRow.append(npubInput, qrBtn, scanBtn);
 
+  // Scan results: one button per persona of the phantombot on this PC.
+  const scanList = el('div', 'display:none;flex-direction:column;gap:4px;margin-top:8px;');
+  scanList.setAttribute('data-testid', 'add-contact-scan-list');
+
+  // --- Provider (desktop only) -----------------------------------------
+  const providerBox = el('div', 'display:none;flex-direction:column;gap:8px;');
+  providerBox.setAttribute('data-testid', 'add-contact-provider');
+  const providerSelect = el('select', INPUT_CSS);
+  providerSelect.setAttribute('data-testid', 'add-contact-provider-select');
+  const tokenRow = el('div', 'display:flex;gap:8px;align-items:center;');
+  const tokenInput = el('input', INPUT_CSS + 'flex:1;min-width:0;');
+  tokenInput.type = 'password';
+  tokenInput.placeholder = 'Token';
+  tokenInput.autocomplete = 'off';
+  tokenInput.setAttribute('data-testid', 'add-contact-provider-token');
+  const validateBtn = el('button', BTN_CSS + 'flex:none;', 'Validate');
+  validateBtn.type = 'button';
+  validateBtn.classList.add('btn-primary', 'btn-transparent');
+  validateBtn.setAttribute('data-testid', 'add-contact-provider-validate');
+  tokenRow.append(tokenInput, validateBtn);
+  const providerStatus = el('div', 'font-size:12px;color:var(--secondary-text-color);min-height:16px;');
+  providerStatus.setAttribute('data-testid', 'add-contact-provider-status');
+  const modelSelect = el('select', INPUT_CSS);
+  modelSelect.setAttribute('data-testid', 'add-contact-provider-model');
+  modelSelect.style.display = 'none';
+  providerBox.append(providerSelect, tokenRow, providerStatus, modelSelect);
+
   // --- Toggles ---------------------------------------------------------
   const localTools = makeToggle('Local tools', false, 'add-contact-local-tools');
   const notifications = makeToggle('Notifications', true, 'add-contact-notifications');
@@ -216,6 +259,10 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
     // Local tools: Phantom + Provider only. Scan: Phantom, desktop only.
     localTools.row.style.display = k === 'human' ? 'none' : '';
     scanBtn.style.display = k === 'phantom' && scanAvailable ? '' : 'none';
+    npubRow.style.display = k === 'provider' ? 'none' : 'flex';
+    providerBox.style.display = k === 'provider' ? 'flex' : 'none';
+    if(k !== 'phantom') scanList.style.display = 'none';
+    if(k === 'provider') void loadProviders();
     errorEl.textContent = '';
     void renderAvatar();
   };
@@ -242,12 +289,183 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
     }
   });
 
-  scanBtn.addEventListener('click', () => {
-    // Wired up with the desktop local-persona bridge (phantombot side).
-    errorEl.textContent = 'Scan needs the latest Phantomyard Desktop';
+  scanBtn.addEventListener('click', async() => {
+    const api = desktopApi()?.localPersonas;
+    if(!api) return;
+    errorEl.textContent = '';
+    scanBtn.disabled = true;
+    scanList.replaceChildren(el('div', 'font-size:12px;color:var(--secondary-text-color);', 'Looking for phantombot on this PC...'));
+    scanList.style.display = 'flex';
+    try {
+      const ownNpub = await getOwnNpub();
+      const res = await api.list(ownNpub);
+      if(!res?.ok) {
+        scanList.replaceChildren(el('div', 'font-size:12px;color:var(--danger-color);', res?.error?.message || 'Scan failed'));
+        return;
+      }
+      const personas = (res.value as LocalPersonaListing[]) || [];
+      if(!personas.length) {
+        scanList.replaceChildren(el('div', 'font-size:12px;color:var(--secondary-text-color);', 'No personas found on this PC'));
+        return;
+      }
+      scanList.replaceChildren(...personas.map((p) => {
+        const b = el('button', BTN_CSS + 'text-align:left;background:transparent;color:var(--primary-text-color);border:1px solid var(--border-color);',
+          p.persona + (p.allowed ? ' (already allows you)' : ''));
+        b.type = 'button';
+        b.setAttribute('data-testid', `add-contact-scan-persona-${p.persona}`);
+        b.addEventListener('click', () => void pickLocalPersona(p.persona, ownNpub));
+        return b;
+      }));
+    } catch(err) {
+      console.error('[AddContactPopup] scan failed', err);
+      scanList.replaceChildren(el('div', 'font-size:12px;color:var(--danger-color);', 'Scan failed'));
+    } finally {
+      scanBtn.disabled = false;
+    }
   });
 
+  const pickLocalPersona = async(persona: string, ownNpub: string) => {
+    const api = desktopApi()?.localPersonas;
+    if(!api) return;
+    scanList.replaceChildren(el('div', 'font-size:12px;color:var(--secondary-text-color);', `Adding you to ${persona} and restarting phantombot...`));
+    const res = await api.allow(persona, ownNpub).catch((err: unknown) => ({ok: false, error: {message: String(err)}}));
+    if(!res?.ok) {
+      scanList.replaceChildren(el('div', 'font-size:12px;color:var(--danger-color);', res?.error?.message || 'Could not add you'));
+      return;
+    }
+    npubInput.value = res.value.npub;
+    if(!nameInput.value.trim()) nameInput.value = persona.charAt(0).toUpperCase() + persona.slice(1);
+    const note = res.value.restarted || !res.value.added ?
+      `${persona} is ready` :
+      `Restart phantombot to finish (${res.value.restartError || 'restart failed'})`;
+    scanList.replaceChildren(el('div', 'font-size:12px;color:var(--secondary-text-color);', note));
+    scanList.firstElementChild?.setAttribute('data-testid', 'add-contact-scan-done');
+    void renderAvatar();
+  };
+
+  // --- Provider behaviour ------------------------------------------------
+  let providers: ProviderOption[] | undefined;
+  let checked: {provider: string; token: string; result: ProviderCheckResult} | undefined;
+  const call = (method: string, params?: Record<string, unknown>) => desktopApi()!.phantombot!.call(method, params);
+  const currentProvider = () => providers?.find((p) => p.id === providerSelect.value);
+
+  const resetCheck = () => {
+    checked = undefined;
+    modelSelect.style.display = 'none';
+    modelSelect.replaceChildren();
+    const p = currentProvider();
+    tokenInput.placeholder = p?.keyLabel || 'Token';
+    providerStatus.textContent = p && !p.checkable ? 'This provider cannot be verified; its key is used as given' : '';
+  };
+
+  const loadProviders = async() => {
+    if(providers) return;
+    try {
+      const {listProviderOptions} = await import('@lib/phantomchat/provider-contacts');
+      providers = await listProviderOptions(call);
+      providerSelect.replaceChildren(...providers.map((p) => {
+        const o = el('option', undefined, p.label);
+        o.value = p.id;
+        return o;
+      }));
+      resetCheck();
+    } catch(err) {
+      console.error('[AddContactPopup] providers failed', err);
+      providerStatus.textContent = 'Could not list providers';
+    }
+  };
+
+  providerSelect.addEventListener('change', resetCheck);
+  tokenInput.addEventListener('input', () => {
+    if(checked) resetCheck();
+  });
+
+  validateBtn.addEventListener('click', async() => {
+    const p = currentProvider();
+    if(!p) return;
+    validateBtn.disabled = true;
+    providerStatus.textContent = 'Checking...';
+    try {
+      const {checkProviderKey} = await import('@lib/phantomchat/provider-contacts');
+      const token = tokenInput.value.trim();
+      const result = await checkProviderKey(call, p.id, token);
+      checked = {provider: p.id, token, result};
+      providerStatus.textContent = result.status === 'verified' ? 'Token verified' :
+        result.status === 'invalid' ? `Token rejected (${result.detail})` :
+        `Could not verify (${result.detail || 'no check for this provider'})`;
+      if(p.autoModel || result.status === 'invalid') return;
+      const ids = result.models.map((m) => m.id);
+      if(p.defaultModel && !ids.includes(p.defaultModel)) ids.unshift(p.defaultModel);
+      modelSelect.replaceChildren(...ids.map((id) => {
+        const o = el('option', undefined, id);
+        o.value = id;
+        return o;
+      }));
+      if(p.defaultModel) modelSelect.value = p.defaultModel;
+      modelSelect.style.display = ids.length ? '' : 'none';
+      if(!ids.length) providerStatus.textContent += '; no models listed';
+    } catch(err) {
+      providerStatus.textContent = err instanceof Error ? err.message : 'Check failed';
+    } finally {
+      validateBtn.disabled = false;
+    }
+  });
+
+  const addProvider = async() => {
+    const p = currentProvider();
+    if(!p) {
+      errorEl.textContent = 'Choose a provider';
+      return;
+    }
+    const token = tokenInput.value.trim();
+    if(!checked || checked.provider !== p.id || checked.token !== token) {
+      errorEl.textContent = 'Validate the token first';
+      return;
+    }
+    if(checked.result.status === 'invalid') {
+      errorEl.textContent = 'The provider rejected this token';
+      return;
+    }
+    const model = p.autoModel ? p.defaultModel : modelSelect.value;
+    if(!model) {
+      errorEl.textContent = 'Choose a model';
+      return;
+    }
+    addBtn.disabled = true;
+    addBtn.textContent = 'Adding...';
+    const {createProviderContact, deleteProviderPersona} = await import('@lib/phantomchat/provider-contacts');
+    let created: Awaited<ReturnType<typeof createProviderContact>> | undefined;
+    try {
+      created = await createProviderContact(call, {
+        displayName: nameInput.value.trim() || p.label,
+        provider: p,
+        model,
+        apiKey: token,
+        ownNpub: await getOwnNpub()
+      });
+      if(created.channelError) console.warn('[AddContactPopup] provider channel not running yet:', created.channelError);
+      const result = await addTypedContact(managers, {
+        npub: created.npub,
+        nickname: nameInput.value.trim() || p.label,
+        kind: 'provider',
+        notifications: notifications.input.checked,
+        localTools: localTools.input.checked,
+        persona: created.persona
+      });
+      overlay.remove();
+      onContactAdded?.(result.peerIdTweb, result.displayName);
+    } catch(err) {
+      console.error('[AddContactPopup] provider add failed', err);
+      // The contact did not land: take its persona (and key) away again.
+      if(created) await deleteProviderPersona(call, created.persona).catch(() => {});
+      errorEl.textContent = err instanceof Error && err.message ? err.message : 'Failed to add contact';
+      addBtn.disabled = false;
+      addBtn.textContent = 'Add';
+    }
+  };
+
   addBtn.addEventListener('click', async() => {
+    if(kind === 'provider') return addProvider();
     const submit: AddContactSubmit = {
       npub: npubInput.value.trim(),
       nickname: nameInput.value.trim(),
@@ -277,7 +495,7 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
     if(e.target === overlay) overlay.remove();
   });
 
-  dialog.append(title, segment, avatarRow, npubRow, toggles, errorEl, btnRow);
+  dialog.append(title, segment, avatarRow, npubRow, scanList, providerBox, toggles, errorEl, btnRow);
   overlay.append(dialog);
   document.body.append(overlay);
   setKind('phantom');
@@ -310,7 +528,11 @@ export async function addTypedContact(managers: AppManagers, submit: AddContactS
   let wrote = false;
   try {
     previous = await getContactPrefs(hex);
-    await setContactPrefs(hex, {kind: submit.kind, localTools: submit.localTools});
+    await setContactPrefs(hex, {
+      kind: submit.kind,
+      localTools: submit.localTools,
+      ...(submit.persona ? {persona: submit.persona} : {})
+    });
     wrote = true;
   } catch(err) {
     console.warn('[AddContactPopup] could not save contact prefs', err);
