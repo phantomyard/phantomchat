@@ -141,7 +141,15 @@ export class ThemeController {
     });
   }
 
-  public setThemeColor(color = this.themeColor) {
+  public setThemeColor(override?: string) {
+    // Boring Corporate leaves the title bar to the OS: no theme-color at all.
+    // An explicit override (fullscreen call black) still applies.
+    if(!override && document.documentElement.dataset.uiTheme === 'boring-corporate') {
+      applyThemeColorToMeta(document.head, null);
+      return;
+    }
+
+    let color = override || this.themeColor;
     if(!color) {
       color = this.isNight() ? '#14161D' : '#ffffff';
     }

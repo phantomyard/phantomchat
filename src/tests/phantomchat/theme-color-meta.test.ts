@@ -54,10 +54,29 @@ describe('applyThemeColorToMeta (#213 PWA theme-color on startup)', () => {
     expect(metas[0].media).toBeNull();
   });
 
-  it('is a no-op when no theme-color meta exists', () => {
+  it('creates one unscoped meta when none exists (fullscreen call after Boring Corporate removed it)', () => {
     const head = makeHead(`<meta name="description" content="x">`);
 
-    expect(() => applyThemeColorToMeta(head, '#3080FF')).not.toThrow();
+    applyThemeColorToMeta(head, '#000000');
+
+    expect(themeColorMetas(head)).toEqual([{content: '#000000', media: null}]);
+  });
+
+  it('null removes every theme-color meta so the OS draws the title bar (Boring Corporate)', () => {
+    const head = makeHead(`
+      <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+      <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14161D">
+      <meta name="description" content="x">
+    `);
+
+    applyThemeColorToMeta(head, null);
+    expect(themeColorMetas(head)).toHaveLength(0);
+    expect(head.querySelectorAll('meta[name="description"]')).toHaveLength(1);
+
+    // fullscreen call forces black, then restores to OS default
+    applyThemeColorToMeta(head, '#000000');
+    expect(themeColorMetas(head)).toEqual([{content: '#000000', media: null}]);
+    applyThemeColorToMeta(head, null);
     expect(themeColorMetas(head)).toHaveLength(0);
   });
 

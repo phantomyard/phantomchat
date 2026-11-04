@@ -23,6 +23,10 @@
          to a single unscoped meta once the real palette color is known. -->
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14161D">
+    <script>
+      // Boring Corporate: no theme-color, so the OS draws its own title bar from first paint.
+      if(document.documentElement.getAttribute('data-ui-theme')==='boring-corporate')document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.remove();});
+    </script>
     <meta name="color-scheme" content="light">
     <meta name="google" content="notranslate">
     <!-- <meta name="robots" content="noindex"> -->

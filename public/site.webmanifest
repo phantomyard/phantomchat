@@ -67,7 +67,6 @@
         "sizes": "1280x910",
         "type": "image/jpeg"
     }],
-    "theme_color": "#1f9bdf",
     "background_color": "#000000",
     "display": "standalone",
     "orientation": "portrait-primary",
