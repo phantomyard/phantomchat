@@ -236,10 +236,9 @@ export default class AppEditContactTab extends SliderSuperTab {
                   // memory and history too. That goes first, so a failed
                   // persona delete leaves the contact and its prefs intact
                   // and lands on Contact.Delete.Failed.
-                  const {forgetContact} = await import('@lib/phantomchat/provider-contacts');
+                  const {deleteP2PContact} = await import('@lib/phantomchat/provider-contacts');
                   const bridge = (window as any).phantomchatDesktop?.phantombot;
-                  await forgetContact(pubkey, bridge?.call);
-                  await chatAPI.deleteConversation(pubkey);
+                  await deleteP2PContact(pubkey, chatAPI, bridge?.call);
                 } else {
                   if(userId) {
                     await this.managers.appUsersManager.deleteContacts([userId]);

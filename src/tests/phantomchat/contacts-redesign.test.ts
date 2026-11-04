@@ -19,7 +19,8 @@ import {
   clearDicebearCache
 } from '@helpers/generateDicebearAvatar';
 import {npubEncode} from '@lib/phantomchat/nostr-identity';
-import {forgetContact} from '@lib/phantomchat/provider-contacts';
+import {deleteP2PContact, forgetContact} from '@lib/phantomchat/provider-contacts';
+import {readFileSync} from 'node:fs';
 import {LocalToolsHost} from '../../../electron/localTools/host';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -130,6 +131,39 @@ describe('contact-prefs store', () => {
       expect((await getContactPrefs(HEX))?.localTools).toBe(true);
     } finally {
       delete (window as any).phantomchatDesktop;
+    }
+  });
+
+  it('deleteP2PContact revokes first and keeps the conversation when the revoke fails', async() => {
+    const order: string[] = [];
+    let fail = true;
+    (window as any).phantomchatDesktop = {localTools: {message: async(): Promise<unknown[]> => [], set: async() => {
+      order.push('revoke');
+      if(fail) throw new Error('main gone');
+      return {enabled: false, notify: null as unknown};
+    }}};
+    const chatAPI = {deleteConversation: vi.fn(async() => {
+      order.push('conversation');
+    })};
+    try {
+      await setContactPrefs(HEX, {kind: 'phantom', localTools: true});
+      await expect(deleteP2PContact(HEX, chatAPI, undefined)).rejects.toThrow('main gone');
+      expect(chatAPI.deleteConversation).not.toHaveBeenCalled();
+      fail = false;
+      order.length = 0;
+      await deleteP2PContact(HEX, chatAPI, undefined);
+      expect(order).toEqual(['revoke', 'conversation']);
+      expect(await getContactPrefs(HEX)).toBeUndefined();
+    } finally {
+      delete (window as any).phantomchatDesktop;
+    }
+  });
+
+  it('every P2P contact delete in the UI goes through deleteP2PContact', () => {
+    for(const file of ['src/components/sidebarRight/tabs/editContact.ts', 'src/components/sidebarLeft/tabs/contacts.ts']) {
+      const src = readFileSync(file, 'utf8');
+      expect(src, file).toContain('deleteP2PContact(pubkey, chatAPI');
+      expect(src.match(/deleteConversation\(/g), file).toBeNull();
     }
   });
 

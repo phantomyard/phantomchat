@@ -178,3 +178,17 @@ export async function forgetContact(pubkey: string, call: BridgeCall | undefined
   }
   await clearContactPrefs(pubkey);
 }
+
+/**
+ * Delete a P2P contact. Every UI delete path goes through here (contact info
+ * and the contacts list), so none can skip the Local tools revoke or the
+ * prefs: the grant and prefs go first, then the conversation.
+ */
+export async function deleteP2PContact(
+  pubkey: string,
+  chatAPI: {deleteConversation(pubkey: string): Promise<unknown>},
+  call: BridgeCall | undefined
+): Promise<void> {
+  await forgetContact(pubkey, call);
+  await chatAPI.deleteConversation(pubkey);
+}

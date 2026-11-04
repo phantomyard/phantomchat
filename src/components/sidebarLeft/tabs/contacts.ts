@@ -211,7 +211,11 @@ export default class AppContactsTab extends SliderSuperTab {
           return;
         }
 
-        await chatAPI.deleteConversation(pubkey);
+        // Same path as contact info: revokes Local tools, deletes a Provider's
+        // persona and the prefs, then the conversation.
+        const {deleteP2PContact} = await import('@lib/phantomchat/provider-contacts');
+        const bridge = (window as any).phantomchatDesktop?.phantombot;
+        await deleteP2PContact(pubkey, chatAPI, bridge?.call);
       } else {
         await this.managers.appUsersManager.deleteContacts([peerId.toUserId()]);
         await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});
