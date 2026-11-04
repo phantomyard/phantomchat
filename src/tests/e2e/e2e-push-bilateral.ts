@@ -148,26 +148,20 @@ async function addPeerAsContact(page: Page, peerNpub: string, peerName: string):
   await page.locator('.btn-menu-item', {hasText: 'Add to contacts'}).first().click({timeout: 5000});
   await page.waitForTimeout(600);
 
-  // The .popup-add-contact-overlay should now be visible.
-  await page.waitForSelector('.popup-add-contact-overlay', {timeout: 8000});
+  // The New Contact pane slides in on the right.
+  await page.waitForSelector('.add-contact-container [data-testid="add-contact-npub"]', {timeout: 8000});
 
-  // Fill nickname (optional field, appears first in DOM).
   if(peerName) {
-    await page.locator('.popup-add-contact-overlay input[placeholder="Nickname (optional)"]')
-      .fill(peerName);
+    await page.locator('[data-testid="add-contact-name"]').fill(peerName);
     await page.waitForTimeout(200);
   }
 
-  // Fill npub (second input). Use fill() — clipboard paste is not needed.
-  await page.locator('.popup-add-contact-overlay input[placeholder="npub1..."]')
-    .fill(peerNpub);
+  await page.locator('[data-testid="add-contact-npub"]').fill(peerNpub);
   await page.waitForTimeout(200);
 
-  // Click the "Add" button (btn-color-primary).
-  await page.locator('.popup-add-contact-overlay button.btn-color-primary').click({timeout: 5000});
-
-  // Wait for popup to close (overlay element removed from DOM).
-  await page.waitForSelector('.popup-add-contact-overlay', {state: 'detached', timeout: 15000});
+  // The corner check button adds and closes the pane.
+  await page.locator('[data-testid="add-contact-submit"]').click({timeout: 5000});
+  await page.waitForSelector('.add-contact-container', {state: 'detached', timeout: 15000});
 
   // Brief settle — addP2PContact is async and mirrors are populated after.
   await page.waitForTimeout(2000);

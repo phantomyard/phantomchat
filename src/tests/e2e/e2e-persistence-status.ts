@@ -110,7 +110,7 @@ async function addContactAndOpenChat(page: Page, npub: string, nickname: string)
 
   // Dismiss overlay that may block sidebar close button
   await page.evaluate(() => {
-    document.querySelectorAll('.popup-add-contact-overlay, .popup-overlay, .popup').forEach((el) => {
+    document.querySelectorAll('.popup-overlay, .popup').forEach((el) => {
       (el as HTMLElement).style.pointerEvents = 'none';
     });
   });

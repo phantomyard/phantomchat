@@ -106,8 +106,8 @@ describe('EditProfile save integration', () => {
 describe('Contacts add-contact integration', () => {
   const contactsSrc = readFile('components/sidebarLeft/tabs/contacts.ts');
 
-  it('FAB button calls showAddContactPopup (not PopupCreateContact)', () => {
-    expect(contactsSrc).toContain('showAddContactPopup');
+  it('FAB button opens the New Contact pane (not PopupCreateContact)', () => {
+    expect(contactsSrc).toContain('openAddContactPane');
     expect(contactsSrc).not.toContain('PopupCreateContact');
   });
 

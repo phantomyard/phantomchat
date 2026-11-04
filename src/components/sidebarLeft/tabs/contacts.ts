@@ -17,7 +17,6 @@ import {getMiddleware} from '@helpers/middleware';
 import replaceContent from '@helpers/dom/replaceContent';
 import rootScope from '@lib/rootScope';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
-import {showAddContactPopup as showAddContactPopupShared} from '@components/popups/addContact';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpTag from '@helpers/dom/findUpTag';
 import confirmationPopup from '@components/confirmationPopup';
@@ -68,7 +67,7 @@ export default class AppContactsTab extends SliderSuperTab {
     this.content.append(btnAdd);
 
     attachClickEvent(btnAdd, () => {
-      this.showAddContactPopup();
+      void this.showAddContactPane();
     }, {listenerSetter: this.listenerSetter});
 
     this.inputSearch = new InputSearch({
@@ -389,14 +388,16 @@ export default class AppContactsTab extends SliderSuperTab {
     }
   }
 
-  // A pasted npub opens the New Contact modal prefilled, so every add goes
+  // A pasted npub opens the New Contact pane prefilled, so every add goes
   // through the same Phantom | Human | Provider choice.
   private handleNpubInput(npub: string) {
-    this.showAddContactPopup(npub);
+    void this.showAddContactPane(npub);
   }
 
-  private showAddContactPopup(npub?: string) {
-    showAddContactPopupShared({
+  // The pane slides in from the right like the contact and group Edit panes.
+  private async showAddContactPane(npub?: string) {
+    const {openAddContactPane} = await import('@components/sidebarRight/tabs/addContact');
+    await openAddContactPane({
       managers: this.managers,
       npub,
       onContactAdded: async(_peerId, displayName) => {

@@ -8,11 +8,23 @@ import type {AppManagers} from '@lib/managers';
 import type {ContactKind} from '@lib/phantomchat/contact-prefs';
 import type {LocalPersonaListing} from '@lib/phantomchat/desktop-api';
 import type {ProviderCheckResult, ProviderOption} from '@lib/phantomchat/provider-contacts';
+import {SliderSuperTab} from '@components/slider';
+import SettingSection from '@components/settingSection';
+import InputField from '@components/inputField';
+import Row from '@components/row';
+import CheckboxField from '@components/checkboxField';
+import ButtonCorner from '@components/buttonCorner';
+import {replaceButtonIcon} from '@components/button';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import toggleDisability from '@helpers/dom/toggleDisability';
 import Icon from '@components/icon';
 
 /**
- * New-contact modal (contacts redesign). The user first picks what the
- * contact IS, and each type shows only its own fields:
+ * New Contact pane (contacts redesign). It slides in from the right like the
+ * contact and group Edit panes and is built from the same parts: close
+ * button + title header, SettingSection, InputField, checkbox Rows and the
+ * round check button in the corner. The user first picks what the contact
+ * IS, and each type shows only its own fields:
  *
  *   Phantom  — npub (+ Scan, desktop only), Phantom avatar, Contact Name,
  *              Local tools, Notifications
@@ -98,19 +110,19 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cssText?: string, tex
   return node;
 }
 
-const INPUT_CSS = 'width:100%;padding:12px;border:1px solid var(--border-color);border-radius:8px;font-size:14px;box-sizing:border-box;background:var(--surface-color);color:var(--primary-text-color);';
-const BTN_CSS = 'padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:14px;';
-
-/* Compact controls for the dialog's own rows. The app's `.btn-primary` is a
- * block button (width:100%, height:54px, overflow:hidden), so putting it on a
- * control that shares a row with a field blows the row past the dialog width:
- * the field collapses to a few pixels and the dialog grows a horizontal
- * scrollbar. These styles size to content instead. */
+/* Only the controls the app has no component for get inline styles: the
+ * type selector, the icon buttons inside the npub field, the provider
+ * selects and the scan results. Fields, toggles and the save button are the
+ * same components the Edit panes use. None of them carries the app-wide
+ * `.btn-primary` block button (width:100%, height:54px), which would blow a
+ * shared row past the pane width. */
+const SIDE_CSS = 'margin:0 .5rem;';
 const SEGMENT_CSS = 'flex:1;min-width:0;padding:8px 6px;border:none;border-radius:8px;background:transparent;color:var(--primary-text-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
-const ACTION_CSS = 'flex:none;height:40px;padding:0 14px;border:none;border-radius:8px;background:transparent;color:var(--primary-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
-const OUTLINE_CSS = 'flex:none;height:44px;padding:0 14px;border:1px solid var(--border-color);border-radius:8px;background:transparent;color:var(--primary-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
-const PRIMARY_CSS = 'flex:none;height:40px;padding:0 24px;border:none;border-radius:10px;background:var(--primary-color);color:#fff;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;';
-const ICON_BTN_CSS = 'position:absolute;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:none;border-radius:8px;background:transparent;color:var(--secondary-text-color);font-size:20px;line-height:1;cursor:pointer;';
+const SELECT_CSS = 'width:100%;height:3.375rem;padding:0 .875rem;border:1px solid var(--input-search-border-color, var(--border-color));border-radius:var(--border-radius-medium, .75rem);font-size:1rem;box-sizing:border-box;background:var(--surface-color);color:var(--primary-text-color);';
+const OUTLINE_CSS = 'flex:none;height:3.375rem;padding:0 14px;border:1px solid var(--border-color);border-radius:var(--border-radius-medium, .75rem);background:transparent;color:var(--primary-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
+const LIST_BTN_CSS = 'padding:10px 14px;border:1px solid var(--border-color);border-radius:var(--border-radius-medium, .75rem);background:transparent;color:var(--primary-text-color);font-size:14px;text-align:left;cursor:pointer;';
+const NOTE_CSS = 'font-size:.875rem;color:var(--secondary-text-color);';
+const ICON_BTN_CSS = 'position:absolute;top:50%;transform:translateY(-50%);z-index:2;display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:none;border-radius:8px;background:transparent;color:var(--secondary-text-color);font-size:20px;line-height:1;cursor:pointer;';
 
 /** Icon-only button for the npub field's trailing edge. */
 function makeIconButton(icon: Icon, title: string, testId: string) {
@@ -123,57 +135,43 @@ function makeIconButton(icon: Icon, title: string, testId: string) {
   return btn;
 }
 
-function makeToggle(label: string, checked: boolean, testId: string) {
-  const row = el('div', 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 2px;font-size:14px;color:var(--primary-text-color);cursor:pointer;');
-  row.setAttribute('data-testid', testId + '-row');
-  const caption = el('span', 'min-width:0;', label);
-  // The app's switch markup (see checkboxField.ts). A bare <input type="checkbox">
-  // is invisible here: _checkbox.scss hides it and draws .checkbox-toggle instead.
-  // pointer-events:all is required: .checkbox-field-toggle is pointer-events:none
-  // app-wide (the app re-enables it only inside .row.accordion-toggler), so without
-  // it a click on the switch falls through to the row and nothing toggles.
-  const field = el('label', 'margin:0;pointer-events:all;');
-  field.classList.add('checkbox-field', 'checkbox-field-toggle', 'checkbox-without-caption');
-  const input = el('input');
-  input.classList.add('checkbox-field-input');
-  input.type = 'checkbox';
-  input.checked = checked;
-  input.setAttribute('data-testid', testId);
-  const toggle = el('div', '');
-  toggle.classList.add('checkbox-toggle');
-  const circle = el('div', '');
-  circle.classList.add('checkbox-toggle-circle');
-  toggle.append(circle);
-  field.append(input, toggle);
-  // A click on the switch or the label activates the input natively through the
-  // label; the row handler must not toggle it a second time or the two cancel out.
-  row.addEventListener('click', (e) => {
-    if((e.target as HTMLElement).closest('label')) return;
-    input.checked = !input.checked;
-  });
-  row.append(caption, field);
-  return {row, input};
+/** A plain-text InputField (an <input>, like the Edit pane's fields) with a test id on the input. */
+function makeField(label: string, testId: string, maxLength?: number) {
+  const field = new InputField({labelText: label, plainText: true, maxLength});
+  field.input.setAttribute('data-testid', testId);
+  return field;
+}
+
+export interface AddContactFormOptions extends ShowAddContactOptions {
+  /** Close the pane after a successful add. */
+  onDone: () => void;
+  /** False once the pane is gone, so a late provider list never touches it. */
+  isAlive: () => boolean;
+}
+
+export interface AddContactForm {
+  /** Everything above the save button, for the pane's scrollable. */
+  section: HTMLElement;
+  /** The round check button in the pane's corner, as in the Edit panes. */
+  submitBtn: HTMLButtonElement;
+  focus(): void;
+  submit(): Promise<void>;
 }
 
 /**
- * Show the Add Contact modal. Both entry points (tools menu, Contacts tab +)
- * and an npub pasted into a search box open this same modal.
+ * Build the New Contact form. Kept apart from the pane so it can be tested
+ * without the right sidebar; the pane only mounts it.
  */
-export function showAddContactPopup(opts: ShowAddContactOptions): void {
+export function createAddContactForm(opts: AddContactFormOptions): AddContactForm {
   const {managers, onContactAdded} = opts;
-  // One modal at a time: a search box fires on every keystroke past 60 chars.
-  if(document.querySelector('.popup-add-contact-overlay')) return;
 
-  const overlay = el('div', 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center;');
-  overlay.classList.add('popup-add-contact-overlay');
-
-  const dialog = el('div', 'background:var(--surface-color);border-radius:12px;padding:24px;width:360px;max-width:90vw;max-height:90vh;overflow:auto;box-sizing:border-box;');
-  dialog.setAttribute('data-testid', 'add-contact-dialog');
-
-  const title = el('h3', 'margin:0 0 16px;font-size:18px;color:var(--primary-text-color);', 'New Contact');
+  const settingSection = new SettingSection({noDelimiter: true});
+  const section = settingSection.container;
+  section.setAttribute('data-testid', 'add-contact-dialog');
+  const content = settingSection.content;
 
   // --- Type selector ---------------------------------------------------
-  const segment = el('div', 'display:flex;gap:4px;padding:4px;border-radius:10px;background:var(--light-secondary-text-color, rgba(127,127,127,.12));margin-bottom:16px;');
+  const segment = el('div', SIDE_CSS + 'display:flex;gap:4px;padding:4px;border-radius:10px;background:var(--light-secondary-text-color, rgba(127,127,127,.12));margin-top:.5rem;margin-bottom:1.25rem;');
   segment.setAttribute('role', 'tablist');
   const segButtons = new Map<ContactKind, HTMLButtonElement>();
   let kind: ContactKind = 'phantom';
@@ -190,88 +188,94 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   addSegButton('phantom');
   addSegButton('human');
 
-  // --- Avatar + name ---------------------------------------------------
-  const avatarRow = el('div', 'display:flex;align-items:center;gap:12px;margin-bottom:12px;');
-  const avatar = el('img', 'width:64px;height:64px;border-radius:50%;flex:none;background:var(--light-secondary-text-color, rgba(127,127,127,.12));');
+  // --- Avatar: centred, 120px, like the Edit pane ----------------------
+  const avatarWrap = el('div', 'width:120px;height:120px;margin:0 auto;cursor:default;');
+  avatarWrap.classList.add('avatar-edit');
+  const avatar = el('img', 'width:100%;height:100%;display:block;border-radius:50%;background:var(--light-secondary-text-color, rgba(127,127,127,.12));');
   avatar.alt = '';
   avatar.setAttribute('data-testid', 'add-contact-avatar');
-  const nameInput = el('input', INPUT_CSS);
-  nameInput.type = 'text';
-  nameInput.placeholder = 'Contact Name';
-  nameInput.maxLength = 70;
-  nameInput.classList.add('input-clear');
-  nameInput.setAttribute('data-testid', 'add-contact-name');
-  avatarRow.append(avatar, nameInput);
+  avatarWrap.append(avatar);
 
-  // --- npub row (Phantom + Human) --------------------------------------
-  const npubRow = el('div', 'display:flex;gap:8px;align-items:center;');
-  // The field keeps the full row width; QR and Scan are icon buttons that sit
-  // inside its trailing edge, so the modal never needs horizontal scrolling.
-  const npubField = el('div', 'position:relative;display:flex;align-items:center;flex:1;min-width:0;');
-  const npubInput = el('input', INPUT_CSS + 'min-width:0;');
-  npubInput.type = 'text';
-  npubInput.placeholder = 'npub Key (npub1...)';
-  npubInput.classList.add('input-clear');
-  npubInput.setAttribute('data-testid', 'add-contact-npub');
-  if(opts.npub) npubInput.value = opts.npub.trim();
+  // --- Fields ----------------------------------------------------------
+  const inputWrapper = el('div');
+  inputWrapper.classList.add('input-wrapper');
+
+  const nameField = makeField('Contact Name', 'add-contact-name', 70);
+
+  // npub (Phantom + Human). QR and Scan are icon buttons inside the field's
+  // trailing edge, so the field keeps the full pane width.
+  const npubField = makeField('npub Key (npub1...)', 'add-contact-npub');
+  const npubInput = npubField.input as HTMLInputElement;
+  npubField.container.style.position = 'relative';
+  if(opts.npub) npubField.value = opts.npub.trim();
 
   // Scan: find phantombot personas installed on this PC (desktop only).
   const scanAvailable = canScanLocalPersonas();
   const localToolsAvailable = typeof (desktopApi() as any)?.localTools?.message === 'function';
   const scanBtn = makeIconButton('search', 'Find phantombot personas on this PC', 'add-contact-scan-local');
-  scanBtn.style.insetInlineEnd = '42px';
+  scanBtn.style.insetInlineEnd = '46px';
 
-  // QR: scan a printed / on-screen npub with the camera. Kept from the old
-  // modal — on a phone it is how most contacts get added.
+  // QR: scan a printed / on-screen npub with the camera. On a phone it is
+  // how most contacts get added.
   const qrBtn = makeIconButton('camera', 'Scan QR code', 'add-contact-scan-qr');
-  qrBtn.style.insetInlineEnd = '6px';
-
-  npubField.append(npubInput, qrBtn, scanBtn);
-  npubRow.append(npubField);
+  qrBtn.style.insetInlineEnd = '10px';
+  npubField.container.append(qrBtn, scanBtn);
 
   // Scan results: one button per persona of the phantombot on this PC.
-  const scanList = el('div', 'display:none;flex-direction:column;gap:4px;margin-top:8px;');
+  const scanList = el('div', 'display:none;flex-direction:column;gap:4px;margin:-.5rem 0 1rem;');
   scanList.setAttribute('data-testid', 'add-contact-scan-list');
 
   // --- Provider (desktop only) -----------------------------------------
-  const providerBox = el('div', 'display:none;flex-direction:column;gap:8px;');
+  const providerBox = el('div', 'display:none;flex-direction:column;gap:.75rem;margin-bottom:1.5rem;');
   providerBox.setAttribute('data-testid', 'add-contact-provider');
-  const providerSelect = el('select', INPUT_CSS);
+  const providerSelect = el('select', SELECT_CSS);
   providerSelect.setAttribute('data-testid', 'add-contact-provider-select');
   const tokenRow = el('div', 'display:flex;gap:8px;align-items:center;');
-  const tokenInput = el('input', INPUT_CSS + 'flex:1;min-width:0;');
+  const tokenField = makeField('Token', 'add-contact-provider-token');
+  tokenField.container.style.cssText = 'flex:1;min-width:0;margin:0;';
+  const tokenInput = tokenField.input as HTMLInputElement;
   tokenInput.type = 'password';
-  tokenInput.placeholder = 'Token';
   tokenInput.autocomplete = 'off';
-  tokenInput.setAttribute('data-testid', 'add-contact-provider-token');
   const validateBtn = el('button', OUTLINE_CSS, 'Validate');
   validateBtn.type = 'button';
   validateBtn.setAttribute('data-testid', 'add-contact-provider-validate');
-  tokenRow.append(tokenInput, validateBtn);
-  const providerStatus = el('div', 'font-size:12px;color:var(--secondary-text-color);min-height:16px;');
+  tokenRow.append(tokenField.container, validateBtn);
+  const providerStatus = el('div', NOTE_CSS + 'min-height:16px;');
   providerStatus.setAttribute('data-testid', 'add-contact-provider-status');
-  const modelSelect = el('select', INPUT_CSS);
+  const modelSelect = el('select', SELECT_CSS);
   modelSelect.setAttribute('data-testid', 'add-contact-provider-model');
   modelSelect.style.display = 'none';
   providerBox.append(providerSelect, tokenRow, providerStatus, modelSelect);
 
-  // --- Toggles ---------------------------------------------------------
-  const localTools = makeToggle('Local tools', false, 'add-contact-local-tools');
-  const notifications = makeToggle('Notifications', true, 'add-contact-notifications');
-  const toggles = el('div', 'margin-top:8px;');
-  toggles.append(localTools.row, notifications.row);
+  inputWrapper.append(nameField.container, npubField.container, scanList, providerBox);
 
-  const errorEl = el('div', 'color:var(--danger-color);font-size:12px;margin-top:8px;min-height:18px;');
+  // --- Toggles: the Edit pane's checkbox Rows ----------------------------
+  const makeToggleRow = (text: 'ContactLocalTools' | 'Notifications', checked: boolean, testId: string) => {
+    const field = new CheckboxField({text});
+    field.input.setAttribute('data-testid', testId);
+    const row = new Row({checkboxField: field, withCheckboxSubtitle: true});
+    row.container.setAttribute('data-testid', testId + '-row');
+    // Set after the Row exists: the setter fires change, which writes the
+    // Enabled / Disabled subtitle the Edit pane shows.
+    field.checked = checked;
+    return {row: row.container, input: field.input};
+  };
+  const localTools = makeToggleRow('ContactLocalTools', false, 'add-contact-local-tools');
+  const notifications = makeToggleRow('Notifications', true, 'add-contact-notifications');
+
+  const errorEl = el('div', SIDE_CSS + 'color:var(--danger-color);font-size:.875rem;min-height:18px;margin-top:.5rem;');
   errorEl.setAttribute('data-testid', 'add-contact-error');
 
-  const btnRow = el('div', 'display:flex;gap:8px;margin-top:16px;justify-content:flex-end;');
-  const cancelBtn = el('button', ACTION_CSS, 'Cancel');
-  cancelBtn.type = 'button';
-  cancelBtn.addEventListener('click', () => overlay.remove());
-  const addBtn = el('button', PRIMARY_CSS, 'Add');
-  addBtn.type = 'button';
-  addBtn.setAttribute('data-testid', 'add-contact-submit');
-  btnRow.append(cancelBtn, addBtn);
+  content.append(segment, avatarWrap, inputWrapper, localTools.row, notifications.row, errorEl);
+
+  // Same save control as the contact and group Edit panes. `.btn-corner`
+  // rests below the pane until `.is-visible`, so it is set once: the button
+  // validates on press instead of hiding until the form looks complete.
+  const submitBtn = ButtonCorner({icon: 'check'}) as HTMLButtonElement;
+  submitBtn.classList.add('is-visible');
+  submitBtn.setAttribute('data-testid', 'add-contact-submit');
+  submitBtn.setAttribute('aria-label', 'Add contact');
+  submitBtn.title = 'Add contact';
 
   // --- Behaviour -------------------------------------------------------
   let avatarToken = 0;
@@ -298,19 +302,16 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
       b.style.background = on ? 'var(--primary-color)' : 'transparent';
       b.style.color = on ? '#fff' : 'var(--primary-text-color)';
     });
-    // Local tools: Phantom + Provider only. Scan: Phantom, desktop only.
     // Local tools: Phantom on a desktop build with the Local tools gate. A
     // Provider runs on this PC's engine with its tools, and the engine has no
     // per-channel switch yet, so it shows none rather than one that does
     // nothing. Never Human.
-    // Explicit values: clearing the inline display falls back to block, which
-    // stacks the switch under its caption.
-    localTools.row.style.display = k === 'phantom' && localToolsAvailable ? 'flex' : 'none';
+    localTools.row.style.display = k === 'phantom' && localToolsAvailable ? '' : 'none';
     const showScan = k === 'phantom' && scanAvailable;
     scanBtn.style.display = showScan ? 'flex' : 'none';
     // Keep the typed text clear of the icon buttons inside the field.
-    npubInput.style.paddingInlineEnd = showScan ? '82px' : '44px';
-    npubRow.style.display = k === 'provider' ? 'none' : 'flex';
+    npubInput.style.paddingInlineEnd = showScan ? '86px' : '48px';
+    npubField.container.style.display = k === 'provider' ? 'none' : '';
     providerBox.style.display = k === 'provider' ? 'flex' : 'none';
     if(k !== 'phantom') scanList.style.display = 'none';
     if(k === 'provider') void loadProviders();
@@ -328,14 +329,14 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
       const {launchQRScanner} = await import('@components/phantomchat/QRScanner');
       launchQRScanner({
         onDetected: (npub: string) => {
-          npubInput.value = npub;
+          npubField.value = npub;
           errorEl.textContent = '';
           void renderAvatar();
-          nameInput.focus();
+          nameField.input.focus();
         }
       });
     } catch(err) {
-      console.error('[AddContactPopup] QRScanner load failed', err);
+      console.error('[AddContactPane] QRScanner load failed', err);
       errorEl.textContent = 'Scanner unavailable';
     }
   });
@@ -345,31 +346,30 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
     if(!api) return;
     errorEl.textContent = '';
     scanBtn.disabled = true;
-    scanList.replaceChildren(el('div', 'font-size:12px;color:var(--secondary-text-color);', 'Looking for phantombot on this PC...'));
+    scanList.replaceChildren(el('div', NOTE_CSS, 'Looking for phantombot on this PC...'));
     scanList.style.display = 'flex';
     try {
       const ownNpub = await getOwnNpub();
       const res = await api.list(ownNpub);
       if(!res?.ok) {
-        scanList.replaceChildren(el('div', 'font-size:12px;color:var(--danger-color);', res?.error?.message || 'Scan failed'));
+        scanList.replaceChildren(el('div', 'font-size:.875rem;color:var(--danger-color);', res?.error?.message || 'Scan failed'));
         return;
       }
       const personas = (res.value as LocalPersonaListing[]) || [];
       if(!personas.length) {
-        scanList.replaceChildren(el('div', 'font-size:12px;color:var(--secondary-text-color);', 'No personas found on this PC'));
+        scanList.replaceChildren(el('div', NOTE_CSS, 'No personas found on this PC'));
         return;
       }
       scanList.replaceChildren(...personas.map((p) => {
-        const b = el('button', BTN_CSS + 'text-align:left;background:transparent;color:var(--primary-text-color);border:1px solid var(--border-color);',
-          p.persona + (p.allowed ? ' (already allows you)' : ''));
+        const b = el('button', LIST_BTN_CSS, p.persona + (p.allowed ? ' (already allows you)' : ''));
         b.type = 'button';
         b.setAttribute('data-testid', `add-contact-scan-persona-${p.persona}`);
         b.addEventListener('click', () => void pickLocalPersona(p.persona, ownNpub));
         return b;
       }));
     } catch(err) {
-      console.error('[AddContactPopup] scan failed', err);
-      scanList.replaceChildren(el('div', 'font-size:12px;color:var(--danger-color);', 'Scan failed'));
+      console.error('[AddContactPane] scan failed', err);
+      scanList.replaceChildren(el('div', 'font-size:.875rem;color:var(--danger-color);', 'Scan failed'));
     } finally {
       scanBtn.disabled = false;
     }
@@ -378,18 +378,18 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   const pickLocalPersona = async(persona: string, ownNpub: string) => {
     const api = desktopApi()?.localPersonas;
     if(!api) return;
-    scanList.replaceChildren(el('div', 'font-size:12px;color:var(--secondary-text-color);', `Adding you to ${persona} and restarting phantombot...`));
+    scanList.replaceChildren(el('div', NOTE_CSS, `Adding you to ${persona} and restarting phantombot...`));
     const res = await api.allow(persona, ownNpub).catch((err: unknown) => ({ok: false, error: {message: String(err)}}));
     if(!res?.ok) {
-      scanList.replaceChildren(el('div', 'font-size:12px;color:var(--danger-color);', res?.error?.message || 'Could not add you'));
+      scanList.replaceChildren(el('div', 'font-size:.875rem;color:var(--danger-color);', res?.error?.message || 'Could not add you'));
       return;
     }
-    npubInput.value = res.value.npub;
-    if(!nameInput.value.trim()) nameInput.value = persona.charAt(0).toUpperCase() + persona.slice(1);
+    npubField.value = res.value.npub;
+    if(!nameField.value.trim()) nameField.value = persona.charAt(0).toUpperCase() + persona.slice(1);
     const note = res.value.restarted || !res.value.added ?
       `${persona} is ready` :
       `Restart phantombot to finish (${res.value.restartError || 'restart failed'})`;
-    scanList.replaceChildren(el('div', 'font-size:12px;color:var(--secondary-text-color);', note));
+    scanList.replaceChildren(el('div', NOTE_CSS, note));
     scanList.firstElementChild?.setAttribute('data-testid', 'add-contact-scan-done');
     void renderAvatar();
   };
@@ -405,7 +405,7 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
     modelSelect.style.display = 'none';
     modelSelect.replaceChildren();
     const p = currentProvider();
-    tokenInput.placeholder = p?.keyLabel || 'Token';
+    tokenField.label.textContent = p?.keyLabel || 'Token';
     providerStatus.textContent = p && !p.checkable ? 'This provider cannot be verified; its key is used as given' : '';
   };
 
@@ -421,7 +421,7 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
       }));
       resetCheck();
     } catch(err) {
-      console.error('[AddContactPopup] providers failed', err);
+      console.error('[AddContactPane] providers failed', err);
       providerStatus.textContent = 'Could not list providers';
     }
   };
@@ -462,6 +462,20 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
     }
   });
 
+  // One add at a time: the corner button and Enter both land here.
+  let busy = false;
+  const runBusy = async(fn: () => Promise<void>) => {
+    if(busy) return;
+    busy = true;
+    const restore = toggleDisability([submitBtn], true);
+    try {
+      await fn();
+    } finally {
+      busy = false;
+      restore();
+    }
+  };
+
   const addProvider = async() => {
     const p = currentProvider();
     if(!p) {
@@ -482,44 +496,39 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
       errorEl.textContent = 'Choose a model';
       return;
     }
-    addBtn.disabled = true;
-    addBtn.textContent = 'Adding...';
     const {createProviderContact, deleteProviderPersona} = await import('@lib/phantomchat/provider-contacts');
     let created: Awaited<ReturnType<typeof createProviderContact>> | undefined;
     try {
       created = await createProviderContact(call, {
-        displayName: nameInput.value.trim() || p.label,
+        displayName: nameField.value.trim() || p.label,
         provider: p,
         model,
         apiKey: token,
         ownNpub: await getOwnNpub()
       });
-      if(created.channelError) console.warn('[AddContactPopup] provider channel not running yet:', created.channelError);
+      if(created.channelError) console.warn('[AddContactPane] provider channel not running yet:', created.channelError);
       const result = await addTypedContact(managers, {
         npub: created.npub,
-        nickname: nameInput.value.trim() || p.label,
+        nickname: nameField.value.trim() || p.label,
         kind: 'provider',
         notifications: notifications.input.checked,
         localTools: false,
         persona: created.persona
       });
-      overlay.remove();
+      opts.onDone();
       onContactAdded?.(result.peerIdTweb, result.displayName);
     } catch(err) {
-      console.error('[AddContactPopup] provider add failed', err);
+      console.error('[AddContactPane] provider add failed', err);
       // The contact did not land: take its persona (and key) away again.
       if(created) await deleteProviderPersona(call, created.persona).catch(() => {});
       errorEl.textContent = err instanceof Error && err.message ? err.message : 'Failed to add contact';
-      addBtn.disabled = false;
-      addBtn.textContent = 'Add';
     }
   };
 
-  addBtn.addEventListener('click', async() => {
-    if(kind === 'provider') return addProvider();
+  const addPeer = async() => {
     const submit: AddContactSubmit = {
       npub: npubInput.value.trim(),
-      nickname: nameInput.value.trim(),
+      nickname: nameField.value.trim(),
       kind,
       notifications: notifications.input.checked,
       localTools: kind !== 'human' && localTools.input.checked
@@ -528,37 +537,131 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
       errorEl.textContent = 'Invalid npub format';
       return;
     }
-    addBtn.disabled = true;
-    addBtn.textContent = 'Adding...';
     try {
       const result = await addTypedContact(managers, submit);
-      overlay.remove();
+      opts.onDone();
       onContactAdded?.(result.peerIdTweb, result.displayName);
     } catch(err) {
-      console.error('[AddContactPopup]', err);
+      console.error('[AddContactPane]', err);
       errorEl.textContent = 'Failed to add contact';
-      addBtn.disabled = false;
-      addBtn.textContent = 'Add';
     }
+  };
+
+  const submit = () => runBusy(() => kind === 'provider' ? addProvider() : addPeer());
+  submitBtn.addEventListener('click', () => void submit());
+
+  // Enter in a text field adds, like Enter in the group editor's name field.
+  [nameField.input, npubInput].forEach((input) => {
+    input.addEventListener('keydown', (event: KeyboardEvent) => {
+      if(event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      if(!event.repeat) void submit();
+    });
   });
 
-  overlay.addEventListener('click', (e) => {
-    if(e.target === overlay) overlay.remove();
-  });
-
-  dialog.append(title, segment, avatarRow, npubRow, scanList, providerBox, toggles, errorEl, btnRow);
-  overlay.append(dialog);
-  document.body.append(overlay);
   setKind('phantom');
-  (opts.npub ? nameInput : npubInput).focus();
 
   // Provider is desktop-only and needs the bundled engine's provider list.
   void canAddProviders().then((ok) => {
-    if(ok && overlay.isConnected && !segButtons.has('provider')) {
+    if(ok && opts.isAlive() && !segButtons.has('provider')) {
       addSegButton('provider');
       setKind(kind);
     }
   });
+
+  return {
+    section,
+    submitBtn,
+    submit,
+    focus: () => (opts.npub ? nameField.input : npubInput).focus()
+  };
+}
+
+/**
+ * The New Contact pane: a right-sidebar tab like AppEditContactTab and
+ * AppPhantomChatGroupEditTab, with the same close button, title and corner
+ * check button.
+ */
+export default class AppAddContactTab extends SliderSuperTab {
+  public options: ShowAddContactOptions;
+  public form: AddContactForm;
+  /** Opened over the chat list (phone): closing must go back to it. */
+  public fromChatList = false;
+  private added = false;
+  private backToChatList: () => void;
+
+  public async init() {
+    // Closing the right sidebar always selects the CHAT tab. On a phone the
+    // pane opens over the chat list with no chat behind it, so without this a
+    // close (X, back, Escape) lands on an empty chat screen. A successful add
+    // opens the new chat, which is the right place to land.
+    const {default: appImManager, APP_TABS} = await import('@lib/appImManager');
+    this.backToChatList = () => appImManager.selectTab(APP_TABS.CHATLIST);
+
+    this.container.classList.add('edit-peer-container', 'edit-contact-container', 'add-contact-container');
+    this.title.textContent = 'New Contact';
+
+    const appSidebarRight = (await import('@components/sidebarRight')).default;
+    const closePane = () => {
+      this.close();
+      appSidebarRight.toggleSidebar(false);
+    };
+
+    // Close, not back: the pane is a whole task, as in the Edit panes.
+    const newCloseBtn = this.closeBtn.cloneNode(true) as HTMLElement;
+    this.closeBtn.replaceWith(newCloseBtn);
+    this.closeBtn = newCloseBtn;
+    replaceButtonIcon(this.closeBtn, 'close');
+    attachClickEvent(this.closeBtn, closePane, {listenerSetter: this.listenerSetter});
+
+    let alive = true;
+    this.middlewareHelper.get().onDestroy(() => {
+      alive = false;
+    });
+
+    this.form = createAddContactForm({
+      ...this.options,
+      onDone: () => {
+        this.added = true;
+        closePane();
+      },
+      isAlive: () => alive && this.container.isConnected
+    });
+    this.scrollable.append(this.form.section);
+    this.content.append(this.form.submitBtn);
+  }
+
+  protected onOpenAfterTimeout() {
+    this.form?.focus();
+  }
+
+  protected onClose() {
+    if(this.fromChatList && !this.added) this.backToChatList?.();
+  }
+}
+
+/**
+ * Open the New Contact pane. Every entry point (tools menu, Contacts tab +,
+ * an npub pasted into a search box) opens this same pane.
+ */
+export async function openAddContactPane(opts: ShowAddContactOptions): Promise<void> {
+  const appSidebarRight = (await import('@components/sidebarRight')).default;
+  // One pane at a time: a search box fires on every keystroke past 60 chars.
+  if(appSidebarRight.isTabExists(AppAddContactTab)) {
+    appSidebarRight.toggleSidebar(true);
+    return;
+  }
+  const tab = appSidebarRight.createTab(AppAddContactTab, true);
+  tab.options = opts;
+  // 'is-left-column-shown' (LEFT_COLUMN_ACTIVE_CLASSNAME in sidebarLeft) is
+  // set while the chat list is the selected tab. Read as a string so this
+  // module does not import the whole left sidebar.
+  tab.fromChatList = document.body.classList.contains('is-left-column-shown');
+  // Await open() BEFORE showing the sidebar: with an empty history,
+  // toggleSidebar(true) falls back to the native peer-info tab (see
+  // openPeerEditor in peerActionsMenu.ts).
+  await tab.open();
+  appSidebarRight.toggleSidebar(true);
 }
 
 /**
@@ -586,7 +689,7 @@ export async function addTypedContact(managers: AppManagers, submit: AddContactS
     });
     wrote = true;
   } catch(err) {
-    console.warn('[AddContactPopup] could not save contact prefs', err);
+    console.warn('[AddContactPane] could not save contact prefs', err);
   }
 
   const {addP2PContact} = await import('@lib/phantomchat/add-p2p-contact');
@@ -602,7 +705,7 @@ export async function addTypedContact(managers: AppManagers, submit: AddContactS
   } catch(err) {
     if(wrote) {
       await restoreContactPrefs(hex, previous).catch((restoreErr) => {
-        console.warn('[AddContactPopup] could not undo contact prefs', restoreErr);
+        console.warn('[AddContactPane] could not undo contact prefs', restoreErr);
       });
     }
     throw err;
@@ -616,7 +719,7 @@ export async function addTypedContact(managers: AppManagers, submit: AddContactS
       const on = getLocalToolsApi() ? await setPhantomLocalTools(hex, true, submit.nickname || 'This contact') : false;
       if(!on && wrote) await setContactPrefs(hex, {localTools: false});
     } catch(err) {
-      console.warn('[AddContactPopup] could not turn on Local tools', err);
+      console.warn('[AddContactPane] could not turn on Local tools', err);
     }
   }
 
@@ -624,7 +727,7 @@ export async function addTypedContact(managers: AppManagers, submit: AddContactS
     try {
       await managers.appMessagesManager.togglePeerMute({peerId: result.peerIdTweb, mute: true});
     } catch(err) {
-      console.warn('[AddContactPopup] could not mute new contact', err);
+      console.warn('[AddContactPane] could not mute new contact', err);
     }
   }
   return result;

@@ -140,9 +140,9 @@ async function main() {
   await addContactEntry.first().click();
   await page.waitForTimeout(1000);
 
-  const popup = await page.locator('.popup-add-contact-overlay').count();
-  if(popup === 0) throw new Error('Add Contact popup did not open');
-  console.log('[test] Add Contact popup opened OK');
+  const pane = await page.locator('.add-contact-container').count();
+  if(pane === 0) throw new Error('New Contact pane did not open');
+  console.log('[test] New Contact pane opened OK');
 
   // Click Scan QR -> overlay should mount
   await page.locator('[data-testid="add-contact-scan-qr"]').click();

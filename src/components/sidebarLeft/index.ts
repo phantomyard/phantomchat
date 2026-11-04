@@ -661,8 +661,8 @@ export class AppSidebarLeft extends SidebarSlider {
       separator: true,
       onClick: async() => {
         closeTabsBefore(async() => {
-          const {showAddContactPopup} = await import('@components/popups/addContact');
-          showAddContactPopup({managers: this.managers});
+          const {openAddContactPane} = await import('@components/sidebarRight/tabs/addContact');
+          void openAddContactPane({managers: this.managers});
         });
       }
     };
@@ -1222,11 +1222,11 @@ export class AppSidebarLeft extends SidebarSlider {
     });
   }
 
-  // A pasted npub opens the New Contact modal prefilled (contacts redesign):
+  // A pasted npub opens the New Contact pane prefilled (contacts redesign):
   // adding straight from the search box skipped the contact-type choice.
   private async handleNpubInput(npub: string) {
-    const {showAddContactPopup} = await import('@components/popups/addContact');
-    showAddContactPopup({
+    const {openAddContactPane} = await import('@components/sidebarRight/tabs/addContact');
+    await openAddContactPane({
       managers: this.managers,
       npub,
       onContactAdded: async(_peerId, displayName) => {
