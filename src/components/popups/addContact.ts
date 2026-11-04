@@ -8,6 +8,7 @@ import type {AppManagers} from '@lib/managers';
 import type {ContactKind} from '@lib/phantomchat/contact-prefs';
 import type {LocalPersonaListing} from '@lib/phantomchat/desktop-api';
 import type {ProviderCheckResult, ProviderOption} from '@lib/phantomchat/provider-contacts';
+import Icon from '@components/icon';
 
 /**
  * New-contact modal (contacts redesign). The user first picks what the
@@ -100,14 +101,57 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cssText?: string, tex
 const INPUT_CSS = 'width:100%;padding:12px;border:1px solid var(--border-color);border-radius:8px;font-size:14px;box-sizing:border-box;background:var(--surface-color);color:var(--primary-text-color);';
 const BTN_CSS = 'padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:14px;';
 
+/* Compact controls for the dialog's own rows. The app's `.btn-primary` is a
+ * block button (width:100%, height:54px, overflow:hidden), so putting it on a
+ * control that shares a row with a field blows the row past the dialog width:
+ * the field collapses to a few pixels and the dialog grows a horizontal
+ * scrollbar. These styles size to content instead. */
+const SEGMENT_CSS = 'flex:1;min-width:0;padding:8px 6px;border:none;border-radius:8px;background:transparent;color:var(--primary-text-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
+const ACTION_CSS = 'flex:none;height:40px;padding:0 14px;border:none;border-radius:8px;background:transparent;color:var(--primary-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
+const OUTLINE_CSS = 'flex:none;height:44px;padding:0 14px;border:1px solid var(--border-color);border-radius:8px;background:transparent;color:var(--primary-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
+const PRIMARY_CSS = 'flex:none;height:40px;padding:0 24px;border:none;border-radius:10px;background:var(--primary-color);color:#fff;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;';
+const ICON_BTN_CSS = 'position:absolute;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:none;border-radius:8px;background:transparent;color:var(--secondary-text-color);font-size:20px;line-height:1;cursor:pointer;';
+
+/** Icon-only button for the npub field's trailing edge. */
+function makeIconButton(icon: Icon, title: string, testId: string) {
+  const btn = el('button', ICON_BTN_CSS);
+  btn.type = 'button';
+  btn.title = title;
+  btn.setAttribute('aria-label', title);
+  btn.setAttribute('data-testid', testId);
+  btn.append(Icon(icon));
+  return btn;
+}
+
 function makeToggle(label: string, checked: boolean, testId: string) {
-  const row = el('label', 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 2px;font-size:14px;color:var(--primary-text-color);cursor:pointer;');
-  row.append(el('span', undefined, label));
+  const row = el('div', 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 2px;font-size:14px;color:var(--primary-text-color);cursor:pointer;');
+  row.setAttribute('data-testid', testId + '-row');
+  const caption = el('span', 'min-width:0;', label);
+  // The app's switch markup (see checkboxField.ts). A bare <input type="checkbox">
+  // is invisible here: _checkbox.scss hides it and draws .checkbox-toggle instead.
+  // pointer-events:all is required: .checkbox-field-toggle is pointer-events:none
+  // app-wide (the app re-enables it only inside .row.accordion-toggler), so without
+  // it a click on the switch falls through to the row and nothing toggles.
+  const field = el('label', 'margin:0;pointer-events:all;');
+  field.classList.add('checkbox-field', 'checkbox-field-toggle', 'checkbox-without-caption');
   const input = el('input');
+  input.classList.add('checkbox-field-input');
   input.type = 'checkbox';
   input.checked = checked;
   input.setAttribute('data-testid', testId);
-  row.append(input);
+  const toggle = el('div', '');
+  toggle.classList.add('checkbox-toggle');
+  const circle = el('div', '');
+  circle.classList.add('checkbox-toggle-circle');
+  toggle.append(circle);
+  field.append(input, toggle);
+  // A click on the switch or the label activates the input natively through the
+  // label; the row handler must not toggle it a second time or the two cancel out.
+  row.addEventListener('click', (e) => {
+    if((e.target as HTMLElement).closest('label')) return;
+    input.checked = !input.checked;
+  });
+  row.append(caption, field);
   return {row, input};
 }
 
@@ -135,7 +179,7 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   let kind: ContactKind = 'phantom';
 
   const addSegButton = (k: ContactKind) => {
-    const b = el('button', BTN_CSS + 'flex:1;padding:8px 6px;background:transparent;color:var(--primary-text-color);', KIND_LABELS[k]);
+    const b = el('button', SEGMENT_CSS, KIND_LABELS[k]);
     b.type = 'button';
     b.setAttribute('role', 'tab');
     b.setAttribute('data-testid', `add-contact-kind-${k}`);
@@ -161,7 +205,10 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
 
   // --- npub row (Phantom + Human) --------------------------------------
   const npubRow = el('div', 'display:flex;gap:8px;align-items:center;');
-  const npubInput = el('input', INPUT_CSS + 'flex:1;min-width:0;');
+  // The field keeps the full row width; QR and Scan are icon buttons that sit
+  // inside its trailing edge, so the modal never needs horizontal scrolling.
+  const npubField = el('div', 'position:relative;display:flex;align-items:center;flex:1;min-width:0;');
+  const npubInput = el('input', INPUT_CSS + 'min-width:0;');
   npubInput.type = 'text';
   npubInput.placeholder = 'npub Key (npub1...)';
   npubInput.classList.add('input-clear');
@@ -169,21 +216,18 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   if(opts.npub) npubInput.value = opts.npub.trim();
 
   // Scan: find phantombot personas installed on this PC (desktop only).
-  const scanBtn = el('button', BTN_CSS + 'flex:none;', 'Scan');
-  scanBtn.type = 'button';
-  scanBtn.classList.add('btn-primary', 'btn-transparent');
-  scanBtn.setAttribute('data-testid', 'add-contact-scan-local');
   const scanAvailable = canScanLocalPersonas();
   const localToolsAvailable = typeof (desktopApi() as any)?.localTools?.message === 'function';
+  const scanBtn = makeIconButton('search', 'Find phantombot personas on this PC', 'add-contact-scan-local');
+  scanBtn.style.insetInlineEnd = '42px';
 
   // QR: scan a printed / on-screen npub with the camera. Kept from the old
   // modal — on a phone it is how most contacts get added.
-  const qrBtn = el('button', BTN_CSS + 'flex:none;padding:8px 10px;', 'QR');
-  qrBtn.type = 'button';
-  qrBtn.title = 'Scan QR code';
-  qrBtn.classList.add('btn-primary', 'btn-transparent');
-  qrBtn.setAttribute('data-testid', 'add-contact-scan-qr');
-  npubRow.append(npubInput, qrBtn, scanBtn);
+  const qrBtn = makeIconButton('camera', 'Scan QR code', 'add-contact-scan-qr');
+  qrBtn.style.insetInlineEnd = '6px';
+
+  npubField.append(npubInput, qrBtn, scanBtn);
+  npubRow.append(npubField);
 
   // Scan results: one button per persona of the phantombot on this PC.
   const scanList = el('div', 'display:none;flex-direction:column;gap:4px;margin-top:8px;');
@@ -200,9 +244,8 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   tokenInput.placeholder = 'Token';
   tokenInput.autocomplete = 'off';
   tokenInput.setAttribute('data-testid', 'add-contact-provider-token');
-  const validateBtn = el('button', BTN_CSS + 'flex:none;', 'Validate');
+  const validateBtn = el('button', OUTLINE_CSS, 'Validate');
   validateBtn.type = 'button';
-  validateBtn.classList.add('btn-primary', 'btn-transparent');
   validateBtn.setAttribute('data-testid', 'add-contact-provider-validate');
   tokenRow.append(tokenInput, validateBtn);
   const providerStatus = el('div', 'font-size:12px;color:var(--secondary-text-color);min-height:16px;');
@@ -222,13 +265,11 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
   errorEl.setAttribute('data-testid', 'add-contact-error');
 
   const btnRow = el('div', 'display:flex;gap:8px;margin-top:16px;justify-content:flex-end;');
-  const cancelBtn = el('button', BTN_CSS, 'Cancel');
+  const cancelBtn = el('button', ACTION_CSS, 'Cancel');
   cancelBtn.type = 'button';
-  cancelBtn.classList.add('btn-primary', 'btn-transparent');
   cancelBtn.addEventListener('click', () => overlay.remove());
-  const addBtn = el('button', BTN_CSS + 'color:#fff;', 'Add');
+  const addBtn = el('button', PRIMARY_CSS, 'Add');
   addBtn.type = 'button';
-  addBtn.classList.add('btn-primary', 'btn-color-primary');
   addBtn.setAttribute('data-testid', 'add-contact-submit');
   btnRow.append(cancelBtn, addBtn);
 
@@ -262,8 +303,13 @@ export function showAddContactPopup(opts: ShowAddContactOptions): void {
     // Provider runs on this PC's engine with its tools, and the engine has no
     // per-channel switch yet, so it shows none rather than one that does
     // nothing. Never Human.
-    localTools.row.style.display = k === 'phantom' && localToolsAvailable ? '' : 'none';
-    scanBtn.style.display = k === 'phantom' && scanAvailable ? '' : 'none';
+    // Explicit values: clearing the inline display falls back to block, which
+    // stacks the switch under its caption.
+    localTools.row.style.display = k === 'phantom' && localToolsAvailable ? 'flex' : 'none';
+    const showScan = k === 'phantom' && scanAvailable;
+    scanBtn.style.display = showScan ? 'flex' : 'none';
+    // Keep the typed text clear of the icon buttons inside the field.
+    npubInput.style.paddingInlineEnd = showScan ? '82px' : '44px';
     npubRow.style.display = k === 'provider' ? 'none' : 'flex';
     providerBox.style.display = k === 'provider' ? 'flex' : 'none';
     if(k !== 'phantom') scanList.style.display = 'none';

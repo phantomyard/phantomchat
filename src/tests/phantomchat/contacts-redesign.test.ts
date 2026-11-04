@@ -241,7 +241,7 @@ function desktopLocalTools(allow: boolean) {
 describe('New Contact modal', () => {
   const managers: any = {appMessagesManager: {togglePeerMute: vi.fn(async() => {})}};
   const q = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
-  const visible = (id: string) => !!q(id) && (q(id).closest('label') || q(id)).style.display !== 'none';
+  const visible = (id: string) => !!q(id) && (q(id).closest('[data-testid$="-row"]') as HTMLElement || q(id)).style.display !== 'none';
 
   beforeEach(async() => {
     await freshDb();
@@ -280,6 +280,64 @@ describe('New Contact modal', () => {
     q('add-contact-kind-human').click();
     expect(visible('add-contact-local-tools')).toBe(false);
     expect(visible('add-contact-notifications')).toBe(true);
+  });
+
+  it('draws QR and Scan as icon buttons inside the npub field', async() => {
+    (window as any).phantomchatDesktop = {localPersonas: {list: vi.fn(async() => ({ok: true, value: [] as unknown[]})), allow: vi.fn()}};
+    await open();
+    const npub = q('add-contact-npub');
+    const field = npub.parentElement;
+    const qr = q('add-contact-scan-qr');
+    const scan = q('add-contact-scan-local');
+    expect(qr.parentElement).toBe(field);
+    expect(scan.parentElement).toBe(field);
+    expect(qr.textContent).not.toContain('QR'); // an icon glyph, not the word "QR"
+    expect(qr.querySelector('.tgico')).toBeTruthy();
+    expect(scan.querySelector('.tgico')).toBeTruthy();
+    expect(scan.getAttribute('aria-label')).toBeTruthy();
+    expect(scan.style.display).toBe('flex');
+  });
+
+  it('never reuses the app-wide block button inside the dialog', async() => {
+    await open();
+    const dialog = q('add-contact-dialog');
+    // .btn-primary is width:100%/height:54px, so a control carrying it blows the
+    // row past the dialog width and adds a horizontal scrollbar.
+    expect(dialog.querySelectorAll('.btn-primary, .btn-transparent').length).toBe(0);
+  });
+
+  it('renders each toggle as the app switch, not a bare checkbox', async() => {
+    await open();
+    expect(q('add-contact-notifications').closest('.checkbox-field-toggle')).toBeTruthy();
+  });
+
+  it('flips the switch when the switch itself is clicked', async() => {
+    await open();
+    const input = q('add-contact-notifications') as HTMLInputElement;
+    const toggle = input.closest('.checkbox-field-toggle')!.querySelector('.checkbox-toggle') as HTMLElement;
+    expect(input.checked).toBe(true);
+    toggle.click();
+    expect(input.checked).toBe(false);
+    toggle.click();
+    expect(input.checked).toBe(true);
+  });
+
+  it('flips the switch when the row caption is clicked', async() => {
+    await open();
+    const input = q('add-contact-notifications') as HTMLInputElement;
+    const row = q('add-contact-notifications-row');
+    expect(input.checked).toBe(true);
+    row.click();
+    expect(input.checked).toBe(false);
+  });
+
+  it('leaves the switch label clickable, overriding the app-wide pointer-events:none', async() => {
+    await open();
+    // .checkbox-field-toggle is pointer-events:none in _checkbox.scss; jsdom does
+    // not compute stylesheets, so assert the inline override that keeps the switch
+    // clickable in a real browser.
+    const field = q('add-contact-notifications').closest('.checkbox-field-toggle') as HTMLElement;
+    expect(field.style.pointerEvents).toBe('all');
   });
 
   it('has no last-name or notes field', async() => {
