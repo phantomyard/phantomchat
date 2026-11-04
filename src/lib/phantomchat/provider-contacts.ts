@@ -158,12 +158,19 @@ export async function deleteProviderPersona(call: BridgeCall, persona: string): 
 }
 
 /**
- * The prefs half of deleting a contact. A Provider contact's persona goes
- * first: the prefs row is the only record of its name, so if the persona
- * cannot be deleted (or there is no engine to ask) the row stays, the caller
- * sees the error, and a retry is still possible.
+ * The prefs half of deleting a contact. Its Local tools grant is revoked
+ * first, through main's gate: that removes it from local-access.json (so it
+ * stays gone after a restart) and cancels what the contact has running. The
+ * prefs switch is not the grant, so clearing prefs alone would leave it live.
+ * A failed revoke throws before anything is forgotten.
+ *
+ * A Provider contact's persona goes next: the prefs row is the only record of
+ * its name, so if the persona cannot be deleted (or there is no engine to ask)
+ * the row stays, the caller sees the error, and a retry is still possible.
  */
 export async function forgetContact(pubkey: string, call: BridgeCall | undefined): Promise<void> {
+  const {setPhantomLocalTools} = await import('@lib/phantomchat/local-tools');
+  await setPhantomLocalTools(pubkey, false, '');
   const prefs = await getContactPrefs(pubkey);
   if(prefs?.kind === 'provider' && prefs.persona) {
     if(!call) throw new ProviderContactError('not_supported', 'this app cannot reach the engine that runs this contact');

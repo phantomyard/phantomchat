@@ -20,6 +20,10 @@ import {
 } from '@helpers/generateDicebearAvatar';
 import {npubEncode} from '@lib/phantomchat/nostr-identity';
 import {forgetContact} from '@lib/phantomchat/provider-contacts';
+import {LocalToolsHost} from '../../../electron/localTools/host';
+import {mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
 const HEX = '17162c921dc4d2518f9a101db33695df1afb56ab82f5ff3e5da6eec3ca5cd917';
 const NPUB = npubEncode(HEX);
@@ -65,6 +69,68 @@ describe('contact-prefs store', () => {
     const ok = vi.fn(async() => ({ok: true as const, value: null as unknown}));
     await forgetContact(HEX, ok);
     expect(await getContactPrefs(HEX)).toBeUndefined();
+  });
+
+  it('deleting a Phantom contact revokes its Local tools grant, also after a host restart', async() => {
+    const OWNER = 'a'.repeat(64);
+    const dataDir = mkdtempSync(join(tmpdir(), 'lt-forget-'));
+    const pending = new Map<string, (r: any) => void>();
+    const tools = {
+      run: vi.fn((runId: string, _tool: string, args: any) => args.hang ?
+        new Promise<any>((resolve) => pending.set(runId, resolve)) :
+        Promise.resolve({status: 'ok' as const, output: 'ran', exit: 0})),
+      cancel: vi.fn(async(runId: string) => pending.get(runId)?.({status: 'error', output: 'aborted'}))
+    };
+    const newHost = () => {
+      const host = new LocalToolsHost({dataDir, tools, confirm: async() => true, deviceName: 'pc'});
+      host.setOwner(OWNER);
+      return host;
+    };
+    const call = (host: LocalToolsHost, callId: string, args: any = {command: 'ls'}) =>
+      host.handleMessage(HEX, {t: 'call', callId, deviceId: (host as any).state.deviceId, tool: 'bash', args, expiresAt: Date.now() + 60_000}, null);
+    const desktop = (host: LocalToolsHost) => (window as any).phantomchatDesktop = {localTools: {
+      setOwner: async() => ({enabled: host.enabled(), capability: null as unknown}),
+      enabled: async() => host.enabled(),
+      set: (p: string, on: boolean, name: string) => host.setLocalAccess(p, on, name),
+      message: (s: string, payload: unknown, g: any) => host.handleMessage(s, payload as any, g)
+    }};
+    try {
+      const host = newHost();
+      desktop(host);
+      expect((await host.setLocalAccess(HEX, true, 'Kai')).enabled).toBe(true);
+      await setContactPrefs(HEX, {kind: 'phantom', localTools: true});
+      const running = call(host, 'c1', {hang: true});
+      await new Promise((r) => setTimeout(r, 0));
+
+      await forgetContact(HEX, undefined);
+      expect(await getContactPrefs(HEX)).toBeUndefined();
+      // The running call was cancelled and a fresh one gets nothing.
+      expect(tools.cancel).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(await running)).toContain('cancelled');
+      expect(await call(host, 'c2')).toEqual([]);
+
+      // A restarted host reads the same local-access.json: still revoked.
+      const restarted = newHost();
+      expect(restarted.enabled()).not.toContain(HEX);
+      expect(await call(restarted, 'c3')).toEqual([]);
+      expect(tools.run).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (window as any).phantomchatDesktop;
+      rmSync(dataDir, {recursive: true, force: true});
+    }
+  });
+
+  it('keeps the contact when its Local tools revoke fails', async() => {
+    await setContactPrefs(HEX, {kind: 'phantom', localTools: true});
+    (window as any).phantomchatDesktop = {localTools: {message: async(): Promise<unknown[]> => [], set: async() => {
+      throw new Error('main gone');
+    }}};
+    try {
+      await expect(forgetContact(HEX, undefined)).rejects.toThrow('main gone');
+      expect((await getContactPrefs(HEX))?.localTools).toBe(true);
+    } finally {
+      delete (window as any).phantomchatDesktop;
+    }
   });
 
   it('round-trips kind and localTools, and survives a cache reset', async() => {
