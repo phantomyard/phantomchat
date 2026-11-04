@@ -10,7 +10,7 @@ const sessionPeerId = -Number(SESSION_PEER_BASE) - 7;
 const p2pPeerId = 1000000000000001; // synthetic P2P range
 
 describe('chat list click on the already-open chat', () => {
-  const base = {peerId: groupPeerId, isActive: true};
+  const base = {peerId: groupPeerId, isActive: true, isLessThanFloatingLeftSidebar: false};
 
   it('opens the editor for an active group chat', () => {
     expect(shouldOpenEditorOnSelectedChat(base)).toBe(true);
@@ -18,6 +18,17 @@ describe('chat list click on the already-open chat', () => {
 
   it('opens the editor for an active session (sessions share the group peer class)', () => {
     expect(shouldOpenEditorOnSelectedChat({...base, peerId: sessionPeerId})).toBe(true);
+  });
+
+  it('falls through to opening the chat when the list and the chat cannot sit side by side', () => {
+    // Below the floating-left-sidebar breakpoint the chat replaces the list, so
+    // the selected row is the only way back to the bubbles.
+    expect(shouldOpenEditorOnSelectedChat({...base, isLessThanFloatingLeftSidebar: true})).toBe(false);
+    expect(shouldOpenEditorOnSelectedChat({
+      ...base,
+      peerId: sessionPeerId,
+      isLessThanFloatingLeftSidebar: true
+    })).toBe(false);
   });
 
   it('leaves a row that is not the open chat alone', () => {
@@ -34,7 +45,7 @@ describe('chat list click on the already-open chat', () => {
   });
 
   it('routes ctrl- and cmd-clicks through the listener to the new-tab path, plain clicks to the editor', () => {
-    const route = {peerId: groupPeerId, isActive: true};
+    const route = {peerId: groupPeerId, isActive: true, isLessThanFloatingLeftSidebar: false};
     const clicked = {mode: 'none'};
     const opened: number[] = [];
 
@@ -85,6 +96,9 @@ describe('chat list click on the already-open chat', () => {
     expect(source).toContain('handleSelectedChatClick(');
     expect(source).toContain("elem.classList.contains('active')");
     expect(source).toContain("import('@components/peerActionsMenu').then((m) => m.openPeerEditor(editorPeerId))");
+    // The narrow layout has to reach `openChat()` below instead.
+    expect(source).toContain('isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar');
+    expect(source.indexOf('openChat();')).toBeGreaterThan(source.indexOf('handleSelectedChatClick('));
     // ctrl/meta must still reach the existing open-in-new-tab branch below.
     expect(source.indexOf('if(e.ctrlKey || e.metaKey)')).toBeGreaterThan(source.indexOf('handleSelectedChatClick('));
   });
