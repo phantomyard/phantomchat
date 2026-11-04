@@ -16,7 +16,7 @@ function ctx() {
   const log: any = vi.fn();
   log.warn = vi.fn();
   log.error = vi.fn();
-  return {ownId: ME, history: [] as any[], activePeer: null, deliveryTracker: null, offlineQueue: null, onMessage: vi.fn(), onEdit: vi.fn(), log};
+  return {ownId: ME, history: [] as any[], activePeer: null as string | null, deliveryTracker: null as null, offlineQueue: null as null, onMessage: vi.fn(), onEdit: vi.fn(), log};
 }
 
 const rumor = (from: string, tags: string[][]) => ({

@@ -114,9 +114,9 @@ describe('Human avatar', () => {
 
 function desktopLocalTools(allow: boolean) {
   return {
-    setOwner: vi.fn(async() => ({enabled: [], capability: null})),
+    setOwner: vi.fn(async() => ({enabled: [] as string[], capability: null as unknown})),
     enabled: vi.fn(async() => [] as string[]),
-    set: vi.fn(async(_pubkey: string, on: boolean) => ({enabled: allow && on, notify: null})),
+    set: vi.fn(async(_pubkey: string, on: boolean) => ({enabled: allow && on, notify: null as unknown})),
     message: vi.fn(async() => [] as unknown[])
   };
 }
