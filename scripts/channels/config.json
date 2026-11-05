@@ -274,8 +274,8 @@
     },
     "src/components/chat/input.ts": {
       "stable": "00902fb8dd1f3fb11ad72d8746fcbde66f54daf52e8d6c77f2c664f208e8bdb5",
-      "preview": "3f3b143ad564763cab1d5e16f282c1accc52ebc5a3d78c498d652c585094237b",
-      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toasts are presentation-only. Forward failure toast distinguishes a partial batch (Forwarded X of Y) from a total failure so the user never blind-retries duplicates."
+      "preview": "23d4020ded06560bf488cc972dd5bc14455459969d166c850a8af8f5b9df2015",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toasts are presentation-only. Forward failure toast distinguishes a partial batch (Forwarded X of Y) from a total failure so the user never blind-retries duplicates. Forward partial-batch failures now cross the worker port as a plain ApiError-shaped object branched on the new FORWARD_PARTIAL type (the port's structured clone strips an Error subclass and its own props). global.d.ts adds the type string to the LocalErrorType union only — ambient declaration, no runtime bytes. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/phantomchat-message-handler.ts": {
       "stable": "9d6ed16c9b03e75a8ddda77de59b2aa883c0928bbfca5cb0fad8d59c2991784e",
@@ -839,8 +839,13 @@
     },
     "src/lib/phantomchat/forward-messages.ts": {
       "stable": "absent",
-      "preview": "20b3b9c044e12907dc1b7a0c2589294c6a8929d044319c600546781753be108c",
-      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toasts are presentation-only. Counts sends and throws ForwardPartialError (sent/total) when a batch fails mid-way; nothing lands, the original error propagates unchanged."
+      "preview": "8159f241e6232ff1495338437192e00251a9758315c5092b72bb7d3f4bde4aa6",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toasts are presentation-only. Counts sends and throws ForwardPartialError (sent/total) when a batch fails mid-way; nothing lands, the original error propagates unchanged. Forward partial-batch failures now cross the worker port as a plain ApiError-shaped object branched on the new FORWARD_PARTIAL type (the port's structured clone strips an Error subclass and its own props). global.d.ts adds the type string to the LocalErrorType union only — ambient declaration, no runtime bytes. Requires independent exact-head content review."
+    },
+    "src/global.d.ts": {
+      "stable": "fc55fd0391c83f5362e5c2d60694f3bcc5599fbedefac28501177e6d03e4274e",
+      "preview": "2663252e6d02a5af52402fae7d68d1dc530c0a13af1eb93e704b2de89e4d6466",
+      "reason": "Forward partial-batch failures now cross the worker port as a plain ApiError-shaped object branched on the new FORWARD_PARTIAL type (the port's structured clone strips an Error subclass and its own props). global.d.ts adds the type string to the LocalErrorType union only — ambient declaration, no runtime bytes. Requires independent exact-head content review."
     }
   }
 }
