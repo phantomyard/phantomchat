@@ -10,7 +10,7 @@ import lottieLoader from '@lib/rlottie/lottieLoader';
 import Row from '@components/row';
 import SettingSection from '@components/settingSection';
 import AppPhantomChatRelaySettingsTab from '@components/sidebarLeft/tabs/phantomchatRelaySettings';
-import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
+import {getDesktopDecisionModel, hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import showLogOutPopup from '@components/popups/logOut';
 import showResetLocalDataPopup from '@components/popups/resetLocalData';
@@ -205,6 +205,24 @@ export default class AppSettingsTab extends SliderSuperTab {
         listenerSetter: this.listenerSetter
       });
       buttonsDiv.append(updatesRow.container);
+    }
+
+    // Desktop only (issue #449): the bundled engine's decision model, for
+    // every persona. Hidden in the PWA and on installs packaged before it.
+    if(getDesktopDecisionModel()) {
+      const decisionModelRow = new Row({
+        title: 'Decision Model',
+        icon: 'bots',
+        clickable: async() => {
+          const {default: AppPhantomChatDecisionModelTab} =
+            await import('@components/sidebarLeft/tabs/phantomchatDecisionModel');
+          const tab = this.slider.createTab(AppPhantomChatDecisionModelTab);
+          tab.open();
+        },
+        listenerSetter: this.listenerSetter
+      });
+      decisionModelRow.container.setAttribute('data-testid', 'settings-decision-model');
+      buttonsDiv.append(decisionModelRow.container);
     }
 
     const buttonsSection = new SettingSection();

@@ -50,6 +50,9 @@ function fakeEngine() {
       list: vi.fn(async() => [{id: 'openrouter', label: 'OpenRouter'}]),
       check: vi.fn(async() => ({status: 'verified', detail: 'HTTP 200', models: [{id: 'm', supportsImages: false}]}))
     },
+    decisionModels: {
+      check: vi.fn(async() => ({status: 'verified', detail: 'HTTP 200', models: ['typesafe/jev-1.13']}))
+    },
     persona: vi.fn(() => persona)
   };
   return {engine, persona, turnCalls, statusListeners, wasCancelled: () => cancelled};
@@ -216,6 +219,19 @@ describe('phantombot host dispatcher', () => {
       expect(engine.providers.check).toHaveBeenLastCalledWith('openrouter', 'k', undefined);
       await send(engine, {id: 3, method: 'providers.check', params: {provider: 'openai-compatible', baseUrl: 'http://x'}});
       expect(engine.providers.check).toHaveBeenLastCalledWith('openai-compatible', '', {baseUrl: 'http://x'});
+    });
+
+    it('checks a decision-model key, and refuses a missing provider or non-string key', async() => {
+      const {engine} = fakeEngine();
+      expect(await send(engine, {id: 1, method: 'decisionModels.check', params: {provider: 'typesafe', apiKey: 'k'}})).toEqual([
+        {id: 1, result: {status: 'verified', detail: 'HTTP 200', models: ['typesafe/jev-1.13']}}
+      ]);
+      expect(engine.decisionModels.check).toHaveBeenLastCalledWith('typesafe', 'k');
+      const noProvider = await send(engine, {id: 2, method: 'decisionModels.check', params: {apiKey: 'k'}});
+      expect(noProvider[0]).toMatchObject({id: 2, error: {code: 'invalid_argument'}});
+      const badKey = await send(engine, {id: 3, method: 'decisionModels.check', params: {provider: 'typesafe', apiKey: 7}});
+      expect(badKey[0]).toMatchObject({id: 3, error: {code: 'invalid_argument'}});
+      expect(engine.decisionModels.check).toHaveBeenCalledTimes(1);
     });
 
     it('refuses an allowlist entry that is not an npub', async() => {
