@@ -74,6 +74,27 @@ describe('GFM tables in bubbles', () => {
     expect(table.textContent).not.toContain('All');
   });
 
+  it('consumes the table source: prose directly after it is not preceded by raw rows', () => {
+    // The table branch in wrapRichText must skip the entities (linebreaks,
+    // bold, code) inside the table's range; otherwise they are processed a
+    // second time and the raw rows are re-emitted after the <table>.
+    const {container} = renderBubble([
+      '| Service | State |',
+      '|---|---|',
+      '| **api** | `up` |',
+      'Next line.'
+    ].join('\n'));
+
+    const table = container.querySelector('.markdown-table table');
+    expect(table).not.toBeNull();
+    expect(container.textContent).not.toContain('|---|');
+    expect(container.textContent).not.toContain('|');
+    expect(container.textContent.match(/api/g)).toHaveLength(1);
+    expect(container.textContent.endsWith('Next line.')).toBe(true);
+    const afterTable = container.textContent.slice(container.textContent.lastIndexOf('up') + 2);
+    expect(afterTable.trim()).toBe('Next line.');
+  });
+
   it('degrades to the Markdown source where formatting is off (previews)', () => {
     const {container} = renderBubble(message, {noTextFormat: true});
     expect(container.querySelector('table')).toBeNull();
