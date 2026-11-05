@@ -66,10 +66,9 @@ async function main() {
     await waitRows(B.page, B.remotePeerId, text);
     const bubble = A.page.locator(`.bubble[data-mid="${source.mid}"] .message`).first();
     await bubble.click({button: 'right'});
-    console.log('menu:', await A.page.locator('#bubble-contextmenu').innerText());
     await A.page.locator('#bubble-contextmenu .btn-menu-item').filter({hasText: 'Forward'}).first().click();
     await A.page.locator(`.popup [data-peer-id="${groupPeer}"]`).first().click();
-    await A.page.locator('.chat-input button.btn-send').first().click();
+    await A.page.locator('.chat.active .chat-input button.btn-send').click();
     const [groupText] = await waitRows(A.page, groupPeer, text);
     await waitRows(B.page, groupPeer, text);
     assert.notEqual(groupText.eventId, source.eventId);
@@ -91,7 +90,8 @@ async function main() {
     const [groupFile] = await waitRows(A.page, groupPeer, caption);
     const [receivedGroupFile] = await waitRows(B.page, groupPeer, caption);
     assert.notEqual(groupFile.fileMetadata.keyHex, file.fileMetadata.keyHex, 'fresh attachment encryption');
-    assert.equal(receivedGroupFile.fileMetadata.mediaType, 'voice');
+    assert.equal(receivedGroupFile.fileMetadata.mimeType, 'audio/ogg');
+    assert.equal(receivedGroupFile.fileMetadata.duration, 2);
     assert.equal(receivedGroupFile.fileMetadata.waveform, 'AQID');
     await forward(A.page, groupPeer, groupFile.mid, A.remotePeerId);
     const receivedDM = await waitRows(B.page, B.remotePeerId, caption, 2);

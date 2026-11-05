@@ -14,8 +14,8 @@
     },
     "package.json": {
       "stable": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
-      "preview": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
-      "reason": "Desktop build commands only; dependency declarations and stored formats unchanged."
+      "preview": "04f27d87a43b9b10062710db3dc1cf622e8ac819d08a6d899a7f6b41b8616b00",
+      "reason": "Registers forwarding and destination-picker regressions in the quick suite; no dependency, runtime or storage changes."
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "378b94f843ad08780c207dbf7560a054bb99df0a541758fbdc428cf6457a33e5",
@@ -124,8 +124,8 @@
     },
     "src/components/appSelectPeers.ts": {
       "stable": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
-      "preview": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
-      "reason": "Groups (3) enumeration stage added after Archive so the recipient picker keeps offering existing groups (Chats still hides them by presentation rule). Read-only dialog enumeration; no storage or format change."
+      "preview": "68c89cc237b77441f8c561b1ace852e2771d7f01c2a00f706c748f99e57ad49e",
+      "reason": "Forward destination picker includes fresh groups already rendered in the main-thread dialog mirror but not yet present in Worker dialogs. Existing archive, class and send-rights filters remain; in-memory reads only."
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "dc06ae04e02840ac1d76466ffad6443352c11f317ff316726d716c5561bd96e6",

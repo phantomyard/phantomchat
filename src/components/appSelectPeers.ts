@@ -34,6 +34,7 @@ import {ChannelParticipant, ChannelParticipantsFilter, ChannelsChannelParticipan
 import canSendToUser from '@appManagers/utils/users/canSendToUser';
 import hasRights from '@appManagers/utils/chats/hasRights';
 import {FOLDER_ID_GROUPS} from '@appManagers/constants';
+import {isChatGroupPeer} from '@lib/phantomchat/group-types';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import {generateDelimiter} from '@components/generateDelimiter';
 import SettingSection from '@components/settingSection';
@@ -822,6 +823,17 @@ export default class AppSelectPeers {
           return;
         }
       }
+    }
+
+    // New PhantomChat groups paint in the main-thread mirror before the
+    // Worker has a dialog row. Include them so Forward can target a group
+    // immediately after creation, retaining the normal rights filter below.
+    const mirrored = Object.values((apiManagerProxy as any).mirrors?.dialogs || {}) as Dialog[];
+    const known = new Set(groupDialogs.map((dialog) => dialog.peerId));
+    if(!this.query) {
+      groupDialogs.push(...mirrored.filter((dialog) =>
+        isChatGroupPeer(Number(dialog.peerId)) && dialog.folder_id !== 1 && !known.has(dialog.peerId)
+      ));
     }
 
     let dialogs = groupDialogs.slice();

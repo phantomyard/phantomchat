@@ -30,7 +30,7 @@ const FOLDER_ARCHIVED = 1;
 // Browser APIs jsdom lacks but the component's import graph touches at module
 // scope: setWorkerProxy (apiManagerProxy) reaches for `Worker`,
 // CacheStorageController for `caches`, the picker's layout for `matchMedia`.
-const {peers} = vi.hoisted(() => {
+const {peers, mirroredDialogs} = vi.hoisted(() => {
   if(!(globalThis as any).Worker) (globalThis as any).Worker = class { addEventListener() {} postMessage() {} terminate() {} };
   if(typeof (globalThis as any).caches === 'undefined') {
     const makeCache = (): any => ({match: async(): Promise<any> => undefined, put: async(): Promise<void> => {}, delete: async(): Promise<void> => {}, keys: async(): Promise<any[]> => []});
@@ -39,13 +39,13 @@ const {peers} = vi.hoisted(() => {
   if(typeof (globalThis as any).matchMedia === 'undefined') {
     (globalThis as any).matchMedia = () => ({matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}});
   }
-  return {peers: new Map<number, any>()};
+  return {peers: new Map<number, any>(), mirroredDialogs: {} as Record<string, any>};
 });
 
 // The real proxy spawns MTProto workers on import; the rights filter is the
 // only consumer here, so a Map lookup is enough.
 vi.mock('@lib/apiManagerProxy', () => ({
-  default: {getPeer: (id: number) => peers.get(id) ?? {_: 'chat', id, pFlags: {}}}
+  default: {mirrors: {dialogs: mirroredDialogs}, getPeer: (id: number) => peers.get(id) ?? {_: 'chat', id, pFlags: {}}}
 }));
 
 // The sidebar singletons (via appSearchSuper) walk a bootstrapped DOM at
@@ -110,6 +110,7 @@ describe('peer picker — Groups stage (getMoreGroups)', () => {
   beforeEach(() => {
     (rootScope as any).myId = SELF;
     peers.clear();
+    for(const key of Object.keys(mirroredDialogs)) delete mirroredDialogs[key];
     instance = harness();
   });
 
@@ -173,6 +174,32 @@ describe('peer picker — Groups stage (getMoreGroups)', () => {
     await instance.getMoreGroups();
 
     expect(instance.renderResultsFunc).toHaveBeenCalledWith([GROUP_B]);
+  });
+
+  it('includes a newly created mirrored group, but excludes archived groups and sessions', async() => {
+    const fresh = -5_000_000_000_000_001;
+    const archived = fresh - 1;
+    const session = -15_000_000_000_000_001;
+    mirroredDialogs[fresh] = mkDialog(fresh);
+    mirroredDialogs[archived] = {...mkDialog(archived), folder_id: 1};
+    mirroredDialogs[session] = mkDialog(session);
+    getDialogs.mockResolvedValue({dialogs: [], isEnd: true});
+    await instance.getMoreGroups();
+    expect(instance.renderResultsFunc).toHaveBeenCalledWith([fresh]);
+  });
+
+  it('does not duplicate Worker groups or bypass send rights for mirrored groups', async() => {
+    const fresh = -5_000_000_000_000_001;
+    mirroredDialogs[fresh] = mkDialog(fresh);
+    getDialogs.mockResolvedValue({dialogs: [mkDialog(fresh)], isEnd: true});
+    await instance.getMoreGroups();
+    expect(instance.renderResultsFunc).toHaveBeenCalledWith([fresh]);
+    instance.loadedWhat.groups = false;
+    instance.chatRightsActions = ['send_plain'];
+    getDialogs.mockResolvedValue({dialogs: [], isEnd: true});
+    peers.set(fresh, {_: 'chat', pFlags: {}, default_banned_rights: {_: 'chatBannedRights', pFlags: {send_plain: true}}});
+    await instance.getMoreGroups();
+    expect(instance.renderResultsFunc).toHaveBeenLastCalledWith([]);
   });
 
   it('loads Groups once however many entry points fire', async() => {
