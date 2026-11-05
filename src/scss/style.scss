@@ -2273,6 +2273,62 @@ hr {
   }
 }
 
+.markdown-table {
+  // PhantomChat GFM tables (markdown-tables.ts), styled after PhantomOps chat:
+  // rounded border, muted small-caps header, padded cells, row dividers,
+  // sideways scroll when too wide. Colours derive from the bubble's own text
+  // colour so incoming/outgoing bubbles and light/dark themes all work.
+  --markdown-table-border: color-mix(in srgb, currentColor 18%, transparent);
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: .375rem 0;
+  border: 1px solid var(--markdown-table-border);
+  border-radius: .5rem;
+  font-size: var(--messages-secondary-text-size);
+  line-height: 1.35;
+
+  table {
+    min-width: 100%;
+    border-collapse: collapse;
+    border-spacing: 0;
+  }
+
+  thead {
+    background-color: color-mix(in srgb, currentColor 7%, transparent);
+  }
+
+  th {
+    padding: .375rem .75rem;
+    text-align: start;
+    font-size: .75em;
+    font-weight: var(--font-weight-bold);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    white-space: nowrap;
+    opacity: .75;
+  }
+
+  td {
+    padding: .375rem .75rem;
+    text-align: start;
+    vertical-align: top;
+    border-top: 1px solid var(--markdown-table-border);
+    overflow-wrap: break-word;
+    min-width: 3rem;
+  }
+
+  tbody tr {
+    @include hover() {
+      background-color: color-mix(in srgb, currentColor 5%, transparent);
+    }
+  }
+
+  code {
+    white-space: nowrap;
+  }
+}
+
 .tchart {
   &--wrapper {
     --tchart-letter-spacing-small: auto !important;

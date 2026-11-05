@@ -119,8 +119,8 @@
     },
     "src/lib/phantomchat/phantomchat-peer-mapper.ts": {
       "stable": "c2d34f5eceee2446b9dfdc813e281944095f7daf13bc65c3659b8db0446ea900",
-      "preview": "9c465b7bf099898a54d2b32da8717a5c122d6584e2346f396b3c714e6e285237",
-      "reason": "An archived group/session dialog is built with folder_id 1 and index_1; a live one gets index_3 or index_4 by peer class. Derived dialog shape only; no storage or protocol change. Pin/unread menu update: Optional pin/unread mapper options stamp existing tweb pFlags; dialog shape, indexes, identity and message/read-cursor mapping remain unchanged. Requires independent exact-head content review. #391 (app-bugs batch): comment only, describing that every read path now passes our own peerId for outgoing rows. No code change. Independent exact-head content review required."
+      "preview": "f4003b077b89fc966f6ddf582aa029f612d0557085cb0518b3651e3927dc2db5",
+      "reason": "An archived group/session dialog is built with folder_id 1 and index_1; a live one gets index_3 or index_4 by peer class. Derived dialog shape only; no storage or protocol change. Pin/unread menu update: Optional pin/unread mapper options stamp existing tweb pFlags; dialog shape, indexes, identity and message/read-cursor mapping remain unchanged. Requires independent exact-head content review. #391 (app-bugs batch): comment only, describing that every read path now passes our own peerId for outgoing rows. No code change. Independent exact-head content review required. Markdown tables: comment-only change describing the phantomchat-table fence. No behaviour change."
     },
     "src/components/appSelectPeers.ts": {
       "stable": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
@@ -806,6 +806,16 @@
       "stable": "absent",
       "preview": "b6bbe6dd62f1658050f272fb4c86598ec7143f25633f1c918349bbc9289b1941",
       "reason": "New pure helpers for the render guard above (no I/O, no storage). Failed sends (message.error) are never treated as painted, so their temp bubble keeps the error state. Storage-neutral."
+    },
+    "src/lib/phantomchat/markdown-tables.ts": {
+      "stable": "3da58bc72aec42f63d16564953b8ce796ac742d8d7e0abcff893600d5d1564d7",
+      "preview": "4f717dd49e24b43b9ee662c0932dbc9e9938f4fbc05086ccfcc84f37e9260f07",
+      "reason": "Render-only: GFM tables are wrapped in a ```phantomchat-table fence (source kept) instead of a reflowed monospace fence, plus a pure parser and DOM table builder. Display text derived at map time from the stored raw message; no storage, protocol or schema change."
+    },
+    "src/lib/richTextProcessor/wrapRichText.ts": {
+      "stable": "a069f3628dc57e519dabad3e42052a0b45bfce9fc3810d4a76a25bbc314d6fb7",
+      "preview": "69f8b5ad217b319e46aefb0e58c9ac671af5d73e38858017fd30d23f405b310f",
+      "reason": "Render-only: a messageEntityPre with language phantomchat-table is drawn as a DOM <table> (cells via parseMarkdown + wrapRichText), falling back to the normal code block. No storage or protocol change."
     }
   }
 }

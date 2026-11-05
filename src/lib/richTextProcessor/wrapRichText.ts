@@ -38,6 +38,9 @@ import {createRoot, createSignal, createEffect, onCleanup} from 'solid-js';
 import formatFormattedDate from '@helpers/date/formatFormattedDate';
 import formatRelativeTime from '@helpers/date/formatRelativeTime';
 import tsNow from '@helpers/tsNow';
+import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
+import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
+import {MARKDOWN_TABLE_LANGUAGE, buildMarkdownTableElement} from '@lib/phantomchat/markdown-tables';
 
 export type WrapRichTextOptions = Partial<{
   entities: MessageEntity[],
@@ -281,6 +284,30 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
           // element = document.createElement('span');
           // element.style.fontFamily = 'var(--font-monospace)';
           // element.style.fontFamily = 'markup-monospace';
+        } else if(
+          entity._ === 'messageEntityPre' &&
+          !options.noTextFormat &&
+          entityLanguage === MARKDOWN_TABLE_LANGUAGE &&
+          (element = buildMarkdownTableElement(fullEntityText, (cell) => {
+            // Each cell is its own inline-Markdown message: bold, code, links,
+            // emoji. Fresh options: wrapRichText mutates the ones it is given.
+            const [cellText, cellEntities] = parseMarkdown(cell);
+            const {message, totalEntities} = wrapMessageEntities(cellText, cellEntities);
+            return wrapRichText(message, {entities: totalEntities, noLinks: options.noLinks});
+          }))
+        ) {
+          // PhantomChat GFM table (see markdown-tables.ts). Same bookkeeping as
+          // the code block below: the table consumed the entity's text and
+          // any inner entities.
+          usedText = true;
+          let lastInnerEntityIndex = findIndexFrom(entities, (n) => n.offset >= endOffset, nasty.i + 1);
+          if(lastInnerEntityIndex === -1) lastInnerEntityIndex = entities.length - 1;
+          else lastInnerEntityIndex -= 1;
+          nasty.i = lastInnerEntityIndex;
+          nasty.usedLength = endOffset;
+          nasty.lastEntity = entities[lastInnerEntityIndex];
+          nextEntity = undefined;
+          processingBlockElement = true;
         } else if(entity._ === 'messageEntityPre' && !options.noTextFormat) {
           const container = document.createElement('pre');
           const content = document.createElement('div');
