@@ -68,7 +68,9 @@ async function main() {
     await bubble.click({button: 'right'});
     await A.page.locator('#bubble-contextmenu .btn-menu-item').filter({hasText: 'Forward'}).first().click();
     await A.page.locator(`.popup [data-peer-id="${groupPeer}"]`).first().click();
-    await A.page.locator('.chat.active .chat-input button.btn-send').click();
+    await A.page.waitForFunction((peerId) => +window.appImManager.chat.peerId === peerId && !!window.appImManager.chat.input.forwarding, groupPeer);
+    const sendButton = await A.page.evaluateHandle(() => window.appImManager.chat.input.btnSend);
+    await sendButton.asElement().click();
     const [groupText] = await waitRows(A.page, groupPeer, text);
     await waitRows(B.page, groupPeer, text);
     assert.notEqual(groupText.eventId, source.eventId);
