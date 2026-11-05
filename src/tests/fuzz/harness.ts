@@ -69,7 +69,7 @@ export async function bootHarness(opts: HarnessOptions = {}): Promise<{
   return {browser, relay, ctx, teardown};
 }
 
-async function createUser(
+export async function createUser(
   browser: Browser,
   id: UserId,
   displayName: string,
@@ -199,7 +199,7 @@ async function createUser(
   };
 }
 
-async function linkContacts(a: UserHandle, b: UserHandle): Promise<void> {
+export async function linkContacts(a: UserHandle, b: UserHandle): Promise<void> {
   a.remotePeerId = await injectContact(a, b);
   b.remotePeerId = await injectContact(b, a);
 }
@@ -364,7 +364,7 @@ async function waitForGroupOnUser(user: UserHandle, groupId: string, timeoutMs: 
   throw new Error(`warmup/groups: peer never received group ${groupId.slice(0, 8)} within ${timeoutMs}ms`);
 }
 
-async function sendTextViaUI(self: UserHandle, text: string): Promise<void> {
+export async function sendTextViaUI(self: UserHandle, text: string): Promise<void> {
   // Open the chat to the remote peer using the same setPeer path actions use.
   await self.page.evaluate((peerId: number) => {
     (window as any).appImManager?.setPeer?.({peerId});

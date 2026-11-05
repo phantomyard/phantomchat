@@ -796,6 +796,16 @@
       "stable": "ba5f217ba580501413b4ce8a80f0eb97e2286aa09fa2b00165d59723faaaad63",
       "preview": "2c28f98080bb97a2375a57a1e38f56db0d2ea68c5f7e5dafb1e067adb40f1f6c",
       "reason": "Comment and rename only: the group-avatar URL allowlist is exported as isSafeAvatarUrl because it now gates the peer kind-0 picture render path as well, so a contact-cached profile cannot beacon every viewer's IP to an arbitrary host. Same host set (DEFAULT_BLOSSOM_SERVERS union /blossom.json), same behaviour; no stored-format, schema or wire change."
+    },
+    "src/components/chat/bubbles.ts": {
+      "stable": "41c7b510dac38f2f8ff2922b463deaa6c02619c5f95efd84c141e2231a86e339",
+      "preview": "776f231e01023a7b91278d58d64ca632341ef074b0584786780019022f9227f5",
+      "reason": "Render-only: history renders skip the temp copy of a VMT/GroupAPI-painted text send, and message_sent drops a temp bubble instead of renaming it onto a mid that already has a bubble. No IndexedDB, localStorage, schema or wire change."
+    },
+    "src/lib/phantomchat/optimistic-send-bubble.ts": {
+      "stable": "absent",
+      "preview": "b6bbe6dd62f1658050f272fb4c86598ec7143f25633f1c918349bbc9289b1941",
+      "reason": "New pure helpers for the render guard above (no I/O, no storage). Failed sends (message.error) are never treated as painted, so their temp bubble keeps the error state. Storage-neutral."
     }
   }
 }
