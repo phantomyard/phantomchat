@@ -304,8 +304,8 @@
     },
     "src/lib/phantomchat/ensure-sender-user-injected.ts": {
       "stable": "9b1386f4af1d93ea6ef66556bd8400032b7a25dd2c8320b4963df2fc442b63be",
-      "preview": "9b1386f4af1d93ea6ef66556bd8400032b7a25dd2c8320b4963df2fc442b63be",
-      "reason": "Passes the in-memory contact-list option. No stored format change."
+      "preview": "cc5ef27f2d22a09550e3968d1cbc665185298b954b05153a9e13afa85927a31d",
+      "reason": "Passes the in-memory contact-list option. No stored format change. Keeps the cached kind-0 bot flag on the new-peer mirror rebuild and writes the main-thread mirror after injectP2PUser so the worker's flagless mirror-back cannot replace it; presentation only."
     },
     "src/components/chat/attachmentTray.ts": {
       "stable": "2e2031858a3a835ba5a6378dbb158e1a2c467dcdff937ebed2afa012643e1200",
