@@ -465,15 +465,19 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     if(tokenInput.value.trim()) void verifyToken();
   }
 
-  /** Check the token with the provider; the models come back with a verified key. */
-  const checkToken = async(p: ProviderOption, token: string): Promise<ProviderCheckResult> => {
-    providerStatus.textContent = 'Checking token...';
+  /**
+   * Check the token with the provider; the models come back with a verified
+   * key. The status line is NOT written here: a check for the provider the
+   * user has already switched away from must not speak for the new one, so
+   * the caller writes the text after its generation check.
+   */
+  const checkToken = async(p: ProviderOption, token: string): Promise<{result: ProviderCheckResult; status: string}> => {
     const {checkProviderKey} = await import('@lib/phantomchat/provider-contacts');
     const result = await checkProviderKey(call, p.id, token);
-    providerStatus.textContent = result.status === 'verified' ? 'Token verified' :
+    const status = result.status === 'verified' ? 'Token verified' :
       result.status === 'invalid' ? `Token rejected (${result.detail})` :
       `Could not verify (${result.detail || 'no check for this provider'})`;
-    return result;
+    return {result, status};
   };
 
   /** Put a check's models in the picker, default model first and preselected. */
@@ -506,9 +510,11 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     if(!p || !token) return;
     if(checked && checked.provider === p.id && checked.token === token) return;
     const generation = ++checkGeneration;
+    providerStatus.textContent = 'Checking token...';
     try {
-      const result = await checkToken(p, token);
+      const {result, status} = await checkToken(p, token);
       if(generation !== checkGeneration) return;
+      providerStatus.textContent = status;
       checked = {provider: p.id, token, result};
       fillModels(p, result);
     } catch(err) {
@@ -553,13 +559,17 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     let result = checked && checked.provider === p.id && checked.token === token ? checked.result : undefined;
     if(!result) {
       const generation = ++checkGeneration;
+      providerStatus.textContent = 'Checking token...';
       try {
-        result = await checkToken(p, token);
+        const check = await checkToken(p, token);
+        if(generation !== checkGeneration) return;
+        result = check.result;
+        providerStatus.textContent = check.status;
       } catch(err) {
+        if(generation !== checkGeneration) return;
         errorEl.textContent = err instanceof Error && err.message ? err.message : 'Could not check the token';
         return;
       }
-      if(generation !== checkGeneration) return;
       checked = {provider: p.id, token, result};
       fillModels(p, result);
     }

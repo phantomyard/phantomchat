@@ -685,6 +685,129 @@ describe('New Contact pane', () => {
     }
   });
 
+  // A pane harness whose providers.check promises the test settles by hand, so
+  // it can let a check for the previous provider land after a switch. Every
+  // generation guard in the pane is load-bearing and each one is mutated below.
+  async function openWithDeferredChecks() {
+    const pending: Array<{resolve: (v: any) => void; reject: (e: any) => void}> = [];
+    const calls: Array<[string, any]> = [];
+    const call = vi.fn(async(method: string, params?: any) => {
+      calls.push([method, params]);
+      switch(method) {
+        case 'providers.list': return {ok: true, value: [
+          {id: 'phantomops', label: 'PhantomOps', autoModel: true, defaultModel: 'auto'},
+          {id: 'anthropic', label: 'Anthropic'},
+          {id: 'xai', label: 'xAI'}
+        ]};
+        case 'providers.check': return new Promise((resolve, reject) => { pending.push({resolve, reject}); });
+        case 'personas.list': return {ok: true, value: [] as string[]};
+        case 'persona.phantomchat.start': return {ok: true, value: {npub: npubEncode('a'.repeat(64)), state: 'running'}};
+        default: return {ok: true, value: {}};
+      }
+    });
+    (window as any).phantomchatDesktop = {phantombot: {call}};
+    const added = await open();
+    await vi.waitFor(() => expect(q('add-contact-kind-provider')).toBeTruthy());
+    q('add-contact-kind-provider').click();
+    await vi.waitFor(() => expect(q('add-contact-provider-select-value').textContent).toBe('PhantomOps'));
+    return {pending, calls, added};
+  }
+
+  const pickProvider = (id: string) => {
+    q('add-contact-provider-select').click();
+    q(`add-contact-provider-select-option-${id}`).click();
+  };
+
+  it('Provider: a check for the provider the user switched away from never speaks for the new one', async() => {
+    // The status line and the model list are part of the provider/token pair:
+    // a stale verdict that lands tells the user xAI rejected a key it never saw,
+    // and fills xAI's model picker with Anthropic's models.
+    const {pending} = await openWithDeferredChecks();
+    pickProvider('anthropic');
+    const token = q('add-contact-provider-token') as HTMLInputElement;
+    token.value = 'sk-bad';
+    token.dispatchEvent(new Event('input'));
+    token.dispatchEvent(new FocusEvent('blur'));
+    await vi.waitFor(() => expect(pending.length).toBe(1));
+    expect(q('add-contact-provider-status').textContent).toBe('Checking token...');
+
+    // Switch provider while Anthropic's check is still in flight.
+    pickProvider('xai');
+    await vi.waitFor(() => expect(pending.length).toBe(2));
+    expect(q('add-contact-provider-status').textContent).toBe('Checking token...');
+
+    // The stale verdict belongs to Anthropic: it must not land on xAI.
+    pending[0].resolve({ok: true, value: {status: 'verified', models: [{id: 'claude-sonnet'}]}});
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q('add-contact-provider-status').textContent).toBe('Checking token...');
+    expect(q('add-contact-provider-model-value').textContent).toBe('Enter your token to load models');
+    expect((q('add-contact-provider-model') as HTMLButtonElement).disabled).toBe(true);
+
+    // The check for the pair on screen still lands normally.
+    pending[1].resolve({ok: true, value: {status: 'verified', models: [{id: 'grok-4'}]}});
+    await vi.waitFor(() => expect(q('add-contact-provider-status').textContent).toBe('Token verified'));
+    await vi.waitFor(() => expect(q('add-contact-provider-model-value').textContent).toBe('grok-4'));
+  });
+
+  it('Provider: a check that fails after the provider changed reports nothing', async() => {
+    // A rejection is the same stale write: 'network down' on xAI's status line
+    // would be Anthropic's failure.
+    const {pending} = await openWithDeferredChecks();
+    pickProvider('anthropic');
+    const token = q('add-contact-provider-token') as HTMLInputElement;
+    token.value = 'sk-a';
+    token.dispatchEvent(new Event('input'));
+    token.dispatchEvent(new FocusEvent('blur'));
+    await vi.waitFor(() => expect(pending.length).toBe(1));
+    pickProvider('xai');
+    await vi.waitFor(() => expect(pending.length).toBe(2));
+
+    pending[0].reject(new Error('network down'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q('add-contact-provider-status').textContent).toBe('Checking token...');
+  });
+
+  it('Provider: a save whose check is overtaken by a provider switch never creates the old provider', async() => {
+    const {pending, calls, added} = await openWithDeferredChecks();
+    pickProvider('anthropic');
+    const token = q('add-contact-provider-token') as HTMLInputElement;
+    token.value = 'sk-a';
+    token.dispatchEvent(new Event('input'));
+    q('add-contact-submit').click();
+    await vi.waitFor(() => expect(pending.length).toBe(1));
+
+    // The user switches provider while the save's own check is in flight.
+    pickProvider('xai');
+    await vi.waitFor(() => expect(pending.length).toBe(2));
+    pending[0].resolve({ok: true, value: {status: 'verified', models: [{id: 'claude-sonnet'}]}});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls.map(([m]) => m)).not.toContain('personas.create');
+    expect(added).not.toHaveBeenCalled();
+    expect(q('add-contact-provider-status').textContent).toBe('Checking token...');
+    expect(q('add-contact-provider-model-value').textContent).toBe('Enter your token to load models');
+
+    pending[1].resolve({ok: true, value: {status: 'verified', models: [{id: 'grok-4'}]}});
+    await vi.waitFor(() => expect(q('add-contact-provider-model-value').textContent).toBe('grok-4'));
+  });
+
+  it('Provider: a save whose check fails after a provider switch reports no error', async() => {
+    const {pending, calls} = await openWithDeferredChecks();
+    pickProvider('anthropic');
+    const token = q('add-contact-provider-token') as HTMLInputElement;
+    token.value = 'sk-a';
+    token.dispatchEvent(new Event('input'));
+    q('add-contact-submit').click();
+    await vi.waitFor(() => expect(pending.length).toBe(1));
+    pickProvider('xai');
+    await vi.waitFor(() => expect(pending.length).toBe(2));
+
+    pending[0].reject(new Error('network down'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q('add-contact-error').textContent).toBe('');
+    expect(calls.map(([m]) => m)).not.toContain('personas.create');
+  });
+
   it('shows Provider only when the desktop engine can list providers', async() => {
     (window as any).phantomchatDesktop = {phantombot: {call: vi.fn(async() => ({ok: false, error: {code: 'unknown_method'}}))}};
     await open();
