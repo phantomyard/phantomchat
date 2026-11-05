@@ -1,5 +1,5 @@
 import {describe, expect, it, vi} from 'vitest';
-import {forwardPhantomChatMessages, prepareForwardContent} from '@lib/phantomchat/forward-messages';
+import {ForwardPartialError, forwardPhantomChatMessages, prepareForwardContent} from '@lib/phantomchat/forward-messages';
 import type {StoredMessage} from '@lib/phantomchat/message-store';
 
 const MID = 1762350000123456;
@@ -92,6 +92,29 @@ describe('forward sends', () => {
     await expect(forwardPhantomChatMessages([MID, MID + 1], false, {
       load, sendText: vi.fn().mockRejectedValue(new Error('send refused')), sendFile: vi.fn()
     })).rejects.toThrow('send refused');
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a partial batch with how many of the total landed', async() => {
+    const load = vi.fn().mockResolvedValue({text: 'hello'});
+    const sendText = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('send refused'));
+    const err = await forwardPhantomChatMessages([MID, MID + 1, MID + 2], false, {
+      load, sendText, sendFile: vi.fn()
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ForwardPartialError);
+    expect(err.forwardSent).toBe(1);
+    expect(err.forwardTotal).toBe(3);
+    expect((err.original as Error).message).toBe('send refused');
+    expect(sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not wrap a failure that landed nothing', async() => {
+    const load = vi.fn().mockResolvedValue({text: 'hello'});
+    await expect(forwardPhantomChatMessages([MID, MID + 1], false, {
+      load, sendText: vi.fn().mockRejectedValue(new Error('send refused')), sendFile: vi.fn()
+    })).rejects.not.toBeInstanceOf(ForwardPartialError);
     expect(load).toHaveBeenCalledTimes(1);
   });
 });

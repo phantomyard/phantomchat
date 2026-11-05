@@ -43,6 +43,15 @@ export async function prepareForwardContent(
   };
 }
 
+/** A batch that failed after some messages already landed. The UI must not
+ * offer a blind retry — re-sending everything would duplicate the messages
+ * that did arrive — so it carries how many of the total went out. */
+export class ForwardPartialError extends Error {
+  constructor(public forwardSent: number, public forwardTotal: number, public original: unknown) {
+    super(`Forward batch failed after ${forwardSent} of ${forwardTotal} messages`);
+  }
+}
+
 /** Worker orchestration. Each send depends on the preceding one to preserve
  * selection order and avoid retaining a batch of decrypted attachments. The
  * existing sends own optimistic rendering, persistence and pending settlement. */
@@ -55,12 +64,20 @@ export async function forwardPhantomChatMessages(
     sendFile: (content: ForwardContent, caption: string) => Promise<unknown>;
   }
 ): Promise<void> {
-  for(const mid of mids.slice().sort((a, b) => a - b)) {
-    const content = await deps.load(mid);
-    if(content.blob) {
-      await deps.sendFile(content, dropCaptions ? '' : content.text);
-    } else {
-      await deps.sendText(content.text);
+  const ordered = mids.slice().sort((a, b) => a - b);
+  let sent = 0;
+  try {
+    for(const mid of ordered) {
+      const content = await deps.load(mid);
+      if(content.blob) {
+        await deps.sendFile(content, dropCaptions ? '' : content.text);
+      } else {
+        await deps.sendText(content.text);
+      }
+      sent++;
     }
+  } catch(err) {
+    if(sent > 0) throw new ForwardPartialError(sent, ordered.length, err);
+    throw err;
   }
 }

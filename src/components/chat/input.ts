@@ -166,6 +166,7 @@ import getDocumentDownloadOptions from '@lib/appManagers/utils/docs/getDocumentD
 import getPhotoDownloadOptions from '@lib/appManagers/utils/photos/getPhotoDownloadOptions';
 import {getFileNameByLocation} from '@helpers/fileName';
 import {Middleware, getMiddleware, MiddlewareHelper} from '@helpers/middleware';
+import {ForwardPartialError} from '@lib/phantomchat/forward-messages';
 
 // console.log('Recorder', Recorder);
 
@@ -4321,6 +4322,13 @@ export default class ChatInput {
             toastNew({
               langPackKey: 'Chat.SendVoice.PrivacyError',
               langPackArguments: [await wrapPeerTitle({peerId})]
+            });
+          } else if(err instanceof ForwardPartialError && err.forwardTotal > 1) {
+            // Some messages already landed — a blind retry would duplicate
+            // them, so name the split instead of offering to re-send all.
+            toastNew({
+              langPackKey: 'ForwardErrorPartial',
+              langPackArguments: [err.forwardSent, err.forwardTotal]
             });
           } else {
             toastNew({langPackKey: 'ForwardError'});
