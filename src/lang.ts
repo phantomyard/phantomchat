@@ -1328,6 +1328,7 @@ const lang = {
   'Reply': 'Reply',
   'Edit': 'Edit',
   'Forward': 'Forward',
+  'ForwardError': 'Could not forward the message. Please try again.',
   'CopyLink': 'Copy Link',
   'Copy': 'Copy',
   'Search': 'Search',

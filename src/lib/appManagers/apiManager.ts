@@ -889,6 +889,7 @@ export class ApiManager extends ApiManagerMethods {
     'users.getUsers',
     'users.getFullUser',
     'phantomchatSendFile',
+    'phantomchatGetForwardContent',
     // Privacy rules: VMT persists via localStorage so the round-trip works
     // across reload. Worker → bridge → VMT for both read/write.
     'account.getPrivacy',

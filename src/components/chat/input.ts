@@ -4322,6 +4322,8 @@ export default class ChatInput {
               langPackKey: 'Chat.SendVoice.PrivacyError',
               langPackArguments: [await wrapPeerTitle({peerId})]
             });
+          } else {
+            toastNew({langPackKey: 'ForwardError'});
           }
         });
       }

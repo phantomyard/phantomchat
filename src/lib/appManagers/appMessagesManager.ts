@@ -9,6 +9,7 @@
  * https://github.com/zhukov/webogram/blob/master/LICENSE
  */
 
+import base64ToBytes from '@helpers/string/base64ToBytes';
 import type {ApiFileManager} from '@appManagers/apiFileManager';
 import type {MediaSize} from '@helpers/mediaSize';
 import type {Progress} from '@lib/appDownloadManager';
@@ -69,6 +70,8 @@ import {joinDeepPath} from '@helpers/object/setDeepProperty';
 // import {isVirtualPeer, sendTextViaChatAPI, sendMediaViaChatAPI} from '../phantomchat/phantomchat-send-bridge';
 import {isP2PPeer} from '@lib/phantomchat/phantomchat-bridge';
 import {isPhantomChatPeerId} from '@lib/phantomchat/bridge-invariants';
+import {forwardPhantomChatMessages} from '@lib/phantomchat/forward-messages';
+import type {ForwardContent} from '@lib/phantomchat/forward-messages';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
 import {LOCAL_ENTITIES} from '@lib/richTextProcessor';
@@ -1635,7 +1638,7 @@ export class AppMessagesManager extends AppManager {
    * tray goes through the public wrapper below so it can tell a real publish
    * from a refusal and keep a refused file staged for a retry.
    */
-  private async sendFileViaBridge(options: SendFileArgs): Promise<Message.message | undefined> {
+  private async sendFileViaBridge(options: SendFileArgs, mediaType?: 'image' | 'video' | 'file' | 'voice'): Promise<Message.message | undefined> {
     const {peerId: targetPeerId} = options;
     const peerId = this.appPeersManager.getPeerMigratedTo(targetPeerId) || targetPeerId;
     const file = options.file;
@@ -1645,6 +1648,7 @@ export class AppMessagesManager extends AppManager {
 
     const mime = (file.type || '').toLowerCase();
     const phantomchatType: 'image' | 'video' | 'file' | 'voice' =
+      mediaType ? mediaType :
       options.isVoiceMessage ? 'voice' :
       mime.startsWith('image/') ? 'image' :
       mime.startsWith('video/') ? 'video' :
@@ -4309,6 +4313,32 @@ export class AppMessagesManager extends AppManager {
     await this.checkSendOptions(options);
 
     const {peerId, fromPeerId, mids} = options;
+    if(isPhantomChatPeerId(peerId)) {
+      return forwardPhantomChatMessages(mids, !!options.dropCaptions, {
+        load: (mid) => {
+          const original = this.getMessageByPeer(fromPeerId, mid);
+          // Text is already in the Worker mirror. Start the normal optimistic
+          // send without an extra IDB/MessagePort round-trip before its paint.
+          if(original?._ === 'message' && (!original.media || original.media._ === 'messageMediaWebPage') && original.message) {
+            return Promise.resolve({text: original.message});
+          }
+          return this.apiManager.invokeApi('phantomchatGetForwardContent' as any, {fromPeerId, mid} as any) as Promise<ForwardContent>;
+        },
+        sendText: (text) => this.sendText({...options, text}),
+        sendFile: async(content, caption) => {
+          const message = await this.sendFileViaBridge({
+            peerId,
+            file: content.blob,
+            caption,
+            width: content.width,
+            height: content.height,
+            duration: content.duration,
+            waveform: content.waveform ? base64ToBytes(content.waveform) : undefined
+          }, content.mediaType);
+          if(!message) throw new Error('Forward attachment failed');
+        }
+      });
+    }
     const channelId = this.appPeersManager.isChannel(fromPeerId) ? fromPeerId.toChatId() : undefined;
     const splitted = this.appMessagesIdsManager.splitMessageIdsByChannels(mids, channelId);
     const promises = splitted.map(([_channelId, {mids}]) => {
