@@ -1328,6 +1328,8 @@ const lang = {
   'Reply': 'Reply',
   'Edit': 'Edit',
   'Forward': 'Forward',
+  'ForwardError': 'Could not forward the message. Please try again.',
+  'ForwardErrorPartial': 'Forwarded %@ of %@. The rest failed — forward the remaining messages again.',
   'CopyLink': 'Copy Link',
   'Copy': 'Copy',
   'Search': 'Search',

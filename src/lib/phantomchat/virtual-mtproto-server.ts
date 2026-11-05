@@ -511,6 +511,12 @@ export class PhantomChatMTProtoServer {
       case 'messages.sendMedia':
         return this.sendMedia(params);
 
+      case 'phantomchatGetForwardContent': {
+        const {prepareForwardContent} = await import('./forward-messages');
+        const {fetchAndDecryptPhantomChatFile} = await import('./phantomchat-file-fetch');
+        return prepareForwardContent(params, (mid) => getMessageStore().getByMid(mid), fetchAndDecryptPhantomChatFile);
+      }
+
       case 'phantomchatSendFile':
         return this.phantomchatSendFile(params);
 

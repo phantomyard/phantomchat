@@ -14,8 +14,8 @@
     },
     "package.json": {
       "stable": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
-      "preview": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
-      "reason": "Desktop build commands only; dependency declarations and stored formats unchanged."
+      "preview": "04f27d87a43b9b10062710db3dc1cf622e8ac819d08a6d899a7f6b41b8616b00",
+      "reason": "Registers forwarding and destination-picker regressions in the quick suite; no dependency, runtime or storage changes."
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "378b94f843ad08780c207dbf7560a054bb99df0a541758fbdc428cf6457a33e5",
@@ -59,8 +59,8 @@
     },
     "src/lang.ts": {
       "stable": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b",
-      "preview": "090aee25ce713f12810da5b82a1d611ed774bc2425ff9339703ad18e51c630c8",
-      "reason": "Shared language pack source. Only change: two group/session editor labels ('Name' and 'Add Members') replace the old 'Group Name'/'Group Members' wording. No storage, schema or protocol strings touched. Contact delete everywhere: New strings for the contact delete confirm dialog. No storage effect."
+      "preview": "28d8edec1ae337f95a50dafd78f7b57b973f34288ff9e6345076ac597c5a925c",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toasts are presentation-only. Adds ForwardErrorPartial so a half-sent batch names the split instead of offering a blind retry."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
@@ -74,8 +74,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f8fc66f7707e106851bbf0aa76b018408bda9c59f6740b9fccf4fa2a89fe0d4e",
-      "preview": "2439109ef09a9194c016d4128a30d81a0ff7f7a325bafcb089d7a8d792f51b41",
-      "reason": "Generated artifact of src/lang.ts (node src/scripts/format_lang.js). Only change: the same two editor labels ('Name', 'Add Members'). No other key changes. Contact delete everywhere: regenerated for the new Contact.Delete.ConfirmTitle/ConfirmDesc/ConfirmDescProvider strings (ConfirmationDesc removed). Display strings only."
+      "preview": "f5d41ebe26f96954c2b677a52fa0455ba00af4a5f905df35dc8c81f09a3201ed",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toasts are presentation-only. Regenerated from lang.ts; adds ForwardErrorPartial."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
@@ -124,13 +124,13 @@
     },
     "src/components/appSelectPeers.ts": {
       "stable": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
-      "preview": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
-      "reason": "Groups (3) enumeration stage added after Archive so the recipient picker keeps offering existing groups (Chats still hides them by presentation rule). Read-only dialog enumeration; no storage or format change."
+      "preview": "67c85f9c74683489cd5e9ad583a4c1b37acb1464c7aedf19303105eada17fa6d",
+      "reason": "Forward destination picker includes fresh groups already rendered in the main-thread dialog mirror but not yet present in Worker dialogs. mirrors.dialogs is written at runtime by the PhantomChat message handler though absent from the Mirrors type; existing archive, class and send-rights filters remain. In-memory reads only."
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "dc06ae04e02840ac1d76466ffad6443352c11f317ff316726d716c5561bd96e6",
-      "preview": "e6ac936f0c1898c88be803ec64961dcc12c8e2313faa32582250e5c5ecfa72b6",
-      "reason": "Notify-settings invalidation and folder dialog counting now include the Groups (3) folder. Read-only iteration over existing dialog data; no storage or format change. Send finalization now moves the in-memory dialog's top_message from the deleted temp mid to the real mid. It writes only through the existing setDialogTopMessage path; no storage, schema or wire-format change. sendPhantomChatAttachment()'s peer guard and sendFile()'s bridge shortcut now share one isPhantomChatPeerId() predicate instead of two hand-written range tests, so the guard cannot drift from the path it guards. No storage, database or IPC format change. Context-menu read fix: preserve chronological mids, persist the canonical cursor and reconcile existing unread counters/folder badges. No stored-format change. Requires independent exact-head content review. Read-cursor gating now tests the stored mid (readMaxId > 0) instead of the derived wire id, so a cursor at an exact multiple of 2^32 is no longer treated as empty. No storage, schema or wire-format change. Optimistic media temp mid is now positive on the real mid scale, and replaceLocalTempMessage swaps it for the real mid in the Worker's in-memory history on upload completion. No storage, schema or wire-format change; the only persisted temp mid is the upload queue's event key, and a mid from either sign is a no-op after reload. Requires independent exact-head content review. The swap no longer writes the dialog's top slot through appendLocalHistoryMessage (updateTop = false); settleDialogTopAfterSend alone moves top_message, and maxId only moves forward. In-memory only; no stored-format, schema or wire change. Requires independent exact-head content review. Issue #325: single-message lookups retain chronological mids and attach existing peer context only for the local PhantomChat adapter. Telegram wire shape unchanged; no persisted format change. #396 (app-bugs batch): replaceLocalTempMessage makes one in-memory history count adjustment per swap; sendFileViaBridge skips a temp mid already present in the in-memory history storage. Worker memory only: no IndexedDB write, persisted shape, schema or protocol change, and Stable never sees temp mids (they are not persisted). Independent exact-head content review required. PR423 blocker fixes: synchronous temp-id high-water reservation; optional infoUpdatedAt field timestamps in Unix seconds preserved in the existing GroupRecord/CRDT v2 payload. Info sends/receives stamp only carried fields; unrelated writes do not advance them. Legacy readers ignore this optional property; missing provenance never fabricates a watermark. Sync and the raise helper cap stamps at local time. No database version, key, encryption or required wire-field changes. Independent content review required."
+      "preview": "b26c07802e4133bde42c99a02406219cda5a69c9e0ce19d077456d54ea9bb4d3",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toast is presentation-only."
     },
     "src/lib/phantomchat/group-api.ts": {
       "stable": "cf47cb2ee628f3d1dad10c5b718b6b16e158cd64053ea5be4e38de6c22ddfd39",
@@ -139,8 +139,8 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536",
-      "preview": "480e5808cdb22ebed3b8e443723d4f3114dfae7aaa7ee30368b9adc493851a49",
-      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged. Preview bumps the local language-pack version 17 -> 18 with this PR's new \"Open New Session\" key, because a cached v17 pack renders the literal key (boot reloads local strings on a version mismatch only, and the update check is a no-op with MTProto off). Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Contacts redesign: bumps the local language-pack version 18 -> 19 so cached clients load ContactName and ContactLocalTools instead of rendering the raw keys. Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Additional change: Local language-pack version 19 -> 20 so a cached client reloads the pack for this PR's two new editor labels (Name, Add Members). Version constant only; no other content, storage or schema change."
+      "preview": "b71e69c7c31607143f19ecf6dc40bf70e7c15614c29799e16a12d3c516ae2b36",
+      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged. Preview bumps the local language-pack version 17 -> 18 with this PR's new \"Open New Session\" key, because a cached v17 pack renders the literal key (boot reloads local strings on a version mismatch only, and the update check is a no-op with MTProto off). Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Contacts redesign: bumps the local language-pack version 18 -> 19 so cached clients load ContactName and ContactLocalTools instead of rendering the raw keys. Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Additional change: Local language-pack version 19 -> 20 so a cached client reloads the pack for this PR's two new editor labels (Name, Add Members). Version constant only; no other content, storage or schema change. Additional change: Local language-pack version 20 -> 21 so cached clients load ForwardErrorPartial (and ForwardError, added earlier in this PR) instead of rendering the raw keys. Version constant only; no other content, storage or schema change."
     },
     "src/lib/folders-sidebar-layout.ts": {
       "stable": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
@@ -209,8 +209,8 @@
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "b23eb84b2b32d30fd5c8d02fcc9a582882dbc19fbba654c1be0bd640a091a40e",
-      "preview": "6e7bd0de447cf3f6eaa974eeaa13e5c6ab2fcc1ae341e513307041b1c8b99735",
-      "reason": "#418 voice waveform: the waveform crosses the wire and the store as base64 (the recorder's Uint8Array was JSON-serialised to an index-keyed object), and group receive persists the rumor's mediaType inside the existing fileMetadata JSON blob. No storage format or schema change. Older/pinned Stable receiving an index-keyed waveform drops it at its typeof-string guard: flat line, no crash. Pinned Stable 2cee0bba buildPhantomChatMedia already reads mediaType, so it classifies a new group row as voice, not file. Earlier: Session peer-class refactor plus the 1:1 archive guard: the bridge refuses text and media for a peer whose dialog sits in the archive (folder_id 1), the one path every chat send crosses. The guard reads the dialog through the proxied dialogsStorage, so it awaits - a synchronous read was reading folder_id off a Promise and never refused at runtime. Membership stays a pure function of (groupId, kind) and writes remain LWW-merged by updatedAt - no stored-format change. Pin/unread menu update: Explicit group pin/unread RPC handlers update optional record flags; 1:1 behaviour retained. getDialogs maps existing record flags to existing dialog flags without changing schema, cursor or identity. Requires independent exact-head content review. isArchivedPeer now fails open LOUDLY: a missing dialogsStorage.getAnyDialog and a rejected proxied lookup each warn with the peer id instead of silently answering false, so a renamed hook cannot turn the 1:1 archive refusal back into dead code unnoticed. Control flow unchanged - still advisory, still fails open, no stored-format or schema change. Context-menu read fix: preserve chronological mids, persist the canonical cursor and reconcile existing unread counters/folder badges. No stored-format change. Requires independent exact-head content review. Reconcile only non-zero receive counters to avoid a redundant conversation scan while scrolling; no stored-format change. Empty-session rendering fix: getGroupHistory preserves an existing chatCreate row as messageService/messageActionChatCreate, matching getDialogs, so tweb suppresses the outgoing local creation marker. Existing row, eventId, mid, timestamp, pagination and conversation key remain intact; no schema, persistence or wire-format changes. Requires independent exact-head content review. Upload completion now calls the Worker's replaceLocalTempMessage; a rejected call is caught and logged, the send has already completed. No stored-format change. Requires independent exact-head content review. Issue #325: cold reply lookup reuses existing history builders and the conversationMid index, filters by exact id, and returns existing message shapes. No database version, schema, key, relay protocol or persisted format change. #391/#396 (app-bugs batch): getDialogs (1:1, group, group create row), 1:1 getHistory and searchMessages set from_id to our own peerId on outgoing rows (clamped to none, with console.error, when unresolvable), matching injectOutgoingBubble and getGroupHistory; getGroupHistory's create row emits user_id 0 rather than undefined. Response-shape only, derived on every read: nothing persisted, no store, schema or protocol change. rootScope.managers derefs optional-chained. Independent exact-head content review required."
+      "preview": "8e7edd9dc79c8308f97b92bbbc680133de6eae6e7e12a060fb38e6b050a30c96",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toast is presentation-only."
     },
     "src/components/dialogsContextMenu.ts": {
       "stable": "95cb488c369560065eaef66688ec496962cf1011c245d104788ae649a546daf1",
@@ -274,8 +274,8 @@
     },
     "src/components/chat/input.ts": {
       "stable": "00902fb8dd1f3fb11ad72d8746fcbde66f54daf52e8d6c77f2c664f208e8bdb5",
-      "preview": "958435d6e2729d3260a5d2c7cc1bf5aa5b46d9ac9a7c5f76a52f88dbfa3a95da",
-      "reason": "Selection/presentation only: omit list presence dots and suppress selected unread badges; advance the existing monotonic per-conversation read cursor via existing readHistory/setReadCursor APIs. No new store, schema, key, identity, or protocol format. Stable and Preview retain the existing shared read-state contract. Requires independent exact-head content review. Composer wiring for the PhantomChat attachment tray: the file picker, paste and drop stage files into the tray for PhantomChat peers only, and Send dispatches the staged batch before the typed text through sendBatchThenText(), which drops the text if the user switched chat mid-upload, and forwards the staged image's intrinsic width/height. Non-PhantomChat peers keep the untouched PopupNewMedia path; no storage format, database or IPC change. Requires independent content review. Composer attachment caption: the typed text now travels as the caption of the first staged file instead of a separate message, so a recipient agent reads the instruction together with the attachment. The text keeps its own message when a caption cannot express the message flags (reply, story reply, forwarded batch, suggested post, or text over MAX_ATTACHMENT_CAPTION_LENGTH). No new store, schema, key or protocol field: the caption is a field that already exists on the existing file rumor. Preview hash refreshed: a failed batch consumes the composer once a file already published the caption, so the retry cannot caption the next file with the same text; the successful path clears it only when a file carried it. Peer guard unchanged. Preview hash refreshed: the caption path now drops the stored draft itself (appDraftsManager.clearDraft for the batch's peer, thread and monoforum thread) before onMessageSent, so clearInput() -> setDraft(undefined) cannot restore the exact text that just published as a caption, in the composer or in the chat list draft preview. The failed-batch path reuses the same helper; the peer guards that keep a chat opened mid-batch untouched are unchanged. Existing drafts manager API only: no new store, schema, key, identity or protocol change. Requires independent exact-head content review. #339 (app-bugs batch): a batch that failed after publishing the caption clears only the draft and the text field, keeping the in-memory reply target, scheduleDate and sendSilent for the tray retry. Uses the existing appDraftsManager.clearDraft call; no new store, key, schema or protocol. Independent exact-head content review required."
+      "preview": "23d4020ded06560bf488cc972dd5bc14455459969d166c850a8af8f5b9df2015",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toasts are presentation-only. Forward failure toast distinguishes a partial batch (Forwarded X of Y) from a total failure so the user never blind-retries duplicates. Forward partial-batch failures now cross the worker port as a plain ApiError-shaped object branched on the new FORWARD_PARTIAL type (the port's structured clone strips an Error subclass and its own props). global.d.ts adds the type string to the LocalErrorType union only — ambient declaration, no runtime bytes. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/phantomchat-message-handler.ts": {
       "stable": "9d6ed16c9b03e75a8ddda77de59b2aa883c0928bbfca5cb0fad8d59c2991784e",
@@ -339,8 +339,8 @@
     },
     "src/lib/appManagers/apiManager.ts": {
       "stable": "599489f17acb83393f57e848af98792737247ca1494977735a6433954080ca82",
-      "preview": "4ae8d153aee73c59490bdadce08e02da2abf001ab12ebd1c38ae4fcf1ffb25e2",
-      "reason": "Routes existing toggleDialogPin and markDialogUnread methods through the MessagePort to the main-thread group handlers. Existing RPC envelope and shared Worker storage remain unchanged. Requires independent exact-head content review. Issue #325: cold message lookup routes through the existing local MessagePort bridge instead of an empty reply stub; no schema, storage, protocol or key change."
+      "preview": "df2b9b56a02e789314cfa410092cbd633caf28674b3a17c6758fa07b3907e505",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toast is presentation-only."
     },
     "index.html": {
       "stable": "4de92dc7976fd19e38b6f79b91672a92c9dcb37e0878e7f1474a5376cf0a7062",
@@ -836,6 +836,16 @@
       "stable": "absent",
       "preview": "2e623bb98d3dee8e0463348cc122748a8f1eececa06514f1e902b6ca921eb9aa",
       "reason": "Contact delete everywhere: New wire message: self-addressed NIP-17 gift wrap with a control tag and no data. Older Stable clients log it as an unknown control type and drop it (no bubble, no storage). Never persisted."
+    },
+    "src/lib/phantomchat/forward-messages.ts": {
+      "stable": "absent",
+      "preview": "8159f241e6232ff1495338437192e00251a9758315c5092b72bb7d3f4bde4aa6",
+      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toasts are presentation-only. Counts sends and throws ForwardPartialError (sent/total) when a batch fails mid-way; nothing lands, the original error propagates unchanged. Forward partial-batch failures now cross the worker port as a plain ApiError-shaped object branched on the new FORWARD_PARTIAL type (the port's structured clone strips an Error subclass and its own props). global.d.ts adds the type string to the LocalErrorType union only — ambient declaration, no runtime bytes. Requires independent exact-head content review."
+    },
+    "src/global.d.ts": {
+      "stable": "fc55fd0391c83f5362e5c2d60694f3bcc5599fbedefac28501177e6d03e4274e",
+      "preview": "2663252e6d02a5af52402fae7d68d1dc530c0a13af1eb93e704b2de89e4d6466",
+      "reason": "Forward partial-batch failures now cross the worker port as a plain ApiError-shaped object branched on the new FORWARD_PARTIAL type (the port's structured clone strips an Error subclass and its own props). global.d.ts adds the type string to the LocalErrorType union only — ambient declaration, no runtime bytes. Requires independent exact-head content review."
     },
     "src/lib/phantomchat/add-p2p-contact.ts": {
       "stable": "91c6a1f8be4148cf11a95988723a7fc20d45744565501e985bd7823b116d941d",
