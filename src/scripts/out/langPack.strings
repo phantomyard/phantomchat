@@ -1192,7 +1192,9 @@
 "Contact.Delete.Failed" = "Failed to delete contact";
 "Contact.Delete.ChatNotReady" = "Chat is not ready yet";
 "Contact.Delete.CouldNotResolve" = "Could not resolve contact to delete";
-"Contact.Delete.ConfirmationDesc" = "will be deleted along with the entire conversation history. This cannot be undone.";
+"Contact.Delete.ConfirmTitle" = "Delete %s?";
+"Contact.Delete.ConfirmDesc" = "Removed from all your devices.";
+"Contact.Delete.ConfirmDescProvider" = "Removed from all your devices, with its local AI data.";
 "PhantomChat.GroupEdit.AdminSubtitle" = "admin";
 "PhantomChat.GroupEdit.Name" = "Name";
 "PhantomChat.GroupEdit.AddMembers" = "Add Members";

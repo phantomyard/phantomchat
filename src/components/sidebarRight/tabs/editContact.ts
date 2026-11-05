@@ -11,8 +11,6 @@ import Row, {CreateRowFromCheckboxField} from '@components/row';
 import CheckboxField from '@components/checkboxField';
 import Button, {replaceButtonIcon} from '@components/button';
 import rootScope from '@lib/rootScope';
-import PopupPeer from '@components/popups/peer';
-import PopupElement, {addCancelButton} from '@components/popups';
 import {i18n} from '@lib/langPack';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import toggleDisability from '@helpers/dom/toggleDisability';
@@ -32,6 +30,12 @@ export default class AppEditContactTab extends SliderSuperTab {
   private localToolsCheckboxField?: CheckboxField;
   private contactPubkey: string | null = null;
   public peerId: PeerId;
+  /**
+   * Opened from the Contacts list on a phone: the pane covers the chat, so it
+   * gets a back arrow, and closing it lands in that chat (#442 narrow rule:
+   * a contact tap must reach the conversation).
+   */
+  public onPhone = false;
 
   public async init() {
     const {peerId} = this;
@@ -46,7 +50,9 @@ export default class AppEditContactTab extends SliderSuperTab {
     const newCloseBtn = this.closeBtn.cloneNode(true) as HTMLElement;
     this.closeBtn.replaceWith(newCloseBtn);
     this.closeBtn = newCloseBtn;
-    replaceButtonIcon(this.closeBtn, 'close');
+    // Back arrow (the tab default) over the chat on a phone; a close X beside
+    // the chat everywhere else.
+    if(!this.onPhone) replaceButtonIcon(this.closeBtn, 'close');
 
     attachClickEvent(this.closeBtn, () => {
       this.close();
@@ -204,64 +210,39 @@ export default class AppEditContactTab extends SliderSuperTab {
 
       const btnDelete = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'PeerInfo.DeleteContact'});
 
-      attachClickEvent(btnDelete, () => {
-        PopupElement.createPopup(PopupPeer, 'popup-delete-contact', {
-          peerId: peerId,
-          titleLangKey: 'DeleteContact',
-          descriptionLangKey: 'AreYouSureDeleteContact',
-          buttons: addCancelButton([{
-            langKey: 'Delete',
-            callback: async() => {
-              const toggle = toggleDisability([btnDelete], true);
+      attachClickEvent(btnDelete, async() => {
+        const {default: confirmDeleteContact} = await import('@components/phantomchat/confirmDeleteContact');
+        if(!await confirmDeleteContact(peerId)) return;
+        const toggle = toggleDisability([btnDelete], true);
 
-              try {
-                const isP2P = isP2PPeerId(Number(userId));
-                if(isP2P) {
-                  const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
-                  const pubkey = await getPubkey(Number(userId));
-                  if(!pubkey) {
-                    toggle();
-                    toast(i18n('Contact.Delete.CouldNotResolve'));
-                    return;
-                  }
+        try {
+          if(isP2PPeerId(Number(userId))) {
+            // The one delete path (delete-contact.ts): a Provider contact's
+            // persona and local data first, then the contact, here and on
+            // every other device.
+            const {deleteContact} = await import('@lib/phantomchat/delete-contact');
+            const outcome = await deleteContact(Number(userId));
+            if(outcome !== 'deleted') {
+              toggle();
+              toast(i18n(outcome === 'unresolved' ? 'Contact.Delete.CouldNotResolve' : 'Contact.Delete.ChatNotReady'));
+              return;
+            }
+          } else {
+            if(userId) {
+              await this.managers.appUsersManager.deleteContacts([userId]);
+            }
+            await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});
+            rootScope.dispatchEvent('dialog_drop', {peerId} as any);
+          }
 
-                  const chatAPI = (window as any).__phantomchatChatAPI;
-                  if(!chatAPI?.deleteConversation) {
-                    toggle();
-                    toast(i18n('Contact.Delete.ChatNotReady'));
-                    return;
-                  }
-
-                  // A Provider contact IS a persona of this PC's bundled
-                  // engine: deleting the contact destroys its nsec, key,
-                  // memory and history too. That goes first, so a failed
-                  // persona delete leaves the contact and its prefs intact
-                  // and lands on Contact.Delete.Failed.
-                  const {deleteP2PContact} = await import('@lib/phantomchat/provider-contacts');
-                  const bridge = (window as any).phantomchatDesktop?.phantombot;
-                  await deleteP2PContact(pubkey, chatAPI, bridge?.call);
-                } else {
-                  if(userId) {
-                    await this.managers.appUsersManager.deleteContacts([userId]);
-                  }
-                  await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});
-                }
-
-                // Ensure UI removes active chat & dialog everywhere
-                rootScope.dispatchEvent('dialog_drop', {peerId} as any);
-
-                this.close();
-                appSidebarRight.toggleSidebar(false);
-                toast(i18n('Contact.Delete.Success'));
-              } catch(err) {
-                console.error('[PhantomChat] failed to delete contact:', err);
-                toggle();
-                toast(i18n('Contact.Delete.Failed'));
-              }
-            },
-            isDanger: true
-          }])
-        }).show();
+          this.close();
+          appSidebarRight.toggleSidebar(false);
+          toast(i18n('Contact.Delete.Success'));
+        } catch(err) {
+          console.error('[PhantomChat] failed to delete contact:', err);
+          toggle();
+          toast(i18n('Contact.Delete.Failed'));
+        }
       }, {listenerSetter: this.listenerSetter});
 
       section.content.append(btnDelete);
@@ -320,4 +301,33 @@ export default class AppEditContactTab extends SliderSuperTab {
       appSidebarRight.toggleSidebar(false);
     }, {listenerSetter: this.listenerSetter});
   }
+}
+
+/**
+ * A click on a contact in the Contacts list. The chat always opens first, so
+ * every tap reaches the conversation (also a contact with no chat yet: the
+ * Contacts list is the new-DM flow). On a wide screen the Edit pane sits to
+ * the right of the chat and the Contacts list stays open on the left. On a
+ * phone the Edit pane covers the chat, and its back arrow lands in the chat.
+ * Clicking another contact replaces the pane.
+ */
+export async function openContactEditor(peerId: PeerId): Promise<void> {
+  const [{default: mediaSizes}, {default: appImManager}] = await Promise.all([
+    import('@helpers/mediaSizes'),
+    import('@lib/appImManager')
+  ]);
+  const onPhone = mediaSizes.isMobile;
+
+  const existing = appSidebarRight.getTab(AppEditContactTab);
+  if(existing) existing.close();
+
+  await appImManager.setInnerPeer({peerId});
+
+  const tab = appSidebarRight.createTab(AppEditContactTab, true);
+  tab.peerId = peerId;
+  tab.onPhone = onPhone;
+  // open() before showing the sidebar: an empty history makes toggleSidebar
+  // fall back to the native peer-info tab (see openAddContactPane).
+  await tab.open();
+  appSidebarRight.toggleSidebar(true);
 }

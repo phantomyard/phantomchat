@@ -194,12 +194,15 @@ describe('contact-prefs store', () => {
     }
   });
 
-  it('every P2P contact delete in the UI goes through deleteP2PContact', () => {
+  it('every P2P contact delete in the UI goes through the shared deleteContact path', () => {
     for(const file of ['src/components/sidebarRight/tabs/editContact.ts', 'src/components/sidebarLeft/tabs/contacts.ts']) {
       const src = readFileSync(file, 'utf8');
-      expect(src, file).toContain('deleteP2PContact(pubkey, chatAPI');
+      expect(src, file).toContain('confirmDeleteContact(peerId)');
+      expect(src, file).toContain('await deleteContact(');
       expect(src.match(/deleteConversation\(/g), file).toBeNull();
+      expect(src.match(/deleteP2PContact\(/g), file).toBeNull();
     }
+    expect(readFileSync('src/lib/phantomchat/delete-contact.ts', 'utf8')).toContain('deleteP2PContact(pubkey, chatAPI');
   });
 
   it('round-trips kind and localTools, and survives a cache reset', async() => {
