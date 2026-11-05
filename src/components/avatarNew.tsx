@@ -705,9 +705,9 @@ export const AvatarNew = (props: {
       // A peer's own kind-0 `picture` wins over the deterministic sigil
       // (human bust or phantom). Groups have no custom avatar: the group
       // edit pane can no longer set one and its stored field is not rendered.
-      // Only https URLs are dereferenced (see getPeerAvatarPictureUrl), so a
-      // malformed `picture` — or a data:/blob: URL from a hostile client —
-      // simply falls through to the sigil.
+      // Only Blossom-host URLs are dereferenced (see getPeerAvatarPictureUrl),
+      // so a hostile `picture` — an arbitrary host, or a data:/blob: URL —
+      // simply falls through to the sigil without the client fetching it.
       const peerPicture = isGroup ? undefined : getPeerAvatarPictureUrl(hexPubkey);
       if(peerPicture && middleware()) {
         const img = document.createElement('img');

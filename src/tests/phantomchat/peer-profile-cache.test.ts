@@ -226,9 +226,35 @@ describe('getPeerAvatarPictureUrl', () => {
     JSON.stringify({profile: {picture}, created_at: 1})
   );
 
-  test('returns the cached https picture', () => {
+  // The allowlist unions DEFAULT_BLOSSOM_SERVERS with the live /blossom.json
+  // list, which the test override stands in for. Reset it after each case so a
+  // stray host cannot make a later test pass.
+  beforeEach(() => {
+    (globalThis as any).window.__phantomchatTestBlossom = 'https://blossom.test';
+  });
+  afterEach(() => {
+    delete (globalThis as any).window.__phantomchatTestBlossom;
+  });
+
+  test('returns the cached picture on an allowlisted Blossom host', () => {
     cache('https://blossom.test/abc.png');
     expect(getPeerAvatarPictureUrl(PUBKEY)).toBe('https://blossom.test/abc.png');
+  });
+
+  test('accepts a hardened default Blossom host without the live list', () => {
+    delete (globalThis as any).window.__phantomchatTestBlossom;
+    cache('https://nostr.download/' + 'a'.repeat(64));
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBe('https://nostr.download/' + 'a'.repeat(64));
+  });
+
+  test('refuses an arbitrary https host (IP-beacon vector)', () => {
+    // A kind-0 profile is cached from public relays, so any contact controls
+    // `picture`. Dereferencing a non-Blossom host would leak every viewer's
+    // IP/UA/timing to an attacker-chosen URL.
+    cache('https://attacker.example/beacon.png');
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+    cache('https://blossom.test.evil.example/beacon.png');
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
   });
 
   test('returns undefined without a cached entry', () => {

@@ -28,17 +28,21 @@ export const DEFAULT_BLOSSOM_SERVERS: readonly string[] = [
   'https://cdn.hzrd149.com'
 ];
 
-// ─── Group avatar URL allowlist ───────────────────────────────────
+// ─── Avatar URL allowlist ─────────────────────────────────────────
 
 /**
- * Allowlisted avatar URLs. group_info_update carries a URL that every
- * member's client fetches when rendering the group avatar — without this
- * gate any member (or a compromised one) could make all peers beacon an
+ * Allowlisted avatar URLs. Two untrusted, passively-fetched surfaces feed
+ * this gate: group_info_update carries a URL every member's client fetches
+ * when rendering the group avatar, and a peer's kind-0 `picture` is cached
+ * from public relays and fetched by every client that renders that contact.
+ * Without the gate either one lets an attacker make all peers beacon an
  * arbitrary host. Restrict to Blossom hosts: the hardcoded canonical list
  * unioned with the live /blossom.json servers (see avatarAllowedHosts).
- * Blossom URLs are content-addressed, so mirrors add nothing here. Kept in
- * this dependency-free module so both the receive path (group-api) and the
- * render path (avatarNew) can import it without cycles or bundle bloat.
+ * Blossom URLs are content-addressed, so mirrors add nothing here; the app's
+ * own upload path (uploadToBlossom) only ever produces these hosts, so every
+ * app-created avatar still renders. Kept in this dependency-free module so
+ * the receive path (group-api) and the render paths (avatarNew,
+ * peer-profile-cache) can import it without cycles or bundle bloat.
  */
 function avatarAllowedHosts(): ReadonlySet<string> {
   // Union the hardcoded defaults with the live /blossom.json list: the
@@ -60,7 +64,7 @@ function avatarAllowedHosts(): ReadonlySet<string> {
   return hosts;
 }
 
-export function isSafeGroupAvatarUrl(url: string | undefined | null): boolean {
+export function isSafeAvatarUrl(url: string | undefined | null): boolean {
   if(!url) return true; // absent avatar is not an attack
   try {
     const parsed = new URL(url);
