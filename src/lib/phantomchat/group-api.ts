@@ -37,7 +37,7 @@ import {GroupDeliveryTracker} from './group-delivery-tracker';
 import {handleGroupIncoming, handleGroupOutgoing, applyGroupEdit, applyGroupReaction, applyGroupDialogFolder, applyGroupDialogFlags, groupSpaceFolderId, cleanupGroupChatInjection, ensureGroupChatInjected, ingestBackfilledGroupHistory, injectGroupCreateDialog, primeGroupKindCache, relocateGroupDialog, type GroupDispatchFn} from './phantomchat-groups-sync';
 import {reconcileGroupPeerClasses} from './group-class-reconcile';
 import {getMessageStore} from './message-store';
-import {isSafeGroupAvatarUrl} from './blossom-servers';
+import {isSafeAvatarUrl} from './blossom-servers';
 import type {GroupStore} from './group-store';
 import type {GroupKind, GroupRecord, GroupControlPayload} from './group-types';
 import type {NTNostrEvent} from './nostr-crypto';
@@ -2986,7 +2986,7 @@ export class GroupAPI {
       this.log.warn('[GroupAPI] ignoring group_info_update from non-admin', senderPubkey.slice(0, 8), 'for', payload.groupId.slice(0, 8));
       return [];
     }
-    if(!isSafeGroupAvatarUrl(payload.groupAvatar)) {
+    if(!isSafeAvatarUrl(payload.groupAvatar)) {
       this.log.warn('[GroupAPI] ignoring group_info_update with non-Blossom avatar URL for', payload.groupId.slice(0, 8));
       return [];
     }
@@ -3004,15 +3004,6 @@ export class GroupAPI {
     if(updates.avatar !== undefined) appliedFields.push('avatar');
     if(appliedFields.length === 0) return [];
     await this.store.updateInfo(payload.groupId, updates, tsSec);
-
-    // Drop the avatarNew memo so a changed avatar renders on the next
-    // cycle instead of lagging up to the 30s TTL.
-    try {
-      const {invalidateGroupAvatarCache} = await import('@components/avatarNew');
-      invalidateGroupAvatarCache(group.peerId);
-    } catch(err) {
-      this.log.warn('[GroupAPI] avatar cache invalidation non-critical:', err);
-    }
 
     // Sync the main-thread mirror so the receiver's chat-list + topbar
     // pick up the new title. Without this, FIND-3f07bfd3 δ — the rename

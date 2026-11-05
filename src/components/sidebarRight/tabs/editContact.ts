@@ -119,8 +119,9 @@ export default class AppEditContactTab extends SliderSuperTab {
       this.content.append(this.editPeer.nextBtn);
 
       if(peerId) {
+        // Display-only: only the user's own profile picture is editable.
         const div = document.createElement('div');
-        div.classList.add('avatar-edit');
+        div.classList.add('avatar-static');
         div.append(this.editPeer.avatarElem.node);
 
         const notificationsCheckboxField = new CheckboxField({

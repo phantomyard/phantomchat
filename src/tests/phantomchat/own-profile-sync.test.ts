@@ -34,7 +34,8 @@ vi.mock('@lib/phantomchat/nostr-profile', async() => {
 import {
   loadCachedProfile,
   saveCachedProfile,
-  clearCachedProfile
+  clearCachedProfile,
+  resolveOwnProfilePicture
 } from '@lib/phantomchat/profile-cache';
 import {
   hydrateOwnProfileFromCache,
@@ -276,5 +277,31 @@ describe('own-profile-sync: optimistic save', () => {
     expect(reloaded).not.toBeNull();
     expect(reloaded!.profile.name).toBe('bob');
     expect(reloaded!.created_at).toBe(3000);
+  });
+});
+
+describe('resolveOwnProfilePicture', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    dispatchSingleSpy.mockClear();
+  });
+
+  it('prefers the freshly uploaded picture', () => {
+    saveCachedProfile({profile: {picture: 'https://old.test/a.png'}, created_at: 1});
+    expect(resolveOwnProfilePicture('https://new.test/b.png', 'https://live.test/c.png'))
+    .toBe('https://new.test/b.png');
+  });
+
+  it('keeps the cached picture when no new file was picked', () => {
+    // Regression: saving a name/bio used to write picture: undefined over the
+    // cache and republish kind 0 without a picture, erasing the avatar on
+    // every device.
+    saveCachedProfile({profile: {picture: 'https://old.test/a.png'}, created_at: 1});
+    expect(resolveOwnProfilePicture(undefined, undefined)).toBe('https://old.test/a.png');
+  });
+
+  it('falls back to the live store value, then undefined', () => {
+    expect(resolveOwnProfilePicture(undefined, 'https://live.test/c.png')).toBe('https://live.test/c.png');
+    expect(resolveOwnProfilePicture(undefined, null)).toBeUndefined();
   });
 });

@@ -193,9 +193,10 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
   addSegButton('phantom');
   addSegButton('human');
 
-  // --- Avatar: centred, 120px, like the Edit pane ----------------------
+  // --- Avatar: centred, 120px, like the Edit pane. Display-only: the
+  // contact's face comes from their kind-0 picture or the human bust sigil
+  // (or the phantom sigil), never from an upload here. -------------------
   const avatarWrap = el('div', 'width:120px;height:120px;margin:0 auto;cursor:default;');
-  avatarWrap.classList.add('avatar-edit');
   const avatar = el('img', 'width:100%;height:100%;display:block;border-radius:50%;background:var(--light-secondary-text-color, rgba(127,127,127,.12));');
   avatar.alt = '';
   avatar.setAttribute('data-testid', 'add-contact-avatar');
