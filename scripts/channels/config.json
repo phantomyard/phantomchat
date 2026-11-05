@@ -804,8 +804,8 @@
     },
     "src/lib/phantomchat/optimistic-send-bubble.ts": {
       "stable": "absent",
-      "preview": "83368f017a1414bf65442d689a441db37a3322562d96702ae666cc294a75b379",
-      "reason": "New pure helpers for the render guard above (no I/O, no storage). Storage-neutral."
+      "preview": "b6bbe6dd62f1658050f272fb4c86598ec7143f25633f1c918349bbc9289b1941",
+      "reason": "New pure helpers for the render guard above (no I/O, no storage). Failed sends (message.error) are never treated as painted, so their temp bubble keeps the error state. Storage-neutral."
     }
   }
 }

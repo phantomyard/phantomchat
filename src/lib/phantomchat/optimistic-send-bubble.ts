@@ -21,6 +21,8 @@ type MessageLike = {
   _?: string;
   peerId?: number | string;
   media?: {_?: string};
+  /** Set by tweb on a send that failed (see bubbles.ts `message.error`). */
+  error?: unknown;
   pFlags?: {is_outgoing?: boolean | true};
 };
 
@@ -32,11 +34,14 @@ function isPhantomChatPeer(peerId: number): boolean {
  * True for the Worker's temp copy of an in-flight TEXT send to a PhantomChat
  * peer: the bubble for it is already painted under the real mid, so a history
  * render must skip it. Media sends are left alone (their upload bubble is keyed
- * by the temp mid on purpose).
+ * by the temp mid on purpose), and so are FAILED sends: their temp copy is the
+ * only bubble that carries the error state and the retry, so hiding it would
+ * make a failed message vanish.
  */
 export function isPaintedTempSend(message: MessageLike | undefined): boolean {
   if(!message || message._ !== 'message') return false;
   if(!message.pFlags?.is_outgoing) return false;
+  if(message.error) return false;
   const media = message.media;
   if(media && media._ !== 'messageMediaEmpty') return false;
   return isPhantomChatPeer(Number(message.peerId));

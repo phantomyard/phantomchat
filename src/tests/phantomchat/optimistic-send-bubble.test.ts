@@ -32,6 +32,11 @@ describe('isPaintedTempSend — the temp copy of a VMT-painted text send', () =>
     expect(isPaintedTempSend(temp({media: {_: 'messageMediaPhoto'}}))).toBe(false);
   });
 
+  it('leaves a FAILED send alone so it stays visible with its error state', () => {
+    expect(isPaintedTempSend(temp({error: {type: 'SEND_FAILED'}}))).toBe(false);
+    expect(isPaintedTempSend(temp({peerId: GROUP_PEER, error: {type: 'SEND_FAILED'}}))).toBe(false);
+  });
+
   it('leaves non-PhantomChat peers and service messages alone', () => {
     expect(isPaintedTempSend(temp({peerId: TG_PEER}))).toBe(false);
     expect(isPaintedTempSend(temp({_: 'messageService'}))).toBe(false);
