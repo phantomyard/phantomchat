@@ -1858,15 +1858,16 @@ export class AppDialogsManager {
         threadId: threadId
       });
 
-      // Clicking the row of the chat that is already open opens its edit
-      // sidebar (name + members) instead of pointlessly re-selecting it — but
-      // only while the list and the chat are on screen side by side. Below the
-      // floating-left-sidebar breakpoint the chat replaces the list, so that
-      // click has to fall through to `openChat` to get back to the bubbles.
-      // Groups and sessions share one peer class, so this covers both. The
-      // open chat is read from the live app state (with the row's `active`
-      // class as fallback) so this also works in the folder lists, whose rows
-      // are rebuilt without the class.
+      // Clicking the row of the chat that is already open toggles its edit
+      // sidebar (name + members for groups/sessions, contact fields for 1:1)
+      // instead of pointlessly re-selecting it — but only while the list and
+      // the chat are on screen side by side. Below the floating-left-sidebar
+      // breakpoint the chat replaces the list, so that click has to fall
+      // through to `openChat` to get back to the bubbles. Groups and sessions
+      // share one peer class; PhantomChat 1:1 peers are the P2P id range, so
+      // the predicate covers all three. The open chat is read from the live
+      // app state (with the row's `active` class as fallback) so this also
+      // works in the folder lists, whose rows are rebuilt without the class.
       const isSelectedChat = elem.classList.contains('active') ||
         (!!appImManager.chat && appImManager.isSamePeer(appImManager.chat, {
           peerId: monoforumParentPeerId || peerId,

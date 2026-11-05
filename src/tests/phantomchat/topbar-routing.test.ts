@@ -42,9 +42,12 @@ describe('Topbar click routing logic', () => {
     // Topbar routes through the shared entry point...
     expect(topbarSource).toContain('openPeerEditor(this.peerId)');
     // ...and the shared module still replaces a group editor belonging to a
-    // different group instead of stacking a second one.
-    expect(source).toContain('existingTab.groupPeerId === numId');
-    expect(source).toContain('createTab(GroupEditTab, true)');
+    // different group instead of stacking a second one: the toggle plan marks
+    // every other editor tab stale, and those are closed before the new pane
+    // is built.
+    expect(source).toContain('planPeerEditorToggle({');
+    expect(source).toContain('plan.staleTabs.forEach((tab) => appSidebarRight.closeTab(tab))');
+    expect(source).toContain('createTab(ctor, true)');
   });
 
   it('routes synthetic P2P direct peers (>= 1e15) to AppEditContactTab', () => {
