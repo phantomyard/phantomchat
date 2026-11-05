@@ -791,6 +791,11 @@
       "stable": "df497b2fb10df3f25e320f2004ed0eeca4ec34d9f1de9c9f1986d0bda142c6de",
       "preview": "5996d0f35a1296596e61c65395043d4da3a0a13d4bcec3677dffb8f95a24decc",
       "reason": "Avatars are now sourced only from the profile's kind-0 `picture`: a save preserves the stored picture, uploads use the live relay-pool key, peers' https pictures render ahead of the Key Sigil, and every other avatar edit control plus the group custom-avatar render path are removed. No stored-format change — same kind-0 event, same localStorage keys."
+    },
+    "src/lib/phantomchat/blossom-servers.ts": {
+      "stable": "ba5f217ba580501413b4ce8a80f0eb97e2286aa09fa2b00165d59723faaaad63",
+      "preview": "2c28f98080bb97a2375a57a1e38f56db0d2ea68c5f7e5dafb1e067adb40f1f6c",
+      "reason": "Comment and rename only: the group-avatar URL allowlist is exported as isSafeAvatarUrl because it now gates the peer kind-0 picture render path as well, so a contact-cached profile cannot beacon every viewer's IP to an arbitrary host. Same host set (DEFAULT_BLOSSOM_SERVERS union /blossom.json), same behaviour; no stored-format, schema or wire change."
     }
   }
 }
