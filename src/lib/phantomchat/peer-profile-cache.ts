@@ -14,6 +14,7 @@
 
 import rootScope from '@lib/rootScope';
 import {DEFAULT_RELAYS} from './nostr-relay-pool';
+import {isSafeAvatarUrl} from './blossom-servers';
 import {queryRelayForProfileWithMeta, type NostrProfile} from './nostr-profile';
 import {updateMappingProfile} from './virtual-peers-db';
 
@@ -171,4 +172,22 @@ export function clearPeerProfileCache(): void {
   } catch{
     // ignore
   }
+}
+
+/**
+ * A peer's own kind-0 avatar URL, if we have one cached and it is safe to
+ * dereference. The cached profile comes from public relays, so `picture` is
+ * fully peer-controlled: dereferencing it passively would beacon every
+ * viewer's IP/User-Agent/timing to an attacker-chosen host, and an
+ * `https:`-only check does not stop that (attacker.example is https too).
+ * Same rule as the group-avatar receive path: Blossom hosts only, which are
+ * exactly the hosts the app's own upload path (uploadToBlossom) produces, so
+ * every app-created avatar still renders. Returns undefined so callers fall
+ * through to the deterministic sigil.
+ */
+export function getPeerAvatarPictureUrl(pubkey: string | null | undefined): string | undefined {
+  if(!pubkey) return undefined;
+  const picture = loadCachedPeerProfile(pubkey)?.profile?.picture;
+  if(typeof picture !== 'string' || !picture) return undefined;
+  return isSafeAvatarUrl(picture) ? picture : undefined;
 }

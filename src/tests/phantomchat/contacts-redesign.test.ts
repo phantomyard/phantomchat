@@ -363,7 +363,9 @@ describe('New Contact pane', () => {
     const submit = q('add-contact-submit');
     expect(submit.classList.contains('btn-corner')).toBe(true);
     expect(submit.classList.contains('is-visible')).toBe(true);
-    expect(q('add-contact-avatar').closest('.avatar-edit')).toBeTruthy();
+    // Only the user's own profile picture is editable — the New Contact pane
+    // shows a display-only avatar.
+    expect(q('add-contact-avatar').closest('.avatar-edit')).toBeNull();
   });
 
   it('shows the Edit pane\'s Enabled / Disabled subtitle from the start', async() => {

@@ -955,6 +955,15 @@ b {
   font-weight: var(--font-weight-bold);
 }
 
+// Display-only avatar host (chats, contacts, groups): same circular geometry
+// as .avatar-edit without the click affordance — only the user's own profile
+// picture is editable.
+.avatar-static {
+  position: relative;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
 .avatar-edit {
   position: relative;
   border-radius: 50%;

@@ -70,3 +70,16 @@ export function clearCachedProfile(): void {
     localStorage.removeItem(LEGACY_EXTRAS_KEY);
   } catch{ /* ignore */ }
 }
+
+/**
+ * The picture to persist and publish when the profile is saved. A freshly
+ * uploaded URL always wins; otherwise keep whatever is already stored —
+ * writing `undefined` here used to overwrite the cache entry and republish
+ * kind 0 without `picture`, erasing the avatar on every device.
+ */
+export function resolveOwnProfilePicture(
+  uploaded: string | undefined,
+  live: string | null | undefined
+): string | undefined {
+  return uploaded || loadCachedProfile()?.profile?.picture || live || undefined;
+}

@@ -42,6 +42,7 @@ import {
   saveCachedPeerProfile,
   refreshPeerProfileFromRelays,
   clearPeerProfileCache,
+  getPeerAvatarPictureUrl,
   PEER_PROFILE_CACHE_PREFIX
 } from '@lib/phantomchat/peer-profile-cache';
 
@@ -216,5 +217,63 @@ describe('clearPeerProfileCache', () => {
     expect(localStorage.getItem(PEER_PROFILE_CACHE_PREFIX + PUBKEY)).toBeNull();
     expect(localStorage.getItem(PEER_PROFILE_CACHE_PREFIX + PUBKEY_2)).toBeNull();
     expect(localStorage.getItem('unrelated-key')).toBe('keep-me');
+  });
+});
+
+describe('getPeerAvatarPictureUrl', () => {
+  const cache = (picture: unknown) => localStorage.setItem(
+    PEER_PROFILE_CACHE_PREFIX + PUBKEY,
+    JSON.stringify({profile: {picture}, created_at: 1})
+  );
+
+  // The allowlist unions DEFAULT_BLOSSOM_SERVERS with the live /blossom.json
+  // list, which the test override stands in for. Reset it after each case so a
+  // stray host cannot make a later test pass.
+  beforeEach(() => {
+    (globalThis as any).window.__phantomchatTestBlossom = 'https://blossom.test';
+  });
+  afterEach(() => {
+    delete (globalThis as any).window.__phantomchatTestBlossom;
+  });
+
+  test('returns the cached picture on an allowlisted Blossom host', () => {
+    cache('https://blossom.test/abc.png');
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBe('https://blossom.test/abc.png');
+  });
+
+  test('accepts a hardened default Blossom host without the live list', () => {
+    delete (globalThis as any).window.__phantomchatTestBlossom;
+    cache('https://nostr.download/' + 'a'.repeat(64));
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBe('https://nostr.download/' + 'a'.repeat(64));
+  });
+
+  test('refuses an arbitrary https host (IP-beacon vector)', () => {
+    // A kind-0 profile is cached from public relays, so any contact controls
+    // `picture`. Dereferencing a non-Blossom host would leak every viewer's
+    // IP/UA/timing to an attacker-chosen URL.
+    cache('https://attacker.example/beacon.png');
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+    cache('https://blossom.test.evil.example/beacon.png');
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+  });
+
+  test('returns undefined without a cached entry', () => {
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+    expect(getPeerAvatarPictureUrl(undefined)).toBeUndefined();
+    expect(getPeerAvatarPictureUrl('')).toBeUndefined();
+  });
+
+  test('returns undefined for missing or non-string pictures', () => {
+    cache(undefined);
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+    cache(42);
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+  });
+
+  test('refuses every non-https scheme', () => {
+    for(const url of ['http://evil.test/a.png', 'data:image/svg+xml,<svg/>', 'blob:https://x/1', 'javascript:alert(1)', '/relative.png']) {
+      cache(url);
+      expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+    }
   });
 });

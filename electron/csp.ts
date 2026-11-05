@@ -24,7 +24,10 @@ export function buildCsp(html = ''): string {
     // rlottie compiles WebAssembly in a worker; keep JavaScript eval blocked.
     ["script-src 'self' 'wasm-unsafe-eval'", ...inlineScriptHashes(html)].join(' '),
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    // https: for peers' kind-0 avatar pictures, served from Blossom (and any
+    // other https host a peer set). Without it every real photo fails to
+    // render in Electron; dicebear sigils are blob: and were unaffected.
+    "img-src 'self' data: blob: https:",
     "media-src 'self' data: blob:",
     "font-src 'self' data:",
     "connect-src 'self' wss: https: blob: data:",

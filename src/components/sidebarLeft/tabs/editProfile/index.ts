@@ -21,8 +21,9 @@ import {toast} from '@components/toast';
 import {publishKind0Metadata} from '@lib/phantomchat/nostr-relay';
 import {uploadToBlossom} from '@lib/phantomchat/blossom-upload';
 import {saveOwnProfileLocal} from '@lib/phantomchat/own-profile-sync';
-import {loadEncryptedIdentity, loadBrowserKey, decryptKeys} from '@lib/phantomchat/key-storage';
-import {importFromStored} from '@lib/phantomchat/nostr-identity';
+import {resolveOwnProfilePicture} from '@lib/phantomchat/profile-cache';
+import {npubEncode} from '@lib/phantomchat/nostr-identity';
+import {bytesToHex} from '@lib/phantomchat/file-crypto';
 import {createBasicInfoSection, type BasicInfoSection} from './basic-info-section';
 import {createNip05Section, type Nip05Section} from './nip05-section';
 
@@ -142,30 +143,27 @@ export default class AppEditProfileTab extends SliderSuperTab {
     });
   }
 
-  /** Load the npub from the store; fall back to decrypting local storage. */
+  /**
+   * Load the npub from the store, falling back to the live pubkey onboarding
+   * sets (`window.__phantomchatOwnPubkey`). The encrypted-identity store is
+   * only readable with the browser key, so pin/biometric and imported
+   * identities can't be re-derived here — and re-deriving used to re-dispatch
+   * `phantomchat_identity_loaded` WITHOUT the cached picture, wiping it.
+   */
   private async ensureNpubLoaded(): Promise<string> {
     const identity = usePhantomChatIdentity();
-    let npub = identity.npub() || '';
-    if(npub) return npub;
+    const known = identity.npub();
+    if(known) return known;
+
+    const ownPubkey = (window as any).__phantomchatOwnPubkey as string | undefined;
+    if(!ownPubkey) return '';
 
     try {
-      const record = await loadEncryptedIdentity();
-      if(!record) return '';
-      const browserKey = await loadBrowserKey();
-      if(!browserKey) return '';
-      const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-      const id = importFromStored({seed, nsec});
-      npub = id.npub;
-      rootScope.dispatchEvent('phantomchat_identity_loaded', {
-        npub: id.npub,
-        displayName: record.displayName || null,
-        nip05: undefined,
-        protectionType: 'none'
-      });
+      return npubEncode(ownPubkey);
     } catch(err) {
-      console.warn('[EditProfile] failed to load identity:', err);
+      console.warn('[EditProfile] failed to encode own pubkey:', err);
+      return '';
     }
-    return npub;
   }
 
   /** Render the read-only public-key section with copy-to-clipboard row. */
@@ -192,7 +190,11 @@ export default class AppEditProfileTab extends SliderSuperTab {
   private async save(npubValue: string): Promise<void> {
     const {displayName, bio, website, lud16} = this.basicInfo.getValues();
 
-    const pictureUrl = await this.maybeUploadAvatar();
+    const uploadedPicture = await this.maybeUploadAvatar();
+    if(uploadedPicture) this.editPeer.lastAvatarBlob = null;
+    // A save WITHOUT a freshly picked file must keep the stored picture
+    // (see resolveOwnProfilePicture).
+    const picture = resolveOwnProfilePicture(uploadedPicture, usePhantomChatIdentity().picture());
 
     const nowSec = Math.floor(Date.now() / 1000);
     const existingNip05 = usePhantomChatIdentity().nip05() || undefined;
@@ -201,7 +203,7 @@ export default class AppEditProfileTab extends SliderSuperTab {
       name: displayName,
       display_name: displayName,
       about: bio,
-      picture: pictureUrl,
+      ...(picture ? {picture} : {}),
       website: website || undefined,
       lud16: lud16 || undefined,
       nip05: existingNip05
@@ -213,7 +215,7 @@ export default class AppEditProfileTab extends SliderSuperTab {
         display_name: displayName,
         about: bio,
         nip05: existingNip05,
-        picture: pictureUrl || undefined,
+        ...(picture ? {picture} : {}),
         website: website || undefined,
         lud16: lud16 || undefined
       }).catch((err) => {
@@ -225,16 +227,18 @@ export default class AppEditProfileTab extends SliderSuperTab {
     this.close();
   }
 
-  /** If the user picked a new avatar, decrypt the key and upload to Blossom. */
+  /** If the user picked a new avatar, upload it to Blossom with the LIVE key. */
   private async maybeUploadAvatar(): Promise<string | undefined> {
     if(!this.editPeer.lastAvatarBlob) return undefined;
     try {
-      const record = await loadEncryptedIdentity();
-      const browserKey = await loadBrowserKey();
-      if(!record || !browserKey) throw new Error('no identity loaded');
-      const {seed, nsec} = await decryptKeys(record.iv, record.encryptedKeys, browserKey);
-      const id = importFromStored({seed, nsec});
-      const {url} = await uploadToBlossom(this.editPeer.lastAvatarBlob, id.privateKey);
+      // The chat API's relay pool holds the key the session actually signs
+      // with. Re-deriving it via loadEncryptedIdentity()+loadBrowserKey()
+      // fails for pin/biometric and imported identities (no browser key),
+      // which silently discarded every avatar those users picked.
+      const privateKey = (window as any).__phantomchatChatAPI?.relayPool?.getPrivateKey?.() as
+        Uint8Array | null | undefined;
+      if(!privateKey || privateKey.length !== 32) throw new Error('no live identity key');
+      const {url} = await uploadToBlossom(this.editPeer.lastAvatarBlob, bytesToHex(privateKey));
       return url;
     } catch(err) {
       console.error('[EditProfile] blossom upload failed:', err);
