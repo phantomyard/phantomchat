@@ -148,22 +148,17 @@ export async function ensureSenderUserInjected(
     } catch(e: any) {
       console.debug(logPrefix, 'injectP2PUser (worker re-sync) non-critical:', e?.message);
     }
+    // injectP2PUser mirrors back a flagless user that replaces the entry;
+    // put the existing one (bot flag, upgraded name) back.
+    proxy.mirrors.peers[peerId] = existing;
     return {isNewPeer: false};
   }
 
   const displayName = await resolveInitialDisplayName(senderPubkey, logPrefix);
 
-  const mapper = new PhantomChatPeerMapper();
-  const user = mapper.createTwebUser({peerId, firstName: displayName, pubkey: senderPubkey});
-  proxy.mirrors.peers[peerId] = user;
-
-  try {
-    const {reconcilePeer} = await import('@stores/peers');
-    reconcilePeer(peerId, user);
-  } catch(e: any) {
-    console.debug(logPrefix, 'reconcilePeer non-critical:', e?.message);
-  }
-
+  // Inject into the worker FIRST: injectP2PUser mirrors back a flagless user
+  // that replaces the mirror entry, so the main-thread mirror is written after
+  // it (same order as add-p2p-contact.ts and contacts.ts).
   try {
     const {PhantomChatBridge} = await import('@lib/phantomchat/phantomchat-bridge');
     const bridge = PhantomChatBridge.getInstance();
@@ -171,6 +166,20 @@ export async function ensureSenderUserInjected(
     await rootScope.managers.appUsersManager.injectP2PUser(senderPubkey, peerId, displayName, avatar, ...contactArgs);
   } catch(e: any) {
     console.debug(logPrefix, 'injectP2PUser non-critical:', e?.message);
+  }
+
+  const mapper = new PhantomChatPeerMapper();
+  // Keep the cached kind-0 bot flag: a legacy Phantom contact rebuilt here
+  // after a reload must keep its bot badge and "/" command menu.
+  const {isCachedPeerBot} = await import('@lib/phantomchat/contact-kind');
+  const user = mapper.createTwebUser({peerId, firstName: displayName, pubkey: senderPubkey, bot: isCachedPeerBot(senderPubkey)});
+  proxy.mirrors.peers[peerId] = user;
+
+  try {
+    const {reconcilePeer} = await import('@stores/peers');
+    reconcilePeer(peerId, user);
+  } catch(e: any) {
+    console.debug(logPrefix, 'reconcilePeer non-critical:', e?.message);
   }
 
   scheduleKind0Upgrade(senderPubkey, peerId, displayName, logPrefix);

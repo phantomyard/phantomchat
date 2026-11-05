@@ -335,6 +335,8 @@ export default class AppContactsTab extends SliderSuperTab {
       // Presence (#52): register each contact so an inbound ping/pong resolves
       // to the right peer and drives a REAL online / "last seen at HH:MM" status.
       const {trackPeerPresence} = await import('@lib/phantomchat/phantomchat-presence');
+      // Keep the kind-0 bot flag on the mirror (badge, "/" menu, contact type).
+      const {isCachedPeerBot} = await import('@lib/phantomchat/contact-kind');
 
       const peerIds: PeerId[] = [];
       for(const m of filtered) {
@@ -347,7 +349,7 @@ export default class AppContactsTab extends SliderSuperTab {
           await rootScope.managers.appUsersManager.injectP2PUser(m.pubkey, m.peerId, displayName, avatar);
         } catch(err) { /* ignore */ }
         // Main thread mirror + Solid store
-        const user = mapper.createTwebUser({peerId: m.peerId, firstName: displayName, pubkey: m.pubkey});
+        const user = mapper.createTwebUser({peerId: m.peerId, firstName: displayName, pubkey: m.pubkey, bot: isCachedPeerBot(m.pubkey)});
         if(proxy?.mirrors?.peers) proxy.mirrors.peers[m.peerId.toPeerId(false)] = user;
         reconcilePeer(m.peerId.toPeerId(false), user);
         peerIds.push(m.peerId.toPeerId(false));

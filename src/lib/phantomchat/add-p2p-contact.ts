@@ -200,8 +200,9 @@ export async function addP2PContact(opts: AddP2PContactOptions): Promise<AddP2PC
   }
 
   // Main-thread mirrors + Solid store
+  const {isCachedPeerBot} = await import('./contact-kind');
   const mapper = new PhantomChatPeerMapper();
-  const user = mapper.createTwebUser({peerId, firstName: displayName, pubkey: hexPubkey});
+  const user = mapper.createTwebUser({peerId, firstName: displayName, pubkey: hexPubkey, bot: isCachedPeerBot(hexPubkey)});
   const proxyRef = MOUNT_CLASS_TO.apiManagerProxy;
   if(proxyRef?.mirrors?.peers) proxyRef.mirrors.peers[peerIdTweb] = user;
   try {

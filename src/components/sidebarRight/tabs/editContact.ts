@@ -98,8 +98,8 @@ export default class AppEditContactTab extends SliderSuperTab {
       const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
       const contactPubkey = userId && isP2PPeerId(Number(userId)) ? await getPubkey(Number(userId)) : null;
       const prefsMod = await import('@lib/phantomchat/contact-prefs');
-      const prefs = contactPubkey ? await prefsMod.getContactPrefs(contactPubkey) : undefined;
-      const contactKind = prefsMod.resolveContactKind(prefs?.kind, isBot);
+      const {resolveContactKindForPeer} = await import('@lib/phantomchat/contact-kind');
+      const {kind: contactKind, prefs} = await resolveContactKindForPeer(contactPubkey, isBot);
       this.contactPubkey = contactPubkey;
       // Phantom: the switch is main's Local tools gate (phantombot #747), so it
       // only exists in a desktop build that has it, and main's list is the
