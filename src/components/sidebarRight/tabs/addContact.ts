@@ -18,6 +18,7 @@ import {replaceButtonIcon} from '@components/button';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import Icon from '@components/icon';
+import {createListPicker} from '@components/listPicker';
 
 /**
  * New Contact pane (contacts redesign). It slides in from the right like the
@@ -117,14 +118,13 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cssText?: string, tex
 }
 
 /* Only the controls the app has no component for get inline styles: the
- * type selector, the icon buttons inside the npub field, the provider
- * selects and the scan results. Fields, toggles and the save button are the
- * same components the Edit panes use. None of them carries the app-wide
+ * type selector, the icon buttons inside the npub field, the provider and
+ * model pickers and the scan results. Fields, toggles and the save button are
+ * the same components the Edit panes use. None of them carries the app-wide
  * `.btn-primary` block button (width:100%, height:54px), which would blow a
  * shared row past the pane width. */
 const SIDE_CSS = 'margin:0 .5rem;';
 const SEGMENT_CSS = 'flex:1;min-width:0;padding:8px 6px;border:none;border-radius:8px;background:transparent;color:var(--primary-text-color);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;';
-const SELECT_CSS = 'width:100%;height:3.375rem;padding:0 .875rem;border:1px solid var(--input-search-border-color, var(--border-color));border-radius:var(--border-radius-medium, .75rem);font-size:1rem;box-sizing:border-box;background:var(--surface-color);color:var(--primary-text-color);';
 const LIST_BTN_CSS = 'padding:10px 14px;border:1px solid var(--border-color);border-radius:var(--border-radius-medium, .75rem);background:transparent;color:var(--primary-text-color);font-size:14px;text-align:left;cursor:pointer;';
 const NOTE_CSS = 'font-size:.875rem;color:var(--secondary-text-color);';
 const ICON_BTN_CSS = 'position:absolute;top:50%;transform:translateY(-50%);z-index:2;display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:none;border-radius:8px;background:transparent;color:var(--secondary-text-color);font-size:20px;line-height:1;cursor:pointer;';
@@ -234,8 +234,12 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
   // --- Provider (desktop only) -----------------------------------------
   const providerBox = el('div', 'display:none;flex-direction:column;gap:.75rem;margin-bottom:1.5rem;');
   providerBox.setAttribute('data-testid', 'add-contact-provider');
-  const providerSelect = el('select', SELECT_CSS);
-  providerSelect.setAttribute('data-testid', 'add-contact-provider-select');
+  const providerPicker = createListPicker({
+    testId: 'add-contact-provider-select',
+    label: 'Provider',
+    placeholder: 'Choose a provider',
+    onChange: () => onProviderChanged()
+  });
   const tokenField = makeField('Token', 'add-contact-provider-token');
   tokenField.container.style.margin = '0';
   const tokenInput = tokenField.input as HTMLInputElement;
@@ -243,11 +247,24 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
   tokenInput.autocomplete = 'off';
   const providerStatus = el('div', NOTE_CSS + 'min-height:16px;');
   providerStatus.setAttribute('data-testid', 'add-contact-provider-status');
-  const modelSelect = el('select', SELECT_CSS);
-  modelSelect.setAttribute('data-testid', 'add-contact-provider-model');
-  modelSelect.style.display = 'none';
-  providerBox.append(providerSelect, tokenField.container, providerStatus, modelSelect);
-
+  // A provider that needs a model shows this picker the moment it is picked,
+  // before the token: the engine learns the model list from the provider's own
+  // API, so the models arrive with a verified key and the picker says what it
+  // is waiting for instead of appearing out of nowhere after a save.
+  const modelField = el('div', 'display:none;flex-direction:column;gap:.375rem;');
+  modelField.setAttribute('data-testid', 'add-contact-provider-model-field');
+  modelField.append(el('div', NOTE_CSS, 'Model'));
+  const modelPicker = createListPicker({
+    testId: 'add-contact-provider-model',
+    label: 'Model',
+    placeholder: 'Enter your token to load models',
+    limit: 20,
+    onChange: () => {
+      errorEl.textContent = '';
+    }
+  });
+  modelField.append(modelPicker.trigger);
+  providerBox.append(providerPicker.trigger, tokenField.container, providerStatus, modelField);
   inputWrapper.append(nameField.container, npubField.container, scanList, providerBox);
 
   // --- Toggles: the Edit pane's checkbox Rows ----------------------------
@@ -398,15 +415,33 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
   // --- Provider behaviour ------------------------------------------------
   let providers: ProviderOption[] | undefined;
   let checked: {provider: string; token: string; result: ProviderCheckResult} | undefined;
+  /**
+   * Bumped whenever the provider or the token changes, so a check that is
+   * still in flight for the old pair never writes into the new one.
+   */
+  let checkGeneration = 0;
   const call = (method: string, params?: Record<string, unknown>) => desktopApi()!.phantombot!.call(method, params);
-  const currentProvider = () => providers?.find((p) => p.id === providerSelect.value);
+  const currentProvider = () => providers?.find((p) => p.id === providerPicker.getValue());
+
+  /** Show the model picker as soon as a provider that needs one is picked. */
+  const syncModelRow = () => {
+    const p = currentProvider();
+    const needsModel = !!p && !p.autoModel;
+    modelField.style.display = needsModel ? 'flex' : 'none';
+    if(!needsModel) return;
+    modelPicker.setDisabled(!modelPicker.getOptions().length);
+    modelPicker.setPlaceholder(p.defaultModel ?
+      `Enter your token to load models (default: ${p.defaultModel})` :
+      'Enter your token to load models');
+  };
 
   const resetCheck = () => {
     checked = undefined;
-    modelSelect.style.display = 'none';
-    modelSelect.replaceChildren();
+    checkGeneration++;
+    modelPicker.setOptions([]);
     const p = currentProvider();
     tokenField.label.textContent = p?.keyLabel || 'Token';
+    syncModelRow();
     providerStatus.textContent = p && !p.checkable ? 'This provider cannot be verified; its key is used as given' : '';
   };
 
@@ -415,11 +450,7 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     try {
       const {listProviderOptions} = await import('@lib/phantomchat/provider-contacts');
       providers = await listProviderOptions(call);
-      providerSelect.replaceChildren(...providers.map((p) => {
-        const o = el('option', undefined, p.label);
-        o.value = p.id;
-        return o;
-      }));
+      providerPicker.setOptions(providers.map((p) => ({value: p.id, label: p.label})), providers[0]?.id);
       resetCheck();
     } catch(err) {
       console.error('[AddContactPane] providers failed', err);
@@ -427,33 +458,76 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     }
   };
 
-  providerSelect.addEventListener('change', resetCheck);
-  tokenInput.addEventListener('input', () => {
-    if(checked) resetCheck();
-  });
+  function onProviderChanged() {
+    errorEl.textContent = '';
+    resetCheck();
+    // A token typed before the provider was picked is checked right away.
+    if(tokenInput.value.trim()) void verifyToken();
+  }
 
-  /** Check the token with the provider; lists its models in the picker. */
-  const checkToken = async(p: ProviderOption, token: string): Promise<ProviderCheckResult> => {
-    providerStatus.textContent = 'Checking token...';
+  /**
+   * Check the token with the provider; the models come back with a verified
+   * key. The status line is NOT written here: a check for the provider the
+   * user has already switched away from must not speak for the new one, so
+   * the caller writes the text after its generation check.
+   */
+  const checkToken = async(p: ProviderOption, token: string): Promise<{result: ProviderCheckResult; status: string}> => {
     const {checkProviderKey} = await import('@lib/phantomchat/provider-contacts');
     const result = await checkProviderKey(call, p.id, token);
-    checked = {provider: p.id, token, result};
-    providerStatus.textContent = result.status === 'verified' ? 'Token verified' :
+    const status = result.status === 'verified' ? 'Token verified' :
       result.status === 'invalid' ? `Token rejected (${result.detail})` :
       `Could not verify (${result.detail || 'no check for this provider'})`;
-    if(p.autoModel || result.status === 'invalid') return result;
+    return {result, status};
+  };
+
+  /** Put a check's models in the picker, default model first and preselected. */
+  const fillModels = (p: ProviderOption, result: ProviderCheckResult) => {
+    if(p.autoModel || result.status === 'invalid') return;
     const ids = result.models.map((m) => m.id);
     if(p.defaultModel && !ids.includes(p.defaultModel)) ids.unshift(p.defaultModel);
-    modelSelect.replaceChildren(...ids.map((id) => {
-      const o = el('option', undefined, id);
-      o.value = id;
-      return o;
-    }));
-    if(p.defaultModel) modelSelect.value = p.defaultModel;
-    modelSelect.style.display = ids.length ? '' : 'none';
-    if(!ids.length) providerStatus.textContent += '; no models listed';
-    return result;
+    if(!ids.length) {
+      providerStatus.textContent += '; no models listed';
+      modelPicker.setDisabled(true);
+      return;
+    }
+    const previous = modelPicker.getValue();
+    modelPicker.setOptions(ids.map((id) => ({
+      value: id,
+      label: id,
+      ...(id === p.defaultModel ? {hint: 'Provider default'} : {})
+    })), previous && ids.includes(previous) ? previous : (p.defaultModel || ids[0]));
+    modelPicker.setDisabled(false);
   };
+
+  /**
+   * Verify the typed token when the field loses focus (tap on the model
+   * picker, the save button or anywhere else), so the model list is already
+   * there when the user reaches for it, not after a save attempt.
+   */
+  const verifyToken = async() => {
+    const p = currentProvider();
+    const token = tokenInput.value.trim();
+    if(!p || !token) return;
+    if(checked && checked.provider === p.id && checked.token === token) return;
+    const generation = ++checkGeneration;
+    providerStatus.textContent = 'Checking token...';
+    try {
+      const {result, status} = await checkToken(p, token);
+      if(generation !== checkGeneration) return;
+      providerStatus.textContent = status;
+      checked = {provider: p.id, token, result};
+      fillModels(p, result);
+    } catch(err) {
+      if(generation !== checkGeneration) return;
+      providerStatus.textContent = err instanceof Error && err.message ? err.message : 'Could not check the token';
+    }
+  };
+
+  tokenInput.addEventListener('input', () => {
+    // A different token means a different model list.
+    if(checked || modelPicker.getOptions().length) resetCheck();
+  });
+  tokenInput.addEventListener('blur', () => void verifyToken());
 
   // One add at a time: the corner button and Enter both land here.
   let busy = false;
@@ -480,29 +554,32 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
       errorEl.textContent = 'Enter the token';
       return;
     }
-    // The token is checked on save; a check for this exact provider and
-    // token is reused, so a second press after picking a model is instant.
+    // A check for this exact provider and token is reused, so a save after a
+    // token blur (or after picking a model) never asks the provider twice.
     let result = checked && checked.provider === p.id && checked.token === token ? checked.result : undefined;
-    const firstCheck = !result;
     if(!result) {
+      const generation = ++checkGeneration;
+      providerStatus.textContent = 'Checking token...';
       try {
-        result = await checkToken(p, token);
+        const check = await checkToken(p, token);
+        if(generation !== checkGeneration) return;
+        result = check.result;
+        providerStatus.textContent = check.status;
       } catch(err) {
+        if(generation !== checkGeneration) return;
         errorEl.textContent = err instanceof Error && err.message ? err.message : 'Could not check the token';
         return;
       }
+      checked = {provider: p.id, token, result};
+      fillModels(p, result);
     }
     if(result.status === 'invalid') {
       errorEl.textContent = 'The provider rejected this token';
       return;
     }
-    // A provider with several models: the first check fills the picker, and
-    // the user confirms the model with a second press.
-    if(!p.autoModel && firstCheck && modelSelect.options.length > 1) {
-      errorEl.textContent = 'Choose a model, then save';
-      return;
-    }
-    const model = p.autoModel ? p.defaultModel : (modelSelect.value || p.defaultModel);
+    // The model picker is filled and preselected by now, so a save takes the
+    // model the user can see. Nothing is chosen behind their back.
+    const model = p.autoModel ? p.defaultModel : (modelPicker.getValue() || p.defaultModel);
     if(!model) {
       errorEl.textContent = 'Choose a model';
       return;

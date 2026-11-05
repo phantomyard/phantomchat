@@ -50,12 +50,33 @@ async function value<T>(call: BridgeCall, method: string, params?: Record<string
 }
 
 /**
- * Providers the engine can run as a contact. Those that need a base URL are
- * left out: the engine's brain settings have no endpoint field yet.
+ * Providers that belong at the top of the picker, in this order. The engine's
+ * own order is alphabetical-ish and buries the two a PhantomChat user is
+ * most likely to pick, so the client pins them; everything else keeps the
+ * engine's order.
+ */
+export const PINNED_PROVIDERS: readonly string[] = ['phantomops', 'anthropic'];
+
+/** Pin PhantomOps and Anthropic first; leave the engine's order otherwise. */
+export function orderProviderOptions(providers: readonly ProviderOption[]): ProviderOption[] {
+  const rank = (id: string) => {
+    const index = PINNED_PROVIDERS.indexOf(id);
+    return index === -1 ? PINNED_PROVIDERS.length : index;
+  };
+  return providers
+  .map((provider, index) => ({provider, index}))
+  .sort((a, b) => (rank(a.provider.id) - rank(b.provider.id)) || (a.index - b.index))
+  .map(({provider}) => provider);
+}
+
+/**
+ * Providers the engine can run as a contact, pinned order applied. Those that
+ * need a base URL are left out: the engine's brain settings have no endpoint
+ * field yet.
  */
 export async function listProviderOptions(call: BridgeCall): Promise<ProviderOption[]> {
   const raw = await value<any[]>(call, 'providers.list');
-  return (Array.isArray(raw) ? raw : [])
+  return orderProviderOptions((Array.isArray(raw) ? raw : [])
   .filter((p) => p && typeof p.id === 'string' && typeof p.label === 'string' && !p.needsBaseUrl)
   .map((p) => ({
     id: p.id,
@@ -65,7 +86,7 @@ export async function listProviderOptions(call: BridgeCall): Promise<ProviderOpt
     autoModel: !!p.autoModel,
     ...(typeof p.defaultModel === 'string' ? {defaultModel: p.defaultModel} : {}),
     ...(typeof p.keyLabel === 'string' ? {keyLabel: p.keyLabel} : {})
-  }));
+  })));
 }
 
 export async function checkProviderKey(call: BridgeCall, provider: string, apiKey: string): Promise<ProviderCheckResult> {

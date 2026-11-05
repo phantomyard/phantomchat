@@ -43,6 +43,17 @@ describe('provider contacts', () => {
     expect((await listProviderOptions(call)).map((p) => p.id)).toEqual(['openrouter']);
   });
 
+  it('pins PhantomOps and Anthropic above the engine order', async() => {
+    const call: BridgeCall = async() => ({ok: true, value: [
+      {id: 'cloudflare-ai-gateway', label: 'Cloudflare AI Gateway'},
+      {id: 'xai', label: 'xAI'},
+      {id: 'anthropic', label: 'Anthropic'},
+      {id: 'openrouter', label: 'OpenRouter'},
+      {id: 'phantomops', label: 'PhantomOps'}
+    ]});
+    expect((await listProviderOptions(call)).map((p) => p.id)).toEqual(['phantomops', 'anthropic', 'cloudflare-ai-gateway', 'xai', 'openrouter']);
+  });
+
   it('reads a check verdict and its models', async() => {
     const call: BridgeCall = async() => ({ok: true, value: {status: 'verified', detail: 'HTTP 200', models: [{id: 'a', supportsImages: true}, {bad: 1}]}});
     expect(await checkProviderKey(call, 'openrouter', 'k')).toEqual({status: 'verified', detail: 'HTTP 200', models: [{id: 'a', supportsImages: true}]});
