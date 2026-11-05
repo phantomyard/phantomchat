@@ -40,9 +40,33 @@ export function schedulePublish(domain: SyncDomain): void {
   }
 }
 
+type NudgeHandler = () => void;
+
+const nudgeHandlers: Partial<Record<SyncDomain, NudgeHandler>> = {};
+
+/**
+ * Wire what a sibling's sync nudge (sync-nudge.ts) does here: reconcile the
+ * domain now. The handler is expected to coalesce bursts.
+ */
+export function registerSyncNudgeHandler(domain: SyncDomain, handler: NudgeHandler): void {
+  nudgeHandlers[domain] = handler;
+}
+
+/** Another of my devices changed `domain`. No-op before boot / after logout. */
+export function handleSyncNudge(domain: SyncDomain): void {
+  try {
+    nudgeHandlers[domain]?.();
+  } catch(err) {
+    console.warn('[phantomchat-sync-triggers] nudge handler failed', domain, err);
+  }
+}
+
 /** Drop all publishers — called on logout so a stale engine isn't retriggered. */
 export function clearSyncPublishers(): void {
   delete publishers.contacts;
   delete publishers.groups;
   delete publishers['read-state'];
+  delete nudgeHandlers.contacts;
+  delete nudgeHandlers.groups;
+  delete nudgeHandlers['read-state'];
 }

@@ -814,6 +814,19 @@ export class AppUsersManager extends AppManager {
   }
 
   /**
+   * A P2P contact was deleted (here or, through contacts-sync, on another of
+   * my devices). Its data is already gone; this drops it from the cached
+   * contact list, which the Contacts pane renders from, and tells open lists
+   * (`contacts_update`). Without it a deleted contact stayed on screen until a
+   * reload. The synthetic user stays known (a group can still show it) but as
+   * a non-contact, so adding it again goes back on the list.
+   */
+  public dropP2PContact(userId: UserId): void {
+    if(this.p2pSyntheticUsers.has(userId as number)) this.p2pNonContactUsers.add(userId as number);
+    this.onContactUpdated(userId, false);
+  }
+
+  /**
    * Update display name for an existing P2P synthetic user.
    * Re-mirrors the user to main thread so the UI updates reactively.
    */

@@ -19,8 +19,6 @@ import rootScope from '@lib/rootScope';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpTag from '@helpers/dom/findUpTag';
-import confirmationPopup from '@components/confirmationPopup';
-import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {i18n} from '@lib/langPack';
 import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
 import {resolvePickPeerHook} from '@lib/phantomchat/session-pick-hook';
@@ -121,7 +119,16 @@ export default class AppContactsTab extends SliderSuperTab {
           return false;
         }
 
-        this.close();
+        // Contacts redesign: a click opens the contact's Edit pane (beside the
+        // chat on a wide screen, over this list on a phone) and keeps the
+        // list open, so the next contact is one click away.
+        const raw = elem.dataset.peerId;
+        if(raw) {
+          void import('@components/sidebarRight/tabs/editContact')
+          .then(({openContactEditor}) => openContactEditor(raw.toPeerId()))
+          .catch((err) => console.error('[PhantomChat.chat] failed to open contact editor:', err));
+        }
+        return false;
       },
       withContext: undefined,
       autonomous: true
@@ -163,58 +170,28 @@ export default class AppContactsTab extends SliderSuperTab {
   }
 
   private async confirmDeleteContactAndChat(peerId: PeerId, rawId: number) {
-    const peerTitleElement = await wrapPeerTitle({peerId}).catch((): undefined => undefined);
-
-    const description = document.createElement('span');
-    if(peerTitleElement) {
-      description.append(peerTitleElement, document.createTextNode(' '));
-    }
-    description.append(i18n('Contact.Delete.ConfirmationDesc'));
-
-    try {
-      await confirmationPopup({
-        title: 'DeleteContact',
-        description,
-        button: {
-          langKey: 'Delete',
-          isDanger: true,
-          callback: () => {
-            this.deleteContactAndChat(peerId, rawId);
-          }
-        }
-      });
-    } catch{
-      // cancelled / dismissed — nothing to do
-    }
+    const {default: confirmDeleteContact} = await import('@components/phantomchat/confirmDeleteContact');
+    if(!await confirmDeleteContact(peerId)) return;
+    await this.deleteContactAndChat(peerId, rawId);
   }
 
   private async deleteContactAndChat(peerId: PeerId, rawId: number) {
     const {toast} = await import('@components/toast');
 
-    // P2P peers live in the synthetic range (>= 1e15); the raw dataset id is
-    // the virtual peer id used for the reverse pubkey lookup.
-    const isP2P = isP2PPeerId(rawId);
-
     try {
-      if(isP2P) {
-        const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
-        const pubkey = await getPubkey(rawId);
-        if(!pubkey) {
+      // P2P peers live in the synthetic range (>= 1e15); the raw dataset id is
+      // the virtual peer id used for the reverse pubkey lookup.
+      if(isP2PPeerId(rawId)) {
+        const {deleteContact} = await import('@lib/phantomchat/delete-contact');
+        const outcome = await deleteContact(rawId);
+        if(outcome === 'unresolved') {
           toast(i18n('Contact.Delete.CouldNotResolve'));
           return;
         }
-
-        const chatAPI = (window as any).__phantomchatChatAPI;
-        if(!chatAPI?.deleteConversation) {
+        if(outcome === 'not_ready') {
           toast(i18n('Contact.Delete.ChatNotReady'));
           return;
         }
-
-        // Same path as contact info: revokes Local tools, deletes a Provider's
-        // persona and the prefs, then the conversation.
-        const {deleteP2PContact} = await import('@lib/phantomchat/provider-contacts');
-        const bridge = (window as any).phantomchatDesktop?.phantombot;
-        await deleteP2PContact(pubkey, chatAPI, bridge?.call);
       } else {
         await this.managers.appUsersManager.deleteContacts([peerId.toUserId()]);
         await rootScope.managers.appMessagesManager.flushHistory({peerId, justClear: false, revoke: true});

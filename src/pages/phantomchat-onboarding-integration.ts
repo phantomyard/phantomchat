@@ -36,7 +36,8 @@ import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTA
 import {createGroupsAdapter, mergeGroupsMaps, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
 import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
-import {registerSyncPublisher} from '@lib/phantomchat/phantomchat-sync-triggers';
+import {registerSyncPublisher, registerSyncNudgeHandler} from '@lib/phantomchat/phantomchat-sync-triggers';
+import {sendSyncNudge} from '@lib/phantomchat/sync-nudge';
 import {getAllMappings, getMapping, setMappingDisplayName, setMappingUpdatedAt, setDeliberateAddAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
 import {getMessageStore} from '@lib/phantomchat/message-store';
 import {startReceiveAfterCursorWarm} from '@lib/phantomchat/read-cursor-boot';
@@ -581,7 +582,16 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             // #180: persist a remote entry's deliberate-add stamp (seconds on
             // the wire → millis in the mapping store). Monotonic at the store layer.
             setDeliberateAddAt: (pubkey, sec) => setDeliberateAddAt(pubkey, sec * 1000),
-            removeContact: (pubkey) => removeMapping(pubkey),
+            // A delete learned from sync (another of my devices deleted it):
+            // the mapping goes, then this PC's own leftovers -- Local tools
+            // grant, a Provider persona and the prefs -- and the cached
+            // contact list, so it leaves the screen now, not on reload.
+            removeContact: async(pubkey) => {
+              const mapping = await getMapping(pubkey).catch((): undefined => undefined);
+              await removeMapping(pubkey);
+              const {forgetSyncedDelete} = await import('@lib/phantomchat/delete-contact');
+              await forgetSyncedDelete(pubkey, mapping?.peerId);
+            },
             setTombstone: (convId, sec) => store.setTombstone(convId, sec),
             // (#198) read() self-heal: a delete learned from sync used to
             // tear down the mapping but leave the message-store rows (incl.
@@ -746,9 +756,58 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           // a slow start self-heals into a full address book / group roster
           // instead of coming up blank.
           const crdtRelayPool = (chatAPI as any).relayPool;
+          // Contacts reconcile, shared by the boot/periodic loop and a
+          // sibling's sync nudge. One pass at a time; a nudge landing during a
+          // pass queues exactly one more, so a burst costs two passes at most.
+          let contactsPass: Promise<string> | null = null;
+          let contactsAgain = false;
+          const reconcileContactsOnce = async(): Promise<string> => {
+            const outcome = await contactsSync.reconcile().catch((e): 'failed' => { console.warn('[contacts-sync] reconcile failed', e); return 'failed'; });
+            // Retry a deleted contact's local cleanup that failed earlier
+            // (e.g. the engine running a Provider persona was not up yet).
+            try {
+              const [{sweepDeletedContactLeftovers}, {forgetContact}, {getContactPrefs}] = await Promise.all([
+                import('@lib/phantomchat/delete-contact'),
+                import('@lib/phantomchat/provider-contacts'),
+                import('@lib/phantomchat/contact-prefs')
+              ]);
+              await sweepDeletedContactLeftovers({
+                listDeletedPeers: () => listDeletedPeers(),
+                hasMapping: async(pubkey) => !!(await getMapping(pubkey)),
+                getPrefs: (pubkey) => getContactPrefs(pubkey),
+                forget: (pubkey) => forgetContact(pubkey, (window as any).phantomchatDesktop?.phantombot?.call)
+              });
+            } catch(e) {
+              console.warn('[contacts-sync] deleted-contact sweep failed', e);
+            }
+            return outcome;
+          };
+          const reconcileContacts = (): Promise<string> => {
+            if(contactsPass) {
+              contactsAgain = true;
+              return contactsPass;
+            }
+            contactsPass = (async() => {
+              try {
+                let outcome = await reconcileContactsOnce();
+                while(contactsAgain) {
+                  contactsAgain = false;
+                  outcome = await reconcileContactsOnce();
+                }
+                return outcome;
+              } finally {
+                contactsPass = null;
+              }
+            })();
+            return contactsPass;
+          };
+          registerSyncNudgeHandler('contacts', () => {
+            void reconcileContacts();
+          });
+
           const reconcileOnce = async() => {
             const [c, g, r] = await Promise.all([
-              contactsSync.reconcile().catch((e) => { console.warn('[contacts-sync] reconcile failed', e); return 'failed'; }),
+              reconcileContacts(),
               groupsSync.reconcile().catch((e) => { console.warn('[groups-sync] reconcile failed', e); return 'failed'; }),
               readStateSync.reconcile().catch((e) => { console.warn('[read-state-sync] reconcile failed', e); return 'failed'; })
             ]);
@@ -855,7 +914,17 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               }, 2000);
             };
           };
-          registerSyncPublisher('contacts', mkDebounced(() => contactsSync.publishWithRetry(), '[contacts-sync]'));
+          // Once a contacts publish is on the relay, nudge my other devices
+          // to reconcile now (sync-nudge.ts) instead of on their 30-minute
+          // timer: a delete, add or rename shows up everywhere in seconds.
+          registerSyncPublisher('contacts', mkDebounced(async() => {
+            const landed = await contactsSync.publishWithRetry();
+            if(landed) {
+              void sendSyncNudge(PhantomChatBridge.getInstance().getRelayPool(), ownPubkey, 'contacts')
+              .catch((e) => console.warn('[contacts-sync] nudge failed', e));
+            }
+            return landed;
+          }, '[contacts-sync]'));
           registerSyncPublisher('groups', mkDebounced(() => groupsSync.publishWithRetry(), '[groups-sync]'));
           // Read cursors advance constantly (every readHistory) — the debounce
           // collapses a scrolling session into one publish.

@@ -15,6 +15,8 @@ import {getMessageRequestStore} from './message-requests';
 import {isControlEvent, getGroupIdFromRumor} from './group-control-messages';
 import {getMsSlotFromTags} from './nostr-crypto';
 import {isLocalToolsRumor} from './local-tools-wire';
+import {isSyncNudgeRumor, parseSyncNudge, SYNC_NUDGE_DEVICE_ID, SYNC_NUDGE_MAX_AGE_SECONDS} from './sync-nudge';
+import {handleSyncNudge} from './phantomchat-sync-triggers';
 import {waveformToBase64} from './phantomchat-media-shape';
 import type {ChatMessage, ChatMessageType} from './chat-api';
 import rootScope from '@lib/rootScope';
@@ -241,6 +243,18 @@ export async function handleRelayMessage(
       .catch((err) => ctx.log.warn('[ChatAPI] local tools message failed:', err));
     }
     return {action: 'skipped', reason: 'local_tools'};
+  }
+
+  // 0c. Sync nudge from another of my devices (sync-nudge.ts): reconcile now.
+  //     Never a chat message. Only my own pubkey may nudge, my own device's
+  //     nudge is ignored, and a stale relay replay asks for nothing.
+  if(isSyncNudgeRumor(msg.tags)) {
+    const nudge = parseSyncNudge(msg.tags, msg.content);
+    const fresh = Math.abs(Math.floor(Date.now() / 1000) - msg.timestamp) <= SYNC_NUDGE_MAX_AGE_SECONDS;
+    if(nudge && msg.from === ctx.ownId && nudge.deviceId !== SYNC_NUDGE_DEVICE_ID && fresh) {
+      handleSyncNudge(nudge.domain);
+    }
+    return {action: 'skipped', reason: 'sync_nudge'};
   }
 
   // 1. Check for delete notification
