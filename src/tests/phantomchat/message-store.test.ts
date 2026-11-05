@@ -140,6 +140,25 @@ describe('MessageStore', () => {
       expect(await store.reKeyEventId('chat-missing-0', 'b'.repeat(64))).toBe(false);
     });
 
+    it('merges our own self-echo row into the original instead of keeping both', async() => {
+      const conv = uniqueConvId();
+      const APP = 'chat-echo-0';
+      const RUMOR = 'd'.repeat(64);
+      await store.saveMessage(makeMsg({eventId: APP, conversationId: conv, mid: 101, isOutgoing: true, deliveryState: 'sending'}));
+      // The echo saved under the rumor id first, with its own mid.
+      await store.saveMessage(makeMsg({eventId: RUMOR, conversationId: conv, mid: 202, isOutgoing: true, deliveryState: 'delivered'}));
+
+      expect(await store.reKeyEventId(APP, RUMOR)).toBe(true);
+
+      const rows = await store.getMessages(conv, 50);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].eventId).toBe(RUMOR);
+      expect(rows[0].mid).toBe(101); // the painted bubble's mid survives
+      expect(rows[0].appMessageId).toBe(APP);
+      expect(rows[0].deliveryState).toBe('delivered'); // ticks never regress
+      expect(await store.getByEventId(APP)).toBeNull();
+    });
+
     it('returns false (no duplicate) when the new key already exists', async() => {
       await store.saveMessage(makeMsg({eventId: 'chat-x-0', mid: 1}));
       await store.saveMessage(makeMsg({eventId: 'c'.repeat(64), mid: 2}));

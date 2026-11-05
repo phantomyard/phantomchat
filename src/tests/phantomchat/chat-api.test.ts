@@ -456,6 +456,57 @@ describe('ChatAPI', () => {
       expect(history[0].id).toBe(preAllocated);
     });
 
+    // Duplicate own bubble on first send to a new contact: the self-wrap echo
+    // came back from the relay while the pre-saved row was still keyed by the
+    // app message id, so handleSelfEcho (rumor-id dedup only) saved a SECOND
+    // row and the re-key then bailed on the collision, leaving both.
+    test('self-echo landing before the re-key commits does not save a second row', async() => {
+      messageStoreMocks.saveMessage.mockClear();
+      messageStoreMocks.getByEventId.mockClear();
+      const prevMapMid = (bridgeMocks as any).mapEventIdToMid;
+      (bridgeMocks as any).mapEventIdToMid = vi.fn().mockResolvedValue(31337);
+      mockPool.simulateConnect();
+      await chatApi.connect(PEER_ID);
+
+      const RUMOR = 'f'.repeat(64);
+      mockPool.publish = vi.fn(async(recipientPubkey: string, plaintext: string) => {
+        mockPool.publishCalls.push({recipientPubkey, plaintext});
+        return {successes: ['relay-1'], failures: [], rumorId: RUMOR} as any;
+      }) as any;
+      // Hold the re-key open: this is the window the echo races into.
+      let releaseReKey!: (ok: boolean) => void;
+      messageStoreMocks.reKeyEventId.mockImplementationOnce(() => new Promise<boolean>((res) => { releaseReKey = res; }));
+
+      try {
+        const sendPromise = chatApi.sendText('hello', {messageId: 'chat-echo-race-1', mid: 515151, twebPeerId: 777});
+        await vi.waitFor(() => expect(releaseReKey).toBeTypeOf('function'));
+
+        // Own echo arrives from the relay mid-re-key (plain-text NIP-17: no app id).
+        mockPool.simulateMessage({
+          id: RUMOR,
+          from: OWN_ID,
+          content: 'hello',
+          timestamp: Math.floor(Date.now() / 1000),
+          rumorKind: 14,
+          tags: [['p', PEER_ID]]
+        } as any);
+        await vi.waitFor(() => expect(messageStoreMocks.getByEventId).toHaveBeenCalledWith(RUMOR));
+        await new Promise((r) => setTimeout(r, 20));
+
+        const echoSaves = messageStoreMocks.saveMessage.mock.calls.filter((c: any[]) => c[0].eventId === RUMOR);
+        expect(echoSaves).toHaveLength(0);
+
+        releaseReKey(true);
+        await sendPromise;
+        // Only the send path's own finalize writes the rumor-id row, carrying the painted mid.
+        const rumorSaves = messageStoreMocks.saveMessage.mock.calls.filter((c: any[]) => c[0].eventId === RUMOR);
+        expect(rumorSaves.length).toBeGreaterThan(0);
+        expect(rumorSaves.every((c: any[]) => c[0].mid === 515151)).toBe(true);
+      } finally {
+        (bridgeMocks as any).mapEventIdToMid = prevMapMid;
+      }
+    });
+
     // FIND-msg-disappear: durable-write-first. The row must be persisted to the
     // message store (keyed by the app messageId, deliveryState 'sending') BEFORE
     // the network publish resolves — otherwise switching chats during a slow

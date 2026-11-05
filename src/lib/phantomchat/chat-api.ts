@@ -348,6 +348,13 @@ export class ChatAPI {
    *
    * @param peerOwnId - The peer's public key
    */
+  /**
+   * Rumor ids of our own sends whose pre-saved row is still keyed by the app
+   * message id. The self-wrap echo can come back from the relay before the
+   * re-key lands; handleSelfEcho skips these so it never saves a second row.
+   */
+  private pendingOwnRumorIds = new Set<string>();
+
   async connect(peerOwnId: string): Promise<void> {
     if(this.state === 'connected' || this.state === 'connecting') {
       if(this.activePeer === peerOwnId) {
@@ -995,7 +1002,11 @@ export class ChatAPI {
     // relay path below exactly as before.
     let directAcked = false;
     let directRumor: {rumor: NonNullable<PublishResult['rumor']>; rumorId: string} | undefined;
-    const direct = await this.sendDirectFirst(peerOwnId, wirePayload, messageId, opts?.replyTo, opts?.onPublishedRumorId);
+    const notePublishedRumorId = (id: string) => {
+      if(storedRow && id !== storedRow.eventId) this.pendingOwnRumorIds.add(id);
+      opts?.onPublishedRumorId?.(id);
+    };
+    const direct = await this.sendDirectFirst(peerOwnId, wirePayload, messageId, opts?.replyTo, notePublishedRumorId);
 
     if(direct) {
       publishedRumorId = direct.rumorId;
@@ -1008,7 +1019,7 @@ export class ChatAPI {
         const result: PublishResult = await this.relayPool.publish(peerOwnId!, wirePayload, opts?.replyTo);
         publishedRumorId = result.rumorId;
         if(publishedRumorId) {
-          opts?.onPublishedRumorId?.(publishedRumorId);
+          notePublishedRumorId(publishedRumorId);
         }
 
         // Additive P2P fast-path (issue #61, phase 1). Fire-and-forget: when the
@@ -1094,9 +1105,10 @@ export class ChatAPI {
     // in the exact end state the old save-after-publish path produced — a row
     // keyed by the rumor id — but without the disappear window, because the row
     // already existed (keyed by messageId) throughout the publish. The self
-    // gift-wrap echo arrives only AFTER publish resolves, by which point the
-    // re-key below has already run in this synchronous continuation, so the
-    // echo's rumorId save merges into this row rather than inserting a dup.
+    // gift-wrap echo can return before this re-key commits (the store may be
+    // busy, e.g. right after a contact add). handleSelfEcho skips rumor ids in
+    // pendingOwnRumorIds, and reKeyEventId merges a duplicate own row if one
+    // was saved anyway, so a send always ends as ONE row.
     if(storedRow) {
       try {
         const store = getMessageStore();
@@ -1112,6 +1124,7 @@ export class ChatAPI {
         this.log.warn('[ChatAPI] failed to finalize message store row:', err);
       }
     }
+    if(publishedRumorId) this.pendingOwnRumorIds.delete(publishedRumorId);
 
     if(publishSucceeded) {
       // Keep the in-memory `history` view in sync for legacy consumers that
@@ -1544,11 +1557,14 @@ export class ChatAPI {
     // Store row migration runs AFTER the tracker is armed; its only job is to
     // make reload/getHistory + the self-wrap dedup resolve by rumor id, none of
     // which races the live receipt. Failures are logged, not fatal.
+    this.pendingOwnRumorIds.add(rumorId);
     try {
       // Re-key the stored row app id → rumor id (in place; preserves the mid).
       await getMessageStore().reKeyEventId(appMessageId, rumorId);
     } catch(err: any) {
       this.log.warn('[ChatAPI] flush re-key failed:', err?.message);
+    } finally {
+      this.pendingOwnRumorIds.delete(rumorId);
     }
   }
 
@@ -1879,6 +1895,7 @@ export class ChatAPI {
         offlineQueue: this.offlineQueue,
         onMessage: this.onMessage,
         onEdit: this.onEditMessage,
+        isPendingOwnRumor: (id: string) => this.pendingOwnRumorIds.has(id),
         log: this.log
       });
       this.log('[ChatAPI] relay message result:', result.action);

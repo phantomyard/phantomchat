@@ -113,4 +113,28 @@ describe('self-echo media reconstruction', () => {
     expect(saved.fileMetadata?.mediaType).toBe('voice');
     expect(saved.content).toBe(''); // caption-less → empty, not JSON
   });
+
+  it('skips the echo of a same-device send whose row is still being re-keyed', async() => {
+    const onMessage = vi.fn();
+    const id = '7'.repeat(64);
+    store.saveMessage.mockClear();
+    const ctx = {
+      ownId: OWN_PUBKEY,
+      history: [] as any[],
+      activePeer: null as string | null,
+      deliveryTracker: null as any,
+      offlineQueue: null as any,
+      onMessage,
+      onEdit: null as any,
+      isPendingOwnRumor: (rid: string) => rid === id,
+      log: Object.assign(vi.fn(), {warn: vi.fn(), error: vi.fn()}) as any
+    };
+    const result = await handleRelayMessage({
+      id, from: OWN_PUBKEY, content: 'hello',
+      timestamp: Math.floor(Date.now() / 1000), rumorKind: 14, tags: [['p', PEER_PUBKEY]]
+    } as any, ctx as any);
+    expect(result.action).toBe('echo_skipped');
+    expect(store.saveMessage).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+  });
 });

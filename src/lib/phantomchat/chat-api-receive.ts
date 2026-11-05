@@ -38,6 +38,12 @@ export interface ReceiveContext {
   offlineQueue: {acknowledge(id: string): void} | null;
   onMessage: ((msg: ChatMessage) => void) | null;
   onEdit: ((edit: IncomingEdit) => void) | null;
+  /**
+   * True while this device's own send for `rumorId` is still migrating its
+   * pre-saved row (app message id -> rumor id). The self-wrap echo of that send
+   * must not be saved as a second row: the send path owns it.
+   */
+  isPendingOwnRumor?: (rumorId: string) => boolean;
   log: {
     (...args: any[]): void;
     warn(...args: any[]): void;
@@ -599,6 +605,13 @@ async function handleSelfEcho(
   const store = getMessageStore();
   const existing = await store.getByEventId(echoId);
   if(existing) {
+    return {action: 'echo_skipped', id: echoId};
+  }
+
+  // Same-device send still in flight: the row exists under the app message id
+  // and is about to be re-keyed to this rumor id. Saving the echo now would
+  // create a second row (second bubble) and make the re-key collide.
+  if(ctx.isPendingOwnRumor?.(echoId)) {
     return {action: 'echo_skipped', id: echoId};
   }
 

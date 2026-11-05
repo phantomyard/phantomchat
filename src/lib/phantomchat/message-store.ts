@@ -200,6 +200,18 @@ export interface MessageStoreOptions {
   messageCap?: number;
 }
 
+const DELIVERY_RANK: Record<StoredMessage['deliveryState'], number> = {
+  failed: -1, sending: 0, sent: 1, delivered: 2, read: 3
+};
+
+/** The further-along of two delivery states (a merge never regresses ticks). */
+function furthestDeliveryState(
+  a: StoredMessage['deliveryState'],
+  b: StoredMessage['deliveryState']
+): StoredMessage['deliveryState'] {
+  return (DELIVERY_RANK[b] ?? -1) > (DELIVERY_RANK[a] ?? -1) ? b : a;
+}
+
 export class MessageStore {
   private dbPromise: Promise<IDBDatabase> | null = null;
   private readonly messageCap: number;
@@ -932,7 +944,9 @@ export class MessageStore {
    * delivery receipt (which references the rumor id) resolves to this row and
    * the self-wrap echo dedups against it. `appMessageId` is set to the OLD key
    * so app-level lookups still work. No-op (returns false) if the old row is
-   * gone or the new key already exists.
+   * gone, or the new key holds an unrelated row. If the new key holds our own
+   * self-wrap echo of this send (outgoing, same conversation), the two rows are
+   * MERGED into the original (keeps its mid, furthest delivery state).
    */
   async reKeyEventId(oldEventId: string, newEventId: string): Promise<boolean> {
     if(!oldEventId || !newEventId || oldEventId === newEventId) return false;
@@ -946,11 +960,45 @@ export class MessageStore {
       keyReq.onsuccess = () => {
         const primaryKey = keyReq.result;
         if(primaryKey === undefined) {resolve(false); return;}
-        // Bail if a row already exists under the new key (avoid a duplicate).
         const existsReq = index.getKey(newEventId);
         existsReq.onerror = () => reject(existsReq.error);
         existsReq.onsuccess = () => {
-          if(existsReq.result !== undefined) {resolve(false); return;}
+          const dupKey = existsReq.result;
+          if(dupKey !== undefined) {
+            // A row already exists under the new key. If it is our own
+            // self-wrap echo of this same send (outgoing, same conversation),
+            // merge: keep the original row (its mid is the painted bubble) and
+            // drop the echo's row. Anything else: bail, never clobber.
+            const oldReq = store.get(primaryKey);
+            oldReq.onerror = () => reject(oldReq.error);
+            oldReq.onsuccess = () => {
+              const oldRow = oldReq.result as StoredMessage | undefined;
+              const dupReq = store.get(dupKey);
+              dupReq.onerror = () => reject(dupReq.error);
+              dupReq.onsuccess = () => {
+                const dup = dupReq.result as StoredMessage | undefined;
+                if(!oldRow || !dup || !oldRow.isOutgoing || !dup.isOutgoing ||
+                  oldRow.conversationId !== dup.conversationId) {
+                  resolve(false);
+                  return;
+                }
+                const next: StoredMessage = {
+                  ...oldRow,
+                  eventId: newEventId,
+                  appMessageId: oldRow.appMessageId ?? oldEventId,
+                  deliveryState: furthestDeliveryState(oldRow.deliveryState, dup.deliveryState)
+                };
+                tx.oncomplete = () => {
+                  this.markSeen(newEventId);
+                  resolve(true);
+                };
+                tx.onabort = () => reject(tx.error);
+                store.delete(dupKey);
+                store.put(next, primaryKey);
+              };
+            };
+            return;
+          }
           const readReq = store.get(primaryKey);
           readReq.onerror = () => reject(readReq.error);
           readReq.onsuccess = () => {
