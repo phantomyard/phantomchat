@@ -154,7 +154,10 @@ export async function ensureSenderUserInjected(
   const displayName = await resolveInitialDisplayName(senderPubkey, logPrefix);
 
   const mapper = new PhantomChatPeerMapper();
-  const user = mapper.createTwebUser({peerId, firstName: displayName, pubkey: senderPubkey});
+  // Keep the cached kind-0 bot flag: a legacy Phantom contact rebuilt here
+  // after a reload must keep its bot badge and "/" command menu.
+  const {isCachedPeerBot} = await import('@lib/phantomchat/contact-kind');
+  const user = mapper.createTwebUser({peerId, firstName: displayName, pubkey: senderPubkey, bot: isCachedPeerBot(senderPubkey)});
   proxy.mirrors.peers[peerId] = user;
 
   try {
