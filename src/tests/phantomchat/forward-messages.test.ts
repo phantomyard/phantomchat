@@ -1,5 +1,6 @@
 import {describe, expect, it, vi} from 'vitest';
-import {ForwardPartialError, forwardPhantomChatMessages, prepareForwardContent} from '@lib/phantomchat/forward-messages';
+import {forwardPhantomChatMessages, isForwardPartialError, prepareForwardContent} from '@lib/phantomchat/forward-messages';
+import type {ForwardPartialError} from '@lib/phantomchat/forward-messages';
 import type {StoredMessage} from '@lib/phantomchat/message-store';
 
 const MID = 1762350000123456;
@@ -102,19 +103,50 @@ describe('forward sends', () => {
       .mockRejectedValueOnce(new Error('send refused'));
     const err = await forwardPhantomChatMessages([MID, MID + 1, MID + 2], false, {
       load, sendText, sendFile: vi.fn()
-    }).catch((e) => e);
-    expect(err).toBeInstanceOf(ForwardPartialError);
+    }).catch((e) => e) as ForwardPartialError;
+    expect(isForwardPartialError(err)).toBe(true);
     expect(err.forwardSent).toBe(1);
     expect(err.forwardTotal).toBe(3);
-    expect((err.original as Error).message).toBe('send refused');
+    expect(err.originalError).toBe('send refused');
     expect(sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the partial-batch fields across the worker→main structured clone', async() => {
+    const load = vi.fn().mockResolvedValue({text: 'hello'});
+    const sendText = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('send refused'));
+    // The rejection reaches the UI through SuperMessagePort postMessage,
+    // whose structured clone strips an Error subclass and its own props —
+    // assert the exact fields the input.ts branch reads, post-clone.
+    const cloned = structuredClone(await forwardPhantomChatMessages([MID, MID + 1, MID + 2], false, {
+      load, sendText, sendFile: vi.fn()
+    }).catch((e) => e)) as ForwardPartialError;
+    expect(cloned.type).toBe('FORWARD_PARTIAL');
+    expect(cloned.forwardSent).toBe(1);
+    expect(cloned.forwardTotal).toBe(3);
+  });
+
+  it('clones cleanly when the underlying failure is not a plain Error', async() => {
+    const load = vi.fn().mockResolvedValue({text: 'hello'});
+    const sendText = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce({uncloneable: () => 'fn'});
+    const cloned = structuredClone(await forwardPhantomChatMessages([MID, MID + 1], false, {
+      load, sendText, sendFile: vi.fn()
+    }).catch((e) => e)) as ForwardPartialError;
+    expect(cloned.type).toBe('FORWARD_PARTIAL');
+    expect(cloned.forwardSent).toBe(1);
+    expect(cloned).not.toHaveProperty('originalError');
   });
 
   it('does not wrap a failure that landed nothing', async() => {
     const load = vi.fn().mockResolvedValue({text: 'hello'});
-    await expect(forwardPhantomChatMessages([MID, MID + 1], false, {
+    const err = await forwardPhantomChatMessages([MID, MID + 1], false, {
       load, sendText: vi.fn().mockRejectedValue(new Error('send refused')), sendFile: vi.fn()
-    })).rejects.not.toBeInstanceOf(ForwardPartialError);
+    }).catch((e) => e);
+    expect(isForwardPartialError(err as ApiError)).toBe(false);
+    expect((err as Error).message).toBe('send refused');
     expect(load).toHaveBeenCalledTimes(1);
   });
 });

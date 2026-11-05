@@ -1,3 +1,4 @@
+import makeError from '@helpers/makeError';
 import type {StoredMessage} from './message-store';
 import {healStoredFileRow} from './phantomchat-media-shape';
 import type {fetchAndDecryptPhantomChatFile} from './phantomchat-file-fetch';
@@ -45,11 +46,30 @@ export async function prepareForwardContent(
 
 /** A batch that failed after some messages already landed. The UI must not
  * offer a blind retry — re-sending everything would duplicate the messages
- * that did arrive — so it carries how many of the total went out. */
-export class ForwardPartialError extends Error {
-  constructor(public forwardSent: number, public forwardTotal: number, public original: unknown) {
-    super(`Forward batch failed after ${forwardSent} of ${forwardTotal} messages`);
+ * that did arrive — so it carries how many of the total went out.
+ *
+ * This rejection crosses the worker→main SuperMessagePort via postMessage,
+ * whose structured clone strips an Error subclass and its own properties, so
+ * it travels as a plain cloneable ApiError-shaped object branched on `type`
+ * (same convention as the other port-crossing errors). No nested `original`:
+ * a non-cloneable value would make postMessage throw and hang the invoke. */
+export type ForwardPartialError = ApiError & {
+  forwardSent: number,
+  forwardTotal: number
+};
+
+export function isForwardPartialError(err: ApiError): err is ForwardPartialError {
+  return err.type === 'FORWARD_PARTIAL';
+}
+
+function makePartialError(sent: number, total: number, original: unknown): ForwardPartialError {
+  const error = makeError('FORWARD_PARTIAL', `Forward batch failed after ${sent} of ${total} messages`) as ForwardPartialError;
+  error.forwardSent = sent;
+  error.forwardTotal = total;
+  if(original instanceof Error) {
+    error.originalError = original.message;
   }
+  return error;
 }
 
 /** Worker orchestration. Each send depends on the preceding one to preserve
@@ -77,7 +97,7 @@ export async function forwardPhantomChatMessages(
       sent++;
     }
   } catch(err) {
-    if(sent > 0) throw new ForwardPartialError(sent, ordered.length, err);
+    if(sent > 0) throw makePartialError(sent, ordered.length, err);
     throw err;
   }
 }
