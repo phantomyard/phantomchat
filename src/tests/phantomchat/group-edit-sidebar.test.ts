@@ -86,8 +86,9 @@ describe('chat list click on the already-open chat', () => {
     row.remove();
   });
 
-  it('does not hijack P2P or MTProto peers', () => {
-    expect(shouldOpenEditorOnSelectedChat({...base, peerId: p2pPeerId})).toBe(false);
+  it('does not hijack P2P rows on narrow layouts or MTProto peers', () => {
+    expect(shouldOpenEditorOnSelectedChat({...base, peerId: p2pPeerId})).toBe(true);
+    expect(shouldOpenEditorOnSelectedChat({...base, peerId: p2pPeerId, isLessThanFloatingLeftSidebar: true})).toBe(false);
     expect(shouldOpenEditorOnSelectedChat({...base, peerId: 987654321})).toBe(false);
   });
 
