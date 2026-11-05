@@ -766,6 +766,16 @@
       "stable": "absent",
       "preview": "7d811f3a50cbbb7aafda9e7f2ca53a29cf964c467ce004c0b75263c4028f7b06",
       "reason": "New Contact pane: the former popups/addContact.ts form (Phantom | Human | Provider, Scan and Provider desktop only, Phantom Local tools gate) moved into a right-sidebar tab like the contact and group Edit panes, built from InputField, checkbox Rows and the corner check button. Writes only phantomchat-contact-prefs (version 1 store, optional persona field) and the existing addP2PContact path, exactly as the modal did. Closing the pane over the chat list returns to the chat list. Presentation only; no storage, schema or protocol change. Additional change: a Provider add reads my npub from window.__phantomchatOwnPubkey (loadIdentity() returns null in a real session, so Provider and Scan failed with 'no identity'), the Validate button is gone and the token is checked on save (a rejected token stops before any persona is created). No storage, schema or protocol change."
+    },
+    "src/components/chat/bubbles.ts": {
+      "stable": "41c7b510dac38f2f8ff2922b463deaa6c02619c5f95efd84c141e2231a86e339",
+      "preview": "776f231e01023a7b91278d58d64ca632341ef074b0584786780019022f9227f5",
+      "reason": "Render-only: history renders skip the temp copy of a VMT/GroupAPI-painted text send, and message_sent drops a temp bubble instead of renaming it onto a mid that already has a bubble. No IndexedDB, localStorage, schema or wire change."
+    },
+    "src/lib/phantomchat/optimistic-send-bubble.ts": {
+      "stable": "absent",
+      "preview": "83368f017a1414bf65442d689a441db37a3322562d96702ae666cc294a75b379",
+      "reason": "New pure helpers for the render guard above (no I/O, no storage). Storage-neutral."
     }
   }
 }
