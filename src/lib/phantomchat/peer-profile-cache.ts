@@ -172,3 +172,21 @@ export function clearPeerProfileCache(): void {
     // ignore
   }
 }
+
+/**
+ * A peer's own kind-0 avatar URL, if we have one cached and it is safe to
+ * dereference. Only https URLs qualify: the avatar element must never fetch
+ * a data:/blob:/relative URL a hostile client put in its profile, and the
+ * Electron CSP only allows https images. Returns undefined so callers fall
+ * through to the deterministic sigil.
+ */
+export function getPeerAvatarPictureUrl(pubkey: string | null | undefined): string | undefined {
+  if(!pubkey) return undefined;
+  const picture = loadCachedPeerProfile(pubkey)?.profile?.picture;
+  if(typeof picture !== 'string' || !picture) return undefined;
+  try {
+    return new URL(picture).protocol === 'https:' ? picture : undefined;
+  } catch{
+    return undefined;
+  }
+}

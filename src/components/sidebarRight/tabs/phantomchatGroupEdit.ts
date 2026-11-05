@@ -4,7 +4,6 @@ import Row from '@components/row';
 import InputField from '@components/inputField';
 import ButtonCorner from '@components/buttonCorner';
 import Button from '@components/button';
-import AvatarEdit from '@components/avatarEdit';
 import {avatarNew} from '@components/avatarNew';
 import {replaceButtonIcon} from '@components/button';
 import toggleDisability from '@helpers/dom/toggleDisability';
@@ -14,7 +13,6 @@ import confirmationPopup from '@components/confirmationPopup';
 import {getGroupAPI} from '@lib/phantomchat/group-api';
 import {getGroupStore} from '@lib/phantomchat/group-store';
 import {getAllMappings} from '@lib/phantomchat/virtual-peers-db';
-import {BlossomClient} from '@lib/phantomchat/blossom-client';
 import rootScope from '@lib/rootScope';
 import {i18n, LangPackKey} from '@lib/langPack';
 import {toastNew} from '@components/toast';
@@ -81,20 +79,14 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
       }
     };
 
-    // Avatar section: click to change (admin only). Uploads the cropped image
-    // to Blossom (public URL) and broadcasts it via updateGroupInfo so every
-    // member's client picks it up. Non-admins see the current avatar.
+    // Avatar section: static. Groups render the deterministic Key Sigil and
+    // have no custom avatar — the only editable avatar in PhantomChat is the
+    // user's own profile picture.
     const avatarSection = new SettingSection({noDelimiter: true});
     const avatarWrap = document.createElement('div');
-    avatarWrap.classList.add('avatar-edit');
     avatarSection.content.append(avatarWrap);
 
     let avatarElem: ReturnType<typeof avatarNew>;
-    // The avatar element must live inside the click-to-change host when the
-    // viewer is admin (avatarEdit.container), otherwise directly in the wrap
-    // — and it must keep rendering into that host on every re-render, or the
-    // first avatar change leaves the edit overlay empty.
-    let avatarHost: HTMLElement = avatarWrap;
     const renderAvatarPreview = () => {
       avatarElem?.node.remove();
       avatarElem = avatarNew({
@@ -103,34 +95,9 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         peerId: this.groupPeerId.toPeerId(true)
       });
       avatarElem.node.classList.add('avatar-placeholder');
-      avatarHost.append(avatarElem.node);
+      avatarWrap.append(avatarElem.node);
     };
     renderAvatarPreview();
-
-    if(isAdmin) {
-      const avatarEdit = new AvatarEdit(async(_upload, blob) => {
-        try {
-          // Uses the default server list (DEFAULT_BLOSSOM_SERVERS via
-          // BlossomClient) — the receive-path allowlist isSafeGroupAvatarUrl
-          // unions that list with /blossom.json hosts (getBlossomServers),
-          // so the two lists are load-bearing together: if this upload ever
-          // switches to getBlossomServers()-rotated hosts, the receive check
-          // already accepts them, but a host outside both lists would store
-          // an avatar every other member refuses to render.
-          const client = new BlossomClient();
-          const descriptor = await client.upload(await blob.arrayBuffer(), blob.type || 'image/jpeg');
-          await getGroupAPI().updateGroupInfo(this.groupId, {avatar: descriptor.url});
-          renderAvatarPreview();
-        } catch(err) {
-          console.error('[PhantomChatGroupEdit] avatar upload failed:', err);
-          toastNew({langPackKey: 'Error.AnError'});
-        }
-      });
-      avatarHost = avatarEdit.container;
-      avatarEdit.container.append(avatarElem.node);
-      avatarWrap.append(avatarEdit.container);
-      avatarEdit.container.title = i18n('PhantomChat.GroupEdit.ChangePhoto').textContent;
-    }
 
     this.scrollable.append(avatarSection.container);
 

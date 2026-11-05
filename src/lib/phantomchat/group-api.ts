@@ -3005,15 +3005,6 @@ export class GroupAPI {
     if(appliedFields.length === 0) return [];
     await this.store.updateInfo(payload.groupId, updates, tsSec);
 
-    // Drop the avatarNew memo so a changed avatar renders on the next
-    // cycle instead of lagging up to the 30s TTL.
-    try {
-      const {invalidateGroupAvatarCache} = await import('@components/avatarNew');
-      invalidateGroupAvatarCache(group.peerId);
-    } catch(err) {
-      this.log.warn('[GroupAPI] avatar cache invalidation non-critical:', err);
-    }
-
     // Sync the main-thread mirror so the receiver's chat-list + topbar
     // pick up the new title. Without this, FIND-3f07bfd3 δ — the rename
     // landed in the receiver's group-store but not in `mirrors.chats`,

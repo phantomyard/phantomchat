@@ -9,7 +9,6 @@
 import appDialogsManager from '@lib/appDialogsManager';
 import InputField from '@components/inputField';
 import {SliderSuperTab} from '@components/slider';
-import AvatarEdit from '@components/avatarEdit';
 import ButtonCorner from '@components/buttonCorner';
 import getUserStatusString from '@components/wrappers/getUserStatusString';
 import appImManager from '@lib/appImManager';
@@ -31,7 +30,6 @@ export default class AppPhantomChatNewGroupTab extends SliderSuperTab {
     this.container.classList.add('new-group-container');
     this.setTitle('NewGroup');
 
-    const avatarEdit = new AvatarEdit(() => {});
     const section = new SettingSection({});
 
     const inputWrapper = document.createElement('div');
@@ -101,7 +99,7 @@ export default class AppPhantomChatNewGroupTab extends SliderSuperTab {
 
     const list = this.list = appDialogsManager.createChatList({new: true});
     chatsSection.content.append(list);
-    section.content.append(avatarEdit.container, inputWrapper);
+    section.content.append(inputWrapper);
     this.content.append(this.nextBtn);
     this.scrollable.append(section.container, chatsSection.container);
 

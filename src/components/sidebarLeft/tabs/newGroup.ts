@@ -4,11 +4,10 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {InputFile, MissingInvitee} from '@layer';
+import {MissingInvitee} from '@layer';
 import appDialogsManager from '@lib/appDialogsManager';
 import InputField from '@components/inputField';
 import {SliderSuperTab} from '@components/slider';
-import AvatarEdit from '@components/avatarEdit';
 import I18n from '@lib/langPack';
 import ButtonCorner from '@components/buttonCorner';
 import getUserStatusString from '@components/wrappers/getUserStatusString';
@@ -34,8 +33,6 @@ interface OpenStreetMapInterface {
 
 export default class AppNewGroupTab extends SliderSuperTab {
   public static noSame = true;
-  private avatarEdit: AvatarEdit;
-  private uploadAvatar: () => Promise<InputFile> = null;
   private peerIds: PeerId[];
   private isGeoChat: boolean = false;
   private nextBtn: HTMLButtonElement;
@@ -65,10 +62,6 @@ export default class AppNewGroupTab extends SliderSuperTab {
 
     this.container.classList.add('new-group-container');
     this.setTitle('NewGroup');
-
-    this.avatarEdit = new AvatarEdit((_upload) => {
-      this.uploadAvatar = _upload;
-    });
 
     const section = new SettingSection({});
 
@@ -124,12 +117,6 @@ export default class AppNewGroupTab extends SliderSuperTab {
         };
         promise = handleChannelsTooMuch(() => this.managers.appChatsManager.createChannel(options))
         .then(async(chatId) => {
-          if(this.uploadAvatar) {
-            this.uploadAvatar().then((inputFile) => {
-              this.managers.appChatsManager.editPhoto(chatId, inputFile);
-            });
-          }
-
           const missingInvitees = this.peerIds.length ?
             await this.managers.appChatsManager.inviteToChannel(chatId, this.peerIds) :
             [];
@@ -157,16 +144,6 @@ export default class AppNewGroupTab extends SliderSuperTab {
             userIds
           );
         }
-
-        promise = promise.then((result) => {
-          if(this.uploadAvatar) {
-            this.uploadAvatar().then((inputFile) => {
-              this.managers.appChatsManager.editPhoto(result.chatId, inputFile);
-            });
-          }
-
-          return result;
-        });
       }
 
       if(!promise) {
@@ -200,7 +177,7 @@ export default class AppNewGroupTab extends SliderSuperTab {
 
     chatsSection.content.append(list);
 
-    section.content.append(this.avatarEdit.container, inputWrapper);
+    section.content.append(inputWrapper);
 
     this.content.append(this.nextBtn);
     this.scrollable.append(section.container, chatsSection.container);
@@ -253,8 +230,6 @@ export default class AppNewGroupTab extends SliderSuperTab {
   }
 
   public onCloseAfterTimeout() {
-    this.avatarEdit.clear();
-    this.uploadAvatar = null;
     this.groupNameInputField.value = '';
     this.groupLocationInputField.container.classList.add('hide');
     this.nextBtn.disabled = false;

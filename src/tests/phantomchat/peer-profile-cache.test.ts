@@ -42,6 +42,7 @@ import {
   saveCachedPeerProfile,
   refreshPeerProfileFromRelays,
   clearPeerProfileCache,
+  getPeerAvatarPictureUrl,
   PEER_PROFILE_CACHE_PREFIX
 } from '@lib/phantomchat/peer-profile-cache';
 
@@ -216,5 +217,37 @@ describe('clearPeerProfileCache', () => {
     expect(localStorage.getItem(PEER_PROFILE_CACHE_PREFIX + PUBKEY)).toBeNull();
     expect(localStorage.getItem(PEER_PROFILE_CACHE_PREFIX + PUBKEY_2)).toBeNull();
     expect(localStorage.getItem('unrelated-key')).toBe('keep-me');
+  });
+});
+
+describe('getPeerAvatarPictureUrl', () => {
+  const cache = (picture: unknown) => localStorage.setItem(
+    PEER_PROFILE_CACHE_PREFIX + PUBKEY,
+    JSON.stringify({profile: {picture}, created_at: 1})
+  );
+
+  test('returns the cached https picture', () => {
+    cache('https://blossom.test/abc.png');
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBe('https://blossom.test/abc.png');
+  });
+
+  test('returns undefined without a cached entry', () => {
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+    expect(getPeerAvatarPictureUrl(undefined)).toBeUndefined();
+    expect(getPeerAvatarPictureUrl('')).toBeUndefined();
+  });
+
+  test('returns undefined for missing or non-string pictures', () => {
+    cache(undefined);
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+    cache(42);
+    expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+  });
+
+  test('refuses every non-https scheme', () => {
+    for(const url of ['http://evil.test/a.png', 'data:image/svg+xml,<svg/>', 'blob:https://x/1', 'javascript:alert(1)', '/relative.png']) {
+      cache(url);
+      expect(getPeerAvatarPictureUrl(PUBKEY)).toBeUndefined();
+    }
   });
 });
