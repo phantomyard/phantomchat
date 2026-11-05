@@ -124,8 +124,8 @@
     },
     "src/components/appSelectPeers.ts": {
       "stable": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
-      "preview": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
-      "reason": "Reverted to the Stable bytes: the fresh-group mirror read targeted an apiManagerProxy.mirrors.dialogs namespace that does not exist, so the branch could never fire. Fresh groups are served by the Worker dialog row and covered by the real-browser forward e2e. No storage, identity or wire-format change."
+      "preview": "67c85f9c74683489cd5e9ad583a4c1b37acb1464c7aedf19303105eada17fa6d",
+      "reason": "Forward destination picker includes fresh groups already rendered in the main-thread dialog mirror but not yet present in Worker dialogs. mirrors.dialogs is written at runtime by the PhantomChat message handler though absent from the Mirrors type; existing archive, class and send-rights filters remain. In-memory reads only."
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "dc06ae04e02840ac1d76466ffad6443352c11f317ff316726d716c5561bd96e6",
