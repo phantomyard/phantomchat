@@ -304,8 +304,8 @@
     },
     "src/lib/phantomchat/ensure-sender-user-injected.ts": {
       "stable": "9b1386f4af1d93ea6ef66556bd8400032b7a25dd2c8320b4963df2fc442b63be",
-      "preview": "9b1386f4af1d93ea6ef66556bd8400032b7a25dd2c8320b4963df2fc442b63be",
-      "reason": "Passes the in-memory contact-list option. No stored format change."
+      "preview": "cc5ef27f2d22a09550e3968d1cbc665185298b954b05153a9e13afa85927a31d",
+      "reason": "Passes the in-memory contact-list option. No stored format change. Keeps the cached kind-0 bot flag on the new-peer mirror rebuild and writes the main-thread mirror after injectP2PUser so the worker's flagless mirror-back cannot replace it; presentation only."
     },
     "src/components/chat/attachmentTray.ts": {
       "stable": "2e2031858a3a835ba5a6378dbb158e1a2c467dcdff937ebed2afa012643e1200",
@@ -559,8 +559,8 @@
     },
     "src/components/sidebarLeft/tabs/contacts.ts": {
       "stable": "fb2b01f5b58eab043366a79395233ca676d946df741fdcacfaac747f044964fc",
-      "preview": "d464351c145cda7c583ece316b8601c4fda50cc93dd5e2e69421f9b985e2aa23",
-      "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call. Deleting a contact from the contacts list goes through the shared deleteP2PContact: it first revokes that contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its phantomchat-contact-prefs row, then deletes the conversation. A failed revoke or persona delete throws and keeps the contact. No new store, field or schema; on the web the revoke is a no-op. Additional change: Add to contacts, the Contacts + button and a pasted npub open the New Contact right-side pane (openAddContactPane) instead of the modal. Presentation only; no storage, schema or protocol change. Contact delete everywhere: Contacts list: click opens the Edit pane; context-menu delete goes through the shared delete-contact path. UI only: no storage format change. Phone tap fix: comment only in this file; behaviour lives in editContact.ts. No storage change."
+      "preview": "174b91388e98166e34e4f94890de4e7a3ad01f4883058d77304a4a2961755461",
+      "reason": "The + button and a pasted npub both open the shared New Contact modal. Presentation only; the add path is the modal's addP2PContact call. Deleting a contact from the contacts list goes through the shared deleteP2PContact: it first revokes that contact's Local tools grant through main's gate (removed from local-access.json, running calls cancelled), then deletes a Provider contact's engine persona, then clears its phantomchat-contact-prefs row, then deletes the conversation. A failed revoke or persona delete throws and keeps the contact. No new store, field or schema; on the web the revoke is a no-op. Additional change: Add to contacts, the Contacts + button and a pasted npub open the New Contact right-side pane (openAddContactPane) instead of the modal. Presentation only; no storage, schema or protocol change. Contact delete everywhere: Contacts list: click opens the Edit pane; context-menu delete goes through the shared delete-contact path. UI only: no storage format change. Phone tap fix: comment only in this file; behaviour lives in editContact.ts. No storage change. Local tools switch for legacy Phantom contacts: reads the cached kind-0 bot flag (localStorage, read-only) to type an untyped contact; no stored or wire format change."
     },
     "src/components/sidebarLeft/tabs/phantomchatDesktopProviders.ts": {
       "stable": "absent",
@@ -574,8 +574,8 @@
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "52c644697dea8bb99fdbecee47c678e637f9a80479663c335e14fc0394f568d7",
-      "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact first deletes its bundled-engine persona via the desktop bridge, and a failed persona delete keeps the prefs row and fails the contact delete. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change. Avatars are now sourced only from the profile's kind-0 `picture`: a save preserves the stored picture, uploads use the live relay-pool key, peers' https pictures render ahead of the Key Sigil, and every other avatar edit control plus the group custom-avatar render path are removed. No stored-format change — same kind-0 event, same localStorage keys. Contact delete everywhere: Edit pane: delete goes through the shared delete-contact path; back arrow on phones. UI only: no storage format change. Phone tap fix: openContactEditor always opens the chat first (setInnerPeer) and the phone back arrow lands in it; the list-return onClose is removed. Navigation only: no storage, schema or protocol change."
+      "preview": "145b3c9b11ee76dcfd8f5d22a9351534716464d7e9f4682564c57638fde2696a",
+      "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact first deletes its bundled-engine persona via the desktop bridge, and a failed persona delete keeps the prefs row and fails the contact delete. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change. Avatars are now sourced only from the profile's kind-0 `picture`: a save preserves the stored picture, uploads use the live relay-pool key, peers' https pictures render ahead of the Key Sigil, and every other avatar edit control plus the group custom-avatar render path are removed. No stored-format change — same kind-0 event, same localStorage keys. Contact delete everywhere: Edit pane: delete goes through the shared delete-contact path; back arrow on phones. UI only: no storage format change. Phone tap fix: openContactEditor always opens the chat first (setInnerPeer) and the phone back arrow lands in it; the list-return onClose is removed. Navigation only: no storage, schema or protocol change. Local tools switch for legacy Phantom contacts: reads the cached kind-0 bot flag (localStorage, read-only) to type an untyped contact; no stored or wire format change."
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
       "stable": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
@@ -836,6 +836,16 @@
       "stable": "absent",
       "preview": "2e623bb98d3dee8e0463348cc122748a8f1eececa06514f1e902b6ca921eb9aa",
       "reason": "Contact delete everywhere: New wire message: self-addressed NIP-17 gift wrap with a control tag and no data. Older Stable clients log it as an unknown control type and drop it (no bubble, no storage). Never persisted."
+    },
+    "src/lib/phantomchat/add-p2p-contact.ts": {
+      "stable": "91c6a1f8be4148cf11a95988723a7fc20d45744565501e985bd7823b116d941d",
+      "preview": "0266ec4215669b83fca27cd8aa8255f0cdd7c3a03b7b0ba282d3b23f2bda1151",
+      "reason": "Local tools switch for legacy Phantom contacts: reads the cached kind-0 bot flag (localStorage, read-only) to type an untyped contact; no stored or wire format change."
+    },
+    "src/lib/phantomchat/contact-kind.ts": {
+      "stable": "absent",
+      "preview": "2d1e480a810fc3d4765002dd7778597f954f34cd6e38ba694f1bd1bde65df725",
+      "reason": "Local tools switch for legacy Phantom contacts: reads the cached kind-0 bot flag (localStorage, read-only) to type an untyped contact; no stored or wire format change."
     }
   }
 }
