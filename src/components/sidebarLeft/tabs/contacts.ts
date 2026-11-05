@@ -119,9 +119,10 @@ export default class AppContactsTab extends SliderSuperTab {
           return false;
         }
 
-        // Contacts redesign: a click opens the contact's Edit pane (beside the
-        // chat on a wide screen, over this list on a phone) and keeps the
-        // list open, so the next contact is one click away.
+        // Contacts redesign: a click opens the chat with the contact's Edit
+        // pane (beside the chat on a wide screen, over it on a phone, where
+        // the back arrow lands in the chat). The list stays open, so the next
+        // contact is one click away.
         const raw = elem.dataset.peerId;
         if(raw) {
           void import('@components/sidebarRight/tabs/editContact')

@@ -31,10 +31,11 @@ export default class AppEditContactTab extends SliderSuperTab {
   private contactPubkey: string | null = null;
   public peerId: PeerId;
   /**
-   * Opened from the Contacts list on a phone: the pane covers the list, so it
-   * gets a back arrow and closing it goes back to the list.
+   * Opened from the Contacts list on a phone: the pane covers the chat, so it
+   * gets a back arrow, and closing it lands in that chat (#442 narrow rule:
+   * a contact tap must reach the conversation).
    */
-  public overContactsList = false;
+  public onPhone = false;
 
   public async init() {
     const {peerId} = this;
@@ -49,9 +50,9 @@ export default class AppEditContactTab extends SliderSuperTab {
     const newCloseBtn = this.closeBtn.cloneNode(true) as HTMLElement;
     this.closeBtn.replaceWith(newCloseBtn);
     this.closeBtn = newCloseBtn;
-    // Back arrow (the tab default) over the Contacts list on a phone; a close
-    // X beside the chat everywhere else.
-    if(!this.overContactsList) replaceButtonIcon(this.closeBtn, 'close');
+    // Back arrow (the tab default) over the chat on a phone; a close X beside
+    // the chat everywhere else.
+    if(!this.onPhone) replaceButtonIcon(this.closeBtn, 'close');
 
     attachClickEvent(this.closeBtn, () => {
       this.close();
@@ -300,37 +301,31 @@ export default class AppEditContactTab extends SliderSuperTab {
       appSidebarRight.toggleSidebar(false);
     }, {listenerSetter: this.listenerSetter});
   }
-
-  protected onClose() {
-    // Closing the right sidebar selects the CHAT tab; over the Contacts list
-    // on a phone there is no chat behind the pane, so go back to the list.
-    if(this.overContactsList) {
-      void import('@lib/appImManager').then(({default: appImManager, APP_TABS}) => appImManager.selectTab(APP_TABS.CHATLIST));
-    }
-  }
 }
 
 /**
- * A click on a contact in the Contacts list. On a wide screen the chat opens
- * in the middle and the Edit pane to its right; the Contacts list stays open
- * on the left. On a phone the Edit pane takes over the screen with a back
- * arrow that returns to the list. Clicking another contact replaces the pane.
+ * A click on a contact in the Contacts list. The chat always opens first, so
+ * every tap reaches the conversation (also a contact with no chat yet: the
+ * Contacts list is the new-DM flow). On a wide screen the Edit pane sits to
+ * the right of the chat and the Contacts list stays open on the left. On a
+ * phone the Edit pane covers the chat, and its back arrow lands in the chat.
+ * Clicking another contact replaces the pane.
  */
 export async function openContactEditor(peerId: PeerId): Promise<void> {
   const [{default: mediaSizes}, {default: appImManager}] = await Promise.all([
     import('@helpers/mediaSizes'),
     import('@lib/appImManager')
   ]);
-  const overList = mediaSizes.isMobile;
+  const onPhone = mediaSizes.isMobile;
 
   const existing = appSidebarRight.getTab(AppEditContactTab);
   if(existing) existing.close();
 
-  if(!overList) await appImManager.setInnerPeer({peerId});
+  await appImManager.setInnerPeer({peerId});
 
   const tab = appSidebarRight.createTab(AppEditContactTab, true);
   tab.peerId = peerId;
-  tab.overContactsList = overList;
+  tab.onPhone = onPhone;
   // open() before showing the sidebar: an empty history makes toggleSidebar
   // fall back to the native peer-info tab (see openAddContactPane).
   await tab.open();
