@@ -10,7 +10,10 @@ import lottieLoader from '@lib/rlottie/lottieLoader';
 import Row from '@components/row';
 import SettingSection from '@components/settingSection';
 import AppPhantomChatRelaySettingsTab from '@components/sidebarLeft/tabs/phantomchatRelaySettings';
-import {getDesktopDecisionModel, hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
+import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
+// Separate statement on purpose: scripts/channels/build.mjs strips the line above
+// by exact anchor for the channel UI; this one must survive in the preview tree.
+import {getDesktopDecisionModel} from '@lib/phantomchat/desktop-api';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import showLogOutPopup from '@components/popups/logOut';
 import showResetLocalDataPopup from '@components/popups/resetLocalData';

@@ -569,7 +569,7 @@
     },
     "src/components/sidebarLeft/tabs/settings.ts": {
       "stable": "d6d40466f109b248575be83201096e3fcfa0d478f3055e978ef6b9ba568753eb",
-      "preview": "e8dd6d4e4798e3c049fa0afeaa367488cb970ed09f0ef65309fdebe0176cb6e1",
+      "preview": "10a4429b5b1929af44f38471f6e5bc3d7187dfc6c7d81e726f8da0cc1e743c61",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Decision Model row (#449), shown only when the desktop exposes the API. Presentation only, no storage change."
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
