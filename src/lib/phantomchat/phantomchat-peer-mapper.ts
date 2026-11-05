@@ -207,8 +207,8 @@ export class PhantomChatPeerMapper {
     let entities: MessageEntity[] | undefined;
     let totalEntities: MessageEntity[] | undefined;
     if(opts.text) {
-      // Reflow GFM tables into aligned monospace blocks first (no table entity
-      // exists), then parse the rest of the Markdown into entities.
+      // Tag GFM tables as ```phantomchat-table blocks first (no table entity
+      // exists; wrapRichText draws them), then parse the rest into entities.
       const [inlineText, inlineEntities] = parseMarkdown(renderMarkdownTables(opts.text));
       const [mdText, mdEntities] = renderMarkdownStructures(inlineText, inlineEntities);
       displayText = mdText;
