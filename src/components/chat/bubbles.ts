@@ -226,6 +226,7 @@ import tsNow from '@helpers/tsNow';
 import wrapMessageForReply from '@components/wrappers/messageForReply';
 import canSeeMessageMedia from '@lib/appManagers/utils/messages/canSeeMessageMedia';
 import {cancelRecoveryWatchdog, startRecoveryWatchdog} from '@lib/phantomchat/phantomchat-message-handler';
+import {isPaintedTempSend, resolveSentTempBubble} from '@lib/phantomchat/optimistic-send-bubble';
 
 // TODO: fix new message won't be rendered if an old one is rendering in the moment
 
@@ -785,6 +786,15 @@ export default class ChatBubbles {
       const fullMid = makeFullMid(message);
 
       let _bubble = this.getBubble(fullTempMid);
+      // [PhantomChat.chat] The real mid may already have its own bubble (VMT /
+      // GroupAPI painted it optimistically while a history load drew the temp
+      // copy). Renaming the temp bubble onto it would leave two bubbles under one
+      // mid, so drop the temp copy and keep the painted one.
+      if(resolveSentTempBubble(_bubble, fullTempMid === fullMid ? undefined : this.getBubble(fullMid)) === 'drop-temp') {
+        this.deleteMessagesByIds([fullTempMid], false);
+        _bubble = undefined;
+      }
+
       if(_bubble) {
         const bubble = _bubble;
         delete this.bubbles[fullTempMid];
@@ -9089,6 +9099,9 @@ export default class ChatBubbles {
 
     const cb = (message: Message.message | Message.messageService | AdminLog) => {
       if(!message) {
+        return;
+      } else if(isPaintedTempSend(message as Message.message)) {
+        // [PhantomChat.chat] Already painted under its real mid by VMT/GroupAPI.
         return;
       } else if(isMessage(message) && message.pFlags.local) {
         return this.processLocalMessageRender(message);
