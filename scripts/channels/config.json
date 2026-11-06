@@ -644,8 +644,8 @@
     },
     "electron/phantombot/pin.json": {
       "stable": "absent",
-      "preview": "403fbbbbe91b654924910d48065727d5fc2e7f9c14220104b986da6b651e9f8d",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+      "preview": "5ec06976a167dafd2b4891496fc3de054b44a87dc0005d9f7536c8029686c06e",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. Pin v1.1.487 (#778) for Embeddings."
     },
     "electron/phantombot/probe.ts": {
       "stable": "absent",
