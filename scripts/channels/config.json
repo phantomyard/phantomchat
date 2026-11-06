@@ -969,7 +969,7 @@
     },
     "electron/updaterSnooze.test.ts": {
       "stable": "absent",
-      "preview": "afa10e8cffe71668d477088f279081a553420ba56e144e456e516e86fda72e0c",
+      "preview": "cc7e6f80ff36961e26cd9549d9515f8ce213d25a06ede3eeab590f2b96868ace",
       "reason": "Tests for the 'Remind me later' re-ask at the cadence level: drives initUpdater and the real IPC handlers with fake timers and a scratch settings file, so an early timer fire and a relaunch with a suppressed launch check are both covered. Never shipped in any bundle."
     },
     "electron/updateNotify.ts": {
@@ -984,7 +984,7 @@
     },
     "electron/updater.ts": {
       "stable": "429321c95d8e2f0a9514a26cea60c5b8ae61e1152edec9f97c0540072853b8c2",
-      "preview": "4d98d951b2ed8eca874cdf25e2fdd4ff34dd6b644e6784052b3ff589bd17142b",
+      "preview": "a69e9869a4142d8ac1833fe5f113347e31b729e8f8a76ca270709d2b835ab26f",
       "reason": "Update orchestration for the New Update Notification: publishes UpdateState.notifyPending from the pure rules in updateNotify.ts and adds two IPC handlers (remind-later persists now+24h and arms the timer that re-asks when the window closes; dismiss records the version already acted on, for this session). Desktop shell only, never part of the web bundle; no browser storage, schema, key or wire change. update-settings.json gains one OPTIONAL field, which a build packaged before this ignores (it is normalized away)."
     },
     "src/lib/phantomchat/desktop-update-modal.ts": {

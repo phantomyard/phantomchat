@@ -21,6 +21,7 @@ const harness = vi.hoisted(() => ({
   userData: '',
   releases: [] as unknown[],
   fetchCalls: 0,
+  failFetch: false,
   handlers: new Map<string, (...args: any[]) => any>(),
   version: '1.1.100'
 }));
@@ -42,13 +43,14 @@ vi.mock('electron', () => ({
   net: {
     fetch: async () => {
       harness.fetchCalls += 1;
+      if(harness.failFetch) return {ok: false, status: 500, json: async () => ({})};
       return {ok: true, status: 200, json: async () => harness.releases};
     }
   }
 }));
 
 import {initUpdater, getUpdateState} from './updater';
-import {updateSettingsPath, writeUpdateSettings} from './updateSettings';
+import {readUpdateSettings, updateSettingsPath, writeUpdateSettings} from './updateSettings';
 import {REMIND_LATER_MS} from './updateNotify';
 
 function seedSettings(next: {lastCheckedAt: number | null; remindLaterUntil: number | null}): void {
@@ -68,6 +70,7 @@ function handler(channel: string): (...args: any[]) => any {
 beforeEach(() => {
   harness.userData = mkdtempSync(join(tmpdir(), 'pc-update-snooze-'));
   harness.fetchCalls = 0;
+  harness.failFetch = false;
   harness.handlers.clear();
   harness.releases = [{
     tag_name: 'phantomchat-v1.1.200',
@@ -138,5 +141,54 @@ describe('the re-ask survives the two paths review found', () => {
     const state = getUpdateState();
     expect(state.status).toBe('available');
     expect(state.notifyPending).toBe(true);
+  });
+
+  it('spends the window once the re-ask has fired, so the next launch is throttled again', async() => {
+    seedSettings({lastCheckedAt: T0 - 1000, remindLaterUntil: null});
+    initUpdater(() => null);
+    await vi.advanceTimersByTimeAsync(0);
+    await handler('desktop:update-check-now')();
+    expect(getUpdateState().notifyPending).toBe(true);
+
+    // Snooze it: the window is persisted, and the timer is what closes it.
+    handler('desktop:update-remind-later')();
+    expect(readUpdateSettings(updateSettingsPath(harness.userData)).remindLaterUntil).not.toBeNull();
+
+    // The timer delivers the reminder (decided answer already in hand)...
+    await vi.advanceTimersByTimeAsync(REMIND_LATER_MS);
+    expect(getUpdateState().notifyPending).toBe(true);
+    // ...and the window is spent, not left in the past for good.
+    expect(readUpdateSettings(updateSettingsPath(harness.userData)).remindLaterUntil).toBeNull();
+
+    // Relaunch ten minutes later with a fresh lastCheckedAt: no fetch, no ask,
+    // because the delivery already consumed the window (the review's loop).
+    seedSettings({lastCheckedAt: Date.now() - 1000, remindLaterUntil: null});
+    harness.fetchCalls = 0;
+    harness.handlers.clear();
+    initUpdater(() => null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.fetchCalls).toBe(0);
+    expect(getUpdateState().notifyPending).toBe(false);
+  });
+
+  it('spends the window only after a decided result, so a failed check still retries', async() => {
+    seedSettings({lastCheckedAt: T0 - HOUR, remindLaterUntil: T0 - 60_000});
+    // A Releases API failure: the re-ask check cannot answer, so the reminder
+    // must survive for the next launch rather than be silently dropped.
+    harness.failFetch = true;
+    initUpdater(() => null);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(getUpdateState().status).toBe('error');
+    expect(getUpdateState().notifyPending).toBe(false);
+    expect(readUpdateSettings(updateSettingsPath(harness.userData)).remindLaterUntil).toBe(T0 - 60_000);
+
+    // Next launch, with the API answering: the reminder is delivered now.
+    harness.failFetch = false;
+    harness.handlers.clear();
+    initUpdater(() => null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getUpdateState().notifyPending).toBe(true);
+    expect(readUpdateSettings(updateSettingsPath(harness.userData)).remindLaterUntil).toBeNull();
   });
 });

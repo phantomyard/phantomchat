@@ -45,6 +45,7 @@ import {
   type UpdateCapability
 } from './updateCapability';
 import {
+  hasDecidedResult,
   nextRemindLaterUntil,
   shouldNotifyUpdate,
   snoozeReAskDelayMs,
@@ -218,6 +219,30 @@ function armSnoozeReAsk(): void {
 }
 
 /**
+ * Spend the window once the re-ask has actually been delivered. A closed
+ * window is otherwise persisted in the past for good, and since
+ * snoozeClosedBefore() is then true at every launch, the launch check would
+ * bypass the 24h throttle and re-raise a modal the user already saw. Only
+ * clear it when a decided answer carried the reminder (see runCheckOwningSnooze)
+ * so a failed check still retries on the next launch instead of dropping it.
+ */
+function consumeSnoozeWindow(): void {
+  if(settings.remindLaterUntil === null) return;
+  settings = {...settings, remindLaterUntil: null};
+  writeUpdateSettings(settingsFile, settings);
+}
+
+/**
+ * A check run for its own sake (the launch catch-up and the 'check' branch of
+ * the re-ask). Its result carries the reminder, so a decided answer spends the
+ * window; an 'error' leaves it persisted and the next launch retries.
+ */
+async function runCheckOwningSnooze(): Promise<void> {
+  await runCheck();
+  if(hasDecidedResult(state.status)) consumeSnoozeWindow();
+}
+
+/**
  * The window closed (or the timer got there early). Decided by a pure function
  * so each branch is testable: a fire that lands inside the window re-arms, a
  * fire with no decided result behind it fetches one, and only a decided answer
@@ -236,9 +261,11 @@ function onSnoozeReAskFired(): void {
   if(step === 'check') {
     // Nothing decided in this process to notify from — a fresh check publishes
     // notifyPending itself, so the reminder is not dropped until the next tick.
-    void runCheck();
+    void runCheckOwningSnooze();
     return;
   }
+  // Delivered: the window is spent, so no later launch re-asks for it.
+  consumeSnoozeWindow();
   // Re-evaluated, not assumed: a newer version, a dismiss or a ring switch in
   // the meantime must still win.
   publish({notifyPending: notifyPendingFor(state.status, state.availableVersion)});
@@ -519,8 +546,9 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
 
   // ...and a window that closed while the app was not running owes it now. The
   // launch check can still be suppressed by the persisted lastCheckedAt, so the
-  // reminder cannot be left to the check cadence.
-  if(snoozeClosedBefore(settings.remindLaterUntil)) void runCheck();
+  // reminder cannot be left to the check cadence. Delivering it spends the
+  // window, so a later launch is back under the normal throttle.
+  if(snoozeClosedBefore(settings.remindLaterUntil)) void runCheckOwningSnooze();
 
   ipcMain.handle('desktop:update-get-state', () => state);
 
