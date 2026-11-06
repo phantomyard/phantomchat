@@ -91,3 +91,47 @@ export function snoozeReAskDelayMs(remindLaterUntil: number | null, now: number 
   if(!isSnoozed(remindLaterUntil, now)) return null;
   return (remindLaterUntil as number) - now;
 }
+
+/**
+ * Statuses that are a decided answer about the feed, as opposed to never having
+ * checked in this process ('idle', 'checking') or a check that failed outright
+ * ('error'). Only a decided answer can honestly say "nothing to notify about".
+ */
+export function hasDecidedResult(status: string): boolean {
+  return status === 'up-to-date' || status === 'available' || status === 'downloading' || status === 'ready';
+}
+
+/**
+ * What a fired re-ask timer must do.
+ *
+ *  - 'wait'    — the window has not actually closed yet. Timers are not
+ *                guaranteed to land at or after their instant and Date.now()
+ *                truncates to the millisecond, so a fire can arrive inside the
+ *                window it was armed for; re-arm with the smaller remainder
+ *                instead of publishing a false that nothing ever corrects.
+ *  - 'check'   — the window is closed but this process has no decided answer to
+ *                notify from (a relaunch resets status to idle while the
+ *                persisted lastCheckedAt can suppress the launch check). Asking
+ *                the user nothing here would drop the reminder until the next
+ *                periodic check, up to a day late, so fetch a fresh result.
+ *  - 'publish' — the window is closed and there is a decided answer; publish
+ *                notifyPending from it.
+ */
+export type SnoozeReAskStep = 'wait' | 'check' | 'publish';
+
+export function planSnoozeReAsk(input: NotifyState, prefs: NotifyPrefs, now: number = Date.now()): SnoozeReAskStep {
+  if(snoozeReAskDelayMs(prefs.remindLaterUntil, now) !== null) return 'wait';
+  if(shouldNotifyUpdate(input, prefs, now)) return 'publish';
+  return hasDecidedResult(input.status) ? 'publish' : 'check';
+}
+
+/**
+ * Did a persisted window close before this launch, so the re-ask is owed now?
+ * The clock-jump guard applies: a timestamp further out than one interval is
+ * bogus and is not treated as an owed reminder.
+ */
+export function snoozeClosedBefore(remindLaterUntil: number | null, now: number = Date.now()): boolean {
+  if(remindLaterUntil === null || !Number.isFinite(remindLaterUntil)) return false;
+  if(remindLaterUntil - now > REMIND_LATER_MS) return false;
+  return now >= remindLaterUntil;
+}

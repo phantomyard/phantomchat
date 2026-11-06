@@ -11,6 +11,9 @@ import {
   shouldNotifyUpdate,
   nextRemindLaterUntil,
   snoozeReAskDelayMs,
+  planSnoozeReAsk,
+  snoozeClosedBefore,
+  hasDecidedResult,
   type NotifyPrefs
 } from './updateNotify';
 import {CHECK_INTERVAL_MS} from './updateSettings';
@@ -117,5 +120,71 @@ describe('snoozeReAskDelayMs', () => {
     // not arm a timer for days.
     expect(snoozeReAskDelayMs(now + REMIND_LATER_MS + 1, now)).toBeNull();
     expect(snoozeReAskDelayMs(now + REMIND_LATER_MS, now)).toBe(REMIND_LATER_MS);
+  });
+});
+
+describe('planSnoozeReAsk', () => {
+  const snoozed: NotifyPrefs = {remindLaterUntil: now + 60_000, handledVersion: null};
+
+  it('waits while the window is still open, even if the timer already fired', () => {
+    // Timers are not guaranteed to land at or after their instant, and
+    // Date.now() truncates, so a fire can arrive inside the window it was armed
+    // for. Publishing a false there would drop the ask silently.
+    expect(planSnoozeReAsk(state('available'), snoozed, now)).toBe('wait');
+    expect(planSnoozeReAsk(state('available'), snoozed, now + 59_999)).toBe('wait');
+  });
+
+  it('publishes once the window has closed and the result is decided', () => {
+    const closed = now + REMIND_LATER_MS;
+    const prefs: NotifyPrefs = {remindLaterUntil: closed, handledVersion: null};
+    expect(planSnoozeReAsk(state('available'), prefs, closed)).toBe('publish');
+    // A decided "nothing to say" is also a publish: the up-to-date result needs
+    // no fetch to be believed.
+    expect(planSnoozeReAsk(state('up-to-date', null), prefs, closed)).toBe('publish');
+    // Already acted on this version ⇒ quiet, and no check is needed to know it.
+    expect(planSnoozeReAsk(state('available'), {remindLaterUntil: closed, handledVersion: '1.1.120'}, closed))
+      .toBe('publish');
+  });
+
+  it('fetches when the window has closed with no result to notify from', () => {
+    const closed = now + REMIND_LATER_MS;
+    const prefs: NotifyPrefs = {remindLaterUntil: closed, handledVersion: null};
+    // A relaunch resets status to idle with no availableVersion, and the
+    // persisted lastCheckedAt can suppress the launch check — publishing a
+    // false would delay the reminder by up to a day.
+    expect(planSnoozeReAsk(state('idle', null), prefs, closed)).toBe('check');
+    expect(planSnoozeReAsk(state('checking', null), prefs, closed)).toBe('check');
+    // A failed check is not an answer either: nobody knows whether an update
+    // exists, so re-validate rather than stay silent.
+    expect(planSnoozeReAsk(state('error', null), prefs, closed)).toBe('check');
+  });
+
+  it('treats a bogus far-future window as nothing to wait for', () => {
+    const bogus: NotifyPrefs = {remindLaterUntil: now + REMIND_LATER_MS + 1, handledVersion: null};
+    expect(planSnoozeReAsk(state('available'), bogus, now)).toBe('publish');
+  });
+});
+
+describe('snoozeClosedBefore', () => {
+  it('reports a window that closed while the app was not running', () => {
+    expect(snoozeClosedBefore(now - 1, now)).toBe(true);
+    expect(snoozeClosedBefore(now, now)).toBe(true);
+    expect(snoozeClosedBefore(now + 1, now)).toBe(false);
+    expect(snoozeClosedBefore(null, now)).toBe(false);
+    expect(snoozeClosedBefore(NaN, now)).toBe(false);
+    // Bogus timestamps follow the clock-jump guard: not an owed reminder.
+    expect(snoozeClosedBefore(now + REMIND_LATER_MS + 1, now)).toBe(false);
+  });
+});
+
+describe('hasDecidedResult', () => {
+  it('separates a decided answer from the absence of one', () => {
+    expect(hasDecidedResult('up-to-date')).toBe(true);
+    expect(hasDecidedResult('available')).toBe(true);
+    expect(hasDecidedResult('downloading')).toBe(true);
+    expect(hasDecidedResult('ready')).toBe(true);
+    for(const undecided of ['idle', 'checking', 'error']) {
+      expect(hasDecidedResult(undecided)).toBe(false);
+    }
   });
 });

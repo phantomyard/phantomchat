@@ -44,7 +44,13 @@ import {
   type PackageType,
   type UpdateCapability
 } from './updateCapability';
-import {nextRemindLaterUntil, shouldNotifyUpdate, snoozeReAskDelayMs} from './updateNotify';
+import {
+  nextRemindLaterUntil,
+  shouldNotifyUpdate,
+  snoozeReAskDelayMs,
+  planSnoozeReAsk,
+  snoozeClosedBefore
+} from './updateNotify';
 import {
   pickReleaseForChannel,
   isNotifiableUpdate,
@@ -207,13 +213,35 @@ function armSnoozeReAsk(): void {
   clearSnoozeReAsk();
   const delay = snoozeReAskDelayMs(settings.remindLaterUntil);
   if(delay === null) return;
-  snoozeTimer = setTimeout(() => {
-    snoozeTimer = null;
-    // Re-evaluated, not assumed: a newer version, a dismiss or a ring switch
-    // in the meantime must still win.
-    publish({notifyPending: notifyPendingFor(state.status, state.availableVersion)});
-  }, delay);
+  snoozeTimer = setTimeout(onSnoozeReAskFired, delay);
   snoozeTimer.unref?.();
+}
+
+/**
+ * The window closed (or the timer got there early). Decided by a pure function
+ * so each branch is testable: a fire that lands inside the window re-arms, a
+ * fire with no decided result behind it fetches one, and only a decided answer
+ * publishes.
+ */
+function onSnoozeReAskFired(): void {
+  snoozeTimer = null;
+  const step = planSnoozeReAsk(
+    {status: state.status, availableVersion: state.availableVersion},
+    {remindLaterUntil: settings.remindLaterUntil, handledVersion}
+  );
+  if(step === 'wait') {
+    armSnoozeReAsk();
+    return;
+  }
+  if(step === 'check') {
+    // Nothing decided in this process to notify from — a fresh check publishes
+    // notifyPending itself, so the reminder is not dropped until the next tick.
+    void runCheck();
+    return;
+  }
+  // Re-evaluated, not assumed: a newer version, a dismiss or a ring switch in
+  // the meantime must still win.
+  publish({notifyPending: notifyPendingFor(state.status, state.availableVersion)});
 }
 
 function markChecked(): void {
@@ -488,6 +516,11 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
   // A relaunch in the middle of a snooze still owes the re-ask: the window
   // is persisted, so arm the timer from it here too.
   armSnoozeReAsk();
+
+  // ...and a window that closed while the app was not running owes it now. The
+  // launch check can still be suppressed by the persisted lastCheckedAt, so the
+  // reminder cannot be left to the check cadence.
+  if(snoozeClosedBefore(settings.remindLaterUntil)) void runCheck();
 
   ipcMain.handle('desktop:update-get-state', () => state);
 

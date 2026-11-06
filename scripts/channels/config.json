@@ -964,12 +964,17 @@
     },
     "electron/updateNotify.test.ts": {
       "stable": "absent",
-      "preview": "bee1f88610bdc9c9b05e83d52219078d1fad1af925c2037a6ad4f04da53551ff",
+      "preview": "bae17d394c9da2f045072d1c806a2c7f8cd5a11d8808493e865545a69be8c904",
       "reason": "Tests for the update-notification decision rules. Never shipped in any bundle."
+    },
+    "electron/updaterSnooze.test.ts": {
+      "stable": "absent",
+      "preview": "afa10e8cffe71668d477088f279081a553420ba56e144e456e516e86fda72e0c",
+      "reason": "Tests for the 'Remind me later' re-ask at the cadence level: drives initUpdater and the real IPC handlers with fake timers and a scratch settings file, so an early timer fire and a relaunch with a suppressed launch check are both covered. Never shipped in any bundle."
     },
     "electron/updateNotify.ts": {
       "stable": "absent",
-      "preview": "7e5f09da558ebf0903e42a0ae380b4a02e0f791641e43651fbb51ecca8442a25",
+      "preview": "8ec05c8512daca91dcf0fb0d6c843852cc17bc8d20569547fcc359fa3455e939",
       "reason": "Pure decision function for the New Update Notification: no fs, no clock, no Electron. Desktop shell only, never part of the web bundle or any stored format."
     },
     "electron/updateSettings.test.ts": {
@@ -979,8 +984,8 @@
     },
     "electron/updater.ts": {
       "stable": "429321c95d8e2f0a9514a26cea60c5b8ae61e1152edec9f97c0540072853b8c2",
-      "preview": "310a0cf7123fe0c32700665d3153a287b2fe9551a0c9866fba4aa4fb6ddd9feb",
-      "reason": "Update orchestration for the New Update Notification: publishes UpdateState.notifyPending from the pure rules in updateNotify.ts and adds two IPC handlers (remind-later persists now+24h; dismiss records the version already acted on, for this session). Desktop shell only, never part of the web bundle; no browser storage, schema, key or wire change. update-settings.json gains one OPTIONAL field, which a build packaged before this ignores (it is normalized away)."
+      "preview": "4d98d951b2ed8eca874cdf25e2fdd4ff34dd6b644e6784052b3ff589bd17142b",
+      "reason": "Update orchestration for the New Update Notification: publishes UpdateState.notifyPending from the pure rules in updateNotify.ts and adds two IPC handlers (remind-later persists now+24h and arms the timer that re-asks when the window closes; dismiss records the version already acted on, for this session). Desktop shell only, never part of the web bundle; no browser storage, schema, key or wire change. update-settings.json gains one OPTIONAL field, which a build packaged before this ignores (it is normalized away)."
     },
     "src/lib/phantomchat/desktop-update-modal.ts": {
       "stable": "absent",
