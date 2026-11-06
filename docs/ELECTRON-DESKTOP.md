@@ -122,6 +122,21 @@ or its local PC tools needs no desktop build. Only a phantombot update does.
   vaults and memory, separate from any phantombot installed on the machine.
   Provider keys go into the vault (`persona.configure` or `persona.secrets.set`)
   and never come back over the bridge.
+- **Decision Model (issue #449).** Settings > Decision Model sets one decision
+  model (OpenRouter or TypeSafe, default `typesafe/jev-1.13`) for every engine
+  persona. Main owns it (`electron/decisionModel.ts`): `<userData>/decision-model.json`
+  holds `{enabled, provider, model, key}`, with the key encrypted by
+  `safeStorage`. The page sends a typed key once and afterwards learns only
+  `hasKey`. Save checks a new key with `decisionModels.check` (a rejected key
+  saves nothing), then runs `persona.configure({decisionModel})` on each persona
+  one after another. Each one restarts that persona's channel. On sends
+  `{provider, model, apiKey, judge: true, router: true}`. Off sends
+  `{judge: false, router: false}`, which keeps the provider, model and key, so
+  On needs no key again. After every successful `personas.create` over the
+  bridge, main applies the same setting, so new personas inherit it. Where
+  `safeStorage` has no real encryption (Linux `basic_text`, no keyring), the key
+  is not kept. Existing personas still get it, but a persona added later is
+  skipped until the key is entered again.
 - **Probe.** `--phantombot-probe` starts the packaged host on a temp root and
   runs info, a persona, a vault write and read-back, and a memory search. The
   release jobs run it on every package. No model is called.

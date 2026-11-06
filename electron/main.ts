@@ -20,9 +20,11 @@ import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontend
 import {SPLASH_PATH} from './splash';
 import {VoiceModels} from './voiceModels';
 import {hostBinaryPath, isAllowedCaller, checkRequest, PhantombotHostClient} from './phantombot/client';
+import type {PhantombotMethod} from './phantombot/methods';
 import {runPhantombotProbe} from './phantombot/probe';
 import {allowOnLocalPersona, findPhantombot, listLocalPersonas, phantombotCandidates} from './localPersonas/scan';
 import {LocalToolsHost, type ToolResult} from './localTools/host';
+import {DecisionModelSettings, inheritOnCreate, type KeyCipher} from './decisionModel';
 import {
   resolvePermissionRequest,
   isPermissionCheckAllowed,
@@ -240,6 +242,9 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
   const result = await ensurePhantombot().call(request.method, request.params, (turnId, data) => {
     if(!sender.isDestroyed()) sender.send('desktop:phantombot-event', {turnId, event: data});
   });
+  // Every new persona inherits the Decision Model setting (issue #449), here
+  // in main so the key never reaches the page.
+  await inheritOnCreate(ensureDecisionModel(), request.method, request.params, result);
   if(result.ok && request.method === 'personas.create') {
     try { await ensureVoiceModels().applyNewPersona(String(request.params.persona)); }
     catch {
@@ -265,13 +270,45 @@ function ensurePhantombot(): PhantombotHostClient {
   return phantombot;
 }
 
+// Decision Model (issue #449): one setting for every engine persona. The key
+// stays in main, encrypted with safeStorage; the page learns only `hasKey`.
+const decisionModelCipher: KeyCipher = {
+  // Linux without a keyring falls back to `basic_text`, a hardcoded key:
+  // that is not encryption, so the key is then not kept at all.
+  available: () => safeStorage.isEncryptionAvailable() &&
+    (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+  encrypt: (plain) => safeStorage.encryptString(plain),
+  decrypt: (encrypted) => safeStorage.decryptString(encrypted)
+};
+let decisionModel: DecisionModelSettings | undefined;
+function ensureDecisionModel(): DecisionModelSettings {
+  decisionModel ??= new DecisionModelSettings({
+    file: join(app.getPath('userData'), 'decision-model.json'),
+    call: (method, params) => ensurePhantombot().call(method as PhantombotMethod, params),
+    cipher: decisionModelCipher,
+    log: (line) => console.log('[decision-model]', line)
+  });
+  return decisionModel;
+}
+const decisionModelFailure = (err: unknown) => ({ok: false, error: err instanceof Error ? err.message : String(err)});
+ipcMain.handle('desktop:decision-model:get', (event) => fromApp(event) ? ensureDecisionModel().state() : null);
+ipcMain.handle('desktop:decision-model:check', async(event, provider: unknown, apiKey: unknown) => {
+  if(!fromApp(event)) return {ok: false, error: 'not available to this page'};
+  try {
+    return {ok: true, value: await ensureDecisionModel().check(provider, apiKey)};
+  } catch(err) {
+    return decisionModelFailure(err);
+  }
+});
+ipcMain.handle('desktop:decision-model:save', async(event, input: unknown) => {
+  if(!fromApp(event)) return {ok: false, error: 'not available to this page', state: null};
+  return ensureDecisionModel().save(input);
+});
+
 let voiceModels: VoiceModels | undefined;
 function ensureVoiceModels(): VoiceModels {
-  return voiceModels ??= new VoiceModels(join(app.getPath('userData'), 'voice-models.enc'), {
-    available: () => safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend?.() !== 'basic_text',
-    encrypt: value => safeStorage.encryptString(value),
-    decrypt: value => safeStorage.decryptString(value)
-  }, (method, params) => ensurePhantombot().call(method as any, params ?? {}));
+  return voiceModels ??= new VoiceModels(join(app.getPath('userData'), 'voice-models.enc'), decisionModelCipher,
+    (method, params) => ensurePhantombot().call(method as PhantombotMethod, params ?? {}));
 }
 ipcMain.handle('desktop:voice-models', async(event, method: unknown, params: unknown) => {
   if(!isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined)) {

@@ -539,7 +539,7 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "c58121ae09a0028b90285289b2f2e4b3cc20bc2ef2c8f58d6a6e8898543844df",
+      "preview": "5cf9334e0d58536fd8fd3ecd36a5f9c1c6dfd1338975854af6767807ff197d12",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "electron/piHarness.ts": {
@@ -549,7 +549,7 @@
     },
     "electron/preload.ts": {
       "stable": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "preview": "31c34beb0f562ab676b6c158e5e40edb20bdf43c5edd4b6c5e894c7835132c93",
+      "preview": "ed3c8d0213808bb5201011209c62c7d2ec7aaa99dd519f5a3dfebee09377998d",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "src/components/peerProfile.tsx": {
@@ -569,7 +569,7 @@
     },
     "src/components/sidebarLeft/tabs/settings.ts": {
       "stable": "d6d40466f109b248575be83201096e3fcfa0d478f3055e978ef6b9ba568753eb",
-      "preview": "50e67735fc8dde5b029823a3ed15bf69de317e96a34cc9e4555dd7f64343ff29",
+      "preview": "4bc30a59dc94071ad805d45b32544d7de0f73f67232bb99fc559b0a5f09441bd",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
@@ -584,7 +584,7 @@
     },
     "src/lib/phantomchat/desktop-api.ts": {
       "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "preview": "ad37261f7108f445bfceb81aaf9da1ecd6cc3de23ebcae061348550a4ec4d746",
+      "preview": "d66dc52ef01853498d0077b83fac7d254f9bd26cf8ee19194d066f3c98c0be40",
       "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "src/lib/phantomchat/external-ai-contact-form.ts": {
@@ -624,12 +624,12 @@
     },
     "electron/phantombot/dispatch.test.ts": {
       "stable": "absent",
-      "preview": "b176042800f81a18182035a7462c104ea9f46ef719e7ebc31ebb34a508ba4148",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+      "preview": "99b46c04999d0eb8df1a70f7a5c4e4888a25506ea59f699114a649aae547a1f2",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. Decision Model (#449): a dispatch test for decisionModels.check. Test code only."
     },
     "electron/phantombot/dispatch.ts": {
       "stable": "absent",
-      "preview": "76ad68ae5ff7f01290e9fdac4b1ba9fa9a735b8f684e2364ec99d39881295934",
+      "preview": "dd33370741dac4b0596da532149d78852c726219ed9624c22871fd42bb5dea4d",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls and 8 concurrent tool runs. See docs/ELECTRON-DESKTOP.md (Trust). Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "electron/phantombot/host.ts": {
@@ -639,12 +639,12 @@
     },
     "electron/phantombot/methods.ts": {
       "stable": "absent",
-      "preview": "b6d66c8df98faeb060a008ae05c2d95cab85f4ab4ecfccbf15d3fea1f05caa56",
+      "preview": "3fa7997b689a707bf84d22e19a5aee1cebd101f30c75b671f7719ec3bf5168d8",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust). Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "electron/phantombot/pin.json": {
       "stable": "absent",
-      "preview": "a344a869527dd8bb2bb601eb93f7399907a4ad6fe3bd303c627cd4268d8863a7",
+      "preview": "589f70bb252b9226c0b57969c8d61aba37561c3eb3b91bbcb61154fc32735652",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/probe.ts": {
@@ -866,6 +866,21 @@
       "stable": "absent",
       "preview": "543d4deca5f8f50d8924f11edb1ec647fbdb5d0391c1d3882df14164f1adf168",
       "reason": "New pure toggle plan for the peer editor pane: given the sidebar tab history, whether the right column is shown and whether a live editor tab holds the same peer, it decides between closing the pane and opening it (listing the stale editor tabs to retire first). Judges the last editor tab in history rather than the first, which is what made a second click re-open the pane. No storage, network, protocol or IndexedDB access."
+    },
+    "electron/decisionModel.ts": {
+      "stable": "absent",
+      "preview": "73f8fd2124250403ad4b5ead224df35f06f7a540c5b63cf999219d271d6fd690",
+      "reason": "New (#449): the Decision Model setting for every bundled-engine persona. Writes one new desktop-only file, <userData>/decision-model.json ({enabled, provider, model, key}), where key is safeStorage-encrypted (base64) and omitted where safeStorage has no real encryption (basic_text). The plaintext key is never written. No IndexedDB, localStorage, schema or PWA storage change."
+    },
+    "electron/decisionModel.test.ts": {
+      "stable": "absent",
+      "preview": "43b78d0fdb12afb03fb52df37833e3b0103288cc9daaf4feebd0e7218629faee",
+      "reason": "Unit tests for electron/decisionModel.ts (#449). Test code only, no runtime storage."
+    },
+    "src/components/sidebarLeft/tabs/phantomchatDecisionModel.ts": {
+      "stable": "absent",
+      "preview": "2981b52041e93ebb3fd301a862f7608e4959d91d45eb4c88f29204154102dda8",
+      "reason": "New (#449): desktop Settings > Decision Model tab. UI only: the key is sent to main once and is never kept in the renderer, localStorage or IndexedDB. Model picker bound to the provider that listed it: a provider switch discards an in-flight check, and no TypeSafe default is offered for OpenRouter (Save refuses without a model)."
     },
     "electron/voiceModels.test.ts": {
       "stable": "absent",

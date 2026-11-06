@@ -92,6 +92,9 @@ export interface EngineLike {
     list(): Promise<unknown>;
     check(provider: string, apiKey: string, options?: unknown): Promise<unknown>;
   };
+  decisionModels: {
+    check(provider: string, apiKey: string): Promise<unknown>;
+  };
   persona(name: string): PersonaLike;
 }
 
@@ -332,6 +335,12 @@ export function createDispatcher(
       case 'voiceModels.check':
         if(!engine.voiceModels) throw new BridgeError('not_supported', 'Update the engine for Voice Models');
         return engine.voiceModels.check(p);
+      case 'decisionModels.check': {
+        const provider = str(p, 'provider', 64);
+        const apiKey = p.apiKey ?? '';
+        if(typeof apiKey !== 'string' || apiKey.length > 64 * 1024) throw invalid('apiKey must be a string');
+        return engine.decisionModels.check(provider, apiKey);
+      }
       case 'persona.configure': {
         const config = optRecord(p, 'config');
         if(!config) throw invalid('config must be an object');
