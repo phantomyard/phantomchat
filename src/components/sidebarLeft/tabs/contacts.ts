@@ -132,7 +132,10 @@ export default class AppContactsTab extends SliderSuperTab {
         return false;
       },
       withContext: undefined,
-      autonomous: true
+      autonomous: true,
+      // Pick mode: the already-open-chat rule would open the picked contact's
+      // Edit pane instead of handing the pick to the session flow.
+      isPicker: () => !!this.onPickPeer
     });
     this.attachContactContextMenu(list);
     return sortedUserList;

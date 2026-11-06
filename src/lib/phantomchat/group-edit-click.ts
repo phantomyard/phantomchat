@@ -23,6 +23,13 @@ export type SelectedChatClick = {
    * must still bring the chat forward instead of opening the editor.
    */
   isLessThanFloatingLeftSidebar: boolean,
+  /**
+   * The list is a PICKER (the Sessions `+` contact picker): a row click means
+   * "this one", never "edit the chat that is open". Without it, picking the
+   * contact whose 1:1 chat is open beside the list opened its Edit pane and no
+   * session was created.
+   */
+  isPicker?: boolean,
   shiftKey?: boolean,
   /** Ctrl-click already means "open in a new tab" further down the listener. */
   ctrlKey?: boolean,
@@ -46,6 +53,7 @@ export type SelectedChatRoute = Omit<SelectedChatClick, 'shiftKey' | 'ctrlKey' |
  */
 export function shouldOpenEditorOnSelectedChat(click: SelectedChatClick): boolean {
   return click.isActive &&
+    !click.isPicker &&
     !click.isLessThanFloatingLeftSidebar &&
     !click.lastMsgId &&
     !click.threadId &&
