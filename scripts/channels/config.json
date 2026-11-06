@@ -539,8 +539,8 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "c97f2210a47454a0f17a48fb93c624d11fec7870b7798c1f979aea65fb6c182b",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Tray presence: the main window can be created hidden on a login launch, close hides it to the tray when close-to-tray is effective, a tray menu offers Open/Quit, and two validated IPC calls read and write presence-settings.json (a new file in userData; no existing file changes format)."
+      "preview": "2c266ed89a51d52934fbbbfb734f43dac9de00440d8b3377d8b73d1ccc0d51e8",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Tray presence: the main window can be created hidden on a login launch, close hides it to the tray when close-to-tray is effective, a tray menu offers Open/Quit, and two validated IPC calls read and write presence-settings.json (a new file in userData; no existing file changes format). Fix: a hidden start is re-taken against the tray that was actually built (dropTray/keepsHiddenStart reveals the window), and no login entry is written outside a packaged app."
     },
     "electron/piHarness.ts": {
       "stable": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
@@ -939,13 +939,13 @@
     },
     "electron/presence.test.ts": {
       "stable": "absent",
-      "preview": "6b32e223f9ad014f72f5e260e10be5114661fe6da7a45a62856368871ee18d28",
-      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Tests only."
+      "preview": "934dccde37edee6880c49dc6a364cc920da93158edba056583119ddb1ed72a63",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Tests only. Fix: tests pin both - no login entry outside a package, and a probed tray that fails to build reveals the window."
     },
     "electron/presence.ts": {
       "stable": "absent",
-      "preview": "12065428745db3f595f6ef448a7c9c703c390b92cd7eccd851dff0c73d34d896",
-      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Deliberately NEW file."
+      "preview": "de13e827f291d1a2b4046b5f966b190a13cada8adc87d82851ffa10d57a04d32",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Deliberately NEW file. Fix: autostartCapability() withholds the login entry for an unpackaged run and a sandboxed package; keepsHiddenStart() re-takes the hidden start once the tray exists."
     },
     "electron/tray.test.ts": {
       "stable": "absent",
