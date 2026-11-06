@@ -71,6 +71,41 @@ export interface PhantomChatDesktopApi {
    * Optional: installs packaged before it shipped do not have it.
    */
   localPersonas?: DesktopLocalPersonasApi;
+  /**
+   * Decision Model for every engine persona (issue #449). Optional: installs
+   * packaged before it shipped do not have it.
+   */
+  decisionModel?: DesktopDecisionModelApi;
+}
+
+export type DecisionModelProvider = 'openrouter' | 'typesafe';
+
+/** Main's view of the setting. Never carries the key. */
+export interface DecisionModelState {
+  configured: boolean;
+  enabled: boolean;
+  provider: DecisionModelProvider;
+  model: string;
+  hasKey: boolean;
+  canStoreKey: boolean;
+}
+
+export interface DecisionModelCheck {
+  status: 'verified' | 'invalid' | 'unverified';
+  detail: string;
+  models: string[];
+}
+
+export type DecisionModelSaveResult =
+  | {ok: true; state: DecisionModelState; applied: number; failed: {persona: string; error: string}[]}
+  | {ok: false; error: string; state: DecisionModelState | null};
+
+export interface DesktopDecisionModelApi {
+  get(): Promise<DecisionModelState | null>;
+  /** An empty key checks with the stored key of the same provider. */
+  check(provider: string, apiKey: string): Promise<{ok: true; value: DecisionModelCheck} | {ok: false; error: string}>;
+  /** An empty or absent key keeps the stored one (same provider only). */
+  save(input: {enabled: boolean; provider: string; model: string; apiKey?: string}): Promise<DecisionModelSaveResult>;
 }
 
 export interface LocalPersonaListing {
@@ -139,4 +174,10 @@ export function hasDesktopUpdateApi(): boolean {
 export function getDesktopPhantombot(): DesktopPhantombotApi | null {
   const bridge = getDesktopApi()?.phantombot;
   return bridge && typeof bridge.call === 'function' && typeof bridge.onEvent === 'function' ? bridge : null;
+}
+
+/** The Decision Model API, or null in the PWA and on installs packaged before #449. */
+export function getDesktopDecisionModel(): DesktopDecisionModelApi | null {
+  const api = getDesktopApi()?.decisionModel;
+  return api && typeof api.get === 'function' && typeof api.check === 'function' && typeof api.save === 'function' ? api : null;
 }

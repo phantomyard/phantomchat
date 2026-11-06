@@ -91,6 +91,9 @@ export interface EngineLike {
     list(): Promise<unknown>;
     check(provider: string, apiKey: string, options?: unknown): Promise<unknown>;
   };
+  decisionModels: {
+    check(provider: string, apiKey: string): Promise<unknown>;
+  };
   persona(name: string): PersonaLike;
 }
 
@@ -324,6 +327,12 @@ export function createDispatcher(
         if(typeof apiKey !== 'string' || apiKey.length > 64 * 1024) throw invalid('apiKey must be a string');
         const baseUrl = optStr(p, 'baseUrl');
         return engine.providers.check(provider, apiKey, baseUrl === undefined ? undefined : {baseUrl});
+      }
+      case 'decisionModels.check': {
+        const provider = str(p, 'provider', 64);
+        const apiKey = p.apiKey ?? '';
+        if(typeof apiKey !== 'string' || apiKey.length > 64 * 1024) throw invalid('apiKey must be a string');
+        return engine.decisionModels.check(provider, apiKey);
       }
       case 'persona.configure': {
         const config = optRecord(p, 'config');

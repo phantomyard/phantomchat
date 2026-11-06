@@ -539,8 +539,8 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "f83ddd03ecf8cbba7e6e5c20ae6c29d09f37f40bf40a44dfe57f832e95d4ef1b",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change."
+      "preview": "f26b1237193a3d559a82f729e73e49ec042e37c6ded63f9160ebca7d692d52b7",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change. Decision Model (#449): get/check/save IPC handlers (app frame only), and a successful personas.create inherits the saved setting via persona.configure. The only new storage is decision-model.json (see electron/decisionModel.ts)."
     },
     "electron/piHarness.ts": {
       "stable": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
@@ -549,8 +549,8 @@
     },
     "electron/preload.ts": {
       "stable": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "preview": "e1cfcfe2ec635fa9fd7764f0d077d0e4bd1eb84720bdd665856b03823dec288c",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "2c76ffd08390d403e0e575c69ff8c8581ef06bf471dd2d664bd509661ab8e992",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Decision Model (#449): decisionModel.get/check/save on the preload API. No storage."
     },
     "src/components/peerProfile.tsx": {
       "stable": "a82fed09c559efc369350bea28ef5eeee1352480863d306dd0edb026d3c3ea1e",
@@ -569,8 +569,8 @@
     },
     "src/components/sidebarLeft/tabs/settings.ts": {
       "stable": "d6d40466f109b248575be83201096e3fcfa0d478f3055e978ef6b9ba568753eb",
-      "preview": "d6d40466f109b248575be83201096e3fcfa0d478f3055e978ef6b9ba568753eb",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any."
+      "preview": "10a4429b5b1929af44f38471f6e5bc3d7187dfc6c7d81e726f8da0cc1e743c61",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Decision Model row (#449), shown only when the desktop exposes the API. Presentation only, no storage change."
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
@@ -584,8 +584,8 @@
     },
     "src/lib/phantomchat/desktop-api.ts": {
       "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "preview": "60830a55022dafc584c43b07d44ab5966827487f1eab54f7763af9b3abf8545a",
-      "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access."
+      "preview": "b6d43f22fe39dba3e51f2b3027d5cda4635fa802c83a3b3c609e137c717a0876",
+      "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access. Decision Model types plus getDesktopDecisionModel() (#449), a pure feature check that returns null on the web and on older installs. No storage."
     },
     "src/lib/phantomchat/external-ai-contact-form.ts": {
       "stable": "absent",
@@ -624,13 +624,13 @@
     },
     "electron/phantombot/dispatch.test.ts": {
       "stable": "absent",
-      "preview": "b176042800f81a18182035a7462c104ea9f46ef719e7ebc31ebb34a508ba4148",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+      "preview": "99b46c04999d0eb8df1a70f7a5c4e4888a25506ea59f699114a649aae547a1f2",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. Decision Model (#449): a dispatch test for decisionModels.check. Test code only."
     },
     "electron/phantombot/dispatch.ts": {
       "stable": "absent",
-      "preview": "147e65b202d907a2e280eef1524f4f96d0c2cb49e27e0aa0fc7e1f54b41e7f46",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls and 8 concurrent tool runs. See docs/ELECTRON-DESKTOP.md (Trust)."
+      "preview": "050d57c27bbe8d0d84410c4db1511f570167c256c14920c353ea3897d217bb8a",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls and 8 concurrent tool runs. See docs/ELECTRON-DESKTOP.md (Trust). Decision Model (#449): decisionModels.check bridge method (key verdict and model ids only, the engine method from phantombot #774). No storage."
     },
     "electron/phantombot/host.ts": {
       "stable": "absent",
@@ -639,12 +639,12 @@
     },
     "electron/phantombot/methods.ts": {
       "stable": "absent",
-      "preview": "c6d198a7841f0a03f93ae07a2f3125df85ad367355911238958dab9e0d9f1851",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust)."
+      "preview": "0acffc5e543b1f9c473fa95b256da966108ee47d95a012657cba75980470b803",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes; existing data is proven by electron-upgrade-smoke. Capability signed off by the principal (https://github.com/phantomyard/phantomchat/pull/411#issuecomment-6600474821): this general bridge lets the live PWA, with no desktop release, run principal engine turns with tools \"full\" (local PC execution), write vault secrets and read memory; capped at 4 concurrent model calls. See docs/ELECTRON-DESKTOP.md (Trust). Decision Model (#449): decisionModels.check added to the bridge allowlist. No storage."
     },
     "electron/phantombot/pin.json": {
       "stable": "absent",
-      "preview": "a344a869527dd8bb2bb601eb93f7399907a4ad6fe3bd303c627cd4268d8863a7",
+      "preview": "589f70bb252b9226c0b57969c8d61aba37561c3eb3b91bbcb61154fc32735652",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/probe.ts": {
@@ -866,6 +866,21 @@
       "stable": "absent",
       "preview": "543d4deca5f8f50d8924f11edb1ec647fbdb5d0391c1d3882df14164f1adf168",
       "reason": "New pure toggle plan for the peer editor pane: given the sidebar tab history, whether the right column is shown and whether a live editor tab holds the same peer, it decides between closing the pane and opening it (listing the stale editor tabs to retire first). Judges the last editor tab in history rather than the first, which is what made a second click re-open the pane. No storage, network, protocol or IndexedDB access."
+    },
+    "electron/decisionModel.ts": {
+      "stable": "absent",
+      "preview": "73f8fd2124250403ad4b5ead224df35f06f7a540c5b63cf999219d271d6fd690",
+      "reason": "New (#449): the Decision Model setting for every bundled-engine persona. Writes one new desktop-only file, <userData>/decision-model.json ({enabled, provider, model, key}), where key is safeStorage-encrypted (base64) and omitted where safeStorage has no real encryption (basic_text). The plaintext key is never written. No IndexedDB, localStorage, schema or PWA storage change."
+    },
+    "electron/decisionModel.test.ts": {
+      "stable": "absent",
+      "preview": "43b78d0fdb12afb03fb52df37833e3b0103288cc9daaf4feebd0e7218629faee",
+      "reason": "Unit tests for electron/decisionModel.ts (#449). Test code only, no runtime storage."
+    },
+    "src/components/sidebarLeft/tabs/phantomchatDecisionModel.ts": {
+      "stable": "absent",
+      "preview": "2981b52041e93ebb3fd301a862f7608e4959d91d45eb4c88f29204154102dda8",
+      "reason": "New (#449): desktop Settings > Decision Model tab. UI only: the key is sent to main once and is never kept in the renderer, localStorage or IndexedDB. Model picker bound to the provider that listed it: a provider switch discards an in-flight check, and no TypeSafe default is offered for OpenRouter (Save refuses without a model)."
     }
   }
 }

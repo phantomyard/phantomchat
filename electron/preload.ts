@@ -8,6 +8,7 @@
 import {contextBridge, ipcRenderer} from 'electron';
 import type {UpdateState} from './updater';
 import type {PermissionSettings, PermissionSetting} from './permissions';
+import type {DecisionModelCheck, DecisionModelSaveResult, DecisionModelState} from './decisionModel';
 
 export type {UpdateState, PermissionSettings, PermissionSetting};
 
@@ -88,6 +89,15 @@ export interface PhantomChatDesktopApi {
     set(pubkey: string, on: boolean, contactName: string): Promise<unknown>;
     message(sender: string, payload: unknown, group: unknown): Promise<unknown[]>;
   };
+  /**
+   * Decision Model for every engine persona (issue #449). Main keeps the key,
+   * encrypted; `get` says only whether one is set. Absent on older installs.
+   */
+  decisionModel: {
+    get(): Promise<DecisionModelState | null>;
+    check(provider: string, apiKey: string): Promise<{ok: true; value: DecisionModelCheck} | {ok: false; error: string}>;
+    save(input: {enabled: boolean; provider: string; model: string; apiKey?: string}): Promise<DecisionModelSaveResult>;
+  };
 }
 
 export type PhantombotEvent = {turnId: string; event: unknown} | {persona: string; phantomchat: unknown};
@@ -122,6 +132,11 @@ const api: PhantomChatDesktopApi = {
   localPersonas: {
     list: (ownNpub: string) => ipcRenderer.invoke('desktop:local-personas:list', ownNpub),
     allow: (persona: string, ownNpub: string) => ipcRenderer.invoke('desktop:local-personas:allow', persona, ownNpub)
+  },
+  decisionModel: {
+    get: () => ipcRenderer.invoke('desktop:decision-model:get'),
+    check: (provider: string, apiKey: string) => ipcRenderer.invoke('desktop:decision-model:check', provider, apiKey),
+    save: (input) => ipcRenderer.invoke('desktop:decision-model:save', input)
   },
   localTools: {
     setOwner: (ownerPubkey: string) => ipcRenderer.invoke('desktop:local-tools:set-owner', ownerPubkey),
