@@ -1784,14 +1784,21 @@ export class AppDialogsManager {
     withContext = false,
     withArchiveContext = false,
     autonomous = false,
-    openInner = false
+    openInner = false,
+    isPicker
   }: {
     list: HTMLElement,
     onFound?: (target: HTMLElement) => void | boolean,
     withContext?: boolean,
     withArchiveContext?: boolean,
     autonomous?: boolean,
-    openInner?: boolean
+    openInner?: boolean,
+    /**
+     * Read per click: true while the list is picking a peer for its caller, so
+     * the already-open-chat Edit-pane rule must not take the click before
+     * `onFound` hands the pick over (see `SelectedChatClick.isPicker`).
+     */
+    isPicker?: () => boolean
   }) {
     let lastActiveListElement: HTMLElement;
 
@@ -1883,7 +1890,8 @@ export class AppDialogsManager {
           threadId,
           monoforumParentPeerId,
           isActive: isSelectedChat,
-          isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar
+          isLessThanFloatingLeftSidebar: mediaSizes.isLessThanFloatingLeftSidebar,
+          isPicker: !!isPicker?.()
         },
         (editorPeerId) => {
           // Dynamic import: the editor module pulls in the sidebar and the

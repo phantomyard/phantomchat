@@ -102,6 +102,7 @@ import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import AppPhantomChatQRTab from '@components/sidebarLeft/tabs/phantomchatQR';
 import {generateDicebearAvatar} from '@helpers/generateDicebearAvatar';
 import {decodePubkey} from '@lib/phantomchat/nostr-identity';
+import {listSessionContacts, routeSessionPlus, type SessionPlusRoute} from '@lib/phantomchat/session-plus';
 import {composerDraftFromSelection} from '@lib/phantomchat/group-sessions';
 import {needsLeftColumnReveal} from '@lib/phantomchat/session-column-reveal';
 import {loadCachedProfile} from '@lib/phantomchat/profile-cache';
@@ -1122,52 +1123,108 @@ export class AppSidebarLeft extends SidebarSlider {
       }
     }
 
+    const createSession = (peerId: PeerId) => this.createSessionWithPeer(peerId, prefill);
+
+    // One press, no dead ends (owner 2026-11-06): no contacts -> the New
+    // Contact pane, and the contact saved there becomes the session; exactly
+    // one contact (any type) -> straight to the session; more -> the picker.
+    // A failed lookup only costs the shortcut: the picker still opens.
+    let route: SessionPlusRoute = {kind: 'picker'};
+    try {
+      route = routeSessionPlus(await this.listSessionContacts());
+    } catch(err) {
+      console.error('[PhantomChat.chat] failed to count contacts for a session:', err);
+    }
+
+    if(route.kind === 'direct') {
+      await createSession(route.peerId);
+      return;
+    }
+
+    if(route.kind === 'add-contact') {
+      const {openAddContactPane} = await import('@components/sidebarRight/tabs/addContact');
+      await openAddContactPane({
+        managers: this.managers,
+        onContactAdded: (peerId) => void createSession(peerId)
+      });
+      return;
+    }
+
     const tab = this.createTab(AppContactsTab);
     // The hook rides the OPEN, not `init`: createTab hands back the Contacts tab
     // that is already up (`noSame`), and that instance's `init` ran long ago and
     // was nulled — passing the hook inside `open({onPickPeer})` was silently
     // dropped there, so `+` in Sessions opened a DM instead of creating one.
-    tab.setPickPeerHook(async(peerId: PeerId) => {
-      try {
-        const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
-        const pubkey = await getPubkey(+peerId);
-        if(!pubkey) return;
+    tab.setPickPeerHook(createSession);
+    tab.open();
+  }
 
-        const {getGroupAPI} = await import('@lib/phantomchat/group-api');
-        const {DEFAULT_SESSION_GROUP_NAME} = await import('@lib/phantomchat/group-sessions');
-        const {getGroupStore} = await import('@lib/phantomchat/group-store');
-
-        const groupId = await getGroupAPI().createGroup(
-          DEFAULT_SESSION_GROUP_NAME,
-          [pubkey],
-          undefined,
-          {kind: 'session'}
-        );
-
-        const group = await getGroupStore().get(groupId);
-        if(!group) return;
-
-        // Composer prefill, not a send. Written as the session's DRAFT before
-        // the chat opens, never through whichever `ChatInput` is on screen:
-        // opening a session builds the chat pane more than once, and the
-        // instance handed a direct `setInputValue` is not the one that
-        // survives — the text died with it and no draft was stored. The drafts
-        // manager outlives the swap: every composer loads its peer's draft once
-        // it settles (`input.ts:2564`, `setDraft(undefined, false)`), and the
-        // `draft_updated` it dispatches reaches the settled instance anyway.
-        if(prefill) {
-          appImManager.managers.appDraftsManager.setDraft(group.peerId, undefined, prefill);
+  /**
+   * The contacts the session picker would list (see `listSessionContacts`):
+   * the worker's list, or the live P2P mappings when that path rejects.
+   */
+  private async listSessionContacts(): Promise<PeerId[]> {
+    const {getAllMappings} = await import('@lib/phantomchat/virtual-peers-db');
+    return listSessionContacts({
+      getContactsPeerIds: () => this.managers.appUsersManager.getContactsPeerIds(undefined, undefined, 'online'),
+      getAllMappings,
+      isTombstoned: async(m) => {
+        const ownPubkey = (window as {__phantomchatOwnPubkey?: string}).__phantomchatOwnPubkey ?? null;
+        if(!ownPubkey) return false;
+        try {
+          const {getMessageStore} = await import('@lib/phantomchat/message-store');
+          const store = getMessageStore();
+          return await store.getTombstone(store.getConversationId(ownPubkey, m.pubkey)) > 0;
+        } catch{
+          return false;
         }
-
-        this.closeEverythingInside();
-        await appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
-      } catch(err) {
-        console.error('[PhantomChat.chat] failed to create session:', err);
-        const {toast} = await import('@components/toast');
-        toast(i18n('SessionCreateFailed'));
       }
     });
-    tab.open();
+  }
+
+  /**
+   * Create a SESSION peer with one contact and open it. `prefill` lands in the
+   * composer as a draft (see `openNewSessionFlow`).
+   */
+  private async createSessionWithPeer(peerId: PeerId, prefill: string) {
+    try {
+      const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
+      const pubkey = await getPubkey(+peerId);
+      if(!pubkey) return;
+
+      const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+      const {DEFAULT_SESSION_GROUP_NAME} = await import('@lib/phantomchat/group-sessions');
+      const {getGroupStore} = await import('@lib/phantomchat/group-store');
+
+      const groupId = await getGroupAPI().createGroup(
+        DEFAULT_SESSION_GROUP_NAME,
+        [pubkey],
+        undefined,
+        {kind: 'session'}
+      );
+
+      const group = await getGroupStore().get(groupId);
+      if(!group) return;
+
+      // Composer prefill, not a send. Written as the session's DRAFT before
+      // the chat opens, never through whichever `ChatInput` is on screen:
+      // opening a session builds the chat pane more than once, and the
+      // instance handed a direct `setInputValue` is not the one that
+      // survives — the text died with it and no draft was stored. The drafts
+      // manager outlives the swap: every composer loads its peer's draft once
+      // it settles (`input.ts:2564`, `setDraft(undefined, false)`), and the
+      // `draft_updated` it dispatches reaches the settled instance anyway.
+      if(prefill) {
+        appImManager.managers.appDraftsManager.setDraft(group.peerId, undefined, prefill);
+      }
+
+      this.closeEverythingInside();
+      await appImManager.setInnerPeer({peerId: group.peerId.toPeerId(true)});
+    } catch(err) {
+      console.error('[PhantomChat.chat] failed to create session:', err);
+      const {toast} = await import('@components/toast');
+      toast(i18n('SessionCreateFailed'));
+    }
   }
 
   // "Create a new": group and private chat only. Adding a contact lives in the
