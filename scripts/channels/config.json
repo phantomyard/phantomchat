@@ -644,7 +644,7 @@
     },
     "electron/phantombot/pin.json": {
       "stable": "absent",
-      "preview": "a344a869527dd8bb2bb601eb93f7399907a4ad6fe3bd303c627cd4268d8863a7",
+      "preview": "589f70bb252b9226c0b57969c8d61aba37561c3eb3b91bbcb61154fc32735652",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/probe.ts": {
