@@ -10,7 +10,7 @@ import {FormatterArguments, LangPackKey} from '@lib/langPack';
 import rootScope from '@lib/rootScope';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import PopupPeer, {PopupPeerButtonCallbackCheckboxes, PopupPeerOptions} from '@components/popups/peer';
-import {isGroupPeer} from '@lib/phantomchat/group-types';
+import {isGroupPeer, isSessionPeer} from '@lib/phantomchat/group-types';
 
 export default class PopupDeleteDialog {
   constructor(
@@ -54,6 +54,8 @@ export default class PopupDeleteDialog {
     // Route them through GroupAPI.leaveGroupByPeerId, which broadcasts
     // `group_leave`, deletes the local store record, and cleans the mirror.
     const isP2PGroup = isGroupPeer(peerId);
+    // Sessions share the group dialogs; only the wording says "session".
+    const isSession = isSessionPeer(peerId);
     const groupAPI = (window as any).__phantomchatGroupAPI as {leaveGroupByPeerId?: (id: number) => Promise<void>, deleteGroupByPeerId?: (id: number) => Promise<void>} | undefined;
 
     // Owner batch 15: for a group-class peer the ADMIN is the owner — there is no
@@ -257,10 +259,10 @@ export default class PopupDeleteDialog {
           // every member — admin included — got the leave wording. The group
           // record's adminPubkey is the real answer: an admin gets the
           // delete-for-everyone dialog, everyone else keeps Leave.
-          title = 'DeleteMegaMenu';
-          description = 'AreYouSureDeleteAndExit';
+          title = isSession ? 'PhantomChat.Session.DeleteMenu' : 'DeleteMegaMenu';
+          description = isSession ? 'PhantomChat.Session.DeleteAndExit' : 'AreYouSureDeleteAndExit';
           buttons = [{
-            langKey: 'DeleteMegaMenu',
+            langKey: title,
             isDanger: true,
             callback: callbackDelete
           }];
@@ -271,8 +273,8 @@ export default class PopupDeleteDialog {
             text: 'DeleteChat.DeleteGroupForAll'
           }];
         } else {
-          title = 'LeaveMegaMenu';
-          description = 'AreYouSureDeleteAndExitName';
+          title = isSession ? 'PhantomChat.Session.LeaveMenu' : 'LeaveMegaMenu';
+          description = isSession ? 'PhantomChat.Session.DeleteAndExitName' : 'AreYouSureDeleteAndExitName';
           descriptionArgs = [peerTitleElement];
           buttons = [{
             langKey: 'DeleteChatUser',

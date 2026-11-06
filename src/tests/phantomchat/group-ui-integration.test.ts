@@ -284,7 +284,9 @@ describe('Group UI Integration', () => {
         'utf-8'
       );
 
-      expect(source).toContain('ChatList.Context.LeaveGroup');
+      // The Leave key is picked by the shared group/session wording helper.
+      expect(source).toContain('leaveGroupLangKey(');
+      expect(fs.readFileSync('src/lib/phantomchat/session-wording.ts', 'utf-8')).toContain('ChatList.Context.LeaveGroup');
       expect(source).toContain('Permissions.RemoveFromGroup');
       // Should NOT contain the old raw 'AreYouSure' cast
       expect(source).not.toContain("'AreYouSure'");
