@@ -34,6 +34,13 @@ export interface UpdateState {
   releaseUrl: string | null;
   progressPercent: number | null;
   error: string | null;
+  /**
+   * Main's verdict on whether to raise the update notification now (an
+   * actionable update, not snoozed, not already handled this session).
+   * Optional: builds packaged before the notification shipped never send it,
+   * so every read is `=== true`.
+   */
+  notifyPending?: boolean;
 }
 
 export type PermissionSetting = 'ask' | 'allow' | 'deny';
@@ -75,6 +82,10 @@ export interface PhantomChatDesktopApi {
   setUpdateChannel(channel: string): Promise<UpdateState>;
   checkForUpdates(): Promise<UpdateState>;
   installUpdate(): Promise<boolean>;
+  /** Silence the update notification for 24h. Optional: newer than the bridge. */
+  remindLaterUpdate?(): Promise<UpdateState>;
+  /** Record that the user acted on this version. Optional: newer than the bridge. */
+  dismissUpdateNotification?(): Promise<UpdateState>;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   getPermissionSettings?(): Promise<PermissionSettings>;
   setPermissionSetting?(permission: string, setting: PermissionSetting): Promise<PermissionSettings>;
@@ -257,6 +268,19 @@ export function visiblePresenceRows(capability: PresenceCapability | null | unde
   if(capability?.autostart) rows.push('startAtLogin');
   if(capability?.tray) rows.push('closeToTray');
   return rows;
+}
+
+/**
+ * True when this desktop build's preload can snooze and dismiss the update
+ * notification (the New Update Notification). A build packaged before it
+ * shipped has the update API but neither method, and mounting the modal there
+ * would raise it again after every state push with no way to say "later".
+ */
+export function hasDesktopUpdateNotificationApi(): boolean {
+  const api = getDesktopApi();
+  return !!api &&
+    typeof api.remindLaterUpdate === 'function' &&
+    typeof api.dismissUpdateNotification === 'function';
 }
 
 /** The desktop app's phantombot bridge, or null in the PWA and on older installs. */

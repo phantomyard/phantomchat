@@ -45,6 +45,14 @@ import {
   type UpdateCapability
 } from './updateCapability';
 import {
+  hasDecidedResult,
+  nextRemindLaterUntil,
+  shouldNotifyUpdate,
+  snoozeReAskDelayMs,
+  planSnoozeReAsk,
+  snoozeClosedBefore
+} from './updateNotify';
+import {
   pickReleaseForChannel,
   isNotifiableUpdate,
   isReleasePageUrl,
@@ -90,6 +98,14 @@ export interface UpdateState {
   /** 0-100 while downloading. */
   progressPercent: number | null;
   error: string | null;
+  /**
+   * True when the renderer should raise the update notification now: an
+   * update the user can act on, not snoozed by "Remind me later" and not
+   * already acted on in this session. Decided here, not in the renderer —
+   * the snooze is persisted next to the ring, and the preload is a
+   * convenience rather than a boundary. See updateNotify.ts for the rules.
+   */
+  notifyPending: boolean;
 }
 
 let settings: UpdateSettings;
@@ -99,6 +115,14 @@ let capabilityReason: string | null;
 let getWindow: () => BrowserWindow | null = () => null;
 let timer: NodeJS.Timeout | null = null;
 let checkInFlight = false;
+
+/**
+ * Newest version the user already acted on in this session ("Update now").
+ * Session-scoped on purpose: it suppresses the modal for a version they have
+ * already clicked through on the notify ring, where the app keeps running
+ * after the browser opens, and a relaunch is allowed to ask again.
+ */
+let handledVersion: string | null = null;
 
 let state: UpdateState;
 
@@ -162,6 +186,91 @@ function publish(patch: Partial<UpdateState>): void {
   }
 }
 
+/** Does this (status, version) pair deserve a notification right now? */
+function notifyPendingFor(status: UpdateStatus, availableVersion: string | null): boolean {
+  return shouldNotifyUpdate(
+    {status, availableVersion},
+    {remindLaterUntil: settings.remindLaterUntil, handledVersion}
+  );
+}
+
+/**
+ * Pending re-ask for an open "Remind me later" window. The check cadence
+ * cannot keep the 24h promise on its own (the modal is answered minutes or
+ * hours after the check that raised it, so the following check is still
+ * suppressed), so the window itself arms a timer that re-publishes
+ * notifyPending the moment it closes. See snoozeReAskDelayMs.
+ */
+let snoozeTimer: NodeJS.Timeout | null = null;
+
+function clearSnoozeReAsk(): void {
+  if(snoozeTimer) {
+    clearTimeout(snoozeTimer);
+    snoozeTimer = null;
+  }
+}
+
+function armSnoozeReAsk(): void {
+  clearSnoozeReAsk();
+  const delay = snoozeReAskDelayMs(settings.remindLaterUntil);
+  if(delay === null) return;
+  snoozeTimer = setTimeout(onSnoozeReAskFired, delay);
+  snoozeTimer.unref?.();
+}
+
+/**
+ * Spend the window once the re-ask has actually been delivered. A closed
+ * window is otherwise persisted in the past for good, and since
+ * snoozeClosedBefore() is then true at every launch, the launch check would
+ * bypass the 24h throttle and re-raise a modal the user already saw. Only
+ * clear it when a decided answer carried the reminder (see runCheckOwningSnooze)
+ * so a failed check still retries on the next launch instead of dropping it.
+ */
+function consumeSnoozeWindow(): void {
+  if(settings.remindLaterUntil === null) return;
+  settings = {...settings, remindLaterUntil: null};
+  writeUpdateSettings(settingsFile, settings);
+}
+
+/**
+ * A check run for its own sake (the launch catch-up and the 'check' branch of
+ * the re-ask). Its result carries the reminder, so a decided answer spends the
+ * window; an 'error' leaves it persisted and the next launch retries.
+ */
+async function runCheckOwningSnooze(): Promise<void> {
+  await runCheck();
+  if(hasDecidedResult(state.status)) consumeSnoozeWindow();
+}
+
+/**
+ * The window closed (or the timer got there early). Decided by a pure function
+ * so each branch is testable: a fire that lands inside the window re-arms, a
+ * fire with no decided result behind it fetches one, and only a decided answer
+ * publishes.
+ */
+function onSnoozeReAskFired(): void {
+  snoozeTimer = null;
+  const step = planSnoozeReAsk(
+    {status: state.status, availableVersion: state.availableVersion},
+    {remindLaterUntil: settings.remindLaterUntil, handledVersion}
+  );
+  if(step === 'wait') {
+    armSnoozeReAsk();
+    return;
+  }
+  if(step === 'check') {
+    // Nothing decided in this process to notify from — a fresh check publishes
+    // notifyPending itself, so the reminder is not dropped until the next tick.
+    void runCheckOwningSnooze();
+    return;
+  }
+  // Delivered: the window is spent, so no later launch re-asks for it.
+  consumeSnoozeWindow();
+  // Re-evaluated, not assumed: a newer version, a dismiss or a ring switch in
+  // the meantime must still win.
+  publish({notifyPending: notifyPendingFor(state.status, state.availableVersion)});
+}
+
 function markChecked(): void {
   settings = {...settings, lastCheckedAt: Date.now()};
   writeUpdateSettings(settingsFile, settings);
@@ -211,13 +320,22 @@ function getUpdater(): AppUpdater {
       status: 'downloading',
       availableVersion: info.version,
       progressPercent: 0,
-      error: null
+      error: null,
+      // Not yet: the download is not finished, so there is nothing to install.
+      // The modal appears on 'update-downloaded' below.
+      notifyPending: notifyPendingFor('downloading', info.version)
     });
   });
 
   autoUpdater.on('update-not-available', () => {
     markChecked();
-    publish({status: 'up-to-date', availableVersion: null, progressPercent: null, error: null});
+    publish({
+      status: 'up-to-date',
+      availableVersion: null,
+      progressPercent: null,
+      error: null,
+      notifyPending: false
+    });
   });
 
   autoUpdater.on('download-progress', (progress) => {
@@ -226,13 +344,24 @@ function getUpdater(): AppUpdater {
 
   autoUpdater.on('update-downloaded', (info) => {
     downloadedUpdateFile = info.downloadedFile ?? null;
-    publish({status: 'ready', availableVersion: info.version, progressPercent: 100, error: null});
+    publish({
+      status: 'ready',
+      availableVersion: info.version,
+      progressPercent: 100,
+      error: null,
+      notifyPending: notifyPendingFor('ready', info.version)
+    });
   });
 
   autoUpdater.on('error', (err: Error) => {
     // A failed check is not fatal and must not surface as a crash: the user
     // keeps running the version they have.
-    publish({status: 'error', progressPercent: null, error: err?.message || 'update failed'});
+    publish({
+      status: 'error',
+      progressPercent: null,
+      error: err?.message || 'update failed',
+      notifyPending: false
+    });
   });
 
   return autoUpdater;
@@ -276,9 +405,21 @@ async function checkViaReleasesApi(): Promise<void> {
   markChecked();
 
   if(isNotifiableUpdate(app.getVersion(), picked)) {
-    publish({status: 'available', availableVersion: picked!.version, releaseUrl: picked!.url, error: null});
+    publish({
+      status: 'available',
+      availableVersion: picked!.version,
+      releaseUrl: picked!.url,
+      error: null,
+      notifyPending: notifyPendingFor('available', picked!.version)
+    });
   } else {
-    publish({status: 'up-to-date', availableVersion: null, releaseUrl: null, error: null});
+    publish({
+      status: 'up-to-date',
+      availableVersion: null,
+      releaseUrl: null,
+      error: null,
+      notifyPending: false
+    });
   }
 }
 
@@ -393,8 +534,21 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
     availableVersion: null,
     releaseUrl: null,
     progressPercent: null,
-    error: null
+    error: null,
+    // Nothing has been checked yet in this process; a snooze is only ever
+    // evaluated against a real result.
+    notifyPending: false
   };
+
+  // A relaunch in the middle of a snooze still owes the re-ask: the window
+  // is persisted, so arm the timer from it here too.
+  armSnoozeReAsk();
+
+  // ...and a window that closed while the app was not running owes it now. The
+  // launch check can still be suppressed by the persisted lastCheckedAt, so the
+  // reminder cannot be left to the check cadence. Delivering it spends the
+  // window, so a later launch is back under the normal throttle.
+  if(snoozeClosedBefore(settings.remindLaterUntil)) void runCheckOwningSnooze();
 
   ipcMain.handle('desktop:update-get-state', () => state);
 
@@ -404,7 +558,12 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
     if(!isUpdateChannel(channel)) return state;
     if(channel === settings.channel) return state;
 
-    settings = {...settings, channel, lastCheckedAt: null};
+    // A different ring is a different question: a snooze or an "already
+    // acted on" marker recorded against the old ring must not follow the
+    // user to the new one.
+    handledVersion = null;
+    clearSnoozeReAsk();
+    settings = {...settings, channel, lastCheckedAt: null, remindLaterUntil: null};
     writeUpdateSettings(settingsFile, settings);
     publish({
       channel,
@@ -413,7 +572,8 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
       availableVersion: null,
       releaseUrl: null,
       progressPercent: null,
-      error: null
+      error: null,
+      notifyPending: false
     });
     // Switching ring is an explicit act — check immediately rather than
     // leaving the user on the other ring for up to a day.
@@ -423,6 +583,26 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle('desktop:update-check-now', async() => {
     await runCheck();
+    return state;
+  });
+
+  // "Remind me later" — silence the notification for one interval. Persisted
+  // next to the ring so relaunching in the middle of the snooze stays quiet.
+  ipcMain.handle('desktop:update-remind-later', () => {
+    settings = {...settings, remindLaterUntil: nextRemindLaterUntil()};
+    writeUpdateSettings(settingsFile, settings);
+    publish({notifyPending: false});
+    // The window, not the next check, decides when to ask again.
+    armSnoozeReAsk();
+    return state;
+  });
+
+  // "Update now" (or any other way the user answers the notification): this
+  // version has been dealt with. Session-scoped — see handledVersion.
+  ipcMain.handle('desktop:update-dismiss', () => {
+    clearSnoozeReAsk();
+    if(state.availableVersion !== null) handledVersion = state.availableVersion;
+    publish({notifyPending: false});
     return state;
   });
 
