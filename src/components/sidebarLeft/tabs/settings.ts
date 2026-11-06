@@ -14,6 +14,7 @@ import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
 // Separate statement on purpose: scripts/channels/build.mjs strips the line above
 // by exact anchor for the channel UI; this one must survive in the preview tree.
 import {getDesktopDecisionModel} from '@lib/phantomchat/desktop-api';
+import {getDesktopVoiceModels} from '@lib/phantomchat/desktop-api';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import showLogOutPopup from '@components/popups/logOut';
 import showResetLocalDataPopup from '@components/popups/resetLocalData';
@@ -191,6 +192,19 @@ export default class AppSettingsTab extends SliderSuperTab {
       privacyRow.container,
       notificationsRow.container
     );
+
+    if(getDesktopVoiceModels()) {
+      const voiceRow = new Row({
+        title: 'VoiceModels',
+        icon: 'microphone',
+        clickable: async() => {
+          const {default: Tab} = await import('@components/sidebarLeft/tabs/phantomchatVoiceModels');
+          this.slider.createTab(Tab).open();
+        },
+        listenerSetter: this.listenerSetter
+      });
+      buttonsDiv.append(voiceRow.container);
+    }
 
     // Desktop only (issue #164): the release-ring picker and update status.
     // The PWA has no installer to replace — updates there are the browser's

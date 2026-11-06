@@ -115,6 +115,15 @@ export default class AppEditContactTab extends SliderSuperTab {
         new CheckboxField({text: 'ContactLocalTools', checked: localToolsOn}) :
         undefined;
 
+      if(contactPubkey && (contactKind === 'phantom' || contactKind === 'provider')) {
+        const {mountContactVoiceModels} = await import('@lib/phantomchat/voice-models');
+        const voiceSection = new SettingSection();
+        this.scrollable.append(voiceSection.container);
+        void mountContactVoiceModels(voiceSection.content, contactPubkey).catch(() => {
+          voiceSection.content.textContent = 'Voice settings unavailable';
+        });
+      }
+
       this.editPeer = new EditPeer({
         peerId: peerId,
         inputFields,

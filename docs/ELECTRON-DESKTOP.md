@@ -559,3 +559,38 @@ Three separate things have to hold, and the package check verifies each one:
 The hardened runtime is required for notarization, and Electron needs the JIT,
 unsigned-executable-memory and library-validation exceptions in
 `electron/build/entitlements.mac.plist` to start under it.
+
+### Voice Models
+
+Settings → Voice Models appears on desktop builds exposing the voice-settings
+preload API. TTS and STT have independent enablement, providers, masked key entry,
+models and (for TTS) model-scoped voices. Discovery uses the phantombot TUI's
+provider/model helpers through the host bridge. Endpoints without audio catalogue
+metadata offer the same typed model fallback as the TUI.
+
+Electron main owns `voice-models.enc`, encrypted with `safeStorage`; unavailable
+or plaintext fallback backends refuse persistence. Saved keys never return to the
+renderer or contact prefs. A blank key keeps the saved credential only for the
+same provider/endpoint. Defaults apply sequentially to bundled personas and are
+inherited before a new persona's channel starts. Failed applications/restarts
+are listed; Off retains encrypted settings and sends an off-only engine patch.
+
+Both Phantom and Provider Edit Contact use one model selector component, gated
+independently by TTS/STT enablement. Overrides belong to a voice provider/endpoint;
+incompatible overrides reset explicitly on Settings changes. Contact chat-provider
+choices do not supply voice catalogues or credentials.
+
+Remote Phantoms use authenticated NIP-17 model-only control requests and must
+already have the matching endpoint and key configured in their own TUI/vault.
+The protocol never sends or retrieves credentials. Unsupported/offline or
+incompatible engines show an unavailable state and cannot report a successful
+local save. Existing Phantom contacts receive default/enablement changes, including those
+without an override. Deleted peers are excluded, requests use at most three
+workers, and failures are named. New personas always inherit defaults even when
+reusing a deleted persona name. The extra local-tools control tag makes older
+engines discard requests before chat/LLM ingestion.
+
+The desktop engine pin must carry `voiceModels.providers/check` and independent
+`persona.configure({voice})` before this feature is merge-ready. The prerequisite
+engine PR is linked in the Voice Models application PR; no release or deployment
+is implied by preparing these changes.

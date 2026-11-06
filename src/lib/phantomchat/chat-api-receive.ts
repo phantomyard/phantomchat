@@ -14,6 +14,7 @@ import {getMessageStore, StoredMessage} from './message-store';
 import {getMessageRequestStore} from './message-requests';
 import {isControlEvent, getGroupIdFromRumor} from './group-control-messages';
 import {getMsSlotFromTags} from './nostr-crypto';
+import {isVoiceModelsRumor, handleVoiceModelsRumor} from './voice-models-remote';
 import {isLocalToolsRumor} from './local-tools-wire';
 import {isSyncNudgeRumor, parseSyncNudge, SYNC_NUDGE_DEVICE_ID, SYNC_NUDGE_MAX_AGE_SECONDS} from './sync-nudge';
 import {handleSyncNudge} from './phantomchat-sync-triggers';
@@ -232,6 +233,11 @@ export async function handleRelayMessage(
       'from:', msg.from?.slice(0, 8) + '...'
     );
     return {action: 'skipped', reason: 'created_at_out_of_window'};
+  }
+
+  if(isVoiceModelsRumor(msg.tags)) {
+    if(msg.from !== ctx.ownId) handleVoiceModelsRumor(msg);
+    return {action: 'skipped', reason: 'voice_models_control'};
   }
 
   // 0b. Local tools traffic (phantombot #747) is never a chat message. It is

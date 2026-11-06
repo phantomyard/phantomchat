@@ -18,6 +18,7 @@ import {attachEditableContextMenu} from './contextMenu';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
 import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontendProxy';
 import {SPLASH_PATH} from './splash';
+import {VoiceModels} from './voiceModels';
 import {hostBinaryPath, isAllowedCaller, checkRequest, PhantombotHostClient} from './phantombot/client';
 import type {PhantombotMethod} from './phantombot/methods';
 import {runPhantombotProbe} from './phantombot/probe';
@@ -244,6 +245,17 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
   // Every new persona inherits the Decision Model setting (issue #449), here
   // in main so the key never reaches the page.
   await inheritOnCreate(ensureDecisionModel(), request.method, request.params, result);
+  if(result.ok && request.method === 'personas.create') {
+    // Constructing the voice store is not a voice failure of this persona: a
+    // broken store must not roll persona creation back. applyNewPersona only
+    // fails (and rolls back) when an enabled default fails to apply.
+    const voice = ensureVoiceModels();
+    try { await voice.applyNewPersona(String(request.params.persona)); }
+    catch {
+      await ensurePhantombot().call('personas.delete', {persona: request.params.persona});
+      return {ok: false, error: {code: 'voice_settings', message: 'Could not apply voice defaults to the new persona'}};
+    }
+  }
   return result;
 });
 
@@ -295,6 +307,19 @@ ipcMain.handle('desktop:decision-model:check', async(event, provider: unknown, a
 ipcMain.handle('desktop:decision-model:save', async(event, input: unknown) => {
   if(!fromApp(event)) return {ok: false, error: 'not available to this page', state: null};
   return ensureDecisionModel().save(input);
+});
+
+let voiceModels: VoiceModels | undefined;
+function ensureVoiceModels(): VoiceModels {
+  return voiceModels ??= new VoiceModels(join(app.getPath('userData'), 'voice-models.enc'), decisionModelCipher,
+    (method, params) => ensurePhantombot().call(method as PhantombotMethod, params ?? {}));
+}
+ipcMain.handle('desktop:voice-models', async(event, method: unknown, params: unknown) => {
+  if(!isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined)) {
+    return {ok: false, error: {code: 'forbidden', message: 'not available to this page'}};
+  }
+  try { return await ensureVoiceModels().handle(method, params); }
+  catch {return {ok: false, error: {code: 'unavailable', message: 'Encrypted voice settings are unavailable'}};}
 });
 
 // Scan (contacts redesign): the phantombot installed on this PC, not the

@@ -66,6 +66,7 @@ export interface PhantomChatDesktopApi {
    * principal. Optional: installs packaged before it shipped do not have it.
    */
   phantombot?: DesktopPhantombotApi;
+  voiceModels?: {call(method: string, params?: unknown): Promise<DesktopPhantombotResult>};
   /**
    * Scan: personas of the phantombot installed on this PC (contacts redesign).
    * Optional: installs packaged before it shipped do not have it.
@@ -174,6 +175,11 @@ export function hasDesktopUpdateApi(): boolean {
 export function getDesktopPhantombot(): DesktopPhantombotApi | null {
   const bridge = getDesktopApi()?.phantombot;
   return bridge && typeof bridge.call === 'function' && typeof bridge.onEvent === 'function' ? bridge : null;
+}
+
+export function getDesktopVoiceModels() {
+  const api = getDesktopApi()?.voiceModels;
+  return typeof api?.call === 'function' ? api : null;
 }
 
 /** The Decision Model API, or null in the PWA and on installs packaged before #449. */

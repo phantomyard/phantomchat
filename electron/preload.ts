@@ -66,6 +66,7 @@ export interface PhantomChatDesktopApi {
    * a hosted PhantomChat channel's state arrives as `{persona, phantomchat}`.
    * Absent on installs packaged before it shipped.
    */
+  voiceModels: {call(method: string, params?: unknown): Promise<PhantombotResult>};
   phantombot: {
     call(method: string, params?: Record<string, unknown>): Promise<PhantombotResult>;
     onEvent(listener: (message: PhantombotEvent) => void): () => void;
@@ -121,6 +122,7 @@ const api: PhantomChatDesktopApi = {
   setPermissionSetting: (permission: string, setting: PermissionSetting) =>
     ipcRenderer.invoke('desktop:set-permission-setting', permission, setting),
   resetPermissionSettings: () => ipcRenderer.invoke('desktop:reset-permission-settings'),
+  voiceModels: {call: (method, params) => ipcRenderer.invoke('desktop:voice-models', method, params)},
   phantombot: {
     call: (method: string, params?: Record<string, unknown>) => ipcRenderer.invoke('desktop:phantombot:call', method, params),
     onEvent: (listener: (message: PhantombotEvent) => void) => {
