@@ -119,6 +119,34 @@ export function shouldStartHidden(opts: {
 }
 
 /**
+ * Whether a login entry can be written at all.
+ *
+ * The entry points at `process.execPath`. In an unpackaged run that is
+ * `node_modules`' Electron binary, not this app, so a contributor machine
+ * would launch bare Electron at every login: no login entry outside a
+ * package. A snap could not write the autostart folder either, and the entry
+ * would point into a confined path.
+ */
+export function autostartCapability(opts: {packaged: boolean; sandboxed: boolean}): {
+  autostart: boolean;
+  reason: string | null;
+} {
+  if(!opts.packaged) return {autostart: false, reason: 'an unpackaged run has no login entry to write'};
+  if(opts.sandboxed) return {autostart: false, reason: 'sandboxed packages cannot write the autostart folder'};
+  return {autostart: true, reason: null};
+}
+
+/**
+ * A hidden start is only safe while a tray exists to bring the window back.
+ * The tray is built after the window, so the start-hidden decision is taken
+ * twice: once from the probe, then again against the tray that was actually
+ * built. Losing it must reveal the window, never strand an invisible app.
+ */
+export function keepsHiddenStart(startHidden: boolean, capability: PresenceCapability): boolean {
+  return startHidden && capability.tray;
+}
+
+/**
  * The path a login entry must point at. An AppImage runs from a temporary
  * mount but the .AppImage file itself is stable, so prefer $APPIMAGE there;
  * a deb/rpm install runs from its own execPath anyway.

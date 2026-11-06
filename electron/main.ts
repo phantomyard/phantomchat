@@ -18,9 +18,11 @@ import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
 import {
   type PresenceCapability,
   type PresenceSettings,
+  autostartCapability,
   autostartPath,
   autostartTargetPath,
   effectivePresence,
+  keepsHiddenStart,
   normalizePresenceSettings,
   presenceSettingsPath,
   probeStatusNotifier,
@@ -225,6 +227,8 @@ let tray: Tray | null = null;
 let quitting = false;
 /** Decided once at boot: a login launch stays in the tray. */
 let startHidden = false;
+/** True once the window has emitted ready-to-show, so a late reveal is safe. */
+let windowReady = false;
 
 function presenceState() {
   return {
@@ -240,22 +244,19 @@ function presenceState() {
  * StatusNotifierItem and nothing else (a bare GNOME session has no watcher).
  */
 function detectPresenceCapability(): PresenceCapability {
+  const login = autostartCapability({packaged: app.isPackaged, sandboxed: !!process.env.SNAP});
   if(process.platform !== 'linux') {
-    return {tray: true, autostart: true, trayReason: null, autostartReason: null};
+    return {tray: true, autostart: login.autostart, trayReason: null, autostartReason: login.reason};
   }
   const probe = probeStatusNotifier((command, args) => {
     const result = spawnSync(command, args, {encoding: 'utf8', timeout: 1500});
     return {status: result.status, missing: (result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'};
   });
-  // The autostart folder is writable for every package we ship (rpm, deb,
-  // AppImage). A snap could not write it — we don't ship one, so this is a
-  // guard against a future packaging mistake, not a supported case.
-  const sandboxed = !!process.env.SNAP;
   return {
     tray: probe.present,
-    autostart: !sandboxed,
+    autostart: login.autostart,
     trayReason: probe.present ? null : probe.detail,
-    autostartReason: sandboxed ? 'sandboxed packages cannot write the autostart folder' : null
+    autostartReason: login.reason
   };
 }
 
@@ -287,6 +288,20 @@ function showMainWindow(): void {
   mainWindow.focus();
 }
 
+/**
+ * Drop the tray capability. A hidden start was decided from the probe, before
+ * the tray existed; if the tray cannot be built now, the window is the only
+ * way back, so it must be revealed (or, if it has not painted yet, shown by
+ * its ready-to-show handler).
+ */
+function dropTray(reason: string): void {
+  presenceCapability = {...presenceCapability, tray: false, trayReason: reason};
+  startHidden = keepsHiddenStart(startHidden, presenceCapability);
+  if(startHidden) return;
+  console.log('[presence] no tray:', reason);
+  if(windowReady && mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+}
+
 /** Build the tray once, if this desktop has one. */
 function ensureTray(): void {
   if(tray || !presenceCapability.tray) return;
@@ -297,7 +312,7 @@ function ensureTray(): void {
   if(!iconPath) {
     // No icon means the close button would hide the window with nothing to
     // click: drop the capability so closing keeps the old behaviour.
-    presenceCapability = {...presenceCapability, tray: false, trayReason: 'tray icon not found'};
+    dropTray('tray icon not found');
     return;
   }
   tray = createTray(iconPath, process.platform, {
@@ -307,7 +322,7 @@ function ensureTray(): void {
       app.quit();
     }
   }) ?? null;
-  if(!tray) presenceCapability = {...presenceCapability, tray: false, trayReason: 'tray icon could not be loaded'};
+  if(!tray) dropTray('tray icon could not be loaded');
 }
 
 ipcMain.handle('desktop:get-presence', () => presenceState());
@@ -682,6 +697,7 @@ function createWindow(): void {
   });
 
   mainWindow.once('ready-to-show', () => {
+    windowReady = true;
     if(startHidden) return;
     if(mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
   });

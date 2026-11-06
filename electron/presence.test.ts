@@ -14,11 +14,13 @@ import {
   AUTOSTART_FILE,
   DEFAULT_PRESENCE,
   STATUS_NOTIFIER_NAME,
+  autostartCapability,
   autostartEntry,
   autostartExec,
   autostartPath,
   autostartTargetPath,
   effectivePresence,
+  keepsHiddenStart,
   normalizePresenceSettings,
   presenceSettingsPath,
   probeStatusNotifier,
@@ -120,6 +122,43 @@ describe('shouldStartHidden', () => {
     expect(shouldStartHidden({argv: ['/Applications/PhantomChat'], platform: 'darwin', openedAtLogin: false, capability: both})).toBe(false);
     // wasOpenedAtLogin is meaningless elsewhere, and must not leak in.
     expect(shouldStartHidden({argv: ['phantomchat'], platform: 'win32', openedAtLogin: true, capability: both})).toBe(false);
+  });
+});
+
+describe('autostartCapability', () => {
+  it('writes no login entry outside a package', () => {
+    // Unpackaged execPath is node_modules' Electron: an entry would launch
+    // bare Electron at every login on a contributor's machine.
+    expect(autostartCapability({packaged: false, sandboxed: false})).toEqual({
+      autostart: false,
+      reason: 'an unpackaged run has no login entry to write'
+    });
+    expect(autostartCapability({packaged: false, sandboxed: true}).autostart).toBe(false);
+  });
+
+  it('allows the packages we ship, logged in', () => {
+    expect(autostartCapability({packaged: true, sandboxed: false})).toEqual({autostart: true, reason: null});
+  });
+
+  it('refuses a sandboxed package, which could not write the folder', () => {
+    expect(autostartCapability({packaged: true, sandboxed: true})).toEqual({
+      autostart: false,
+      reason: 'sandboxed packages cannot write the autostart folder'
+    });
+  });
+});
+
+describe('keepsHiddenStart', () => {
+  it('keeps a hidden start only while the tray exists', () => {
+    expect(keepsHiddenStart(true, both)).toBe(true);
+    expect(keepsHiddenStart(false, both)).toBe(false);
+  });
+
+  it('reveals the window when the tray that was probed could not be built', () => {
+    // The decision is taken from the probe, before the tray exists; a tray
+    // that fails to build must not strand an invisible app.
+    expect(keepsHiddenStart(true, {...both, tray: false, trayReason: 'tray icon not found'})).toBe(false);
+    expect(keepsHiddenStart(true, none)).toBe(false);
   });
 });
 
