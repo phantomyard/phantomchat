@@ -1,5 +1,7 @@
 import {requestRemoteVoiceModels} from './voice-models-remote';
 import {getDesktopVoiceModels} from './desktop-api';
+import type {ListPicker} from '@components/listPicker';
+import {createModelChooser, formColumn, labelledPicker, noteLine, saveButton, textField, toggleRow} from '@components/sidebarLeft/tabs/phantomchatModelKit';
 export type VoiceModality = 'tts' | 'stt';
 export type VoiceModelsCall = (method: string, params?: unknown) => Promise<{ok: boolean; value?: any; error?: {message: string}}>;
 export async function voiceValue(call: VoiceModelsCall, method: string, params?: unknown) {
@@ -8,87 +10,139 @@ export async function voiceValue(call: VoiceModelsCall, method: string, params?:
   return r.value;
 }
 
-function field(parent: HTMLElement, title: string, type = 'text') {
-  const label = document.createElement('label');
-  label.textContent = title;
-  label.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin:16px 0';
-  const input = document.createElement('input');
-  input.type = type;
-  input.className = 'input-field-input';
-  label.append(input); parent.append(label);
-  return input;
-}
-function select(parent: HTMLElement, title: string) {
-  const label = document.createElement('label');
-  label.textContent = title;
-  label.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin:16px 0';
-  const input = document.createElement('select');
-  input.className = 'input-field-input';
-  input.style.cssText = 'width:100%;min-width:0;color:inherit;background:var(--surface-color);padding:12px';
-  label.append(input); parent.append(label);
-  return input;
-}
-function options(input: HTMLSelectElement, ids: string[], current = '') {
-  input.replaceChildren(...ids.map(id => new Option(id, id)));
-  input.value = ids.includes(current) ? current : ids[0] || '';
+const sameUrl = (a = '', b = '') => a.trim().replace(/\/+$/, '') === b.trim().replace(/\/+$/, '');
+
+export interface VoiceDirectionForm {
+  section: HTMLElement;
+  /** The direction's settings for save(); `{enabled: false}` when off. */
+  value(): Record<string, unknown>;
+  dispose(): void;
 }
 
-/** The request generation owns catalogue AND status writes, including failures. */
-export function createVoiceDirectionForm(parent: HTMLElement, modality: VoiceModality, saved: any, providers: any[], call: VoiceModelsCall) {
-  const section = document.createElement('fieldset');
-  section.style.cssText = 'min-width:0;border:0;padding:16px';
-  const legend = document.createElement('legend'); legend.textContent = modality === 'tts' ? 'Text-to-speech (TTS)' : 'Speech-to-text (STT)';
-  section.append(legend); parent.append(section);
-  const enabled = field(section, 'Enabled', 'checkbox'); enabled.checked = saved.enabled;
-  const controls = document.createElement('div'); section.append(controls);
-  const provider = select(controls, 'Provider');
+/**
+ * One direction (TTS or STT), built from the Specialized Models kit like the
+ * Decision Model form: Enabled Row, Provider, Base URL, API key + note, Model
+ * (typed id when the provider has no catalogue), Voice (TTS), status. Models
+ * load when the key or base URL field is left, not from a button. The request
+ * generation owns catalogue AND status writes, including failures.
+ */
+export function createVoiceDirectionForm(modality: VoiceModality, saved: any, providers: any[], call: VoiceModelsCall): VoiceDirectionForm {
+  const id = `voice-${modality}`;
+  const section = formColumn(`${id}-form`);
+  const {container: enabledRow, field: enabled} = toggleRow(`${id}-enabled`, 'Enabled',
+    modality === 'tts' ? 'Your assistants can answer with a voice note' : 'Your assistants can read your voice notes');
+  enabled.setValueSilently(!!saved.enabled);
+
   const available = providers.filter(p => p.modalities.includes(modality));
-  provider.replaceChildren(...available.map(p => new Option(p.label, p.id))); provider.value = saved.provider;
-  const endpoint = field(controls, 'Base URL (including /v1)'); endpoint.value = saved.baseUrl;
-  const key = field(controls, 'API key (leave blank to keep saved key)', 'password'); key.autocomplete = 'off'; key.placeholder = saved.hasKey ? 'Key saved' : '';
-  const load = document.createElement('button'); load.type = 'button'; load.className = 'btn-primary'; load.textContent = 'Load models'; controls.append(load);
-  const model = select(controls, 'Model'); options(model, (saved.models || []).map((m: {id: string}) => m.id), saved.model);
-  if(saved.model && !model.value) options(model, [saved.model], saved.model);
-  const typed = field(controls, 'Model ID (when the provider has no catalogue)'); typed.value = saved.model;
-  typed.parentElement.hidden = saved.models?.length > 0;
-  const voice = modality === 'tts' ? select(controls, 'Voice') : undefined;
-  if(voice) options(voice, saved.voices || [], saved.voice);
-  const status = document.createElement('p'); status.setAttribute('role', 'status'); section.append(status);
+  const {container: providerBox, picker: provider} = labelledPicker({
+    testId: `${id}-provider`, label: 'Provider', placeholder: 'Choose a provider', onChange: () => onProviderChanged()
+  });
+  provider.setOptions(available.map(p => ({value: p.id, label: p.label})),
+    available.some(p => p.id === saved.provider) ? saved.provider : available[0]?.id);
+
+  const {container: urlBox, input: endpoint} = textField(`${id}-base-url`, 'Base URL (including /v1)', {placeholder: 'https://api.openai.com/v1'});
+  endpoint.value = saved.baseUrl || '';
+  const {container: keyBox, input: key} = textField(`${id}-key`, 'API key', {secret: true, maxLength: 65536});
+  const keyNote = noteLine(`${id}-key-note`);
+
+  const model = createModelChooser({
+    testId: `${id}-model`, placeholder: 'Enter your key to load models', allowTyped: true,
+    onChange: () => onModelChanged(), onTyped: () => onModelChanged()
+  });
+  const voiceBox = modality === 'tts' ? labelledPicker({testId: `${id}-voice`, label: 'Voice', placeholder: 'Choose a model first'}) : undefined;
+  const voice = voiceBox?.picker;
+  const status = noteLine(`${id}-status`, true);
+  section.append(enabledRow, providerBox, urlBox, keyBox, keyNote, model.container, ...(voiceBox ? [voiceBox.container] : []), status);
+
   let generation = 0;
   let disposed = false;
-  const value = () => ({enabled: enabled.checked, provider: provider.value, baseUrl: endpoint.value.trim(), apiKey: key.value,
-    model: model.value || typed.value.trim(), voice: voice?.value || ''});
-  const updateEnabled = () => {
-    controls.hidden = !enabled.checked;
-    endpoint.parentElement.hidden = provider.value !== 'openai-compatible';
+  let checked: string | undefined;
+  const currentProvider = () => provider.getValue() || '';
+  const compatible = () => currentProvider() === 'openai-compatible';
+  const savedFits = () => currentProvider() === saved.provider && (!compatible() || sameUrl(saved.baseUrl, endpoint.value));
+  const storedKeyFits = () => !!saved.hasKey && savedFits();
+  const setVoices = (ids: string[], preferred?: string) => {
+    if(!voice) return;
+    voice.setOptions(ids.map(v => ({value: v, label: v})), ids.includes(preferred) ? preferred : ids[0]);
+    voice.setDisabled(!ids.length);
+    if(!ids.length) voice.setPlaceholder('Choose a model first');
   };
-  enabled.addEventListener('change', () => {generation++; updateEnabled();});
-  const invalidate = () => {generation++; options(model, []); typed.value = ''; if(voice) options(voice, []); status.textContent = '';};
-  provider.addEventListener('change', () => {key.value = ''; invalidate(); endpoint.value = provider.value === saved.provider ? saved.baseUrl : ''; updateEnabled();});
-  endpoint.addEventListener('input', () => {key.value = ''; invalidate();}); key.addEventListener('input', invalidate);
+  const showFields = () => {
+    urlBox.style.display = compatible() ? '' : 'none';
+    keyNote.textContent = storedKeyFits() ? 'Key saved. Leave empty to keep it.' : '';
+  };
+  const value = () => ({enabled: enabled.checked, provider: currentProvider(), baseUrl: compatible() ? endpoint.value.trim() : '',
+    apiKey: key.value, model: model.value(), voice: voice?.getValue() || ''});
+
+  function onProviderChanged() {
+    generation++;
+    checked = undefined;
+    key.value = '';
+    endpoint.value = currentProvider() === saved.provider ? saved.baseUrl || '' : '';
+    model.clear('Enter your key to load models');
+    setVoices([]);
+    status.textContent = '';
+    showFields();
+    if(storedKeyFits()) void discover(false);
+  }
+  function onModelChanged() {
+    if(!voice) return;
+    setVoices([]);
+    if(model.value()) void discover(true);
+  }
+
   async function discover(keepModel: boolean) {
+    const ask = `${currentProvider()}|${endpoint.value.trim()}|${key.value.trim()}`;
+    if(!keepModel && checked === ask) return;
+    if(!key.value.trim() && !storedKeyFits()) return;
+    if(compatible() && !endpoint.value.trim()) return;
     const request = ++generation;
-    status.textContent = 'Loading…';
+    status.textContent = keepModel ? 'Loading voices...' : 'Loading models...';
     try {
       const check = await voiceValue(call, 'check', {modality, settings: value()});
       if(disposed || request !== generation) return;
-      if(!check.ok) {status.textContent = check.error || 'Provider unavailable'; if(voice) options(voice, []); return;}
-      const current = model.value || typed.value;
-      if(!keepModel) options(model, check.models.map((m: {id: string}) => m.id), current);
-      typed.parentElement.hidden = check.models.length > 0;
-      if(model.value) typed.value = model.value;
-      if(voice) options(voice, check.voices, voice.value || saved.voice);
-      status.textContent = check.models.length ? '' : 'No catalogue returned. Enter a model ID, then load its voices.';
-      if(!keepModel && voice && !check.voices.length && model.value) void discover(true);
+      if(!check.ok) {
+        status.textContent = check.error || 'Provider unavailable';
+        setVoices([]);
+        return;
+      }
+      checked = ask;
+      if(!keepModel) {
+        const current = model.value() || (savedFits() ? saved.model : undefined);
+        model.setModels(check.models.map((m: {id: string}) => m.id), current);
+      }
+      setVoices(check.voices, voice?.getValue() || saved.voice);
+      status.textContent = check.models.length ? 'Key verified' : 'No model list from this provider: type a model ID';
+      if(!keepModel && voice && !check.voices.length && model.value()) void discover(true);
     } catch(err) {
       if(!disposed && request === generation) status.textContent = err instanceof Error ? err.message : 'Provider unavailable';
     }
   }
-  load.addEventListener('click', () => void discover(false));
-  model.addEventListener('change', () => {typed.value = model.value; if(voice) {options(voice, []); void discover(true);}});
-  typed.addEventListener('input', () => {generation++; if(voice) options(voice, []); status.textContent = '';});
-  updateEnabled();
-  return {value: () => enabled.checked ? value() : {enabled: false}, dispose: () => {disposed = true; generation++; key.value = '';}};
+
+  for(const input of [key, endpoint]) {
+    input.addEventListener('input', () => {checked = undefined;});
+    input.addEventListener('blur', () => void discover(false));
+  }
+  enabled.input.addEventListener('change', () => {generation++;});
+
+  // The saved choice shows without a network call; main cached its lists.
+  showFields();
+  const savedModels: string[] = (saved.models || []).map((m: {id: string}) => m.id);
+  if(saved.model || savedModels.length) model.setModels(savedModels, saved.model || undefined);
+  setVoices(saved.voices || [], saved.voice);
+
+  return {
+    section,
+    value: () => enabled.checked ? value() : {enabled: false},
+    dispose: () => {
+      disposed = true;
+      generation++;
+      key.value = '';
+      provider.destroy();
+      model.destroy();
+      voice?.destroy();
+    }
+  };
 }
 
 /** Shared by both Phantom and Provider editors. No keys enter contact prefs. */
@@ -99,29 +153,36 @@ export async function mountContactVoiceModels(parent: HTMLElement, pubkey: strin
   if(!state.persona && Object.values(state.settings).some((v: any) => v.enabled)) {
     try {remote = await requestRemoteVoiceModels(pubkey, 'get');} catch{/* Shown as unavailable below. */}
   }
-  const controls: Partial<Record<VoiceModality, HTMLSelectElement>> = {};
-  const box = document.createElement('div'); box.style.padding = '16px';
+  const pickers: Partial<Record<VoiceModality, ListPicker>> = {};
+  const disabled: VoiceModality[] = [];
+  const box = formColumn('contact-voice-models');
   for(const d of ['tts', 'stt'] as const) {
     const settings = state.settings[d];
     if(!settings.enabled) continue;
-    const input = select(box, `${d.toUpperCase()} Model`);
-    input.dataset.testid = `contact-${d}-model`;
-    input.append(new Option(`Use default (${settings.model})`, ''));
-    input.append(...settings.models.map((m: {id: string}) => new Option(m.id, m.id)));
-    input.value = state.overrides[d]?.model || '';
+    const {container, picker} = labelledPicker({testId: `contact-${d}-model`, label: `${d.toUpperCase()} model`, placeholder: 'Use default', limit: 20});
+    picker.setOptions([
+      {value: '', label: 'Use default', hint: settings.model},
+      ...settings.models.map((m: {id: string}) => ({value: m.id, label: m.id}))
+    ], state.overrides[d]?.model || '');
     const target = remote?.[d];
-    const remoteCompatible = target?.available && target.provider === settings.provider && target.baseUrl.replace(/\/+$/, '') === settings.baseUrl.replace(/\/+$/, '');
-    input.disabled = !state.persona && !remoteCompatible;
-    controls[d] = input;
+    const remoteCompatible = target?.available && target.provider === settings.provider && sameUrl(target.baseUrl, settings.baseUrl);
+    if(!state.persona && !remoteCompatible) {
+      picker.setDisabled(true);
+      disabled.push(d);
+    }
+    pickers[d] = picker;
+    box.append(container);
   }
-  if(!Object.keys(controls).length) return;
-  const status = document.createElement('p'); status.setAttribute('role', 'status'); box.append(status);
-  if(!state.persona && Object.values(controls).some(input => input.disabled)) status.textContent = 'Remote voice configuration unavailable. Its engine must support Voice Models and have the Settings provider endpoint/key configured in its TUI.';
-  const save = document.createElement('button'); save.type = 'button'; save.className = 'btn-primary'; save.textContent = 'Save voice models'; save.disabled = Object.values(controls).some(input => input.disabled); box.append(save);
+  if(!Object.keys(pickers).length) return;
+  const status = noteLine('contact-voice-status', true);
+  if(disabled.length) status.textContent = 'Remote voice configuration unavailable. Its engine must support Voice Models and have the Settings provider endpoint/key configured in its TUI.';
+  const save = saveButton('contact-voice-save', 'Save voice models');
+  save.disabled = disabled.length > 0;
+  box.append(status, save);
   save.addEventListener('click', async() => {
     save.disabled = true;
     try {
-      const models = Object.fromEntries(Object.entries(controls).map(([d, input]) => [d, input.value]));
+      const models = Object.fromEntries(Object.entries(pickers).map(([d, picker]) => [d, picker.getValue() || '']));
       if(state.persona) await voiceValue(call, 'setContact', {pubkey, models});
       else {
         const plan = await voiceValue(call, 'remotePlan', {pubkey, models});
@@ -130,7 +191,7 @@ export async function mountContactVoiceModels(parent: HTMLElement, pubkey: strin
       }
       status.textContent = 'Voice models saved';
     } catch(err) {status.textContent = err instanceof Error ? err.message : 'Could not save voice models';}
-    finally {save.disabled = Object.values(controls).some(input => input.disabled);}
+    finally {save.disabled = disabled.length > 0;}
   });
   parent.append(box);
 }

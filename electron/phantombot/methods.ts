@@ -6,8 +6,8 @@
  *
  * No method returns a secret: `secrets.set` writes into the persona's
  * encrypted vault, and the vault is never read back over the bridge.
- * `providers.check` and `decisionModels.check` take a key and answer with a
- * verdict and model ids only.
+ * `providers.check`, `decisionModels.check` and `embeddings.check` take a key
+ * and answer with a verdict and model ids (and `dims`) only.
  *
  * `tools.run` runs one of Pi's built-in tools on this PC, for the Local tools
  * protocol (docs/LOCAL-TOOLS.md). The page decides who may call it; the bridge
@@ -25,12 +25,14 @@ export const PHANTOMBOT_METHODS = [
   'voiceModels.providers',
   'voiceModels.check',
   'decisionModels.check',
+  'embeddings.check',
   'persona.configure',
   'persona.secrets.set',
   'persona.secrets.has',
   'persona.secrets.delete',
   'persona.memory.search',
   'persona.memory.capture',
+  'persona.memory.refresh',
   'persona.turn',
   'persona.askJson',
   'persona.decide',

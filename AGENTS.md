@@ -182,6 +182,51 @@ hot paths that **violate** it. Don't reintroduce the violations below.
    replayed already-read message must not re-bump unread; an own-message echo
    must never dispatch `unreadCount: 1`.
 
+## Settings screens: one design (MUST)
+
+Decision Model and Voice Models were built by two agents, one each, and they came
+out looking like two different apps. Every settings screen, and every model setting
+in particular, follows the rules below. Reviewers reject a diff that breaks them.
+
+1. **Build from the app's own components, never raw HTML controls.** Use
+   `SliderSuperTab` + `SettingSection` (with a caption that says what the screen
+   does, in plain words), `Row` for navigation and toggles (`CheckboxField
+   {toggle: true}`), `InputField` for text and keys, `createListPicker` for any
+   choice, and `Button('btn-primary btn-color-primary')` for the action. NEVER use
+   `<select>`, `<fieldset>`/`<legend>`, a bare `<input type=checkbox>` or inline
+   `className = 'btn-primary'` buttons. The pickers exist because native selects are
+   unusable on a phone.
+2. **Model settings use the kit** (`src/components/sidebarLeft/tabs/phantomchatModelKit.ts`),
+   always in this order: Enabled toggle Row, Provider, (Base URL), API key + key
+   note, Model (+ Voice), status line, Save. A new model setting goes under
+   **Settings > Specialized Models** as one more row, not as a new top-level row.
+3. **No "Load models" button.** Models load when the key or base URL field is
+   left (blur), when the provider changes and a stored key fits, and on open when
+   a key is stored. The saved choice shows on open with no network call.
+4. **Keys are write-only.** A key field is a password field, cleared after save
+   and on close. It never shows the stored key. The note under it says
+   "Key saved. Leave empty to keep it." when one is stored, or why it cannot be
+   kept. Main owns keys (safeStorage), and the page learns only `hasKey`. A stored
+   key is reused only for the same provider and endpoint.
+5. **One status line per form**, `role="status"`, in short plain sentences:
+   "Checking key...", "Key verified", "Key rejected (HTTP 401)", then
+   `appliedLine()`: "On: applied to 2 personas; failed: aria (disk full)". Errors
+   go in the status line, not in alerts or toasts.
+6. **Stale answers never win.** Every async check carries a generation counter.
+   A provider switch, a new key or a save bumps it, and an older answer is dropped,
+   failures included.
+7. **No catalogue means a typed model id**, through the kit's model chooser
+   ("Other: type a model ID"). Never a dead empty picker.
+8. **Validate before saving.** Save checks a new key or model the way the TUI
+   does, and saves nothing on a rejection. It applies to every persona one by one,
+   names the ones that failed, and new personas inherit the setting.
+9. **Test ids follow `<screen>-<field>`** (e.g. `embeddings-key`), and pickers
+   derive theirs (`-value`, `-option-<v>`). Tests drive the form the way a user does:
+   blur, pick, Save.
+10. **Copy.** Sentence case and plain words ("assistants", "Key saved"). Name
+    things the way the TUI does. No jargon in captions, and no ellipsis characters:
+    use `...`.
+
 ## Review checklist (reject a diff that does any of these on a hot path)
 
 - An `await` of a worker/IDB/network call placed *before* a paint or input echo.

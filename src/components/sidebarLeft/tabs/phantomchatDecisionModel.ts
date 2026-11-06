@@ -1,11 +1,18 @@
 import {SliderSuperTab} from '@components/slider';
 import SettingSection from '@components/settingSection';
-import Row from '@components/row';
-import CheckboxField from '@components/checkboxField';
-import InputField from '@components/inputField';
-import Button from '@components/button';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
-import {createListPicker} from '@components/listPicker';
+import {
+  appliedLine,
+  createModelChooser,
+  el,
+  formColumn,
+  labelledPicker,
+  NOTE_CSS,
+  noteLine,
+  saveButton,
+  textField,
+  toggleRow
+} from '@components/sidebarLeft/tabs/phantomchatModelKit';
 import {
   getDesktopDecisionModel,
   type DecisionModelProvider,
@@ -30,15 +37,6 @@ const PROVIDERS: {value: DecisionModelProvider; label: string}[] = [
   {value: 'typesafe', label: 'TypeSafe'}
 ];
 
-const NOTE_CSS = 'font-size:.875rem;color:var(--secondary-text-color);min-height:16px;';
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cssText?: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if(cssText) node.style.cssText = cssText;
-  if(text) node.textContent = text;
-  return node;
-}
-
 export interface DecisionModelForm {
   section: HTMLElement;
   /** Resolves once the stored setting is shown (and its models, when a key is stored). */
@@ -51,48 +49,30 @@ export interface DecisionModelForm {
 
 /** The form, apart from the tab so tests drive it without the slider. */
 export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionModelForm {
-  const section = el('div', 'display:flex;flex-direction:column;gap:.75rem;padding:0 .5rem;');
-  section.setAttribute('data-testid', 'decision-model-form');
+  const section = formColumn('decision-model-form');
 
-  const enabled = new CheckboxField({toggle: true, checked: false});
-  enabled.input.setAttribute('data-testid', 'decision-model-enabled');
-  const enabledRow = new Row({
-    title: 'Enabled',
-    subtitle: 'Screen untrusted messages and route each turn',
-    checkboxField: enabled
-  });
+  const {container: enabledRow, field: enabled} = toggleRow(
+    'decision-model-enabled', 'Enabled', 'Screen untrusted messages and route each turn');
 
-  const providerPicker = createListPicker({
+  const {container: providerBox, picker: providerPicker} = labelledPicker({
     testId: 'decision-model-provider',
     label: 'Provider',
     placeholder: 'Choose a provider',
     onChange: () => onProviderChanged()
   });
 
-  const keyField = new InputField({labelText: 'API key', plainText: true, maxLength: 4096});
-  keyField.container.style.margin = '0';
-  const keyInput = keyField.input as HTMLInputElement;
-  keyInput.type = 'password';
-  keyInput.autocomplete = 'off';
-  keyInput.setAttribute('data-testid', 'decision-model-key');
-  const keyNote = el('div', NOTE_CSS);
-  keyNote.setAttribute('data-testid', 'decision-model-key-note');
+  const {container: keyBox, input: keyInput} = textField('decision-model-key', 'API key', {secret: true, maxLength: 4096});
+  const keyNote = noteLine('decision-model-key-note');
 
-  const modelPicker = createListPicker({
+  const models = createModelChooser({
     testId: 'decision-model-model',
-    label: 'Model',
-    placeholder: 'Enter your key to load models',
-    limit: 20
+    placeholder: 'Enter your key to load models'
   });
 
-  const status = el('div', NOTE_CSS);
-  status.setAttribute('data-testid', 'decision-model-status');
+  const status = noteLine('decision-model-status', true);
+  const saveBtn = saveButton('decision-model-save');
 
-  const saveBtn = Button('btn-primary btn-color-primary');
-  saveBtn.textContent = 'Save';
-  saveBtn.setAttribute('data-testid', 'decision-model-save');
-
-  section.append(enabledRow.container, providerPicker.trigger, keyField.container, keyNote, modelPicker.trigger, status, saveBtn);
+  section.append(enabledRow, providerBox, keyBox, keyNote, models.container, status, saveBtn);
 
   let state: DecisionModelState | null = null;
   let checkGeneration = 0;
@@ -110,28 +90,20 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
   /** A default only where it is that provider's own id; OpenRouter has none. */
   const defaultFor = (p: DecisionModelProvider) => p === 'typesafe' ? DEFAULT_DECISION_MODEL : undefined;
   /** The picked model, only while the picker holds this provider's list. */
-  const pickedModelFor = (p: DecisionModelProvider) => modelsProvider === p ? modelPicker.getValue() : undefined;
+  const pickedModelFor = (p: DecisionModelProvider) => modelsProvider === p ? models.value() || undefined : undefined;
 
   const clearModels = () => {
     modelsProvider = undefined;
-    modelPicker.setOptions([]);
-    modelPicker.setDisabled(true);
+    models.clear();
   };
 
   const setModels = (p: DecisionModelProvider, ids: string[], preferred?: string) => {
-    const list = [...ids];
-    if(preferred && !list.includes(preferred)) list.unshift(preferred);
-    if(!list.length) {
+    if(!ids.length && !preferred) {
       clearModels();
       return;
     }
     modelsProvider = p;
-    modelPicker.setOptions(list.map((id) => ({
-      value: id,
-      label: id,
-      ...(id === DEFAULT_DECISION_MODEL ? {hint: 'recommended'} : {})
-    })), preferred && list.includes(preferred) ? preferred : list[0]);
-    modelPicker.setDisabled(false);
+    models.setModels(ids, preferred, (id) => id === DEFAULT_DECISION_MODEL ? 'recommended' : undefined);
   };
 
   const showKeyNote = () => {
@@ -209,11 +181,7 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
       keyInput.value = '';
       checkedKey = undefined;
       showKeyNote();
-      const n = res.applied;
-      const done = `${enabled.checked ? 'On' : 'Off'}: applied to ${n} persona${n === 1 ? '' : 's'}`;
-      status.textContent = res.failed.length ?
-        `${done}; failed: ${res.failed.map((f) => `${f.persona} (${f.error})`).join(', ')}` :
-        done;
+      status.textContent = appliedLine(enabled.checked, res.applied, res.failed.map((f) => `${f.persona} (${f.error})`));
     } finally {
       busy = false;
       saveBtn.disabled = false;
@@ -223,7 +191,6 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
 
   const ready = (async() => {
     providerPicker.setOptions(PROVIDERS, 'openrouter');
-    modelPicker.setDisabled(true);
     state = await api.get();
     if(!state) return;
     enabled.setValueSilently(state.configured && state.enabled);
@@ -240,7 +207,7 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     loadModels,
     destroy: () => {
       providerPicker.destroy();
-      modelPicker.destroy();
+      models.destroy();
     }
   };
 }
@@ -250,11 +217,10 @@ export default class AppPhantomChatDecisionModelTab extends SliderSuperTab {
 
   public init() {
     this.container.classList.add('phantomchat-decision-model');
-    this.setTitle('Decision Model' as any);
+    this.setTitle('DecisionModel');
     const api = getDesktopDecisionModel();
-    const settingSection = new SettingSection({
-      caption: 'One decision model for every assistant in this app. It screens messages from anyone you have not allowed, and picks the main or coding model for each turn. Assistants you add later get it too.' as any
-    });
+    const settingSection = new SettingSection({caption: true});
+    settingSection.caption.textContent = 'One decision model for every assistant in this app. It screens messages from anyone you have not allowed, and picks the main or coding model for each turn. Assistants you add later get it too.';
     if(!api) {
       settingSection.content.append(el('div', NOTE_CSS, 'Not available in this version of the app.'));
       this.scrollable.append(settingSection.container);

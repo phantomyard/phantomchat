@@ -122,7 +122,7 @@ or its local PC tools needs no desktop build. Only a phantombot update does.
   vaults and memory, separate from any phantombot installed on the machine.
   Provider keys go into the vault (`persona.configure` or `persona.secrets.set`)
   and never come back over the bridge.
-- **Decision Model (issue #449).** Settings > Decision Model sets one decision
+- **Decision Model (issue #449).** Settings > Specialized Models > Decision Model sets one decision
   model (OpenRouter or TypeSafe, default `typesafe/jev-1.13`) for every engine
   persona. Main owns it (`electron/decisionModel.ts`): `<userData>/decision-model.json`
   holds `{enabled, provider, model, key}`, with the key encrypted by
@@ -560,9 +560,42 @@ The hardened runtime is required for notarization, and Electron needs the JIT,
 unsigned-executable-memory and library-validation exceptions in
 `electron/build/entitlements.mac.plist` to start under it.
 
+### Specialized Models
+
+Settings → Specialized Models holds the models an assistant uses besides its
+main one: Decision Model, Voice Models and Embeddings. Each row exists only
+when the desktop exposes that screen's API, and the menu only when one does
+(`hasDesktopSpecializedModels`). All three screens are built from one kit
+(`src/components/sidebarLeft/tabs/phantomchatModelKit.ts`) and follow the rules
+in AGENTS.md, "Settings screens: one design".
+
+### Embeddings
+
+Settings → Specialized Models → Embeddings sets one embeddings provider for every
+engine persona, so memory search is hybrid (keywords + meaning), like a CLI
+persona set up with `phantombot embedding`. Providers are Gemini
+(`gemini-embedding-001`) and OpenAI Compatible (a `/v1` base URL; the key is
+optional for llama-server or Ollama; models come from the endpoint's Models API,
+or are typed when it lists none).
+
+Main owns it (`electron/embeddings.ts`): `<userData>/embeddings.json` holds
+`{enabled, provider, baseUrl, model, dims, key}`, with the key encrypted by
+`safeStorage` under the Decision Model's rules. A stored key is reused only for
+the same provider and endpoint. On runs `embeddings.check` with the model (a
+live one-token embed; anything but `verified` saves nothing), stores the
+returned `dims`, then `persona.configure({embeddings})` on each persona in turn.
+Off sends `{provider: "none"}`, which keeps the provider blocks and key. New
+personas inherit it after `personas.create`.
+
+The engine runs no heartbeat, so main embeds the notes itself:
+`persona.memory.refresh` for every persona after a save, a minute after start,
+and every 30 minutes (incremental; a no-op while Embeddings is off). Needs an
+engine pin with `engine.embeddings` and `persona.memory.refresh`
+(phantombot #778); an older engine answers `not_supported`.
+
 ### Voice Models
 
-Settings → Voice Models appears on desktop builds exposing the voice-settings
+Settings → Specialized Models → Voice Models appears on desktop builds exposing the voice-settings
 preload API. TTS and STT have independent enablement, providers, masked key entry,
 models and (for TTS) model-scoped voices. Discovery uses the phantombot TUI's
 provider/model helpers through the host bridge. Endpoints without audio catalogue

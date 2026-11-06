@@ -234,6 +234,27 @@ describe('phantombot host dispatcher', () => {
       expect(engine.decisionModels.check).toHaveBeenCalledTimes(1);
     });
 
+    it('checks embeddings, passing only the given fields, and says when the engine is too old', async() => {
+      const {engine} = fakeEngine();
+      expect(await send(engine, {id: 1, method: 'embeddings.check', params: {}})).toMatchObject([{id: 1, error: {code: 'not_supported'}}]);
+      engine.embeddings = {check: vi.fn(async() => ({status: 'unchecked', detail: 'choose a model', models: ['bge-m3']}))};
+      expect(await send(engine, {id: 2, method: 'embeddings.check', params: {provider: 'openai-compatible', baseUrl: 'http://x/v1'}})).toEqual([
+        {id: 2, result: {status: 'unchecked', detail: 'choose a model', models: ['bge-m3']}}
+      ]);
+      expect(engine.embeddings.check).toHaveBeenLastCalledWith({provider: 'openai-compatible', baseUrl: 'http://x/v1'});
+      const badKey = await send(engine, {id: 3, method: 'embeddings.check', params: {provider: 'gemini', apiKey: 7}});
+      expect(badKey[0]).toMatchObject({id: 3, error: {code: 'invalid_argument'}});
+    });
+
+    it('refreshes a persona\'s memory index, or says the engine is too old', async() => {
+      const {engine, persona} = fakeEngine();
+      expect((await send(engine, {id: 1, method: 'persona.memory.refresh', params: {persona: 'p'}}))[0]).toMatchObject({error: {code: 'not_supported'}});
+      (persona.memory as any).refresh = vi.fn(async() => ({indexed: 1, removed: 0, embedded: 2, embedFailed: 0}));
+      expect(await send(engine, {id: 2, method: 'persona.memory.refresh', params: {persona: 'p'}})).toEqual([
+        {id: 2, result: {indexed: 1, removed: 0, embedded: 2, embedFailed: 0}}
+      ]);
+    });
+
     it('refuses an allowlist entry that is not an npub', async() => {
       const {engine, persona} = fakeEngine();
       const out = await send(engine, {id: 1, method: 'persona.phantomchat.allow', params: {persona: 'p', npub: 'nsec1abc'}});

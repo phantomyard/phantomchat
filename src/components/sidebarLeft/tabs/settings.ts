@@ -13,8 +13,7 @@ import AppPhantomChatRelaySettingsTab from '@components/sidebarLeft/tabs/phantom
 import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
 // Separate statement on purpose: scripts/channels/build.mjs strips the line above
 // by exact anchor for the channel UI; this one must survive in the preview tree.
-import {getDesktopDecisionModel} from '@lib/phantomchat/desktop-api';
-import {getDesktopVoiceModels} from '@lib/phantomchat/desktop-api';
+import {hasDesktopSpecializedModels} from '@lib/phantomchat/desktop-api';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import showLogOutPopup from '@components/popups/logOut';
 import showResetLocalDataPopup from '@components/popups/resetLocalData';
@@ -193,19 +192,6 @@ export default class AppSettingsTab extends SliderSuperTab {
       notificationsRow.container
     );
 
-    if(getDesktopVoiceModels()) {
-      const voiceRow = new Row({
-        title: 'VoiceModels',
-        icon: 'microphone',
-        clickable: async() => {
-          const {default: Tab} = await import('@components/sidebarLeft/tabs/phantomchatVoiceModels');
-          this.slider.createTab(Tab).open();
-        },
-        listenerSetter: this.listenerSetter
-      });
-      buttonsDiv.append(voiceRow.container);
-    }
-
     // Desktop only (issue #164): the release-ring picker and update status.
     // The PWA has no installer to replace — updates there are the browser's
     // and the service worker's job — so the row simply does not exist on web.
@@ -224,22 +210,22 @@ export default class AppSettingsTab extends SliderSuperTab {
       buttonsDiv.append(updatesRow.container);
     }
 
-    // Desktop only (issue #449): the bundled engine's decision model, for
-    // every persona. Hidden in the PWA and on installs packaged before it.
-    if(getDesktopDecisionModel()) {
-      const decisionModelRow = new Row({
-        title: 'Decision Model',
+    // Desktop only: Decision Model, Voice Models and Embeddings under one
+    // menu, each built from the same kit (AGENTS.md, "Settings screens: one
+    // design"). Hidden in the PWA and on installs packaged before them.
+    if(hasDesktopSpecializedModels()) {
+      const specializedRow = new Row({
+        title: 'Specialized Models',
         icon: 'bots',
         clickable: async() => {
-          const {default: AppPhantomChatDecisionModelTab} =
-            await import('@components/sidebarLeft/tabs/phantomchatDecisionModel');
-          const tab = this.slider.createTab(AppPhantomChatDecisionModelTab);
-          tab.open();
+          const {default: AppPhantomChatSpecializedModelsTab} =
+            await import('@components/sidebarLeft/tabs/phantomchatSpecializedModels');
+          this.slider.createTab(AppPhantomChatSpecializedModelsTab).open();
         },
         listenerSetter: this.listenerSetter
       });
-      decisionModelRow.container.setAttribute('data-testid', 'settings-decision-model');
-      buttonsDiv.append(decisionModelRow.container);
+      specializedRow.container.setAttribute('data-testid', 'settings-specialized-models');
+      buttonsDiv.append(specializedRow.container);
     }
 
     const buttonsSection = new SettingSection();

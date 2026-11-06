@@ -9,6 +9,7 @@ import {contextBridge, ipcRenderer} from 'electron';
 import type {UpdateState} from './updater';
 import type {PermissionSettings, PermissionSetting} from './permissions';
 import type {DecisionModelCheck, DecisionModelSaveResult, DecisionModelState} from './decisionModel';
+import type {EmbeddingsCheck, EmbeddingsSaveResult, EmbeddingsState} from './embeddings';
 
 export type {UpdateState, PermissionSettings, PermissionSetting};
 
@@ -99,7 +100,16 @@ export interface PhantomChatDesktopApi {
     check(provider: string, apiKey: string): Promise<{ok: true; value: DecisionModelCheck} | {ok: false; error: string}>;
     save(input: {enabled: boolean; provider: string; model: string; apiKey?: string}): Promise<DecisionModelSaveResult>;
   };
+  /** Embeddings for every engine persona (Specialized Models). Same key rules. */
+  embeddings: {
+    get(): Promise<EmbeddingsState | null>;
+    check(input: EmbeddingsCheckInput): Promise<{ok: true; value: EmbeddingsCheck} | {ok: false; error: string}>;
+    save(input: EmbeddingsSaveInput): Promise<EmbeddingsSaveResult>;
+  };
 }
+
+export interface EmbeddingsCheckInput {provider: string; baseUrl?: string; apiKey?: string; model?: string}
+export interface EmbeddingsSaveInput extends EmbeddingsCheckInput {enabled: boolean}
 
 export type PhantombotEvent = {turnId: string; event: unknown} | {persona: string; phantomchat: unknown};
 
@@ -139,6 +149,11 @@ const api: PhantomChatDesktopApi = {
     get: () => ipcRenderer.invoke('desktop:decision-model:get'),
     check: (provider: string, apiKey: string) => ipcRenderer.invoke('desktop:decision-model:check', provider, apiKey),
     save: (input) => ipcRenderer.invoke('desktop:decision-model:save', input)
+  },
+  embeddings: {
+    get: () => ipcRenderer.invoke('desktop:embeddings:get'),
+    check: (input) => ipcRenderer.invoke('desktop:embeddings:check', input),
+    save: (input) => ipcRenderer.invoke('desktop:embeddings:save', input)
   },
   localTools: {
     setOwner: (ownerPubkey: string) => ipcRenderer.invoke('desktop:local-tools:set-owner', ownerPubkey),

@@ -45,6 +45,8 @@ export interface PersonaLike {
   memory: {
     search(query: string, options?: unknown): Promise<unknown>;
     capture(text: string, options?: unknown): Promise<void>;
+    /** Engines from before Specialized Models lack it. */
+    refresh?(): Promise<unknown>;
   };
   turn(options: unknown): TurnStreamLike;
   askJson(options: unknown): Promise<unknown>;
@@ -95,6 +97,8 @@ export interface EngineLike {
   decisionModels: {
     check(provider: string, apiKey: string): Promise<unknown>;
   };
+  /** Engines from before Specialized Models lack it. */
+  embeddings?: {check(input: unknown): Promise<unknown>};
   persona(name: string): PersonaLike;
 }
 
@@ -341,6 +345,19 @@ export function createDispatcher(
         if(typeof apiKey !== 'string' || apiKey.length > 64 * 1024) throw invalid('apiKey must be a string');
         return engine.decisionModels.check(provider, apiKey);
       }
+      case 'embeddings.check': {
+        if(!engine.embeddings) throw new BridgeError('not_supported', 'Update the engine for Embeddings');
+        const provider = str(p, 'provider', 64);
+        const apiKey = optStr(p, 'apiKey');
+        const baseUrl = optStr(p, 'baseUrl');
+        const model = optStr(p, 'model');
+        return engine.embeddings.check({
+          provider,
+          ...(apiKey === undefined ? {} : {apiKey}),
+          ...(baseUrl === undefined ? {} : {baseUrl}),
+          ...(model === undefined ? {} : {model})
+        });
+      }
       case 'persona.configure': {
         const config = optRecord(p, 'config');
         if(!config) throw invalid('config must be an object');
@@ -360,6 +377,11 @@ export function createDispatcher(
       case 'persona.memory.capture':
         await engine.persona(personaName(p)).memory.capture(str(p, 'text'), optRecord(p, 'options'));
         return null;
+      case 'persona.memory.refresh': {
+        const memory = engine.persona(personaName(p)).memory;
+        if(!memory.refresh) throw new BridgeError('not_supported', 'Update the engine for Embeddings');
+        return memory.refresh();
+      }
       case 'persona.turn': {
         const id = turnId(p);
         if(turns.has(id)) throw invalid(`turn ${id} is already running`);

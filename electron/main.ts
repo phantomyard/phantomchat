@@ -25,6 +25,7 @@ import {runPhantombotProbe} from './phantombot/probe';
 import {allowOnLocalPersona, findPhantombot, listLocalPersonas, phantombotCandidates} from './localPersonas/scan';
 import {LocalToolsHost, type ToolResult} from './localTools/host';
 import {DecisionModelSettings, inheritOnCreate, type KeyCipher} from './decisionModel';
+import {EmbeddingsSettings} from './embeddings';
 import {
   resolvePermissionRequest,
   isPermissionCheckAllowed,
@@ -245,6 +246,7 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
   // Every new persona inherits the Decision Model setting (issue #449), here
   // in main so the key never reaches the page.
   await inheritOnCreate(ensureDecisionModel(), request.method, request.params, result);
+  await inheritOnCreate(ensureEmbeddings(), request.method, request.params, result);
   if(result.ok && request.method === 'personas.create') {
     // Constructing the voice store is not a voice failure of this persona: a
     // broken store must not roll persona creation back. applyNewPersona only
@@ -307,6 +309,39 @@ ipcMain.handle('desktop:decision-model:check', async(event, provider: unknown, a
 ipcMain.handle('desktop:decision-model:save', async(event, input: unknown) => {
   if(!fromApp(event)) return {ok: false, error: 'not available to this page', state: null};
   return ensureDecisionModel().save(input);
+});
+
+// Embeddings (Settings > Specialized Models): one provider for every engine
+// persona, key kept like the Decision Model's. The engine runs no heartbeat,
+// so main embeds changed notes on a timer (a no-op while Embeddings is off).
+let embeddings: EmbeddingsSettings | undefined;
+function ensureEmbeddings(): EmbeddingsSettings {
+  embeddings ??= new EmbeddingsSettings({
+    file: join(app.getPath('userData'), 'embeddings.json'),
+    call: (method, params) => ensurePhantombot().call(method as PhantombotMethod, params),
+    cipher: decisionModelCipher,
+    log: (line) => console.log('[embeddings]', line)
+  });
+  return embeddings;
+}
+const EMBEDDINGS_REFRESH_MS = 30 * 60_000;
+app.whenReady().then(() => {
+  const refresh = () => void ensureEmbeddings().refreshAll().catch((err) => console.log('[embeddings] refresh failed', err));
+  setTimeout(refresh, 60_000).unref?.();
+  setInterval(refresh, EMBEDDINGS_REFRESH_MS).unref?.();
+});
+ipcMain.handle('desktop:embeddings:get', (event) => fromApp(event) ? ensureEmbeddings().state() : null);
+ipcMain.handle('desktop:embeddings:check', async(event, input: unknown) => {
+  if(!fromApp(event)) return {ok: false, error: 'not available to this page'};
+  try {
+    return {ok: true, value: await ensureEmbeddings().check(input)};
+  } catch(err) {
+    return decisionModelFailure(err);
+  }
+});
+ipcMain.handle('desktop:embeddings:save', async(event, input: unknown) => {
+  if(!fromApp(event)) return {ok: false, error: 'not available to this page', state: null};
+  return ensureEmbeddings().save(input);
 });
 
 let voiceModels: VoiceModels | undefined;
