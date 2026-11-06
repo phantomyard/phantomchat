@@ -2,7 +2,7 @@
 /**
  * E2E: the UI theme selector (#317), through the real Appearance menu entry.
  *
- *  - Boring Corporate is the default, with nothing stored.
+ *  - Graphite Corporate is the default, with nothing stored.
  *  - Graphite is the corporate costume plus a palette variant; Boring Corporate is unchanged by it.
  *  - Picking a theme persists per device and reloads into it. Fun and Relaxed has no attribute.
  *  - The costume beats ThemeController's inline colours, on <html> and in Day and Night.
@@ -89,7 +89,8 @@ async function main() {
 
   try {
     await createIdentity(page);
-    assert.equal(await attribute(page), 'boring-corporate', 'Boring Corporate is the default');
+    assert.equal(await attribute(page), 'boring-corporate', 'the default wears the corporate costume');
+    assert.equal(await variant(page), 'graphite', 'Graphite Corporate is the default');
     assert.equal(await stored(page), null, 'nothing is written until the user picks a theme');
 
     await pick(page, 'Fun and Relaxed');
@@ -149,6 +150,7 @@ async function main() {
     await page.evaluate((key) => localStorage.setItem(key, 'neon-disco'), KEY);
     await page.reload({waitUntil: 'load'});
     assert.equal(await attribute(page), 'boring-corporate', 'an unknown value falls back to the default');
+    assert.equal(await variant(page), 'graphite', 'the fallback default is Graphite Corporate');
 
     assert.deepEqual(errors, [], 'no page errors');
     console.log('PASS UI theme selector round trip');

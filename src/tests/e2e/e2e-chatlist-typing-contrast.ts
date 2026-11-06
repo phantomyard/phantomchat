@@ -210,10 +210,10 @@ async function main() {
     }, rowSelector);
 
     const themes = [
-      // Boring Corporate is the default theme, so this is the shape Andrew sees.
+      // Boring Corporate: the corporate costume on its original palette.
       {name: 'boring-corporate day', uiTheme: 'boring-corporate', night: false},
       {name: 'boring-corporate night', uiTheme: 'boring-corporate', night: true},
-      // Graphite is the corporate costume plus a palette variant with tinted rows.
+      // Graphite Corporate is the default theme: the corporate costume plus a palette variant with tinted rows.
       {name: 'graphite day', uiTheme: 'boring-corporate', uiVariant: 'graphite', night: false},
       {name: 'graphite night', uiTheme: 'boring-corporate', uiVariant: 'graphite', night: true},
       // Fun and Relaxed has no attribute; its active row is the dark accent one
