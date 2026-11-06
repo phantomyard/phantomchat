@@ -14,7 +14,7 @@
  *
  * What is pinned here: on the active row, the typing line's computed colour
  * keeps a readable contrast against the row's own computed background, under
- * boring-corporate (light + night) AND Fun and Relaxed.
+ * boring-corporate (light + night), Graphite (light + night) AND Fun and Relaxed.
  *
  * Start Vite separately, then run:
  * FUZZ_APP_URL=http://127.0.0.1:8080 pnpm exec tsx src/tests/e2e/e2e-chatlist-typing-contrast.ts
@@ -186,11 +186,13 @@ async function main() {
     };
 
     /** Applies a theme on <html> exactly the way the boot script and the day/night toggle do. */
-    const applyTheme = async({uiTheme, night}) => A.page.evaluate(({uiTheme, night}) => {
+    const applyTheme = async({uiTheme, uiVariant = null, night}) => A.page.evaluate(({uiTheme, uiVariant, night}) => {
       if(uiTheme) document.documentElement.setAttribute('data-ui-theme', uiTheme);
       else document.documentElement.removeAttribute('data-ui-theme');
+      if(uiVariant) document.documentElement.setAttribute('data-ui-variant', uiVariant);
+      else document.documentElement.removeAttribute('data-ui-variant');
       document.documentElement.classList.toggle('night', night);
-    }, {uiTheme, night});
+    }, {uiTheme, uiVariant, night});
 
     await typing(false);
     assert.ok(await waitForTypingLine(), 'typing line must render on the active row');
@@ -208,9 +210,12 @@ async function main() {
     }, rowSelector);
 
     const themes = [
-      // Boring Corporate is the default theme, so this is the shape Andrew sees.
+      // Boring Corporate: the corporate costume on its original palette.
       {name: 'boring-corporate day', uiTheme: 'boring-corporate', night: false},
       {name: 'boring-corporate night', uiTheme: 'boring-corporate', night: true},
+      // Graphite Corporate is the default theme: the corporate costume plus a palette variant with tinted rows.
+      {name: 'graphite day', uiTheme: 'boring-corporate', uiVariant: 'graphite', night: false},
+      {name: 'graphite night', uiTheme: 'boring-corporate', uiVariant: 'graphite', night: true},
       // Fun and Relaxed has no attribute; its active row is the dark accent one
       // the old hardcoded white was written for — it must keep working.
       {name: 'fun and relaxed', uiTheme: null, night: false}
@@ -223,6 +228,7 @@ async function main() {
       assert.ok(state, `${theme.name}: typing line must still be mounted`);
       const ratio = contrastRatio(state.colour, state.background);
       console.log('CONTRAST', theme.name, JSON.stringify({...state, ratio: ratio.toFixed(2)}));
+      if(process.env.SHOT_DIR) await A.page.screenshot({path: `${process.env.SHOT_DIR}/${theme.name.replace(/\W+/g, '-')}.png`});
       assert.ok(
         ratio >= 3,
         `${theme.name}: "‹peer› is working" must be readable on the active row — ` +

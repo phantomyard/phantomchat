@@ -2,7 +2,8 @@
 /**
  * E2E: the UI theme selector (#317), through the real Appearance menu entry.
  *
- *  - Boring Corporate is the default, with nothing stored.
+ *  - Graphite Corporate is the default, with nothing stored.
+ *  - Graphite is the corporate costume plus a palette variant; Boring Corporate is unchanged by it.
  *  - Picking a theme persists per device and reloads into it. Fun and Relaxed has no attribute.
  *  - The costume beats ThemeController's inline colours, on <html> and in Day and Night.
  *  - The saved accent and wallpaper are never rewritten: switching back restores them.
@@ -22,6 +23,7 @@ const APP_URL = process.env.E2E_APP_URL || 'http://localhost:8080';
 const KEY = 'phantomchat:ui-theme';
 
 const attribute = (page) => page.evaluate(() => document.documentElement.getAttribute('data-ui-theme'));
+const variant = (page) => page.evaluate(() => document.documentElement.getAttribute('data-ui-variant'));
 const stored = (page) => page.evaluate((key) => localStorage.getItem(key), KEY);
 const colour = (page, name) => page.evaluate((name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim(), name);
 const savedThemes = (page) => page.evaluate(() => JSON.stringify(window.rootScope.settings.themes));
@@ -87,7 +89,8 @@ async function main() {
 
   try {
     await createIdentity(page);
-    assert.equal(await attribute(page), 'boring-corporate', 'Boring Corporate is the default');
+    assert.equal(await attribute(page), 'boring-corporate', 'the default wears the corporate costume');
+    assert.equal(await variant(page), 'graphite', 'Graphite Corporate is the default');
     assert.equal(await stored(page), null, 'nothing is written until the user picks a theme');
 
     await pick(page, 'Fun and Relaxed');
@@ -115,6 +118,18 @@ async function main() {
     }, night);
     await page.waitForTimeout(1500);
 
+    // Graphite wears the corporate costume plus a palette variant; Boring Corporate keeps its own.
+    const corporateCanvas = await colour(page, '--body-background-color');
+    await pick(page, 'Graphite Corporate');
+    assert.equal(await stored(page), 'graphite');
+    assert.equal(await attribute(page), 'boring-corporate', 'Graphite keeps the corporate costume');
+    assert.equal(await variant(page), 'graphite');
+    assert.equal((await colour(page, '--gr-row-selected')).toLowerCase(), night ? '#1d2742' : '#e6ecfa', 'Graphite tints the selected row');
+    if(night) assert.equal((await colour(page, '--body-background-color')).toLowerCase(), '#1a1a1d', 'Graphite night is graphite, not black');
+    await pick(page, 'Boring Corporate');
+    assert.equal(await variant(page), null, 'Boring Corporate drops the variant');
+    assert.equal(await colour(page, '--body-background-color'), corporateCanvas, 'Boring Corporate keeps its own palette');
+
     await pick(page, 'Fun and Relaxed');
     assert.equal(await attribute(page), null, 'switching back removes the costume');
     assert.equal(await colour(page, '--primary-color'), funPrimary, 'switching back restores the accent');
@@ -135,6 +150,7 @@ async function main() {
     await page.evaluate((key) => localStorage.setItem(key, 'neon-disco'), KEY);
     await page.reload({waitUntil: 'load'});
     assert.equal(await attribute(page), 'boring-corporate', 'an unknown value falls back to the default');
+    assert.equal(await variant(page), 'graphite', 'the fallback default is Graphite Corporate');
 
     assert.deepEqual(errors, [], 'no page errors');
     console.log('PASS UI theme selector round trip');

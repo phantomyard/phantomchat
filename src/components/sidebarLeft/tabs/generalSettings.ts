@@ -174,7 +174,8 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
     {
       const container = section('UITheme');
       const form = document.createElement('form');
-      const isBoringCorporate = document.documentElement.dataset.uiTheme === 'boring-corporate';
+      const {uiTheme, uiVariant} = document.documentElement.dataset;
+      const current = uiTheme !== 'boring-corporate' ? 'fun-and-relaxed' : uiVariant === 'graphite' ? 'graphite' : 'boring-corporate';
 
       const createRow = (langKey: LangPackKey, value: string, checked: boolean) => {
         const radioField = new RadioField({langKey, name: 'ui-theme', value});
@@ -194,8 +195,9 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
       };
 
       form.append(
-        createRow('UITheme.FunAndRelaxed', 'fun-and-relaxed', !isBoringCorporate).container,
-        createRow('UITheme.BoringCorporate', 'boring-corporate', isBoringCorporate).container
+        createRow('UITheme.FunAndRelaxed', 'fun-and-relaxed', current === 'fun-and-relaxed').container,
+        createRow('UITheme.BoringCorporate', 'boring-corporate', current === 'boring-corporate').container,
+        createRow('UITheme.Graphite', 'graphite', current === 'graphite').container
       );
 
       container.append(form);

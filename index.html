@@ -2,9 +2,11 @@
 <html lang="en">
   <head>
     <script>
-      // UI theme costume (#317). Read once, before first paint. Absent, unknown or unreadable means Boring Corporate, the default.
+      // UI theme costume (#317). Read once, before first paint. Absent, unknown or unreadable means Graphite Corporate, the default.
       var uiTheme;try{uiTheme=localStorage.getItem('phantomchat:ui-theme');}catch(e){}
       if(uiTheme!=='fun-and-relaxed')document.documentElement.setAttribute('data-ui-theme','boring-corporate');
+      // Graphite Corporate is Boring Corporate's costume with a softer palette (_graphite.scss); only an explicit 'boring-corporate' pick opts out.
+      if(uiTheme!=='fun-and-relaxed'&&uiTheme!=='boring-corporate')document.documentElement.setAttribute('data-ui-variant','graphite');
     </script>
     <meta charset="utf-8" />
     <title>{{title}}</title>

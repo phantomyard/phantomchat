@@ -1,1 +1,1 @@
-const langPackLocalVersion = 21;export default langPackLocalVersion;
+const langPackLocalVersion = 22;export default langPackLocalVersion;
