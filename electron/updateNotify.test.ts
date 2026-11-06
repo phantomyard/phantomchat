@@ -10,6 +10,7 @@ import {
   isSnoozed,
   shouldNotifyUpdate,
   nextRemindLaterUntil,
+  snoozeReAskDelayMs,
   type NotifyPrefs
 } from './updateNotify';
 import {CHECK_INTERVAL_MS} from './updateSettings';
@@ -86,5 +87,35 @@ describe('shouldNotifyUpdate', () => {
   it('never notifies without a version to show', () => {
     expect(shouldNotifyUpdate(state('ready', null), noPrefs, now)).toBe(false);
     expect(shouldNotifyUpdate(state('available', null), noPrefs, now)).toBe(false);
+  });
+});
+
+describe('snoozeReAskDelayMs', () => {
+  it('re-asks when the window closes, not at the check that follows it', () => {
+    // The ordinary case: the launch check raises the modal at T, the user
+    // answers it at T+30min. The next check is T+24h10m — still inside the
+    // window, so the check cadence alone would delay the re-ask to T+48h10m.
+    const answeredAt = now + 30 * 60 * 1000;
+    const until = nextRemindLaterUntil(answeredAt);
+    const snoozed: NotifyPrefs = {remindLaterUntil: until, handledVersion: null};
+    const nextCheck = now + CHECK_INTERVAL_MS + 10 * 60 * 1000;
+
+    expect(shouldNotifyUpdate(state('available'), snoozed, nextCheck)).toBe(false);
+    //...so the re-ask has to be scheduled off the window itself, from the
+    // moment the snooze was written.
+    expect(snoozeReAskDelayMs(until, answeredAt)).toBe(REMIND_LATER_MS);
+    // And at that moment the notification is due again.
+    expect(shouldNotifyUpdate(state('available'), snoozed, until)).toBe(true);
+  });
+
+  it('has nothing to schedule when no window is open', () => {
+    expect(snoozeReAskDelayMs(null, now)).toBeNull();
+    expect(snoozeReAskDelayMs(NaN, now)).toBeNull();
+    expect(snoozeReAskDelayMs(now, now)).toBeNull();
+    expect(snoozeReAskDelayMs(now - 1, now)).toBeNull();
+    // The clock-jump guard applies here too: a bogus far-future timestamp must
+    // not arm a timer for days.
+    expect(snoozeReAskDelayMs(now + REMIND_LATER_MS + 1, now)).toBeNull();
+    expect(snoozeReAskDelayMs(now + REMIND_LATER_MS, now)).toBe(REMIND_LATER_MS);
   });
 });

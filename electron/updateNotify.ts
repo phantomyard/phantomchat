@@ -74,3 +74,20 @@ export function shouldNotifyUpdate(
 export function nextRemindLaterUntil(now: number = Date.now()): number {
   return now + REMIND_LATER_MS;
 }
+
+/**
+ * How long until a persisted "Remind me later" window closes, or null when
+ * there is nothing left to wait for.
+ *
+ * The check cadence alone cannot keep the 24h promise: the modal is raised by
+ * one check and answered whenever the user comes back to it, so the next
+ * check is usually still inside the window (suppressed) and the one after
+ * that lands up to a full interval later. The caller schedules a re-ask from
+ * this value instead, which fires the moment the window closes.
+ */
+export function snoozeReAskDelayMs(remindLaterUntil: number | null, now: number = Date.now()): number | null {
+  // isSnoozed also applies the clock-jump guard: a timestamp further out than
+  // one interval is bogus, so it must not arm a timer for days either.
+  if(!isSnoozed(remindLaterUntil, now)) return null;
+  return (remindLaterUntil as number) - now;
+}

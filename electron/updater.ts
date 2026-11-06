@@ -44,7 +44,7 @@ import {
   type PackageType,
   type UpdateCapability
 } from './updateCapability';
-import {nextRemindLaterUntil, shouldNotifyUpdate} from './updateNotify';
+import {nextRemindLaterUntil, shouldNotifyUpdate, snoozeReAskDelayMs} from './updateNotify';
 import {
   pickReleaseForChannel,
   isNotifiableUpdate,
@@ -185,6 +185,35 @@ function notifyPendingFor(status: UpdateStatus, availableVersion: string | null)
     {status, availableVersion},
     {remindLaterUntil: settings.remindLaterUntil, handledVersion}
   );
+}
+
+/**
+ * Pending re-ask for an open "Remind me later" window. The check cadence
+ * cannot keep the 24h promise on its own (the modal is answered minutes or
+ * hours after the check that raised it, so the following check is still
+ * suppressed), so the window itself arms a timer that re-publishes
+ * notifyPending the moment it closes. See snoozeReAskDelayMs.
+ */
+let snoozeTimer: NodeJS.Timeout | null = null;
+
+function clearSnoozeReAsk(): void {
+  if(snoozeTimer) {
+    clearTimeout(snoozeTimer);
+    snoozeTimer = null;
+  }
+}
+
+function armSnoozeReAsk(): void {
+  clearSnoozeReAsk();
+  const delay = snoozeReAskDelayMs(settings.remindLaterUntil);
+  if(delay === null) return;
+  snoozeTimer = setTimeout(() => {
+    snoozeTimer = null;
+    // Re-evaluated, not assumed: a newer version, a dismiss or a ring switch
+    // in the meantime must still win.
+    publish({notifyPending: notifyPendingFor(state.status, state.availableVersion)});
+  }, delay);
+  snoozeTimer.unref?.();
 }
 
 function markChecked(): void {
@@ -456,6 +485,10 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
     notifyPending: false
   };
 
+  // A relaunch in the middle of a snooze still owes the re-ask: the window
+  // is persisted, so arm the timer from it here too.
+  armSnoozeReAsk();
+
   ipcMain.handle('desktop:update-get-state', () => state);
 
   ipcMain.handle('desktop:update-set-channel', async(_event, channel: unknown) => {
@@ -468,6 +501,7 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
     // acted on" marker recorded against the old ring must not follow the
     // user to the new one.
     handledVersion = null;
+    clearSnoozeReAsk();
     settings = {...settings, channel, lastCheckedAt: null, remindLaterUntil: null};
     writeUpdateSettings(settingsFile, settings);
     publish({
@@ -497,12 +531,15 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
     settings = {...settings, remindLaterUntil: nextRemindLaterUntil()};
     writeUpdateSettings(settingsFile, settings);
     publish({notifyPending: false});
+    // The window, not the next check, decides when to ask again.
+    armSnoozeReAsk();
     return state;
   });
 
   // "Update now" (or any other way the user answers the notification): this
   // version has been dealt with. Session-scoped — see handledVersion.
   ipcMain.handle('desktop:update-dismiss', () => {
+    clearSnoozeReAsk();
     if(state.availableVersion !== null) handledVersion = state.availableVersion;
     publish({notifyPending: false});
     return state;

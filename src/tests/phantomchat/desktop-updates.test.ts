@@ -182,13 +182,27 @@ describe('describeUpdateNotification', () => {
     expect(copy.updateLabel).toBe(describeActionButton(state({status: 'ready'}))!.label);
   });
 
-  it('names the ring on the open-the-download path', () => {
+  it('names the ring on the open-the-release-page path', () => {
     const stable = describeUpdateNotification(state({status: 'available', channel: 'stable', availableVersion: '1.1.120'}))!;
     const preview = describeUpdateNotification(state({status: 'available', channel: 'preview', availableVersion: '1.1.120'}))!;
     expect(stable.body).toContain('Stable');
     expect(preview.body).toContain('Preview');
     expect(preview.title).toContain('1.1.120');
-    expect(preview.updateLabel).toBe('Open download page');
+    // releaseUrl is a GitHub release page, not a download — the copy must not
+    // promise a different destination than the button opens.
+    expect(preview.body).toContain('release page');
+  });
+
+  it('uses the Updates tab\'s label for EVERY notifiable state', () => {
+    // Not just 'ready': a label asserted against a literal pins any drift
+    // instead of catching it, and the whole point is that the two surfaces
+    // never disagree about what the user is about to click.
+    for(const status of ['ready', 'available'] as const) {
+      const view = state({status, availableVersion: '1.1.120', releaseUrl: 'https://github.com/phantomyard/phantomchat/releases/tag/v1.1.120'});
+      const copy = describeUpdateNotification(view)!;
+      const action = describeActionButton(view)!;
+      expect(copy.updateLabel).toBe(action.label);
+    }
   });
 
   it('has nothing to say while checking, downloading, up to date or failed', () => {

@@ -64,21 +64,23 @@ export interface UpdateNotificationCopy {
  * Copy for the update notification modal, or null when there is nothing to
  * announce.
  *
- * The primary button is deliberately NOT a second way to update: it says
- * exactly what the Updates tab's action button would do in the same state
- * (restart-and-install once downloaded, otherwise open the download page), and
- * the renderer wires it to the same IPC. Two different update paths that
- * disagree is the failure mode being avoided here.
+ * The primary button is deliberately NOT a second way to update: its label IS
+ * the Updates tab's action button label for the same state (restart-and-install
+ * once downloaded, otherwise open the release page), and the renderer wires it
+ * to the same IPC. Two different update paths that disagree is the failure mode
+ * being avoided here, so the label is derived rather than re-typed.
  */
 export function describeUpdateNotification(state: UpdateState): UpdateNotificationCopy | null {
   const version = state.availableVersion;
   if(!version) return null;
+  const action = describeActionButton(state);
+  if(!action) return null;
 
   if(state.status === 'ready') {
     return {
       title: `PhantomChat ${version} is ready to install`,
       body: 'The update has been downloaded. Restarting finishes the install — your chats and settings stay as they are.',
-      updateLabel: 'Restart and install',
+      updateLabel: action.label,
       remindLabel: 'Remind me later'
     };
   }
@@ -87,8 +89,8 @@ export function describeUpdateNotification(state: UpdateState): UpdateNotificati
     const ring = state.channel === 'preview' ? 'Preview' : 'Stable';
     return {
       title: `PhantomChat ${version} is available`,
-      body: `A newer build is published on the ${ring} channel. The download page opens in your browser.`,
-      updateLabel: 'Open download page',
+      body: `A newer build is published on the ${ring} channel. The release page opens in your browser.`,
+      updateLabel: action.label,
       remindLabel: 'Remind me later'
     };
   }
