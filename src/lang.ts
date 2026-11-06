@@ -1,4 +1,5 @@
 const lang = {
+  'VoiceModels': 'Voice Models',
   'Animations': 'Animations',
   'AttachAlbum': 'Album',
   'Appearance.Color.Hex': 'HEX',

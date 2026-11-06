@@ -21,6 +21,8 @@ export const PHANTOMBOT_METHODS = [
   'personas.delete',
   'providers.list',
   'providers.check',
+  'voiceModels.providers',
+  'voiceModels.check',
   'persona.configure',
   'persona.secrets.set',
   'persona.secrets.has',

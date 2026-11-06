@@ -10,7 +10,7 @@
  *    is blocked, window.open is denied and vetted https links are handed to the
  *    OS browser
  */
-import {app, BrowserWindow, session, shell, protocol, net, ipcMain, dialog} from 'electron';
+import {app, BrowserWindow, session, shell, protocol, net, ipcMain, dialog, safeStorage} from 'electron';
 import {readFileSync, writeFileSync, renameSync, mkdirSync, existsSync} from 'fs';
 import {join} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
@@ -18,6 +18,7 @@ import {attachEditableContextMenu} from './contextMenu';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
 import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontendProxy';
 import {SPLASH_PATH} from './splash';
+import {VoiceModels} from './voiceModels';
 import {hostBinaryPath, isAllowedCaller, checkRequest, PhantombotHostClient} from './phantombot/client';
 import {runPhantombotProbe} from './phantombot/probe';
 import {allowOnLocalPersona, findPhantombot, listLocalPersonas, phantombotCandidates} from './localPersonas/scan';
@@ -236,9 +237,17 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
   const request = checkRequest(method, params);
   if('code' in request) return {ok: false, error: request};
   const sender = event.sender;
-  return ensurePhantombot().call(request.method, request.params, (turnId, data) => {
+  const result = await ensurePhantombot().call(request.method, request.params, (turnId, data) => {
     if(!sender.isDestroyed()) sender.send('desktop:phantombot-event', {turnId, event: data});
   });
+  if(result.ok && request.method === 'personas.create') {
+    try { await ensureVoiceModels().applyNewPersona(String(request.params.persona)); }
+    catch {
+      await ensurePhantombot().call('personas.delete', {persona: request.params.persona});
+      return {ok: false, error: {code: 'voice_settings', message: 'Could not apply voice defaults to the new persona'}};
+    }
+  }
+  return result;
 });
 
 function ensurePhantombot(): PhantombotHostClient {
@@ -255,6 +264,22 @@ function ensurePhantombot(): PhantombotHostClient {
   });
   return phantombot;
 }
+
+let voiceModels: VoiceModels | undefined;
+function ensureVoiceModels(): VoiceModels {
+  return voiceModels ??= new VoiceModels(join(app.getPath('userData'), 'voice-models.enc'), {
+    available: () => safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend?.() !== 'basic_text',
+    encrypt: value => safeStorage.encryptString(value),
+    decrypt: value => safeStorage.decryptString(value)
+  }, (method, params) => ensurePhantombot().call(method as any, params ?? {}));
+}
+ipcMain.handle('desktop:voice-models', async(event, method: unknown, params: unknown) => {
+  if(!isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined)) {
+    return {ok: false, error: {code: 'forbidden', message: 'not available to this page'}};
+  }
+  try { return await ensureVoiceModels().handle(method, params); }
+  catch {return {ok: false, error: {code: 'unavailable', message: 'Encrypted voice settings are unavailable'}};}
+});
 
 // Scan (contacts redesign): the phantombot installed on this PC, not the
 // bundled engine. Same caller check as the bridge.

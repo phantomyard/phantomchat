@@ -81,6 +81,7 @@ export const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 export const MAX_TOOL_TIMEOUT_MS = 600_000;
 
 export interface EngineLike {
+  voiceModels?: {providers(): Promise<unknown>; check(input: any): Promise<unknown>};
   personas: {
     list(): Promise<string[]>;
     exists(name: string): Promise<boolean>;
@@ -325,6 +326,12 @@ export function createDispatcher(
         const baseUrl = optStr(p, 'baseUrl');
         return engine.providers.check(provider, apiKey, baseUrl === undefined ? undefined : {baseUrl});
       }
+      case 'voiceModels.providers':
+        if(!engine.voiceModels) throw new BridgeError('not_supported', 'Update the engine for Voice Models');
+        return engine.voiceModels.providers();
+      case 'voiceModels.check':
+        if(!engine.voiceModels) throw new BridgeError('not_supported', 'Update the engine for Voice Models');
+        return engine.voiceModels.check(p);
       case 'persona.configure': {
         const config = optRecord(p, 'config');
         if(!config) throw invalid('config must be an object');

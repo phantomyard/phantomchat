@@ -1,0 +1,33 @@
+import {afterEach, expect, it, vi} from 'vitest';
+import {generateSecretKey, getPublicKey} from 'nostr-tools/pure';
+const mocks = vi.hoisted(() => ({pool: null as any}));
+vi.mock('@lib/phantomchat/nostr-relay-pool', () => ({getSharedRelayPool: () => mocks.pool}));
+import {requestRemoteVoiceModels, handleVoiceModelsRumor, isVoiceModelsRumor} from '@lib/phantomchat/voice-models-remote';
+import {unwrapNip17Message} from '@lib/phantomchat/nostr-crypto';
+afterEach(() => {vi.useRealTimers(); mocks.pool = null;});
+it('sends encrypted model-only controls with an old-engine discard tag; binds replies to the target', async() => {
+  const app = generateSecretKey(), remote = generateSecretKey();
+  const pubkey = getPublicKey(remote);
+  let request: any;
+  mocks.pool = {getPrivateKey: () => app, publishRawEvent: vi.fn(async event => {request = unwrapNip17Message(event, remote);})};
+  const promise = requestRemoteVoiceModels(pubkey, 'get');
+  await vi.waitFor(() => expect(request).toBeTruthy());
+  expect(isVoiceModelsRumor(request.tags)).toBe(true);
+  expect(request.tags).toContainEqual(['phantomchat-local-tools', '1']);
+  const id = JSON.parse(request.content).id;
+  handleVoiceModelsRumor({from: getPublicKey(app), timestamp: Math.floor(Date.now() / 1000), content: JSON.stringify({type: 'phantomchat-voice-models', id, ok: true, value: 'wrong-sender'})});
+  handleVoiceModelsRumor({from: pubkey, timestamp: Math.floor(Date.now() / 1000) - 120, content: JSON.stringify({type: 'phantomchat-voice-models', id, ok: true, value: 'stale'})});
+  const {handleRelayMessage} = await import('@lib/phantomchat/chat-api-receive');
+  const res = await handleRelayMessage({id: 'e'.repeat(64), from: pubkey, timestamp: Math.floor(Date.now() / 1000), tags: request.tags, content: JSON.stringify({type: 'phantomchat-voice-models', id, ok: true, value: {tts: {model: 'speech-a'}}})} as any, {ownId: getPublicKey(app), history: [], log: Object.assign(vi.fn(), {warn: vi.fn()})} as any);
+  expect(res).toEqual({action: 'skipped', reason: 'voice_models_control'});
+  expect(await promise).toEqual({tts: {model: 'speech-a'}});
+});
+it('reports unsupported/offline engines and clears its timeout', async() => {
+  vi.useFakeTimers();
+  mocks.pool = {getPrivateKey: () => generateSecretKey(), publishRawEvent: async() => {}};
+  const result = requestRemoteVoiceModels(getPublicKey(generateSecretKey()), 'get');
+  const rejected = expect(result).rejects.toThrow('offline or does not support');
+  await vi.advanceTimersByTimeAsync(20_001);
+  await rejected;
+  expect(vi.getTimerCount()).toBe(0);
+});
