@@ -1998,7 +1998,7 @@ const lang = {
   'UITheme': 'Theme',
   'UITheme.FunAndRelaxed': 'Fun and Relaxed',
   'UITheme.BoringCorporate': 'Boring Corporate',
-  'UITheme.Graphite': 'Graphite',
+  'UITheme.Graphite': 'Graphite Corporate',
   'SendAsFile': 'Send as file',
   'SendAsFiles': 'Send as files',
   'ChatThemeChangedYou': 'You changed the chat theme to %1$s',

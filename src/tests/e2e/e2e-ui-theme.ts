@@ -119,7 +119,7 @@ async function main() {
 
     // Graphite wears the corporate costume plus a palette variant; Boring Corporate keeps its own.
     const corporateCanvas = await colour(page, '--body-background-color');
-    await pick(page, 'Graphite');
+    await pick(page, 'Graphite Corporate');
     assert.equal(await stored(page), 'graphite');
     assert.equal(await attribute(page), 'boring-corporate', 'Graphite keeps the corporate costume');
     assert.equal(await variant(page), 'graphite');
