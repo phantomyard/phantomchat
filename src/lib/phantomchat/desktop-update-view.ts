@@ -51,3 +51,47 @@ export function describeActionButton(state: UpdateState): {label: string, enable
   if(state.status === 'available') return {label: 'Open release page', enabled: true};
   return null;
 }
+
+export interface UpdateNotificationCopy {
+  title: string;
+  body: string;
+  /** What the primary button does — the same action as the Updates tab's. */
+  updateLabel: string;
+  remindLabel: string;
+}
+
+/**
+ * Copy for the update notification modal, or null when there is nothing to
+ * announce.
+ *
+ * The primary button is deliberately NOT a second way to update: it says
+ * exactly what the Updates tab's action button would do in the same state
+ * (restart-and-install once downloaded, otherwise open the download page), and
+ * the renderer wires it to the same IPC. Two different update paths that
+ * disagree is the failure mode being avoided here.
+ */
+export function describeUpdateNotification(state: UpdateState): UpdateNotificationCopy | null {
+  const version = state.availableVersion;
+  if(!version) return null;
+
+  if(state.status === 'ready') {
+    return {
+      title: `PhantomChat ${version} is ready to install`,
+      body: 'The update has been downloaded. Restarting finishes the install — your chats and settings stay as they are.',
+      updateLabel: 'Restart and install',
+      remindLabel: 'Remind me later'
+    };
+  }
+
+  if(state.status === 'available') {
+    const ring = state.channel === 'preview' ? 'Preview' : 'Stable';
+    return {
+      title: `PhantomChat ${version} is available`,
+      body: `A newer build is published on the ${ring} channel. The download page opens in your browser.`,
+      updateLabel: 'Open download page',
+      remindLabel: 'Remind me later'
+    };
+  }
+
+  return null;
+}

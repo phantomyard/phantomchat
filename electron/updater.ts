@@ -44,6 +44,7 @@ import {
   type PackageType,
   type UpdateCapability
 } from './updateCapability';
+import {nextRemindLaterUntil, shouldNotifyUpdate} from './updateNotify';
 import {
   pickReleaseForChannel,
   isNotifiableUpdate,
@@ -90,6 +91,14 @@ export interface UpdateState {
   /** 0-100 while downloading. */
   progressPercent: number | null;
   error: string | null;
+  /**
+   * True when the renderer should raise the update notification now: an
+   * update the user can act on, not snoozed by "Remind me later" and not
+   * already acted on in this session. Decided here, not in the renderer —
+   * the snooze is persisted next to the ring, and the preload is a
+   * convenience rather than a boundary. See updateNotify.ts for the rules.
+   */
+  notifyPending: boolean;
 }
 
 let settings: UpdateSettings;
@@ -99,6 +108,14 @@ let capabilityReason: string | null;
 let getWindow: () => BrowserWindow | null = () => null;
 let timer: NodeJS.Timeout | null = null;
 let checkInFlight = false;
+
+/**
+ * Newest version the user already acted on in this session ("Update now").
+ * Session-scoped on purpose: it suppresses the modal for a version they have
+ * already clicked through on the notify ring, where the app keeps running
+ * after the browser opens, and a relaunch is allowed to ask again.
+ */
+let handledVersion: string | null = null;
 
 let state: UpdateState;
 
@@ -162,6 +179,14 @@ function publish(patch: Partial<UpdateState>): void {
   }
 }
 
+/** Does this (status, version) pair deserve a notification right now? */
+function notifyPendingFor(status: UpdateStatus, availableVersion: string | null): boolean {
+  return shouldNotifyUpdate(
+    {status, availableVersion},
+    {remindLaterUntil: settings.remindLaterUntil, handledVersion}
+  );
+}
+
 function markChecked(): void {
   settings = {...settings, lastCheckedAt: Date.now()};
   writeUpdateSettings(settingsFile, settings);
@@ -211,13 +236,22 @@ function getUpdater(): AppUpdater {
       status: 'downloading',
       availableVersion: info.version,
       progressPercent: 0,
-      error: null
+      error: null,
+      // Not yet: the download is not finished, so there is nothing to install.
+      // The modal appears on 'update-downloaded' below.
+      notifyPending: notifyPendingFor('downloading', info.version)
     });
   });
 
   autoUpdater.on('update-not-available', () => {
     markChecked();
-    publish({status: 'up-to-date', availableVersion: null, progressPercent: null, error: null});
+    publish({
+      status: 'up-to-date',
+      availableVersion: null,
+      progressPercent: null,
+      error: null,
+      notifyPending: false
+    });
   });
 
   autoUpdater.on('download-progress', (progress) => {
@@ -226,13 +260,24 @@ function getUpdater(): AppUpdater {
 
   autoUpdater.on('update-downloaded', (info) => {
     downloadedUpdateFile = info.downloadedFile ?? null;
-    publish({status: 'ready', availableVersion: info.version, progressPercent: 100, error: null});
+    publish({
+      status: 'ready',
+      availableVersion: info.version,
+      progressPercent: 100,
+      error: null,
+      notifyPending: notifyPendingFor('ready', info.version)
+    });
   });
 
   autoUpdater.on('error', (err: Error) => {
     // A failed check is not fatal and must not surface as a crash: the user
     // keeps running the version they have.
-    publish({status: 'error', progressPercent: null, error: err?.message || 'update failed'});
+    publish({
+      status: 'error',
+      progressPercent: null,
+      error: err?.message || 'update failed',
+      notifyPending: false
+    });
   });
 
   return autoUpdater;
@@ -276,9 +321,21 @@ async function checkViaReleasesApi(): Promise<void> {
   markChecked();
 
   if(isNotifiableUpdate(app.getVersion(), picked)) {
-    publish({status: 'available', availableVersion: picked!.version, releaseUrl: picked!.url, error: null});
+    publish({
+      status: 'available',
+      availableVersion: picked!.version,
+      releaseUrl: picked!.url,
+      error: null,
+      notifyPending: notifyPendingFor('available', picked!.version)
+    });
   } else {
-    publish({status: 'up-to-date', availableVersion: null, releaseUrl: null, error: null});
+    publish({
+      status: 'up-to-date',
+      availableVersion: null,
+      releaseUrl: null,
+      error: null,
+      notifyPending: false
+    });
   }
 }
 
@@ -393,7 +450,10 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
     availableVersion: null,
     releaseUrl: null,
     progressPercent: null,
-    error: null
+    error: null,
+    // Nothing has been checked yet in this process; a snooze is only ever
+    // evaluated against a real result.
+    notifyPending: false
   };
 
   ipcMain.handle('desktop:update-get-state', () => state);
@@ -404,7 +464,11 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
     if(!isUpdateChannel(channel)) return state;
     if(channel === settings.channel) return state;
 
-    settings = {...settings, channel, lastCheckedAt: null};
+    // A different ring is a different question: a snooze or an "already
+    // acted on" marker recorded against the old ring must not follow the
+    // user to the new one.
+    handledVersion = null;
+    settings = {...settings, channel, lastCheckedAt: null, remindLaterUntil: null};
     writeUpdateSettings(settingsFile, settings);
     publish({
       channel,
@@ -413,7 +477,8 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
       availableVersion: null,
       releaseUrl: null,
       progressPercent: null,
-      error: null
+      error: null,
+      notifyPending: false
     });
     // Switching ring is an explicit act — check immediately rather than
     // leaving the user on the other ring for up to a day.
@@ -423,6 +488,23 @@ export function initUpdater(resolveWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle('desktop:update-check-now', async() => {
     await runCheck();
+    return state;
+  });
+
+  // "Remind me later" — silence the notification for one interval. Persisted
+  // next to the ring so relaunching in the middle of the snooze stays quiet.
+  ipcMain.handle('desktop:update-remind-later', () => {
+    settings = {...settings, remindLaterUntil: nextRemindLaterUntil()};
+    writeUpdateSettings(settingsFile, settings);
+    publish({notifyPending: false});
+    return state;
+  });
+
+  // "Update now" (or any other way the user answers the notification): this
+  // version has been dealt with. Session-scoped — see handledVersion.
+  ipcMain.handle('desktop:update-dismiss', () => {
+    if(state.availableVersion !== null) handledVersion = state.availableVersion;
+    publish({notifyPending: false});
     return state;
   });
 

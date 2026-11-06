@@ -33,6 +33,12 @@ export interface UpdateSettings {
   channel: UpdateChannel;
   /** Epoch ms of the last completed check, or null if never checked. */
   lastCheckedAt: number | null;
+  /**
+   * Epoch ms until which the update notification stays quiet, or null.
+   * Set by "Remind me later" (now + CHECK_INTERVAL_MS) and persisted, so a
+   * restart in the middle of the snooze does not pop the modal again.
+   */
+  remindLaterUntil: number | null;
 }
 
 export function isUpdateChannel(value: unknown): value is UpdateChannel {
@@ -53,7 +59,11 @@ export function normalizeUpdateSettings(raw: unknown): UpdateSettings {
   const lastCheckedAt =
     typeof rawLast === 'number' && Number.isFinite(rawLast) && rawLast > 0 ? rawLast : null;
 
-  return {channel, lastCheckedAt};
+  const rawRemind = source.remindLaterUntil;
+  const remindLaterUntil =
+    typeof rawRemind === 'number' && Number.isFinite(rawRemind) && rawRemind > 0 ? rawRemind : null;
+
+  return {channel, lastCheckedAt, remindLaterUntil};
 }
 
 /**

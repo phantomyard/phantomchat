@@ -154,8 +154,8 @@
     },
     "src/lib/phantomchat/desktop-update-view.ts": {
       "stable": "f5c41987244d0c42538a9a151fe05d833b54029a91e2266d698a68cbedbea3c9",
-      "preview": "f5c41987244d0c42538a9a151fe05d833b54029a91e2266d698a68cbedbea3c9",
-      "reason": "Dependency-free presentation strings only: status line, last-checked line, action button. The two channel-choice helpers moved out to lib/phantomchat/update-channel-choice.ts, which does not exist at stableRef, so the builder can copy them into pinned Stable. No DOM, no Electron, no app singletons, no storage."
+      "preview": "fc04e7be51b41612e62105e532d348f27b1747090c2350bc5c42ca891cd88c66",
+      "reason": "Dependency-free presentation strings only: status line, last-checked line, action button. The two channel-choice helpers moved out to lib/phantomchat/update-channel-choice.ts, which does not exist at stableRef, so the builder can copy them into pinned Stable. No DOM, no Electron, no app singletons, no storage. Adds describeUpdateNotification copy for the modal; its primary label is the same action describeActionButton performs in that state."
     },
     "src/lib/phantomchat/update-channel-choice.ts": {
       "stable": "4e69326b98165a07841faadbee5c305cb9c29f661ba18e64bed9deb6bf5f8f1e",
@@ -229,8 +229,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "c51f2530b811d1fb6744b05d9b3653a55419835d84772aaf2d573eca6fb046e5",
-      "reason": "Boot: one fire-and-forget import of local-tools, which is a no-op without the desktop Local tools bridge. No storage change. Session name revert fix: the groups CrdtSync now passes merge: mergeGroupsMaps (per-field info merge, same v2 envelope), and the groups-sync upsert drains renames staged before their record (getGroupAPI().drainPendingInfoUpdates), next to the existing backfill drain. No storage change. Contact delete everywhere: Startup wiring: synced deletes run local cleanup, contacts publishes send the nudge, nudges trigger the existing contacts reconcile, and a leftover sweep finishes failed Provider wipes (skips prefs written after the delete). Reads existing stores only; no schema change."
+      "preview": "b34b3bcd4d2399201ca2b74e05d013ce076469daab8d94533fa064347306d2c6",
+      "reason": "Boot: one fire-and-forget import of local-tools, which is a no-op without the desktop Local tools bridge. No storage change. Session name revert fix: the groups CrdtSync now passes merge: mergeGroupsMaps (per-field info merge, same v2 envelope), and the groups-sync upsert drains renames staged before their record (getGroupAPI().drainPendingInfoUpdates), next to the existing backfill drain. No storage change. Contact delete everywhere: Startup wiring: synced deletes run local cleanup, contacts publishes send the nudge, nudges trigger the existing contacts reconcile, and a leftover sweep finishes failed Provider wipes (skips prefs written after the delete). Reads existing stores only; no schema change. Boot: one fire-and-forget dynamic import that mounts the New Update Notification modal — a no-op in the PWA and on desktop builds whose preload cannot snooze or dismiss it."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
@@ -369,8 +369,8 @@
     },
     "electron/updateSettings.ts": {
       "stable": "49fbd8fe4fb3f3fe3a6080763bf562375ab2bee6a86f07eda47369bb24826c8d",
-      "preview": "49fbd8fe4fb3f3fe3a6080763bf562375ab2bee6a86f07eda47369bb24826c8d",
-      "reason": "JSDoc only: default-channel rationale reworded because Electron Preview is now manual. No code, wire or storage change."
+      "preview": "fa513a4f5d1feae177109b76592ea6706b2e1dfdbe7a8040e27092675d305851",
+      "reason": "JSDoc only: default-channel rationale reworded because Electron Preview is now manual. No code, wire or storage change. Update notification: adds the optional persisted remindLaterUntil, normalized like the rest so a hand-edited or half-written file still boots."
     },
     "src/environment/webpSupport.ts": {
       "stable": "a09c39e8f66364581e2a65261c4524acf14f4548eb8b1b2fd1df62bda0c88b6b",
@@ -549,8 +549,8 @@
     },
     "electron/preload.ts": {
       "stable": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "preview": "bce9d9eb92afda9ef4797f36151e85fa68305ccd7e9e46812f48c187fd24a663",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Plus getPresence/setPresence on the narrow allowlist: two calls, validated again in main, over the new presence-settings.json. No storage format change."
+      "preview": "2c38fd6d41cd2811dceb04eb9ebf775ec1370183d9c152961d0cd38fca5942b7",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Plus getPresence/setPresence on the narrow allowlist: two calls, validated again in main, over the new presence-settings.json. No storage format change. Exposes remindLaterUpdate/dismissUpdateNotification for the New Update Notification."
     },
     "src/components/peerProfile.tsx": {
       "stable": "a82fed09c559efc369350bea28ef5eeee1352480863d306dd0edb026d3c3ea1e",
@@ -584,8 +584,8 @@
     },
     "src/lib/phantomchat/desktop-api.ts": {
       "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "preview": "92fab6b96a8b847c347af5c60c17c9c404311fd197b6948848d113a9f839443f",
-      "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Plus the presence bridge types and hasDesktopPresenceApi(): a pure feature check on window.phantomchatDesktop.getPresence that returns false on the web and on older installs. No storage, schema or database access."
+      "preview": "dd4ecc9bde013c5b2447f0d59660c08ede879c93d67ba1a493c37132c6402455",
+      "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Plus the presence bridge types and hasDesktopPresenceApi(): a pure feature check on window.phantomchatDesktop.getPresence that returns false on the web and on older installs. No storage, schema or database access. Renderer mirror of notifyPending and the two notification methods, both optional so an older packaged bridge degrades instead of throwing."
     },
     "src/lib/phantomchat/external-ai-contact-form.ts": {
       "stable": "absent",
@@ -961,6 +961,31 @@
       "stable": "absent",
       "preview": "bed33fdca42d2c8069a09384e2fa9cc2a53dc6aa555de882c236f3e2ffc1f08d",
       "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Presentation only: two toggles over main's state, rows hidden per capability. Deliberately NEW file."
+    },
+    "electron/updateNotify.test.ts": {
+      "stable": "absent",
+      "preview": "98a6eb02e953ac4e31e6725fd23e22ddf43ff490e9ba201278f2d51c20c7e412",
+      "reason": "Tests for the update-notification decision rules. Never shipped in any bundle."
+    },
+    "electron/updateNotify.ts": {
+      "stable": "absent",
+      "preview": "607f891278e701485e6f80935d7828708826fabb8a71ac2b23dc40b6d969055b",
+      "reason": "Pure decision function for the New Update Notification: no fs, no clock, no Electron. Desktop shell only, never part of the web bundle or any stored format."
+    },
+    "electron/updateSettings.test.ts": {
+      "stable": "12a58f0ae879d15b9464d4f279725a7c65321b3e2933c0187a7a76059ce746d9",
+      "preview": "8dc1d93805696600a96dd98658d01394431d1220377467ba0131bab853b72bd8",
+      "reason": "Tests for the update-settings round-trip, including the new optional persisted snooze field. Never shipped in any bundle."
+    },
+    "electron/updater.ts": {
+      "stable": "429321c95d8e2f0a9514a26cea60c5b8ae61e1152edec9f97c0540072853b8c2",
+      "preview": "7a30295fe4230b06c3ed0d5097615691c133eb72b5f55e6449a0c1986879bcda",
+      "reason": "Update orchestration for the New Update Notification: publishes UpdateState.notifyPending from the pure rules in updateNotify.ts and adds two IPC handlers (remind-later persists now+24h; dismiss records the version already acted on, for this session). Desktop shell only, never part of the web bundle; no browser storage, schema, key or wire change. update-settings.json gains one OPTIONAL field, which a build packaged before this ignores (it is normalized away)."
+    },
+    "src/lib/phantomchat/desktop-update-modal.ts": {
+      "stable": "absent",
+      "preview": "392628422594bb583131d23a6e98408ef4207a000fea46c90bb0273a9029fc52",
+      "reason": "Presentation-only message banner: builds a DOM overlay from main's pushed state. Reads no browser storage and writes no schema; it calls the same install/snooze IPC the Updates tab already uses."
     }
   }
 }

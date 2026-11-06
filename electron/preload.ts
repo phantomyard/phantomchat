@@ -40,6 +40,18 @@ export interface PhantomChatDesktopApi {
    */
   installUpdate(): Promise<boolean>;
   /**
+   * "Remind me later" on the update notification: silence it for one check
+   * interval (24h). The snooze is persisted by the main process, so a
+   * relaunch inside the window stays quiet.
+   */
+  remindLaterUpdate(): Promise<UpdateState>;
+  /**
+   * The user acted on the offered update — stop raising it for this version
+   * for the rest of the session. Not persisted: quitting and relaunching may
+   * ask again.
+   */
+  dismissUpdateNotification(): Promise<UpdateState>;
+  /**
    * Subscribe to update-state pushes. Returns an unsubscribe function.
    * The listener only ever receives the main process's own state object —
    * the raw IpcRendererEvent is deliberately not forwarded.
@@ -141,6 +153,8 @@ const api: PhantomChatDesktopApi = {
   setUpdateChannel: (channel: string) => ipcRenderer.invoke('desktop:update-set-channel', channel),
   checkForUpdates: () => ipcRenderer.invoke('desktop:update-check-now'),
   installUpdate: () => ipcRenderer.invoke('desktop:update-install-now'),
+  remindLaterUpdate: () => ipcRenderer.invoke('desktop:update-remind-later'),
+  dismissUpdateNotification: () => ipcRenderer.invoke('desktop:update-dismiss'),
   onUpdateState: (listener: (state: UpdateState) => void) => {
     const handler = (_event: unknown, state: UpdateState) => listener(state);
     ipcRenderer.on('desktop:update-state', handler);

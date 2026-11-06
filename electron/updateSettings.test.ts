@@ -44,20 +44,20 @@ describe('isUpdateChannel', () => {
 
 describe('normalizeUpdateSettings', () => {
   it('defaults to stable so preview is always opt-in', () => {
-    expect(normalizeUpdateSettings(undefined)).toEqual({channel: 'stable', lastCheckedAt: null});
+    expect(normalizeUpdateSettings(undefined)).toEqual({channel: 'stable', lastCheckedAt: null, remindLaterUntil: null});
     expect(DEFAULT_CHANNEL).toBe('stable');
   });
 
   it('keeps a valid stored ring', () => {
     expect(normalizeUpdateSettings({channel: 'preview', lastCheckedAt: 1000}))
-      .toEqual({channel: 'preview', lastCheckedAt: 1000});
+      .toEqual({channel: 'preview', lastCheckedAt: 1000, remindLaterUntil: null});
   });
 
   it('falls back per-field: a corrupt timestamp must not discard the chosen ring', () => {
     expect(normalizeUpdateSettings({channel: 'preview', lastCheckedAt: 'yesterday'}))
-      .toEqual({channel: 'preview', lastCheckedAt: null});
+      .toEqual({channel: 'preview', lastCheckedAt: null, remindLaterUntil: null});
     expect(normalizeUpdateSettings({channel: 'nonsense', lastCheckedAt: 1000}))
-      .toEqual({channel: 'stable', lastCheckedAt: 1000});
+      .toEqual({channel: 'stable', lastCheckedAt: 1000, remindLaterUntil: null});
   });
 
   it('rejects non-finite and non-positive timestamps', () => {
@@ -68,7 +68,7 @@ describe('normalizeUpdateSettings', () => {
 
   it('drops unknown fields rather than persisting them', () => {
     const result = normalizeUpdateSettings({channel: 'stable', evil: 'payload'}) as unknown as Record<string, unknown>;
-    expect(Object.keys(result).sort()).toEqual(['channel', 'lastCheckedAt']);
+    expect(Object.keys(result).sort()).toEqual(['channel', 'lastCheckedAt', 'remindLaterUntil']);
   });
 
   it('survives non-object input of every shape', () => {
@@ -76,30 +76,50 @@ describe('normalizeUpdateSettings', () => {
       expect(normalizeUpdateSettings(bad).channel).toBe('stable');
     }
   });
+
+  it('keeps a valid "Remind me later" snooze and defaults it to null', () => {
+    const until = 1_700_000_000_000 + 86_400_000;
+    expect(normalizeUpdateSettings({channel: 'stable', remindLaterUntil: until}).remindLaterUntil).toBe(until);
+    expect(normalizeUpdateSettings({channel: 'stable'}).remindLaterUntil).toBeNull();
+  });
+
+  it('drops a corrupt snooze without discarding the ring or last check', () => {
+    for(const bad of [NaN, Infinity, -1, 0, 'tomorrow', {}]) {
+      expect(normalizeUpdateSettings({channel: 'preview', lastCheckedAt: 1000, remindLaterUntil: bad}))
+        .toEqual({channel: 'preview', lastCheckedAt: 1000, remindLaterUntil: null});
+    }
+  });
 });
 
 describe('readUpdateSettings / writeUpdateSettings', () => {
   it('round-trips a chosen ring', () => {
     const file = updateSettingsPath(scratch());
-    writeUpdateSettings(file, {channel: 'preview', lastCheckedAt: 12345});
-    expect(readUpdateSettings(file)).toEqual({channel: 'preview', lastCheckedAt: 12345});
+    writeUpdateSettings(file, {channel: 'preview', lastCheckedAt: 12345, remindLaterUntil: null});
+    expect(readUpdateSettings(file)).toEqual({channel: 'preview', lastCheckedAt: 12345, remindLaterUntil: null});
+  });
+
+  it('round-trips a "Remind me later" snooze so a relaunch inside it stays quiet', () => {
+    const file = updateSettingsPath(scratch());
+    const until = 1_700_000_000_000 + 86_400_000;
+    writeUpdateSettings(file, {channel: 'stable', lastCheckedAt: 12345, remindLaterUntil: until});
+    expect(readUpdateSettings(file).remindLaterUntil).toBe(until);
   });
 
   it('returns defaults for a file that does not exist yet (first run)', () => {
     expect(readUpdateSettings(updateSettingsPath(scratch())))
-      .toEqual({channel: 'stable', lastCheckedAt: null});
+      .toEqual({channel: 'stable', lastCheckedAt: null, remindLaterUntil: null});
   });
 
   it('returns defaults for a truncated or hand-mangled file instead of throwing', () => {
     const file = updateSettingsPath(scratch());
     writeFileSync(file, '{"channel": "prev');
     expect(() => readUpdateSettings(file)).not.toThrow();
-    expect(readUpdateSettings(file)).toEqual({channel: 'stable', lastCheckedAt: null});
+    expect(readUpdateSettings(file)).toEqual({channel: 'stable', lastCheckedAt: null, remindLaterUntil: null});
   });
 
   it('writes atomically and leaves no .tmp behind', () => {
     const file = updateSettingsPath(scratch());
-    writeUpdateSettings(file, {channel: 'preview', lastCheckedAt: 1});
+    writeUpdateSettings(file, {channel: 'preview', lastCheckedAt: 1, remindLaterUntil: null});
     expect(existsSync(`${file}.tmp`)).toBe(false);
     expect(JSON.parse(readFileSync(file, 'utf8')).channel).toBe('preview');
   });
@@ -108,7 +128,7 @@ describe('readUpdateSettings / writeUpdateSettings', () => {
     const dir = scratch();
     chmodSync(dir, 0o500); // read + execute, no write
     try {
-      expect(() => writeUpdateSettings(join(dir, 'sub', 'update-settings.json'), {channel: 'preview', lastCheckedAt: 1}))
+      expect(() => writeUpdateSettings(join(dir, 'sub', 'update-settings.json'), {channel: 'preview', lastCheckedAt: 1, remindLaterUntil: null}))
         .not.toThrow();
     } finally {
       chmodSync(dir, 0o700); // so afterEach can clean up

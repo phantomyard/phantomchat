@@ -991,6 +991,19 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
         }
       })();
 
+      // --- Desktop: New Update Notification. The 24h update check runs in the
+      // Electron main process; here we only follow its verdict and raise the
+      // "Update now / Remind me later" modal. A no-op in the PWA and on desktop
+      // builds whose preload cannot snooze or dismiss it. ---
+      void (async() => {
+        try {
+          const {mountUpdateNotification} = await import('@lib/phantomchat/desktop-update-modal');
+          mountUpdateNotification();
+        } catch(err) {
+          console.warn('[PhantomChatOnboardingIntegration] update notification mount failed:', err);
+        }
+      })();
+
       // --- Initialize presence (#52): honest online / last-seen via the
       // gift-wrapped ping/pong handshake. ---
       try {
