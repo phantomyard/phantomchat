@@ -539,8 +539,8 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "12b67bc2a07ce0eee133b269e2410a75f5a262830aa65d57d6252ae557636d76",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets)."
+      "preview": "2c266ed89a51d52934fbbbfb734f43dac9de00440d8b3377d8b73d1ccc0d51e8",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Tray presence: the main window can be created hidden on a login launch, close hides it to the tray when close-to-tray is effective, a tray menu offers Open/Quit, and two validated IPC calls read and write presence-settings.json (a new file in userData; no existing file changes format). Fix: a hidden start is re-taken against the tray that was actually built (dropTray/keepsHiddenStart reveals the window), and no login entry is written outside a packaged app."
     },
     "electron/piHarness.ts": {
       "stable": "79b3f8baf7f0f0c240d3044a59cb6e50094906a7f2ccce584a2def2d0489b2a7",
@@ -549,8 +549,8 @@
     },
     "electron/preload.ts": {
       "stable": "ca70ee82d23b7a3b19d88c85043bb9d26087775209bc81f398ead3b9d5596d2c",
-      "preview": "a674d851cfabbea8e5c66a020f9a26f88e1f601d1bb57d467b766176ad4926f6",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets)."
+      "preview": "bce9d9eb92afda9ef4797f36151e85fa68305ccd7e9e46812f48c187fd24a663",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Plus getPresence/setPresence on the narrow allowlist: two calls, validated again in main, over the new presence-settings.json. No storage format change."
     },
     "src/components/peerProfile.tsx": {
       "stable": "a82fed09c559efc369350bea28ef5eeee1352480863d306dd0edb026d3c3ea1e",
@@ -569,8 +569,8 @@
     },
     "src/components/sidebarLeft/tabs/settings.ts": {
       "stable": "d6d40466f109b248575be83201096e3fcfa0d478f3055e978ef6b9ba568753eb",
-      "preview": "7d59f527520893d3505dba563795e45289c7f7ff3502bf00c2af28078b3e1b7b",
-      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets)."
+      "preview": "62e558787f1aee0d0c4af7472ef87e37a53fce9c5c05f0797ffc770ddc763fcc",
+      "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design. Removing desktop-only code adds no storage, schema or database change; the #276 rows recorded that it never wrote any. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Plus a capability-gated Desktop row: it is only appended when the desktop reports at least one presence capability, so the PWA (no bridge) and a desktop without a tray show nothing. Presentation only."
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
@@ -584,8 +584,8 @@
     },
     "src/lib/phantomchat/desktop-api.ts": {
       "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
-      "preview": "7b6917daf1ec8de5ab567fb7fb2c9f11a1baf41e5cf818fe08124dfa1a95e813",
-      "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets)."
+      "preview": "92fab6b96a8b847c347af5c60c17c9c404311fd197b6948848d113a9f839443f",
+      "reason": "Types plus getDesktopPhantombot(), a pure feature check on window.phantomchatDesktop.phantombot that returns null on the web and on older installs. No storage, schema or database access. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets). Plus the presence bridge types and hasDesktopPresenceApi(): a pure feature check on window.phantomchatDesktop.getPresence that returns false on the web and on older installs. No storage, schema or database access."
     },
     "src/lib/phantomchat/external-ai-contact-form.ts": {
       "stable": "absent",
@@ -936,6 +936,31 @@
       "stable": "absent",
       "preview": "8ed98f1be1e6f3053ae7cb4b9fd73e81bc9af843b2ffbbdb4da9426ad326c3e9",
       "reason": "Specialized Models: desktop-only settings menu holding Decision Model, Voice Models and a new Embeddings screen on one UI kit. Embeddings key lives in a separate Electron-main safeStorage file (embeddings.json); no IndexedDB, localStorage, identity, contact-pref or wire-format change. Bridge gains embeddings.check and persona.memory.refresh (verdicts and counts only, no secrets)."
+    },
+    "electron/presence.test.ts": {
+      "stable": "absent",
+      "preview": "934dccde37edee6880c49dc6a364cc920da93158edba056583119ddb1ed72a63",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Tests only. Fix: tests pin both - no login entry outside a package, and a probed tray that fails to build reveals the window."
+    },
+    "electron/presence.ts": {
+      "stable": "absent",
+      "preview": "de13e827f291d1a2b4046b5f966b190a13cada8adc87d82851ffa10d57a04d32",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Deliberately NEW file. Fix: autostartCapability() withholds the login entry for an unpackaged run and a sandboxed package; keepsHiddenStart() re-takes the hidden start once the tray exists."
+    },
+    "electron/tray.test.ts": {
+      "stable": "absent",
+      "preview": "3183e018759d76dff15892cab1f0b8a0f80fd2cf0767f6ad315c6f9b54b2f3d5",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Tests only."
+    },
+    "electron/tray.ts": {
+      "stable": "absent",
+      "preview": "f052b632c89f391cc963aef0feeb8eea09386802c1083e57ab57ac8967024b43",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Deliberately NEW file."
+    },
+    "src/components/sidebarLeft/tabs/phantomchatDesktopPresence.ts": {
+      "stable": "absent",
+      "preview": "bed33fdca42d2c8069a09384e2fa9cc2a53dc6aa555de882c236f3e2ffc1f08d",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Presentation only: two toggles over main's state, rows hidden per capability. Deliberately NEW file."
     }
   }
 }

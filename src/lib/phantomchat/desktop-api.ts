@@ -38,6 +38,30 @@ export interface UpdateState {
 
 export type PermissionSetting = 'ask' | 'allow' | 'deny';
 
+export interface PresenceSettings {
+  closeToTray: boolean;
+  startAtLogin: boolean;
+}
+
+/** What this PC's desktop can actually deliver (see electron/presence.ts). */
+export interface PresenceCapability {
+  tray: boolean;
+  autostart: boolean;
+  trayReason: string | null;
+  autostartReason: string | null;
+}
+
+export interface DesktopPresenceState {
+  /** The user's stored choice — kept even when a capability is missing. */
+  settings: PresenceSettings;
+  capability: PresenceCapability;
+  /** `settings && capability`: what is really in force right now. */
+  effective: PresenceSettings;
+}
+
+/** The two rows the Desktop tab can show. */
+export type PresenceRow = 'startAtLogin' | 'closeToTray';
+
 export interface PermissionSettings {
   overrides: Record<string, PermissionSetting>;
   granted: string[];
@@ -60,6 +84,12 @@ export interface PhantomChatDesktopApi {
    * older packaged bridge degrades instead of throwing.
    */
   resetPermissionSettings?(): Promise<PermissionSettings>;
+  /**
+   * Tray presence (start at login / close to tray). Optional: installs
+   * packaged before it shipped have the bridge but not these methods.
+   */
+  getPresence?(): Promise<DesktopPresenceState>;
+  setPresence?(patch: Partial<PresenceSettings>): Promise<DesktopPresenceState>;
   /**
    * The phantombot engine bundled in the desktop app: one general bridge
    * (see electron/phantombot/methods.ts for the methods). Turns default to the
@@ -206,6 +236,27 @@ export function hasDesktopPermissionApi(): boolean {
 export function hasDesktopUpdateApi(): boolean {
   const api = getDesktopApi();
   return !!api && typeof api.getUpdateState === 'function' && typeof api.onUpdateState === 'function';
+}
+
+/**
+ * True when this desktop build's preload exposes the tray-presence API.
+ * The Settings row is hidden in the PWA and on installs packaged before it.
+ */
+export function hasDesktopPresenceApi(): boolean {
+  const api = getDesktopApi();
+  return !!api && typeof api.getPresence === 'function' && typeof api.setPresence === 'function';
+}
+
+/**
+ * Which presence rows this PC can honour. The same gate hides a row in the
+ * PWA (no capability at all) and on a desktop that cannot deliver it, so a
+ * setting no platform supports is never shown as a dead switch.
+ */
+export function visiblePresenceRows(capability: PresenceCapability | null | undefined): PresenceRow[] {
+  const rows: PresenceRow[] = [];
+  if(capability?.autostart) rows.push('startAtLogin');
+  if(capability?.tray) rows.push('closeToTray');
+  return rows;
 }
 
 /** The desktop app's phantombot bridge, or null in the PWA and on older installs. */
