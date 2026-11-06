@@ -7,7 +7,7 @@
  *
  *   Update now      → the SAME action the Updates tab's button performs
  *                     (restart-and-install once downloaded, otherwise open the
- *                     download page) — one update path, not two,
+ *                     release page) — one update path, not two,
  *   Remind me later  → silence for 24h, then ask again.
  *
  * Deliberately the smallest thing that works:

@@ -984,7 +984,7 @@
     },
     "src/lib/phantomchat/desktop-update-modal.ts": {
       "stable": "absent",
-      "preview": "392628422594bb583131d23a6e98408ef4207a000fea46c90bb0273a9029fc52",
+      "preview": "4b392f56b8bee3c239f716c3512c5e9bceeff498bf7df30d1b84c542004b1411",
       "reason": "Presentation-only message banner: builds a DOM overlay from main's pushed state. Reads no browser storage and writes no schema; it calls the same install/snooze IPC the Updates tab already uses."
     }
   }
