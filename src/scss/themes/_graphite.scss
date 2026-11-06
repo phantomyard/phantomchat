@@ -1,0 +1,62 @@
+// Graphite: Boring Corporate's costume (layout, type, avatars) with a softer palette.
+// The boot script in index.html sets data-ui-theme="boring-corporate" plus
+// data-ui-variant="graphite", so every Boring Corporate rule applies and only the
+// colours below differ. Boring Corporate itself is untouched.
+//
+// Dark lifts the canvas off pure black to a graphite grey; chat-list rows get a
+// light wash of the accent when selected and a fainter one on hover, in both modes.
+
+$gr: 'html[data-ui-theme="boring-corporate"][data-ui-variant="graphite"]';
+
+#{$gr}.night,
+#{$gr}.night .chat {
+  @include bc-palette(
+    $canvas: #1a1a1d, $canvas-rgb: (26, 26, 29), $sidebar: #151518, $sidebar-rgb: (21, 21, 24),
+    $surface: #232327, $surface-rgb: (35, 35, 39),
+    $text: #ececef, $text-rgb: (236, 236, 239), $muted: #a1a1aa, $muted-rgb: (161, 161, 170),
+    $border: #2c2c31, $input: #36363c,
+    $accent: #346bf1, $accent-rgb: (52, 107, 241), $accent-dark: #2a59cc,
+    $message: #2a2a2f, $message-rgb: (42, 42, 47), $message-dark: #232327,
+    $hover: #222226, $selected: #2c2c31,
+    $danger: #fb414a, $danger-rgb: (251, 65, 74), $danger-dark: #d9333b,
+    $green: #22c55e, $scrollbar: rgba(255, 255, 255, .12), $menu: rgba(30, 30, 34, .85), $out-status: #a1a1aa
+  );
+
+  // #346bf1 is 3.7:1 on graphite; links take the lighter blue (6.8:1 on the canvas).
+  --link-color: #7da0f5 !important;
+}
+
+// Chat-list rows: selected is a light wash of the accent, hover a fainter one.
+#{$gr} {
+  --gr-row-hover: #f2f4fa;
+  --gr-row-selected: #e6ecfa;
+  --gr-row-selected-muted: #63636c;
+  --gr-row-selected-border: #{rgba(#1b4ed8, .22)};
+}
+
+#{$gr}.night {
+  --gr-row-hover: #1a1e2a;
+  --gr-row-selected: #1d2742;
+  --gr-row-selected-muted: #a1a1aa;
+  --gr-row-selected-border: #{rgba(#346bf1, .35)};
+}
+
+#{$gr} {
+  &.no-touch .chatlist-chat:hover,
+  .chatlist-chat.menu-open {
+    --background: var(--gr-row-hover) !important;
+  }
+
+  .chatlist-chat.active.active.active {
+    --background: var(--gr-row-selected) !important;
+    box-shadow: inset 0 0 0 1px var(--gr-row-selected-border);
+
+    .row-subtitle,
+    .dialog-subtitle-badge-pinned,
+    .message-status,
+    .sending-status-icon,
+    .dialog-subtitle-ico {
+      color: var(--gr-row-selected-muted) !important;
+    }
+  }
+}
