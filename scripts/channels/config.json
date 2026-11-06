@@ -539,7 +539,7 @@
     },
     "electron/main.ts": {
       "stable": "66ceb3695959ef27dfea1b957e8129ec95e36cc6296c63fc701fbc8f628d7303",
-      "preview": "5cf9334e0d58536fd8fd3ecd36a5f9c1c6dfd1338975854af6767807ff197d12",
+      "preview": "eecfc30869d4c43924577b1519a0995fa8bbb3ab3a15f7d037349883b56b6a31",
       "reason": "Removed again by #410: External AI, Local PC access and Providers come back later in a new design; the #276 rows recorded that it never wrote any storage. Plus the BrowserWindow title string is now Phantomyard Desktop. Desktop shell only: no storage, schema or database change. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "electron/piHarness.ts": {
@@ -884,12 +884,12 @@
     },
     "electron/voiceModels.test.ts": {
       "stable": "absent",
-      "preview": "50cafedf3621e908cb7a9b687b2561ce0c25eae227c8baf4388d38739c2412b6",
+      "preview": "db221c6d05a938591a46ae9729074a027858549c02ce5da1579d2c2aac31ae44",
       "reason": "Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "electron/voiceModels.ts": {
       "stable": "absent",
-      "preview": "1cb50273c4bcb11d0592b722ab658d81ee8f0804663caff7ac4aba42cf8b3b72",
+      "preview": "31bc4f7c3231b8751ae9274ddb86d6895c231a36ec4c92b70160d75da0fac9ea",
       "reason": "Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
     },
     "src/components/sidebarLeft/tabs/phantomchatVoiceModels.ts": {
