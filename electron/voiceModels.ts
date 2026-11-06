@@ -20,6 +20,12 @@ export type VoiceCall = (method: string, params?: Record<string, unknown>) => Pr
 const directions: Modality[] = ['tts', 'stt'];
 const empty = (): SavedChoice => ({enabled: false, provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: '', voice: '', apiKey: '', models: [], voices: []});
 const fingerprint = (v: VoiceChoice) => `${v.provider}|${v.baseUrl.replace(/\/+$/, '')}`;
+// Tags the channel-restart failure so callers can tell it apart from a voice
+// application failure; save() still records it, creation follow-through ignores it.
+export type TaggedError = Error & {code: string};
+export const CHANNEL_RESTART = 'voice_channel_restart';
+const channelRestartError = (): TaggedError =>
+  Object.assign(new Error('Voice settings saved; channel restart failed'), {code: CHANNEL_RESTART});
 const record = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 export class VoiceModels {
@@ -116,13 +122,24 @@ export class VoiceModels {
   apply(persona: string) {
     return this.exclusive(() => this.applyPersona(persona));
   }
+  // persona.create follow-through in main: only an enabled default gives this
+  // something to apply, so with voice off it must neither call the engine nor
+  // fail (main would roll the just-created persona back).
   applyNewPersona(persona: string) {
     return this.exclusive(async() => {
+      if(!directions.some(d => this.state.defaults[d].enabled)) return;
       if(this.state.overrides[persona]) {
         delete this.state.overrides[persona];
         this.persist();
       }
-      return this.applyPersona(persona);
+      try { return await this.applyPersona(persona); }
+      catch(err) {
+        // A failed channel restart is channel state, not a voice failure; it
+        // reaches the UI through channel status events. Only a voice
+        // application failure may roll persona creation back.
+        if((err as {code?: string}).code === CHANNEL_RESTART) return;
+        throw err;
+      }
     });
   }
   private async applyPersona(persona: string) {
@@ -137,7 +154,7 @@ export class VoiceModels {
     }));
     await this.value('persona.configure', {persona, config: {voice}});
     const status = await this.value<any>('persona.phantomchat.status', {persona});
-    if(status?.state === 'failed') throw new Error('Voice settings saved; channel restart failed');
+    if(status?.state === 'failed') throw channelRestartError();
   }
   async contact(pubkey: string) {
     if(!/^[0-9a-f]{64}$/.test(pubkey)) throw new Error('Invalid contact');

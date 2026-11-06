@@ -11,6 +11,7 @@ let file: string;
 let service: VoiceModels;
 let payloads: any[];
 let statuses: Record<string, string>;
+const failConfigure = new Set<string>();
 const key = randomBytes(32);
 const storage: SecretStorage = {
   available: () => true,
@@ -24,14 +25,17 @@ async function call(method: string, p: any = {}) {
     const tts = p.modality === 'tts';
     value = {ok: p.apiKey !== 'bad', models: tts ? [{id: 'tts-a', voices: ['alloy']}, {id: 'tts-b', voices: ['echo']}] : [{id: 'stt-a', voices: []}], voices: tts ? [p.model === 'tts-b' ? 'echo' : 'alloy'] : []};
   }
-  if(method === 'persona.configure') payloads.push(structuredClone(p));
+  if(method === 'persona.configure') {
+    if(failConfigure.has(p.persona)) return {ok: false as const, error: {code: 'engine', message: 'configure failed'}};
+    payloads.push(structuredClone(p));
+  }
   if(method === 'persona.phantomchat.status') value = {state: statuses[p.persona] || 'stopped'};
   if(method === 'persona.phantomchat.info') value = {npub: p.persona === 'alpha' ? nip19.npubEncode(pubkey) : null};
   return {ok: true as const, value};
 }
 const form = (model: string, voice = '') => ({enabled: true, provider: 'openai-compatible', baseUrl: 'https://audio.example/v1', model, voice, apiKey: 'secret-value'});
 const settings = () => ({tts: form('tts-a', 'alloy'), stt: form('stt-a')});
-beforeEach(() => {root = mkdtempSync(join(tmpdir(), 'pc-voice-')); file = join(root, 'voice.enc'); payloads = []; statuses = {}; service = new VoiceModels(file, storage, call);});
+beforeEach(() => {root = mkdtempSync(join(tmpdir(), 'pc-voice-')); file = join(root, 'voice.enc'); payloads = []; statuses = {}; failConfigure.clear(); service = new VoiceModels(file, storage, call);});
 afterEach(() => rmSync(root, {recursive: true, force: true}));
 describe('voice settings in main', () => {
   it('encrypts keys, returns only presence, applies both defaults and restores off/on', async() => {
@@ -78,6 +82,19 @@ describe('voice settings in main', () => {
     await service.save({tts: {enabled: false}, stt: {enabled: false}});
     await service.setContact(pubkey, {tts: 'tts-b'});
     expect(payloads.at(-1).config.voice.tts).toEqual({enabled: false});
+  });
+  it('creation follow-through skips everything when no default is enabled', async() => {
+    statuses.brand = 'failed';
+    await expect(service.applyNewPersona('brand')).resolves.toBeUndefined();
+    expect(payloads).toEqual([]);
+  });
+  it('creation follow-through survives a channel-restart failure and still throws on voice failures', async() => {
+    await service.save(settings());
+    payloads.length = 0; statuses.beta = 'failed';
+    await expect(service.applyNewPersona('beta')).resolves.toBeUndefined();
+    expect(payloads.at(-1).config.voice.tts).toMatchObject({model: 'tts-a'});
+    failConfigure.add('beta');
+    await expect(service.applyNewPersona('beta')).rejects.toThrow('configure failed');
   });
   it('refuses plaintext encryption backends', async() => {
     const s = new VoiceModels(file, {...storage, available: () => false}, call);
