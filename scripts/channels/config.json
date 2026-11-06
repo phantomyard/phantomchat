@@ -879,8 +879,8 @@
     },
     "src/components/sidebarLeft/tabs/phantomchatDecisionModel.ts": {
       "stable": "absent",
-      "preview": "ac30874042dab1850baade18f3cecfa0e43446ab3440e21aaf275c0a407934d3",
-      "reason": "New (#449): desktop Settings > Decision Model tab. UI only: the key is sent to main once and is never kept in the renderer, localStorage or IndexedDB."
+      "preview": "2981b52041e93ebb3fd301a862f7608e4959d91d45eb4c88f29204154102dda8",
+      "reason": "New (#449): desktop Settings > Decision Model tab. UI only: the key is sent to main once and is never kept in the renderer, localStorage or IndexedDB. Model picker bound to the provider that listed it: a provider switch discards an in-flight check, and no TypeSafe default is offered for OpenRouter (Save refuses without a model)."
     }
   }
 }

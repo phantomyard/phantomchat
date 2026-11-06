@@ -102,7 +102,8 @@ describe('Settings > Decision Model', () => {
   });
 
   it('shows a save error and the personas that failed', async() => {
-    const api = fakeApi();
+    // TypeSafe has its own default model, so Save can go out before any check.
+    const api = fakeApi({...UNCONFIGURED, provider: 'typesafe'});
     api.save.mockResolvedValueOnce({ok: false, error: 'Enter an API key', state: UNCONFIGURED} as any);
     const form = createDecisionModelForm(api);
     await form.ready;
@@ -112,6 +113,52 @@ describe('Settings > Decision Model', () => {
     api.save.mockResolvedValueOnce({ok: true, state: UNCONFIGURED, applied: 1, failed: [{persona: 'aria', error: 'disk full'}]} as any);
     await form.save();
     expect(q(form.section, 'decision-model-status').textContent).toBe('On: applied to 1 persona; failed: aria (disk full)');
+  });
+
+  const pickProvider = (form: {section: HTMLElement}, value: string) => {
+    q(form.section, 'decision-model-provider').click();
+    (document.querySelector(`[data-testid="decision-model-provider-option-${value}"]`) as HTMLElement).click();
+  };
+
+  it('a provider switch discards a check still running for the previous provider', async() => {
+    const api = fakeApi({configured: true, enabled: true, provider: 'openrouter', model: 'liquid/d1', hasKey: true, canStoreKey: true});
+    const form = createDecisionModelForm(api);
+    document.body.append(form.section);
+    await form.ready;
+    let release: () => void;
+    const gate = new Promise<void>((resolve) => release = resolve);
+    api.check.mockImplementationOnce(async() => {
+      await gate;
+      return {ok: true as const, value: {status: 'verified' as const, detail: 'ok', models: ['liquid/d1']}};
+    });
+    const key = q(form.section, 'decision-model-key') as HTMLInputElement;
+    key.value = 'sk-or-2';
+    const inFlight = form.loadModels();
+    pickProvider(form, 'typesafe');
+    release!();
+    await inFlight;
+    expect(api.check).not.toHaveBeenCalledWith('typesafe', expect.anything());
+    expect(q(form.section, 'decision-model-status').textContent).toBe('');
+    expect(q(form.section, 'decision-model-model-value').textContent).not.toBe('liquid/d1');
+    (q(form.section, 'decision-model-enabled') as HTMLInputElement).checked = true;
+    await form.save();
+    expect(api.save).not.toHaveBeenCalledWith(expect.objectContaining({provider: 'typesafe', model: 'liquid/d1'}));
+  });
+
+  it('an unverifiable OpenRouter key offers no TypeSafe model and Save refuses without one', async() => {
+    const api = fakeApi();
+    api.check.mockResolvedValueOnce({ok: true, value: {status: 'unverified', detail: 'ETIMEDOUT', models: []}} as any);
+    const form = createDecisionModelForm(api);
+    document.body.append(form.section);
+    await form.ready;
+    (q(form.section, 'decision-model-key') as HTMLInputElement).value = 'sk-or-3';
+    await form.loadModels();
+    expect(q(form.section, 'decision-model-status').textContent).toBe('Could not verify the key (ETIMEDOUT)');
+    expect(q(form.section, 'decision-model-model-value').textContent).not.toContain('typesafe/');
+    (q(form.section, 'decision-model-enabled') as HTMLInputElement).checked = true;
+    await form.save();
+    expect(api.save).not.toHaveBeenCalled();
+    expect(q(form.section, 'decision-model-status').textContent).toBe('Choose a model');
   });
 
   it('says when this PC cannot keep the key', async() => {

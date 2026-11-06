@@ -97,15 +97,35 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
   let state: DecisionModelState | null = null;
   let checkGeneration = 0;
   let checkedKey: {provider: string; key: string} | undefined;
+  /** The provider whose check filled the model picker; a pick is only valid for it. */
+  let modelsProvider: DecisionModelProvider | undefined;
   let busy = false;
 
   const provider = (): DecisionModelProvider => (providerPicker.getValue() as DecisionModelProvider) || 'openrouter';
   /** The stored key belongs to the provider on screen. */
   const storedKeyFits = () => !!state?.hasKey && state.provider === provider();
 
-  const setModels = (ids: string[], preferred?: string) => {
-    const list = ids.length ? [...ids] : [DEFAULT_DECISION_MODEL];
+  /** The saved model, only when it was saved for this provider. */
+  const storedModelFor = (p: DecisionModelProvider) => state?.configured && state.provider === p ? state.model : undefined;
+  /** A default only where it is that provider's own id; OpenRouter has none. */
+  const defaultFor = (p: DecisionModelProvider) => p === 'typesafe' ? DEFAULT_DECISION_MODEL : undefined;
+  /** The picked model, only while the picker holds this provider's list. */
+  const pickedModelFor = (p: DecisionModelProvider) => modelsProvider === p ? modelPicker.getValue() : undefined;
+
+  const clearModels = () => {
+    modelsProvider = undefined;
+    modelPicker.setOptions([]);
+    modelPicker.setDisabled(true);
+  };
+
+  const setModels = (p: DecisionModelProvider, ids: string[], preferred?: string) => {
+    const list = [...ids];
     if(preferred && !list.includes(preferred)) list.unshift(preferred);
+    if(!list.length) {
+      clearModels();
+      return;
+    }
+    modelsProvider = p;
     modelPicker.setOptions(list.map((id) => ({
       value: id,
       label: id,
@@ -123,11 +143,12 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
   };
 
   function onProviderChanged() {
+    // Discard a check still running for the previous provider.
+    ++checkGeneration;
     checkedKey = undefined;
     keyInput.value = '';
     status.textContent = '';
-    modelPicker.setOptions([]);
-    modelPicker.setDisabled(true);
+    clearModels();
     showKeyNote();
     if(storedKeyFits()) void loadModels();
   }
@@ -149,13 +170,11 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     const r = res.value;
     if(r.status === 'invalid') {
       status.textContent = `Key rejected (${r.detail})`;
-      modelPicker.setOptions([]);
-      modelPicker.setDisabled(true);
+      clearModels();
       return;
     }
     status.textContent = r.status === 'verified' ? 'Key verified' : `Could not verify the key (${r.detail})`;
-    const preferred = modelPicker.getValue() || (state?.provider === p ? state.model : DEFAULT_DECISION_MODEL);
-    setModels(r.models, preferred);
+    setModels(p, r.models, pickedModelFor(p) || storedModelFor(p) || defaultFor(p));
   }
 
   keyInput.addEventListener('input', () => {
@@ -170,10 +189,16 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     status.textContent = 'Saving...';
     try {
       const key = keyInput.value.trim();
+      const p = provider();
+      const model = pickedModelFor(p) || storedModelFor(p) || defaultFor(p);
+      if(!model) {
+        status.textContent = 'Choose a model';
+        return;
+      }
       const res = await api.save({
         enabled: enabled.checked,
-        provider: provider(),
-        model: modelPicker.getValue() || (state?.provider === provider() ? state.model : DEFAULT_DECISION_MODEL),
+        provider: p,
+        model,
         ...(key ? {apiKey: key} : {})
       });
       if(res.ok === false) {
@@ -205,7 +230,7 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     providerPicker.setOptions(PROVIDERS, state.provider);
     showKeyNote();
     if(storedKeyFits()) await loadModels();
-    else if(state.configured) setModels([state.model], state.model);
+    else if(state.configured) setModels(state.provider, [state.model], state.model);
   })();
 
   return {
