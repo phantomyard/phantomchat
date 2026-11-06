@@ -1,5 +1,8 @@
 const lang = {
   'VoiceModels': 'Voice Models',
+  'SpecializedModels': 'Specialized Models',
+  'DecisionModel': 'Decision Model',
+  'Embeddings': 'Embeddings',
   'Animations': 'Animations',
   'AttachAlbum': 'Album',
   'Appearance.Color.Hex': 'HEX',

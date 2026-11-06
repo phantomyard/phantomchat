@@ -77,6 +77,43 @@ export interface PhantomChatDesktopApi {
    * packaged before it shipped do not have it.
    */
   decisionModel?: DesktopDecisionModelApi;
+  /** Embeddings for every engine persona. Optional: older installs lack it. */
+  embeddings?: DesktopEmbeddingsApi;
+}
+
+export type EmbeddingsProvider = 'gemini' | 'openai-compatible';
+
+/** Main's view of the setting. Never carries the key. */
+export interface EmbeddingsState {
+  configured: boolean;
+  enabled: boolean;
+  provider: EmbeddingsProvider;
+  baseUrl: string;
+  model: string;
+  dims: number;
+  hasKey: boolean;
+  canStoreKey: boolean;
+}
+
+export interface EmbeddingsCheck {
+  status: 'verified' | 'failed' | 'unchecked';
+  detail: string;
+  models: string[];
+  dims?: number;
+}
+
+export interface EmbeddingsCheckInput {provider: EmbeddingsProvider; baseUrl?: string; apiKey?: string; model?: string}
+
+export type EmbeddingsSaveResult =
+  | {ok: true; state: EmbeddingsState; applied: number; failed: {persona: string; error: string}[]}
+  | {ok: false; error: string; state: EmbeddingsState | null};
+
+export interface DesktopEmbeddingsApi {
+  get(): Promise<EmbeddingsState | null>;
+  /** An empty key checks with the stored key of the same provider and endpoint. */
+  check(input: EmbeddingsCheckInput): Promise<{ok: true; value: EmbeddingsCheck} | {ok: false; error: string}>;
+  /** Turning it on needs a live embed with the model; a failed one saves nothing. */
+  save(input: EmbeddingsCheckInput & {enabled: boolean}): Promise<EmbeddingsSaveResult>;
 }
 
 export type DecisionModelProvider = 'openrouter' | 'typesafe';
@@ -186,4 +223,15 @@ export function getDesktopVoiceModels() {
 export function getDesktopDecisionModel(): DesktopDecisionModelApi | null {
   const api = getDesktopApi()?.decisionModel;
   return api && typeof api.get === 'function' && typeof api.check === 'function' && typeof api.save === 'function' ? api : null;
+}
+
+/** The Embeddings API, or null in the PWA and on installs packaged before it. */
+export function getDesktopEmbeddings(): DesktopEmbeddingsApi | null {
+  const api = getDesktopApi()?.embeddings;
+  return api && typeof api.get === 'function' && typeof api.check === 'function' && typeof api.save === 'function' ? api : null;
+}
+
+/** Settings > Specialized Models exists when any of its three screens can work. */
+export function hasDesktopSpecializedModels(): boolean {
+  return !!(getDesktopDecisionModel() || getDesktopVoiceModels() || getDesktopEmbeddings());
 }
