@@ -10,8 +10,9 @@ import type {UpdateState} from './updater';
 import type {PermissionSettings, PermissionSetting} from './permissions';
 import type {DecisionModelCheck, DecisionModelSaveResult, DecisionModelState} from './decisionModel';
 import type {EmbeddingsCheck, EmbeddingsSaveResult, EmbeddingsState} from './embeddings';
+import type {PresenceCapability, PresenceSettings} from './presence';
 
-export type {UpdateState, PermissionSettings, PermissionSetting};
+export type {UpdateState, PermissionSettings, PermissionSetting, PresenceCapability, PresenceSettings};
 
 export interface PhantomChatDesktopApi {
   /** Installed app version (electron app version, e.g. "1.0.42"). */
@@ -58,6 +59,17 @@ export interface PhantomChatDesktopApi {
    * defaults", since grants can exist for permissions the tab never lists.
    */
   resetPermissionSettings(): Promise<PermissionSettings>;
+  /**
+   * Tray presence: the stored start-at-login / close-to-tray choice, what this
+   * desktop can actually do, and the effective (flag && capability) state.
+   * Main owns all three; this is a view over them.
+   */
+  getPresence(): Promise<DesktopPresenceState>;
+  /**
+   * Change one or both presence flags. Main validates the patch, persists it
+   * and applies the login entry; the returned state is the source of truth.
+   */
+  setPresence(patch: Partial<PresenceSettings>): Promise<DesktopPresenceState>;
   /**
    * The bundled phantombot engine. One general entry point so a new PWA
    * feature needs no new desktop build: `call(method, params)` runs one
@@ -113,6 +125,12 @@ export interface EmbeddingsSaveInput extends EmbeddingsCheckInput {enabled: bool
 
 export type PhantombotEvent = {turnId: string; event: unknown} | {persona: string; phantomchat: unknown};
 
+export interface DesktopPresenceState {
+  settings: PresenceSettings;
+  capability: PresenceCapability;
+  effective: PresenceSettings;
+}
+
 export type PhantombotResult = {ok: true; value: unknown} | {ok: false; error: {code: string; message: string}};
 
 const api: PhantomChatDesktopApi = {
@@ -132,6 +150,8 @@ const api: PhantomChatDesktopApi = {
   setPermissionSetting: (permission: string, setting: PermissionSetting) =>
     ipcRenderer.invoke('desktop:set-permission-setting', permission, setting),
   resetPermissionSettings: () => ipcRenderer.invoke('desktop:reset-permission-settings'),
+  getPresence: () => ipcRenderer.invoke('desktop:get-presence'),
+  setPresence: (patch: Partial<PresenceSettings>) => ipcRenderer.invoke('desktop:set-presence', patch),
   voiceModels: {call: (method, params) => ipcRenderer.invoke('desktop:voice-models', method, params)},
   phantombot: {
     call: (method: string, params?: Record<string, unknown>) => ipcRenderer.invoke('desktop:phantombot:call', method, params),

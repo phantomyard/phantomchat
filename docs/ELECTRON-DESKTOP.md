@@ -244,6 +244,48 @@ SmartScreen may still warn until the certificate accumulates reputation;
 verify the published SHA-256 checksum before choosing **More info → Run
 anyway**.
 
+## Tray presence: start at login and close to tray
+
+`electron/presence.ts` owns this, `electron/tray.ts` is the thin Tray wiring,
+and Settings → Desktop is a view over main's state. Two preferences, both on
+by default:
+
+| Preference | What it does |
+|---|---|
+| **Start at login** | Writes a login entry that launches the app with `--hidden`, so it arrives in the tray instead of on screen. |
+| **Close to tray** | Closing the window hides it; PhantomChat keeps receiving. **Quit PhantomChat** in the tray menu is the real quit. |
+
+### Effective state is `flag && capability`
+
+A preference is only in force where the desktop can deliver it. The stored
+flag is never thrown away (hidden is not deleted), so a choice made under one
+desktop comes back with it.
+
+| Capability | macOS | Windows | Linux |
+|---|---|---|---|
+| Tray | always (menu bar) | always (notification area) | session-bus probe: `org.kde.StatusNotifierWatcher` must have an owner |
+| Login entry | `app.setLoginItemSettings` | `app.setLoginItemSettings({args: ['--hidden']})` | `~/.config/autostart/phantomchat.desktop` |
+
+On Linux the probe asks `GetNameOwner` over DBus with the first tool that
+exists — `dbus-send`, then `gdbus`, then `busctl`. Plasma has a watcher, stock
+Ubuntu Desktop has one because the AppIndicator extension ships enabled, bare
+GNOME has none: no watcher means no tray icon, so the app falls back to the
+status quo (a visible window, close quits) rather than to a window that can
+disappear. Wayland is irrelevant — StatusNotifier is DBus, not X11.
+
+A missing capability also **hides** its Settings row (not greyed) — the same
+gate hides both rows in the PWA, which has no capability at all. A packaged
+build that cannot write `~/.config/autostart` (a snap; we ship rpm, deb and
+AppImage only) hides the login row for the same reason.
+
+macOS login items take no arguments, so a login launch is recognised through
+`getLoginItemSettings().wasOpenedAtLogin` instead of `--hidden`.
+
+The tray image is the packaged `resources/icon.png`, resized per platform
+(22 px Linux, 18 px macOS, 16 px Windows). If it cannot be loaded, no tray is
+created and close-to-tray stays off: a tray with no icon would hide the
+window with nothing to click.
+
 ## Diagnostics: freezes and crashes (issue #243)
 
 Everything needed to diagnose a freeze is in one plain-text file, readable

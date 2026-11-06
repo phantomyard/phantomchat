@@ -10,10 +10,27 @@
  *    is blocked, window.open is denied and vetted https links are handed to the
  *    OS browser
  */
-import {app, BrowserWindow, session, shell, protocol, net, ipcMain, dialog, safeStorage} from 'electron';
+import {app, BrowserWindow, Tray, session, shell, protocol, net, ipcMain, dialog, safeStorage} from 'electron';
+import {spawnSync} from 'child_process';
 import {readFileSync, writeFileSync, renameSync, mkdirSync, existsSync} from 'fs';
 import {join} from 'path';
 import {installDesktopEntry, uninstallDesktopEntry} from './desktopIntegration';
+import {
+  type PresenceCapability,
+  type PresenceSettings,
+  autostartPath,
+  autostartTargetPath,
+  effectivePresence,
+  normalizePresenceSettings,
+  presenceSettingsPath,
+  probeStatusNotifier,
+  readPresenceSettings,
+  removeAutostartEntry,
+  shouldStartHidden,
+  writeAutostartEntry,
+  writePresenceSettings
+} from './presence';
+import {createTray, resolveTrayIcon} from './tray';
 import {attachEditableContextMenu} from './contextMenu';
 import {APP_SCHEME_PRIVILEGES} from './scheme';
 import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontendProxy';
@@ -192,6 +209,120 @@ function promptForPermission(
 let mainWindow: BrowserWindow | null = null;
 let frontend: ReturnType<typeof createFrontendProxy> | undefined;
 let phantombot: PhantombotHostClient | undefined;
+
+// ─── Tray presence ─────────────────────────────────────────────────────────
+// Start at login and close to tray (see electron/presence.ts for why the
+// effective state is flag && capability, and why both live in one place).
+let presenceSettings: PresenceSettings = normalizePresenceSettings(undefined);
+let presenceCapability: PresenceCapability = {
+  tray: false,
+  autostart: false,
+  trayReason: 'not probed yet',
+  autostartReason: 'not probed yet'
+};
+let tray: Tray | null = null;
+/** True only for a real quit; a close that hides the window is not one. */
+let quitting = false;
+/** Decided once at boot: a login launch stays in the tray. */
+let startHidden = false;
+
+function presenceState() {
+  return {
+    settings: presenceSettings,
+    capability: presenceCapability,
+    effective: effectivePresence(presenceSettings, presenceCapability)
+  };
+}
+
+/**
+ * What this desktop can deliver. macOS and Windows answer from their own
+ * APIs; Linux is a session-bus probe, since Electron's Linux tray is a
+ * StatusNotifierItem and nothing else (a bare GNOME session has no watcher).
+ */
+function detectPresenceCapability(): PresenceCapability {
+  if(process.platform !== 'linux') {
+    return {tray: true, autostart: true, trayReason: null, autostartReason: null};
+  }
+  const probe = probeStatusNotifier((command, args) => {
+    const result = spawnSync(command, args, {encoding: 'utf8', timeout: 1500});
+    return {status: result.status, missing: (result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'};
+  });
+  // The autostart folder is writable for every package we ship (rpm, deb,
+  // AppImage). A snap could not write it — we don't ship one, so this is a
+  // guard against a future packaging mistake, not a supported case.
+  const sandboxed = !!process.env.SNAP;
+  return {
+    tray: probe.present,
+    autostart: !sandboxed,
+    trayReason: probe.present ? null : probe.detail,
+    autostartReason: sandboxed ? 'sandboxed packages cannot write the autostart folder' : null
+  };
+}
+
+/** Reconcile the OS login entry with the user's stored choice. */
+function applyStartAtLogin(): void {
+  if(!presenceCapability.autostart) return;
+  const on = effectivePresence(presenceSettings, presenceCapability).startAtLogin;
+  if(process.platform === 'linux') {
+    const file = autostartPath(app.getPath('home'));
+    const execPath = autostartTargetPath(process.env.APPIMAGE, process.execPath);
+    if(on) writeAutostartEntry(file, execPath); else removeAutostartEntry(file);
+    return;
+  }
+  // Windows carries the flag in the login entry's arguments; macOS login items
+  // take no arguments, so the OS reports a login launch instead
+  // (getLoginItemSettings().wasOpenedAtLogin).
+  app.setLoginItemSettings(process.platform === 'darwin' ?
+    {openAtLogin: on} :
+    {openAtLogin: on, path: process.execPath, args: ['--hidden']});
+}
+
+function showMainWindow(): void {
+  if(!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if(mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/** Build the tray once, if this desktop has one. */
+function ensureTray(): void {
+  if(tray || !presenceCapability.tray) return;
+  const iconPath = resolveTrayIcon({
+    resourcesPath: process.resourcesPath,
+    devBuildDir: join(__dirname, '..', 'build')
+  });
+  if(!iconPath) {
+    // No icon means the close button would hide the window with nothing to
+    // click: drop the capability so closing keeps the old behaviour.
+    presenceCapability = {...presenceCapability, tray: false, trayReason: 'tray icon not found'};
+    return;
+  }
+  tray = createTray(iconPath, process.platform, {
+    onShow: showMainWindow,
+    onQuit: () => {
+      quitting = true;
+      app.quit();
+    }
+  }) ?? null;
+  if(!tray) presenceCapability = {...presenceCapability, tray: false, trayReason: 'tray icon could not be loaded'};
+}
+
+ipcMain.handle('desktop:get-presence', () => presenceState());
+ipcMain.handle('desktop:set-presence', (_event, patch: unknown) => {
+  // A hostile or stale renderer is untrusted input for our own config file:
+  // only real booleans are taken, unknown keys are ignored.
+  const source = (typeof patch === 'object' && patch !== null ? patch : {}) as Record<string, unknown>;
+  if(typeof source.closeToTray === 'boolean') presenceSettings.closeToTray = source.closeToTray;
+  if(typeof source.startAtLogin === 'boolean') presenceSettings.startAtLogin = source.startAtLogin;
+  // The stored flag is kept even when the capability is missing (hidden is
+  // not deleted): logging into a desktop that supports it again restores it.
+  writePresenceSettings(presenceSettingsPath(app.getPath('userData')), presenceSettings);
+  applyStartAtLogin();
+  return presenceState();
+});
 
 // IPC surface — keep it in lockstep with the preload allowlist.
 ipcMain.handle('desktop:get-version', () => app.getVersion());
@@ -456,6 +587,9 @@ function createWindow(): void {
     title: 'Phantomyard Desktop',
     autoHideMenuBar: true,
     backgroundColor: '#ffffff',
+    // A login launch stays in the tray: created hidden and shown only when
+    // it was not started by the login entry (see shouldStartHidden).
+    show: false,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -538,18 +672,42 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Closing the window hides it to the tray when that is both enabled and
+  // possible; without a tray the old behaviour stands and the app quits.
+  mainWindow.on('close', (event) => {
+    if(quitting || !effectivePresence(presenceSettings, presenceCapability).closeToTray) return;
+    event.preventDefault();
+    if(mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+  });
+
+  mainWindow.once('ready-to-show', () => {
+    if(startHidden) return;
+    if(mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+  });
 }
 
 app.on('second-instance', () => {
-  if(mainWindow) {
-    if(mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  }
+  // A second launch always brings the window back, even from the tray.
+  showMainWindow();
 });
 
 app.whenReady().then(() => {
   if(isPhantombotProbe) return;
   loadPermissionSettings();
+  presenceSettings = readPresenceSettings(presenceSettingsPath(app.getPath('userData')));
+  presenceCapability = detectPresenceCapability();
+  startHidden = shouldStartHidden({
+    argv: process.argv,
+    platform: process.platform,
+    openedAtLogin: process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin,
+    capability: presenceCapability
+  });
+  if(!presenceCapability.tray) console.log('[presence] no tray:', presenceCapability.trayReason);
+  if(!presenceCapability.autostart) console.log('[presence] no login item:', presenceCapability.autostartReason);
+  // Reconcile the OS login entry with the stored choice on every boot, so a
+  // setting changed elsewhere (or a wiped login entry) heals.
+  applyStartAtLogin();
   if(!isDev) {
     frontend = createFrontendProxy({
       origin: resolveFrontendOrigin(app.isPackaged, process.env.PHANTOMCHAT_FRONTEND_ORIGIN),
@@ -559,6 +717,7 @@ app.whenReady().then(() => {
     protocol.handle('app', (request) => frontend!.handle(request));
   }
   createWindow();
+  ensureTray();
   // Provider contacts answer while the app is open, before any page call:
   // the host starts every hosted channel that has an allowlist.
   if(existsSync(join(app.getPath('userData'), 'phantombot'))) {
@@ -577,7 +736,8 @@ app.whenReady().then(() => {
   }
 
   app.on('activate', () => {
-    if(BrowserWindow.getAllWindows().length === 0) createWindow();
+    // macOS: clicking the dock icon reopens the hidden window.
+    showMainWindow();
   });
 }).catch((err) => {
   console.error(err instanceof Error ? err.message : err);
@@ -587,6 +747,8 @@ app.whenReady().then(() => {
 // Let the engine cancel its turns and release its root before the app goes.
 let phantombotStopped = false;
 app.on('before-quit', (event) => {
+  // From here on a closed window really means quit, not hide.
+  quitting = true;
   if(phantombotStopped || !phantombot?.running) return;
   event.preventDefault();
   void phantombot.shutdown().finally(() => {
@@ -596,6 +758,9 @@ app.on('before-quit', (event) => {
 });
 
 app.on('window-all-closed', () => {
-  // Desktop convention: quit on all platforms (PhantomChat has no tray).
+  // With close-to-tray the window is hidden, not closed, so this only fires
+  // when the user genuinely quits — or when the tray is unavailable, which
+  // keeps the old contract: close the window, quit the app.
+  if(effectivePresence(presenceSettings, presenceCapability).closeToTray) return;
   app.quit();
 });

@@ -12,8 +12,9 @@ import SettingSection from '@components/settingSection';
 import AppPhantomChatRelaySettingsTab from '@components/sidebarLeft/tabs/phantomchatRelaySettings';
 import {hasDesktopUpdateApi} from '@lib/phantomchat/desktop-api';
 // Separate statement on purpose: scripts/channels/build.mjs strips the line above
-// by exact anchor for the channel UI; this one must survive in the preview tree.
+// by exact anchor for the channel UI; these must survive in the preview tree.
 import {hasDesktopSpecializedModels} from '@lib/phantomchat/desktop-api';
+import {getDesktopApi, hasDesktopPresenceApi, visiblePresenceRows} from '@lib/phantomchat/desktop-api';
 import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
 import showLogOutPopup from '@components/popups/logOut';
 import showResetLocalDataPopup from '@components/popups/resetLocalData';
@@ -208,6 +209,28 @@ export default class AppSettingsTab extends SliderSuperTab {
         listenerSetter: this.listenerSetter
       });
       buttonsDiv.append(updatesRow.container);
+    }
+
+    // Desktop only, capability-gated: start at login and close to tray. The
+    // gate hides the row in the PWA and on a desktop that cannot deliver
+    // either one (no tray, no writable autostart folder), so a switch is
+    // never offered where it would do nothing.
+    if(hasDesktopPresenceApi()) {
+      void getDesktopApi()!.getPresence!().then((state) => {
+        if(!visiblePresenceRows(state.capability).length) return;
+        const desktopRow = new Row({
+          title: 'Desktop',
+          icon: 'settings',
+          clickable: async() => {
+            const {default: AppPhantomChatDesktopPresenceTab} =
+              await import('@components/sidebarLeft/tabs/phantomchatDesktopPresence');
+            const tab = this.slider.createTab(AppPhantomChatDesktopPresenceTab);
+            tab.open();
+          },
+          listenerSetter: this.listenerSetter
+        });
+        buttonsDiv.append(desktopRow.container);
+      }).catch(() => {});
     }
 
     // Desktop only: Decision Model, Voice Models and Embeddings under one
