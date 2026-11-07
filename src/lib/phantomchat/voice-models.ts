@@ -14,7 +14,7 @@ const sameUrl = (a = '', b = '') => a.trim().replace(/\/+$/, '') === b.trim().re
 
 export interface VoiceForm {
   section: HTMLElement;
-  /** Both directions for save(); a direction the provider lacks, or Enabled off, is `{enabled: false}`. */
+  /** Both directions for save(); a direction the provider lacks, or its Enabled toggle off, is `{enabled: false}`. */
   value(): Record<VoiceModality, Record<string, unknown>>;
   /** Check the key (typed or stored) and load both model lists. */
   discover(): Promise<void>;
@@ -25,17 +25,21 @@ const DIRECTIONS: VoiceModality[] = ['tts', 'stt'];
 
 /**
  * The Voice Models form, built from the Specialized Models kit like Decision
- * Model and Embeddings: Enabled, ONE provider and ONE key for both
- * directions (+ Active check), then a TTS model + Voice and an STT model.
+ * Model and Embeddings: ONE provider and ONE key for both
+ * directions (+ Active check), then TTS (Enabled, model, Voice) and STT (Enabled, model).
  * A provider that serves only one direction shows only that one. Models load
  * when the key or base URL field is left, not from a button. The request
  * generation owns catalogue AND status writes, including failures.
  */
 export function createVoiceForm(saved: Record<VoiceModality, any>, providers: any[], call: VoiceModelsCall): VoiceForm {
   const section = formColumn('voice-form');
-  const {container: enabledRow, field: enabled} = toggleRow('voice-enabled', 'Enabled',
-    'Your assistants answer with voice notes and read the ones you send');
-  enabled.setValueSilently(!!(saved.tts?.enabled || saved.stt?.enabled));
+  // One Enabled toggle per direction: TTS on with STT off (or the reverse) stays saveable.
+  const {container: ttsEnabledRow, field: ttsEnabled} = toggleRow('voice-tts-enabled', 'Text-to-speech',
+    'Your assistants answer with voice notes');
+  const {container: sttEnabledRow, field: sttEnabled} = toggleRow('voice-stt-enabled', 'Speech-to-text',
+    'Your assistants read the voice notes you send');
+  const enabled: Record<VoiceModality, typeof ttsEnabled> = {tts: ttsEnabled, stt: sttEnabled};
+  for(const d of DIRECTIONS) enabled[d].setValueSilently(!!saved[d]?.enabled);
 
   const {container: providerBox, picker: provider} = labelledPicker({
     testId: 'voice-provider', label: 'Provider', placeholder: 'Choose a provider', onChange: () => onProviderChanged()
@@ -60,15 +64,15 @@ export function createVoiceForm(saved: Record<VoiceModality, any>, providers: an
   const {container: voiceBox, picker: voice} = labelledPicker({testId: 'voice-tts-voice', label: 'Voice', placeholder: 'Choose a model first'});
   const ttsBox = el('div', 'display:flex;flex-direction:column;gap:.75rem;');
   ttsBox.setAttribute('data-testid', 'voice-tts');
-  ttsBox.append(tts.container, voiceBox);
+  ttsBox.append(ttsEnabledRow, tts.container, voiceBox);
   const stt = createModelChooser({
     testId: 'voice-stt-model', label: 'Speech-to-text model', placeholder: 'Enter your key to load models', allowTyped: true
   });
   const sttBox = el('div', 'display:flex;flex-direction:column;gap:.75rem;');
   sttBox.setAttribute('data-testid', 'voice-stt');
-  sttBox.append(stt.container);
+  sttBox.append(sttEnabledRow, stt.container);
   const status = noteLine('voice-status', true);
-  section.append(enabledRow, providerBox, urlBox, keyBox, active.container, keyNote, ttsBox, sttBox, status);
+  section.append(providerBox, urlBox, keyBox, active.container, keyNote, ttsBox, sttBox, status);
 
   const models: Record<VoiceModality, ModelChooser> = {tts, stt};
   let generation = 0;
@@ -93,7 +97,8 @@ export function createVoiceForm(saved: Record<VoiceModality, any>, providers: an
     showStoredKey(key, anyStoredKey());
     keyNote.textContent = anyStoredKey() ? 'Key saved. Leave empty to keep it. One key for both directions.' : 'One key for both directions.';
   };
-  const settingsFor = (d: VoiceModality) => ({enabled: enabled.checked && serves(d), provider: currentProvider(),
+  const on = (d: VoiceModality) => enabled[d].checked && serves(d);
+  const settingsFor = (d: VoiceModality) => ({enabled: on(d), provider: currentProvider(),
     baseUrl: ownEndpoint() ? endpoint.value.trim() : '', apiKey: key.value, model: models[d].value(), voice: d === 'tts' ? voice.getValue() || '' : ''});
 
   function onProviderChanged() {
@@ -169,7 +174,7 @@ export function createVoiceForm(saved: Record<VoiceModality, any>, providers: an
     input.addEventListener('input', () => {checked = undefined;});
     input.addEventListener('blur', () => void discover());
   }
-  enabled.input.addEventListener('change', () => {generation++;});
+  for(const d of DIRECTIONS) enabled[d].input.addEventListener('change', () => {generation++;});
 
   // The saved choice shows without a network call; main cached its lists.
   showFields();
@@ -184,7 +189,7 @@ export function createVoiceForm(saved: Record<VoiceModality, any>, providers: an
 
   return {
     section,
-    value: () => Object.fromEntries(DIRECTIONS.map(d => [d, enabled.checked && serves(d) ? settingsFor(d) : {enabled: false}])) as unknown as Record<VoiceModality, Record<string, unknown>>,
+    value: () => Object.fromEntries(DIRECTIONS.map(d => [d, on(d) ? settingsFor(d) : {enabled: false}])) as unknown as Record<VoiceModality, Record<string, unknown>>,
     discover,
     dispose: () => {
       disposed = true;

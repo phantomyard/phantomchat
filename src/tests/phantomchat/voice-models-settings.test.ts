@@ -44,7 +44,7 @@ it('one provider and one key for both directions, built from the kit, stored key
   document.body.append(form.section);
   expect(form.section.querySelector('select')).toBeNull();
   expect([...form.section.querySelectorAll('button')].some((b) => /load models/i.test(b.textContent))).toBe(false);
-  for(const id of ['voice-enabled', 'voice-provider', 'voice-base-url', 'voice-key', 'voice-active', 'voice-tts-model', 'voice-tts-voice', 'voice-stt-model', 'voice-status']) {
+  for(const id of ['voice-tts-enabled', 'voice-stt-enabled', 'voice-provider', 'voice-base-url', 'voice-key', 'voice-active', 'voice-tts-model', 'voice-tts-voice', 'voice-stt-model', 'voice-status']) {
     expect(q(form.section, id), id).not.toBeNull();
   }
   expect(form.section.querySelectorAll('[data-testid="voice-key"]').length).toBe(1);
@@ -116,8 +116,19 @@ it('does not let a stale check overwrite the new provider', async() => {
 
 it('disabled: an off-only patch for both directions', () => {
   const form = createVoiceForm(saved, providers, vi.fn(async() => ok([])));
-  (q(form.section, 'voice-enabled') as HTMLInputElement).checked = false;
+  (q(form.section, 'voice-tts-enabled') as HTMLInputElement).checked = false;
+  (q(form.section, 'voice-stt-enabled') as HTMLInputElement).checked = false;
   expect(form.value()).toEqual({tts: {enabled: false}, stt: {enabled: false}});
+});
+
+it('TTS on, STT off on a provider serving both: saves unchanged and never turns STT on', () => {
+  const both = {tts: savedTts, stt: {...savedStt, enabled: false}};
+  const form = createVoiceForm(both, providers, vi.fn(async() => ok([])));
+  expect((q(form.section, 'voice-tts-enabled') as HTMLInputElement).checked).toBe(true);
+  expect((q(form.section, 'voice-stt-enabled') as HTMLInputElement).checked).toBe(false);
+  const v = form.value();
+  expect(v.tts).toMatchObject({enabled: true, provider: 'openai-compatible', model: 'speech-a', voice: 'alloy'});
+  expect(v.stt).toEqual({enabled: false});
 });
 
 it('contact pickers: enabled directions only, and a gated Voice ID for a local contact', async() => {
