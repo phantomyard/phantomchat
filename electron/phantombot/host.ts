@@ -11,13 +11,11 @@
  *   - `__pi <args>`: the embedded Pi engine. The engine's native harness
  *     re-executes this binary (process.execPath) with `__pi`, exactly as it
  *     re-executes the phantombot CLI.
- *   - `__escort`: the escort's claude hook, same contract as the CLI.
  *   - `--version`: prints {phantombot, pi, bun} as JSON (packaging probe).
  *   - otherwise `--root <dir>`: open the engine on <dir> and serve JSON
  *     lines on stdin/stdout until stdin closes.
  */
 import {EMBEDDED_PI_SUBCOMMAND, EMBEDDED_PI_VERSION, runEmbeddedPi} from '../lib/embeddedPi.ts';
-import {ESCORT_SUBCOMMAND, runEscortHook} from '../lib/escort.ts';
 import {createEngine} from '../engine/index.ts';
 import {VERSION} from '../version.ts';
 import {
@@ -36,14 +34,6 @@ const info = {phantombot: VERSION, pi: EMBEDDED_PI_VERSION, bun: Bun.version};
 
 if(process.argv[2] === EMBEDDED_PI_SUBCOMMAND) {
   await runEmbeddedPi(process.argv.slice(3));
-} else if(process.argv[2] === ESCORT_SUBCOMMAND) {
-  const stdinText = await new Response(Bun.stdin.stream()).text();
-  let reason = '';
-  const code = await runEscortHook(stdinText, {stderr: (s) => {
-    reason += s;
-  }});
-  if(reason) await Bun.write(Bun.stderr, reason);
-  process.exit(code);
 } else if(process.argv.includes('--version')) {
   process.stdout.write(JSON.stringify(info) + '\n');
   process.exit(0);

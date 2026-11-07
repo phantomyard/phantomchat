@@ -634,7 +634,7 @@
     },
     "electron/phantombot/host.ts": {
       "stable": "absent",
-      "preview": "45e2a7067f3b54f98d543aef8974d0f32234d642ba64a157496f9ccf54f162e1",
+      "preview": "b67915e177ca5fc5e935c16a391d1866a222a212b8ca252603477bac0caff4f8",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/methods.ts": {

@@ -94,9 +94,9 @@ or its local PC tools needs no desktop build. Only a phantombot update does.
   `{tag, commit}` entry in `pin.json` still pins one deliberately. Builds need
   Bun `1.x` on PATH; `PHANTOMBOT_HOST=skip node electron/build.mjs` builds
   main/preload only.
-- **One binary, three roles.** `phantombot-host __pi …` is the embedded Pi (the
+- **One binary, two roles.** `phantombot-host __pi …` is the embedded Pi (the
   engine's native harness re-executes the binary as Pi, as it does the CLI),
-  `__escort` is the claude escort hook, and `--root <dir>` serves the engine.
+  and `--root <dir>` serves the engine.
 - **Protocol.** JSON lines on stdin/stdout: `{id, method, params}` in,
   `{id, result}` or `{id, error: {code, message}}` out, and
   `{event: "turn", turnId, data}` while a `persona.turn` streams. Requests run
