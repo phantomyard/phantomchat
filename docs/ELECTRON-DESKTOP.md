@@ -82,12 +82,18 @@ binary, `resources/phantombot/phantombot-host[.exe]`, with Pi embedded. The PWA
 reaches it through one general bridge, so a new PWA feature that uses the engine
 or its local PC tools needs no desktop build. Only a phantombot update does.
 
-- **Pinned.** `electron/phantombot/pin.json` holds the phantombot tag, its commit
-  and the Bun version. `electron/phantombot/build-host.mjs` checks phantombot out
-  at that commit, installs with its own lockfile, and compiles `host.ts` with
-  `bun build --compile` for the job's OS and arch. To update phantombot, change
-  the pin and cut a desktop release. Builds need Bun on PATH;
-  `PHANTOMBOT_HOST=skip node electron/build.mjs` builds main/preload only.
+- **Release-pinned, not version-pinned.** `electron/phantombot/pin.json` names a
+  channel (`{"channel": "latest"}`), and `electron/phantombot/build-host.mjs`
+  reads the phantombot release GitHub marks as **Latest** at build time. So there
+  is no version to remember: promote a phantombot release to Latest, cut a
+  desktop release, and that engine ships. The build checks phantombot out at the
+  resolved commit, installs with its own lockfile, and compiles `host.ts` with
+  `bun build --compile` for the job's OS and arch. The resolved tag and commit
+  ship as `resources/phantombot/pin.json` and in the release notes.
+  `PHANTOMBOT_HOST_REF` (plus `PHANTOMBOT_HOST_COMMIT`) forces a tag; a
+  `{tag, commit}` entry in `pin.json` still pins one deliberately. Builds need
+  Bun `1.x` on PATH; `PHANTOMBOT_HOST=skip node electron/build.mjs` builds
+  main/preload only.
 - **One binary, three roles.** `phantombot-host __pi …` is the embedded Pi (the
   engine's native harness re-executes the binary as Pi, as it does the CLI),
   `__escort` is the claude escort hook, and `--root <dir>` serves the engine.

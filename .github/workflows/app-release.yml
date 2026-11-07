@@ -3,6 +3,14 @@ name: Electron 1. Build + deploy to Preview — manual
 # Manual only, from main. A push or merge must never start this. Independent of PWA releases.
 on:
   workflow_dispatch:
+    inputs:
+      phantombot-ref:
+        # Empty is the normal case: pin.json names the `latest` channel and the
+        # build bundles whatever phantombot release is marked Latest. Set a tag
+        # only to force one that is not (yet) the latest release.
+        description: 'phantombot tag to bundle (empty = latest release)'
+        required: false
+        default: ''
 
 concurrency:
   group: electron-release
@@ -19,6 +27,8 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
+      engine-ref: ${{ steps.engine.outputs.ref }}
+      engine-commit: ${{ steps.engine.outputs.commit }}
       pr-number: ${{ steps.pr.outputs.number }}
       pr-title: ${{ steps.pr.outputs.title }}
     runs-on: ubuntu-latest
@@ -58,6 +68,25 @@ jobs:
         run: |
           VERSION="1.1.${GITHUB_RUN_NUMBER}"
           printf 'version=%s\ntag=phantomchat-v%s\n' "$VERSION" "$VERSION" >> "$GITHUB_OUTPUT"
+
+      # The engine is not pinned by hand any more: electron/phantombot/pin.json
+      # names a channel and this resolves it ONCE, so all four platform jobs
+      # bundle one tag+commit. Promoting a phantombot release to Latest is the
+      # whole update - dispatch this workflow and it carries that engine.
+      # PHANTOMBOT_HOST_REF overrides the channel for a deliberate one-off build.
+      - name: Resolve the phantombot engine release
+        id: engine
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PHANTOMBOT_HOST_REF: ${{ inputs.phantombot-ref }}
+        run: |
+          RESOLVED=$(node electron/phantombot/build-host.mjs --resolve)
+          echo "engine: $RESOLVED"
+          {
+            echo "ref=$(jq -r .tag <<<"$RESOLVED")"
+            echo "commit=$(jq -r .commit <<<"$RESOLVED")"
+          } >> "$GITHUB_OUTPUT"
+          echo "Bundling phantombot $(jq -r .tag <<<"$RESOLVED") ($(jq -r .commit <<<"$RESOLVED"))" >> "$GITHUB_STEP_SUMMARY"
 
 
   # Runs beside the builds. Publish needs it green.
@@ -103,14 +132,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # Bun compiles the phantombot engine host (electron/phantombot). Same pinned
-      # action commit phantombot's own release uses; the version must equal
-      # electron/phantombot/pin.json, which build-host.mjs checks.
+      # action commit phantombot's own release uses, same 1.x series: the series
+      # is the pin (pin.json), matching phantombot's own release workflow.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.4.4
+          bun-version: 1.x
       - name: Build electron main/preload + phantombot host
         run: node electron/build.mjs
         env:
+          # Resolved once in `version`; every platform bundles that same engine.
+          PHANTOMBOT_HOST_REF: ${{ needs.version.outputs.engine-ref }}
+          PHANTOMBOT_HOST_COMMIT: ${{ needs.version.outputs.engine-commit }}
           ARCH: x64
 
       - run: pnpm exec playwright install-deps chromium
@@ -205,14 +237,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # Bun compiles the phantombot engine host (electron/phantombot). Same pinned
-      # action commit phantombot's own release uses; the version must equal
-      # electron/phantombot/pin.json, which build-host.mjs checks.
+      # action commit phantombot's own release uses, same 1.x series: the series
+      # is the pin (pin.json), matching phantombot's own release workflow.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.4.4
+          bun-version: 1.x
       - name: Build electron main/preload + phantombot host
         run: node electron/build.mjs
         env:
+          # Resolved once in `version`; every platform bundles that same engine.
+          PHANTOMBOT_HOST_REF: ${{ needs.version.outputs.engine-ref }}
+          PHANTOMBOT_HOST_COMMIT: ${{ needs.version.outputs.engine-commit }}
           ARCH: ${{ matrix.arch }}
 
       - run: node scripts/channels/electron-shell-smoke.mjs
@@ -440,14 +475,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # Bun compiles the phantombot engine host (electron/phantombot). Same pinned
-      # action commit phantombot's own release uses; the version must equal
-      # electron/phantombot/pin.json, which build-host.mjs checks.
+      # action commit phantombot's own release uses, same 1.x series: the series
+      # is the pin (pin.json), matching phantombot's own release workflow.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.4.4
+          bun-version: 1.x
       - name: Build electron main/preload + phantombot host
         run: node electron/build.mjs
         env:
+          # Resolved once in `version`; every platform bundles that same engine.
+          PHANTOMBOT_HOST_REF: ${{ needs.version.outputs.engine-ref }}
+          PHANTOMBOT_HOST_COMMIT: ${{ needs.version.outputs.engine-commit }}
           ARCH: ${{ matrix.arch }}
 
       # Unsigned here on purpose: Authenticode signing happens once, in the
@@ -841,7 +879,10 @@ jobs:
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           SHA: ${{ github.sha }}
+          ENGINE_REF: ${{ needs.version.outputs.engine-ref }}
+          ENGINE_COMMIT: ${{ needs.version.outputs.engine-commit }}
         run: |
+          ENGINE_LINE="Bundled phantombot engine: ${ENGINE_REF} (${ENGINE_COMMIT})"
           # PR_NUMBER is empty for a direct push (no PR). Render the
           # originating-PR lines only when we actually resolved one.
           if [ -n "$PR_NUMBER" ]; then
@@ -861,6 +902,7 @@ jobs:
           Desktop release from workflow run #${RUN_NUMBER} (run id ${RUN_ID}).
           ${ORIGIN_LINE}
           ${FRONTEND_LINE}
+          ${ENGINE_LINE}
 
           Build run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}
           ${PR_LINK_LINE}

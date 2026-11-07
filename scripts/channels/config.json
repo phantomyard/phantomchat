@@ -9,7 +9,7 @@
     },
     "electron/build.mjs": {
       "stable": "01fdbe467ccd2e720894bbf492029922b49fc2886ecb74ed30c8316b5a48f9de",
-      "preview": "b79a1416e6903f7aa22e77def7d9ab2fc75064180d905d922341e94047ffa19f",
+      "preview": "b94d0434b460fd1871a9826eee6cd572285e5fb9b88406a007dc570a8d918019",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "package.json": {
@@ -609,7 +609,7 @@
     },
     "electron/phantombot/build-host.mjs": {
       "stable": "absent",
-      "preview": "f2e915087e4c3e9effa305b2c0894defbdec1da59c4ba839987789d54049918b",
+      "preview": "2087b43b1584a8c49d2e3dac1f96f2646dfc8f8e10c332914988aa08227e3fac",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/client.test.ts": {
@@ -644,8 +644,13 @@
     },
     "electron/phantombot/pin.json": {
       "stable": "absent",
-      "preview": "5ec06976a167dafd2b4891496fc3de054b44a87dc0005d9f7536c8029686c06e",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. Pin v1.1.487 (#778) for Embeddings."
+      "preview": "14352b1c05bd49dfb7d31c3fd5fc042dbab5284b1c57293c0c9ddda493fca46b",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. Now names the `latest` channel rather than a hand-maintained tag, so the desktop build bundles whichever phantombot release the principal promoted to Latest."
+    },
+    "electron/phantombot/pin.test.mjs": {
+      "stable": "absent",
+      "preview": "e8c1ef03429d185a0fbac102978d1bf83e6e4be028e0d7d96290c25a700d9838",
+      "reason": "Test only: pins the engine-channel contract (pin.json names `latest`, the build resolves and matches a Bun series, and an unknown channel or a tag without a commit is refused by calling resolveEngine with an injected pin) and ships no runtime code. Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes."
     },
     "electron/phantombot/probe.ts": {
       "stable": "absent",
