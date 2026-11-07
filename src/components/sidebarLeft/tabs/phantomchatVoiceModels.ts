@@ -5,11 +5,9 @@ import {el, NOTE_CSS, noteLine, saveButton} from '@components/sidebarLeft/tabs/p
 import {getDesktopVoiceModels} from '@lib/phantomchat/desktop-api';
 import {
   applyRemoteVoiceDefaults,
-  createVoiceDirectionForm,
+  createVoiceForm,
   listPhantomVoiceTargets,
   voiceValue,
-  type VoiceDirectionForm,
-  type VoiceModality,
   type VoiceModelsCall
 } from '@lib/phantomchat/voice-models';
 
@@ -19,26 +17,18 @@ import {
  * settings and keys (electron/voiceModels.ts).
  *
  * Same layout as Decision Model and Embeddings (AGENTS.md, "Settings screens:
- * one design"): one captioned section per direction, then one Save.
+ * one design"): one provider and one key for both directions, a model picker
+ * per direction, then one Save.
  */
-
-const CAPTIONS: Record<VoiceModality, string> = {
-  tts: 'Text-to-speech: the voice your assistants answer with.',
-  stt: 'Speech-to-text: how your assistants read the voice notes you send.'
-};
 
 /** The page, apart from the tab so tests drive it without the slider. */
 export async function mountVoiceModels(parent: {append(...nodes: Node[]): void}, call: VoiceModelsCall): Promise<{save(): Promise<void>; dispose(): void}> {
   const [settings, providers] = await Promise.all([voiceValue(call, 'get'), voiceValue(call, 'providers')]);
-  const forms: [VoiceModality, VoiceDirectionForm][] = [];
-  for(const d of ['tts', 'stt'] as const) {
-    const section = new SettingSection({name: el('span', undefined, d === 'tts' ? 'Text-to-speech (TTS)' : 'Speech-to-text (STT)'), caption: true});
-    section.caption.textContent = CAPTIONS[d];
-    const form = createVoiceDirectionForm(d, settings[d], providers, call);
-    section.content.append(form.section);
-    parent.append(section.container);
-    forms.push([d, form]);
-  }
+  const section = new SettingSection({caption: true});
+  section.caption.textContent = 'One provider and key for text-to-speech (the voice your assistants answer with) and speech-to-text (how they read your voice notes).';
+  const form = createVoiceForm(settings, providers, call);
+  section.content.append(form.section);
+  parent.append(section.container);
 
   const footer = new SettingSection({noDelimiter: true});
   const status = noteLine('voice-models-status', true);
@@ -55,7 +45,7 @@ export async function mountVoiceModels(parent: {append(...nodes: Node[]): void},
     saveBtn.disabled = true;
     status.textContent = 'Saving...';
     try {
-      const result = await voiceValue(call, 'save', Object.fromEntries(forms.map(([d, form]) => [d, form.value()])));
+      const result = await voiceValue(call, 'save', form.value());
       let remoteApplied = 0;
       try {
         const targets = await listPhantomVoiceTargets();
@@ -76,7 +66,7 @@ export async function mountVoiceModels(parent: {append(...nodes: Node[]): void},
     }
   }
   attachClickEvent(saveBtn, () => void save());
-  return {save, dispose: () => forms.forEach(([, form]) => form.dispose())};
+  return {save, dispose: () => form.dispose()};
 }
 
 export default class AppPhantomChatVoiceModelsTab extends SliderSuperTab {

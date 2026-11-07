@@ -115,6 +115,26 @@ export default class AppEditContactTab extends SliderSuperTab {
         new CheckboxField({text: 'ContactLocalTools', checked: localToolsOn}) :
         undefined;
 
+      // Provider: its main provider and model can change after it was created.
+      const providerPersona = contactKind === 'provider' ? prefs?.persona : undefined;
+      if(contactPubkey && providerPersona) {
+        const {getDesktopPhantombot} = await import('@lib/phantomchat/desktop-api');
+        const bridge = getDesktopPhantombot();
+        if(bridge) {
+          const {mountProviderModelEditor} = await import('@lib/phantomchat/provider-contact-editor');
+          const title = document.createElement('span');
+          title.textContent = 'Provider and model';
+          const modelSection = new SettingSection({name: title});
+          this.scrollable.append(modelSection.container);
+          void mountProviderModelEditor(modelSection.content, providerPersona, (method, params) => bridge.call(method, params))
+          .then((editor) => {
+            if(!editor) modelSection.container.remove();
+            else this.middlewareHelper.get().onDestroy(() => editor.destroy());
+          })
+          .catch(() => modelSection.container.remove());
+        }
+      }
+
       if(contactPubkey && (contactKind === 'phantom' || contactKind === 'provider')) {
         const {mountContactVoiceModels} = await import('@lib/phantomchat/voice-models');
         const voiceSection = new SettingSection();

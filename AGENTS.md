@@ -197,19 +197,25 @@ in particular, follows the rules below. Reviewers reject a diff that breaks them
    `className = 'btn-primary'` buttons. The pickers exist because native selects are
    unusable on a phone.
 2. **Model settings use the kit** (`src/components/sidebarLeft/tabs/phantomchatModelKit.ts`),
-   always in this order: Enabled toggle Row, Provider, (Base URL), API key + key
-   note, Model (+ Voice), status line, Save. A new model setting goes under
+   always in this order: Enabled toggle Row, Provider, (Base URL), API key +
+   Active check + key note, Model (+ Voice), status line, Save. The Provider list
+   comes from the engine (`*.providers()`): the Pi providers that serve that
+   model type. Voice has ONE provider and ONE key for both TTS and STT, with a
+   model picker per direction (a direction the provider lacks is hidden). A new model setting goes under
    **Settings > Specialized Models** as one more row, not as a new top-level row.
 3. **No "Load models" button.** Models load when the key or base URL field is
    left (blur), when the provider changes and a stored key fits, and on open when
    a key is stored. The saved choice shows on open with no network call.
 4. **Keys are write-only.** A key field is a password field, cleared after save
-   and on close. It never shows the stored key. The note under it says
+   and on close. It never shows the stored key: a stored key shows as dots in the
+   placeholder (`showStoredKey`). The note under it says
    "Key saved. Leave empty to keep it." when one is stored, or why it cannot be
    kept. Main owns keys (safeStorage), and the page learns only `hasKey`. A stored
    key is reused only for the same provider and endpoint.
-5. **One status line per form**, `role="status"`, in short plain sentences:
-   "Checking key...", "Key verified", "Key rejected (HTTP 401)", then
+5. **One Active check and one status line per form.** The key's verdict goes in
+   `activeCheck()`: green "✓ Active" only after a live call with the key worked
+   (a stored key is checked on open), red "✕ Key rejected (HTTP 401)". The status
+   line (`role="status"`) has the rest in short plain sentences, then
    `appliedLine()`: "On: applied to 2 personas; failed: aria (disk full)". Errors
    go in the status line, not in alerts or toasts.
 6. **Stale answers never win.** Every async check carries a generation counter.
@@ -217,10 +223,13 @@ in particular, follows the rules below. Reviewers reject a diff that breaks them
    failures included.
 7. **No catalogue means a typed model id**, through the kit's model chooser
    ("Other: type a model ID"). Never a dead empty picker.
-8. **Validate before saving.** Save checks a new key or model the way the TUI
+8. **Ask before a disruptive save.** A save that re-embeds every note (Embeddings
+   turned on, or a new provider, endpoint or model) asks Confirm/Cancel first and
+   says memory search by meaning is unavailable until it finishes.
+9. **Validate before saving.** Save checks a new key or model the way the TUI
    does, and saves nothing on a rejection. It applies to every persona one by one,
    names the ones that failed, and new personas inherit the setting.
-9. **Test ids follow `<screen>-<field>`** (e.g. `embeddings-key`), and pickers
+10. **Test ids follow `<screen>-<field>`** (e.g. `embeddings-key`), and pickers
    derive theirs (`-value`, `-option-<v>`). Tests drive the form the way a user does:
    blur, pick, Save.
 10. **Copy.** Sentence case and plain words ("assistants", "Key saved"). Name

@@ -2,6 +2,7 @@ import {SliderSuperTab} from '@components/slider';
 import SettingSection from '@components/settingSection';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {
+  activeCheck,
   appliedLine,
   createModelChooser,
   el,
@@ -10,6 +11,7 @@ import {
   NOTE_CSS,
   noteLine,
   saveButton,
+  showStoredKey,
   textField,
   toggleRow
 } from '@components/sidebarLeft/tabs/phantomchatModelKit';
@@ -63,6 +65,7 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
 
   const {container: keyBox, input: keyInput} = textField('decision-model-key', 'API key', {secret: true, maxLength: 4096});
   const keyNote = noteLine('decision-model-key-note');
+  const active = activeCheck('decision-model-active');
 
   const models = createModelChooser({
     testId: 'decision-model-model',
@@ -72,7 +75,7 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
   const status = noteLine('decision-model-status', true);
   const saveBtn = saveButton('decision-model-save');
 
-  section.append(enabledRow, providerBox, keyBox, keyNote, models.container, status, saveBtn);
+  section.append(enabledRow, providerBox, keyBox, active.container, keyNote, models.container, status, saveBtn);
 
   let state: DecisionModelState | null = null;
   let checkGeneration = 0;
@@ -107,6 +110,7 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
   };
 
   const showKeyNote = () => {
+    showStoredKey(keyInput, storedKeyFits());
     if(state && !state.canStoreKey) {
       keyNote.textContent = 'This PC has no keyring, so the key is not kept. Personas added later need it entered again.';
     } else {
@@ -120,6 +124,7 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     checkedKey = undefined;
     keyInput.value = '';
     status.textContent = '';
+    active.set('idle');
     clearModels();
     showKeyNote();
     if(storedKeyFits()) void loadModels();
@@ -131,21 +136,22 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     if(!key && !storedKeyFits()) return;
     if(checkedKey && checkedKey.provider === p && checkedKey.key === key) return;
     const generation = ++checkGeneration;
-    status.textContent = 'Checking key...';
+    status.textContent = '';
+    active.set('checking');
     const res = await api.check(p, key);
     if(generation !== checkGeneration) return;
     if(res.ok === false) {
-      status.textContent = res.error || 'Could not check the key';
+      active.set('unverified', res.error || 'could not check the key');
       return;
     }
     checkedKey = {provider: p, key};
     const r = res.value;
     if(r.status === 'invalid') {
-      status.textContent = `Key rejected (${r.detail})`;
+      active.set('invalid', r.detail);
       clearModels();
       return;
     }
-    status.textContent = r.status === 'verified' ? 'Key verified' : `Could not verify the key (${r.detail})`;
+    active.set(r.status === 'verified' ? 'active' : 'unverified', r.detail);
     setModels(p, r.models, pickedModelFor(p) || storedModelFor(p) || defaultFor(p));
   }
 

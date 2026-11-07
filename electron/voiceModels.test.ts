@@ -10,6 +10,7 @@ let root: string;
 let file: string;
 let service: VoiceModels;
 let payloads: any[];
+let checks: any[] = [];
 let statuses: Record<string, string>;
 const failConfigure = new Set<string>();
 const key = randomBytes(32);
@@ -21,6 +22,8 @@ const storage: SecretStorage = {
 async function call(method: string, p: any = {}) {
   let value: any;
   if(method === 'personas.list') value = ['alpha', 'beta'];
+  if(method === 'voiceModels.providers') value = [{id: 'openai', label: 'OpenAI', modalities: ['tts', 'stt'], needsBaseUrl: false, transport: {provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1'}}];
+  if(method === 'voiceModels.check') checks.push(structuredClone(p));
   if(method === 'voiceModels.check') {
     const tts = p.modality === 'tts';
     value = {ok: p.apiKey !== 'bad', models: tts ? [{id: 'tts-a', voices: ['alloy']}, {id: 'tts-b', voices: ['echo']}] : [{id: 'stt-a', voices: []}], voices: tts ? [p.model === 'tts-b' ? 'echo' : 'alloy'] : []};
@@ -35,9 +38,30 @@ async function call(method: string, p: any = {}) {
 }
 const form = (model: string, voice = '') => ({enabled: true, provider: 'openai-compatible', baseUrl: 'https://audio.example/v1', model, voice, apiKey: 'secret-value'});
 const settings = () => ({tts: form('tts-a', 'alloy'), stt: form('stt-a')});
-beforeEach(() => {root = mkdtempSync(join(tmpdir(), 'pc-voice-')); file = join(root, 'voice.enc'); payloads = []; statuses = {}; failConfigure.clear(); service = new VoiceModels(file, storage, call);});
+beforeEach(() => {root = mkdtempSync(join(tmpdir(), 'pc-voice-')); file = join(root, 'voice.enc'); payloads = []; checks = []; statuses = {}; failConfigure.clear(); service = new VoiceModels(file, storage, call);});
 afterEach(() => rmSync(root, {recursive: true, force: true}));
 describe('voice settings in main', () => {
+  it('a Pi provider: one key for both directions, never a caller base URL, remote plans name its transport', async() => {
+    const preset = (model: string, voice = '') => ({...form(model, voice), provider: 'openai', baseUrl: 'https://evil.example/v1', apiKey: 'one-key'});
+    await service.save({tts: preset('tts-a', 'alloy'), stt: preset('stt-a')});
+    const voice = payloads.at(-1).config.voice;
+    expect(voice.tts).toMatchObject({provider: 'openai', apiKey: 'one-key'});
+    expect(voice.stt).toMatchObject({provider: 'openai', apiKey: 'one-key'});
+    expect(voice.tts.baseUrl).toBeUndefined();
+    expect(checks.every(c => c.baseUrl === undefined)).toBe(true);
+    expect((service.get() as any).tts.transport).toEqual({provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1'});
+    const plan = await service.handle('remotePlan', {pubkey: 'b'.repeat(64)});
+    expect((plan as any).value.tts).toMatchObject({provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'tts-a'});
+  });
+  it('a contact Voice ID is kept when its model offers it, refused otherwise', async() => {
+    await service.save(settings());
+    await service.setContact(pubkey, {tts: 'tts-b'}, {tts: 'echo'});
+    expect(payloads.at(-1).config.voice.tts).toMatchObject({model: 'tts-b', voice: 'echo'});
+    await expect(service.setContact(pubkey, {tts: 'tts-b'}, {tts: 'nope'})).rejects.toThrow('does not offer that voice');
+    // A voice alone overrides the default model's voice.
+    await service.setContact(pubkey, {tts: ''}, {tts: 'alloy'});
+    expect(payloads.at(-1).config.voice.tts).toMatchObject({model: 'tts-a', voice: 'alloy'});
+  });
   it('encrypts keys, returns only presence, applies both defaults and restores off/on', async() => {
     const result = await service.save(settings());
     expect(result.applied).toBe(2);

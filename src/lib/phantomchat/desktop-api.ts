@@ -122,7 +122,17 @@ export interface PhantomChatDesktopApi {
   embeddings?: DesktopEmbeddingsApi;
 }
 
-export type EmbeddingsProvider = 'gemini' | 'openai-compatible';
+/** 'gemini', 'openai-compatible' or a Pi provider id from `providers()`. */
+export type EmbeddingsProvider = string;
+
+export interface EmbeddingsProviderInfo {
+  id: string;
+  label: string;
+  /** Bring-your-own endpoint: shows the Base URL field. */
+  needsBaseUrl: boolean;
+  /** A local server may need no key. */
+  keyOptional: boolean;
+}
 
 /** Main's view of the setting. Never carries the key. */
 export interface EmbeddingsState {
@@ -151,6 +161,8 @@ export type EmbeddingsSaveResult =
 
 export interface DesktopEmbeddingsApi {
   get(): Promise<EmbeddingsState | null>;
+  /** Providers that serve embedding models. Older apps lack it. */
+  providers?(): Promise<EmbeddingsProviderInfo[]>;
   /** An empty key checks with the stored key of the same provider and endpoint. */
   check(input: EmbeddingsCheckInput): Promise<{ok: true; value: EmbeddingsCheck} | {ok: false; error: string}>;
   /** Turning it on needs a live embed with the model; a failed one saves nothing. */

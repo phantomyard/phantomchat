@@ -70,13 +70,14 @@ describe('Settings > Decision Model', () => {
     key.value = 'sk-or-1';
     await form.loadModels();
     expect(api.check).toHaveBeenLastCalledWith('openrouter', 'sk-or-1');
-    expect(q(form.section, 'decision-model-status').textContent).toBe('Key verified');
+    expect(q(form.section, 'decision-model-active').textContent).toBe('✓ Active');
     (q(form.section, 'decision-model-enabled') as HTMLInputElement).checked = true;
     await form.save();
     expect(api.save).toHaveBeenCalledWith({enabled: true, provider: 'openrouter', model: 'typesafe/jev-1.13', apiKey: 'sk-or-1'});
     expect(q(form.section, 'decision-model-status').textContent).toBe('On: applied to 2 personas');
     expect(key.value).toBe('');
     expect(q(form.section, 'decision-model-key-note').textContent).toBe('Key saved. Leave empty to keep it.');
+    expect((q(form.section, 'decision-model-key') as HTMLInputElement).placeholder).toBe('••••••••••••');
   });
 
   it('a rejected key says so and lists no models', async() => {
@@ -85,7 +86,7 @@ describe('Settings > Decision Model', () => {
     await form.ready;
     (q(form.section, 'decision-model-key') as HTMLInputElement).value = 'bad';
     await form.loadModels();
-    expect(q(form.section, 'decision-model-status').textContent).toBe('Key rejected (HTTP 401)');
+    expect(q(form.section, 'decision-model-active').textContent).toBe('✕ Key rejected (HTTP 401)');
   });
 
   it('Off saves without a key, so the stored one is kept', async() => {
@@ -153,7 +154,7 @@ describe('Settings > Decision Model', () => {
     await form.ready;
     (q(form.section, 'decision-model-key') as HTMLInputElement).value = 'sk-or-3';
     await form.loadModels();
-    expect(q(form.section, 'decision-model-status').textContent).toBe('Could not verify the key (ETIMEDOUT)');
+    expect(q(form.section, 'decision-model-active').textContent).toBe('Could not confirm the connection (ETIMEDOUT)');
     expect(q(form.section, 'decision-model-model-value').textContent).not.toContain('typesafe/');
     (q(form.section, 'decision-model-enabled') as HTMLInputElement).checked = true;
     await form.save();
