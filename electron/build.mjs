@@ -44,4 +44,6 @@ await build({
 // resources/phantombot (electron-builder extraResources): it is executed, so it
 // cannot live inside app.asar. See electron/phantombot/build-host.mjs.
 // PHANTOMBOT_HOST=skip builds main/preload only (typecheck-style local builds).
-if(process.env.PHANTOMBOT_HOST !== 'skip') buildHost();
+// Pin resolution is async: pin.json names a channel and the release is read
+// at build time.
+if(process.env.PHANTOMBOT_HOST !== 'skip') console.log(await buildHost());

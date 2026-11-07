@@ -1,5 +1,4 @@
 {
-  "tag": "v1.1.487",
-  "commit": "3882afe6c27752cf2c2596d77319ef2c9d04710f",
-  "bun": "1.4.4"
+  "channel": "latest",
+  "bun": "1.x"
 }
