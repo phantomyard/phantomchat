@@ -9,7 +9,7 @@ import {contextBridge, ipcRenderer} from 'electron';
 import type {UpdateState} from './updater';
 import type {PermissionSettings, PermissionSetting} from './permissions';
 import type {DecisionModelCheck, DecisionModelSaveResult, DecisionModelState} from './decisionModel';
-import type {EmbeddingsCheck, EmbeddingsSaveResult, EmbeddingsState} from './embeddings';
+import type {EmbeddingsCheck, EmbeddingsProviderInfo, EmbeddingsSaveResult, EmbeddingsState} from './embeddings';
 import type {PresenceCapability, PresenceSettings} from './presence';
 
 export type {UpdateState, PermissionSettings, PermissionSetting, PresenceCapability, PresenceSettings};
@@ -127,6 +127,7 @@ export interface PhantomChatDesktopApi {
   /** Embeddings for every engine persona (Specialized Models). Same key rules. */
   embeddings: {
     get(): Promise<EmbeddingsState | null>;
+    providers(): Promise<EmbeddingsProviderInfo[]>;
     check(input: EmbeddingsCheckInput): Promise<{ok: true; value: EmbeddingsCheck} | {ok: false; error: string}>;
     save(input: EmbeddingsSaveInput): Promise<EmbeddingsSaveResult>;
   };
@@ -186,6 +187,7 @@ const api: PhantomChatDesktopApi = {
   },
   embeddings: {
     get: () => ipcRenderer.invoke('desktop:embeddings:get'),
+    providers: () => ipcRenderer.invoke('desktop:embeddings:providers'),
     check: (input) => ipcRenderer.invoke('desktop:embeddings:check', input),
     save: (input) => ipcRenderer.invoke('desktop:embeddings:save', input)
   },

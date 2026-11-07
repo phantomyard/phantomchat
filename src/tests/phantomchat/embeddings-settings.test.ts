@@ -82,16 +82,20 @@ describe('Settings > Specialized Models', () => {
 
   it('Gemini: a typed key is checked on leaving the field and saved once', async() => {
     const api = fakeApi();
-    const form = createEmbeddingsForm(api);
+    const confirm = vi.fn(async() => true);
+    const form = createEmbeddingsForm(api, {confirm});
     document.body.append(form.section);
     await form.ready;
     const key = q(form.section, 'embeddings-key') as HTMLInputElement;
     key.value = 'g-1'; key.dispatchEvent(new Event('blur'));
-    await vi.waitFor(() => expect(q(form.section, 'embeddings-status').textContent).toBe('Key verified (1536 dims)'));
+    await vi.waitFor(() => expect(q(form.section, 'embeddings-active').textContent).toBe('✓ Active'));
+    expect(q(form.section, 'embeddings-status').textContent).toBe('Model works (1536 dims)');
     (q(form.section, 'embeddings-enabled') as HTMLInputElement).checked = true;
     await form.save();
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(api.save).toHaveBeenCalledWith({enabled: true, provider: 'gemini', model: 'gemini-embedding-001', apiKey: 'g-1'});
-    expect(q(form.section, 'embeddings-status').textContent).toBe('On: applied to 2 personas. Indexing notes in the background.');
+    expect(q(form.section, 'embeddings-status').textContent).toBe('On: applied to 2 personas. Re-embedding notes in the background; search by meaning is back when it finishes.');
+    expect(key.placeholder).toBe('••••••••••••');
     expect(key.value).toBe('');
   });
 
@@ -100,12 +104,12 @@ describe('Settings > Specialized Models', () => {
     await form.ready;
     (q(form.section, 'embeddings-key') as HTMLInputElement).value = 'bad';
     await form.loadModels();
-    expect(q(form.section, 'embeddings-status').textContent).toBe('Key rejected (HTTP 401)');
+    expect(q(form.section, 'embeddings-active').textContent).toBe('✕ Key rejected (HTTP 401)');
   });
 
   it('OpenAI Compatible: the base URL loads the list, a pick is proved, Save sends the endpoint', async() => {
     const api = fakeApi();
-    const form = createEmbeddingsForm(api);
+    const form = createEmbeddingsForm(api, {confirm: async() => true});
     document.body.append(form.section);
     await form.ready;
     pick('embeddings-provider', 'openai-compatible');
@@ -144,7 +148,7 @@ describe('Settings > Specialized Models', () => {
   it('no list from the endpoint: the model is typed', async() => {
     const api = fakeApi();
     api.check.mockResolvedValue({ok: true, value: {status: 'unchecked', detail: 'choose a model', models: []}} as any);
-    const form = createEmbeddingsForm(api);
+    const form = createEmbeddingsForm(api, {confirm: async() => true});
     document.body.append(form.section);
     await form.ready;
     pick('embeddings-provider', 'openai-compatible');
@@ -161,11 +165,58 @@ describe('Settings > Specialized Models', () => {
     const api = fakeApi({...UNCONFIGURED, configured: true, enabled: true, hasKey: true});
     const form = createEmbeddingsForm(api);
     await form.ready;
-    expect(api.check).toHaveBeenCalledWith({provider: 'gemini', baseUrl: undefined, apiKey: ''});
+    // The stored key is proved at once with a live embed: the Active check.
+    expect(api.check).toHaveBeenCalledWith({provider: 'gemini', baseUrl: undefined, apiKey: '', model: 'gemini-embedding-001'});
+    expect(q(form.section, 'embeddings-active').textContent).toBe('✓ Active');
+    expect((q(form.section, 'embeddings-key') as HTMLInputElement).placeholder).toBe('••••••••••••');
     expect(q(form.section, 'embeddings-key-note').textContent).toBe('Key saved. Leave empty to keep it.');
     (q(form.section, 'embeddings-enabled') as HTMLInputElement).checked = false;
     await form.save();
     expect(api.save).toHaveBeenCalledWith({enabled: false, provider: 'gemini', model: 'gemini-embedding-001'});
     expect(q(form.section, 'embeddings-status').textContent).toBe('Off: applied to 2 personas');
+  });
+
+  it('re-embedding needs Confirm: Cancel saves nothing, and an unchanged model asks nothing', async() => {
+    const api = fakeApi({...UNCONFIGURED, configured: true, enabled: true, hasKey: true});
+    const confirm = vi.fn(async() => false);
+    const form = createEmbeddingsForm(api, {confirm});
+    document.body.append(form.section);
+    await form.ready;
+    // Same provider, same model, still on: no re-embed, no question.
+    await form.save();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(api.save).toHaveBeenCalledTimes(1);
+    // Another model re-embeds everything: Cancel leaves the saved one alone.
+    api.check.mockResolvedValue({ok: true, value: {status: 'verified', detail: 'ok', models: ['gemini-embedding-001', 'gemini-embedding-002'], dims: 768}} as any);
+    (q(form.section, 'embeddings-key') as HTMLInputElement).value = 'g-3';
+    await form.loadModels();
+    pick('embeddings-model', 'gemini-embedding-002');
+    await form.save();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(api.save).toHaveBeenCalledTimes(1);
+    expect(q(form.section, 'embeddings-status').textContent).toBe('Not saved');
+    confirm.mockResolvedValueOnce(true);
+    await form.save();
+    expect(api.save).toHaveBeenCalledTimes(2);
+    expect(api.save).toHaveBeenLastCalledWith(expect.objectContaining({model: 'gemini-embedding-002'}));
+  });
+
+  it('lists the engine providers; a Pi provider has no base URL and needs a key', async() => {
+    const api = {...fakeApi(), providers: vi.fn(async() => [
+      {id: 'gemini', label: 'Google Gemini', needsBaseUrl: false, keyOptional: false},
+      {id: 'openai', label: 'OpenAI', needsBaseUrl: false, keyOptional: false},
+      {id: 'openai-compatible', label: 'OpenAI Compatible', needsBaseUrl: true, keyOptional: true}
+    ])};
+    const form = createEmbeddingsForm(api, {confirm: async() => true});
+    document.body.append(form.section);
+    await form.ready;
+    pick('embeddings-provider', 'openai');
+    expect((q(form.section, 'embeddings-base-url').closest('.input-field') as HTMLElement).style.display).toBe('none');
+    expect(q(form.section, 'embeddings-key-note').textContent).toBe('');
+    await form.loadModels();
+    expect(api.check).not.toHaveBeenCalledWith(expect.objectContaining({provider: 'openai'}));
+    (q(form.section, 'embeddings-key') as HTMLInputElement).value = 'sk-1';
+    await form.loadModels();
+    expect(api.check).toHaveBeenCalledWith({provider: 'openai', baseUrl: undefined, apiKey: 'sk-1'});
   });
 });

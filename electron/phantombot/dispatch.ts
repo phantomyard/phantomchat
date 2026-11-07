@@ -37,6 +37,9 @@ export interface TurnStreamLike extends AsyncIterable<unknown> {
 /** The slice of the engine's Persona the dispatcher uses. */
 export interface PersonaLike {
   configure(settings: unknown): Promise<void>;
+  /** Engines from before the Provider contact editor lack these. */
+  brain?(): Promise<unknown>;
+  brainCheck?(): Promise<unknown>;
   secrets: {
     set(name: string, value: string): Promise<void>;
     has(name: string): Promise<boolean>;
@@ -98,7 +101,7 @@ export interface EngineLike {
     check(provider: string, apiKey: string): Promise<unknown>;
   };
   /** Engines from before Specialized Models lack it. */
-  embeddings?: {check(input: unknown): Promise<unknown>};
+  embeddings?: {check(input: unknown): Promise<unknown>; providers?(): Promise<unknown>};
   persona(name: string): PersonaLike;
 }
 
@@ -345,6 +348,9 @@ export function createDispatcher(
         if(typeof apiKey !== 'string' || apiKey.length > 64 * 1024) throw invalid('apiKey must be a string');
         return engine.decisionModels.check(provider, apiKey);
       }
+      case 'embeddings.providers':
+        if(!engine.embeddings?.providers) throw new BridgeError('not_supported', 'Update the engine for Embeddings providers');
+        return engine.embeddings.providers();
       case 'embeddings.check': {
         if(!engine.embeddings) throw new BridgeError('not_supported', 'Update the engine for Embeddings');
         const provider = str(p, 'provider', 64);
@@ -367,6 +373,16 @@ export function createDispatcher(
       case 'persona.secrets.set':
         await engine.persona(personaName(p)).secrets.set(str(p, 'name', 128), str(p, 'value', 64 * 1024));
         return null;
+      case 'persona.brain': {
+        const persona = engine.persona(personaName(p));
+        if(!persona.brain) throw new BridgeError('not_supported', 'Update the engine to edit this contact');
+        return persona.brain();
+      }
+      case 'persona.brainCheck': {
+        const persona = engine.persona(personaName(p));
+        if(!persona.brainCheck) throw new BridgeError('not_supported', 'Update the engine to edit this contact');
+        return persona.brainCheck();
+      }
       case 'persona.secrets.has':
         return engine.persona(personaName(p)).secrets.has(str(p, 'name', 128));
       case 'persona.secrets.delete':

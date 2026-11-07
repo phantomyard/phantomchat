@@ -477,6 +477,10 @@ app.whenReady().then(() => {
   setInterval(refresh, EMBEDDINGS_REFRESH_MS).unref?.();
 });
 ipcMain.handle('desktop:embeddings:get', (event) => fromApp(event) ? ensureEmbeddings().state() : null);
+ipcMain.handle('desktop:embeddings:providers', async(event) => {
+  if(!fromApp(event)) return [];
+  return ensureEmbeddings().providers().catch(() => []);
+});
 ipcMain.handle('desktop:embeddings:check', async(event, input: unknown) => {
   if(!fromApp(event)) return {ok: false, error: 'not available to this page'};
   try {

@@ -22,8 +22,23 @@ import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import type {BridgeCall, KeyCipher} from './decisionModel';
 
-export type EmbeddingsProvider = 'gemini' | 'openai-compatible';
-export const EMBEDDINGS_PROVIDERS: readonly EmbeddingsProvider[] = ['gemini', 'openai-compatible'];
+/**
+ * 'gemini', 'openai-compatible' (your base URL), or a Pi provider id from the
+ * engine's `embeddings.providers()` (its own fixed endpoint, e.g. 'openai').
+ */
+export type EmbeddingsProvider = string;
+/** What an engine without `embeddings.providers()` offers. */
+export const BUILTIN_EMBEDDINGS_PROVIDERS: readonly EmbeddingsProviderInfo[] = [
+  {id: 'gemini', label: 'Google Gemini', needsBaseUrl: false, keyOptional: false},
+  {id: 'openai-compatible', label: 'OpenAI Compatible', needsBaseUrl: true, keyOptional: true}
+];
+
+export interface EmbeddingsProviderInfo {
+  id: string;
+  label: string;
+  needsBaseUrl: boolean;
+  keyOptional: boolean;
+}
 export const GEMINI_EMBEDDING_MODEL = 'gemini-embedding-001';
 
 /** What the renderer sees. Never the key. */
@@ -63,19 +78,23 @@ const MAX_KEY_CHARS = 4096;
 const MAX_MODEL_CHARS = 512;
 const MAX_URL_CHARS = 2048;
 
+/** A provider id the engine may know; the engine is the one that validates it. */
 export function isEmbeddingsProvider(value: unknown): value is EmbeddingsProvider {
-  return typeof value === 'string' && (EMBEDDINGS_PROVIDERS as readonly string[]).includes(value);
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
 }
 
+/** Only bring-your-own endpoints take a base URL; or may go without a key. */
+const ownEndpoint = (provider: string) => provider === 'openai-compatible';
+
 const endpoint = (s: {provider: string; baseUrl: string}) =>
-  s.provider === 'gemini' ? 'gemini' : `${s.provider}|${s.baseUrl.trim().replace(/\/+$/, '')}`;
+  ownEndpoint(s.provider) ? `${s.provider}|${s.baseUrl.trim().replace(/\/+$/, '')}` : s.provider;
 
 /** Anything at all to a valid stored setting, or undefined (never saved / unreadable). */
 export function normalizeStored(raw: unknown): Stored | undefined {
   if(typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   const s = raw as Record<string, unknown>;
   if(typeof s.enabled !== 'boolean' || !isEmbeddingsProvider(s.provider)) return undefined;
-  const baseUrl = s.provider === 'openai-compatible' && typeof s.baseUrl === 'string' ? s.baseUrl : '';
+  const baseUrl = ownEndpoint(s.provider) && typeof s.baseUrl === 'string' ? s.baseUrl : '';
   const model = typeof s.model === 'string' && s.model.trim() && s.model.length <= MAX_MODEL_CHARS ?
     s.model.trim() :
     (s.provider === 'gemini' ? GEMINI_EMBEDDING_MODEL : '');
@@ -94,8 +113,9 @@ export function normalizeStored(raw: unknown): Stored | undefined {
 /** The `persona.configure` payload. Off is provider "none", which keeps the provider blocks. */
 export function configurePayload(s: Omit<Stored, 'key'>, apiKey?: string) {
   if(!s.enabled) return {embeddings: {provider: 'none'}};
-  if(s.provider === 'gemini') {
-    return {embeddings: {provider: 'gemini', apiKey, model: s.model, ...(s.dims ? {dims: s.dims} : {})}};
+  if(!ownEndpoint(s.provider)) {
+    // Gemini, or a Pi provider: the engine knows its endpoint.
+    return {embeddings: {provider: s.provider, apiKey, model: s.model, ...(s.dims ? {dims: s.dims} : {})}};
   }
   return {embeddings: {
     provider: 'openai-compatible',
@@ -130,6 +150,15 @@ export class EmbeddingsSettings {
     this.#stored = normalizeStored(raw);
   }
 
+  /** The engine's provider list (filtered to embedding providers); the built-in two on an older engine. */
+  async providers(): Promise<EmbeddingsProviderInfo[]> {
+    const res = await this.opts.call('embeddings.providers', {});
+    if(!res.ok || !Array.isArray(res.value)) return [...BUILTIN_EMBEDDINGS_PROVIDERS];
+    const list = (res.value as any[]).filter((p) => p && isEmbeddingsProvider(p.id) && typeof p.label === 'string')
+    .map((p) => ({id: p.id, label: p.label, needsBaseUrl: !!p.needsBaseUrl, keyOptional: !!p.keyOptional}));
+    return list.length ? list : [...BUILTIN_EMBEDDINGS_PROVIDERS];
+  }
+
   state(): EmbeddingsState {
     const s = this.#stored;
     return {
@@ -157,13 +186,13 @@ export class EmbeddingsSettings {
   async check(input: unknown): Promise<EmbeddingsCheck> {
     const i = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>;
     if(!isEmbeddingsProvider(i.provider)) throw new Error('unknown provider');
-    const baseUrl = i.provider === 'openai-compatible' && typeof i.baseUrl === 'string' ? i.baseUrl.trim() : '';
+    const baseUrl = ownEndpoint(i.provider) && typeof i.baseUrl === 'string' ? i.baseUrl.trim() : '';
     if(baseUrl.length > MAX_URL_CHARS) throw new Error('base URL too long');
     const typed = typeof i.apiKey === 'string' ? i.apiKey.trim() : '';
     if(typed.length > MAX_KEY_CHARS) throw new Error('key too long');
     const model = typeof i.model === 'string' ? i.model.trim() : '';
     if(model.length > MAX_MODEL_CHARS) throw new Error('model too long');
-    if(i.provider === 'openai-compatible' && !baseUrl) return {status: 'unchecked', detail: 'enter the base URL', models: []};
+    if(ownEndpoint(i.provider) && !baseUrl) return {status: 'unchecked', detail: 'enter the base URL', models: []};
     const key = typed || this.#keyFor(i.provider, baseUrl);
     const res = await this.opts.call('embeddings.check', {
       provider: i.provider,
@@ -194,9 +223,9 @@ export class EmbeddingsSettings {
     const fail = (error: string): EmbeddingsSaveResult => ({ok: false, error, state: this.state()});
     const i = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>;
     if(typeof i.enabled !== 'boolean') return fail('enabled must be true or false');
-    if(!isEmbeddingsProvider(i.provider)) return fail('Choose Gemini or OpenAI Compatible');
+    if(!isEmbeddingsProvider(i.provider)) return fail('Choose a provider');
     const provider = i.provider;
-    const baseUrl = provider === 'openai-compatible' && typeof i.baseUrl === 'string' ? i.baseUrl.trim().replace(/\/+$/, '') : '';
+    const baseUrl = ownEndpoint(provider) && typeof i.baseUrl === 'string' ? i.baseUrl.trim().replace(/\/+$/, '') : '';
     if(baseUrl.length > MAX_URL_CHARS) return fail('That base URL is too long');
     const model = (typeof i.model === 'string' ? i.model.trim() : '') || (provider === 'gemini' ? GEMINI_EMBEDDING_MODEL : '');
     if(!model || model.length > MAX_MODEL_CHARS) return fail('Choose a model');
@@ -207,8 +236,8 @@ export class EmbeddingsSettings {
     let dims = this.#stored && endpoint(this.#stored) === endpoint({provider, baseUrl}) && this.#stored.model === model ?
       this.#stored.dims : 0;
     if(i.enabled) {
-      if(provider === 'gemini' && !key) return fail('Enter an API key');
-      if(provider === 'openai-compatible' && !baseUrl) return fail('Enter the base URL');
+      if(!ownEndpoint(provider) && !key) return fail('Enter an API key');
+      if(ownEndpoint(provider) && !baseUrl) return fail('Enter the base URL');
       let verdict: EmbeddingsCheck;
       try {
         verdict = await this.check({provider, baseUrl, apiKey: key ?? '', model});
@@ -256,7 +285,7 @@ export class EmbeddingsSettings {
     const s = this.#stored;
     if(!s) return;
     const key = this.#key();
-    if(s.enabled && s.provider === 'gemini' && !key) {
+    if(s.enabled && !ownEndpoint(s.provider) && !key) {
       this.opts.log?.(`embeddings: ${persona} not configured (no stored key)`);
       return;
     }

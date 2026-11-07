@@ -2,6 +2,7 @@ import {SliderSuperTab} from '@components/slider';
 import SettingSection from '@components/settingSection';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {
+  activeCheck,
   appliedLine,
   createModelChooser,
   el,
@@ -10,6 +11,7 @@ import {
   NOTE_CSS,
   noteLine,
   saveButton,
+  showStoredKey,
   textField,
   toggleRow
 } from '@components/sidebarLeft/tabs/phantomchatModelKit';
@@ -17,6 +19,7 @@ import {
   getDesktopEmbeddings,
   type DesktopEmbeddingsApi,
   type EmbeddingsProvider,
+  type EmbeddingsProviderInfo,
   type EmbeddingsState
 } from '@lib/phantomchat/desktop-api';
 
@@ -33,10 +36,31 @@ import {
 
 export const GEMINI_EMBEDDING_MODEL = 'gemini-embedding-001';
 
-const PROVIDERS: {value: EmbeddingsProvider; label: string}[] = [
-  {value: 'gemini', label: 'Gemini'},
-  {value: 'openai-compatible', label: 'OpenAI Compatible'}
+/** What an older app (no provider list from the engine) offers. */
+const BUILTIN_PROVIDERS: EmbeddingsProviderInfo[] = [
+  {id: 'gemini', label: 'Google Gemini', needsBaseUrl: false, keyOptional: false},
+  {id: 'openai-compatible', label: 'OpenAI Compatible', needsBaseUrl: true, keyOptional: true}
 ];
+
+export const REEMBED_TITLE = 'Re-embed memory?';
+export const REEMBED_TEXT = 'Saving re-embeds every note with this model. Until that finishes, memory search by meaning is unavailable and only keyword search works.';
+
+/** Confirm/Cancel before a save that re-embeds every note. True = go ahead. */
+export type ReembedConfirm = () => Promise<boolean>;
+
+async function confirmReembed(): Promise<boolean> {
+  const {default: confirmationPopup} = await import('@components/confirmationPopup');
+  try {
+    await confirmationPopup({
+      title: REEMBED_TITLE,
+      descriptionRaw: REEMBED_TEXT,
+      button: {text: document.createTextNode('Confirm')}
+    });
+    return true;
+  } catch{
+    return false;
+  }
+}
 
 export interface EmbeddingsForm {
   section: HTMLElement;
@@ -50,7 +74,8 @@ export interface EmbeddingsForm {
 const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '') === b.trim().replace(/\/+$/, '');
 
 /** The form, apart from the tab so tests drive it without the slider. */
-export function createEmbeddingsForm(api: DesktopEmbeddingsApi): EmbeddingsForm {
+export function createEmbeddingsForm(api: DesktopEmbeddingsApi, opts: {confirm?: ReembedConfirm} = {}): EmbeddingsForm {
+  const confirm = opts.confirm ?? confirmReembed;
   const section = formColumn('embeddings-form');
 
   const {container: enabledRow, field: enabled} = toggleRow(
@@ -68,6 +93,7 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi): EmbeddingsForm 
   });
 
   const {container: keyBox, input: keyInput} = textField('embeddings-key', 'API key', {secret: true, maxLength: 4096});
+  const active = activeCheck('embeddings-active');
   const keyNote = noteLine('embeddings-key-note');
 
   const models = createModelChooser({
@@ -81,39 +107,45 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi): EmbeddingsForm 
   const status = noteLine('embeddings-status', true);
   const saveBtn = saveButton('embeddings-save');
 
-  section.append(enabledRow, providerBox, urlBox, keyBox, keyNote, models.container, status, saveBtn);
+  section.append(enabledRow, providerBox, urlBox, keyBox, active.container, keyNote, models.container, status, saveBtn);
 
+  let providers: EmbeddingsProviderInfo[] = BUILTIN_PROVIDERS;
   let state: EmbeddingsState | null = null;
   let generation = 0;
   let checked: string | undefined;
   let busy = false;
 
-  const provider = (): EmbeddingsProvider => (providerPicker.getValue() as EmbeddingsProvider) || 'gemini';
-  const baseUrl = () => provider() === 'openai-compatible' ? urlInput.value.trim() : '';
-  /** The stored key belongs to the provider and endpoint on screen. */
+  const provider = (): EmbeddingsProvider => providerPicker.getValue() || providers[0]?.id || 'gemini';
+  const info = () => providers.find((p) => p.id === provider());
+  const ownEndpoint = () => !!info()?.needsBaseUrl;
+  const keyOptional = () => !!info()?.keyOptional;
+  const baseUrl = () => ownEndpoint() ? urlInput.value.trim() : '';
+  /** The saved setting is for the provider and endpoint on screen. */
+  const savedFits = () => !!state?.configured && state.provider === provider() &&
+    (!ownEndpoint() || sameUrl(state.baseUrl, baseUrl()));
   const storedKeyFits = () => !!state?.hasKey && state.provider === provider() &&
-    (provider() === 'gemini' || sameUrl(state.baseUrl, baseUrl()));
-  const storedModel = () => state?.configured && state.provider === provider() &&
-    (provider() === 'gemini' || sameUrl(state.baseUrl, baseUrl())) ? state.model : undefined;
-  /** Something to ask: Gemini needs a key, OpenAI Compatible a base URL. */
-  const askable = () => provider() === 'gemini' ? !!keyInput.value.trim() || storedKeyFits() : !!baseUrl();
+    (!ownEndpoint() || sameUrl(state.baseUrl, baseUrl()));
+  const storedModel = () => savedFits() ? state!.model : undefined;
+  /** Something to ask: a key (typed or stored), or a base URL for a bring-your-own endpoint. */
+  const askable = () => ownEndpoint() ? !!baseUrl() : !!keyInput.value.trim() || storedKeyFits();
 
   const showFields = () => {
-    const openai = provider() === 'openai-compatible';
-    urlBox.style.display = openai ? '' : 'none';
+    urlBox.style.display = ownEndpoint() ? '' : 'none';
+    showStoredKey(keyInput, storedKeyFits());
     keyNote.textContent = state && !state.canStoreKey ?
       'This PC has no keyring, so the key is not kept. Personas added later need it entered again.' :
       storedKeyFits() ? 'Key saved. Leave empty to keep it.' :
-        openai ? 'Optional for a local server (llama-server, Ollama).' : '';
-    models.clear(openai ? 'Enter the base URL to load models' : 'Enter your key to load models');
+        keyOptional() ? 'Optional for a local server (llama-server, Ollama).' : '';
+    models.clear(ownEndpoint() ? 'Enter the base URL to load models' : 'Enter your key to load models');
   };
 
   function onProviderChanged() {
     ++generation;
     checked = undefined;
     keyInput.value = '';
-    urlInput.value = state?.provider === 'openai-compatible' && provider() === 'openai-compatible' ? state.baseUrl : '';
+    urlInput.value = state?.provider === provider() && ownEndpoint() ? state.baseUrl : '';
     status.textContent = '';
+    active.set('idle');
     showFields();
     if(askable()) void loadModels();
   }
@@ -123,41 +155,49 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi): EmbeddingsForm 
     const ask = `${provider()}|${baseUrl()}|${keyInput.value.trim()}`;
     if(checked === ask) return;
     const g = ++generation;
-    status.textContent = provider() === 'gemini' ? 'Checking key...' : 'Loading models...';
-    const res = await api.check({provider: provider(), baseUrl: baseUrl() || undefined, apiKey: keyInput.value.trim()});
+    status.textContent = '';
+    active.set('checking');
+    // With a model the check is a live embed: the only proof the key works.
+    const model = models.value() || storedModel() || (provider() === 'gemini' ? GEMINI_EMBEDDING_MODEL : undefined);
+    const res = await api.check({provider: provider(), baseUrl: baseUrl() || undefined, apiKey: keyInput.value.trim(), ...(model ? {model} : {})});
     if(g !== generation) return;
     if(res.ok === false) {
-      status.textContent = res.error || 'Could not reach the provider';
+      active.set('unverified', res.error || 'could not reach the provider');
       return;
     }
     checked = ask;
     const r = res.value;
     if(r.status === 'failed') {
-      status.textContent = `Key rejected (${r.detail})`;
+      active.set('invalid', r.detail);
       models.clear();
       return;
     }
-    status.textContent = r.status === 'verified' ? `Key verified (${r.dims} dims)` :
-      r.models.length ? 'Choose a model' : 'No model list from this endpoint: type a model ID';
-    models.setModels(r.models, storedModel());
+    active.set(r.status === 'verified' ? 'active' : 'idle');
+    status.textContent = r.status === 'verified' ? `Model works (${r.dims} dims)` :
+      r.models.length ? 'Choose a model' : 'No model list from this provider: type a model ID';
+    models.setModels(r.models, model);
   }
 
-  /** OpenAI Compatible: prove the picked model with a live embed, as Save will. */
+  /** Prove the picked model with a live embed, as Save will. */
   async function proveModel(): Promise<void> {
-    if(provider() !== 'openai-compatible') return;
     const model = models.value();
-    if(!model) return;
+    if(!model || !askable()) return;
     const g = ++generation;
-    status.textContent = 'Checking model...';
-    const res = await api.check({provider: provider(), baseUrl: baseUrl(), apiKey: keyInput.value.trim(), model});
+    active.set('checking');
+    status.textContent = '';
+    const res = await api.check({provider: provider(), baseUrl: baseUrl() || undefined, apiKey: keyInput.value.trim(), model});
     if(g !== generation) return;
     if(res.ok === false) {
-      status.textContent = res.error || 'Could not reach the provider';
+      active.set('unverified', res.error || 'could not reach the provider');
       return;
     }
-    status.textContent = res.value.status === 'verified' ?
-      `Model works (${res.value.dims} dims)` :
-      `The model did not embed (${res.value.detail})`;
+    if(res.value.status === 'verified') {
+      active.set('active');
+      status.textContent = `Model works (${res.value.dims} dims)`;
+    } else {
+      active.set(res.value.status === 'failed' ? 'invalid' : 'idle', res.value.detail);
+      status.textContent = `The model did not embed (${res.value.detail})`;
+    }
   }
 
   for(const input of [keyInput, urlInput]) {
@@ -172,7 +212,6 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi): EmbeddingsForm 
     busy = true;
     saveBtn.disabled = true;
     ++generation;
-    status.textContent = enabled.checked ? 'Checking and saving...' : 'Saving...';
     try {
       const p = provider();
       const model = models.value() || storedModel() || (p === 'gemini' ? GEMINI_EMBEDDING_MODEL : '');
@@ -180,12 +219,19 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi): EmbeddingsForm 
         status.textContent = 'Choose a model';
         return;
       }
+      // Turning it on, or a new provider / endpoint / model, embeds every note again.
+      const reembeds = enabled.checked && !(savedFits() && state!.enabled && state!.model === model);
+      if(reembeds && !(await confirm())) {
+        status.textContent = 'Not saved';
+        return;
+      }
+      status.textContent = enabled.checked ? 'Checking and saving...' : 'Saving...';
       const key = keyInput.value.trim();
       const res = await api.save({
         enabled: enabled.checked,
         provider: p,
         model,
-        ...(p === 'openai-compatible' ? {baseUrl: baseUrl()} : {}),
+        ...(ownEndpoint() ? {baseUrl: baseUrl()} : {}),
         ...(key ? {apiKey: key} : {})
       });
       if(res.ok === false) {
@@ -195,8 +241,12 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi): EmbeddingsForm 
       state = res.state;
       keyInput.value = '';
       checked = undefined;
+      showStoredKey(keyInput, storedKeyFits());
+      if(enabled.checked) active.set('active');
       const line = appliedLine(enabled.checked, res.applied, res.failed.map((f) => `${f.persona} (${f.error})`));
-      status.textContent = enabled.checked && !res.failed.length ? `${line}. Indexing notes in the background.` : line;
+      status.textContent = enabled.checked && !res.failed.length ?
+        `${line}. ${reembeds ? 'Re-embedding notes in the background; search by meaning is back when it finishes.' : 'Indexing notes in the background.'}` :
+        line;
     } finally {
       busy = false;
       saveBtn.disabled = false;
@@ -205,16 +255,27 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi): EmbeddingsForm 
   attachClickEvent(saveBtn, () => void save());
 
   const ready = (async() => {
-    providerPicker.setOptions(PROVIDERS, 'gemini');
-    showFields();
-    state = await api.get();
-    if(!state) return;
+    providerPicker.setOptions(providers.map((p) => ({value: p.id, label: p.label})), providers[0].id);
+    const [listed, loaded] = await Promise.all([
+      api.providers ? api.providers().catch((): EmbeddingsProviderInfo[] => []) : Promise.resolve([] as EmbeddingsProviderInfo[]),
+      api.get()
+    ]);
+    if(Array.isArray(listed) && listed.length) providers = listed;
+    state = loaded;
+    // A saved provider the list no longer has stays selectable, so it is never silently swapped.
+    if(state?.configured && !providers.some((p) => p.id === state.provider)) {
+      providers = [...providers, {id: state.provider, label: state.provider, needsBaseUrl: !!state.baseUrl, keyOptional: false}];
+    }
+    providerPicker.setOptions(providers.map((p) => ({value: p.id, label: p.label})), state?.configured ? state.provider : providers[0]?.id);
+    if(!state) {
+      showFields();
+      return;
+    }
     enabled.setValueSilently(state.configured && state.enabled);
-    providerPicker.setOptions(PROVIDERS, state.provider);
-    urlInput.value = state.provider === 'openai-compatible' ? state.baseUrl : '';
+    urlInput.value = ownEndpoint() ? state.baseUrl : '';
     showFields();
     if(state.configured) models.setModels([state.model], state.model);
-    if(storedKeyFits() || (state.configured && state.provider === 'openai-compatible')) await loadModels();
+    if(storedKeyFits() || (state.configured && ownEndpoint())) await loadModels();
   })();
 
   return {

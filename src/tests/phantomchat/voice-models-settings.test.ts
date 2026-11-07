@@ -20,96 +20,132 @@ vi.mock('@components/row', () => ({default: class {
     if(options.checkboxField) this.container.append(options.checkboxField.label);
   }
 }}));
-import {createVoiceDirectionForm, mountContactVoiceModels} from '@lib/phantomchat/voice-models';
+import {createVoiceForm, mountContactVoiceModels} from '@lib/phantomchat/voice-models';
 
-const saved = {enabled: true, provider: 'openai-compatible', baseUrl: 'https://audio.example/v1', model: 'speech-a', voice: 'alloy', models: [{id: 'speech-a'}], voices: ['alloy'], hasKey: true};
-const providers = [{id: 'openai-compatible', label: 'OpenAI Compatible', modalities: ['tts', 'stt']}, {id: 'elevenlabs', label: 'ElevenLabs', modalities: ['tts']}];
+const savedTts = {enabled: true, provider: 'openai-compatible', baseUrl: 'https://audio.example/v1', model: 'speech-a', voice: 'alloy', models: [{id: 'speech-a'}], voices: ['alloy'], hasKey: true};
+const savedStt = {...savedTts, model: 'listen-a', voice: '', models: [{id: 'listen-a'}], voices: [] as string[]};
+const saved = {tts: savedTts, stt: savedStt};
+const providers = [
+  {id: 'openai-compatible', label: 'OpenAI Compatible', modalities: ['tts', 'stt'], needsBaseUrl: true},
+  {id: 'elevenlabs', label: 'ElevenLabs', modalities: ['tts', 'stt'], needsBaseUrl: false},
+  {id: 'groq', label: 'Groq', modalities: ['stt'], needsBaseUrl: false}
+];
 const q = (root: ParentNode, id: string) => root.querySelector(`[data-testid="${id}"]`) as HTMLElement;
 const pick = (id: string, value: string) => {
   q(document, id).click();
   (document.querySelector(`[data-testid="${id}-option-${value}"]`) as HTMLElement).click();
 };
+const ok = (models: string[], voices: string[] = []) => ({ok: true, value: {ok: true, models: models.map(id => ({id})), voices}});
 afterEach(() => document.body.replaceChildren());
 
-it('is built from the kit: toggle Row, list pickers, no raw select and no Load models button', () => {
-  const form = createVoiceDirectionForm('tts', saved, providers, vi.fn());
+it('one provider and one key for both directions, built from the kit, stored key shown as dots', async() => {
+  const call = vi.fn(async(_m: string, p: any) => p.modality === 'tts' ? ok(['speech-a', 'speech-b'], ['alloy']) : ok(['listen-a']));
+  const form = createVoiceForm(saved, providers, call);
   document.body.append(form.section);
   expect(form.section.querySelector('select')).toBeNull();
-  expect(form.section.querySelector('fieldset')).toBeNull();
   expect([...form.section.querySelectorAll('button')].some((b) => /load models/i.test(b.textContent))).toBe(false);
-  for(const id of ['voice-tts-enabled', 'voice-tts-provider', 'voice-tts-base-url', 'voice-tts-key', 'voice-tts-model', 'voice-tts-voice', 'voice-tts-status']) {
+  for(const id of ['voice-enabled', 'voice-provider', 'voice-base-url', 'voice-key', 'voice-active', 'voice-tts-model', 'voice-tts-voice', 'voice-stt-model', 'voice-status']) {
     expect(q(form.section, id), id).not.toBeNull();
   }
-  // The saved choice shows without a network call.
-  expect(q(form.section, 'voice-tts-model-value').textContent).toBe('speech-a');
-  expect(q(form.section, 'voice-tts-voice-value').textContent).toBe('alloy');
-  expect(q(form.section, 'voice-tts-key-note').textContent).toBe('Key saved. Leave empty to keep it.');
+  expect(form.section.querySelectorAll('[data-testid="voice-key"]').length).toBe(1);
+  const key = q(form.section, 'voice-key') as HTMLInputElement;
+  expect(key.placeholder).toBe('••••••••••••');
+  expect(key.value).toBe('');
+  // The stored key is checked at once: a live Active check.
+  await vi.waitFor(() => expect(q(form.section, 'voice-active').textContent).toBe('✓ Active'));
+  expect(call).toHaveBeenCalledWith('check', {modality: 'tts', settings: expect.objectContaining({provider: 'openai-compatible'})});
+  expect(call).toHaveBeenCalledWith('check', {modality: 'stt', settings: expect.objectContaining({provider: 'openai-compatible'})});
 });
 
-it('leaving the key field loads the catalogue, as Decision Model does', async() => {
-  const call = vi.fn().mockResolvedValue({ok: true, value: {ok: true, models: [{id: 'speech-a'}, {id: 'speech-b'}], voices: ['alloy', 'nova']}});
-  const form = createVoiceDirectionForm('tts', saved, providers, call);
+it('a typed key goes to both directions on save', async() => {
+  const call = vi.fn(async(_m: string, p: any) => p.modality === 'tts' ? ok(['speech-a'], ['alloy']) : ok(['listen-a']));
+  const form = createVoiceForm(saved, providers, call);
   document.body.append(form.section);
-  const key = q(form.section, 'voice-tts-key') as HTMLInputElement;
+  const key = q(form.section, 'voice-key') as HTMLInputElement;
   key.value = 'new-key'; key.dispatchEvent(new Event('input')); key.dispatchEvent(new Event('blur'));
-  await vi.waitFor(() => expect(q(form.section, 'voice-tts-status').textContent).toBe('Key verified'));
-  expect(call).toHaveBeenCalledWith('check', {modality: 'tts', settings: expect.objectContaining({apiKey: 'new-key', baseUrl: 'https://audio.example/v1'})});
-  expect(form.value()).toMatchObject({model: 'speech-a', voice: 'alloy', apiKey: 'new-key'});
+  await vi.waitFor(() => expect(q(form.section, 'voice-active').textContent).toBe('✓ Active'));
+  const v = form.value();
+  expect(v.tts).toMatchObject({enabled: true, apiKey: 'new-key', model: 'speech-a', voice: 'alloy', baseUrl: 'https://audio.example/v1'});
+  expect(v.stt).toMatchObject({enabled: true, apiKey: 'new-key', model: 'listen-a'});
 });
 
-it('does not let a stale provider rejection overwrite the new catalogue or status', async() => {
+it('a rejected key shows the red check', async() => {
+  const call = vi.fn(async() => ({ok: true, value: {ok: false, error: '401 Unauthorized — wrong key', models: [] as unknown[], voices: [] as string[]}}));
+  const form = createVoiceForm(saved, providers, call);
+  document.body.append(form.section);
+  await vi.waitFor(() => expect(q(form.section, 'voice-active').dataset.state).toBe('invalid'));
+  expect(q(form.section, 'voice-active').textContent).toContain('Key rejected');
+});
+
+it('a provider with only STT hides TTS and saves TTS off', async() => {
+  const call = vi.fn(async() => ok(['whisper-large-v3']));
+  const form = createVoiceForm(saved, providers, call);
+  document.body.append(form.section);
+  pick('voice-provider', 'groq');
+  expect(q(form.section, 'voice-tts').style.display).toBe('none');
+  expect(q(form.section, 'voice-stt').style.display).toBe('');
+  const key = q(form.section, 'voice-key') as HTMLInputElement;
+  expect(key.placeholder).toBe('');
+  key.value = 'gsk'; key.dispatchEvent(new Event('input')); key.dispatchEvent(new Event('blur'));
+  await vi.waitFor(() => expect(q(form.section, 'voice-stt-model-value').textContent).toBe('whisper-large-v3'));
+  const groq = call.mock.calls.filter(([, p]: any) => p.settings.provider === 'groq');
+  expect(groq.length).toBeGreaterThan(0);
+  expect(groq.every(([, p]: any) => p.modality === 'stt')).toBe(true);
+  const v = form.value();
+  expect(v.tts).toEqual({enabled: false});
+  expect(v.stt).toMatchObject({enabled: true, provider: 'groq', baseUrl: '', apiKey: 'gsk', model: 'whisper-large-v3'});
+});
+
+it('does not let a stale check overwrite the new provider', async() => {
   let rejectOld: (err: Error) => void;
   const call = vi.fn()
   .mockImplementationOnce(() => new Promise((_, reject) => rejectOld = reject))
-  .mockResolvedValue({ok: true, value: {ok: true, models: [{id: 'eleven-model'}], voices: ['daniel']}});
-  const form = createVoiceDirectionForm('tts', saved, providers, call);
+  .mockImplementationOnce(() => new Promise(() => {}))
+  .mockImplementation(async(_m: string, p: any) => p.modality === 'tts' ? ok(['eleven-model'], ['daniel']) : ok(['scribe_v1']));
+  const form = createVoiceForm(saved, providers, call);
   document.body.append(form.section);
-  const key = q(form.section, 'voice-tts-key') as HTMLInputElement;
-  key.dispatchEvent(new Event('blur')); // stored key: first check, left hanging
-  pick('voice-tts-provider', 'elevenlabs');
+  pick('voice-provider', 'elevenlabs');
+  const key = q(form.section, 'voice-key') as HTMLInputElement;
   key.value = 'new-key'; key.dispatchEvent(new Event('input')); key.dispatchEvent(new Event('blur'));
   await vi.waitFor(() => expect(q(form.section, 'voice-tts-model-value').textContent).toBe('eleven-model'));
   rejectOld(new Error('old rejected-key status')); await new Promise(resolve => setTimeout(resolve, 0));
-  expect(q(form.section, 'voice-tts-status').textContent).not.toContain('old');
-  expect(form.value()).toMatchObject({provider: 'elevenlabs', baseUrl: '', model: 'eleven-model', voice: 'daniel'});
+  expect(q(form.section, 'voice-active').textContent).toBe('✓ Active');
+  expect(form.value().tts).toMatchObject({provider: 'elevenlabs', baseUrl: '', model: 'eleven-model', voice: 'daniel'});
   form.dispose(); expect(key.value).toBe('');
 });
 
-it('no catalogue: the model is typed, and typing it loads its voices', async() => {
-  const call = vi.fn()
-  .mockResolvedValueOnce({ok: true, value: {ok: true, models: [], voices: []}})
-  .mockResolvedValue({ok: true, value: {ok: true, models: [], voices: ['v1']}});
-  const form = createVoiceDirectionForm('tts', {...saved, model: '', voice: '', models: [], voices: [], hasKey: false}, providers, call);
-  document.body.append(form.section);
-  const key = q(form.section, 'voice-tts-key') as HTMLInputElement;
-  key.value = 'k'; key.dispatchEvent(new Event('blur'));
-  await vi.waitFor(() => expect(q(form.section, 'voice-tts-status').textContent).toContain('type a model ID'));
-  const typed = q(form.section, 'voice-tts-model-typed') as HTMLInputElement;
-  typed.value = 'my-tts'; typed.dispatchEvent(new Event('blur'));
-  await vi.waitFor(() => expect(q(form.section, 'voice-tts-voice-value').textContent).toBe('v1'));
-  expect(form.value()).toMatchObject({model: 'my-tts', voice: 'v1'});
+it('disabled: an off-only patch for both directions', () => {
+  const form = createVoiceForm(saved, providers, vi.fn(async() => ok([])));
+  (q(form.section, 'voice-enabled') as HTMLInputElement).checked = false;
+  expect(form.value()).toEqual({tts: {enabled: false}, stt: {enabled: false}});
 });
 
-it('keeps modalities separate and returns an off-only patch when disabled', () => {
-  const form = createVoiceDirectionForm('stt', saved, providers, vi.fn());
-  document.body.append(form.section);
-  q(form.section, 'voice-stt-provider').click();
-  expect(document.querySelector('[data-testid="voice-stt-provider-option-elevenlabs"]')).toBeNull();
-  expect(q(form.section, 'voice-stt-voice')).toBeNull();
-  (q(form.section, 'voice-stt-enabled') as HTMLInputElement).checked = false;
-  expect(form.value()).toEqual({enabled: false});
-});
-
-it('mounts the shared Phantom/Provider contact pickers only for enabled directions and saves inheritance', async() => {
+it('contact pickers: enabled directions only, and a gated Voice ID for a local contact', async() => {
   const parent = document.createElement('div'); document.body.append(parent);
-  const call = vi.fn().mockResolvedValue({ok: true, value: {persona: 'contact', settings: {tts: {...saved, models: [{id: 'speech-a'}, {id: 'speech-b'}]}, stt: {...saved, enabled: false}}, overrides: {tts: {model: 'speech-b'}}}});
+  const call = vi.fn(async(method: string, params: any) => {
+    if(method === 'contact') return {ok: true, value: {persona: 'contact', settings: {tts: {...savedTts, models: [{id: 'speech-a'}, {id: 'speech-b'}]}, stt: {...savedStt, enabled: false}}, overrides: {tts: {model: 'speech-b', voice: 'echo'}}}};
+    if(method === 'check') return ok([], params.settings.model === 'speech-b' ? ['echo', 'nova'] : []);
+    return {ok: true, value: {}};
+  });
   await mountContactVoiceModels(parent, 'a'.repeat(64), call);
   expect(parent.querySelector('select')).toBeNull();
   expect(q(parent, 'contact-tts-model-value').textContent).toBe('speech-b');
   expect(q(parent, 'contact-stt-model')).toBeNull();
-  pick('contact-tts-model', '');
+  await vi.waitFor(() => expect(q(parent, 'contact-tts-voice-value').textContent).toBe('echo'));
+  pick('contact-tts-voice', 'nova');
   q(parent, 'contact-voice-save').click();
-  await vi.waitFor(() => expect(call).toHaveBeenCalledWith('setContact', {pubkey: 'a'.repeat(64), models: {tts: ''}}));
+  await vi.waitFor(() => expect(call).toHaveBeenCalledWith('setContact', {pubkey: 'a'.repeat(64), models: {tts: 'speech-b'}, voices: {tts: 'nova'}}));
+  // A model with no voice list hides the Voice ID.
+  pick('contact-tts-model', 'speech-a');
+  await vi.waitFor(() => expect(q(parent, 'contact-tts-voice').parentElement!.style.display).toBe('none'));
+});
+
+it('no Voice ID for a remote Phantom', async() => {
+  const parent = document.createElement('div'); document.body.append(parent);
+  const call = vi.fn(async(method: string) => method === 'contact' ?
+    {ok: true, value: {persona: null as string | null, settings: {tts: savedTts, stt: {...savedStt, enabled: false}}, overrides: {}}} : ok([], ['x']));
+  await mountContactVoiceModels(parent, 'a'.repeat(64), call);
+  expect(q(parent, 'contact-tts-voice')).toBeNull();
 });
 
 it('shows no picker when both directions are disabled', async() => {

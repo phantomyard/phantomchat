@@ -19,6 +19,9 @@ export interface SecretStorage {available(): boolean; encrypt(value: string): Bu
 export type VoiceCall = (method: string, params?: Record<string, unknown>) => Promise<PhantombotResult>;
 const directions: Modality[] = ['tts', 'stt'];
 const empty = (): SavedChoice => ({enabled: false, provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: '', voice: '', apiKey: '', models: [], voices: []});
+/** Bring-your-own endpoint: the only provider whose base URL comes from the user. */
+const ownEndpoint = (provider: string) => provider === 'openai-compatible';
+const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const fingerprint = (v: VoiceChoice) => `${v.provider}|${v.baseUrl.replace(/\/+$/, '')}`;
 // Tags the channel-restart failure so callers can tell it apart from a voice
 // application failure; save() still records it, creation follow-through ignores it.
@@ -31,6 +34,9 @@ const record = (v: unknown): v is Record<string, any> => !!v && typeof v === 'ob
 export class VoiceModels {
   private state: State;
   private queue: Promise<unknown> = Promise.resolve();
+  /** Pi presets run as openai-compatible + a fixed URL (engine `voiceModels.providers`). */
+  private transports = new Map<string, {provider: string; baseUrl: string}>();
+  private transportsLoaded = false;
   constructor(private file: string, private storage: SecretStorage, private call: VoiceCall) {
     if(existsSync(file)) {
       if(!storage.available()) throw new Error('Encrypted voice storage is unavailable');
@@ -53,10 +59,26 @@ export class VoiceModels {
     this.queue = task.catch(() => {});
     return task;
   }
+  /** The engine's provider list, cached with each preset's transport for remote Phantoms. */
+  private async providers(): Promise<any[]> {
+    const list = await this.value<any[]>('voiceModels.providers');
+    for(const p of Array.isArray(list) ? list : []) {
+      if(p?.transport && typeof p.transport.baseUrl === 'string') this.transports.set(p.id, {provider: p.transport.provider, baseUrl: p.transport.baseUrl});
+    }
+    this.transportsLoaded = true;
+    return list;
+  }
+  private async loadTransports() {
+    if(!this.transportsLoaded) await this.providers().catch(() => {});
+  }
+  /** What a remote engine stores for this choice (presets are openai-compatible + their URL). */
+  private transport(v: VoiceChoice) {
+    return this.transports.get(v.provider) ?? {provider: v.provider, baseUrl: v.baseUrl};
+  }
   get() {
     return Object.fromEntries(directions.map(d => {
       const {apiKey, ...visible} = this.state.defaults[d];
-      return [d, {...visible, hasKey: !!apiKey}];
+      return [d, {...visible, hasKey: !!apiKey, transport: this.transport(visible)}];
     }));
   }
   private choice(d: Modality, raw: unknown): SavedChoice {
@@ -67,11 +89,11 @@ export class VoiceModels {
     for(const key of ['enabled', 'provider', 'baseUrl', 'model', 'voice', 'apiKey'] as const) {
       if(raw[key] !== undefined) (v as any)[key] = raw[key];
     }
-    if(!['elevenlabs', 'openai-compatible'].includes(v.provider)) throw new Error('Unsupported voice provider');
+    if(typeof v.provider !== 'string' || !PROVIDER_ID.test(v.provider)) throw new Error('Unsupported voice provider');
     for(const k of ['baseUrl', 'model', 'voice', 'apiKey'] as const) {
       if(typeof v[k] !== 'string' || v[k].length > 65536) throw new Error(`Invalid voice ${k}`);
     }
-    v.baseUrl = v.provider === 'elevenlabs' ? '' : v.baseUrl.trim().replace(/\/+$/, '');
+    v.baseUrl = ownEndpoint(v.provider) ? v.baseUrl.trim().replace(/\/+$/, '') : '';
     v.apiKey = raw.apiKey?.trim() || (fingerprint(v) === fingerprint(old) ? old.apiKey : '');
     if(v.enabled && (!v.apiKey || !v.model || (d === 'tts' && !v.voice))) throw new Error('Choose a model, key and TTS voice before enabling');
     return v;
@@ -80,11 +102,12 @@ export class VoiceModels {
     if(!directions.includes(d)) throw new Error('Unknown voice direction');
     // Discovery does not require the form to already have a model or voice.
     const v = this.choice(d, {...(record(raw) ? raw : {}), enabled: false});
-    return this.value<any>('voiceModels.check', {modality: d, provider: v.provider, baseUrl: v.baseUrl, apiKey: v.apiKey, model: v.model || undefined, voice: v.voice || undefined});
+    return this.value<any>('voiceModels.check', {modality: d, provider: v.provider, ...(v.baseUrl ? {baseUrl: v.baseUrl} : {}), apiKey: v.apiKey, model: v.model || undefined, voice: v.voice || undefined});
   }
   save(raw: unknown) {
     return this.exclusive(async() => {
       if(!record(raw)) throw new Error('Invalid voice settings');
+      await this.loadTransports();
       const next = {} as Defaults;
       for(const d of directions) {
         next[d] = this.choice(d, raw[d]);
@@ -158,6 +181,7 @@ export class VoiceModels {
   }
   async contact(pubkey: string) {
     if(!/^[0-9a-f]{64}$/.test(pubkey)) throw new Error('Invalid contact');
+    await this.loadTransports();
     const names = await this.value<string[]>('personas.list');
     const {nip19} = await import('nostr-tools');
     const npub = nip19.npubEncode(pubkey);
@@ -168,7 +192,7 @@ export class VoiceModels {
     const persona = matches.find(Boolean);
     return {persona: persona ?? null, settings: this.get(), overrides: this.state.overrides[persona ?? `remote:${pubkey}`] ?? {}};
   }
-  setContact(pubkey: string, raw: unknown) {
+  setContact(pubkey: string, raw: unknown, voices?: unknown) {
     return this.exclusive(async() => {
       const contact = await this.contact(pubkey);
       if(!contact.persona) throw new Error('This Phantom runs on another engine; remote voice configuration is unavailable');
@@ -177,12 +201,17 @@ export class VoiceModels {
       for(const d of directions) {
         const v = this.state.defaults[d];
         if(!v.enabled) { next[d] = this.state.overrides[contact.persona]?.[d]; continue; }
-        const model = raw[d];
+        // A Voice ID alone overrides the voice on the default model.
+        const voiceOnly = d === 'tts' && record(voices) && typeof voices.tts === 'string' && !!voices.tts;
+        const model = raw[d] || (voiceOnly ? v.model : '');
         if(!model) continue;
-        if(typeof model !== 'string' || !v.models.some(m => m.id === model)) throw new Error('Choose a current voice model');
+        if(typeof model !== 'string' || (model !== v.model && !v.models.some(m => m.id === model))) throw new Error('Choose a current voice model');
         const check = await this.check(d, {...v, model, voice: ''});
         if(!check.ok) throw new Error('Voice provider could not be verified');
-        next[d] = {endpoint: fingerprint(v), model, ...(d === 'tts' ? {voice: check.voices.includes(v.voice) ? v.voice : check.voices[0]} : {})};
+        // A Voice ID picked on the contact wins when this model offers it.
+        const picked = d === 'tts' && record(voices) && typeof voices.tts === 'string' && voices.tts ? voices.tts : undefined;
+        if(picked && !check.voices.includes(picked)) throw new Error('This model does not offer that voice');
+        next[d] = {endpoint: fingerprint(v), model, ...(d === 'tts' ? {voice: picked ?? (check.voices.includes(v.voice) ? v.voice : check.voices[0])} : {})};
         if(d === 'tts' && next[d].voice) {
           const proof = await this.check(d, {...v, model, voice: next[d].voice});
           if(!proof.ok) throw new Error('This model does not accept the selected voice');
@@ -209,7 +238,8 @@ export class VoiceModels {
       const model = models && Object.hasOwn(models, d) ? models[d] || v.model :
         (override?.endpoint === fingerprint(v) ? override.model : v.model);
       if(model !== v.model && !v.models.some(m => m.id === model)) throw new Error('Choose a current voice model');
-      return [d, {enabled: true, provider: v.provider, baseUrl: v.baseUrl, model}];
+      const t = this.transport(v);
+      return [d, {enabled: true, provider: t.provider, baseUrl: t.baseUrl, model}];
     }));
   }
   private saveRemote(pubkey: string, models: Record<string, string>) {
@@ -230,13 +260,13 @@ export class VoiceModels {
       let value: unknown;
       switch(method) {
         case 'get': value = this.get(); break;
-        case 'providers': value = await this.value('voiceModels.providers'); break;
+        case 'providers': value = await this.providers(); break;
         case 'check': value = await this.check(params?.modality, params?.settings); break;
         case 'save': value = await this.save(params); break;
         case 'remotePlan': value = this.remotePlan(params?.pubkey, params?.models); break;
         case 'saveRemote': value = this.saveRemote(params?.pubkey, params?.models); break;
         case 'contact': value = await this.contact(params?.pubkey); break;
-        case 'setContact': value = await this.setContact(params?.pubkey, params?.models); break;
+        case 'setContact': value = await this.setContact(params?.pubkey, params?.models, params?.voices); break;
         default: throw new Error('Unknown voice settings method');
       }
       return {ok: true, value};

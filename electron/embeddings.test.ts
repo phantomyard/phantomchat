@@ -142,6 +142,12 @@ describe('EmbeddingsSettings', () => {
 });
 
 describe('normalizeStored / configurePayload', () => {
+  it('a Pi provider is sent as itself with its key and no base URL', () => {
+    const s = normalizeStored({enabled: true, provider: 'openai', baseUrl: 'https://evil.example/v1', model: 'text-embedding-3-small', dims: 1536})!;
+    expect(s.baseUrl).toBe('');
+    expect(configurePayload(s, 'sk-1')).toEqual({embeddings: {provider: 'openai', apiKey: 'sk-1', model: 'text-embedding-3-small', dims: 1536}});
+    expect(normalizeStored({enabled: true, provider: 'Not An Id!', model: 'm'})).toBeUndefined();
+  });
   it('rejects junk and fills the Gemini default model', () => {
     expect(normalizeStored(null)).toBeUndefined();
     expect(normalizeStored({enabled: true, provider: 'cohere'})).toBeUndefined();
