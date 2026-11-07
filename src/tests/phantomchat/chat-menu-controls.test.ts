@@ -1,6 +1,8 @@
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {describe, expect, it, vi} from 'vitest';
+import {leaveGroupLangKey} from '@lib/phantomchat/session-wording';
+import {SESSION_PEER_BASE} from '@lib/phantomchat/group-types';
 
 // Execute the actual handler without importing the chat's browser/worker graph.
 // This covers the wiring as well as the predicate: deleting the group block or
@@ -23,11 +25,11 @@ function compileHandler(file: string, find: (node: ts.Node) => ts.Node | undefin
   return new Function(...Object.keys(dependencies), `${js}\nreturn handler;`)(...Object.values(dependencies));
 }
 
-function menuHarness(options: {admin?: string, own?: string, failure?: 'import' | 'store', switchPeer?: boolean, missing?: boolean} = {}) {
+function menuHarness(options: {admin?: string, own?: string, failure?: 'import' | 'store', switchPeer?: boolean, missing?: boolean, peerId?: number} = {}) {
   const replaceWith = vi.fn();
   const onOpen = vi.fn();
   const bar = {
-    peerId: -2000000000000001,
+    peerId: options.peerId ?? -2000000000000001,
     chat: {monoforumThreadId: 0},
     menuButtons: [{element: {lastChild: {replaceWith}}}],
     managers: {appPeersManager: {getDeleteButtonText: vi.fn().mockResolvedValue('ChatList.Context.LeaveGroup')}},
@@ -48,6 +50,7 @@ function menuHarness(options: {admin?: string, own?: string, failure?: 'import' 
     }
   }, {
     isGroupPeer: (peer: number) => peer < -2000000000000000,
+    leaveGroupLangKey,
     window: {__phantomchatOwnPubkey: options.own ?? 'admin'},
     i18n: (key: string) => key,
     require: () => {
@@ -71,6 +74,12 @@ describe('chat menu delete label', () => {
     const h = menuHarness(options);
     await h.run();
     expect(h.replaceWith).toHaveBeenCalledWith('ChatList.Context.LeaveGroup');
+  });
+
+  it('says Leave Session for a session member', async() => {
+    const h = menuHarness({own: 'member', peerId: -(Number(SESSION_PEER_BASE) + 7)});
+    await h.run();
+    expect(h.replaceWith).toHaveBeenCalledWith('PhantomChat.Session.Leave');
   });
 
   it.each(['import', 'store'] as const)('opens with Leave Group after %s failure', async(failure) => {

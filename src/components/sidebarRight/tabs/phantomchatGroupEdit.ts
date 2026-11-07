@@ -18,16 +18,20 @@ import {i18n, LangPackKey} from '@lib/langPack';
 import {toastNew} from '@components/toast';
 import appSidebarRight from '..';
 import {getGroupEditSavePlan, getGroupMemberChanges} from './phantomchatGroupEditState';
+import {isSessionPeer} from '@lib/phantomchat/group-types';
+import {leaveGroupLangKey} from '@lib/phantomchat/session-wording';
 
 export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
   public groupPeerId: number;
   private groupId: string;
 
   public async init() {
+    // Sessions share this editor with groups; only the wording differs.
+    const isSession = isSessionPeer(+this.groupPeerId);
     const store = getGroupStore();
     const group = await store.getByPeerId(this.groupPeerId);
     if(!group) {
-      this.setTitle('Group' as LangPackKey);
+      this.setTitle((isSession ? 'PhantomChat.Session.Title' : 'Group') as LangPackKey);
       return;
     }
 
@@ -202,7 +206,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
           let cancelled = false;
           try {
             await confirmationPopup({
-              descriptionLangKey: 'PhantomChat.GroupEdit.MakeAdminDescription' as LangPackKey,
+              descriptionLangKey: (isSession ? 'PhantomChat.Session.MakeAdminDescription' : 'PhantomChat.GroupEdit.MakeAdminDescription') as LangPackKey,
               descriptionLangArgs: [displayName],
               button: {langKey: 'PhantomChat.GroupEdit.MakeAdmin' as LangPackKey}
             });
@@ -224,7 +228,7 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
         attachClickEvent(removeBtn, async() => {
           try {
             await confirmationPopup({
-              descriptionLangKey: 'Permissions.RemoveFromGroup' as LangPackKey,
+              descriptionLangKey: (isSession ? 'PhantomChat.Session.RemoveMember' : 'Permissions.RemoveFromGroup') as LangPackKey,
               descriptionLangArgs: [displayName],
               button: {langKey: 'Remove' as LangPackKey, isDanger: true}
             });
@@ -309,13 +313,14 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
 
     // Admins must transfer ownership before leaving; unavailable actions stay hidden.
     if(!isAdmin) {
-      const btnLeave = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'ChatList.Context.LeaveGroup'});
+      const leaveKey = leaveGroupLangKey(+this.groupPeerId);
+      const btnLeave = Button('btn-primary btn-transparent danger', {icon: 'delete', text: leaveKey});
 
       attachClickEvent(btnLeave, async() => {
         try {
           await confirmationPopup({
-            titleLangKey: 'ChatList.Context.LeaveGroup' as LangPackKey,
-            button: {langKey: 'ChatList.Context.LeaveGroup' as LangPackKey, isDanger: true}
+            titleLangKey: leaveKey,
+            button: {langKey: leaveKey, isDanger: true}
           });
           await getGroupAPI().leaveGroup(this.groupId);
 
@@ -341,13 +346,14 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
     // group_delete so other members' clients drop it too, then tears it down
     // locally. Non-admins only get "Leave Group" above.
     if(isAdmin) {
-      const btnDelete = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'PhantomChat.GroupEdit.DeleteGroup' as LangPackKey});
+      const deleteKey = (isSession ? 'PhantomChat.Session.Delete' : 'PhantomChat.GroupEdit.DeleteGroup') as LangPackKey;
+      const btnDelete = Button('btn-primary btn-transparent danger', {icon: 'delete', text: deleteKey});
 
       attachClickEvent(btnDelete, async() => {
         try {
           await confirmationPopup({
-            titleLangKey: 'PhantomChat.GroupEdit.DeleteGroup' as LangPackKey,
-            descriptionLangKey: 'PhantomChat.GroupEdit.DeleteGroupDescription' as LangPackKey,
+            titleLangKey: deleteKey,
+            descriptionLangKey: (isSession ? 'PhantomChat.Session.DeleteDescription' : 'PhantomChat.GroupEdit.DeleteGroupDescription') as LangPackKey,
             button: {langKey: 'Delete' as LangPackKey, isDanger: true}
           });
           await getGroupAPI().deleteGroup(this.groupId);

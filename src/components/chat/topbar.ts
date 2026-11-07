@@ -83,6 +83,7 @@ import Icon from '@components/icon';
 import {getDefaultOptions} from '@components/sidebarLeft/tabs/autoDeleteMessages/options';
 import {createAutoDeleteIcon} from '@components/chat/utils';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
+import {leaveGroupLangKey} from '@lib/phantomchat/session-wording';
 import PopupBoost from '@components/popups/boost';
 import PopupPremium from '@components/popups/premium';
 
@@ -241,7 +242,7 @@ export default class ChatTopbar {
             if(isGroupPeer(peerId)) {
               // Match PopupDeleteDialog: P2P authority lives on the group record,
               // not Telegram's delete_chat right (always false for these peers).
-              deleteButtonText = 'ChatList.Context.LeaveGroup';
+              deleteButtonText = leaveGroupLangKey(peerId);
               try {
                 const {getGroupStore} = await import('@lib/phantomchat/group-store');
                 const record = await getGroupStore().getByPeerId(peerId);

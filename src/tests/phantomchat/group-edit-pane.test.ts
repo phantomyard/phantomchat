@@ -62,13 +62,17 @@ vi.mock('@components/toast', () => ({toastNew: mocks.toast}));
 vi.mock('@components/sidebarRight', () => ({default: {toggleSidebar: mocks.sidebar}}));
 
 import Editor from '@components/sidebarRight/tabs/phantomchatGroupEdit';
+import {GROUP_PEER_BASE, SESSION_PEER_BASE} from '@lib/phantomchat/group-types';
 
 let group: any;
-async function mount(admin = true) {
+const SESSION_PEER_ID = -(Number(SESSION_PEER_BASE) + 7);
+const GROUP_PEER_ID = -(Number(GROUP_PEER_BASE) + 7);
+
+async function mount(admin = true, peerId = -123) {
   (Number.prototype as any).toPeerId = function() { return Number(this); };
   (window as any).__phantomchatOwnPubkey = admin ? 'admin' : 'member';
   const tab = new Editor({} as any);
-  tab.groupPeerId = -123;
+  tab.groupPeerId = peerId;
   await tab.init();
   document.body.append(tab.content);
   return tab;
@@ -202,5 +206,41 @@ describe('mounted group edit pane', () => {
     expect(mocks.remove).toHaveBeenCalledOnce();
     expect(mocks.remove).toHaveBeenCalledWith('group', 'member');
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('session wording (sessions share the group editor)', () => {
+  const buttonTexts = () => [...document.querySelectorAll('button')].map(b => b.textContent);
+
+  it('says Delete Session, with session confirm text, for a session admin', async() => {
+    await mount(true, SESSION_PEER_ID);
+    expect(buttonTexts()).toContain('PhantomChat.Session.Delete');
+    expect(document.body.textContent).not.toContain('PhantomChat.GroupEdit.DeleteGroup');
+    [...document.querySelectorAll('button')].find(b => b.textContent === 'PhantomChat.Session.Delete')!.click();
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalled());
+    expect(mocks.confirm.mock.calls[0][0]).toMatchObject({
+      titleLangKey: 'PhantomChat.Session.Delete',
+      descriptionLangKey: 'PhantomChat.Session.DeleteDescription'
+    });
+  });
+
+  it('says Leave Session for a session member', async() => {
+    await mount(false, SESSION_PEER_ID);
+    expect(buttonTexts()).toContain('PhantomChat.Session.Leave');
+    expect(document.body.textContent).not.toContain('ChatList.Context.LeaveGroup');
+  });
+
+  it('keeps group wording for a real group', async() => {
+    await mount(true, GROUP_PEER_ID);
+    expect(buttonTexts()).toContain('PhantomChat.GroupEdit.DeleteGroup');
+    [...document.querySelectorAll('button')].find(b => b.textContent === 'PhantomChat.GroupEdit.DeleteGroup')!.click();
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalled());
+    expect(mocks.confirm.mock.calls[0][0]).toMatchObject({
+      titleLangKey: 'PhantomChat.GroupEdit.DeleteGroup',
+      descriptionLangKey: 'PhantomChat.GroupEdit.DeleteGroupDescription'
+    });
+    document.body.replaceChildren();
+    await mount(false, GROUP_PEER_ID);
+    expect(buttonTexts()).toContain('ChatList.Context.LeaveGroup');
   });
 });

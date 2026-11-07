@@ -33,6 +33,7 @@ import apiManagerProxy from '@lib/apiManagerProxy';
 import {peerEditMenuButton} from '@components/peerActionsMenu';
 import {FOLDER_ID_ARCHIVE} from '@appManagers/constants';
 import {isGroupPeer} from '@lib/phantomchat/group-types';
+import {leaveGroupLangKey} from '@lib/phantomchat/session-wording';
 
 
 export default class DialogsContextMenu {
@@ -184,7 +185,7 @@ export default class DialogsContextMenu {
     // server-side owner to hand it to), so the menu must say so. A non-admin
     // keeps the leave wording. tweb cannot answer this — `hasRights` is always
     // false for a group peer, which is why it always read "Leave Group".
-    return (await DialogsContextMenu.isGroupAdmin(peerId)) ? 'Delete' : 'ChatList.Context.LeaveGroup';
+    return (await DialogsContextMenu.isGroupAdmin(peerId)) ? 'Delete' : leaveGroupLangKey(peerId);
   }
 
   private getButtons() {
