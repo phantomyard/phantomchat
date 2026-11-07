@@ -73,9 +73,12 @@ async function latestReleaseTag() {
   return release.tag_name;
 }
 
-/** The engine this build bundles: {tag, commit, bun, channel?, source}. */
-export async function resolveEngine() {
-  const pin = readPin();
+/**
+ * The engine this build bundles: {tag, commit, bun, channel?, source}.
+ * `pin` is injectable so the refusal paths can be tested without a real
+ * pin.json on disk; the build itself always passes nothing and reads it.
+ */
+export async function resolveEngine(pin = readPin()) {
   const forced = process.env.PHANTOMBOT_HOST_REF;
   if(forced) {
     return {

@@ -56,10 +56,13 @@ describe('engine resolution', () => {
     });
   });
 
-  it('refuses a pin that names neither a tag nor a known channel', async () => {
+  it('refuses a pin that names a channel this build does not know', async () => {
     delete process.env.PHANTOMBOT_HOST_REF;
-    const pin = readPin();
-    if(pin.tag) return; // an explicit pin resolves locally; nothing to assert
-    expect(pin.channel).toBe('latest');
+    await expect(resolveEngine({channel: 'nightly', bun: '1.x'})).rejects.toThrow(/no channel this build knows/);
+  });
+
+  it('refuses a pinned tag with no commit to build', async () => {
+    delete process.env.PHANTOMBOT_HOST_REF;
+    await expect(resolveEngine({tag: 'v1.1.490', bun: '1.x'})).rejects.toThrow(/pins a tag but no commit/);
   });
 });
