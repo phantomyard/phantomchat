@@ -227,6 +227,7 @@ import wrapMessageForReply from '@components/wrappers/messageForReply';
 import canSeeMessageMedia from '@lib/appManagers/utils/messages/canSeeMessageMedia';
 import {cancelRecoveryWatchdog, startRecoveryWatchdog} from '@lib/phantomchat/phantomchat-message-handler';
 import {isPaintedTempSend, resolveSentTempBubble} from '@lib/phantomchat/optimistic-send-bubble';
+import {createHistorySelfHeal} from '@lib/phantomchat/history-self-heal';
 
 // TODO: fix new message won't be rendered if an old one is rendering in the moment
 
@@ -575,6 +576,9 @@ export default class ChatBubbles {
   private setPeerOptions: {lastMsgFullMid: FullMid, topMessageFullMid: FullMid, savedPosition: ChatSavedPosition};
 
   private setPeerTempId: number = 0;
+
+  /** Bounded repair for history pages rendered without all of their bubbles. */
+  private historySelfHeal: ReturnType<typeof createHistorySelfHeal<Message.message | Message.messageService>>;
 
   private renderNewPromises: Set<Promise<any>> = new Set();
   private updateGradient: boolean;
@@ -4414,6 +4418,7 @@ export default class ChatBubbles {
     // }
 
     this.skippedMids.clear();
+    this.historySelfHeal?.reset();
     this.dateMessages = {};
     this.bubbleGroups?.cleanup();
     this.bubbleGroups = new BubbleGroups(this.chat);
@@ -9082,6 +9087,36 @@ export default class ChatBubbles {
     };
   }
 
+  /**
+   * A history page served from the in-memory slice can carry a mid whose message
+   * object is no longer in the main-thread mirror (a closed chat keeps only its
+   * newest one), and the walk below silently skips whatever it cannot resolve —
+   * the user's own bubble disappears after "send → switch chat → come back"
+   * until a second open refetches the page. Re-read just those mids through the
+   * Worker so the page renders complete. Bounded to once per chat open.
+   */
+  private healMissingHistoryMessages(
+    history: (Message.message | Message.messageService | AdminLog | number)[],
+    messages: (Message.message | Message.messageService | AdminLog | undefined)[],
+    reverse: boolean
+  ) {
+    if(
+      this.chat.type !== ChatType.Chat &&
+      this.chat.type !== ChatType.Discussion &&
+      this.chat.type !== ChatType.Saved
+    ) return;
+
+    this.historySelfHeal ??= createHistorySelfHeal<Message.message | Message.messageService>({
+      loadMessages: (peerId, mids) => this.managers.appMessagesManager.reloadMessages(peerId, mids),
+      renderMessage: (message, reverse) => {
+        this.safeRenderMessage({message, reverse, canAnimateLadder: true});
+      },
+      isActualPeer: (peerId) => this.peerId === peerId
+    });
+
+    void this.historySelfHeal.heal(this.peerId, history, messages, reverse);
+  }
+
   public async performHistoryResult(
     historyResult: LocalHistoryResult | {history: (Message.message | Message.messageService | number)[]},
     reverse: boolean
@@ -9117,6 +9152,8 @@ export default class ChatBubbles {
     const messages = /* await Promise.all */(history.map((mid) => {
       return typeof(mid) === 'number' ? this.chat.getMessage(mid) : mid;
     }));
+
+    this.healMissingHistoryMessages(history, messages, reverse);
 
     const setLoadedPromises: Promise<any>[] = [];
     if(!this.scrollable.loadedAll['bottom'] || !this.scrollable.loadedAll['top']) {

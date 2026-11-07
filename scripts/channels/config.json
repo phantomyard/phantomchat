@@ -809,8 +809,8 @@
     },
     "src/components/chat/bubbles.ts": {
       "stable": "41c7b510dac38f2f8ff2922b463deaa6c02619c5f95efd84c141e2231a86e339",
-      "preview": "776f231e01023a7b91278d58d64ca632341ef074b0584786780019022f9227f5",
-      "reason": "Render-only: history renders skip the temp copy of a VMT/GroupAPI-painted text send, and message_sent drops a temp bubble instead of renaming it onto a mid that already has a bubble. No IndexedDB, localStorage, schema or wire change."
+      "preview": "264d91a089a96aa9f401109c1d9383515bc0b6d005d97dc6b17607815b6d76e4",
+      "reason": "Render-only: a history page that carries a mid the main-thread mirror can no longer resolve (a closed chat keeps only its newest message object) now re-reads just those mids through the Worker once per chat open, so the skipped bubble \u2014 typically the user's own send \u2014 is painted instead of staying missing until a second open. No IndexedDB, localStorage, schema or wire change."
     },
     "src/lib/phantomchat/optimistic-send-bubble.ts": {
       "stable": "absent",
@@ -1011,6 +1011,11 @@
       "stable": "absent",
       "preview": "681b9cd713e8333978019daaee9bcf12ed30720a95ea792704c45a5fe2649ec5",
       "reason": "Desktop-only Provider contact editor (#466): reads persona.brain()/brainCheck() and writes the provider/model through persona.configure over the desktop bridge. No browser storage, IndexedDB or contact-pref schema change."
+    },
+    "src/lib/phantomchat/history-self-heal.ts": {
+      "stable": "absent",
+      "preview": "a58c4ed25b825b76ece79466369a5c6534f0ac1a9fe712c92e6c224877f7196a",
+      "reason": "New pure helpers behind the render guard above: collect the unresolved mids of a rendered page and re-read them at most once per chat open. No I/O of their own, no storage, no wire change."
     }
   }
 }
