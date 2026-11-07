@@ -609,7 +609,7 @@
     },
     "electron/phantombot/build-host.mjs": {
       "stable": "absent",
-      "preview": "db7f7d5ea227c2c88b7eb778bc7f6b342145d43c746c10ada55389a6697799e9",
+      "preview": "2087b43b1584a8c49d2e3dac1f96f2646dfc8f8e10c332914988aa08227e3fac",
       "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
     },
     "electron/phantombot/client.test.ts": {
@@ -649,8 +649,8 @@
     },
     "electron/phantombot/pin.test.mjs": {
       "stable": "absent",
-      "preview": "1a6d43ec1cdd1583c884be5f9788bb9aadc829166d73aab4cd86698ff5f47e23",
-      "reason": "Test only: pins the engine-channel contract (pin.json names `latest`, the build resolves and matches a Bun series) and ships no runtime code. Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes."
+      "preview": "e8c1ef03429d185a0fbac102978d1bf83e6e4be028e0d7d96290c25a700d9838",
+      "reason": "Test only: pins the engine-channel contract (pin.json names `latest`, the build resolves and matches a Bun series, and an unknown channel or a tag without a commit is refused by calling resolveEngine with an injected pin) and ships no runtime code. Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes."
     },
     "electron/phantombot/probe.ts": {
       "stable": "absent",
