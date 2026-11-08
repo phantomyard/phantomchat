@@ -228,6 +228,7 @@ import canSeeMessageMedia from '@lib/appManagers/utils/messages/canSeeMessageMed
 import {cancelRecoveryWatchdog, startRecoveryWatchdog} from '@lib/phantomchat/phantomchat-message-handler';
 import {isPaintedTempSend, resolveSentTempBubble} from '@lib/phantomchat/optimistic-send-bubble';
 import {createHistorySelfHeal} from '@lib/phantomchat/history-self-heal';
+import {createBubbleDiskReconcile} from '@lib/phantomchat/bubble-disk-reconcile';
 
 // TODO: fix new message won't be rendered if an old one is rendering in the moment
 
@@ -580,6 +581,9 @@ export default class ChatBubbles {
   /** Bounded repair for history pages rendered without all of their bubbles. */
   private historySelfHeal: ReturnType<typeof createHistorySelfHeal<Message.message | Message.messageService>>;
 
+  /** Paints stored messages the open chat is missing (on open and on focus). */
+  private diskReconcile: ReturnType<typeof createBubbleDiskReconcile<Message.message | Message.messageService>>;
+
   private renderNewPromises: Set<Promise<any>> = new Set();
   private updateGradient: boolean;
 
@@ -632,6 +636,15 @@ export default class ChatBubbles {
     this.listenerSetter = new ListenerSetter();
 
     this.constructBubbles();
+
+    // Returning to the app is the other moment a stale view is seen: re-check
+    // the open chat against the store (bubble-disk-reconcile.ts).
+    const onAppVisible = () => {
+      if(document.visibilityState === 'hidden') return;
+      this.reconcileWithDisk('focus');
+    };
+    this.listenerSetter.add(window)('focus', onAppVisible);
+    this.listenerSetter.add(document)('visibilitychange', onAppVisible);
 
     // * constructor end
 
@@ -4419,6 +4432,7 @@ export default class ChatBubbles {
 
     this.skippedMids.clear();
     this.historySelfHeal?.reset();
+    this.diskReconcile?.reset();
     this.dateMessages = {};
     this.bubbleGroups?.cleanup();
     this.bubbleGroups = new BubbleGroups(this.chat);
@@ -5017,6 +5031,8 @@ export default class ChatBubbles {
         }
 
         this.tryToForceStartParam(middleware);
+
+        this.reconcileWithDisk(cached ? 'open-cached' : 'open');
 
         // if(cached) {
         // this.onRenderScrollSet();
@@ -9115,6 +9131,42 @@ export default class ChatBubbles {
     });
 
     void this.historySelfHeal.heal(this.peerId, history, messages, reverse);
+  }
+
+  /**
+   * Belt and braces for the "my bubble vanished until Ctrl+R" family: compare
+   * the open chat with the local store and paint any stored message that has
+   * no bubble. Add-only, bounded to the rendered window, never while a send is
+   * in flight. See bubble-disk-reconcile.ts.
+   */
+  public reconcileWithDisk(reason: string) {
+    if(this.chat.type !== ChatType.Chat || this.chat.threadId) return;
+    const peerId = this.peerId;
+    if(!peerId || this.chat.appImManager?.chat !== this.chat) return;
+
+    this.diskReconcile ??= createBubbleDiskReconcile<Message.message | Message.messageService>({
+      readStoredMids: (peerId, limit) => apiManagerProxy.readStoredHistoryMids(peerId, limit),
+      loadMessages: (peerId, mids) => this.managers.appMessagesManager.reloadMessages(peerId, mids),
+      renderMessage: (message) => this.safeRenderMessage({message, reverse: false, canAnimateLadder: false}),
+      getView: () => {
+        const renderedMids: number[] = [];
+        const collect = (fullMid: string) => {
+          const d = splitFullMid(fullMid as FullMid);
+          if(d.peerId === this.peerId) renderedMids.push(d.mid);
+        };
+        Object.keys(this.bubbles).forEach(collect);
+        this.skippedMids.forEach(collect);
+        return {
+          renderedMids,
+          atLiveBottom: !!this.scrollable.loadedAll.bottom,
+          loadedAllTop: !!this.scrollable.loadedAll.top
+        };
+      },
+      hasBubble: (mid) => !!this.getBubble(this.peerId, mid),
+      isActualPeer: (peerId) => this.peerId === peerId
+    });
+
+    void this.diskReconcile.check(peerId, reason);
   }
 
   public async performHistoryResult(

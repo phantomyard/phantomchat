@@ -42,6 +42,7 @@ TESTS=(
   e2e-p2p-messaging.ts
   e2e-first-open-history.ts
   e2e-first-send-no-duplicate.ts
+  e2e-bubble-disk-reconcile.ts
   e2e-group-voice-refresh.ts
   e2e-voice-autoadvance-direction.ts
   # WU-4 #12: group bilateral send/receive — was orphaned (existed but never

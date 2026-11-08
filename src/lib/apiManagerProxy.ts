@@ -156,6 +156,24 @@ class ApiManagerProxy extends MTProtoMessagePort {
   }
 
   /**
+   * Mids of the newest stored messages for a PhantomChat peer, read straight
+   * from IndexedDB through the virtual MTProto server: the same read a reload
+   * renders from, bypassing the Worker's in-memory history slice. Used by the
+   * bubble/disk reconcile (bubble-disk-reconcile.ts).
+   */
+  public async readStoredHistoryMids(peerId: PeerId, limit: number): Promise<number[]> {
+    const server = await this.waitForPhantomChatServer();
+    const id = Math.abs(Number(peerId));
+    const peer = Number(peerId) < 0 ?
+      {_: 'inputPeerChat', chat_id: id} :
+      {_: 'inputPeerUser', user_id: id};
+    const result = await server.handleMethod('messages.getHistory', {peer, limit, offset_id: 0, add_offset: 0});
+    return ((result?.messages ?? []) as {id?: number}[])
+    .map((message) => message?.id)
+    .filter((mid): mid is number => typeof(mid) === 'number');
+  }
+
+  /**
    * The bridge server registers late (onboarding integration), but the worker
    * can invoke phantomchatBridge methods during boot. Wait a bounded window for
    * registration instead of failing instantly; a genuinely missing server still

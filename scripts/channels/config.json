@@ -809,8 +809,8 @@
     },
     "src/components/chat/bubbles.ts": {
       "stable": "41c7b510dac38f2f8ff2922b463deaa6c02619c5f95efd84c141e2231a86e339",
-      "preview": "264d91a089a96aa9f401109c1d9383515bc0b6d005d97dc6b17607815b6d76e4",
-      "reason": "Render-only: a history page that carries a mid the main-thread mirror can no longer resolve (a closed chat keeps only its newest message object) now re-reads just those mids through the Worker once per chat open, so the skipped bubble — typically the user's own send — is painted instead of staying missing until a second open. No IndexedDB, localStorage, schema or wire change."
+      "preview": "8226c0e9d3748b2df0cda65140d7292ca418db9272b6576b40f47762586181e6",
+      "reason": "Render-only: a history page that carries a mid the main-thread mirror can no longer resolve (a closed chat keeps only its newest message object) now re-reads just those mids through the Worker once per chat open, so the skipped bubble — typically the user's own send — is painted instead of staying missing until a second open. No IndexedDB, localStorage, schema or wire change. Additional change: after every chat open and window focus/visibility, a render-only reconcile paints stored mids (newest 50, read via the Worker) that have no bubble; add-only, skips temp mids, generation-guarded. No storage, schema or wire change."
     },
     "src/lib/phantomchat/optimistic-send-bubble.ts": {
       "stable": "absent",
@@ -1016,6 +1016,16 @@
       "stable": "absent",
       "preview": "a58c4ed25b825b76ece79466369a5c6534f0ac1a9fe712c92e6c224877f7196a",
       "reason": "New pure helpers behind the render guard above: collect the unresolved mids of a rendered page and re-read them at most once per chat open. No I/O of their own, no storage, no wire change."
+    },
+    "src/lib/apiManagerProxy.ts": {
+      "stable": "d0f9bc4cdfd4a39aa2c84bef8e34852704a70f42fa6b1f75d3b27559751c5982",
+      "preview": "9ebd760be57600c591e4be52fc90109af9264c0f79cc72103b04c75efba62de3",
+      "reason": "Adds read-only readStoredHistoryMids proxy: returns the newest stored mids for a peer from the existing history store. No write path, no IndexedDB schema, storage format or wire change."
+    },
+    "src/lib/phantomchat/bubble-disk-reconcile.ts": {
+      "stable": "absent",
+      "preview": "63adab034fda367b6a91ff8cfda982780d97404daae41183f29330e2489143d9",
+      "reason": "New render-only helper: decides which stored mids lack a painted bubble and asks bubbles.ts to add them. Reads only; no IndexedDB, localStorage, schema or wire change."
     }
   }
 }
