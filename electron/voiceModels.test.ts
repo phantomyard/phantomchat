@@ -96,6 +96,19 @@ describe('voice settings in main', () => {
     service = new VoiceModels(file, storage, call);
     expect((await service.contact(pubkey)).voice).toBe('alloy');
   });
+  it('a model change drops a Voice ID the new model does not offer, names it and turns that voice off', async() => {
+    await service.save(settings());
+    await service.setContact(pubkey, 'alloy');
+    payloads.length = 0;
+    const result = await service.save({tts: form('tts-b'), stt: form('stt-a')});
+    expect(result.resets).toEqual(['alpha']);
+    expect(result.failures).toEqual([]);
+    expect(payloads.map(p => p.persona)).toEqual(['alpha']);
+    expect(payloads[0].config.voice).toEqual({tts: {enabled: false}, stt: {enabled: false}});
+    expect((await service.contact(pubkey)).voice).toBe('');
+    service = new VoiceModels(file, storage, call);
+    expect((await service.contact(pubkey)).voice).toBe('');
+  });
   it('a stored key is kept for the same endpoint across reloads', async() => {
     await service.save(settings());
     await service.setContact(pubkey, 'alloy');

@@ -147,18 +147,23 @@ export class VoiceModels {
         }
         if(!next.tts.voices.length) throw new Error('This text-to-speech model lists no voices');
       }
+      // A pick the new TTS model does not offer is dropped (same rule as
+      // setContact) and named in `resets`; that persona's voice is turned off.
+      const resets = next.tts.enabled ? Object.keys(this.state.voices).filter(p => !next.tts.voices.includes(this.state.voices[p])) : [];
       const previous = this.state.defaults;
+      const previousVoices = this.state.voices;
       this.state.defaults = next;
-      try { this.persist(); } catch(err) {this.state.defaults = previous; throw err;}
-      // Only the Provider contacts that have a Voice ID: new key/models, or off.
+      this.state.voices = Object.fromEntries(Object.entries(previousVoices).filter(([p]) => !resets.includes(p)));
+      try { this.persist(); } catch(err) {this.state.defaults = previous; this.state.voices = previousVoices; throw err;}
+      // Only the Provider contacts that had a Voice ID: new key/models, reset, or off.
       const failures: string[] = [];
       let applied = 0;
       let live = new Set<string>();
       try { live = new Set(await this.value<string[]>('personas.list')); } catch{failures.push('the Provider contacts could not be listed');}
-      for(const persona of Object.keys(this.state.voices).filter(p => live.has(p))) {
+      for(const persona of Object.keys(previousVoices).filter(p => live.has(p))) {
         try { await this.applyPersona(persona); applied++; } catch {failures.push(persona);}
       }
-      return {settings: this.get(), applied, failures};
+      return {settings: this.get(), applied, failures, resets};
     });
   }
   /**

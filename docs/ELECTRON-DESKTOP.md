@@ -663,7 +663,9 @@ their Edit pane, shown only while Voice Models is on, listing the saved TTS
 model's voices plus "No voice". Picking one configures that persona with TTS
 and STT on (Settings models and key, the picked voice); "No voice" turns both
 off. Later Settings saves update only personas with a Voice ID (new key or
-models, or off). npub Phantoms and human contacts get no voice controls, and
+models, or off). A save whose TTS model does not offer a contact's Voice ID
+clears that pick, turns that persona's voice off and names it in the result.
+npub Phantoms and human contacts get no voice controls, and
 Settings never sends them anything. A new persona starts without a voice.
 
 ### Provider contact Edit pane

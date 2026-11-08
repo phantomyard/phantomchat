@@ -48,6 +48,7 @@ export async function mountVoiceModels(parent: {append(...nodes: Node[]): void},
       const touched = result.applied + result.failures.length;
       status.textContent = (on ? 'Works. Saved: pick a Voice ID on each Provider contact' : 'Off. Saved') +
         (touched ? `; updated ${result.applied} contact${result.applied === 1 ? '' : 's'} with a voice` : '') +
+        (result.resets?.length ? `; Voice ID cleared (not offered by this model): ${result.resets.join(', ')}` : '') +
         (result.failures.length ? `; failed: ${result.failures.join(', ')}` : '');
     } catch(err) {
       status.textContent = `Not saved: ${err instanceof Error ? err.message : 'could not save voice settings'}`;
