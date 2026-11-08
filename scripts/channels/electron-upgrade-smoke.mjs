@@ -5,7 +5,7 @@
 // PHANTOMCHAT_OLD_APP_DIR is the unpacked app.asar of that release.
 import {_electron} from 'playwright';
 import {existsSync, mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
-import {removeScratch} from './smoke-cleanup.mjs';
+import {removeScratch, stopElectron} from './smoke-cleanup.mjs';
 import {resolve, join} from 'node:path';
 import assert from 'node:assert/strict';
 import {createDisposableIdentity, identityFingerprint, writeOfflineMessage, assertOfflineMessage} from './runtime-identity.mjs';
@@ -115,7 +115,7 @@ try {
   const oldScripts = await serviceWorkerScripts(page);
   assert.ok(oldScripts.length > 0, 'the old release must leave a service worker, or retiring it proves nothing');
   const before = await readStorage(page);
-  await desktop.close();
+  await stopElectron(desktop);
 
   // The new shell on that profile.
   const newEntry = writeEntry('new.cjs', newMain, NEW_BLOCK);
@@ -135,7 +135,7 @@ try {
   for(const script of await serviceWorkerScripts(page)) {
     assert.ok(!oldScripts.includes(script), `old service worker survived: ${script}`);
   }
-  await desktop.close();
+  await stopElectron(desktop);
 
   // The bootstrap runs once: the next launch goes straight to the app.
   desktop = await launch(newEntry);
@@ -143,7 +143,7 @@ try {
   assert.equal(new URL(page.url()).pathname, '/index.html');
   await assertSignedIn(page);
   await identityFingerprint(page, identity);
-  await desktop.close();
+  await stopElectron(desktop);
 
   // Someone on Preview before the upgrade is still on it after.
   const previewProfile = join(dir, 'preview-profile');
@@ -152,7 +152,7 @@ try {
   await page.locator(bootSplash).waitFor({state: 'hidden', timeout: 45000});
   const previewIdentity = await createDisposableIdentity(page);
   await page.evaluate((key) => localStorage.setItem(key, 'preview'), CHANNEL_KEY);
-  await desktop.close();
+  await stopElectron(desktop);
   desktop = await launch(writeEntry('new-preview.cjs', newMain, NEW_BLOCK, previewProfile));
   page = await desktop.firstWindow({timeout: FIRST_WINDOW_TIMEOUT_MS});
   await page.waitForURL((url) => url.pathname === '/preview/index.html', {timeout: 60000});
@@ -160,6 +160,6 @@ try {
   await identityFingerprint(page, previewIdentity);
   console.log(`Upgrade passed: ${Object.keys(before.stores).length} stores, identity ${identity.npub.slice(0, 12)}…, phantom and message kept`);
 } finally {
-  if(desktop) await desktop.close().catch(() => {});
+  if(desktop) await stopElectron(desktop).catch(() => {});
   removeScratch(dir);
 }

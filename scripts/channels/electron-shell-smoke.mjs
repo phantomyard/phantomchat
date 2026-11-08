@@ -3,7 +3,7 @@
 // update check's version file, offline relaunch, and first launch with no network.
 import {_electron} from 'playwright';
 import {mkdirSync, mkdtempSync, writeFileSync} from 'node:fs';
-import {removeScratch} from './smoke-cleanup.mjs';
+import {removeScratch, stopElectron} from './smoke-cleanup.mjs';
 import {resolve, join} from 'node:path';
 import assert from 'node:assert/strict';
 
@@ -50,13 +50,13 @@ try {
   }), false, 'CSP must block injected inline script');
   const version = await page.evaluate(async() => (await (await fetch('version', {cache: 'no-cache'})).text()).trim());
   assert.match(version, /^\d+\.\d+\.\d+/, `version file must be readable, got ${JSON.stringify(version)}`);
-  await running.desktop.close();
+  await stopElectron(running.desktop);
 
   running = await launch(writeEntry('offline.cjs', true));
   page = running.page;
   await page.waitForURL((url) => url.href.startsWith('app://localhost/index.html'), {timeout: 60000});
   await page.locator(bootSplash).waitFor({state: 'hidden', timeout: 120000});
-  await running.desktop.close();
+  await stopElectron(running.desktop);
 
   running = await launch(writeEntry('first-offline.cjs', true, join(dir, 'fresh')));
   page = running.page;
@@ -65,6 +65,6 @@ try {
   await page.getByRole('button', {name: 'Try again'}).waitFor();
   console.log(`Desktop shell passed against the live site (version ${version}), online and offline`);
 } finally {
-  if(running) await running.desktop.close().catch(() => {});
+  if(running) await stopElectron(running.desktop).catch(() => {});
   removeScratch(dir);
 }
