@@ -33,6 +33,10 @@ require(${JSON.stringify(main)});
 }
 
 const launch = (entry) => _electron.launch({args: ['--no-sandbox', entry], timeout: 60000});
+// Waiting for the first BrowserWindow is not covered by the launch timeout and
+// otherwise keeps a 30s default a cold arm64 runner can exceed: see
+// electron-shell-smoke.mjs.
+const FIRST_WINDOW_TIMEOUT_MS = 120000;
 
 const readStorage = (page) => page.evaluate(async() => {
   const stores = {};
@@ -101,7 +105,7 @@ let desktop;
 try {
   // The old release.
   desktop = await launch(writeEntry('old.cjs', oldMain, OLD_BLOCK));
-  let page = await desktop.firstWindow();
+  let page = await desktop.firstWindow({timeout: FIRST_WINDOW_TIMEOUT_MS});
   await page.locator(bootSplash).waitFor({state: 'hidden', timeout: 45000});
   const identity = await createDisposableIdentity(page);
   await writeOfflineMessage(page, 'upgrade-fixture', 201);
@@ -116,7 +120,7 @@ try {
   // The new shell on that profile.
   const newEntry = writeEntry('new.cjs', newMain, NEW_BLOCK);
   desktop = await launch(newEntry);
-  page = await desktop.firstWindow();
+  page = await desktop.firstWindow({timeout: FIRST_WINDOW_TIMEOUT_MS});
   assert.equal(new URL(page.url()).pathname, '/__shell/splash.html', 'an upgraded install must start on the bootstrap');
   await page.waitForURL((url) => url.pathname === '/index.html', {timeout: 60000});
   await assertSignedIn(page);
@@ -135,7 +139,7 @@ try {
 
   // The bootstrap runs once: the next launch goes straight to the app.
   desktop = await launch(newEntry);
-  page = await desktop.firstWindow();
+  page = await desktop.firstWindow({timeout: FIRST_WINDOW_TIMEOUT_MS});
   assert.equal(new URL(page.url()).pathname, '/index.html');
   await assertSignedIn(page);
   await identityFingerprint(page, identity);
@@ -144,13 +148,13 @@ try {
   // Someone on Preview before the upgrade is still on it after.
   const previewProfile = join(dir, 'preview-profile');
   desktop = await launch(writeEntry('old-preview.cjs', oldMain, OLD_BLOCK, previewProfile));
-  page = await desktop.firstWindow();
+  page = await desktop.firstWindow({timeout: FIRST_WINDOW_TIMEOUT_MS});
   await page.locator(bootSplash).waitFor({state: 'hidden', timeout: 45000});
   const previewIdentity = await createDisposableIdentity(page);
   await page.evaluate((key) => localStorage.setItem(key, 'preview'), CHANNEL_KEY);
   await desktop.close();
   desktop = await launch(writeEntry('new-preview.cjs', newMain, NEW_BLOCK, previewProfile));
-  page = await desktop.firstWindow();
+  page = await desktop.firstWindow({timeout: FIRST_WINDOW_TIMEOUT_MS});
   await page.waitForURL((url) => url.pathname === '/preview/index.html', {timeout: 60000});
   await assertSignedIn(page);
   await identityFingerprint(page, previewIdentity);

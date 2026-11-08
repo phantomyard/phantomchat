@@ -271,12 +271,38 @@ jobs:
           CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
 
+      # electron and electron-builder's dmg tooling are fetched from GitHub's
+      # release CDN on every clean runner, and @electron/get does not retry a
+      # mid-stream reset: one egress blip became the `socket hang up` that killed
+      # packaging on run 42471929672. Cache both so a warm run never touches the
+      # network for them.
+      - name: Cache electron downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: mac-${{ matrix.arch }}-electron-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: mac-${{ matrix.arch }}-electron-
+
       - name: Package and Developer ID sign the macOS DMG and update zip
         # Two targets from ONE signed .app: the DMG a human downloads, and the
         # zip Squirrel.Mac installs (issue #169). Building them in a single
         # invocation is what guarantees the zip and the DMG carry identical,
         # identically-signed bytes.
-        run: pnpm exec electron-builder --mac zip dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION"
+        #
+        # Retried because the cold-cache case still fetches, and a failed fetch
+        # is a transient network fault rather than a bad build: the partial
+        # download in the cache above makes the next attempt cheap.
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            pnpm exec electron-builder --mac zip dmg --$ARCH --publish never -c.extraMetadata.version="$VERSION" && exit 0
+            echo "::warning::electron-builder attempt $attempt failed"
+            sleep 15
+          done
+          echo "::error::electron-builder failed on 3 attempts" >&2
+          exit 1
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.version.outputs.version }}
