@@ -80,7 +80,9 @@ export class VoiceModels {
   private persist() {
     if(!this.storage.available()) throw new Error('Encrypted voice storage is unavailable');
     const temp = this.file + '.tmp';
-    writeFileSync(temp, this.storage.encrypt(JSON.stringify(this.state)), {mode: 0o600});
+    // `overrides: {}` keeps the file readable by an older build (rollback): it
+    // iterates that map. This build reads `voices` and ignores it.
+    writeFileSync(temp, this.storage.encrypt(JSON.stringify({...this.state, overrides: {}})), {mode: 0o600});
     renameSync(temp, this.file);
   }
   private exclusive<T>(fn: () => Promise<T>): Promise<T> {

@@ -49,6 +49,8 @@ describe('voice settings in main', () => {
     expect((service.get() as any).tts.voices).toEqual(['alloy']);
     expect(readFileSync(file).includes(Buffer.from('secret-value'))).toBe(false);
     expect(JSON.stringify(service.get())).not.toContain('secret-value');
+    // An older build (rollback) iterates `overrides`: it is always there.
+    expect(JSON.parse(storage.decrypt(readFileSync(file))).overrides).toEqual({});
   });
   it('one switch: TTS and STT are on or off together, one provider for both', async() => {
     await expect(service.save({tts: form('tts-a'), stt: {enabled: false}})).rejects.toThrow('together');
