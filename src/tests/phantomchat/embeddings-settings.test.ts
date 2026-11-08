@@ -88,8 +88,10 @@ describe('Settings > Specialized Models', () => {
     await form.ready;
     const key = q(form.section, 'embeddings-key') as HTMLInputElement;
     key.value = 'g-1'; key.dispatchEvent(new Event('blur'));
-    await vi.waitFor(() => expect(q(form.section, 'embeddings-active').textContent).toBe('✓ Active'));
-    expect(q(form.section, 'embeddings-status').textContent).toBe('Model works (1536 dims)');
+    await vi.waitFor(() => expect(q(form.section, 'embeddings-status').textContent).toBe('Model works (1536 dims)'));
+    // No standing Active badge: the button is Test and Apply.
+    expect(q(form.section, 'embeddings-active')).toBeNull();
+    expect(q(form.section, 'embeddings-save').textContent).toBe('Test and Apply');
     (q(form.section, 'embeddings-enabled') as HTMLInputElement).checked = true;
     await form.save();
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -104,7 +106,7 @@ describe('Settings > Specialized Models', () => {
     await form.ready;
     (q(form.section, 'embeddings-key') as HTMLInputElement).value = 'bad';
     await form.loadModels();
-    expect(q(form.section, 'embeddings-active').textContent).toBe('✕ Key rejected (HTTP 401)');
+    expect(q(form.section, 'embeddings-status').textContent).toBe('Key or endpoint rejected (HTTP 401)');
   });
 
   it('OpenAI Compatible: the base URL loads the list, a pick is proved, Save sends the endpoint', async() => {
@@ -165,9 +167,8 @@ describe('Settings > Specialized Models', () => {
     const api = fakeApi({...UNCONFIGURED, configured: true, enabled: true, hasKey: true});
     const form = createEmbeddingsForm(api);
     await form.ready;
-    // The stored key is proved at once with a live embed: the Active check.
+    // The stored key loads the model list on open; no badge.
     expect(api.check).toHaveBeenCalledWith({provider: 'gemini', baseUrl: undefined, apiKey: '', model: 'gemini-embedding-001'});
-    expect(q(form.section, 'embeddings-active').textContent).toBe('✓ Active');
     expect((q(form.section, 'embeddings-key') as HTMLInputElement).placeholder).toBe('••••••••••••');
     expect(q(form.section, 'embeddings-key-note').textContent).toBe('Key saved. Leave empty to keep it.');
     (q(form.section, 'embeddings-enabled') as HTMLInputElement).checked = false;

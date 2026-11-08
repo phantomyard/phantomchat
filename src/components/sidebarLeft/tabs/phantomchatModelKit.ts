@@ -8,12 +8,13 @@ import {createListPicker, type ListPicker, type PickerOption} from '@components/
  * The building blocks of every Settings > Specialized Models screen (Decision
  * Model, Voice Models, Embeddings), so the three look and behave as one:
  *
- *   Enabled toggle Row -> Provider picker -> (Base URL) -> API key + Active
- *   check + note -> Model picker(s) (-> Voice picker) -> status line -> Save
+ *   Enabled toggle Row -> Provider picker -> (Base URL) -> API key + note
+ *   -> Model picker(s) -> status line -> Test and Apply (Test and Save)
  *
  * A stored key shows as dots in the key field (`showStoredKey`); the key
- * itself never reaches the page. The Active check (`activeCheck`) is green
- * only after the provider accepted the key in a live call.
+ * itself never reaches the page. There is no standing "Active" badge: the
+ * button tests the key live and saves only when that test passes, and the
+ * status line says what happened.
  *
  * The rules behind it are in AGENTS.md ("Settings screens: one design"). A new
  * model setting is built from these parts, not from raw <select>/<fieldset>
@@ -199,38 +200,4 @@ export const STORED_KEY_MASK = '••••••••••••';
 export function showStoredKey(input: HTMLInputElement, stored: boolean) {
   input.placeholder = stored ? STORED_KEY_MASK : '';
   input.setAttribute('data-stored-key', stored ? '1' : '0');
-}
-
-export type ActiveState = 'idle' | 'checking' | 'active' | 'unverified' | 'invalid';
-
-const ACTIVE_TEXT: Record<ActiveState, string> = {
-  idle: '',
-  checking: 'Checking connection...',
-  active: '✓ Active',
-  unverified: 'Could not confirm the connection',
-  invalid: '✕ Key rejected'
-};
-const ACTIVE_COLOR: Record<ActiveState, string> = {
-  idle: 'var(--secondary-text-color)',
-  checking: 'var(--secondary-text-color)',
-  active: 'var(--green-color, #2fa84f)',
-  unverified: 'var(--secondary-text-color)',
-  invalid: 'var(--danger-color, #e53935)'
-};
-
-/**
- * The Active check under the key: green "✓ Active" once a live call with the
- * key worked, red when the provider refused it. Same element on every screen.
- */
-export function activeCheck(testId: string) {
-  const node = el('div', NOTE_CSS + 'font-weight:500;');
-  node.setAttribute('data-testid', testId);
-  node.setAttribute('role', 'status');
-  const set = (state: ActiveState, detail?: string) => {
-    node.dataset.state = state;
-    node.style.color = ACTIVE_COLOR[state];
-    node.textContent = detail && state !== 'active' && state !== 'checking' ? `${ACTIVE_TEXT[state]} (${detail})` : ACTIVE_TEXT[state];
-  };
-  set('idle');
-  return {container: node, set, state: () => (node.dataset.state || 'idle') as ActiveState};
 }

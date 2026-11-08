@@ -644,32 +644,36 @@ engine pin with `engine.embeddings` and `persona.memory.refresh`
 ### Voice Models
 
 Settings → Specialized Models → Voice Models appears on desktop builds exposing the voice-settings
-preload API. TTS and STT have independent enablement, providers, masked key entry,
-models and (for TTS) model-scoped voices. Discovery uses the phantombot TUI's
-provider/model helpers through the host bridge. Endpoints without audio catalogue
-metadata offer the same typed model fallback as the TUI.
+preload API. ONE Enabled switch covers TTS and STT together (both on or both
+off), with ONE provider, ONE masked key, a TTS model and an STT model. Only
+providers that serve both directions are listed. There is no voice picker
+here: each Provider contact picks its own voice. Discovery uses the phantombot
+TUI's provider/model helpers through the host bridge; endpoints without audio
+catalogue metadata offer the same typed model fallback as the TUI.
 
-Electron main owns `voice-models.enc`, encrypted with `safeStorage`; unavailable
-or plaintext fallback backends refuse persistence. Saved keys never return to the
-renderer or contact prefs. A blank key keeps the saved credential only for the
-same provider/endpoint. Defaults apply sequentially to bundled personas and are
-inherited before a new persona's channel starts. Failed applications/restarts
-are listed; Off retains encrypted settings and sends an off-only engine patch.
+**Test and Save** checks the key and both models live and saves only when that
+works, keeping the TTS model's voice list. It pushes nothing to any persona or
+Phantom. Electron main owns `voice-models.enc`, encrypted with `safeStorage`;
+unavailable or plaintext fallback backends refuse persistence. Saved keys never
+return to the renderer or contact prefs. A blank key keeps the saved credential
+only for the same provider/endpoint.
 
-Both Phantom and Provider Edit Contact use one model selector component, gated
-independently by TTS/STT enablement. Overrides belong to a voice provider/endpoint;
-incompatible overrides reset explicitly on Settings changes. Contact chat-provider
-choices do not supply voice catalogues or credentials.
+Provider contacts (personas of this app's engine) get a **Voice ID** picker in
+their Edit pane, shown only while Voice Models is on, listing the saved TTS
+model's voices plus "No voice". Picking one configures that persona with TTS
+and STT on (Settings models and key, the picked voice); "No voice" turns both
+off. Later Settings saves update only personas with a Voice ID (new key or
+models, or off). npub Phantoms and human contacts get no voice controls, and
+Settings never sends them anything. A new persona starts without a voice.
 
-Remote Phantoms use authenticated NIP-17 model-only control requests and must
-already have the matching endpoint and key configured in their own TUI/vault.
-The protocol never sends or retrieves credentials. Unsupported/offline or
-incompatible engines show an unavailable state and cannot report a successful
-local save. Existing Phantom contacts receive default/enablement changes, including those
-without an override. Deleted peers are excluded, requests use at most three
-workers, and failures are named. New personas always inherit defaults even when
-reusing a deleted persona name. The extra local-tools control tag makes older
-engines discard requests before chat/LLM ingestion.
+### Provider contact Edit pane
+
+Name at the top, read-only (it is the persona's name on the engine, so the two
+cannot drift). Then Provider, Token, Model and the gated Voice ID under ONE
+Save; a new token is tested before it is written. Notifications and Delete
+Contact are at the bottom. Creating a Provider contact needs a name, and a name
+that maps to an existing Provider contact's persona (case and punctuation
+aside) is refused.
 
 The desktop engine pin must carry `voiceModels.providers/check` and independent
 `persona.configure({voice})` before this feature is merge-ready. The prerequisite

@@ -117,8 +117,19 @@ describe('DecisionModelSettings', () => {
     const on = await settings.save({enabled: true, provider: 'openrouter', model: 'typesafe/jev-1.13'});
     expect(on).toMatchObject({ok: true, applied: 2});
     expect(bridge.configures).toEqual([{persona: 'aria', config: ON}, {persona: 'bob', config: ON}]);
-    // No new key, so nothing re-checked.
-    expect(bridge.call.mock.calls.filter((c) => c[0] === 'decisionModels.check').length).toBe(checksBefore);
+    // Test and Apply: switching on tests the STORED key live too.
+    expect(bridge.call.mock.calls.filter((c) => c[0] === 'decisionModels.check').length).toBe(checksBefore + 1);
+    expect(bridge.call).toHaveBeenCalledWith('decisionModels.check', {provider: 'openrouter', apiKey: 'sk-or-1'});
+  });
+
+  it('Test and Apply refuses to switch on when the stored key no longer works', async() => {
+    const {settings, bridge} = setup();
+    await settings.save({enabled: true, provider: 'openrouter', model: 'typesafe/jev-1.13', apiKey: 'sk-or-1'});
+    bridge.configures.length = 0;
+    bridge.call.mockImplementationOnce(async() => ({ok: true, value: {status: 'invalid', detail: '401', models: []}}));
+    const r = await settings.save({enabled: true, provider: 'openrouter', model: 'typesafe/jev-1.13'});
+    expect(r).toMatchObject({ok: false, error: 'Key rejected (401)'});
+    expect(bridge.configures).toEqual([]);
   });
 
   it('a provider switch needs a new key: the old provider\'s key is never sent to the new one', async() => {

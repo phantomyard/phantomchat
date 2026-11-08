@@ -2,7 +2,6 @@ import {SliderSuperTab} from '@components/slider';
 import SettingSection from '@components/settingSection';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {
-  activeCheck,
   appliedLine,
   createModelChooser,
   el,
@@ -29,7 +28,9 @@ import {
  *
  * Main owns the setting and the key (electron/decisionModel.ts): this tab
  * sends a typed key once and afterwards only learns whether one is stored.
- * Save writes it into every persona; personas created later inherit it.
+ * Test and Apply checks the key live (typed or stored) and only then writes
+ * it into every persona of the bundled engine, i.e. every Provider contact
+ * (npub Phantoms and humans are never touched); ones created later inherit it.
  */
 
 export const DEFAULT_DECISION_MODEL = 'typesafe/jev-1.13';
@@ -65,7 +66,6 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
 
   const {container: keyBox, input: keyInput} = textField('decision-model-key', 'API key', {secret: true, maxLength: 4096});
   const keyNote = noteLine('decision-model-key-note');
-  const active = activeCheck('decision-model-active');
 
   const models = createModelChooser({
     testId: 'decision-model-model',
@@ -73,9 +73,9 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
   });
 
   const status = noteLine('decision-model-status', true);
-  const saveBtn = saveButton('decision-model-save');
+  const saveBtn = saveButton('decision-model-save', 'Test and Apply');
 
-  section.append(enabledRow, providerBox, keyBox, active.container, keyNote, models.container, status, saveBtn);
+  section.append(enabledRow, providerBox, keyBox, keyNote, models.container, status, saveBtn);
 
   let state: DecisionModelState | null = null;
   let checkGeneration = 0;
@@ -124,7 +124,6 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     checkedKey = undefined;
     keyInput.value = '';
     status.textContent = '';
-    active.set('idle');
     clearModels();
     showKeyNote();
     if(storedKeyFits()) void loadModels();
@@ -136,22 +135,21 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     if(!key && !storedKeyFits()) return;
     if(checkedKey && checkedKey.provider === p && checkedKey.key === key) return;
     const generation = ++checkGeneration;
-    status.textContent = '';
-    active.set('checking');
+    status.textContent = 'Loading models...';
     const res = await api.check(p, key);
     if(generation !== checkGeneration) return;
     if(res.ok === false) {
-      active.set('unverified', res.error || 'could not check the key');
+      status.textContent = `Could not check the key (${res.error || 'no answer'})`;
       return;
     }
     checkedKey = {provider: p, key};
     const r = res.value;
     if(r.status === 'invalid') {
-      active.set('invalid', r.detail);
+      status.textContent = `Key rejected (${r.detail})`;
       clearModels();
       return;
     }
-    active.set(r.status === 'verified' ? 'active' : 'unverified', r.detail);
+    status.textContent = r.status === 'verified' ? '' : `Could not confirm the key (${r.detail})`;
     setModels(p, r.models, pickedModelFor(p) || storedModelFor(p) || defaultFor(p));
   }
 
@@ -164,7 +162,8 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
     if(busy) return;
     busy = true;
     saveBtn.disabled = true;
-    status.textContent = 'Saving...';
+    ++checkGeneration;
+    status.textContent = enabled.checked ? 'Testing the key...' : 'Saving...';
     try {
       const key = keyInput.value.trim();
       const p = provider();
@@ -180,7 +179,7 @@ export function createDecisionModelForm(api: DesktopDecisionModelApi): DecisionM
         ...(key ? {apiKey: key} : {})
       });
       if(res.ok === false) {
-        status.textContent = res.error;
+        status.textContent = `Not applied: ${res.error}`;
         return;
       }
       state = res.state;

@@ -197,11 +197,12 @@ in particular, follows the rules below. Reviewers reject a diff that breaks them
    `className = 'btn-primary'` buttons. The pickers exist because native selects are
    unusable on a phone.
 2. **Model settings use the kit** (`src/components/sidebarLeft/tabs/phantomchatModelKit.ts`),
-   always in this order: Enabled toggle Row, Provider, (Base URL), API key +
-   Active check + key note, Model (+ Voice), status line, Save. The Provider list
-   comes from the engine (`*.providers()`): the Pi providers that serve that
-   model type. Voice has ONE provider and ONE key for both TTS and STT, with a
-   model picker per direction (a direction the provider lacks is hidden). A new model setting goes under
+   always in this order: Enabled toggle Row, Provider, (Base URL), API key + key
+   note, Model(s), status line, Test and Apply. The Provider list comes from the
+   engine (`*.providers()`): the Pi providers that serve that model type. Voice has
+   ONE Enabled switch, ONE provider and ONE key for both TTS and STT, a model
+   picker per direction, and NO voice picker (only providers serving both
+   directions are listed). A new model setting goes under
    **Settings > Specialized Models** as one more row, not as a new top-level row.
 3. **No "Load models" button.** Models load when the key or base URL field is
    left (blur), when the provider changes and a stored key fits, and on open when
@@ -212,10 +213,11 @@ in particular, follows the rules below. Reviewers reject a diff that breaks them
    "Key saved. Leave empty to keep it." when one is stored, or why it cannot be
    kept. Main owns keys (safeStorage), and the page learns only `hasKey`. A stored
    key is reused only for the same provider and endpoint.
-5. **One Active check and one status line per form.** The key's verdict goes in
-   `activeCheck()`: green "✓ Active" only after a live call with the key worked
-   (a stored key is checked on open), red "✕ Key rejected (HTTP 401)". The status
-   line (`role="status"`) has the rest in short plain sentences, then
+5. **No standing "Active" badge; one status line per form.** A badge shown on
+   open said "Active" before anything was chosen. The button tests instead:
+   **Test and Apply** (Decision Model, Embeddings) or **Test and Save** (Voice
+   Models, which applies nothing). The status line (`role="status"`) says what
+   happened in short plain sentences ("Key rejected (HTTP 401)", "Not applied: ..."), then
    `appliedLine()`: "On: applied to 2 personas; failed: aria (disk full)". Errors
    go in the status line, not in alerts or toasts.
 6. **Stale answers never win.** Every async check carries a generation counter.
@@ -226,9 +228,14 @@ in particular, follows the rules below. Reviewers reject a diff that breaks them
 8. **Ask before a disruptive save.** A save that re-embeds every note (Embeddings
    turned on, or a new provider, endpoint or model) asks Confirm/Cancel first and
    says memory search by meaning is unavailable until it finishes.
-9. **Validate before saving.** Save checks a new key or model the way the TUI
-   does, and saves nothing on a rejection. It applies to every persona one by one,
-   names the ones that failed, and new personas inherit the setting.
+9. **Validate before saving.** The button checks the key in use (typed or
+   stored) and the model the way the TUI does, and saves nothing on a rejection.
+   Decision Model and Embeddings then apply to every persona of the bundled engine
+   (= every Provider contact; npub Phantoms and humans are never touched) one by
+   one, name the ones that failed, and new personas inherit the setting. Voice
+   Models applies to nobody: it gates the Voice ID picker on Provider contacts'
+   Edit pane, and a contact gets voice (TTS and STT together) when a Voice ID is
+   picked there; only those personas are updated when the setting changes.
 10. **Test ids follow `<screen>-<field>`** (e.g. `embeddings-key`), and pickers
    derive theirs (`-value`, `-option-<v>`). Tests drive the form the way a user does:
    blur, pick, Save.

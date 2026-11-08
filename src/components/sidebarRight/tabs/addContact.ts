@@ -549,6 +549,19 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
       errorEl.textContent = 'Choose a provider';
       return;
     }
+    // The name is required and unique among Provider contacts (it names the persona).
+    const {providerNameProblem} = await import('@lib/phantomchat/provider-contacts');
+    let nameProblem: string | undefined;
+    try {
+      nameProblem = await providerNameProblem(call, nameField.value);
+    } catch(err) {
+      nameProblem = err instanceof Error && err.message ? err.message : 'Could not check the name';
+    }
+    if(nameProblem) {
+      errorEl.textContent = nameProblem;
+      nameField.input.focus();
+      return;
+    }
     const token = tokenInput.value.trim();
     if(!token) {
       errorEl.textContent = 'Enter the token';
@@ -588,7 +601,7 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     let created: Awaited<ReturnType<typeof createProviderContact>> | undefined;
     try {
       created = await createProviderContact(call, {
-        displayName: nameField.value.trim() || p.label,
+        displayName: nameField.value.trim(),
         provider: p,
         model,
         apiKey: token,
@@ -597,7 +610,7 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
       if(created.channelError) console.warn('[AddContactPane] provider channel not running yet:', created.channelError);
       const result = await addTypedContact(managers, {
         npub: created.npub,
-        nickname: nameField.value.trim() || p.label,
+        nickname: nameField.value.trim(),
         kind: 'provider',
         notifications: notifications.input.checked,
         localTools: false,
