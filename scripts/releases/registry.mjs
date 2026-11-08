@@ -78,7 +78,7 @@ export async function selectBuild(store, kind, input = '') {
 // first deploy would have no baseline and would rebuild Stable from source.
 export async function importLegacy(store, all, directory) {
   const site = selectRelease(all, 'site');
-  if(!site) throw new Error('PWA build store is empty and no legacy draft release exists to import');
+  if(!site) throw new Error('PWA build store is empty and no importable release was found; a legacy import needs a token that can see draft releases (contents: write)');
   const preview = selectRelease(all, 'pwa');
   for(const [release, tags] of preview && preview.id !== site.id ?
     [[preview, ['preview']], [site, ['live']]] :
@@ -96,10 +96,13 @@ export async function importLegacy(store, all, directory) {
 // With a PAT, ghcr answers 404 MANIFEST_UNKNOWN for a package that does not
 // exist yet (measured on #427). The workflow's github.token is unmeasured and a
 // registry may answer 401/403 `denied` there instead, so the bootstrap lookup
-// also reads those as "not created yet". The import's own push then creates
-// the package, and a real credential problem surfaces as that push's status.
-// Anything else (5xx, network) still throws: re-importing over an existing
-// `live` would roll the site back.
+// also reads those as "not created yet". That is safe only because of the order
+// inside importLegacy: push, then get the pushed tag, then putManifest. A token
+// denied on this `live` read is denied on that `get` too, so the run dies before
+// any tag moves and an existing `live` is never re-pointed at the legacy
+// snapshot (#430; pinned by a test). Keep that order. Anything else (5xx,
+// network) still throws here: re-importing over an existing `live` would roll
+// the site back.
 export const ABSENT_STORE = new Set([401, 403]);
 export async function ensureStore(store, directory, list = releases) {
   let live;
