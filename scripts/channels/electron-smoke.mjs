@@ -17,7 +17,7 @@ require(${JSON.stringify(resolve('electron/dist/main.cjs'))});
 let desktop;
 try {
   desktop = await _electron.launch({args: ['--no-sandbox', entry], timeout: 60000});
-  const page = await desktop.firstWindow();
+  const page = await desktop.firstWindow({timeout: 120000}); // not covered by the launch timeout; see electron-shell-smoke.mjs
   await page.waitForURL(url => url.pathname === '/index.html', {timeout: 60000});
   await page.locator('#phantomchat-boot-splash').waitFor({state: 'hidden', timeout: 120000});
   const identity = await createDisposableIdentity(page);

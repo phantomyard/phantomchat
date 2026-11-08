@@ -27,7 +27,10 @@ require(${JSON.stringify(resolve('electron/dist/main.cjs'))});
 
 async function launch(entry) {
   const desktop = await _electron.launch({args: ['--no-sandbox', entry], timeout: 60000});
-  return {desktop, page: await desktop.firstWindow()};
+  // The launch timeout covers the spawn + CDP handshake only: waiting for the
+  // first BrowserWindow is a separate call with its own 30s default, which a
+  // cold arm64 runner exceeds while the app is still healthy (run 42471929672).
+  return {desktop, page: await desktop.firstWindow({timeout: 120000})};
 }
 
 const bootSplash = '#phantomchat-boot-splash';
