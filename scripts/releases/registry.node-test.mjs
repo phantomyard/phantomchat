@@ -203,13 +203,40 @@ test('store bootstrap imports only when the package is absent, never on other lo
   let imported = 0;
   const list = () => { imported++; return []; };
   for(const status of [401, 403]) {
-    await assert.rejects(ensureStore(failing(status), '/nonexistent', list), /no legacy draft release/);
+    await assert.rejects(ensureStore(failing(status), '/nonexistent', list), /no importable release/);
   }
   assert.equal(imported, 2);
   for(const status of [500, 502, undefined]) await assert.rejects(ensureStore(failing(status), '/nonexistent', list), /HTTP/);
   assert.equal(imported, 2);
   await ensureStore({get: async() => ({tag: 'live'})}, '/nonexistent', list);
   assert.equal(imported, 2);
+});
+// #430: a token denied on the bootstrap `live` read is denied on the pushed-tag
+// read too, so the import dies at that `get` before any tag moves. This pins the
+// push -> get -> putManifest order that makes reading 401/403 as absent safe.
+test('a 403 on an existing package never re-points live: the import dies before putManifest', async() => {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-denied-'));
+  const path = process.env.PATH;
+  try {
+    mkdirSync(`${dir}/bin`); mkdirSync(`${dir}/legacy/site`, {recursive: true}); mkdirSync(`${dir}/assets`);
+    writeFileSync(`${dir}/legacy/site/index.html`, 'legacy');
+    execFileSync('tar', ['-czf', `${dir}/assets/bundle.tar.gz`, '-C', `${dir}/legacy`, 'site']);
+    writeFileSync(`${dir}/assets/SHA256SUMS.txt`, `${digest(`${dir}/assets/bundle.tar.gz`)}  bundle.tar.gz\n`);
+    writeFileSync(`${dir}/bin/gh`, `#!/bin/sh\nwhile [ "$1" != --dir ]; do shift; done\ncp ${dir}/assets/* "$2"/\n`, {mode: 0o755});
+    process.env.PATH = `${dir}/bin:${path}`;
+    const pushed = [], moved = [];
+    const store = {
+      get: async() => { throw Object.assign(new Error('HTTP 403'), {status: 403}); },
+      push: async tag => { pushed.push(tag); },
+      putManifest: async tags => { moved.push(...tags); },
+    };
+    await assert.rejects(ensureStore(store, `${dir}/work`, () => [pwa(30, 'stable')]), /HTTP 403/);
+    assert.deepEqual(pushed, ['pwa-v1.0.30']);
+    assert.deepEqual(moved, []);
+  } finally {
+    process.env.PATH = path;
+    rmSync(dir, {recursive: true, force: true});
+  }
 });
 test('prune keeps live, preview and the newest builds; drops superseded manifests', () => {
   const v = (id, tags) => ({id, created_at: `2026-11-0${id}T00:00:00Z`, metadata: {container: {tags}}});

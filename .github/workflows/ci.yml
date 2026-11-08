@@ -63,7 +63,7 @@ jobs:
       # that is not a type error (#342).
       - run: npx tsc --noEmit
       - run: pnpm run typecheck:electron
-      # Named for what they test: a re-pin PR should not read as a type failure.
+      # Named for what they test: an approval-table drift should not read as a type failure.
       - name: Check channel approvals against the repository pin
         run: pnpm check:channels
       - name: Check channel approvals against the deployed PWA

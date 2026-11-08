@@ -62,10 +62,17 @@ The workflows use `github.token` with `packages: write`; no extra secret.
 
 The first run on an empty package imports the deployed site and newest
 Preview from the legacy draft releases, then never reads drafts again; the
-drafts can be deleted once that run has published. The bootstrap lookup reads
+drafts can be deleted once that run has published. That one-off import needs
+a token that can see draft releases, which is a workflow permission
+(`contents: write`), not a secret: a read token sees none of them and the run
+fails with "no importable release was found". The import has run, so
+`deploy.yml` is back on `contents: read`. The bootstrap lookup reads
 404, and also 401/403 (what a token without a grant on an absent package may
 get), as "not created yet", and the import's push creates the package; any
-other lookup failure fails the run instead of re-importing over `live`.
+other lookup failure fails the run instead of re-importing over `live`. A
+401/403 on an existing package is still safe: the import reads its pushed tag
+back before moving any tag, the same denied token fails there, and `live` is
+never re-pointed.
 
 The release namespace tests guard workflow tag creation and PWA build isolation;
 `publish-release.sh` validates the desktop namespace. Missing/corrupt assets or
