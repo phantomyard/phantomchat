@@ -2,7 +2,6 @@ import {SliderSuperTab} from '@components/slider';
 import SettingSection from '@components/settingSection';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {
-  activeCheck,
   appliedLine,
   createModelChooser,
   el,
@@ -28,7 +27,9 @@ import {
  * provider for every persona of the bundled engine, so memory search finds
  * notes by meaning, not just by keyword, the way `phantombot embedding` sets
  * up a CLI persona. Main owns the setting and the key (electron/embeddings.ts)
- * and embeds the notes in the background after a save.
+ * and embeds the notes in the background after a save. Test and Apply embeds
+ * a probe with the model first and writes it only into the bundled engine's
+ * personas (Provider contacts); npub Phantoms and humans are never touched.
  *
  * Built from the Specialized Models kit, like Decision Model and Voice
  * Models; see AGENTS.md ("Settings screens: one design").
@@ -93,7 +94,6 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi, opts: {confirm?:
   });
 
   const {container: keyBox, input: keyInput} = textField('embeddings-key', 'API key', {secret: true, maxLength: 4096});
-  const active = activeCheck('embeddings-active');
   const keyNote = noteLine('embeddings-key-note');
 
   const models = createModelChooser({
@@ -105,9 +105,9 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi, opts: {confirm?:
   });
 
   const status = noteLine('embeddings-status', true);
-  const saveBtn = saveButton('embeddings-save');
+  const saveBtn = saveButton('embeddings-save', 'Test and Apply');
 
-  section.append(enabledRow, providerBox, urlBox, keyBox, active.container, keyNote, models.container, status, saveBtn);
+  section.append(enabledRow, providerBox, urlBox, keyBox, keyNote, models.container, status, saveBtn);
 
   let providers: EmbeddingsProviderInfo[] = BUILTIN_PROVIDERS;
   let state: EmbeddingsState | null = null;
@@ -145,7 +145,6 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi, opts: {confirm?:
     keyInput.value = '';
     urlInput.value = state?.provider === provider() && ownEndpoint() ? state.baseUrl : '';
     status.textContent = '';
-    active.set('idle');
     showFields();
     if(askable()) void loadModels();
   }
@@ -155,24 +154,22 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi, opts: {confirm?:
     const ask = `${provider()}|${baseUrl()}|${keyInput.value.trim()}`;
     if(checked === ask) return;
     const g = ++generation;
-    status.textContent = '';
-    active.set('checking');
+    status.textContent = 'Loading models...';
     // With a model the check is a live embed: the only proof the key works.
     const model = models.value() || storedModel() || (provider() === 'gemini' ? GEMINI_EMBEDDING_MODEL : undefined);
     const res = await api.check({provider: provider(), baseUrl: baseUrl() || undefined, apiKey: keyInput.value.trim(), ...(model ? {model} : {})});
     if(g !== generation) return;
     if(res.ok === false) {
-      active.set('unverified', res.error || 'could not reach the provider');
+      status.textContent = `Could not reach the provider (${res.error || 'no answer'})`;
       return;
     }
     checked = ask;
     const r = res.value;
     if(r.status === 'failed') {
-      active.set('invalid', r.detail);
+      status.textContent = `Key or endpoint rejected (${r.detail})`;
       models.clear();
       return;
     }
-    active.set(r.status === 'verified' ? 'active' : 'idle');
     status.textContent = r.status === 'verified' ? `Model works (${r.dims} dims)` :
       r.models.length ? 'Choose a model' : 'No model list from this provider: type a model ID';
     models.setModels(r.models, model);
@@ -183,19 +180,16 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi, opts: {confirm?:
     const model = models.value();
     if(!model || !askable()) return;
     const g = ++generation;
-    active.set('checking');
-    status.textContent = '';
+    status.textContent = 'Testing the model...';
     const res = await api.check({provider: provider(), baseUrl: baseUrl() || undefined, apiKey: keyInput.value.trim(), model});
     if(g !== generation) return;
     if(res.ok === false) {
-      active.set('unverified', res.error || 'could not reach the provider');
+      status.textContent = `Could not reach the provider (${res.error || 'no answer'})`;
       return;
     }
     if(res.value.status === 'verified') {
-      active.set('active');
       status.textContent = `Model works (${res.value.dims} dims)`;
     } else {
-      active.set(res.value.status === 'failed' ? 'invalid' : 'idle', res.value.detail);
       status.textContent = `The model did not embed (${res.value.detail})`;
     }
   }
@@ -225,7 +219,7 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi, opts: {confirm?:
         status.textContent = 'Not saved';
         return;
       }
-      status.textContent = enabled.checked ? 'Checking and saving...' : 'Saving...';
+      status.textContent = enabled.checked ? 'Testing the model...' : 'Saving...';
       const key = keyInput.value.trim();
       const res = await api.save({
         enabled: enabled.checked,
@@ -235,14 +229,13 @@ export function createEmbeddingsForm(api: DesktopEmbeddingsApi, opts: {confirm?:
         ...(key ? {apiKey: key} : {})
       });
       if(res.ok === false) {
-        status.textContent = res.error;
+        status.textContent = `Not applied: ${res.error}`;
         return;
       }
       state = res.state;
       keyInput.value = '';
       checked = undefined;
       showStoredKey(keyInput, storedKeyFits());
-      if(enabled.checked) active.set('active');
       const line = appliedLine(enabled.checked, res.applied, res.failed.map((f) => `${f.persona} (${f.error})`));
       status.textContent = enabled.checked && !res.failed.length ?
         `${line}. ${reembeds ? 'Re-embedding notes in the background; search by meaning is back when it finishes.' : 'Indexing notes in the background.'}` :

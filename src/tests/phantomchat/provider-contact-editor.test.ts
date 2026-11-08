@@ -41,22 +41,24 @@ function fakeCall(brain: any = {provider: 'openrouter', model: 'a/b', hasKey: tr
   });
 }
 
-it('shows the current provider, dots for the stored token and a live Active check; a model change keeps the token', async() => {
+it('shows the current provider and dots for the stored token, no Active badge, ONE Save; a model change keeps the token', async() => {
   const call = fakeCall();
   const parent = document.createElement('div'); document.body.append(parent);
   const editor = await mountProviderModelEditor(parent, 'bob', call);
   expect(editor).toBeTruthy();
   expect(q(parent, 'provider-contact-provider-value').textContent).toBe('OpenRouter');
   expect((q(parent, 'provider-contact-token') as HTMLInputElement).placeholder).toBe('••••••••••••');
-  await vi.waitFor(() => expect(q(parent, 'provider-contact-active').textContent).toBe('✓ Active'));
-  expect(call).toHaveBeenCalledWith('persona.brainCheck', {persona: 'bob'});
+  expect(q(parent, 'provider-contact-active')).toBeNull();
+  expect([...parent.querySelectorAll('button.btn-primary')].map(b => b.textContent)).toEqual(['Save']);
+  await vi.waitFor(() => expect(call).toHaveBeenCalledWith('persona.brainCheck', {persona: 'bob'}));
   expect(call.mock.calls.some(([m]) => m === 'providers.check')).toBe(false);
+  await vi.waitFor(() => expect(q(parent, 'provider-contact-status').textContent).toBe(''));
   pick('provider-contact-model-picker', 'c/d');
   await editor!.save();
   expect(call).toHaveBeenCalledWith('persona.configure', {persona: 'bob', config: {brain: {chain: ['native'], native: {provider: 'openrouter', model: 'c/d'}}}});
 });
 
-it('a new provider needs its own token, checked before save', async() => {
+it('a new provider needs its own token; a rejected token is never written', async() => {
   const call = fakeCall();
   const parent = document.createElement('div'); document.body.append(parent);
   const editor = await mountProviderModelEditor(parent, 'bob', call);
@@ -65,14 +67,40 @@ it('a new provider needs its own token, checked before save', async() => {
   expect(token.placeholder).toBe('');
   await editor!.save();
   expect(q(parent, 'provider-contact-status').textContent).toBe('Choose a model');
-  token.value = 'bad'; token.dispatchEvent(new Event('input')); token.dispatchEvent(new Event('blur'));
-  await vi.waitFor(() => expect(q(parent, 'provider-contact-active').dataset.state).toBe('invalid'));
   token.value = 'sk-ant'; token.dispatchEvent(new Event('input')); token.dispatchEvent(new Event('blur'));
-  await vi.waitFor(() => expect(q(parent, 'provider-contact-active').textContent).toBe('✓ Active'));
+  await vi.waitFor(() => expect(q(parent, 'provider-contact-model-picker-value').textContent).toBe('claude-x'));
+  // Typed over with a bad token, then Save straight away: tested first, refused.
+  token.value = 'bad'; token.dispatchEvent(new Event('input'));
+  await editor!.save();
+  expect(q(parent, 'provider-contact-status').textContent).toBe('Not saved: the provider rejected this token (HTTP 401)');
+  expect(call.mock.calls.some(([m]) => m === 'persona.configure')).toBe(false);
+  token.value = 'sk-ant'; token.dispatchEvent(new Event('input')); token.dispatchEvent(new Event('blur'));
+  await vi.waitFor(() => expect(q(parent, 'provider-contact-model-picker-value').textContent).toBe('claude-x'));
   await editor!.save();
   expect(call).toHaveBeenCalledWith('persona.configure', {persona: 'bob', config: {brain: {chain: ['native'], native: {provider: 'anthropic', model: 'claude-x', apiKey: 'sk-ant'}}}});
   expect(token.value).toBe('');
-  expect(q(parent, 'provider-contact-status').textContent).toBe('Now on Anthropic (claude-x)');
+  expect(q(parent, 'provider-contact-status').textContent).toBe('Saved: now on Anthropic (claude-x)');
+});
+
+it('the Voice ID sits in the same form and the one Save saves it; an unchanged form saves nothing', async() => {
+  const call = fakeCall();
+  const parent = document.createElement('div'); document.body.append(parent);
+  let changed = false;
+  const voice = {container: document.createElement('div'), value: () => 'echo', changed: () => changed,
+    save: vi.fn(async() => {changed = false;}), destroy: vi.fn()};
+  voice.container.setAttribute('data-testid', 'contact-voice-id');
+  const editor = await mountProviderModelEditor(parent, 'bob', call, {voice});
+  expect(q(parent, 'provider-contact-model').contains(voice.container)).toBe(true);
+  await vi.waitFor(() => expect(q(parent, 'provider-contact-model-picker-value').textContent).toBe('a/b'));
+  await editor!.save();
+  expect(q(parent, 'provider-contact-status').textContent).toBe('Nothing to save');
+  changed = true;
+  await editor!.save();
+  expect(voice.save).toHaveBeenCalledTimes(1);
+  expect(call.mock.calls.some(([m]) => m === 'persona.configure')).toBe(false);
+  expect(q(parent, 'provider-contact-status').textContent).toBe('Saved: voice echo');
+  editor!.destroy();
+  expect(voice.destroy).toHaveBeenCalled();
 });
 
 it('an older engine mounts nothing', async() => {

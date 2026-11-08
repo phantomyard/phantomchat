@@ -100,8 +100,7 @@ export async function checkProviderKey(call: BridgeCall, provider: string, apiKe
 
 /** A persona name for the engine: the contact name lowercased, with spaces and every character outside a-z0-9 removed. */
 export function providerPersonaName(displayName: string, existing: readonly string[], random = Math.random): string {
-  const slug = (displayName || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '').slice(0, 40);
-  const base = slug || 'provider';
+  const base = providerNameSlug(displayName) || 'provider';
   const taken = new Set(existing.map((n) => n.toLowerCase()));
   if(!taken.has(base)) return base;
   for(let i = 2; i < 100; i++) {
@@ -109,6 +108,26 @@ export function providerPersonaName(displayName: string, existing: readonly stri
     if(!taken.has(name)) return name;
   }
   return `${base}-${Math.floor(random() * 1e9).toString(36)}`;
+}
+
+/** The persona slug a contact name maps to ('' when it has no letters or digits). */
+export function providerNameSlug(displayName: string): string {
+  return (displayName || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '').slice(0, 40);
+}
+
+/**
+ * Why this name cannot be used for a new Provider contact, or undefined when
+ * it can. Required, and unique: a Provider contact's persona is named after
+ * it, so two names that map to the same persona ("Barry", "barry!") clash.
+ */
+export async function providerNameProblem(call: BridgeCall, displayName: string): Promise<string | undefined> {
+  const name = displayName.trim();
+  if(!name) return 'Enter a contact name';
+  const slug = providerNameSlug(name);
+  if(!slug) return 'Use letters or numbers in the name';
+  const existing = await value<string[]>(call, 'personas.list');
+  if((Array.isArray(existing) ? existing : []).some((n) => n.toLowerCase() === slug)) return `A Provider contact named "${name}" already exists`;
+  return undefined;
 }
 
 export interface CreateProviderContactInput {

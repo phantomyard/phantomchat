@@ -1,5 +1,5 @@
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {mkdtempSync, rmSync, readFileSync} from 'node:fs';
+import {mkdtempSync, rmSync, readFileSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createCipheriv, createDecipheriv, randomBytes} from 'node:crypto';
@@ -22,7 +22,7 @@ const storage: SecretStorage = {
 async function call(method: string, p: any = {}) {
   let value: any;
   if(method === 'personas.list') value = ['alpha', 'beta'];
-  if(method === 'voiceModels.providers') value = [{id: 'openai', label: 'OpenAI', modalities: ['tts', 'stt'], needsBaseUrl: false, transport: {provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1'}}];
+  if(method === 'voiceModels.providers') value = [{id: 'openai', label: 'OpenAI', modalities: ['tts', 'stt'], needsBaseUrl: false}, {id: 'groq', label: 'Groq', modalities: ['stt'], needsBaseUrl: false}];
   if(method === 'voiceModels.check') checks.push(structuredClone(p));
   if(method === 'voiceModels.check') {
     const tts = p.modality === 'tts';
@@ -36,101 +36,119 @@ async function call(method: string, p: any = {}) {
   if(method === 'persona.phantomchat.info') value = {npub: p.persona === 'alpha' ? nip19.npubEncode(pubkey) : null};
   return {ok: true as const, value};
 }
-const form = (model: string, voice = '') => ({enabled: true, provider: 'openai-compatible', baseUrl: 'https://audio.example/v1', model, voice, apiKey: 'secret-value'});
-const settings = () => ({tts: form('tts-a', 'alloy'), stt: form('stt-a')});
+const form = (model: string) => ({enabled: true, provider: 'openai-compatible', baseUrl: 'https://audio.example/v1', model, apiKey: 'secret-value'});
+const settings = () => ({tts: form('tts-a'), stt: form('stt-a')});
 beforeEach(() => {root = mkdtempSync(join(tmpdir(), 'pc-voice-')); file = join(root, 'voice.enc'); payloads = []; checks = []; statuses = {}; failConfigure.clear(); service = new VoiceModels(file, storage, call);});
 afterEach(() => rmSync(root, {recursive: true, force: true}));
 describe('voice settings in main', () => {
-  it('a Pi provider: one key for both directions, never a caller base URL, remote plans name its transport', async() => {
-    const preset = (model: string, voice = '') => ({...form(model, voice), provider: 'openai', baseUrl: 'https://evil.example/v1', apiKey: 'one-key'});
-    await service.save({tts: preset('tts-a', 'alloy'), stt: preset('stt-a')});
-    const voice = payloads.at(-1).config.voice;
-    expect(voice.tts).toMatchObject({provider: 'openai', apiKey: 'one-key'});
-    expect(voice.stt).toMatchObject({provider: 'openai', apiKey: 'one-key'});
-    expect(voice.tts.baseUrl).toBeUndefined();
-    expect(checks.every(c => c.baseUrl === undefined)).toBe(true);
-    expect((service.get() as any).tts.transport).toEqual({provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1'});
-    const plan = await service.handle('remotePlan', {pubkey: 'b'.repeat(64)});
-    expect((plan as any).value.tts).toMatchObject({provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'tts-a'});
-  });
-  it('a contact Voice ID is kept when its model offers it, refused otherwise', async() => {
-    await service.save(settings());
-    await service.setContact(pubkey, {tts: 'tts-b'}, {tts: 'echo'});
-    expect(payloads.at(-1).config.voice.tts).toMatchObject({model: 'tts-b', voice: 'echo'});
-    await expect(service.setContact(pubkey, {tts: 'tts-b'}, {tts: 'nope'})).rejects.toThrow('does not offer that voice');
-    // A voice alone overrides the default model's voice.
-    await service.setContact(pubkey, {tts: ''}, {tts: 'alloy'});
-    expect(payloads.at(-1).config.voice.tts).toMatchObject({model: 'tts-a', voice: 'alloy'});
-  });
-  it('encrypts keys, returns only presence, applies both defaults and restores off/on', async() => {
+  it('Test and Save checks both directions and pushes nothing to any persona', async() => {
     const result = await service.save(settings());
-    expect(result.applied).toBe(2);
+    expect(checks.map(c => c.modality).sort()).toEqual(['stt', 'tts']);
+    expect(payloads).toEqual([]);
+    expect(result.applied).toBe(0);
+    expect((service.get() as any).tts.voices).toEqual(['alloy']);
     expect(readFileSync(file).includes(Buffer.from('secret-value'))).toBe(false);
     expect(JSON.stringify(service.get())).not.toContain('secret-value');
-    expect((service.get() as any).tts.hasKey).toBe(true);
-    expect(payloads[0].config.voice.tts).toMatchObject({model: 'tts-a', keyEnv: 'PHANTOMBOT_VOICE_TTS_API_KEY'});
-    expect(payloads[0].config.voice.stt).not.toHaveProperty('voice');
-    await service.save({tts: {enabled: false}, stt: {...form('stt-a'), apiKey: ''}});
-    expect(payloads.at(-1).config.voice.tts).toEqual({enabled: false});
-    expect(payloads.at(-1).config.voice.stt.enabled).toBe(true);
+    // An older build (rollback) iterates `overrides`: it is always there.
+    expect(JSON.parse(storage.decrypt(readFileSync(file))).overrides).toEqual({});
+  });
+  it('one switch: TTS and STT are on or off together, one provider for both', async() => {
+    await expect(service.save({tts: form('tts-a'), stt: {enabled: false}})).rejects.toThrow('together');
+    await expect(service.save({tts: form('tts-a'), stt: {...form('stt-a'), baseUrl: 'https://other.example/v1'}})).rejects.toThrow('one provider');
+  });
+  it('refuses a bad key or unknown model before changing state', async() => {
+    await service.save(settings()); const before = JSON.stringify(service.get());
+    await expect(service.save({tts: {...form('tts-a'), apiKey: 'bad'}, stt: {...form('stt-a'), apiKey: 'bad'}})).rejects.toThrow();
+    await expect(service.save({tts: form('tts-z'), stt: form('stt-a')})).rejects.toThrow('current TTS model');
+    expect(JSON.stringify(service.get())).toBe(before);
+  });
+  it('providers lists only those serving both directions', async() => {
+    const only = await service.handle('providers', {});
+    expect((only as any).value.map((p: any) => p.id)).toEqual(['openai']);
+  });
+  it('a Voice ID on a Provider contact turns voice on for its persona only; clearing it turns it off', async() => {
+    await service.save(settings());
+    const c = await service.setContact(pubkey, 'alloy');
+    expect(c).toMatchObject({persona: 'alpha', enabled: true, voice: 'alloy', voices: ['alloy']});
+    expect(payloads.at(-1)).toMatchObject({persona: 'alpha', config: {voice: {tts: {enabled: true, model: 'tts-a', voice: 'alloy', keyEnv: 'PHANTOMBOT_VOICE_TTS_API_KEY'}, stt: {enabled: true, model: 'stt-a'}}}});
+    expect(payloads.at(-1).config.voice.stt).not.toHaveProperty('voice');
+    await expect(service.setContact(pubkey, 'nope')).rejects.toThrow('does not offer');
+    await service.setContact(pubkey, '');
+    expect(payloads.at(-1).config.voice).toEqual({tts: {enabled: false}, stt: {enabled: false}});
+  });
+  it('npub Phantoms (no persona here) get no voice', async() => {
+    await service.save(settings());
+    await expect(service.setContact('b'.repeat(64), 'alloy')).rejects.toThrow('only for Provider contacts');
+    expect((await service.contact('b'.repeat(64))).persona).toBeNull();
+  });
+  it('a later save updates only personas with a Voice ID, and switching off turns them off', async() => {
+    await service.save(settings());
+    await service.setContact(pubkey, 'alloy');
+    payloads.length = 0;
+    const result = await service.save({tts: {...form('tts-a'), apiKey: 'new-key'}, stt: {...form('stt-a'), apiKey: 'new-key'}});
+    expect(result.applied).toBe(1);
+    expect(payloads.map(p => p.persona)).toEqual(['alpha']);
+    expect(payloads[0].config.voice.tts.apiKey).toBe('new-key');
+    await service.save({tts: {enabled: false}, stt: {enabled: false}});
+    expect(payloads.at(-1).config.voice).toEqual({tts: {enabled: false}, stt: {enabled: false}});
+    await expect(service.setContact(pubkey, 'alloy')).rejects.toThrow('Turn on Voice Models');
+    // The pick survives a reload.
     service = new VoiceModels(file, storage, call);
-    await service.save({tts: {...form('tts-a', 'alloy'), apiKey: ''}, stt: {...form('stt-a'), apiKey: ''}});
+    expect((await service.contact(pubkey)).voice).toBe('alloy');
+  });
+  it('a model change drops a Voice ID the new model does not offer, names it and turns that voice off', async() => {
+    await service.save(settings());
+    await service.setContact(pubkey, 'alloy');
+    payloads.length = 0;
+    const result = await service.save({tts: form('tts-b'), stt: form('stt-a')});
+    expect(result.resets).toEqual(['alpha']);
+    expect(result.failures).toEqual([]);
+    expect(payloads.map(p => p.persona)).toEqual(['alpha']);
+    expect(payloads[0].config.voice).toEqual({tts: {enabled: false}, stt: {enabled: false}});
+    expect((await service.contact(pubkey)).voice).toBe('');
+    service = new VoiceModels(file, storage, call);
+    expect((await service.contact(pubkey)).voice).toBe('');
+  });
+  it('a stored key is kept for the same endpoint across reloads', async() => {
+    await service.save(settings());
+    await service.setContact(pubkey, 'alloy');
+    service = new VoiceModels(file, storage, call);
+    payloads.length = 0;
+    await service.save({tts: {...form('tts-a'), apiKey: ''}, stt: {...form('stt-a'), apiKey: ''}});
     expect(payloads.at(-1).config.voice.tts.apiKey).toBe('secret-value');
   });
-  it('inherits for new personas; persists and reapplies model-specific contact overrides', async() => {
+  it('reports a channel-restart failure but keeps the pick', async() => {
     await service.save(settings());
-    await service.setContact(pubkey, {tts: 'tts-b', stt: ''});
-    expect(payloads.at(-1).config.voice.tts).toMatchObject({model: 'tts-b', voice: 'echo'});
-    service = new VoiceModels(file, storage, call);
-    expect((await service.contact(pubkey)).overrides.tts?.model).toBe('tts-b');
-    await service.applyNewPersona('new-persona');
-    expect(payloads.at(-1).config.voice.tts.model).toBe('tts-a');
-    const changed = settings(); changed.tts.baseUrl = 'https://new.example/v1';
-    const result = await service.save(changed);
-    expect(result.resets).toContain('alpha: TTS');
-    expect((await service.contact(pubkey)).overrides.tts).toBeUndefined();
-    await service.setContact(pubkey, {tts: 'tts-b'});
-    await service.applyNewPersona('alpha');
-    expect(payloads.at(-1).config.voice.tts.model).toBe('tts-a');
-  });
-  it('refuses invalid keys and provider switches without keys before changing state', async() => {
-    await service.save(settings()); const before = JSON.stringify(service.get()); payloads.length = 0;
-    await expect(service.save({tts: {...form('tts-a', 'alloy'), apiKey: 'bad'}, stt: form('stt-a')})).rejects.toThrow();
-    await expect(service.save({tts: {...form('tts-a', 'alloy'), baseUrl: 'https://other.example', apiKey: ''}, stt: form('stt-a')})).rejects.toThrow();
-    expect(JSON.stringify(service.get())).toBe(before); expect(payloads).toEqual([]);
-  });
-  it('reports restart failures and rejects overrides when disabled', async() => {
     statuses.alpha = 'failed';
-    expect((await service.save(settings())).failures).toEqual(['alpha']);
-    statuses = {};
-    await service.save({tts: {enabled: false}, stt: {enabled: false}});
-    await service.setContact(pubkey, {tts: 'tts-b'});
-    expect(payloads.at(-1).config.voice.tts).toEqual({enabled: false});
+    await expect(service.setContact(pubkey, 'alloy')).rejects.toThrow('channel restart');
+    expect((await service.contact(pubkey)).voice).toBe('alloy');
   });
-  it('creation follow-through skips everything when no default is enabled', async() => {
-    statuses.brand = 'failed';
+  it('rolls a pick back when the engine refuses it', async() => {
+    await service.save(settings());
+    failConfigure.add('alpha');
+    await expect(service.setContact(pubkey, 'alloy')).rejects.toThrow('configure failed');
+    failConfigure.clear();
+    expect((await service.contact(pubkey)).voice).toBe('');
+  });
+  it('a new persona never fails creation and drops a stale pick of the same name', async() => {
+    await service.save(settings());
+    await service.setContact(pubkey, 'alloy');
+    payloads.length = 0;
+    await expect(service.applyNewPersona('alpha')).resolves.toBeUndefined();
     await expect(service.applyNewPersona('brand')).resolves.toBeUndefined();
     expect(payloads).toEqual([]);
+    expect((await service.contact(pubkey)).voice).toBe('');
   });
-  it('creation follow-through survives a channel-restart failure and still throws on voice failures', async() => {
-    await service.save(settings());
-    payloads.length = 0; statuses.beta = 'failed';
-    await expect(service.applyNewPersona('beta')).resolves.toBeUndefined();
-    expect(payloads.at(-1).config.voice.tts).toMatchObject({model: 'tts-a'});
-    failConfigure.add('beta');
-    await expect(service.applyNewPersona('beta')).rejects.toThrow('configure failed');
+  it('carries an older file\'s per-contact voices over, never remote ones', async() => {
+    const old = {defaults: {tts: {...form('tts-a'), voice: 'alloy', enabled: true, models: [], voices: ['alloy']}, stt: {...form('stt-a'), voice: '', models: [], voices: []}},
+      overrides: {alpha: {tts: {endpoint: 'x', model: 'tts-a', voice: 'alloy'}}, ['remote:' + 'b'.repeat(64)]: {tts: {endpoint: 'x', model: 'tts-a', voice: 'echo'}}}};
+    writeFileSync(file, storage.encrypt(JSON.stringify(old)));
+    service = new VoiceModels(file, storage, call);
+    expect((await service.contact(pubkey)).voice).toBe('alloy');
+    expect(JSON.stringify(service.get())).not.toContain('"voice"');
   });
   it('refuses plaintext encryption backends', async() => {
     const s = new VoiceModels(file, {...storage, available: () => false}, call);
     await expect(s.save(settings())).rejects.toThrow('Encrypted');
-  });
-  it('remote plans contain metadata only and use enabled settings defaults', async() => {
-    await service.save(settings());
-    const plan = await service.handle('remotePlan', {pubkey: 'b'.repeat(64), models: {tts: 'tts-b'}});
-    expect(plan.ok).toBe(true); expect(JSON.stringify(plan)).not.toContain('secret-value');
-    expect((plan as any).value.tts).toEqual({enabled: true, provider: 'openai-compatible', baseUrl: 'https://audio.example/v1', model: 'tts-b'});
-    await service.handle('saveRemote', {pubkey: 'b'.repeat(64), models: {tts: 'tts-b'}});
-    const inherit = await service.handle('remotePlan', {pubkey: 'b'.repeat(64), models: {tts: ''}});
-    expect((inherit as any).value.tts.model).toBe('tts-a');
   });
 });

@@ -552,7 +552,7 @@ describe('New Contact pane', () => {
       switch(method) {
         case 'providers.list': return {ok: true, value: [{id: 'phantomops', label: 'PhantomOps', checkable: true, autoModel: true, defaultModel: 'auto'}]};
         case 'providers.check': return {ok: true, value: {status: 'verified', models: [] as unknown[]}};
-        case 'personas.list': return {ok: true, value: ['phantomops']};
+        case 'personas.list': return {ok: true, value: ['other']};
         case 'persona.phantomchat.start': return {ok: true, value: {npub: PROVIDER_NPUB, state: 'running'}};
         default: return {ok: true, value: {}};
       }
@@ -572,7 +572,7 @@ describe('New Contact pane', () => {
       expect(q('add-contact-error').textContent).toBe('');
       const methods = calls.map(([m]) => m);
       expect(methods.indexOf('providers.check')).toBeLessThan(methods.indexOf('personas.create'));
-      expect(calls.find(([m]) => m === 'personas.create')?.[1]).toMatchObject({persona: 'phantomops-2'});
+      expect(calls.find(([m]) => m === 'personas.create')?.[1]).toMatchObject({persona: 'phantomops'});
       expect(calls.find(([m]) => m === 'persona.phantomchat.allow')?.[1]).toMatchObject({npub: OWN});
     } finally {
       delete (window as any).__phantomchatOwnPubkey;
@@ -592,10 +592,39 @@ describe('New Contact pane', () => {
       await vi.waitFor(() => expect(q('add-contact-kind-provider')).toBeTruthy());
       q('add-contact-kind-provider').click();
       await vi.waitFor(() => expect(q('add-contact-provider-select-value').textContent).toBe('PhantomOps'));
+      (q('add-contact-name') as HTMLInputElement).value = 'Ops';
       (q('add-contact-provider-token') as HTMLInputElement).value = 'pok_bad';
       q('add-contact-submit').click();
       await vi.waitFor(() => expect(q('add-contact-error').textContent).toBe('The provider rejected this token'));
       expect(call.mock.calls.map(([m]) => m)).not.toContain('personas.create');
+    } finally {
+      delete (window as any).__phantomchatOwnPubkey;
+    }
+  });
+
+  it('Provider: the name is required and must not clash with another Provider contact', async() => {
+    (window as any).__phantomchatOwnPubkey = HEX;
+    const call = vi.fn(async(method: string) => {
+      if(method === 'providers.list') return {ok: true, value: [{id: 'phantomops', label: 'PhantomOps', checkable: true, autoModel: true, defaultModel: 'auto'}]};
+      if(method === 'personas.list') return {ok: true, value: ['barry']};
+      if(method === 'providers.check') return {ok: true, value: {status: 'verified', models: [] as unknown[]}};
+      return {ok: true, value: {}};
+    });
+    (window as any).phantomchatDesktop = {phantombot: {call}};
+    try {
+      await open();
+      await vi.waitFor(() => expect(q('add-contact-kind-provider')).toBeTruthy());
+      q('add-contact-kind-provider').click();
+      await vi.waitFor(() => expect(q('add-contact-provider-select-value').textContent).toBe('PhantomOps'));
+      (q('add-contact-provider-token') as HTMLInputElement).value = 'pok_ok';
+      q('add-contact-submit').click();
+      await vi.waitFor(() => expect(q('add-contact-error').textContent).toBe('Enter a contact name'));
+      (q('add-contact-name') as HTMLInputElement).value = 'BARRY';
+      q('add-contact-submit').click();
+      await vi.waitFor(() => expect(q('add-contact-error').textContent).toBe('A Provider contact named "BARRY" already exists'));
+      const methods = call.mock.calls.map(([m]) => m);
+      expect(methods).not.toContain('personas.create');
+      expect(methods).not.toContain('providers.check');
     } finally {
       delete (window as any).__phantomchatOwnPubkey;
     }
@@ -674,6 +703,7 @@ describe('New Contact pane', () => {
       q('add-contact-provider-model-option-claude-sonnet').click();
       expect(q('add-contact-provider-model-value').textContent).toBe('claude-sonnet');
 
+      (q('add-contact-name') as HTMLInputElement).value = 'Claude';
       q('add-contact-submit').click();
       await vi.waitFor(() => expect(added).toHaveBeenCalled());
       expect(calls.find(([m]) => m === 'persona.configure')?.[1].config.brain.native)
@@ -773,6 +803,7 @@ describe('New Contact pane', () => {
     const token = q('add-contact-provider-token') as HTMLInputElement;
     token.value = 'sk-a';
     token.dispatchEvent(new Event('input'));
+    (q('add-contact-name') as HTMLInputElement).value = 'Claude';
     q('add-contact-submit').click();
     await vi.waitFor(() => expect(pending.length).toBe(1));
 
@@ -797,6 +828,7 @@ describe('New Contact pane', () => {
     const token = q('add-contact-provider-token') as HTMLInputElement;
     token.value = 'sk-a';
     token.dispatchEvent(new Event('input'));
+    (q('add-contact-name') as HTMLInputElement).value = 'Claude';
     q('add-contact-submit').click();
     await vi.waitFor(() => expect(pending.length).toBe(1));
     pickProvider('xai');

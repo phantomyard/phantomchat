@@ -91,3 +91,18 @@ describe('provider contacts', () => {
     await expect(createProviderContact(fakeBridge().call, {displayName: 'X', provider: OPENROUTER, model: 'm', apiKey: '', ownNpub: ME})).rejects.toThrow('token');
   });
 });
+
+describe('providerNameProblem: a Provider contact name is required and unique', () => {
+  const call = (personas: string[]) => vi.fn(async(method: string) => method === 'personas.list' ?
+    {ok: true as const, value: personas} : {ok: false as const, error: {code: 'x', message: method}});
+  it('requires a name with letters or digits', async() => {
+    const {providerNameProblem} = await import('@lib/phantomchat/provider-contacts');
+    expect(await providerNameProblem(call([]) as any, '  ')).toBe('Enter a contact name');
+    expect(await providerNameProblem(call([]) as any, '!!!')).toBe('Use letters or numbers in the name');
+  });
+  it('refuses a name another Provider contact already maps to, case and punctuation aside', async() => {
+    const {providerNameProblem} = await import('@lib/phantomchat/provider-contacts');
+    expect(await providerNameProblem(call(['barry']) as any, 'Barry!')).toBe('A Provider contact named "Barry!" already exists');
+    expect(await providerNameProblem(call(['barry']) as any, 'Barry 2')).toBeUndefined();
+  });
+});

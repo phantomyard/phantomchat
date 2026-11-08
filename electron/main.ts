@@ -394,15 +394,9 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
   await inheritOnCreate(ensureDecisionModel(), request.method, request.params, result);
   await inheritOnCreate(ensureEmbeddings(), request.method, request.params, result);
   if(result.ok && request.method === 'personas.create') {
-    // Constructing the voice store is not a voice failure of this persona: a
-    // broken store must not roll persona creation back. applyNewPersona only
-    // fails (and rolls back) when an enabled default fails to apply.
-    const voice = ensureVoiceModels();
-    try { await voice.applyNewPersona(String(request.params.persona)); }
-    catch {
-      await ensurePhantombot().call('personas.delete', {persona: request.params.persona});
-      return {ok: false, error: {code: 'voice_settings', message: 'Could not apply voice defaults to the new persona'}};
-    }
+    // A new persona has no Voice ID yet: this only drops a stale one and
+    // never fails creation.
+    try { await ensureVoiceModels().applyNewPersona(String(request.params.persona)); } catch{/* A broken voice store is not this persona's failure. */}
   }
   return result;
 });

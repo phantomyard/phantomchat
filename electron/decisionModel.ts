@@ -178,14 +178,18 @@ export class DecisionModelSettings {
     const key = typed || keptKey;
     if(i.enabled && !key) return fail('Enter an API key');
 
-    if(typed) {
+    // Test and Apply: switching it on tests the key in use (typed or stored)
+    // live; a typed key is tested even when switching off, so a bad one is
+    // never stored.
+    if(i.enabled || typed) {
       let verdict: DecisionModelCheck;
       try {
-        verdict = await this.check(provider, typed);
+        verdict = await this.check(provider, key);
       } catch(err) {
         return fail(`Could not check the key: ${err instanceof Error ? err.message : String(err)}`);
       }
       if(verdict.status === 'invalid') return fail(`Key rejected (${verdict.detail})`);
+      if(i.enabled && verdict.status !== 'verified') return fail(`Could not confirm the key works (${verdict.detail})`);
     }
 
     // Persist BEFORE applying: a persona created while this runs inherits

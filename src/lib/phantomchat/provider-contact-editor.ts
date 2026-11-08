@@ -1,8 +1,9 @@
 /*
  * Provider contacts: change the main provider and model after the contact
- * was created (contact info, desktop only). Same parts as the Specialized
- * Models screens: Provider -> Token (dots when one is stored) + Active check
- * -> Model -> status -> Save.
+ * was created (contact Edit pane, desktop only). Same parts as the
+ * Specialized Models screens: Provider -> Token (dots when one is stored) ->
+ * Model -> Voice ID (only when Voice Models is on) -> status -> ONE Save.
+ * Save tests a new token before it is written.
  *
  * The stored token never reaches the page: `persona.brain` says what is
  * configured and whether a token is stored, `persona.brainCheck` checks that
@@ -10,7 +11,6 @@
  * is checked with `providers.check`, as on the add-contact pane.
  */
 import {
-  activeCheck,
   createModelChooser,
   formColumn,
   labelledPicker,
@@ -19,6 +19,7 @@ import {
   showStoredKey,
   textField
 } from '@components/sidebarLeft/tabs/phantomchatModelKit';
+import type {ContactVoicePicker} from '@lib/phantomchat/voice-models';
 import {
   checkProviderKey,
   listProviderOptions,
@@ -45,7 +46,9 @@ export interface ProviderModelEditor {
  * Mount the editor for `persona` into `parent`. Resolves to undefined (and
  * mounts nothing) when this app's engine cannot read a persona's brain yet.
  */
-export async function mountProviderModelEditor(parent: HTMLElement, persona: string, call: BridgeCall): Promise<ProviderModelEditor | undefined> {
+export async function mountProviderModelEditor(parent: HTMLElement, persona: string, call: BridgeCall,
+  opts: {voice?: ContactVoicePicker} = {}): Promise<ProviderModelEditor | undefined> {
+  const voice = opts.voice;
   let brain: BrainInfo;
   let providers: ProviderOption[];
   try {
@@ -63,12 +66,11 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
   });
   providerPicker.setOptions(providers.map((p) => ({value: p.id, label: p.label})), brain.provider ?? providers[0]?.id);
   const {container: keyBox, input: keyInput} = textField('provider-contact-token', 'Token', {secret: true, maxLength: 4096});
-  const active = activeCheck('provider-contact-active');
   const keyNote = noteLine('provider-contact-token-note');
   const models = createModelChooser({testId: 'provider-contact-model-picker', placeholder: 'Enter the token to load models', allowTyped: true});
   const status = noteLine('provider-contact-status', true);
-  const saveBtn = saveButton('provider-contact-save', 'Save provider and model');
-  section.append(providerBox, keyBox, active.container, keyNote, models.container, status, saveBtn);
+  const saveBtn = saveButton('provider-contact-save', 'Save');
+  section.append(providerBox, keyBox, keyNote, models.container, ...(voice ? [voice.container] : []), status, saveBtn);
 
   let generation = 0;
   let checked: string | undefined;
@@ -83,13 +85,15 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
     models.container.style.display = p?.autoModel ? 'none' : '';
   };
 
+  let lastCheck: ProviderCheckResult | undefined;
   const showResult = (p: ProviderOption, r: ProviderCheckResult) => {
+    lastCheck = r;
     if(r.status === 'invalid') {
-      active.set('invalid', r.detail);
+      status.textContent = `Token rejected (${r.detail})`;
       models.clear('Enter the token to load models');
       return;
     }
-    active.set(r.status === 'verified' ? 'active' : 'unverified', r.detail);
+    status.textContent = '';
     const preferred = models.value() || (p.id === brain.provider ? brain.model : p.defaultModel);
     models.setModels(r.models.map((m) => m.id), preferred);
   };
@@ -102,7 +106,8 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
     if(checked === ask) return;
     if(!token && !storedFits() && !p.keyOptional) return;
     const mine = ++generation;
-    active.set('checking');
+    lastCheck = undefined;
+    status.textContent = 'Loading models...';
     try {
       const r = token || !storedFits() ?
         await checkProviderKey(call, p.id, token) :
@@ -111,7 +116,7 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
       checked = ask;
       showResult(p, {status: r.status, detail: r.detail ?? '', models: Array.isArray(r.models) ? r.models : []});
     } catch(err) {
-      if(mine === generation) active.set('unverified', err instanceof Error ? err.message : 'could not check the token');
+      if(mine === generation) status.textContent = `Could not check the token (${err instanceof Error ? err.message : 'no answer'})`;
     }
   }
 
@@ -120,7 +125,7 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
     checked = undefined;
     keyInput.value = '';
     status.textContent = '';
-    active.set('idle');
+    lastCheck = undefined;
     models.clear('Enter the token to load models');
     showFields();
     const p = current();
@@ -149,20 +154,44 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
         status.textContent = `Enter the ${p.label} token`;
         return;
       }
-      if(active.state() === 'invalid') {
-        status.textContent = 'The provider rejected this token';
+      const brainChanged = p.id !== brain.provider || model !== brain.model || !!token;
+      const voiceChanged = !!voice?.changed();
+      if(!brainChanged && !voiceChanged) {
+        status.textContent = 'Nothing to save';
         return;
       }
-      status.textContent = 'Saving...';
-      await value(call, 'persona.configure', {
-        persona,
-        config: {brain: {chain: ['native'], native: {provider: p.id, model, ...(token ? {apiKey: token} : {})}}}
-      });
-      brain = {provider: p.id, model, hasKey: brain.hasKey && p.id === brain.provider || !!token};
-      keyInput.value = '';
-      checked = undefined;
-      showFields();
-      status.textContent = `Now on ${p.label} (${model})`;
+      const done: string[] = [];
+      if(brainChanged) {
+        // A new token is tested before it is written.
+        if(token && (checked !== `${p.id}|${token}` || !lastCheck)) {
+          checked = undefined;
+          await check();
+        }
+        if(token && !lastCheck) {
+          status.textContent = 'Not saved: the token could not be tested';
+          return;
+        }
+        if(token && lastCheck?.status === 'invalid') {
+          status.textContent = `Not saved: the provider rejected this token (${lastCheck.detail})`;
+          return;
+        }
+        status.textContent = 'Saving...';
+        await value(call, 'persona.configure', {
+          persona,
+          config: {brain: {chain: ['native'], native: {provider: p.id, model, ...(token ? {apiKey: token} : {})}}}
+        });
+        brain = {provider: p.id, model, hasKey: brain.hasKey && p.id === brain.provider || !!token};
+        keyInput.value = '';
+        checked = undefined;
+        showFields();
+        done.push(`now on ${p.label} (${model})`);
+      }
+      if(voiceChanged) {
+        status.textContent = 'Saving voice...';
+        await voice!.save();
+        done.push(voice!.value() ? `voice ${voice!.value()}` : 'no voice');
+      }
+      status.textContent = `Saved: ${done.join(', ')}`;
     } catch(err) {
       status.textContent = err instanceof Error ? err.message : 'Could not save';
     } finally {
@@ -175,7 +204,7 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
   showFields();
   if(brain.model && current()?.id === brain.provider) models.setModels([brain.model], brain.model);
   parent.append(section);
-  // A stored token is checked straight away: the Active check is live.
+  // A stored token loads the model list straight away.
   void check();
 
   return {
@@ -186,6 +215,7 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
       keyInput.value = '';
       providerPicker.destroy();
       models.destroy();
+      voice?.destroy();
     }
   };
 }

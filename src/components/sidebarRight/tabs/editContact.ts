@@ -59,12 +59,30 @@ export default class AppEditContactTab extends SliderSuperTab {
       appSidebarRight.toggleSidebar(false);
     }, {listenerSetter: this.listenerSetter});
 
+    let isProvider = false;
+    let providerSection: SettingSection | undefined;
+    let notificationsRow: Row | undefined;
     {
       const section = new SettingSection({noDelimiter: true});
       const inputFields: InputField[] = [];
 
       const inputWrapper = document.createElement('div');
       inputWrapper.classList.add('input-wrapper');
+
+      const user = userId ? await this.managers.appUsersManager.getUser(userId) : undefined;
+      const isBot = !!user?.pFlags?.bot;
+
+      // Contact type decides whether Local tools is offered at all.
+      const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
+      const contactPubkey = userId && isP2PPeerId(Number(userId)) ? await getPubkey(Number(userId)) : null;
+      const prefsMod = await import('@lib/phantomchat/contact-prefs');
+      const {resolveContactKindForPeer} = await import('@lib/phantomchat/contact-kind');
+      const {kind: contactKind, prefs} = await resolveContactKindForPeer(contactPubkey, isBot);
+      this.contactPubkey = contactPubkey;
+      // A Provider contact's name is its persona's name on this app's engine:
+      // read-only, so the two cannot drift apart.
+      const providerPersona = contactKind === 'provider' ? prefs?.persona : undefined;
+      isProvider = !!(contactPubkey && providerPersona);
 
       // Contacts redesign: one Contact Name field (no last name, no note).
       // A legacy contact's first + last name are shown joined, and saving
@@ -73,15 +91,12 @@ export default class AppEditContactTab extends SliderSuperTab {
         label: 'ContactName',
         name: 'contact-name',
         maxLength: 70,
-        required: true
+        required: true,
+        canBeEdited: !isProvider
       });
 
-      let isBot = false;
       if(userId) {
-        const user = await this.managers.appUsersManager.getUser(userId);
-
         if(user) {
-          isBot = !!user.pFlags?.bot;
           const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ');
           if(isNew && !fullName) {
             this.nameInputField.setDraftValue('');
@@ -92,15 +107,8 @@ export default class AppEditContactTab extends SliderSuperTab {
       }
 
       inputWrapper.append(this.nameInputField.container);
+      if(isProvider) this.nameInputField.container.setAttribute('data-readonly', '1');
       inputFields.push(this.nameInputField);
-
-      // Contact type decides whether Local tools is offered at all.
-      const {getPubkey} = await import('@lib/phantomchat/virtual-peers-db');
-      const contactPubkey = userId && isP2PPeerId(Number(userId)) ? await getPubkey(Number(userId)) : null;
-      const prefsMod = await import('@lib/phantomchat/contact-prefs');
-      const {resolveContactKindForPeer} = await import('@lib/phantomchat/contact-kind');
-      const {kind: contactKind, prefs} = await resolveContactKindForPeer(contactPubkey, isBot);
-      this.contactPubkey = contactPubkey;
       // Phantom: the switch is main's Local tools gate (phantombot #747), so it
       // only exists in a desktop build that has it, and main's list is the
       // truth.
@@ -115,33 +123,29 @@ export default class AppEditContactTab extends SliderSuperTab {
         new CheckboxField({text: 'ContactLocalTools', checked: localToolsOn}) :
         undefined;
 
-      // Provider: its main provider and model can change after it was created.
-      const providerPersona = contactKind === 'provider' ? prefs?.persona : undefined;
-      if(contactPubkey && providerPersona) {
+      // Provider: Provider, Model and the gated Voice ID, under ONE Save. It
+      // goes below the name; Notifications and Delete Contact stay last.
+      if(isProvider) {
         const {getDesktopPhantombot} = await import('@lib/phantomchat/desktop-api');
         const bridge = getDesktopPhantombot();
         if(bridge) {
-          const {mountProviderModelEditor} = await import('@lib/phantomchat/provider-contact-editor');
+          const [{mountProviderModelEditor}, {createContactVoicePicker}] = await Promise.all([
+            import('@lib/phantomchat/provider-contact-editor'), import('@lib/phantomchat/voice-models')
+          ]);
           const title = document.createElement('span');
           title.textContent = 'Provider and model';
-          const modelSection = new SettingSection({name: title});
-          this.scrollable.append(modelSection.container);
-          void mountProviderModelEditor(modelSection.content, providerPersona, (method, params) => bridge.call(method, params))
+          providerSection = new SettingSection({name: title});
+          const modelSection = providerSection;
+          const voice = await createContactVoicePicker(contactPubkey).catch((): undefined => undefined);
+          void mountProviderModelEditor(modelSection.content, providerPersona, (method, params) => bridge.call(method, params), {voice})
           .then((editor) => {
-            if(!editor) modelSection.container.remove();
-            else this.middlewareHelper.get().onDestroy(() => editor.destroy());
+            if(!editor) {
+              voice?.destroy();
+              modelSection.container.remove();
+            } else this.middlewareHelper.get().onDestroy(() => editor.destroy());
           })
           .catch(() => modelSection.container.remove());
         }
-      }
-
-      if(contactPubkey && (contactKind === 'phantom' || contactKind === 'provider')) {
-        const {mountContactVoiceModels} = await import('@lib/phantomchat/voice-models');
-        const voiceSection = new SettingSection();
-        this.scrollable.append(voiceSection.container);
-        void mountContactVoiceModels(voiceSection.content, contactPubkey).catch(() => {
-          voiceSection.content.textContent = 'Voice settings unavailable';
-        });
       }
 
       this.editPeer = new EditPeer({
@@ -151,7 +155,7 @@ export default class AppEditContactTab extends SliderSuperTab {
         doNotEditAvatar: true,
         middleware: this.middlewareHelper.get()
       });
-      this.content.append(this.editPeer.nextBtn);
+      if(!isProvider) this.content.append(this.editPeer.nextBtn);
 
       if(peerId) {
         // Display-only: only the user's own profile picture is editable.
@@ -217,7 +221,7 @@ export default class AppEditContactTab extends SliderSuperTab {
           section.content.append(localToolsRow.container);
         }
 
-        const notificationsRow = new Row({
+        notificationsRow = new Row({
           checkboxField: notificationsCheckboxField,
           withCheckboxSubtitle: true,
           listenerSetter: this.listenerSetter
@@ -225,17 +229,18 @@ export default class AppEditContactTab extends SliderSuperTab {
 
         const enabled = !(await this.managers.appNotificationsManager.isPeerLocalMuted({peerId, respectType: false}));
         notificationsCheckboxField.checked = enabled;
-
-        section.content.append(notificationsRow.container);
       } else {
         section.content.append(inputWrapper);
       }
 
       this.scrollable.append(section.container);
+      if(providerSection) this.scrollable.append(providerSection.container);
     }
 
     if(peerId) {
+      // Bottom: Notifications, then Delete Contact.
       const section = new SettingSection();
+      if(notificationsRow) section.content.append(notificationsRow.container);
 
       const btnDelete = Button('btn-primary btn-transparent danger', {icon: 'delete', text: 'PeerInfo.DeleteContact'});
 
