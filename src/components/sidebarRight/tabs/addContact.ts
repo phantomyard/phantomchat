@@ -19,6 +19,7 @@ import {attachClickEvent} from '@helpers/dom/clickEvent';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import Icon from '@components/icon';
 import {createListPicker} from '@components/listPicker';
+import {applyNewContactVoice, createNewContactVoicePicker, newContactVoices} from '@lib/phantomchat/voice-models';
 
 /**
  * New Contact pane (contacts redesign). It slides in from the right like the
@@ -264,7 +265,11 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     }
   });
   modelField.append(modelPicker.trigger);
-  providerBox.append(providerPicker.trigger, tokenField.container, providerStatus, modelField);
+  // Voice ID, so a voice is picked when the contact is added, not only in its
+  // Edit pane. Shown when the contact will have voice models: Settings >
+  // Voice Models is on, or (PhantomOps) its server has them.
+  const voicePicker = createNewContactVoicePicker();
+  providerBox.append(providerPicker.trigger, tokenField.container, providerStatus, modelField, voicePicker.container);
   inputWrapper.append(nameField.container, npubField.container, scanList, providerBox);
 
   // --- Toggles: the Edit pane's checkbox Rows ----------------------------
@@ -435,9 +440,26 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
       'Enter your token to load models');
   };
 
+  /** Bumped per voice lookup, so a late answer for an old provider/token is dropped. */
+  let voiceGeneration = 0;
+  const refreshVoices = async() => {
+    const p = currentProvider();
+    const mine = ++voiceGeneration;
+    if(!p) {
+      voicePicker.setVoices(undefined);
+      return;
+    }
+    // PhantomOps: only a checked token is sent (never one mid-typing).
+    const token = checked?.provider === p.id ? checked.token : '';
+    const voices = await newContactVoices(p.id, token, call).catch((): undefined => undefined);
+    if(mine === voiceGeneration && opts.isAlive()) voicePicker.setVoices(voices);
+  };
+
   const resetCheck = () => {
     checked = undefined;
     checkGeneration++;
+    // A PhantomOps token decides its voices; others use Voice Models.
+    void refreshVoices();
     modelPicker.setOptions([]);
     const p = currentProvider();
     tokenField.label.textContent = p?.keyLabel || 'Token';
@@ -517,6 +539,7 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
       providerStatus.textContent = status;
       checked = {provider: p.id, token, result};
       fillModels(p, result);
+      if(result.status !== 'invalid') void refreshVoices();
     } catch(err) {
       if(generation !== checkGeneration) return;
       providerStatus.textContent = err instanceof Error && err.message ? err.message : 'Could not check the token';
@@ -608,6 +631,16 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
         ownNpub: await getOwnNpub()
       });
       if(created.channelError) console.warn('[AddContactPane] provider channel not running yet:', created.channelError);
+      const voice = voicePicker.value();
+      if(voice) {
+        // The contact works without it; a failed pick can be redone in its Edit pane.
+        const {nip19} = await import('nostr-tools');
+        const decoded = nip19.decode(created.npub);
+        if(decoded.type === 'npub') {
+          await applyNewContactVoice(decoded.data, voice)
+          .catch((err) => console.warn('[AddContactPane] voice not applied:', err));
+        }
+      }
       const result = await addTypedContact(managers, {
         npub: created.npub,
         nickname: nameField.value.trim(),

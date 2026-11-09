@@ -157,9 +157,9 @@ export interface ContactVoicePicker {
 
 /**
  * The gated Voice ID picker of a Provider contact's Edit pane. Undefined
- * (nothing shown) unless Voice Models is on in Settings and the contact runs
- * on this app's engine. The voices are the ones Test and Save stored for the
- * TTS model, so the list needs no network call.
+ * (nothing shown) unless the contact runs on this app's engine and has voice
+ * models: Voice Models on in Settings (the voices Test and Save stored for
+ * the TTS model), or, for a PhantomOps contact, its server's voice models.
  */
 export async function createContactVoicePicker(pubkey: string, call: VoiceModelsCall | undefined = getDesktopVoiceModels()?.call): Promise<ContactVoicePicker | undefined> {
   if(!call) return undefined;
@@ -182,4 +182,67 @@ export async function createContactVoicePicker(pubkey: string, call: VoiceModels
     },
     destroy: () => picker.destroy()
   };
+}
+
+export interface NewContactVoicePicker {
+  container: HTMLElement;
+  /** Show these voices ('No voice' first), or hide the picker (undefined). */
+  setVoices(voices: readonly string[] | undefined): void;
+  /** The picked Voice ID ('' = no voice, or the picker is hidden). */
+  value(): string;
+  destroy(): void;
+}
+
+/**
+ * The Voice ID picker of the New Contact pane (Provider type): the same
+ * picker as the Edit pane, so a voice can be chosen when the contact is
+ * created. Hidden until `setVoices` gets a list.
+ */
+export function createNewContactVoicePicker(): NewContactVoicePicker {
+  const {container, picker} = labelledPicker({testId: 'add-contact-voice-id', label: 'Voice ID', placeholder: 'No voice', limit: 20});
+  container.style.display = 'none';
+  let shown = false;
+  return {
+    container,
+    setVoices: (voices) => {
+      shown = !!voices?.length;
+      container.style.display = shown ? '' : 'none';
+      const previous = picker.getValue() || '';
+      const list = voices ?? [];
+      picker.setOptions([{value: '', label: 'No voice'}, ...list.map(v => ({value: v, label: v}))], list.includes(previous) ? previous : '');
+    },
+    value: () => shown ? picker.getValue() || '' : '',
+    destroy: () => picker.destroy()
+  };
+}
+
+export type PhantombotBridgeCall = (method: string, params?: Record<string, unknown>) => Promise<{ok: boolean; value?: any; error?: {message: string}}>;
+
+/**
+ * The voices a new contact on `provider` can pick from, or undefined when it
+ * gets no voice picker. A PhantomOps contact uses its server's voice models
+ * (asked with the typed token; no Voice Models setup needed); any other
+ * Provider contact uses Settings > Voice Models, when that is on.
+ */
+export async function newContactVoices(provider: string, token: string, bridge: PhantombotBridgeCall,
+  call: VoiceModelsCall | undefined = getDesktopVoiceModels()?.call): Promise<string[] | undefined> {
+  if(provider === 'phantomops') {
+    if(!token) return undefined;
+    const r = await bridge('platformModels.check', {apiKey: token}).catch((): undefined => undefined);
+    const m = r?.ok ? r.value : undefined;
+    const voices: string[] = Array.isArray(m?.tts?.voices) ? m.tts.voices.filter((v: unknown) => typeof v === 'string' && v) : [];
+    return m?.status === 'available' && m.stt && voices.length ? voices : undefined;
+  }
+  if(!call) return undefined;
+  const settings = await voiceValue(call, 'get').catch((): undefined => undefined);
+  if(!settings?.tts?.enabled || !settings?.stt?.enabled) return undefined;
+  const voices: string[] = Array.isArray(settings.tts.voices) ? settings.tts.voices : [];
+  return voices.length ? voices : undefined;
+}
+
+/** Give a just-created contact its Voice ID (the Edit pane's save, same rules). */
+export async function applyNewContactVoice(pubkey: string, voice: string, call: VoiceModelsCall | undefined = getDesktopVoiceModels()?.call): Promise<void> {
+  if(!voice) return;
+  if(!call) throw new Error('Voice settings unavailable');
+  await voiceValue(call, 'setContact', {pubkey, voice});
 }

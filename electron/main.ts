@@ -38,6 +38,7 @@ import {APP_SCHEME_PRIVILEGES} from './scheme';
 import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontendProxy';
 import {SPLASH_PATH} from './splash';
 import {VoiceModels} from './voiceModels';
+import {brainProvider, brainTarget, followBrainChange} from './platformModels';
 import {hostBinaryPath, isAllowedCaller, checkRequest, PhantombotHostClient} from './phantombot/client';
 import type {PhantombotMethod} from './phantombot/methods';
 import {runPhantombotProbe} from './phantombot/probe';
@@ -386,6 +387,10 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
   const request = checkRequest(method, params);
   if('code' in request) return {ok: false, error: request};
   const sender = event.sender;
+  // A brain save may move a contact onto or off PhantomOps: note where it was.
+  const brain = brainTarget(request.method, request.params);
+  const platformCall = (method: string, params: Record<string, unknown>) => ensurePhantombot().call(method as PhantombotMethod, params);
+  const brainBefore = brain ? await brainProvider(platformCall, brain.persona).catch(() => '') : '';
   const result = await ensurePhantombot().call(request.method, request.params, (turnId, data) => {
     if(!sender.isDestroyed()) sender.send('desktop:phantombot-event', {turnId, event: data});
   });
@@ -397,6 +402,19 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
     // A new persona has no Voice ID yet: this only drops a stale one and
     // never fails creation.
     try { await ensureVoiceModels().applyNewPersona(String(request.params.persona)); } catch{/* A broken voice store is not this persona's failure. */}
+  }
+  // PhantomOps contacts inherit their server's models (electron/platformModels.ts).
+  if(result.ok && brain) {
+    await followBrainChange(platformCall, brain.persona, brainBefore, brain.provider, {
+      reapplyAppWide: async(persona) => {
+        await ensureDecisionModel().applyTo(persona);
+        await ensureEmbeddings().applyTo(persona);
+      },
+      resetVoice: async(persona) => {
+        try { await ensureVoiceModels().resetPersona(persona); } catch{/* A broken voice store is not this persona's failure. */}
+      },
+      log: (line) => console.log('[platform-models]', line)
+    });
   }
   return result;
 });

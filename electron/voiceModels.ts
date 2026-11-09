@@ -10,9 +10,15 @@
  * there; only those personas are touched again when the setting changes (new
  * key or models, or switched off). npub Phantoms on other engines are never
  * touched.
+ *
+ * PhantomOps contacts are the exception: their voice models come from their
+ * PhantomOps server (platformModels.ts), so this setting never applies to
+ * them. Their Voice ID list is the server TTS model's voices, and picking
+ * one sets both directions to the server's models.
  */
 import {existsSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import type {PhantombotResult} from './preload';
+import {isPlatformPersona, personaPlatformModels, platformPersonas, platformVoiceReady, PHANTOMOPS_PROVIDER} from './platformModels';
 
 export type Modality = 'tts' | 'stt';
 export interface VoiceChoice {
@@ -147,9 +153,11 @@ export class VoiceModels {
         }
         if(!next.tts.voices.length) throw new Error('This text-to-speech model lists no voices');
       }
+      // PhantomOps contacts keep their server's voice whatever this says.
+      const platform = await platformPersonas(this.call, Object.keys(this.state.voices)).catch(() => new Set<string>());
       // A pick the new TTS model does not offer is dropped (same rule as
       // setContact) and named in `resets`; that persona's voice is turned off.
-      const resets = next.tts.enabled ? Object.keys(this.state.voices).filter(p => !next.tts.voices.includes(this.state.voices[p])) : [];
+      const resets = next.tts.enabled ? Object.keys(this.state.voices).filter(p => !platform.has(p) && !next.tts.voices.includes(this.state.voices[p])) : [];
       const previous = this.state.defaults;
       const previousVoices = this.state.voices;
       this.state.defaults = next;
@@ -160,7 +168,7 @@ export class VoiceModels {
       let applied = 0;
       let live = new Set<string>();
       try { live = new Set(await this.value<string[]>('personas.list')); } catch{failures.push('the Provider contacts could not be listed');}
-      for(const persona of Object.keys(previousVoices).filter(p => live.has(p))) {
+      for(const persona of Object.keys(previousVoices).filter(p => live.has(p) && !platform.has(p))) {
         try { await this.applyPersona(persona); applied++; } catch {failures.push(persona);}
       }
       return {settings: this.get(), applied, failures, resets};
@@ -209,6 +217,10 @@ export class VoiceModels {
    */
   async contact(pubkey: string) {
     const persona = await this.personaOf(pubkey);
+    if(persona && await isPlatformPersona(this.call, persona)) {
+      const m = await personaPlatformModels(this.call, persona);
+      return {persona, enabled: platformVoiceReady(m), voices: m.tts?.voices ?? [], voice: this.state.voices[persona] ?? '', phantomops: true};
+    }
     const d = this.state.defaults;
     return {
       persona,
@@ -223,6 +235,7 @@ export class VoiceModels {
       const persona = await this.personaOf(pubkey);
       if(!persona) throw new Error('Voice is only for Provider contacts');
       if(typeof voice !== 'string') throw new Error('Invalid voice');
+      if(await isPlatformPersona(this.call, persona)) return this.setPlatformVoice(pubkey, persona, voice);
       const d = this.state.defaults;
       if(voice && !(d.tts.enabled && d.stt.enabled)) throw new Error('Turn on Voice Models in Settings first');
       if(voice && !d.tts.voices.includes(voice)) throw new Error('This model does not offer that voice');
@@ -247,6 +260,41 @@ export class VoiceModels {
       return this.contact(pubkey);
     });
   }
+  /** A PhantomOps contact's Voice ID: the server's voices, both directions on the server's models. */
+  private async setPlatformVoice(pubkey: string, persona: string, voice: string) {
+    if(voice) {
+      const m = await personaPlatformModels(this.call, persona);
+      if(!platformVoiceReady(m)) throw new Error(m.status === 'available' ? 'This PhantomOps server has no voice models' : `PhantomOps unavailable (${m.detail})`);
+      if(!m.tts!.voices.includes(voice)) throw new Error('This model does not offer that voice');
+    }
+    const config = voice ?
+      {tts: {enabled: true, provider: PHANTOMOPS_PROVIDER, voice}, stt: {enabled: true, provider: PHANTOMOPS_PROVIDER}} :
+      {tts: {enabled: false}, stt: {enabled: false}};
+    await this.value('persona.configure', {persona, config: {voice: config}});
+    if(voice) this.state.voices[persona] = voice;
+    else delete this.state.voices[persona];
+    this.persist();
+    const status = await this.value<any>('persona.phantomchat.status', {persona});
+    if(status?.state === 'failed') throw channelRestartError();
+    return this.contact(pubkey);
+  }
+
+  /**
+   * The contact's brain moved between PhantomOps and another provider: the
+   * old Voice ID belongs to the other side's model, so it is dropped and
+   * voice is turned off until a new one is picked. Never throws.
+   */
+  resetPersona(persona: string) {
+    return this.exclusive(async() => {
+      const had = Object.hasOwn(this.state.voices, persona);
+      delete this.state.voices[persona];
+      if(had) {
+        try { this.persist(); } catch{/* Dropped again on the next save. */}
+      }
+      await this.call('persona.configure', {persona, config: {voice: {tts: {enabled: false}, stt: {enabled: false}}}}).catch(() => undefined);
+    });
+  }
+
   async handle(method: unknown, params: any): Promise<PhantombotResult> {
     try {
       let value: unknown;

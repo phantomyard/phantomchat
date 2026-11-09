@@ -21,7 +21,7 @@ import {createVoiceForm, voiceValue, type VoiceModelsCall} from '@lib/phantomcha
 export async function mountVoiceModels(parent: {append(...nodes: Node[]): void}, call: VoiceModelsCall): Promise<{save(): Promise<void>; dispose(): void}> {
   const [settings, providers] = await Promise.all([voiceValue(call, 'get'), voiceValue(call, 'providers')]);
   const section = new SettingSection({caption: true});
-  section.caption.textContent = 'One provider and key for text-to-speech (how your assistants answer with voice notes) and speech-to-text (how they read yours). Each Provider contact picks its own voice in its Edit pane.';
+  section.caption.textContent = 'One provider and key for text-to-speech (how your assistants answer with voice notes) and speech-to-text (how they read yours). Each Provider contact picks its own voice when you add it or in its Edit pane. PhantomOps contacts use their server\'s voice models.';
   const form = createVoiceForm(settings, providers, call);
   section.content.append(form.section);
   parent.append(section.container);

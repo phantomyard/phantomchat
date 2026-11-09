@@ -10,7 +10,9 @@
  * and answer with a verdict and model ids (and `dims`) only. `persona.brain`
  * reports the native provider/model and whether a key is stored, and
  * `persona.brainCheck` checks that stored key inside the engine: neither
- * returns it.
+ * returns it. `platformModels.check` takes a PhantomOps token and answers
+ * with model ids and Voice IDs; `persona.platformModels` asks with the
+ * stored one.
  *
  * `tools.run` runs one of Pi's built-in tools on this PC, for the Local tools
  * protocol (docs/LOCAL-TOOLS.md). The page decides who may call it; the bridge
@@ -30,9 +32,11 @@ export const PHANTOMBOT_METHODS = [
   'decisionModels.check',
   'embeddings.providers',
   'embeddings.check',
+  'platformModels.check',
   'persona.configure',
   'persona.brain',
   'persona.brainCheck',
+  'persona.platformModels',
   'persona.secrets.set',
   'persona.secrets.has',
   'persona.secrets.delete',

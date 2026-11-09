@@ -40,6 +40,8 @@ export interface PersonaLike {
   /** Engines from before the Provider contact editor lack these. */
   brain?(): Promise<unknown>;
   brainCheck?(): Promise<unknown>;
+  /** Engines from before PhantomOps platform models (phantombot #794) lack it. */
+  platformModels?(): Promise<unknown>;
   secrets: {
     set(name: string, value: string): Promise<void>;
     has(name: string): Promise<boolean>;
@@ -102,6 +104,8 @@ export interface EngineLike {
   };
   /** Engines from before Specialized Models lack it. */
   embeddings?: {check(input: unknown): Promise<unknown>; providers?(): Promise<unknown>};
+  /** Engines from before PhantomOps platform models (phantombot #794) lack it. */
+  platformModels?: {check(apiKey: string): Promise<unknown>};
   persona(name: string): PersonaLike;
 }
 
@@ -363,6 +367,17 @@ export function createDispatcher(
           ...(baseUrl === undefined ? {} : {baseUrl}),
           ...(model === undefined ? {} : {model})
         });
+      }
+      case 'platformModels.check': {
+        if(!engine.platformModels) throw new BridgeError('not_supported', 'Update the engine for PhantomOps models');
+        const apiKey = p.apiKey ?? '';
+        if(typeof apiKey !== 'string' || apiKey.length > 4096) throw invalid('apiKey must be a string');
+        return engine.platformModels.check(apiKey);
+      }
+      case 'persona.platformModels': {
+        const persona = engine.persona(personaName(p));
+        if(!persona.platformModels) throw new BridgeError('not_supported', 'Update the engine for PhantomOps models');
+        return persona.platformModels();
       }
       case 'persona.configure': {
         const config = optRecord(p, 'config');
