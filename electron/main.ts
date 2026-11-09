@@ -513,7 +513,9 @@ function ensureVoiceModels(): VoiceModels {
     (method, params) => ensurePhantombot().call(method as PhantombotMethod, params ?? {}));
 }
 // Contacts already on PhantomOps move onto their server's models once, without a re-save.
+// Same gate as the boot path: no engine root means no personas, so never start the host for it.
 app.whenReady().then(() => {
+  if(!existsSync(join(app.getPath('userData'), 'phantombot'))) return;
   setTimeout(() => void adoptPlatformContacts(
     (method, params) => ensurePhantombot().call(method as PhantombotMethod, params),
     adoptedFile(join(app.getPath('userData'), 'platform-models-adopted.json')),
