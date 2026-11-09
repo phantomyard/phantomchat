@@ -405,7 +405,8 @@ ipcMain.handle('desktop:phantombot:call', async(event, method: unknown, params: 
   }
   // PhantomOps contacts inherit their server's models (electron/platformModels.ts).
   if(result.ok && brain) {
-    await followBrainChange(platformCall, brain.persona, brainBefore, brain.provider, {
+    // Best-effort and self-logging: detached so the Save returns at once.
+    void followBrainChange(platformCall, brain.persona, brainBefore, brain.provider, {
       reapplyAppWide: async(persona) => {
         await ensureDecisionModel().applyTo(persona);
         await ensureEmbeddings().applyTo(persona);

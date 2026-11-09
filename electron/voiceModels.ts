@@ -18,7 +18,7 @@
  */
 import {existsSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import type {PhantombotResult} from './preload';
-import {isPlatformPersona, personaPlatformModels, platformPersonas, platformVoiceReady, PHANTOMOPS_PROVIDER} from './platformModels';
+import {isPlatformPersona, lastPlatformModels, platformPersonas, platformVoiceReady, PHANTOMOPS_PROVIDER} from './platformModels';
 
 export type Modality = 'tts' | 'stt';
 export interface VoiceChoice {
@@ -218,7 +218,8 @@ export class VoiceModels {
   async contact(pubkey: string) {
     const persona = await this.personaOf(pubkey);
     if(persona && await isPlatformPersona(this.call, persona)) {
-      const m = await personaPlatformModels(this.call, persona);
+      // The last known answer: the Edit pane never waits on the server.
+      const m = await lastPlatformModels(this.call, persona);
       return {persona, enabled: platformVoiceReady(m), voices: m.tts?.voices ?? [], voice: this.state.voices[persona] ?? '', phantomops: true};
     }
     const d = this.state.defaults;
@@ -263,7 +264,7 @@ export class VoiceModels {
   /** A PhantomOps contact's Voice ID: the server's voices, both directions on the server's models. */
   private async setPlatformVoice(pubkey: string, persona: string, voice: string) {
     if(voice) {
-      const m = await personaPlatformModels(this.call, persona);
+      const m = await lastPlatformModels(this.call, persona);
       if(!platformVoiceReady(m)) throw new Error(m.status === 'available' ? 'This PhantomOps server has no voice models' : `PhantomOps unavailable (${m.detail})`);
       if(!m.tts!.voices.includes(voice)) throw new Error('This model does not offer that voice');
     }

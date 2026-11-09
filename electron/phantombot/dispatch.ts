@@ -368,6 +368,9 @@ export function createDispatcher(
           ...(model === undefined ? {} : {model})
         });
       }
+      case 'platformModels.supported':
+        // Local capability probe, no network: older engines lack both methods.
+        return !!engine.platformModels;
       case 'platformModels.check': {
         if(!engine.platformModels) throw new BridgeError('not_supported', 'Update the engine for PhantomOps models');
         const apiKey = p.apiKey ?? '';

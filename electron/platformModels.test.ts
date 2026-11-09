@@ -7,7 +7,7 @@ import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nip19} from 'nostr-tools';
-import {followBrainChange, brainTarget, inheritPlatformModels} from './platformModels';
+import {followBrainChange, brainTarget, forgetPlatformModels, inheritPlatformModels} from './platformModels';
 import {VoiceModels, type SecretStorage} from './voiceModels';
 import {DecisionModelSettings} from './decisionModel';
 import {EmbeddingsSettings} from './embeddings';
@@ -19,6 +19,10 @@ let configures: {persona: string; config: any}[];
 /** persona -> brain provider */
 let brains: Record<string, string>;
 let platform: any;
+/** Whether the fake engine has PhantomOps platform models (phantombot #794). */
+let supported: boolean;
+/** When set, `persona.platformModels` waits on it (a slow server). */
+let gate: Promise<void> | undefined;
 
 const plain: SecretStorage = {available: () => true, encrypt: (v) => Buffer.from(v), decrypt: (b) => b.toString()};
 
@@ -27,7 +31,12 @@ async function call(method: string, p: any = {}): Promise<any> {
   switch(method) {
     case 'personas.list': value = Object.keys(brains); break;
     case 'persona.brain': value = brains[p.persona] ? {provider: brains[p.persona], hasKey: true} : {hasKey: false}; break;
-    case 'persona.platformModels': value = brains[p.persona] === 'phantomops' ? platform : {status: 'unavailable', detail: 'not a PhantomOps contact'}; break;
+    case 'platformModels.supported': value = supported; break;
+    case 'persona.platformModels':
+      if(!supported) return {ok: false as const, error: {code: 'not_supported', message: 'Update the engine for PhantomOps models'}};
+      if(gate) await gate;
+      value = brains[p.persona] === 'phantomops' ? platform : {status: 'unavailable', detail: 'not a PhantomOps contact'};
+      break;
     case 'persona.configure': configures.push({persona: p.persona, config: structuredClone(p.config)}); break;
     case 'persona.phantomchat.status': value = {state: 'running'}; break;
     case 'persona.phantomchat.info': value = {npub: p.persona === 'ops' ? nip19.npubEncode(OPS_PUBKEY) : nip19.npubEncode('c'.repeat(64))}; break;
@@ -43,8 +52,11 @@ async function call(method: string, p: any = {}): Promise<any> {
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'pc-platform-'));
   configures = [];
+  supported = true;
+  gate = undefined;
+  forgetPlatformModels();
   brains = {ops: 'phantomops', plain: 'openrouter'};
-  platform = {status: 'available', detail: '', embeddings: 'openai/te3', decision: 'typesafe/jev-1.13', tts: {model: 'openai/tts', voices: ['nova', 'echo']}, stt: 'openai/whisper'};
+  platform = {status: 'available', detail: '', embeddings: 'openai/te3', embeddingsDims: 1536, decision: 'typesafe/jev-1.13', tts: {model: 'openai/tts', voices: ['nova', 'echo']}, stt: 'openai/whisper'};
 });
 afterEach(() => rmSync(root, {recursive: true, force: true}));
 
@@ -61,10 +73,20 @@ describe('brain changes', () => {
     const f = followers();
     await followBrainChange(call, 'ops', 'openrouter', 'phantomops', f);
     expect(configures).toEqual([{persona: 'ops', config: {
-      embeddings: {provider: 'phantomops', model: 'openai/te3'},
+      embeddings: {provider: 'phantomops', model: 'openai/te3', dims: 1536},
       decisionModel: {provider: 'phantomops', judge: true, router: true}
     }}]);
     expect(f.resetVoice).toHaveBeenCalledWith('ops');
+    expect(f.reapplyAppWide).not.toHaveBeenCalled();
+  });
+
+  it('an engine that cannot inherit leaves models and voice alone', async() => {
+    supported = false;
+    const f = followers();
+    await followBrainChange(call, 'ops', 'openrouter', 'phantomops', f);
+    await followBrainChange(call, 'ops', 'phantomops', 'openrouter', f);
+    expect(configures).toEqual([]);
+    expect(f.resetVoice).not.toHaveBeenCalled();
     expect(f.reapplyAppWide).not.toHaveBeenCalled();
   });
 
@@ -110,6 +132,24 @@ describe('Voice ID of a PhantomOps contact', () => {
 
   it('offers the server voices without any Voice Models setup', async() => {
     expect(await voice.contact(OPS_PUBKEY)).toEqual({persona: 'ops', enabled: true, voices: ['nova', 'echo'], voice: '', phantomops: true});
+  });
+
+  it('the Edit pane serves the last answer when the server is slow', async() => {
+    expect((await voice.contact(OPS_PUBKEY)).voices).toEqual(['nova', 'echo']);
+    let release!: () => void;
+    gate = new Promise((r) => {release = r;});
+    platform = {...platform, tts: {model: 'openai/tts', voices: ['onyx']}};
+    expect((await voice.contact(OPS_PUBKEY)).voices).toEqual(['nova', 'echo']);
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    expect((await voice.contact(OPS_PUBKEY)).voices).toEqual(['onyx']);
+  });
+
+  it('with no answer yet, a slow server leaves the picker off instead of blocking', async() => {
+    gate = new Promise(() => {});
+    const started = Date.now();
+    expect((await voice.contact(OPS_PUBKEY)).enabled).toBe(false);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it('no picker when the server has no voice models', async() => {
@@ -161,6 +201,14 @@ describe('app-wide Decision Model and Embeddings skip PhantomOps contacts', () =
     expect(configures.map((c) => c.persona)).toEqual(['plain']);
   });
 
+  it('an engine that cannot inherit still gets the app-wide saves', async() => {
+    supported = false;
+    const s = new DecisionModelSettings({file: join(root, 'dm.json'), call, cipher: plain});
+    const r = await s.save({enabled: true, provider: 'openrouter', model: 'typesafe/jev-1.13', apiKey: 'sk-or'});
+    expect(r.ok).toBe(true);
+    expect(configures.map((c) => c.persona).sort()).toEqual(['ops', 'plain']);
+  });
+
   it('Embeddings save and applyTo', async() => {
     const s = new EmbeddingsSettings({file: join(root, 'emb.json'), call, cipher: plain});
     const r = await s.save({enabled: true, provider: 'gemini', model: 'gemini-embedding-001', apiKey: 'g-key'});
@@ -188,6 +236,7 @@ describe('bridge', () => {
 
   it('an older engine answers not_supported', async() => {
     const engine = engineWith({});
+    expect((await send(engine, {id: 0, method: 'platformModels.supported', params: {}}))[0]).toEqual({id: 0, result: false});
     expect((await send(engine, {id: 1, method: 'platformModels.check', params: {apiKey: 'pok_x'}}))[0]).toMatchObject({error: {code: 'not_supported'}});
     expect((await send(engine, {id: 2, method: 'persona.platformModels', params: {persona: 'ops'}}))[0]).toMatchObject({error: {code: 'not_supported'}});
   });
@@ -198,6 +247,7 @@ describe('bridge', () => {
     const engine = engineWith({platformModels: {check}}, {platformModels});
     expect((await send(engine, {id: 1, method: 'platformModels.check', params: {apiKey: 'pok_x'}}))[0]).toEqual({id: 1, result: {status: 'available'}});
     expect(check).toHaveBeenCalledWith('pok_x');
+    expect((await send(engine, {id: 0, method: 'platformModels.supported', params: {}}))[0]).toEqual({id: 0, result: true});
     expect((await send(engine, {id: 2, method: 'persona.platformModels', params: {persona: 'ops'}}))[0]).toEqual({id: 2, result: {status: 'available', stt: 'w'}});
   });
 });
