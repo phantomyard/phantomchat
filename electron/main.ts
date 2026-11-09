@@ -38,7 +38,7 @@ import {APP_SCHEME_PRIVILEGES} from './scheme';
 import {createFrontendProxy, ENTRY_PATH, resolveFrontendOrigin} from './frontendProxy';
 import {SPLASH_PATH} from './splash';
 import {VoiceModels} from './voiceModels';
-import {brainProvider, brainTarget, followBrainChange} from './platformModels';
+import {adoptedFile, adoptPlatformContacts, brainProvider, brainTarget, followBrainChange} from './platformModels';
 import {hostBinaryPath, isAllowedCaller, checkRequest, PhantombotHostClient} from './phantombot/client';
 import type {PhantombotMethod} from './phantombot/methods';
 import {runPhantombotProbe} from './phantombot/probe';
@@ -512,6 +512,17 @@ function ensureVoiceModels(): VoiceModels {
   return voiceModels ??= new VoiceModels(join(app.getPath('userData'), 'voice-models.enc'), decisionModelCipher,
     (method, params) => ensurePhantombot().call(method as PhantombotMethod, params ?? {}));
 }
+// Contacts already on PhantomOps move onto their server's models once, without a re-save.
+app.whenReady().then(() => {
+  setTimeout(() => void adoptPlatformContacts(
+    (method, params) => ensurePhantombot().call(method as PhantombotMethod, params),
+    adoptedFile(join(app.getPath('userData'), 'platform-models-adopted.json')),
+    {
+      adoptVoice: (persona, voices) => ensureVoiceModels().adoptPlatformVoice(persona, voices),
+      log: (line) => console.log('[platform-models]', line)
+    }
+  ), 45_000).unref?.();
+});
 ipcMain.handle('desktop:voice-models', async(event, method: unknown, params: unknown) => {
   if(!isAllowedCaller(event.senderFrame?.url, event.senderFrame === event.sender.mainFrame, isDev ? DEV_URL : undefined)) {
     return {ok: false, error: {code: 'forbidden', message: 'not available to this page'}};

@@ -3,11 +3,11 @@
  * Voice Models' PhantomOps branch, and the app-wide settings skipping them.
  */
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {mkdtempSync, rmSync} from 'node:fs';
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nip19} from 'nostr-tools';
-import {followBrainChange, brainTarget, forgetPlatformModels, inheritPlatformModels} from './platformModels';
+import {adoptedFile, adoptPlatformContacts, followBrainChange, brainTarget, forgetPlatformModels, inheritPlatformModels} from './platformModels';
 import {VoiceModels, type SecretStorage} from './voiceModels';
 import {DecisionModelSettings} from './decisionModel';
 import {EmbeddingsSettings} from './embeddings';
@@ -188,6 +188,72 @@ describe('Voice ID of a PhantomOps contact', () => {
     await voice.resetPersona('ops');
     expect(configures.at(-1)?.config).toEqual({voice: {tts: {enabled: false}, stt: {enabled: false}}});
     expect((await voice.contact(OPS_PUBKEY)).voice).toBe('');
+  });
+});
+
+describe('startup move of existing PhantomOps contacts', () => {
+  /** A voice store as an older build left it: `picks` chosen from the app-wide Voice Models. */
+  const voiceWith = (picks: Record<string, string>) => {
+    writeFileSync(join(root, 'voice.enc'), JSON.stringify({defaults: {}, voices: picks}));
+    return new VoiceModels(join(root, 'voice.enc'), plain, call);
+  };
+  const adopt = (voice: VoiceModels, file = join(root, 'adopted.json'), log: string[] = []) =>
+    adoptPlatformContacts(call, adoptedFile(file), {adoptVoice: (p, v) => voice.adoptPlatformVoice(p, v), log: (l) => log.push(l)});
+
+  it('moves a PhantomOps contact onto its server models once, without a re-save', async() => {
+    const voice = voiceWith({});
+    await adopt(voice);
+    expect(configures).toEqual([{persona: 'ops', config: {
+      embeddings: {provider: 'phantomops', model: 'openai/te3', dims: 1536},
+      decisionModel: {provider: 'phantomops', judge: true, router: true}
+    }}]);
+    configures = [];
+    await adopt(voice);
+    expect(configures).toEqual([]);
+  });
+
+  it('an app-wide Voice ID the server lacks is dropped and voice turned off', async() => {
+    const voice = voiceWith({ops: 'alloy', plain: 'alloy'});
+    await adopt(voice);
+    expect(configures.at(-1)).toEqual({persona: 'ops', config: {voice: {tts: {enabled: false}, stt: {enabled: false}}}});
+    expect((await voice.contact(OPS_PUBKEY)).voice).toBe('');
+    expect(configures.some((c) => c.persona === 'plain')).toBe(false);
+  });
+
+  it('a Voice ID the server offers is kept, now on the server models', async() => {
+    const voice = voiceWith({ops: 'echo'});
+    await adopt(voice);
+    expect(configures.at(-1)).toEqual({persona: 'ops', config: {voice: {
+      tts: {enabled: true, provider: 'phantomops', voice: 'echo'}, stt: {enabled: true, provider: 'phantomops'}
+    }}});
+    expect((await voice.contact(OPS_PUBKEY)).voice).toBe('echo');
+  });
+
+  it('an unreachable server is tried again next startup', async() => {
+    const voice = voiceWith({ops: 'alloy'});
+    platform = {status: 'unavailable', detail: 'down'};
+    await adopt(voice);
+    expect(configures).toEqual([]);
+    forgetPlatformModels();
+    platform = {status: 'available', detail: '', embeddings: 'openai/te3', embeddingsDims: 1536, tts: {model: 'openai/tts', voices: ['nova']}, stt: 'openai/whisper'};
+    await adopt(voice);
+    expect(configures.map((c) => Object.keys(c.config)[0])).toEqual(['embeddings', 'voice']);
+  });
+
+  it('an engine that cannot inherit moves nothing and remembers nothing', async() => {
+    supported = false;
+    const voice = voiceWith({ops: 'alloy'});
+    await adopt(voice);
+    expect(configures).toEqual([]);
+    supported = true;
+    await adopt(voice);
+    expect(configures.length).toBe(2);
+  });
+
+  it('a broken adopted file counts as none yet', async() => {
+    writeFileSync(join(root, 'adopted.json'), '{not json');
+    await adopt(voiceWith({}));
+    expect(configures.length).toBe(1);
   });
 });
 

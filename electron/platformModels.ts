@@ -15,8 +15,13 @@
  *     is left on it;
  *   - its Voice ID list is the server's TTS voices (voiceModels.ts).
  *
+ *   - contacts already on PhantomOps are moved once at startup
+ *     (`adoptPlatformContacts`), so nobody has to re-save them.
+ *
  * No Electron import, so vitest drives it with a fake bridge.
  */
+import {readFileSync, renameSync, writeFileSync} from 'node:fs';
+
 export type PlatformCall = (method: string, params: Record<string, unknown>) => Promise<
   {ok: true; value: unknown} | {ok: false; error: {code: string; message: string}}
 >;
@@ -143,8 +148,12 @@ export const platformVoiceReady = (m: PlatformModels) => m.status === 'available
  * save tries again). Never throws; returns what it did, for the log.
  */
 export async function inheritPlatformModels(call: PlatformCall, persona: string): Promise<string> {
-  const models = await personaPlatformModels(call, persona);
-  if(models.status !== 'available') return `not inherited (${models.detail})`;
+  return (await inheritFrom(call, persona, await personaPlatformModels(call, persona))).line;
+}
+
+/** `inheritPlatformModels` with the server's answer already in hand; `ok` = the persona now follows it. */
+async function inheritFrom(call: PlatformCall, persona: string, models: PlatformModels): Promise<{ok: boolean; line: string}> {
+  if(models.status !== 'available') return {ok: false, line: `not inherited (${models.detail})`};
   const config = {
     embeddings: models.embeddings ?
       {provider: PHANTOMOPS_PROVIDER, model: models.embeddings, ...(models.embeddingsDims ? {dims: models.embeddingsDims} : {})} :
@@ -154,8 +163,78 @@ export async function inheritPlatformModels(call: PlatformCall, persona: string)
       {judge: false, router: false}
   };
   const res = await call('persona.configure', {persona, config});
-  if(!res.ok) return `not inherited (${res.error.message})`;
-  return `embeddings ${models.embeddings ? 'from PhantomOps' : 'off'}, decision model ${models.decision ? 'from PhantomOps' : 'off'}`;
+  if(!res.ok) return {ok: false, line: `not inherited (${res.error.message})`};
+  return {ok: true, line: `embeddings ${models.embeddings ? 'from PhantomOps' : 'off'}, decision model ${models.decision ? 'from PhantomOps' : 'off'}`};
+}
+
+/** Which personas the startup pass has already moved onto their server's models. */
+export interface AdoptedStore {
+  has(persona: string): boolean;
+  add(persona: string): void;
+}
+
+/** An `AdoptedStore` kept as a JSON list in one file (a missing or broken file = none yet). */
+export function adoptedFile(file: string): AdoptedStore {
+  let names: Set<string> | undefined;
+  const load = () => {
+    if(names) return names;
+    try {
+      const raw = JSON.parse(readFileSync(file, 'utf8'));
+      names = new Set(Array.isArray(raw?.personas) ? raw.personas.filter((x: unknown): x is string => typeof x === 'string') : []);
+    } catch{names = new Set();}
+    return names;
+  };
+  return {
+    has: (persona) => load().has(persona),
+    add: (persona) => {
+      load().add(persona);
+      const temp = file + '.tmp';
+      writeFileSync(temp, JSON.stringify({personas: [...load()]}));
+      renameSync(temp, file);
+    }
+  };
+}
+
+export interface AdoptFollowers {
+  /**
+   * Keep the contact's Voice ID if the server offers it (now on the server's
+   * models), else drop it and turn voice off. `voices` is empty when the
+   * server has no voice.
+   */
+  adoptVoice(persona: string, voices: string[]): Promise<void>;
+  log(line: string): void;
+}
+
+/**
+ * Contacts that were on PhantomOps before this app could inherit (or before
+ * its engine could) still carry the app-wide models, and only a brain save
+ * used to move them. On startup, each PhantomOps persona not yet moved is
+ * moved once, as a brain save onto PhantomOps would: its server's embeddings
+ * and decision model, and a Voice ID the server offers. An unreachable
+ * server leaves it for the next startup. Never throws.
+ */
+export async function adoptPlatformContacts(call: PlatformCall, store: AdoptedStore, f: AdoptFollowers): Promise<void> {
+  try {
+    if(!await platformSupported(call)) return;
+    const list = await call('personas.list', {});
+    const names = list.ok && Array.isArray(list.value) ? list.value.filter((x: unknown): x is string => typeof x === 'string') : [];
+    for(const persona of names) {
+      if(store.has(persona)) continue;
+      try {
+        if(await brainProvider(call, persona) !== PHANTOMOPS_PROVIDER) continue;
+        const models = await personaPlatformModels(call, persona);
+        const done = await inheritFrom(call, persona, models);
+        f.log(`${persona}: ${done.line}`);
+        if(!done.ok) continue;
+        await f.adoptVoice(persona, platformVoiceReady(models) ? models.tts!.voices : []);
+        store.add(persona);
+      } catch(err) {
+        f.log(`${persona}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  } catch(err) {
+    f.log(`startup pass: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** The brain provider a `persona.configure` call sets, lowercased, or undefined. */
