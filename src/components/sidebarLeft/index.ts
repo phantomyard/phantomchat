@@ -1067,8 +1067,9 @@ export class AppSidebarLeft extends SidebarSlider {
   /**
    * Session space + button (owner batch 11): the single-contact picker, then a
    * SESSION peer. No name prompt, no multi-select — one phantom per session, the
-   * title starts as 'New session' and is replaced with the first 50 characters of
-   * the first prompt (GroupAPI.sendMessage). The picker's click handler is
+   * title starts as 'New session' and is replaced with the first
+   * SESSION_NAME_PREFIX_LENGTH characters of the first prompt
+   * (GroupAPI.sendMessage). The picker's click handler is
    * replaced by the `onPickPeer` hook, so picking a row creates the session
    * instead of opening a DM.
    *
