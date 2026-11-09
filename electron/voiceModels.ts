@@ -296,6 +296,26 @@ export class VoiceModels {
     });
   }
 
+  /**
+   * Startup move of an existing PhantomOps contact (platformModels.ts
+   * adoptPlatformContacts): a Voice ID its server offers is kept and put on
+   * the server's models; any other is dropped and voice turned off. Throws
+   * when the engine refuses, so the move is tried again next startup.
+   */
+  adoptPlatformVoice(persona: string, voices: string[]) {
+    return this.exclusive(async() => {
+      const picked = this.state.voices[persona];
+      if(!picked) return;
+      if(voices.includes(picked)) {
+        await this.value('persona.configure', {persona, config: {voice: {tts: {enabled: true, provider: PHANTOMOPS_PROVIDER, voice: picked}, stt: {enabled: true, provider: PHANTOMOPS_PROVIDER}}}});
+        return;
+      }
+      await this.value('persona.configure', {persona, config: {voice: {tts: {enabled: false}, stt: {enabled: false}}}});
+      delete this.state.voices[persona];
+      this.persist();
+    });
+  }
+
   async handle(method: unknown, params: any): Promise<PhantombotResult> {
     try {
       let value: unknown;
