@@ -443,9 +443,9 @@ export class GroupAPI {
    */
   /**
    * Sessions take their name from the first thing the user puts in them: the
-   * first 50 characters of the first prompt, no ellipsis. Fire-and-forget — the
-   * rename is a control-message broadcast, and the user's send must never wait
-   * on it.
+   * first SESSION_NAME_PREFIX_LENGTH characters of the first prompt, no
+   * ellipsis. Fire-and-forget — the rename is a control-message broadcast, and
+   * the user's send must never wait on it.
    *
    * Shared by `sendMessage` (text) and `sendFile` (attachment caption) because
    * whichever of the two lands first is the session's first prompt. Naming only
@@ -497,9 +497,10 @@ export class GroupAPI {
     const msgType = opts.type || 'text';
     const replyToRumorId = opts.replyToRumorId;
 
-    // Sessions take their name from the FIRST prompt (first 50 characters, no
-    // ellipsis). Only text names a session here; see `sendFile` for the
-    // attachment-caption half — the two share `maybeAutoNameSession`.
+    // Sessions take their name from the FIRST prompt (first
+    // SESSION_NAME_PREFIX_LENGTH characters, no ellipsis). Only text names a
+    // session here; see `sendFile` for the attachment-caption half — the two
+    // share `maybeAutoNameSession`.
     if(msgType === 'text') this.maybeAutoNameSession(group, content);
 
     // Pin a single timestamp for the whole send so the payload, handler and

@@ -344,20 +344,24 @@ describe('dialog construction', () => {
 });
 
 describe('session naming', () => {
-  it('takes the first 50 characters of the first prompt, with no ellipsis', () => {
+  it('takes the first SESSION_NAME_PREFIX_LENGTH characters of the first prompt, with no ellipsis', () => {
     expect(DEFAULT_SESSION_GROUP_NAME).toBe('New session');
-    expect(SESSION_NAME_PREFIX_LENGTH).toBe(50);
+    // 128 is the edit pane's own name cap (phantomchatGroupEdit maxLength), so
+    // an auto title can never be longer than a name the user could type there.
+    expect(SESSION_NAME_PREFIX_LENGTH).toBe(128);
     expect(sessionTitleFromPrompt('Add a retry loop to the polls now')).toBe('Add a retry loop to the polls now');
     expect(sessionTitleFromPrompt('Add a retry loop to the  polls now')).toBe('Add a retry loop to the polls now');
     expect(sessionTitleFromPrompt('short')).toBe('short');
-    // exactly 50 characters — kept whole, nothing appended
-    const fifty = '1'.repeat(50);
-    expect(sessionTitleFromPrompt(fifty)).toBe(fifty);
-    expect(sessionTitleFromPrompt(fifty + '2')).toBe(fifty);
+    // exactly at the cap — kept whole, nothing appended
+    const atCap = '1'.repeat(128);
+    expect(sessionTitleFromPrompt(atCap)).toBe(atCap);
+    expect(sessionTitleFromPrompt(atCap + '2')).toBe(atCap);
     // a hard cut that lands on a space does not leave a trailing gap
-    expect(sessionTitleFromPrompt('a'.repeat(49) + ' tail')).toBe('a'.repeat(49));
+    expect(sessionTitleFromPrompt('a'.repeat(127) + ' tail')).toBe('a'.repeat(127));
     expect(sessionTitleFromPrompt('  multi\n  line   prompt  ')).toBe('multi line prompt');
     expect(sessionTitleFromPrompt('')).toBe('');
+    // an explicit limit still wins over the default
+    expect(sessionTitleFromPrompt('abcdef', 3)).toBe('abc');
   });
 
   it('prefills the composer with the selection verbatim, only trimmed', () => {
