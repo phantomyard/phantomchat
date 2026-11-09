@@ -16,6 +16,7 @@
  *
  * No Electron import, so vitest drives it with a fake bridge and cipher.
  */
+import {isPlatformPersona, platformPersonas} from './platformModels';
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 
@@ -210,7 +211,9 @@ export class DecisionModelSettings {
     const config = configurePayload(next.enabled, provider, model, key);
     const failed: {persona: string; error: string}[] = [];
     let applied = 0;
-    for(const persona of names) {
+    // PhantomOps contacts take this model from their server, never from here.
+    const platform = await platformPersonas(this.opts.call, names);
+    for(const persona of names.filter((n) => !platform.has(n))) {
       const res = await this.opts.call('persona.configure', {persona, config});
       if(res.ok) applied++;
       else failed.push({persona, error: res.error.message});
@@ -226,6 +229,7 @@ export class DecisionModelSettings {
     await this.#saving;
     const s = this.#stored;
     if(!s) return;
+    if(await isPlatformPersona(this.opts.call, persona)) return;
     const key = this.#key();
     if(s.enabled && !key) {
       this.opts.log?.(`decision model: ${persona} not configured (no stored key)`);
