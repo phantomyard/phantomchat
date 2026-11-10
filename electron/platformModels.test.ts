@@ -145,11 +145,29 @@ describe('Voice ID of a PhantomOps contact', () => {
     expect((await voice.contact(OPS_PUBKEY)).voices).toEqual(['onyx']);
   });
 
-  it('with no answer yet, a slow server leaves the picker off instead of blocking', async() => {
-    gate = new Promise(() => {});
+  it('with no answer yet, a slow server says pending instead of blocking, and `wait` gets the answer', async() => {
+    let release!: () => void;
+    gate = new Promise((r) => {release = r;});
     const started = Date.now();
-    expect((await voice.contact(OPS_PUBKEY)).enabled).toBe(false);
+    const first = await voice.contact(OPS_PUBKEY);
+    expect(first).toMatchObject({enabled: false, pending: true});
     expect(Date.now() - started).toBeLessThan(5000);
+    const waited = voice.contact(OPS_PUBKEY, true);
+    release();
+    expect(await waited).toEqual({persona: 'ops', enabled: true, voices: ['nova', 'echo'], voice: '', phantomops: true});
+  });
+
+  it('an unreachable server says why, so the Edit pane does not just hide the picker', async() => {
+    platform = {status: 'unavailable', detail: 'PhantomOps unavailable: HTTP 502'};
+    expect(await voice.contact(OPS_PUBKEY)).toMatchObject({enabled: false, unavailable: 'PhantomOps unavailable: HTTP 502'});
+  });
+
+  it('the bridge passes `wait` through', async() => {
+    let release!: () => void;
+    gate = new Promise((r) => {release = r;});
+    const res = voice.handle('contact', {pubkey: OPS_PUBKEY, wait: true});
+    release();
+    expect(await res).toMatchObject({ok: true, value: {enabled: true}});
   });
 
   it('no picker when the server has no voice models', async() => {

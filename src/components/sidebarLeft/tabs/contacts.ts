@@ -22,6 +22,7 @@ import findUpTag from '@helpers/dom/findUpTag';
 import {i18n} from '@lib/langPack';
 import {isP2PPeerId} from '@lib/phantomchat/bridge-invariants';
 import {resolvePickPeerHook} from '@lib/phantomchat/session-pick-hook';
+import {createContactsEmpty} from '@lib/phantomchat/contacts-empty';
 
 // TODO: поиск по людям глобальный, если не нашло в контактах никого
 
@@ -83,6 +84,11 @@ export default class AppContactsTab extends SliderSuperTab {
     this.listenerSetter.add(rootScope)('contacts_update', async(userId) => {
       const isContact = await this.managers.appUsersManager.isContact(userId);
       const peerId = userId.toPeerId();
+      // The empty state has no list to add to: the first contact redraws it.
+      if(this.showingEmpty) {
+        if(isContact) this.openContacts();
+        return;
+      }
       if(isContact) this.sortedUserList.add(peerId);
       else this.sortedUserList.delete(peerId);
     });
@@ -234,7 +240,7 @@ export default class AppContactsTab extends SliderSuperTab {
         return;
       }
 
-      this.renderContactsList(contacts, middleware);
+      this.renderContactsList(contacts, middleware, query);
     }).catch(() => {
       // MTProto disabled — load P2P contacts from IndexedDB
       if(!middleware()) return;
@@ -242,7 +248,26 @@ export default class AppContactsTab extends SliderSuperTab {
     });
   }
 
-  private renderContactsList(contacts: PeerId[], middleware: () => boolean) {
+  /** True while the list shows the no-contacts message instead of rows. */
+  private showingEmpty = false;
+
+  /**
+   * No rows: say so, and with no search typed offer the add right here, so a
+   * fresh install never lands on a blank list with nothing to press.
+   */
+  private renderEmpty(query?: string) {
+    this.showingEmpty = true;
+    replaceContent(this.listsContainer, createContactsEmpty(query, () => void this.showAddContactPane()));
+  }
+
+  private renderContactsList(contacts: PeerId[], middleware: () => boolean, query?: string) {
+    // The worker answers an empty list on a fresh install (it does not throw),
+    // which used to draw an empty list with no text at all.
+    if(!contacts.length) {
+      this.renderEmpty(query);
+      return;
+    }
+    this.showingEmpty = false;
     const sortedUserList = this.sortedUserList = this.createList();
 
     let renderPage = () => {
@@ -318,10 +343,7 @@ export default class AppContactsTab extends SliderSuperTab {
         mappings;
 
       if(!filtered.length) {
-        const emptyEl = document.createElement('div');
-        emptyEl.classList.add('contacts-empty');
-        emptyEl.textContent = query ? 'No contacts found' : 'Tap + to add a contact';
-        replaceContent(this.listsContainer, emptyEl);
+        this.renderEmpty(query);
         return;
       }
 
@@ -361,13 +383,10 @@ export default class AppContactsTab extends SliderSuperTab {
       }
 
       if(!middleware()) return;
-      this.renderContactsList(peerIds, middleware);
+      this.renderContactsList(peerIds, middleware, query);
     } catch(err) {
       console.error('[PhantomChat.chat] failed to load P2P contacts:', err);
-      const emptyEl = document.createElement('div');
-      emptyEl.classList.add('contacts-empty');
-      emptyEl.textContent = 'Tap + to add a contact';
-      replaceContent(this.listsContainer, emptyEl);
+      this.renderEmpty(query);
     }
   }
 

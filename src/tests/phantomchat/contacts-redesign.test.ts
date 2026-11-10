@@ -802,7 +802,6 @@ describe('New Contact pane', () => {
     pickProvider('anthropic');
     const token = q('add-contact-provider-token') as HTMLInputElement;
     token.value = 'sk-a';
-    token.dispatchEvent(new Event('input'));
     (q('add-contact-name') as HTMLInputElement).value = 'Claude';
     q('add-contact-submit').click();
     await vi.waitFor(() => expect(pending.length).toBe(1));
@@ -827,7 +826,6 @@ describe('New Contact pane', () => {
     pickProvider('anthropic');
     const token = q('add-contact-provider-token') as HTMLInputElement;
     token.value = 'sk-a';
-    token.dispatchEvent(new Event('input'));
     (q('add-contact-name') as HTMLInputElement).value = 'Claude';
     q('add-contact-submit').click();
     await vi.waitFor(() => expect(pending.length).toBe(1));
@@ -838,6 +836,121 @@ describe('New Contact pane', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(q('add-contact-error').textContent).toBe('');
     expect(calls.map(([m]) => m)).not.toContain('personas.create');
+  });
+
+  // A PhantomOps pane whose providers.check and platformModels.check the
+  // test settles by hand: the Add button must wait for both.
+  async function openPhantomOpsDeferred() {
+    (window as any).__phantomchatOwnPubkey = HEX;
+    const checks: Array<(v: any) => void> = [];
+    const voiceAsks: Array<(v: any) => void> = [];
+    const calls: Array<[string, any]> = [];
+    const call = vi.fn(async(method: string, params?: any) => {
+      calls.push([method, params]);
+      switch(method) {
+        case 'providers.list': return {ok: true, value: [{id: 'phantomops', label: 'PhantomOps', checkable: true, autoModel: true, defaultModel: 'auto'}]};
+        case 'providers.check': return new Promise((resolve) => { checks.push(resolve); });
+        case 'platformModels.check': return new Promise((resolve) => { voiceAsks.push(resolve); });
+        case 'personas.list': return {ok: true, value: [] as string[]};
+        case 'persona.phantomchat.start': return {ok: true, value: {npub: npubEncode('a'.repeat(64)), state: 'running'}};
+        default: return {ok: true, value: {}};
+      }
+    });
+    (window as any).phantomchatDesktop = {phantombot: {call}};
+    const added = await open();
+    await vi.waitFor(() => expect(q('add-contact-kind-provider')).toBeTruthy());
+    q('add-contact-kind-provider').click();
+    await vi.waitFor(() => expect(q('add-contact-provider-select-value').textContent).toBe('PhantomOps'));
+    return {checks, voiceAsks, calls, added};
+  }
+  const VOICES = {ok: true, value: {status: 'available', stt: 'scribe', tts: {model: 'eleven', voices: ['bill', 'nova']}}};
+
+  it('Provider: a pasted token is checked at once and Add stays greyed until the token and its voices are in', async() => {
+    try {
+      const {checks, voiceAsks, calls, added} = await openPhantomOpsDeferred();
+      const submit = q('add-contact-submit') as HTMLButtonElement;
+      expect(submit.disabled).toBe(false);
+      (q('add-contact-name') as HTMLInputElement).value = 'Rene';
+      const token = q('add-contact-provider-token') as HTMLInputElement;
+      token.value = 'pok_x';
+      token.dispatchEvent(new InputEvent('input', {inputType: 'insertFromPaste'}));
+      // No blur needed: the paste starts the check - at once, not after the
+      // typing debounce, so assert it before that 600 ms timer could fire.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(checks.length).toBe(1);
+      expect(submit.disabled).toBe(true);
+      expect(submit.title).toBe('Checking token...');
+
+      // Enter in the name field while loading does nothing.
+      (q('add-contact-name') as HTMLInputElement).dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(calls.map(([m]) => m)).not.toContain('personas.create');
+
+      checks[0]({ok: true, value: {status: 'verified', models: [] as unknown[]}});
+      await vi.waitFor(() => expect(voiceAsks.length).toBe(1));
+      expect(submit.disabled).toBe(true);
+      expect(submit.title).toBe('Loading voices...');
+
+      voiceAsks[0](VOICES);
+      await vi.waitFor(() => expect(submit.disabled).toBe(false));
+      expect(submit.title).toBe('Add contact');
+      expect(q('add-contact-voice-id').closest('div')!.parentElement!.style.display).not.toBe('none');
+
+      q('add-contact-voice-id').click();
+      q('add-contact-voice-id-option-bill').click();
+      addP2PContact.mockImplementationOnce(async(opts: any) => ({hexPubkey: 'a'.repeat(64), peerId: 2, peerIdTweb: 2, displayName: opts.nickname, isNew: true}));
+      submit.click();
+      await vi.waitFor(() => expect(added).toHaveBeenCalled());
+      expect(calls.filter(([m]) => m === 'providers.check').length).toBe(1);
+    } finally {
+      delete (window as any).__phantomchatOwnPubkey;
+    }
+  });
+
+  it('Provider: typing waits for a pause before checking, and Enter in the token field checks now', async() => {
+    vi.useFakeTimers({shouldAdvanceTime: true});
+    try {
+      const {checks} = await openPhantomOpsDeferred();
+      const submit = q('add-contact-submit') as HTMLButtonElement;
+      const token = q('add-contact-provider-token') as HTMLInputElement;
+      token.value = 'pok';
+      token.dispatchEvent(new InputEvent('input', {inputType: 'insertText'}));
+      expect(submit.disabled).toBe(true);
+      expect(checks.length).toBe(0);
+      token.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
+      await vi.waitFor(() => expect(checks.length).toBe(1));
+      // The debounce was cancelled: no second check later.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(checks.length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      delete (window as any).__phantomchatOwnPubkey;
+    }
+  });
+
+  it('Provider: a save that had to check the token itself stops to show new voices before creating', async() => {
+    try {
+      const {checks, voiceAsks, calls, added} = await openPhantomOpsDeferred();
+      (q('add-contact-name') as HTMLInputElement).value = 'Rene';
+      // Set without an input event (autofill): Add runs the check itself.
+      (q('add-contact-provider-token') as HTMLInputElement).value = 'pok_x';
+      q('add-contact-submit').click();
+      await vi.waitFor(() => expect(checks.length).toBe(1));
+      checks[0]({ok: true, value: {status: 'verified', models: [] as unknown[]}});
+      await vi.waitFor(() => expect(voiceAsks.length).toBe(1));
+      voiceAsks[0](VOICES);
+      await vi.waitFor(() => expect(q('add-contact-error').textContent).toBe('Pick a Voice ID (or No voice), then press Add again'));
+      expect(calls.map(([m]) => m)).not.toContain('personas.create');
+      expect(added).not.toHaveBeenCalled();
+
+      // The second press goes through: the voices are on screen now.
+      addP2PContact.mockImplementationOnce(async(opts: any) => ({hexPubkey: 'a'.repeat(64), peerId: 2, peerIdTweb: 2, displayName: opts.nickname, isNew: true}));
+      await vi.waitFor(() => expect((q('add-contact-submit') as HTMLButtonElement).disabled).toBe(false));
+      q('add-contact-submit').click();
+      await vi.waitFor(() => expect(added).toHaveBeenCalled());
+    } finally {
+      delete (window as any).__phantomchatOwnPubkey;
+    }
   });
 
   it('shows Provider only when the desktop engine can list providers', async() => {

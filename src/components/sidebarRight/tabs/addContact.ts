@@ -293,7 +293,9 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
 
   // Same save control as the contact and group Edit panes. `.btn-corner`
   // rests below the pane until `.is-visible`, so it is set once: the button
-  // validates on press instead of hiding until the form looks complete.
+  // validates on press instead of hiding until the form looks complete. It
+  // greys out only while a Provider token is being checked or its voices
+  // looked up (`syncSubmit`), so a fast Add never skips what is loading.
   const submitBtn = ButtonCorner({icon: 'check'}) as HTMLButtonElement;
   submitBtn.classList.add('is-visible');
   submitBtn.setAttribute('data-testid', 'add-contact-submit');
@@ -340,6 +342,8 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     if(k === 'provider') void loadProviders();
     errorEl.textContent = '';
     void renderAvatar();
+    // Only the Provider form loads anything the Add button waits for.
+    syncSubmit();
   };
 
   npubInput.addEventListener('input', () => {
@@ -440,6 +444,31 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
       'Enter your token to load models');
   };
 
+  /**
+   * What the Provider form is still loading, or '' when nothing: a token
+   * waiting to be checked, a check in flight, or the voice lookup after it.
+   * While it says something the Add button is greyed out and labelled with it.
+   */
+  let checkTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The check generation a token check is running for (stale when it differs). */
+  let checkingFor = -1;
+  /** The voice generation a voice lookup is running for. */
+  let voicesFor = -1;
+  let busy = false;
+  const loading = (): string => {
+    if(kind !== 'provider') return '';
+    if(checkTimer !== undefined || checkingFor === checkGeneration) return 'Checking token...';
+    if(voicesFor === voiceGeneration) return 'Loading voices...';
+    return '';
+  };
+  /** Grey the Add button out while busy or loading, and say why. */
+  const syncSubmit = () => {
+    const why = loading();
+    toggleDisability([submitBtn], busy || !!why);
+    submitBtn.title = why || 'Add contact';
+    submitBtn.setAttribute('aria-label', why || 'Add contact');
+  };
+
   /** Bumped per voice lookup, so a late answer for an old provider/token is dropped. */
   let voiceGeneration = 0;
   const refreshVoices = async() => {
@@ -447,17 +476,31 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     const mine = ++voiceGeneration;
     if(!p) {
       voicePicker.setVoices(undefined);
+      syncSubmit();
       return;
     }
     // PhantomOps: only a checked token is sent (never one mid-typing).
     const token = checked?.provider === p.id ? checked.token : '';
-    const voices = await newContactVoices(p.id, token, call).catch((): undefined => undefined);
-    if(mine === voiceGeneration && opts.isAlive()) voicePicker.setVoices(voices);
+    // Only a server lookup (PhantomOps, with a checked token) is worth waiting
+    // for; the other providers read Settings > Voice Models on this PC.
+    if(p.id === 'phantomops' && token) {
+      voicesFor = mine;
+      syncSubmit();
+    }
+    try {
+      const voices = await newContactVoices(p.id, token, call).catch((): undefined => undefined);
+      if(mine === voiceGeneration && opts.isAlive()) voicePicker.setVoices(voices);
+    } finally {
+      if(voicesFor === mine) voicesFor = -1;
+      if(opts.isAlive()) syncSubmit();
+    }
   };
 
   const resetCheck = () => {
     checked = undefined;
     checkGeneration++;
+    if(checkTimer !== undefined) clearTimeout(checkTimer);
+    checkTimer = undefined;
     // A PhantomOps token decides its voices; others use Voice Models.
     void refreshVoices();
     modelPicker.setOptions([]);
@@ -522,17 +565,27 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
   };
 
   /**
-   * Verify the typed token when the field loses focus (tap on the model
-   * picker, the save button or anywhere else), so the model list is already
-   * there when the user reaches for it, not after a save attempt.
+   * Verify the token as soon as it is pasted (or typing pauses), and again
+   * when the field loses focus or Enter is pressed in it, so the model list
+   * and the voices are there before the user reaches for Add.
    */
   const verifyToken = async() => {
+    if(checkTimer !== undefined) clearTimeout(checkTimer);
+    checkTimer = undefined;
     const p = currentProvider();
     const token = tokenInput.value.trim();
-    if(!p || !token) return;
-    if(checked && checked.provider === p.id && checked.token === token) return;
+    if(!p || !token) {
+      syncSubmit();
+      return;
+    }
+    if(checked && checked.provider === p.id && checked.token === token) {
+      syncSubmit();
+      return;
+    }
     const generation = ++checkGeneration;
+    checkingFor = generation;
     providerStatus.textContent = 'Checking token...';
+    syncSubmit();
     try {
       const {result, status} = await checkToken(p, token);
       if(generation !== checkGeneration) return;
@@ -543,26 +596,55 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     } catch(err) {
       if(generation !== checkGeneration) return;
       providerStatus.textContent = err instanceof Error && err.message ? err.message : 'Could not check the token';
+    } finally {
+      if(checkingFor === generation) checkingFor = -1;
+      if(opts.isAlive()) syncSubmit();
     }
   };
 
-  tokenInput.addEventListener('input', () => {
+  /** Typing pauses this long before the token is checked; a paste is checked at once. */
+  const TOKEN_CHECK_DELAY_MS = 600;
+  tokenInput.addEventListener('input', (event) => {
     // A different token means a different model list.
     if(checked || modelPicker.getOptions().length) resetCheck();
+    if(checkTimer !== undefined) clearTimeout(checkTimer);
+    checkTimer = undefined;
+    if(!currentProvider() || !tokenInput.value.trim()) {
+      syncSubmit();
+      return;
+    }
+    if((event as InputEvent).inputType === 'insertFromPaste') {
+      void verifyToken();
+      return;
+    }
+    providerStatus.textContent = 'Checking token...';
+    checkTimer = setTimeout(() => {
+      checkTimer = undefined;
+      if(opts.isAlive()) void verifyToken();
+    }, TOKEN_CHECK_DELAY_MS);
+    syncSubmit();
   });
   tokenInput.addEventListener('blur', () => void verifyToken());
+  // Enter in the token field checks it now; Add stays a separate press, so the
+  // user sees the voices before the contact is created.
+  tokenInput.addEventListener('keydown', (event: KeyboardEvent) => {
+    if(event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    void verifyToken();
+  });
 
-  // One add at a time: the corner button and Enter both land here.
-  let busy = false;
+  // One add at a time: the corner button and Enter both land here. While the
+  // Provider form is still loading, a press (or Enter) does nothing: the
+  // greyed button and the status line already say what it waits for.
   const runBusy = async(fn: () => Promise<void>) => {
-    if(busy) return;
+    if(busy || loading()) return;
     busy = true;
-    const restore = toggleDisability([submitBtn], true);
+    syncSubmit();
     try {
       await fn();
     } finally {
       busy = false;
-      restore();
+      if(opts.isAlive()) syncSubmit();
     }
   };
 
@@ -608,6 +690,18 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
       }
       checked = {provider: p.id, token, result};
       fillModels(p, result);
+      if(result.status !== 'invalid') {
+        // The voices were never looked up for this token: do it now, and if a
+        // Voice ID turns up, stop so the user can pick one before the contact
+        // exists (a contact created here would silently have no voice).
+        const shown = voicePicker.visible();
+        await refreshVoices();
+        if(generation !== checkGeneration) return;
+        if(!shown && voicePicker.visible()) {
+          errorEl.textContent = 'Pick a Voice ID (or No voice), then press Add again';
+          return;
+        }
+      }
     }
     if(result.status === 'invalid') {
       errorEl.textContent = 'The provider rejected this token';
