@@ -80,7 +80,7 @@ describe('Edit pane Voice ID of a PhantomOps contact', () => {
     let answer!: (v: any) => void;
     const call = vi.fn(async(method: string, params?: any) => {
       if(method === 'contact' && !params.wait) return {ok: true, value: {persona: 'ops', enabled: false, voices: [] as string[], voice: '', phantomops: true, pending: true}};
-      if(method === 'contact') return new Promise((r) => { answer = r; });
+      if(method === 'contact') return new Promise<any>((r) => { answer = r; });
       return {ok: true, value: {}};
     });
     const picker = await createContactVoicePicker(PUB, call);
