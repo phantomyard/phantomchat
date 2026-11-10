@@ -7,6 +7,8 @@
  *   - group / session row: open -> close -> open again
  *   - two groups in a row:  the stale-tab case that made click 2 re-animate
  *   - topbar:               same toggle, same pane
+ *   - the pane's own dialog: its confirmation popups mount at `document.body`,
+ *                           so clicking their buttons must NOT count as outside
  *   - 1:1 contact:          row and topbar both reach the contact editor
  *   - narrow:               unchanged, the row click opens the chat (no pane)
  *
@@ -133,9 +135,11 @@ async function main() {
   try {
     await A.page.waitForFunction(() => window.__phantomchatGroupAPI && window.rootScope?.managers);
     const peers = [];
+    const groupIds: Array<string> = [];
     for(const name of ['Toggle A', 'Toggle B']) {
       const groupId = await A.page.evaluate(async([n, other]: [string, string]) =>
         window.__phantomchatGroupAPI.createGroup(n, [other]), [name, B.pubkeyHex]);
+      groupIds.push(groupId);
       peers.push(await A.page.evaluate(async(id: string) => {
         const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
         return (await getGroupStore().get(id)).peerId;
@@ -214,6 +218,44 @@ async function main() {
     assert.equal(await waitFor(async() => (await state(A.page)).peer === peerB), true, 'and that chat is what opens');
     assert.deepEqual(await editorTabs(A.page), [], 'no editor tab survives the chat switch');
     console.log('PASS: click-outside closes the pane (pane / prompt bar / menu / other chat)');
+
+    // ---- the pane's own dialog: a confirm inside it must not dismiss ----
+    // The group editor's Remove button opens a `confirmationPopup`, which
+    // `PopupElement` mounts at `document.body`. Treating that as "outside" killed
+    // the pane on the pointerdown and resolved the removal against a closed tab.
+    await openChat(A.page, peerA);
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(() => editorVisible(A.page, GROUP_EDITOR)), true, 'group editor open before the dialog case');
+
+    const removeButtons = (page) => page.evaluate(() =>
+      document.querySelectorAll('.phantomchat-group-edit-container .btn-icon.danger').length);
+    const popups = (page) => page.evaluate(() => document.querySelectorAll('.popup-confirmation').length);
+    const storedMembers = (page, groupId: string) => page.evaluate(async(id: string) => {
+      const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
+      return ((await getGroupStore().get(id))?.members || []).length;
+    }, groupId);
+
+    assert.equal(await storedMembers(A.page, groupIds[0]), 2, 'group starts with two members');
+    assert.equal(await removeButtons(A.page), 1, 'one removable (non-admin, other) member in the roster');
+    assert.equal(await popups(A.page), 0, 'no confirmation open yet');
+
+    await A.page.locator('.phantomchat-group-edit-container .btn-icon.danger').first().click();
+    assert.equal(await waitFor(async() => (await popups(A.page)) === 1), true, 'Remove opens the confirmation popup');
+
+    assert.equal(await editorVisible(A.page, GROUP_EDITOR), true, 'the dialog itself is not an outside click');
+    await A.page.locator('.popup-confirmation .popup-footer .popup-button.danger').first().click();
+    assert.equal(await waitFor(async() => (await popups(A.page)) === 0), true, 'the confirmation resolves');
+
+    assert.equal(await editorVisible(A.page, GROUP_EDITOR), true, 'the pane survives its own dialog');
+    assert.deepEqual(await editorTabs(A.page), ['AppPhantomChatGroupEditTab'], 'and it is still the one editor tab');
+    assert.equal(await waitFor(async() => (await removeButtons(A.page)) === 0), true,
+      'the roster re-rendered with the member gone (draft)');
+    assert.equal(await storedMembers(A.page, groupIds[0]), 2, 'only a draft: the stored group is untouched');
+    console.log('PASS: the pane\'s own confirmation dialog does not close it');
+
+    // Leave the roster as the fixture had it: close the pane without saving.
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'editor closed again');
 
     // ---- 1:1 contact: row and topbar ----
     await openChat(A.page, contactPeer);

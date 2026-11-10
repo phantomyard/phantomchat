@@ -11,6 +11,13 @@
  * Two families of clicks are deliberately NOT "outside":
  *
  *   - `#column-right` — the pane itself: its fields, its buttons, its own X.
+ *   - A popup — the pane's own dialogs. `PopupElement` mounts at `document.body`
+ *     (`DEFAULT_APPEND_TO`), so the confirm button of the Make admin / Remove
+ *     member / Leave / Delete group confirmations is neither inside the column
+ *     nor a toggle entry point. The pane opened that dialog; the pointer there
+ *     answers it, it does not move on. The topbar hamburger is unaffected: its
+ *     pointerdown lands on the button inside `.chat-utils` before the popup
+ *     exists, and that one dismisses.
  *   - The toggle entry points, because they already own the open/close
  *     decision. Dismissing there would close the pane and let the very same
  *     click reopen it — a visible close-then-open flash: the topbar / avatar
@@ -30,6 +37,10 @@
 
 /** The pane's root: every right-column tab renders inside this column. */
 export const PEER_EDITOR_PANE_SELECTOR = '#column-right';
+
+/** Popups mount at `document.body`, so this is how a pane-opened dialog is
+ * recognised from the pointer target alone. */
+export const PEER_EDITOR_POPUP_SELECTOR = '.popup';
 
 /** The chat topbar, whose click handler routes to `openPeerEditor`. */
 export const PEER_EDITOR_TOPBAR_SELECTOR = '.topbar';
@@ -67,6 +78,33 @@ export function isInsidePeerEditorPane(target: Element | null | undefined): bool
   return !!target?.closest?.(PEER_EDITOR_PANE_SELECTOR);
 }
 
+export function isInsidePeerEditorPopup(target: Element | null | undefined): boolean {
+  return !!target?.closest?.(PEER_EDITOR_POPUP_SELECTOR);
+}
+
+/** The peer of the LIST ROW the target belongs to, or null. The row is the
+ * OUTERMOST `data-peer-id` carrier inside the list: a group row rerenders its
+ * last-message preview through `wrapPeerTitle({peerId: lastMessage.fromId})`,
+ * which nests `.peer-title[data-peer-id=<sender>]` inside the row's own
+ * `.chatlist-chat[data-peer-id=<group>]`. Reading the nearest carrier would
+ * call the sender name "a row for a different peer" and flash the pane
+ * close-then-reopen. */
+export function peerEditorRowPeerId(target: Element | null | undefined): number | null {
+  if(!target?.closest) return null;
+
+  const list = target.closest(PEER_EDITOR_ROW_LIST_SELECTOR);
+  if(!list) return null;
+
+  let row: Element | null = null;
+  for(let el = target.closest('[data-peer-id]'); el && el !== list && list.contains(el); el = el.parentElement) {
+    if(el.hasAttribute('data-peer-id')) row = el; // keep climbing: outermost wins
+  }
+
+  if(!row) return null;
+  const peerId = +(row.getAttribute('data-peer-id') as string);
+  return Number.isFinite(peerId) ? peerId : null;
+}
+
 export function isPeerEditorToggleEntryPoint(
   target: Element | null | undefined,
   panePeerId: number | null
@@ -82,14 +120,13 @@ export function isPeerEditorToggleEntryPoint(
 
   // The row of the pane's own peer is the click the toggle rule answers.
   // Rows elsewhere (a bubble carries `data-peer-id` too) are not entry points.
-  const row = target.closest('[data-peer-id]');
-  if(!row || !row.closest(PEER_EDITOR_ROW_LIST_SELECTOR)) return false;
-  return +row.getAttribute('data-peer-id') === panePeerId;
+  return peerEditorRowPeerId(target) === panePeerId;
 }
 
 export function shouldDismissPeerEditorOnPointerDown(params: {
   isInsidePane: boolean,
+  isInsidePopup: boolean,
   isToggleEntryPoint: boolean
 }): boolean {
-  return !params.isInsidePane && !params.isToggleEntryPoint;
+  return !params.isInsidePane && !params.isInsidePopup && !params.isToggleEntryPoint;
 }

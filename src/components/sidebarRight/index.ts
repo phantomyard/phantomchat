@@ -8,6 +8,7 @@ import appImManager, {APP_TABS} from '@lib/appImManager';
 import SidebarSlider, {SliderSuperTab} from '@components/slider';
 import {
   isInsidePeerEditorPane,
+  isInsidePeerEditorPopup,
   isPeerEditorPaneContainer,
   isPeerEditorToggleEntryPoint,
   PeerEditorPaneTab,
@@ -99,6 +100,7 @@ export class AppSidebarRight extends SidebarSlider {
     const target = e.target instanceof Element ? e.target : null;
     const dismiss = shouldDismissPeerEditorOnPointerDown({
       isInsidePane: isInsidePeerEditorPane(target),
+      isInsidePopup: isInsidePeerEditorPopup(target),
       isToggleEntryPoint: isPeerEditorToggleEntryPoint(target, panePeerId)
     });
     if(!dismiss) return;

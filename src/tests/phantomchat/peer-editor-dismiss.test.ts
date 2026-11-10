@@ -13,9 +13,11 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import {
   isInsidePeerEditorPane,
+  isInsidePeerEditorPopup,
   isPeerEditorPaneContainer,
   isPeerEditorToggleEntryPoint,
   peerEditorPanePeerId,
+  peerEditorRowPeerId,
   shouldDismissPeerEditorOnPointerDown
 } from '@lib/phantomchat/peer-editor-dismiss';
 
@@ -36,8 +38,12 @@ beforeEach(() => {
     </div>
     <div id="column-left">
       <div class="chatlist">
-        <a class="row chatlist-chat" data-peer-id="${GROUP_PEER}" data-e2e="row-same"></a>
-        <a class="row chatlist-chat" data-peer-id="${OTHER_GROUP_PEER}" data-e2e="row-other"></a>
+        <a class="row chatlist-chat" data-peer-id="${GROUP_PEER}" data-e2e="row-same">
+          <div class="row-title"><span class="peer-title" data-peer-id="${OTHER_GROUP_PEER}" data-e2e="row-same-sender">Sender</span></div>
+        </a>
+        <a class="row chatlist-chat" data-peer-id="${OTHER_GROUP_PEER}" data-e2e="row-other">
+          <div class="row-title"><span class="peer-title" data-peer-id="${GROUP_PEER}" data-e2e="row-other-sender">Sender</span></div>
+        </a>
       </div>
       <div class="menu-horizontal-div-item" data-e2e="sidebar-tab"></div>
     </div>
@@ -51,6 +57,11 @@ beforeEach(() => {
       </div>
     </div>
     <div class="popup" data-e2e="menu"></div>
+    <div class="popup popup-confirmation" data-e2e="pane-dialog">
+      <div class="popup-container z-depth-1">
+        <div class="popup-footer"><button class="popup-button btn danger" data-e2e="pane-dialog-confirm"></button></div>
+      </div>
+    </div>
   `;
 });
 
@@ -60,6 +71,7 @@ const el = (e2e: string) => document.querySelector(`[data-e2e="${e2e}"]`);
 function dismisses(target: Element | null, panePeerId: number | null = GROUP_PEER) {
   return shouldDismissPeerEditorOnPointerDown({
     isInsidePane: isInsidePeerEditorPane(target),
+    isInsidePopup: isInsidePeerEditorPopup(target),
     isToggleEntryPoint: isPeerEditorToggleEntryPoint(target, panePeerId)
   });
 }
@@ -78,8 +90,16 @@ describe('editor pane: clicks that close it', () => {
     expect(dismisses(el('composer')?.querySelector('textarea') || null)).toBe(true);
   });
 
-  it('closes on a menu', () => {
-    expect(dismisses(el('menu'))).toBe(true);
+  it('closes on the topbar button that opens a menu', () => {
+    // The pointerdown lands on the button, before the menu exists: this is the
+    // click that dismisses. Content of the popup itself is a dialog, below.
+    expect(dismisses(el('menu-toggle'))).toBe(true);
+  });
+
+  it('closes on a sender title inside ANOTHER peer\'s row', () => {
+    // `wrapPeerTitle({peerId: lastMessage.fromId})` puts a `data-peer-id` title
+    // inside the row: the row's own id decides, not the nearest carrier.
+    expect(dismisses(el('row-other-sender'))).toBe(true);
   });
 
   it('closes on a click in the chat itself (a bubble carries data-peer-id too)', () => {
@@ -120,6 +140,35 @@ describe('editor pane: clicks that leave it alone', () => {
 
   it('treats a row for another peer as outside', () => {
     expect(isPeerEditorToggleEntryPoint(el('row-other'), GROUP_PEER)).toBe(false);
+  });
+
+  it('stays on a sender title inside the pane peer\'s OWN row', () => {
+    // Group row for the pane's peer, preview title carrying the sender's id.
+    expect(dismisses(el('row-same-sender'))).toBe(false);
+    expect(isPeerEditorToggleEntryPoint(el('row-same-sender'), GROUP_PEER)).toBe(true);
+  });
+
+  it('stays on the dialogs the pane itself opened (they mount at body)', () => {
+    // Make admin / Remove member / Leave / Delete group confirm from inside the
+    // pane: `PopupElement` appends to `document.body`, so the column test alone
+    // called the confirm button "outside" and killed the pane mid-flow.
+    expect(dismisses(el('pane-dialog-confirm'))).toBe(false);
+    expect(dismisses(el('pane-dialog'))).toBe(false);
+  });
+});
+
+describe('peerEditorRowPeerId', () => {
+  it('resolves the row, not the nearest data-peer-id carrier', () => {
+    expect(peerEditorRowPeerId(el('row-same-sender'))).toBe(GROUP_PEER);
+    expect(peerEditorRowPeerId(el('row-other-sender'))).toBe(OTHER_GROUP_PEER);
+    expect(peerEditorRowPeerId(el('row-same'))).toBe(GROUP_PEER);
+    expect(peerEditorRowPeerId(el('contact-same'))).toBe(GROUP_PEER);
+  });
+
+  it('is null outside a peer list and for elements without an id', () => {
+    expect(peerEditorRowPeerId(el('bubble'))).toBe(null);
+    expect(peerEditorRowPeerId(el('sidebar-tab'))).toBe(null);
+    expect(peerEditorRowPeerId(null)).toBe(null);
   });
 });
 
