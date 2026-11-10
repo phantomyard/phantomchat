@@ -5,7 +5,15 @@
  */
 
 import appImManager, {APP_TABS} from '@lib/appImManager';
-import SidebarSlider from '@components/slider';
+import SidebarSlider, {SliderSuperTab} from '@components/slider';
+import {
+  isInsidePeerEditorPane,
+  isPeerEditorPaneContainer,
+  isPeerEditorToggleEntryPoint,
+  PeerEditorPaneTab,
+  peerEditorPanePeerId,
+  shouldDismissPeerEditorOnPointerDown
+} from '@lib/phantomchat/peer-editor-dismiss';
 import mediaSizes, {ScreenSize} from '@helpers/mediaSizes';
 import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -60,7 +68,45 @@ export class AppSidebarRight extends SidebarSlider {
     mediaSizes.addEventListener('resize', () => {
       this.setColumnProportion();
     });
+
+    // The editor pane (1:1 contact, group, session) closes on any click that
+    // is not its own: another chat, another sidebar tab, a menu, the prompt
+    // bar. Capture phase, so the pane is gone before the click's own handler
+    // runs and the new chat is what the user sees next. Registered once, for
+    // the life of the singleton: the rule is a no-op while no editor pane is
+    // on screen.
+    document.addEventListener('pointerdown', this.onOutsidePointerDown, true);
   }
+
+  /**
+   * The editor pane showing right now, if any. Only the LAST history entry can
+   * be on screen; an editor tab below it is a hidden leftover.
+   */
+  private getPeerEditorPaneTab(): (SliderSuperTab & PeerEditorPaneTab) | undefined {
+    const history = this.getHistory();
+    const last = history[history.length - 1];
+    if(!last || typeof last !== 'object') return undefined;
+
+    const tab = last as SliderSuperTab & PeerEditorPaneTab;
+    return isPeerEditorPaneContainer(tab.container) ? tab : undefined;
+  }
+
+  private onOutsidePointerDown = (e: PointerEvent) => {
+    const tab = this.getPeerEditorPaneTab();
+    if(!tab) return;
+
+    const panePeerId = peerEditorPanePeerId(tab);
+    const target = e.target instanceof Element ? e.target : null;
+    const dismiss = shouldDismissPeerEditorOnPointerDown({
+      isInsidePane: isInsidePeerEditorPane(target),
+      isToggleEntryPoint: isPeerEditorToggleEntryPoint(target, panePeerId)
+    });
+    if(!dismiss) return;
+
+    // Same path as the pane's own X: closeTab pops the tab and
+    // `onCloseTab` hides the column once the history is empty.
+    this.closeTab(tab);
+  };
 
   public createSharedMediaTab() {
     const tab = this.createTab(AppSharedMediaTab, false, true);

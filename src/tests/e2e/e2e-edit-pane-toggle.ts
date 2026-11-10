@@ -64,6 +64,37 @@ async function clickRow(page, peerId: number) {
   });
 }
 
+/** A whole click on a row: the pointerdown the dismissal listens on, then the
+ * mousedown the chat list answers. Drawing the row first, as `clickRow` does. */
+async function pressRow(page, peerId: number) {
+  await page.evaluate((id: number) => {
+    document.querySelectorAll('[data-e2e-row]').forEach((el) => el.remove());
+    const list = document.querySelector('.chatlist') as HTMLElement;
+    const row = document.createElement('a');
+    row.className = 'row chatlist-chat';
+    row.setAttribute('data-peer-id', String(id));
+    row.setAttribute('data-e2e-row', '1');
+    row.textContent = 'Row click';
+    row.style.height = '60px';
+    list.prepend(row);
+  }, peerId);
+  const row = page.locator('a[data-e2e-row="1"]').first();
+  await row.waitFor({state: 'visible', timeout: 30000});
+  await row.evaluate((el: HTMLElement) => {
+    el.dispatchEvent(new PointerEvent('pointerdown', {button: 0, bubbles: true, cancelable: true}));
+    el.dispatchEvent(new MouseEvent('mousedown', {button: 0, bubbles: true, cancelable: true}));
+  });
+}
+
+/** The pointerdown half of a click on any element on screen. */
+async function pointerDown(page, selector: string) {
+  await page.evaluate((sel: string) => {
+    const el = document.querySelector(sel);
+    if(!el) throw new Error('pointerdown target missing: ' + sel);
+    el.dispatchEvent(new PointerEvent('pointerdown', {button: 0, bubbles: true, cancelable: true}));
+  }, selector);
+}
+
 /** The topbar's own click handler — the shared entry point, not the row rule.
  * Playwright's real click covers both `mousedown` and `click` spellings of
  * `attachClickEvent` (it picks one by touch support). */
@@ -154,6 +185,35 @@ async function main() {
     await clickTopbar(A.page);
     assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'topbar click 2 closes it');
     console.log('PASS: topbar toggles the group editor');
+
+    // ---- click-outside: any click that is not the pane's own closes it ----
+    await openChat(A.page, peerA);
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(() => editorVisible(A.page, GROUP_EDITOR)), true, 'pane open before the outside click');
+
+    // Inside the pane: nothing happens.
+    await pointerDown(A.page, '#column-right ' + GROUP_EDITOR);
+    assert.equal(await editorVisible(A.page, GROUP_EDITOR), true, 'a click inside the pane leaves it open');
+
+    // The prompt bar.
+    await pointerDown(A.page, '.chat-input');
+    assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'the prompt bar closes the pane');
+    assert.deepEqual(await editorTabs(A.page), [], 'the editor tab is really closed, not just hidden behind the column');
+
+    // A menu in the topbar's utility cluster (not a toggle entry point).
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(() => editorVisible(A.page, GROUP_EDITOR)), true, 'pane open again for the menu case');
+    await pointerDown(A.page, '.chat-utils .btn-menu-toggle');
+    assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'a topbar menu closes the pane');
+
+    // Another chat: the pane closes AND that chat opens.
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(() => editorVisible(A.page, GROUP_EDITOR)), true, 'pane open before switching chats');
+    await pressRow(A.page, peerB);
+    assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'selecting another chat closes the pane');
+    assert.equal(await waitFor(async() => (await state(A.page)).peer === peerB), true, 'and that chat is what opens');
+    assert.deepEqual(await editorTabs(A.page), [], 'no editor tab survives the chat switch');
+    console.log('PASS: click-outside closes the pane (pane / prompt bar / menu / other chat)');
 
     // ---- 1:1 contact: row and topbar ----
     await openChat(A.page, contactPeer);
