@@ -1060,7 +1060,27 @@ export class AppSidebarLeft extends SidebarSlider {
     });
   }
 
-  private openNewPrivateChatFlow() {
+  /**
+   * Chats `+`: the contact list to start a chat from. With no contacts that
+   * list is empty (a fresh install), so `+` goes straight to the New Contact
+   * pane, as Sessions `+` does, and the contact saved there opens its chat.
+   * A failed lookup only costs the shortcut: the list still opens.
+   */
+  private async openNewPrivateChatFlow() {
+    let none = false;
+    try {
+      none = !(await this.listSessionContacts()).length;
+    } catch(err) {
+      console.error('[PhantomChat.chat] failed to count contacts for a new chat:', err);
+    }
+    if(none) {
+      const {openAddContactPane} = await import('@components/sidebarRight/tabs/addContact');
+      await openAddContactPane({
+        managers: this.managers,
+        onContactAdded: (peerId) => void appImManager.setInnerPeer({peerId})
+      });
+      return;
+    }
     this.createTab(AppContactsTab).open();
   }
 
@@ -1246,7 +1266,7 @@ export class AppSidebarLeft extends SidebarSlider {
     }, {
       icon: 'newprivate',
       text: singular ? 'PrivateChat' : 'NewPrivateChat',
-      onClick: () => closeTabsBefore(() => this.openNewPrivateChatFlow())
+      onClick: () => closeTabsBefore(() => void this.openNewPrivateChatFlow())
     }];
   }
 
@@ -1267,7 +1287,7 @@ export class AppSidebarLeft extends SidebarSlider {
       } else if(appDialogsManager.filterId === FOLDER_ID_SESSION) {
         void this.openNewSessionFlow();
       } else {
-        this.openNewPrivateChatFlow();
+        void this.openNewPrivateChatFlow();
       }
     });
 

@@ -18,7 +18,7 @@
  */
 import {existsSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import type {PhantombotResult} from './preload';
-import {isPlatformPersona, lastPlatformModels, platformPersonas, platformVoiceReady, PHANTOMOPS_PROVIDER} from './platformModels';
+import {isPlatformPersona, lastPlatformModels, personaPlatformModels, platformPersonas, platformVoiceReady, PHANTOMOPS_PROVIDER} from './platformModels';
 
 export type Modality = 'tts' | 'stt';
 export interface VoiceChoice {
@@ -214,13 +214,21 @@ export class VoiceModels {
   /**
    * What the contact Edit pane needs: whether Voice is on (gates the Voice ID
    * picker), the voices of the saved TTS model, and this contact's pick.
+   *
+   * PhantomOps: by default the last known answer, so opening the pane never
+   * waits on the server. With none yet and a slow server it says `pending`,
+   * and the pane asks again with `wait`, which waits for the server's answer
+   * (the engine's own timeout). An unreachable server says `unavailable`, so
+   * the pane can say why there is no picker instead of hiding it.
    */
-  async contact(pubkey: string) {
+  async contact(pubkey: string, wait = false) {
     const persona = await this.personaOf(pubkey);
     if(persona && await isPlatformPersona(this.call, persona)) {
-      // The last known answer: the Edit pane never waits on the server.
-      const m = await lastPlatformModels(this.call, persona);
-      return {persona, enabled: platformVoiceReady(m), voices: m.tts?.voices ?? [], voice: this.state.voices[persona] ?? '', phantomops: true};
+      const m = wait ? await personaPlatformModels(this.call, persona) : await lastPlatformModels(this.call, persona);
+      return {
+        persona, enabled: platformVoiceReady(m), voices: m.tts?.voices ?? [], voice: this.state.voices[persona] ?? '', phantomops: true,
+        ...(m.pending ? {pending: true} : m.status !== 'available' ? {unavailable: m.detail || 'PhantomOps unavailable'} : {})
+      };
     }
     const d = this.state.defaults;
     return {
@@ -324,7 +332,7 @@ export class VoiceModels {
         case 'providers': value = await this.providers(); break;
         case 'check': value = await this.check(params?.modality, params?.settings); break;
         case 'save': value = await this.save(params); break;
-        case 'contact': value = await this.contact(params?.pubkey); break;
+        case 'contact': value = await this.contact(params?.pubkey, params?.wait === true); break;
         case 'setContact': value = await this.setContact(params?.pubkey, params?.voice); break;
         default: throw new Error('Unknown voice settings method');
       }

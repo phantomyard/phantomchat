@@ -38,6 +38,8 @@ export interface PlatformModels {
   decision?: string;
   tts?: {model: string; voices: string[]};
   stt?: string;
+  /** Set on the stand-in `lastPlatformModels` gives when the server has not answered in time. */
+  pending?: true;
 }
 
 /** The brain provider of a persona, lowercased ('' when unknown). */
@@ -125,7 +127,8 @@ export function personaPlatformModels(call: PlatformCall, persona: string): Prom
 /**
  * For reads the user waits on (the Edit pane): the last known answer at once,
  * refreshed in the background. With none yet, wait at most `waitMs` for the
- * server, then answer unavailable and let the refresh land for next time.
+ * server, then answer unavailable (`pending`) and let the refresh land for
+ * next time; the caller can then wait for it with `personaPlatformModels`.
  */
 export async function lastPlatformModels(call: PlatformCall, persona: string, waitMs = 1500): Promise<PlatformModels> {
   const last = known.get(persona);
@@ -133,7 +136,7 @@ export async function lastPlatformModels(call: PlatformCall, persona: string, wa
   if(last) return last;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const slow = new Promise<PlatformModels>((resolve) => {
-    timer = setTimeout(() => resolve({status: 'unavailable', detail: 'PhantomOps is slow to answer'}), waitMs);
+    timer = setTimeout(() => resolve({status: 'unavailable', detail: 'PhantomOps is slow to answer', pending: true}), waitMs);
   });
   try { return await Promise.race([fresh, slow]); } finally { clearTimeout(timer); }
 }

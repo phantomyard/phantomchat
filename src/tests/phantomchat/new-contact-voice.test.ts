@@ -8,19 +8,23 @@ vi.mock('@components/sidebarLeft/tabs/phantomchatModelKit', () => ({
   labelledPicker: () => {
     let options: {value: string}[] = [];
     let current = '';
+    const state = {placeholder: '', disabled: false};
     return {
       container: document.createElement('div'),
       picker: {
         setOptions: (o: {value: string}[], v?: string) => {options = o; current = v ?? '';},
         getValue: () => current,
         getOptions: () => options,
+        setPlaceholder: (t: string) => {state.placeholder = t;},
+        setDisabled: (d: boolean) => {state.disabled = d;},
+        state,
         destroy: () => {}
       }
     };
   }
 }));
 vi.mock('@lib/phantomchat/desktop-api', () => ({getDesktopVoiceModels: (): null => null}));
-import {applyNewContactVoice, createNewContactVoicePicker, newContactVoices} from '@lib/phantomchat/voice-models';
+import {applyNewContactVoice, createContactVoicePicker, createNewContactVoicePicker, newContactVoices} from '@lib/phantomchat/voice-models';
 
 const voiceCall = (settings: any) => vi.fn(async(method: string) => method === 'get' ? {ok: true, value: settings} : {ok: true, value: {}});
 const on = {tts: {enabled: true, voices: ['alloy', 'echo']}, stt: {enabled: true}};
@@ -67,5 +71,46 @@ describe('new contact voices', () => {
     expect(call).not.toHaveBeenCalled();
     await applyNewContactVoice('ab'.repeat(32), 'nova', call);
     expect(call).toHaveBeenCalledWith('setContact', {pubkey: 'ab'.repeat(32), voice: 'nova'});
+  });
+});
+
+describe('Edit pane Voice ID of a PhantomOps contact', () => {
+  const PUB = 'ab'.repeat(32);
+  it('a server that has not answered shows "Loading voices..." and fills in when it does', async() => {
+    let answer!: (v: any) => void;
+    const call = vi.fn(async(method: string, params?: any) => {
+      if(method === 'contact' && !params.wait) return {ok: true, value: {persona: 'ops', enabled: false, voices: [] as string[], voice: '', phantomops: true, pending: true}};
+      if(method === 'contact') return new Promise((r) => { answer = r; });
+      return {ok: true, value: {}};
+    });
+    const picker = await createContactVoicePicker(PUB, call);
+    expect(picker).toBeDefined();
+    expect(picker!.container.style.display).not.toBe('none');
+    expect(call).toHaveBeenCalledWith('contact', {pubkey: PUB, wait: true});
+    expect(picker!.changed()).toBe(false);
+    answer({ok: true, value: {persona: 'ops', enabled: true, voices: ['bill'], voice: 'bill', phantomops: true}});
+    await new Promise((r) => setTimeout(r, 0));
+    expect(picker!.value()).toBe('bill');
+    expect(picker!.changed()).toBe(false);
+  });
+
+  it('a server that answers with no voices hides it; an unreachable one says why', async() => {
+    const call = (later: any) => vi.fn(async(method: string, params?: any) => method === 'contact' && !params.wait ?
+      {ok: true, value: {persona: 'ops', enabled: false, voices: [] as string[], voice: '', phantomops: true, pending: true}} :
+      {ok: true, value: later});
+    const none = await createContactVoicePicker(PUB, call({persona: 'ops', enabled: false, voices: [], voice: '', phantomops: true}));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(none!.container.style.display).toBe('none');
+
+    const down = await createContactVoicePicker(PUB, call({persona: 'ops', enabled: false, voices: [], voice: '', phantomops: true, unavailable: 'HTTP 502'}));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(down!.container.style.display).not.toBe('none');
+    expect(down!.value()).toBe('');
+  });
+
+  it('a server that answered with no voice models still gets no picker', async() => {
+    const call = vi.fn(async() => ({ok: true, value: {persona: 'ops', enabled: false, voices: [] as string[], voice: '', phantomops: true}}));
+    expect(await createContactVoicePicker(PUB, call)).toBeUndefined();
+    expect(call).toHaveBeenCalledTimes(1);
   });
 });

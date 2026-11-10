@@ -160,17 +160,51 @@ export interface ContactVoicePicker {
  * (nothing shown) unless the contact runs on this app's engine and has voice
  * models: Voice Models on in Settings (the voices Test and Save stored for
  * the TTS model), or, for a PhantomOps contact, its server's voice models.
+ *
+ * A PhantomOps server that has not answered yet never hides the picker: it
+ * shows disabled as "Loading voices..." and fills in when the server answers
+ * (or says it could not, and why). Only a server that answered with no voice
+ * models leaves it out.
  */
 export async function createContactVoicePicker(pubkey: string, call: VoiceModelsCall | undefined = getDesktopVoiceModels()?.call): Promise<ContactVoicePicker | undefined> {
   if(!call) return undefined;
   const state = await voiceValue(call, 'contact', {pubkey});
-  if(!state.persona || !state.enabled) return undefined;
-  const voices: string[] = Array.isArray(state.voices) ? state.voices : [];
-  let current: string = state.voice || '';
+  if(!state.persona) return undefined;
+  const waiting = !!state.phantomops && !!state.pending;
+  const unavailable = !!state.phantomops && typeof state.unavailable === 'string';
+  if(!state.enabled && !waiting && !unavailable) return undefined;
+  let current = '';
+  let destroyed = false;
   const {container, picker} = labelledPicker({testId: 'contact-voice-id', label: 'Voice ID', placeholder: 'No voice', limit: 20});
-  const options = [{value: '', label: 'No voice'}, ...voices.map(v => ({value: v, label: v}))];
-  if(current && !voices.includes(current)) options.push({value: current, label: current});
-  picker.setOptions(options, current);
+  const fill = (s: any) => {
+    const voices: string[] = Array.isArray(s.voices) ? s.voices : [];
+    current = s.voice || '';
+    const options = [{value: '', label: 'No voice'}, ...voices.map(v => ({value: v, label: v}))];
+    if(current && !voices.includes(current)) options.push({value: current, label: current});
+    picker.setPlaceholder('No voice');
+    picker.setOptions(options, current);
+    picker.setDisabled(false);
+  };
+  const cannot = (detail: string) => {
+    picker.setOptions([]);
+    picker.setPlaceholder(`Could not load voices (${detail})`);
+    picker.setDisabled(true);
+  };
+  if(state.enabled) fill(state);
+  else if(unavailable) cannot(state.unavailable);
+  else {
+    picker.setOptions([]);
+    picker.setPlaceholder('Loading voices...');
+    picker.setDisabled(true);
+    void voiceValue(call, 'contact', {pubkey, wait: true}).then((s: any) => {
+      if(destroyed) return;
+      if(s?.enabled) fill(s);
+      else if(typeof s?.unavailable === 'string') cannot(s.unavailable);
+      else container.style.display = 'none';
+    }, (err: unknown) => {
+      if(!destroyed) cannot(err instanceof Error && err.message ? err.message : 'no answer');
+    });
+  }
   return {
     container,
     value: () => picker.getValue() || '',
@@ -180,7 +214,10 @@ export async function createContactVoicePicker(pubkey: string, call: VoiceModels
       await voiceValue(call, 'setContact', {pubkey, voice});
       current = voice;
     },
-    destroy: () => picker.destroy()
+    destroy: () => {
+      destroyed = true;
+      picker.destroy();
+    }
   };
 }
 
@@ -190,6 +227,8 @@ export interface NewContactVoicePicker {
   setVoices(voices: readonly string[] | undefined): void;
   /** The picked Voice ID ('' = no voice, or the picker is hidden). */
   value(): string;
+  /** Whether the picker is on screen (it has voices). */
+  visible(): boolean;
   destroy(): void;
 }
 
@@ -212,6 +251,7 @@ export function createNewContactVoicePicker(): NewContactVoicePicker {
       picker.setOptions([{value: '', label: 'No voice'}, ...list.map(v => ({value: v, label: v}))], list.includes(previous) ? previous : '');
     },
     value: () => shown ? picker.getValue() || '' : '',
+    visible: () => shown,
     destroy: () => picker.destroy()
   };
 }
