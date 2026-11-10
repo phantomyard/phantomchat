@@ -1039,13 +1039,13 @@
     },
     "src/lib/phantomchat/peer-editor-dismiss.ts": {
       "stable": "absent",
-      "preview": "6b35487c5093230b35790608e6a670ac5ab762419847669a94edbe58008bda84",
-      "reason": "New pure predicate module: hit-tests a pointer target against the editor pane, the chat topbar and chat-list rows to decide whether an outside click closes the peer editor pane. No storage, network, protocol or IndexedDB access."
+      "preview": "8335cae75b1df107ca784f1138278fe7e3dec7e8d9e92f21136816f81c2c49f2",
+      "reason": "New pure predicate module: hit-tests a pointer target against the editor pane, the popups the pane itself opens (those mount at `document.body`), the chat topbar and the chat-list ROW (outermost `data-peer-id` carrier, not the nested sender title) to decide whether an outside click closes the peer editor pane. No storage, network, protocol or IndexedDB access."
     },
     "src/components/sidebarRight/index.ts": {
       "stable": "76b5c3a76ff4cdbdeebc0828b1369d9def5e30a16ebcbf932194a98d5b53c8b6",
-      "preview": "653affc1bf90357846a9da518b7a0c08f48085036b850d5553934454ae665f41",
-      "reason": "The right column registers one document-level pointerdown listener that closes the open editor tab when the click belongs to some other component, through the existing closeTab path. UI event wiring only: no storage format, schema, index or IndexedDB change."
+      "preview": "ceaba0c4dcbbbf9527e4b5a3624cf70dd37b97dce646095a6e7a800720bcb321",
+      "reason": "The right column registers one document-level pointerdown listener that closes the open editor tab when the click belongs to some other component (pane, pane-opened popup and toggle rows exempt), through the existing closeTab path. UI event wiring only: no storage format, schema, index or IndexedDB change."
     }
   }
 }
