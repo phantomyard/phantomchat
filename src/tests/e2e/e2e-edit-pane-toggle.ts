@@ -243,7 +243,10 @@ async function main() {
     assert.equal(await waitFor(async() => (await popups(A.page)) === 1), true, 'Remove opens the confirmation popup');
 
     assert.equal(await editorVisible(A.page, GROUP_EDITOR), true, 'the dialog itself is not an outside click');
-    await A.page.locator('.popup-confirmation .popup-footer .popup-button.danger').first().click();
+    // A confirmation popup renders no .popup-footer (PopupElement creates it only
+    // under if(options.footer), and confirmationPopup sets none): its buttons go
+    // into .popup-buttons inside .popup-container.
+    await A.page.locator('.popup-confirmation .popup-button.btn.danger').first().click();
     assert.equal(await waitFor(async() => (await popups(A.page)) === 0), true, 'the confirmation resolves');
 
     assert.equal(await editorVisible(A.page, GROUP_EDITOR), true, 'the pane survives its own dialog');
