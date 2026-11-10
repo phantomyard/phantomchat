@@ -6,6 +6,12 @@
 import 'fake-indexeddb/auto';
 import {describe, expect, it} from 'vitest';
 import {createListPicker} from '@components/listPicker';
+import {
+  isInsidePeerEditorPane,
+  isInsidePeerEditorPopup,
+  isPeerEditorToggleEntryPoint,
+  shouldDismissPeerEditorOnPointerDown
+} from '@lib/phantomchat/peer-editor-dismiss';
 
 const q = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
 const options = (n: number) => Array.from({length: n}, (_, i) => ({value: `m-${i}`, label: `Model ${i}`}));
@@ -46,5 +52,33 @@ describe('list picker', () => {
     expect(q('d-sheet')).toBeNull();
     expect(q('d-value').textContent).toBe('Enter your token to load models');
     picker.destroy();
+  });
+
+  it('a pick in the sheet is not an outside click for the editor pane', () => {
+    // The Provider contact Edit pane's Model / Provider / Voice ID pickers open
+    // this sheet at document.body. The pane's outside-click rule must treat a
+    // pointer there as the pane's own, or picking a model closes the pane
+    // before the check button can save it.
+    const column = document.createElement('div');
+    column.id = 'column-right';
+    document.body.append(column);
+    const picker = createListPicker({testId: 'e', label: 'Model', placeholder: 'None'});
+    column.append(picker.trigger);
+    picker.setOptions(options(3));
+    picker.trigger.click();
+
+    const row = q('e-option-m-1');
+    expect(isInsidePeerEditorPane(row)).toBe(false);
+    expect(isInsidePeerEditorPopup(row)).toBe(true);
+    expect(shouldDismissPeerEditorOnPointerDown({
+      isInsidePane: isInsidePeerEditorPane(row),
+      isInsidePopup: isInsidePeerEditorPopup(row),
+      isToggleEntryPoint: isPeerEditorToggleEntryPoint(row, 1)
+    })).toBe(false);
+    // The backdrop too: tapping it closes the sheet, not the pane under it.
+    expect(isInsidePeerEditorPopup(q('e-sheet'))).toBe(true);
+
+    picker.destroy();
+    column.remove();
   });
 });

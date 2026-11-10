@@ -6,6 +6,9 @@
 
 import Icon from '@components/icon';
 
+/** Class on the picker's body-mounted sheet (see peer-editor-dismiss). */
+export const LIST_PICKER_SHEET_CLASSNAME = 'list-picker-sheet';
+
 /**
  * A list picker the phone can actually use.
  *
@@ -143,6 +146,10 @@ export function createListPicker(opts: ListPickerOptions): ListPicker {
     overlay = document.createElement('div');
     overlay.style.cssText = `position:fixed;inset:0;z-index:5000;display:flex;justify-content:center;background:rgba(0,0,0,.4);${phone ? 'align-items:flex-end;' : 'align-items:center;padding:1rem;box-sizing:border-box;'}`;
     overlay.setAttribute('data-testid', `${testId}-sheet`);
+    // Marks the sheet as owned by whatever opened it: it mounts at
+    // document.body, so the editor pane's outside-click rule
+    // (peer-editor-dismiss) would otherwise read a pick as a click elsewhere.
+    overlay.classList.add(LIST_PICKER_SHEET_CLASSNAME);
 
     const sheet = document.createElement('div');
     sheet.style.cssText = SHEET_CSS + (phone ? 'border-bottom-left-radius:0;border-bottom-right-radius:0;' : '');

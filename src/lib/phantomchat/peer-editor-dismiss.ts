@@ -39,8 +39,11 @@
 export const PEER_EDITOR_PANE_SELECTOR = '#column-right';
 
 /** Popups mount at `document.body`, so this is how a pane-opened dialog is
- * recognised from the pointer target alone. */
-export const PEER_EDITOR_POPUP_SELECTOR = '.popup';
+ * recognised from the pointer target alone. The list picker sheet
+ * (`listPicker.ts`, class `list-picker-sheet`) mounts there too: the Provider,
+ * Model and Voice ID pickers in the Provider contact pane. Without it a pick
+ * closed the pane before the check button could save it. */
+export const PEER_EDITOR_POPUP_SELECTOR = '.popup, .list-picker-sheet';
 
 /** The chat topbar, whose click handler routes to `openPeerEditor`. */
 export const PEER_EDITOR_TOPBAR_SELECTOR = '.topbar';

@@ -769,8 +769,8 @@
     },
     "src/components/listPicker.ts": {
       "stable": "absent",
-      "preview": "5aac80672bbede075fa6ccbdcfa1c39026c739278c046530f0f11a209b80e06c",
-      "reason": "New module: one list picker for the New Contact pane's Provider and Model fields, replacing two native <select>s that on a phone opened a full-screen OS wheel over every model. A field-shaped trigger opens a sheet with a search box, 44px rows, the selected row checked, a capped first list with a Show all button, Escape and backdrop close, and a disabled state that shows the placeholder instead of opening. Pure DOM; no storage, network, protocol or IndexedDB access."
+      "preview": "c8a26c6588fdf0c4d49caff14e1fd731225ec532f57d71ad28b48c07776f80b3",
+      "reason": "New module: one list picker for the New Contact pane's Provider and Model fields, replacing two native <select>s that on a phone opened a full-screen OS wheel over every model. A field-shaped trigger opens a sheet with a search box, 44px rows, the selected row checked, a capped first list with a Show all button, Escape and backdrop close, and a disabled state that shows the placeholder instead of opening. Pure DOM; no storage, network, protocol or IndexedDB access. Edit-pane picker fix: the sheet carries a list-picker-sheet class so the editor pane's outside-click rule treats a pick as the pane's own (picking a model no longer closes the Provider contact pane before Save). Class marker only; no storage, network or IndexedDB change."
     },
     "src/components/sidebarRight/tabs/addContact.ts": {
       "stable": "absent",
@@ -1039,8 +1039,8 @@
     },
     "src/lib/phantomchat/peer-editor-dismiss.ts": {
       "stable": "absent",
-      "preview": "8335cae75b1df107ca784f1138278fe7e3dec7e8d9e92f21136816f81c2c49f2",
-      "reason": "New pure predicate module: hit-tests a pointer target against the editor pane, the popups the pane itself opens (those mount at `document.body`), the chat topbar and the chat-list ROW (outermost `data-peer-id` carrier, not the nested sender title) to decide whether an outside click closes the peer editor pane. No storage, network, protocol or IndexedDB access."
+      "preview": "20d6b11a53a4826a51765ad1aa14f76f01ca7672fb6b593357a0883882dd1a04",
+      "reason": "New pure predicate module: hit-tests a pointer target against the editor pane, the popups the pane itself opens (those mount at `document.body`), the chat topbar and the chat-list ROW (outermost `data-peer-id` carrier, not the nested sender title) to decide whether an outside click closes the peer editor pane. No storage, network, protocol or IndexedDB access. Edit-pane picker fix: the popup selector also matches the list picker sheet (.list-picker-sheet), which mounts at document.body. Still a pure predicate; no storage, network or IndexedDB access."
     },
     "src/components/sidebarRight/index.ts": {
       "stable": "76b5c3a76ff4cdbdeebc0828b1369d9def5e30a16ebcbf932194a98d5b53c8b6",
