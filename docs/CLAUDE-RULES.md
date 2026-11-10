@@ -67,7 +67,7 @@ Storing a user in Worker's `appUsersManager.users[]` is NOT enough — call `thi
 
 - Settings logout calls `showLogOutPopup()` from `@components/popups/logOut` — never inline `indexedDB.deleteDatabase + reload`. `phantomchat-cleanup.ts` is the centralized module.
 - Cleanup MUST run in the main thread (Worker has no `localStorage`). `apiManager.logOut()` only handles `deleteEncryptedIdentity()`.
-- `indexedDB.deleteDatabase()` blocks silently if any connection is open. Close singletons via `destroy()` first, then `forceCloseDB()` for orphan connections (`key-storage.ts`, `identity.ts` open DBs on-demand).
+- `indexedDB.deleteDatabase()` stays `blocked` while any connection is open. EVERY PhantomChat IndexedDB opener must pass its handle through `closeOnVersionChange()` (`src/lib/phantomchat/idb-close-on-versionchange.ts`) so it closes itself when the cleanup deletes the DB. Never "force-close" by opening at a higher version: that open stays queued after `onblocked`, and every delete behind it hangs forever (#480/#481). `deleteDB` is bounded by `DELETE_DB_TIMEOUT_MS`, and the popups arm their safety reload BEFORE the wipe.
 - `VirtualPeersDB` has TWO connections (`this._db` class-level + `_dbPromise` module-level singleton) — `destroy()` must close both.
 - PhantomChat IndexedDB: `phantomchat-messages`, `phantomchat-message-requests`, `phantomchat-virtual-peers`, `phantomchat-groups`, `PhantomChatPool`, `PhantomChat.chat`.
 - PhantomChat localStorage: `phantomchat_identity`, `phantomchat-relay-config`, `phantomchat-last-seen-timestamp`, `phantomchat:read-receipts-enabled`.

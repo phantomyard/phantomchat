@@ -179,8 +179,8 @@
     },
     "src/lib/phantomchat/group-store.ts": {
       "stable": "602c6c7c66a3e30136cab7f4685acb5cfa4ead4645ae2de44c3e8765375aede1",
-      "preview": "8c0e5d3905c9ce7ffa216f04c7a6bee95b426cc5f0ce4455a6f361e13b5a7aea",
-      "reason": "Same IDB layout (store name, key path, index) - no schema change. updateInfo accepts `archivedAt` and stores the CLEAR as an explicit 0 instead of deleting the field, so the groups CRDT can tell \"unarchived\" from \"written by a build that never knew about archive\". Pin/unread menu update: Optional numeric pinnedAt/unreadMarkAt fields in existing GroupRecord values, with explicit zero clears and absent updates preserved. Database remains v2. Real Chromium fixture reopens Preview-written rows with pinned Stable GroupStore and verifies Stable rename preserves both fields and existing peer identity. Requires independent exact-head content review. PR423 blocker fixes: synchronous temp-id high-water reservation; optional infoUpdatedAt field timestamps in Unix seconds preserved in the existing GroupRecord/CRDT v2 payload. Info sends/receives stamp only carried fields; unrelated writes do not advance them. Legacy readers ignore this optional property; missing provenance never fabricates a watermark. Sync and the raise helper cap stamps at local time. No database version, key, encryption or required wire-field changes. Independent content review required."
+      "preview": "d5111c340a91495ddaa61250ec6953e82cde392aa0ed7713419206cdd70f9420",
+      "reason": "Same IDB layout (store name, key path, index) - no schema change. updateInfo accepts `archivedAt` and stores the CLEAR as an explicit 0 instead of deleting the field, so the groups CRDT can tell \"unarchived\" from \"written by a build that never knew about archive\". Pin/unread menu update: Optional numeric pinnedAt/unreadMarkAt fields in existing GroupRecord values, with explicit zero clears and absent updates preserved. Database remains v2. Real Chromium fixture reopens Preview-written rows with pinned Stable GroupStore and verifies Stable rename preserves both fields and existing peer identity. Requires independent exact-head content review. PR423 blocker fixes: synchronous temp-id high-water reservation; optional infoUpdatedAt field timestamps in Unix seconds preserved in the existing GroupRecord/CRDT v2 payload. Info sends/receives stamp only carried fields; unrelated writes do not advance them. Legacy readers ignore this optional property; missing provenance never fabricates a watermark. Sync and the raise helper cap stamps at local time. No database version, key, encryption or required wire-field changes. Independent content review required. #480/#481: the opener now passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection and drop the cached promise; no database name, version, store, key or row format change."
     },
     "src/lib/phantomchat/group-types.ts": {
       "stable": "74f7cc28a5500410d80e301f563f2d71fb3636d01a28af47f5370a53461beb74",
@@ -699,8 +699,8 @@
     },
     "src/lib/phantomchat/contact-prefs.ts": {
       "stable": "absent",
-      "preview": "0b31179f1b4f613f5d1866f8c393b7cb9cffe01d038a00222d2eba20dc9fc2fd",
-      "reason": "New module. Contact type, Local tools and (Provider) persona name live in a NEW IndexedDB database, phantomchat-contact-prefs (version 1, one store keyed by pubkey). The persona field is optional and older rows lack it. It does not touch phantomchat-virtual-peers or any existing database. Stable never opens the new database and ignores it."
+      "preview": "016003cac14e3ceed4a40b477622aa2584aa8d7047cfc883b6e659a36d3ca585",
+      "reason": "New module. Contact type, Local tools and (Provider) persona name live in a NEW IndexedDB database, phantomchat-contact-prefs (version 1, one store keyed by pubkey). The persona field is optional and older rows lack it. It does not touch phantomchat-virtual-peers or any existing database. Stable never opens the new database and ignores it. #480/#481: the opener now passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection and drop the cached promise; no database name, version, store, key or row format change."
     },
     "electron/localPersonas/scan.test.ts": {
       "stable": "absent",

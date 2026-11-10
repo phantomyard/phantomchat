@@ -3,8 +3,9 @@
  * Tests for phantomchat-cleanup.ts error paths.
  *
  * Validates:
- *   - forceCloseDB: synchronous indexedDB.open throw AND req.onerror firing
- *   - deleteDB: indexedDB.deleteDatabase throw + req.onerror / onblocked
+ *   - cleanup never opens a DB (no force-close at v999999, #480/#481)
+ *   - deleteDB: indexedDB.deleteDatabase throw + req.onerror
+ *   - deleteDB: onblocked waits for success; a delete that stays blocked times out
  *   - clearPhantomChatData({keepSeed: true}) filters out PhantomChat.chat / phantomchat_identity
  *   - clearPhantomChatData({keepSeed: false}) wipes everything
  *   - per-key localStorage.removeItem throw is swallowed (loop continues)
@@ -105,30 +106,7 @@ describe('phantomchat-cleanup — error paths', () => {
     if(origLS !== undefined) (globalThis as any).localStorage = origLS;
   });
 
-  it('forceCloseDB: indexedDB.open throwing synchronously is swallowed + resolves', async() => {
-    // Every open call throws. deleteDatabase resolves ok so we can observe
-    // the overall flow completes.
-    openMock.mockImplementation(() => { throw new Error('boom'); });
-    deleteMock.mockImplementation(() => {
-      const req = makeReq();
-      queueMicrotask(() => req.onsuccess?.());
-      return req;
-    });
-
-    const {clearAllPhantomChatData} = await import('@lib/phantomchat/phantomchat-cleanup');
-    const failed = await clearAllPhantomChatData();
-
-    // Open throws but delete still runs and succeeds → no failures
-    expect(failed).toEqual([]);
-  });
-
-  it('forceCloseDB: req.onerror path resolves (does not reject)', async() => {
-    openMock.mockImplementation(() => {
-      const req = makeReq();
-      // Fire onerror asynchronously
-      queueMicrotask(() => req.onerror?.());
-      return req;
-    });
+  it('never opens a database (no force-close upgrade that can queue the deletes)', async() => {
     deleteMock.mockImplementation(() => {
       const req = makeReq();
       queueMicrotask(() => req.onsuccess?.());
@@ -137,22 +115,9 @@ describe('phantomchat-cleanup — error paths', () => {
 
     const {clearAllPhantomChatData} = await import('@lib/phantomchat/phantomchat-cleanup');
     await expect(clearAllPhantomChatData()).resolves.toEqual([]);
-  });
-
-  it('forceCloseDB: req.onblocked path resolves', async() => {
-    openMock.mockImplementation(() => {
-      const req = makeReq();
-      queueMicrotask(() => req.onblocked?.());
-      return req;
-    });
-    deleteMock.mockImplementation(() => {
-      const req = makeReq();
-      queueMicrotask(() => req.onsuccess?.());
-      return req;
-    });
-
-    const {clearAllPhantomChatData} = await import('@lib/phantomchat/phantomchat-cleanup');
-    await expect(clearAllPhantomChatData()).resolves.toEqual([]);
+    // (loadIdentity may open PhantomChat.chat at its real version for the
+    // push unsubscribe; what must never happen is an upgrade-style open.)
+    expect(openMock.mock.calls.filter((c) => c[1] === 999999)).toEqual([]);
   });
 
   it('deleteDB: deleteDatabase throwing synchronously reports failure (name in returned list)', async() => {
@@ -192,23 +157,32 @@ describe('phantomchat-cleanup — error paths', () => {
     expect(failed).toContain('PhantomChatPool');
   });
 
-  it('deleteDB: req.onblocked also returns false', async() => {
-    openMock.mockImplementation(() => {
-      const req = makeReq({result: {close: vi.fn()}});
-      queueMicrotask(() => req.onsuccess?.());
-      return req;
-    });
+  it('deleteDB: onblocked is not final — a delete that then succeeds is not reported failed', async() => {
     deleteMock.mockImplementation(() => {
       const req = makeReq();
-      queueMicrotask(() => req.onblocked?.());
+      queueMicrotask(() => {
+        req.onblocked?.();
+        setTimeout(() => req.onsuccess?.(), 10);
+      });
       return req;
     });
 
     const {clearAllPhantomChatData} = await import('@lib/phantomchat/phantomchat-cleanup');
+    await expect(clearAllPhantomChatData()).resolves.toEqual([]);
+  });
+
+  it('deleteDB: a delete that never settles times out and is reported failed', async() => {
+    // Request never fires anything (the #480/#481 hang shape).
+    deleteMock.mockImplementation(() => makeReq());
+
+    const {clearAllPhantomChatData, DELETE_DB_TIMEOUT_MS} = await import('@lib/phantomchat/phantomchat-cleanup');
+    const started = Date.now();
     const failed = await clearAllPhantomChatData();
 
     expect(failed).toContain('phantomchat-messages');
-  });
+    expect(failed).toContain('PhantomChat.chat');
+    expect(Date.now() - started).toBeGreaterThanOrEqual(DELETE_DB_TIMEOUT_MS - 50);
+  }, 15000);
 
   it('clearAllExceptSeed: omits PhantomChat.chat from delete list and phantomchat_identity from LS removal', async() => {
     const deleted: string[] = [];

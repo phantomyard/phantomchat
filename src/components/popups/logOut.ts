@@ -1,6 +1,16 @@
 import rootScope from '@lib/rootScope';
 import confirmationPopup from '@components/confirmationPopup';
 
+// Longer than the worst-case wipe (push unsubscribe 1.5s + store close 1.5s +
+// per-DB delete 3s) plus the 4s the normal logOut reload gets.
+const SAFETY_RELOAD_MS = 12000;
+
+function armSafetyReload(ms: number): void {
+  setTimeout(() => {
+    location.href = location.origin;
+  }, ms);
+}
+
 function createOverlay(text: string): HTMLDivElement {
   const overlay = document.createElement('div');
   overlay.style.cssText = [
@@ -24,6 +34,10 @@ export default function showLogOutPopup() {
     }
   }).then(async() => {
     const overlay = createOverlay('Clearing data…');
+
+    // Arm the escape hatch BEFORE the wipe, not after it: if the cleanup ever
+    // stalls, the user must not be stuck behind the overlay (#480/#481).
+    armSafetyReload(SAFETY_RELOAD_MS);
 
     // 1. Close connections + delete PhantomChat databases (main thread)
     let failed: string[] = [];

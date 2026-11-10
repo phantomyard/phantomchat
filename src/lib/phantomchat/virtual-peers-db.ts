@@ -11,6 +11,7 @@ import type {NostrProfile} from './nostr-profile';
 import {logSwallow} from './log-swallow';
 import {schedulePublish} from './phantomchat-sync-triggers';
 import {stableStringify} from './sync-crdt';
+import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 const DB_NAME = 'phantomchat-virtual-peers';
 // v2 (#73): adds `updatedAt` — the per-item mutation timestamp the contacts
@@ -90,7 +91,7 @@ export function initVirtualPeersDB(): Promise<IDBDatabase> {
 
     request.onerror = () => reject(request.error);
 
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve(closeOnVersionChange(request.result, () => { _dbPromise = null; }));
 
     request.onupgradeneeded = (event) => {
       const req = event.target as IDBOpenDBRequest;

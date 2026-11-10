@@ -16,6 +16,8 @@
  * means Phantom, anything else keeps today's look (Phantom sigil, no badge).
  */
 
+import {closeOnVersionChange} from './idb-close-on-versionchange';
+
 export type ContactKind = 'phantom' | 'human' | 'provider';
 
 export const CONTACT_KINDS: readonly ContactKind[] = ['phantom', 'human', 'provider'];
@@ -50,7 +52,7 @@ function openDB(): Promise<IDBDatabase> {
         dbPromise = null;
         reject(req.error);
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => resolve(closeOnVersionChange(req.result, () => { dbPromise = null; }));
       req.onupgradeneeded = () => {
         const db = req.result;
         if(!db.objectStoreNames.contains(STORE)) {
