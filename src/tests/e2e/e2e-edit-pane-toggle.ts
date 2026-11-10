@@ -7,6 +7,8 @@
  *   - group / session row: open -> close -> open again
  *   - two groups in a row:  the stale-tab case that made click 2 re-animate
  *   - topbar:               same toggle, same pane
+ *   - the pane's own dialog: its confirmation popups mount at `document.body`,
+ *                           so clicking their buttons must NOT count as outside
  *   - 1:1 contact:          row and topbar both reach the contact editor
  *   - narrow:               unchanged, the row click opens the chat (no pane)
  *
@@ -64,6 +66,37 @@ async function clickRow(page, peerId: number) {
   });
 }
 
+/** A whole click on a row: the pointerdown the dismissal listens on, then the
+ * mousedown the chat list answers. Drawing the row first, as `clickRow` does. */
+async function pressRow(page, peerId: number) {
+  await page.evaluate((id: number) => {
+    document.querySelectorAll('[data-e2e-row]').forEach((el) => el.remove());
+    const list = document.querySelector('.chatlist') as HTMLElement;
+    const row = document.createElement('a');
+    row.className = 'row chatlist-chat';
+    row.setAttribute('data-peer-id', String(id));
+    row.setAttribute('data-e2e-row', '1');
+    row.textContent = 'Row click';
+    row.style.height = '60px';
+    list.prepend(row);
+  }, peerId);
+  const row = page.locator('a[data-e2e-row="1"]').first();
+  await row.waitFor({state: 'visible', timeout: 30000});
+  await row.evaluate((el: HTMLElement) => {
+    el.dispatchEvent(new PointerEvent('pointerdown', {button: 0, bubbles: true, cancelable: true}));
+    el.dispatchEvent(new MouseEvent('mousedown', {button: 0, bubbles: true, cancelable: true}));
+  });
+}
+
+/** The pointerdown half of a click on any element on screen. */
+async function pointerDown(page, selector: string) {
+  await page.evaluate((sel: string) => {
+    const el = document.querySelector(sel);
+    if(!el) throw new Error('pointerdown target missing: ' + sel);
+    el.dispatchEvent(new PointerEvent('pointerdown', {button: 0, bubbles: true, cancelable: true}));
+  }, selector);
+}
+
 /** The topbar's own click handler — the shared entry point, not the row rule.
  * Playwright's real click covers both `mousedown` and `click` spellings of
  * `attachClickEvent` (it picks one by touch support). */
@@ -102,9 +135,11 @@ async function main() {
   try {
     await A.page.waitForFunction(() => window.__phantomchatGroupAPI && window.rootScope?.managers);
     const peers = [];
+    const groupIds: Array<string> = [];
     for(const name of ['Toggle A', 'Toggle B']) {
       const groupId = await A.page.evaluate(async([n, other]: [string, string]) =>
         window.__phantomchatGroupAPI.createGroup(n, [other]), [name, B.pubkeyHex]);
+      groupIds.push(groupId);
       peers.push(await A.page.evaluate(async(id: string) => {
         const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
         return (await getGroupStore().get(id)).peerId;
@@ -154,6 +189,76 @@ async function main() {
     await clickTopbar(A.page);
     assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'topbar click 2 closes it');
     console.log('PASS: topbar toggles the group editor');
+
+    // ---- click-outside: any click that is not the pane's own closes it ----
+    await openChat(A.page, peerA);
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(() => editorVisible(A.page, GROUP_EDITOR)), true, 'pane open before the outside click');
+
+    // Inside the pane: nothing happens.
+    await pointerDown(A.page, '#column-right ' + GROUP_EDITOR);
+    assert.equal(await editorVisible(A.page, GROUP_EDITOR), true, 'a click inside the pane leaves it open');
+
+    // The prompt bar.
+    await pointerDown(A.page, '.chat-input');
+    assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'the prompt bar closes the pane');
+    assert.deepEqual(await editorTabs(A.page), [], 'the editor tab is really closed, not just hidden behind the column');
+
+    // A menu in the topbar's utility cluster (not a toggle entry point).
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(() => editorVisible(A.page, GROUP_EDITOR)), true, 'pane open again for the menu case');
+    await pointerDown(A.page, '.chat-utils .btn-menu-toggle');
+    assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'a topbar menu closes the pane');
+
+    // Another chat: the pane closes AND that chat opens.
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(() => editorVisible(A.page, GROUP_EDITOR)), true, 'pane open before switching chats');
+    await pressRow(A.page, peerB);
+    assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'selecting another chat closes the pane');
+    assert.equal(await waitFor(async() => (await state(A.page)).peer === peerB), true, 'and that chat is what opens');
+    assert.deepEqual(await editorTabs(A.page), [], 'no editor tab survives the chat switch');
+    console.log('PASS: click-outside closes the pane (pane / prompt bar / menu / other chat)');
+
+    // ---- the pane's own dialog: a confirm inside it must not dismiss ----
+    // The group editor's Remove button opens a `confirmationPopup`, which
+    // `PopupElement` mounts at `document.body`. Treating that as "outside" killed
+    // the pane on the pointerdown and resolved the removal against a closed tab.
+    await openChat(A.page, peerA);
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(() => editorVisible(A.page, GROUP_EDITOR)), true, 'group editor open before the dialog case');
+
+    const removeButtons = (page) => page.evaluate(() =>
+      document.querySelectorAll('.phantomchat-group-edit-container .btn-icon.danger').length);
+    const popups = (page) => page.evaluate(() => document.querySelectorAll('.popup-confirmation').length);
+    const storedMembers = (page, groupId: string) => page.evaluate(async(id: string) => {
+      const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
+      return ((await getGroupStore().get(id))?.members || []).length;
+    }, groupId);
+
+    assert.equal(await storedMembers(A.page, groupIds[0]), 2, 'group starts with two members');
+    assert.equal(await removeButtons(A.page), 1, 'one removable (non-admin, other) member in the roster');
+    assert.equal(await popups(A.page), 0, 'no confirmation open yet');
+
+    await A.page.locator('.phantomchat-group-edit-container .btn-icon.danger').first().click();
+    assert.equal(await waitFor(async() => (await popups(A.page)) === 1), true, 'Remove opens the confirmation popup');
+
+    assert.equal(await editorVisible(A.page, GROUP_EDITOR), true, 'the dialog itself is not an outside click');
+    // A confirmation popup renders no .popup-footer (PopupElement creates it only
+    // under if(options.footer), and confirmationPopup sets none): its buttons go
+    // into .popup-buttons inside .popup-container.
+    await A.page.locator('.popup-confirmation .popup-button.btn.danger').first().click();
+    assert.equal(await waitFor(async() => (await popups(A.page)) === 0), true, 'the confirmation resolves');
+
+    assert.equal(await editorVisible(A.page, GROUP_EDITOR), true, 'the pane survives its own dialog');
+    assert.deepEqual(await editorTabs(A.page), ['AppPhantomChatGroupEditTab'], 'and it is still the one editor tab');
+    assert.equal(await waitFor(async() => (await removeButtons(A.page)) === 0), true,
+      'the roster re-rendered with the member gone (draft)');
+    assert.equal(await storedMembers(A.page, groupIds[0]), 2, 'only a draft: the stored group is untouched');
+    console.log('PASS: the pane\'s own confirmation dialog does not close it');
+
+    // Leave the roster as the fixture had it: close the pane without saving.
+    await clickRow(A.page, peerA);
+    assert.equal(await waitFor(async() => !(await editorVisible(A.page, GROUP_EDITOR))), true, 'editor closed again');
 
     // ---- 1:1 contact: row and topbar ----
     await openChat(A.page, contactPeer);

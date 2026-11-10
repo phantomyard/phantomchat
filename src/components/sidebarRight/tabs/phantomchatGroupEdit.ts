@@ -26,6 +26,11 @@ export default class AppPhantomChatGroupEditTab extends SliderSuperTab {
   private groupId: string;
 
   public async init() {
+    // Marked before anything can bail out: the outside-click rule
+    // (peer-editor-dismiss) keys on this class, and a pane for a group that is
+    // already gone still has to answer a click elsewhere.
+    this.container.classList.add('peer-editor-pane');
+
     // Sessions share this editor with groups; only the wording differs.
     const isSession = isSessionPeer(+this.groupPeerId);
     const store = getGroupStore();

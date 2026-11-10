@@ -40,7 +40,7 @@ export default class AppEditContactTab extends SliderSuperTab {
   public async init() {
     const {peerId} = this;
     const userId = peerId.toUserId();
-    this.container.classList.add('edit-peer-container', 'edit-contact-container');
+    this.container.classList.add('edit-peer-container', 'edit-contact-container', 'peer-editor-pane');
     const [isContact, privacy] = await Promise.all([
       userId ? this.managers.appUsersManager.isContact(userId) : Promise.resolve(false),
       this.managers.appPrivacyManager.getPrivacy('inputPrivacyKeyPhoneNumber')

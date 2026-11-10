@@ -269,8 +269,8 @@
     },
     "src/components/sidebarRight/tabs/phantomchatGroupEdit.ts": {
       "stable": "460e95bed92c20ad09f1cefe15782c65303646a6dfb352e086ee30b63fb14588",
-      "preview": "30a72fb36eb0f8045373607e8fcf43f260cb5f81185d29c9d48c4d80be6cb9ee",
-      "reason": "Group/session editor presentation only: 'Name' and 'Add Members' labels; the check button is always on screen (`.is-visible` set once at creation, since `.btn-corner` otherwise rests a button-height below the pane) and saves the current field value. Persistence still goes through the same group-api calls; no storage format change. Avatars are now sourced only from the profile's kind-0 `picture`: a save preserves the stored picture, uploads use the live relay-pool key, peers' https pictures render ahead of the Key Sigil, and every other avatar edit control plus the group custom-avatar render path are removed. No stored-format change — same kind-0 event, same localStorage keys. Session wording (#462): sessions say Session, not Group, in editor Delete/Leave, confirms, deleteDialog and chat-list/topbar Leave (new lang keys, leaveGroupLangKey). UI strings only; no stored-format, schema or wire change."
+      "preview": "54537e6944d2cf1898a75eda3748281245d62a36261c8bc9b550a1c196ce3468",
+      "reason": "Adds the `peer-editor-pane` marker class to the group/session editor's container, before the group lookup can bail out, so the outside-click rule recognizes the pane. Class name only, nothing persisted."
     },
     "src/components/chat/input.ts": {
       "stable": "00902fb8dd1f3fb11ad72d8746fcbde66f54daf52e8d6c77f2c664f208e8bdb5",
@@ -574,8 +574,8 @@
     },
     "src/components/sidebarRight/tabs/editContact.ts": {
       "stable": "dc47d392be5630b7e116fb57a0f285cc910d31507392d6a24fe32bc65945818c",
-      "preview": "515858efba2ffd140fca5c93bbecb0c8cb662058763efde24d626e02604f2d29",
-      "reason": "Contact pane: Local tools for Phantom asks the desktop gate; deleting a Provider contact first deletes its bundled-engine persona via the desktop bridge, and a failed persona delete keeps the prefs row and fails the contact delete. Same phantomchat-contact-prefs rows as before (new optional persona field). No schema change. Avatars are now sourced only from the profile's kind-0 `picture`: a save preserves the stored picture, uploads use the live relay-pool key, peers' https pictures render ahead of the Key Sigil, and every other avatar edit control plus the group custom-avatar render path are removed. No stored-format change — same kind-0 event, same localStorage keys. Contact delete everywhere: Edit pane: delete goes through the shared delete-contact path; back arrow on phones. UI only: no storage format change. Phone tap fix: openContactEditor always opens the chat first (setInnerPeer) and the phone back arrow lands in it; the list-return onClose is removed. Navigation only: no storage, schema or protocol change. Local tools switch for legacy Phantom contacts: reads the cached kind-0 bot flag (localStorage, read-only) to type an untyped contact; no stored or wire format change. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required. Specialized Models rework (#466): engine provider lists, masked stored-key field, Active check and Provider contact provider/model editor via the desktop bridge; no browser storage, IndexedDB, contact-pref or Electron credential-file format change. Test and Apply rework: Active badge removed, Test and Apply / Test and Save buttons, Voice ID only on Provider contacts, Provider Edit pane layout, required unique Provider contact name. UI and Electron-main logic only; no browser storage, IndexedDB, contact-pref or wire format change."
+      "preview": "1df3a1f04d2d97126e967577e2e39f5529dc69e7242ff4081271a30d63d22fe9",
+      "reason": "Adds the `peer-editor-pane` marker class to the contact editor's container so the outside-click rule recognizes the pane. Class name only, nothing persisted."
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
       "stable": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
@@ -1036,6 +1036,16 @@
       "stable": "absent",
       "preview": "3bbc2967f6335cdc6d49926c122323f4cb5b943157b5b13f698f1f44053ba955",
       "reason": "Test file for platformModels.ts; not shipped. Review fix: tests for dims, older engines and the cached read. Startup move tests (follow-up to #475). Test only."
+    },
+    "src/lib/phantomchat/peer-editor-dismiss.ts": {
+      "stable": "absent",
+      "preview": "8335cae75b1df107ca784f1138278fe7e3dec7e8d9e92f21136816f81c2c49f2",
+      "reason": "New pure predicate module: hit-tests a pointer target against the editor pane, the popups the pane itself opens (those mount at `document.body`), the chat topbar and the chat-list ROW (outermost `data-peer-id` carrier, not the nested sender title) to decide whether an outside click closes the peer editor pane. No storage, network, protocol or IndexedDB access."
+    },
+    "src/components/sidebarRight/index.ts": {
+      "stable": "76b5c3a76ff4cdbdeebc0828b1369d9def5e30a16ebcbf932194a98d5b53c8b6",
+      "preview": "ceaba0c4dcbbbf9527e4b5a3624cf70dd37b97dce646095a6e7a800720bcb321",
+      "reason": "The right column registers one document-level pointerdown listener that closes the open editor tab when the click belongs to some other component (pane, pane-opened popup and toggle rows exempt), through the existing closeTab path. UI event wiring only: no storage format, schema, index or IndexedDB change."
     }
   }
 }
