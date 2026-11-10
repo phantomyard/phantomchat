@@ -874,8 +874,10 @@ describe('New Contact pane', () => {
       const token = q('add-contact-provider-token') as HTMLInputElement;
       token.value = 'pok_x';
       token.dispatchEvent(new InputEvent('input', {inputType: 'insertFromPaste'}));
-      // No blur needed: the paste starts the check.
-      await vi.waitFor(() => expect(checks.length).toBe(1));
+      // No blur needed: the paste starts the check - at once, not after the
+      // typing debounce, so assert it before that 600 ms timer could fire.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(checks.length).toBe(1);
       expect(submit.disabled).toBe(true);
       expect(submit.title).toBe('Checking token...');
 
