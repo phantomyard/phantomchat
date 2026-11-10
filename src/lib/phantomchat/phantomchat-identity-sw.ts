@@ -11,6 +11,8 @@
  *   - service worker context (only path that works)
  */
 
+import {closeOnVersionChange} from './idb-close-on-versionchange';
+
 const DB_NAME = 'PhantomChat.chat';
 const STORE_NAME = 'identity';
 const ID_KEY = 'current';
@@ -49,7 +51,7 @@ function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME);
     req.onerror = () => reject(req.error);
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => resolve(closeOnVersionChange(req.result));
     // No onupgradeneeded — SW must NOT alter the schema. If the store is
     // missing it means identity was never created in this origin and the
     // transaction(STORE_NAME, ...) call below will throw, which is caught

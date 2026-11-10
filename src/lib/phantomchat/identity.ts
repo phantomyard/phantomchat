@@ -1,4 +1,5 @@
 import {WORDLIST} from './wordlist';
+import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 /**
  * Generate a cryptographically secure 12-word seed phrase
@@ -197,7 +198,7 @@ async function openDB(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, 1);
 
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve(closeOnVersionChange(request.result));
 
     request.onupgradeneeded = () => {
       const db = request.result;

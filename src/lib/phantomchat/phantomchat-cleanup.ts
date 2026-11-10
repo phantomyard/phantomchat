@@ -55,42 +55,43 @@ const SEED_DB_NAME = 'PhantomChat.chat';
 const SEED_LS_KEY = 'phantomchat_identity';
 
 /**
- * Force-close all open connections to a database by triggering a version upgrade.
- * When we open with a higher version, the browser sends `versionchange` to all
- * existing connections. We hook `onversionchange` on our own connection to close it,
- * and other well-behaved connections will close too. Connections that don't handle
- * `versionchange` will be force-closed by the browser when we abort the upgrade.
+ * Upper bound on one database delete. A delete is normally instant: every
+ * PhantomChat connection closes itself on `versionchange`
+ * (`closeOnVersionChange`). A connection that does not — an older build in
+ * another tab, a context we do not own — keeps the delete `blocked` until it
+ * goes away. We wait a little for that, then give up on this DB so the wipe
+ * always finishes and the caller can reload (#480/#481). The request itself
+ * stays queued, so the browser still completes the delete once the blocker
+ * closes (at the latest when the page reloads).
  */
-function forceCloseDB(name: string): Promise<void> {
-  return new Promise((resolve) => {
-    try {
-      const req = indexedDB.open(name, 999999);
-      req.onupgradeneeded = () => {
-        req.transaction.abort();
-      };
-      req.onsuccess = () => {
-        try { req.result.close(); } catch(e) { logSwallow('Cleanup.forceCloseDB.close', e); }
-        resolve();
-      };
-      req.onerror = () => resolve();
-      req.onblocked = () => resolve();
-    } catch(e) {
-      logSwallow('Cleanup.forceCloseDB.open', e);
-      resolve();
-    }
-  });
-}
+export const DELETE_DB_TIMEOUT_MS = 3000;
 
 function deleteDB(name: string): Promise<boolean> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if(settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => {
+      console.warn('[PhantomChat.chat] delete of ' + name + ' still blocked after ' + DELETE_DB_TIMEOUT_MS + 'ms, giving up');
+      finish(false);
+    }, DELETE_DB_TIMEOUT_MS);
     try {
       const req = indexedDB.deleteDatabase(name);
-      req.onsuccess = () => resolve(true);
-      req.onerror = () => resolve(false);
-      req.onblocked = () => resolve(false);
+      req.onsuccess = () => finish(true);
+      req.onerror = () => finish(false);
+      // `blocked` is not final: the delete goes ahead as soon as the blocking
+      // connection closes. Wait for success (or the timeout) instead of
+      // reporting failure straight away.
+      req.onblocked = () => {
+        console.warn('[PhantomChat.chat] delete of ' + name + ' blocked by an open connection, waiting');
+      };
     } catch(e) {
       logSwallow('Cleanup.deleteDB', e);
-      resolve(false);
+      finish(false);
     }
   });
 }
@@ -179,18 +180,25 @@ async function clearPhantomChatData(opts: {keepSeed: boolean}): Promise<string[]
   try {
     closes.push(destroyPushStorage());
   } catch(e) { logSwallow('Cleanup.pushStorage', e); }
-  await Promise.allSettled(closes);
+  // Bounded: a destroy() that awaits a still-pending open must not stall the wipe.
+  await Promise.race([
+    Promise.allSettled(closes),
+    new Promise<void>((resolve) => setTimeout(resolve, 1500))
+  ]);
 
-  // 2. Force-close any remaining connections
-  await Promise.allSettled(dbNames.map((name) => forceCloseDB(name)));
-
-  // 3. Delete databases
+  // 2. Delete databases. No "force-close by opening at v999999" step: an open
+  //    request that is blocked by a connection without an `onversionchange`
+  //    handler stays QUEUED after `onblocked`, and every deleteDatabase()
+  //    queued behind it then never fires success/error/blocked — that was the
+  //    Delete Account / Reset Local Data hang (#480/#481). Our own connections
+  //    close themselves on `versionchange`; anything else is bounded by
+  //    DELETE_DB_TIMEOUT_MS.
   const results = await Promise.all(
     dbNames.map(async(name) => ({name, ok: await deleteDB(name)}))
   );
   const failed = results.filter((r) => !r.ok).map((r) => r.name);
 
-  // 4. Clear localStorage keys — and the voice-meta decode cache in full
+  // 3. Clear localStorage keys — and the voice-meta decode cache in full
   //    (memory + disk + any pending debounced flush), so a later identity
   //    can never consume a stale entry via a colliding document id.
   try {

@@ -24,6 +24,7 @@
 import {Logger, logger} from '@lib/logger';
 import {NostrRelayPool, type PublishResult} from './nostr-relay-pool';
 import {UnsignedEvent} from './nostr-crypto';
+import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 /**
  * Queued message structure
@@ -112,7 +113,7 @@ function initDB(): Promise<IDBDatabase> {
 
     request.onerror = () => reject(request.error);
 
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve(closeOnVersionChange(request.result, () => { _dbPromise = null; }));
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;

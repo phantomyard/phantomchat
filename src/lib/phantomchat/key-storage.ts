@@ -1,3 +1,5 @@
+import {closeOnVersionChange} from './idb-close-on-versionchange';
+
 const DB_NAME = 'PhantomChat.chat';
 const DB_VERSION = 2;
 const IDENTITY_STORE = 'nostr-identity';
@@ -21,7 +23,7 @@ function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve(closeOnVersionChange(request.result));
     request.onupgradeneeded = () => {
       const db = request.result;
       if(!db.objectStoreNames.contains('identity')) {

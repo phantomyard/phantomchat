@@ -12,6 +12,8 @@
  *   indexes: by targetEventId, by fromPubkey
  */
 
+import {closeOnVersionChange} from './idb-close-on-versionchange';
+
 export interface ReactionRow {
   /** compoundKey = `${targetEventId}|${fromPubkey}|${emoji}` — IDB keyPath */
   compoundKey?: string;
@@ -46,7 +48,7 @@ class PhantomChatReactionsStore {
           os.createIndex('byFromPubkey', 'fromPubkey', {unique: false});
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => resolve(closeOnVersionChange(req.result, () => { this.db = null; }));
       req.onerror = () => reject(req.error);
     });
   }

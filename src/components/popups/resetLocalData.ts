@@ -8,6 +8,16 @@ import {toast} from '@components/toast';
 
 const RESET_FLAG_KEY = 'phantomchat-just-reset';
 
+// Longer than the worst-case wipe (push unsubscribe 1.5s + store close 1.5s +
+// per-DB delete 3s) plus the 4s the normal logOut reload gets.
+const SAFETY_RELOAD_MS = 12000;
+
+function armSafetyReload(ms: number): void {
+  setTimeout(() => {
+    location.href = location.origin;
+  }, ms);
+}
+
 function createOverlay(text: string): HTMLDivElement {
   const overlay = document.createElement('div');
   overlay.style.cssText = [
@@ -32,6 +42,10 @@ export default async function showResetLocalDataPopup() {
     }
   }).then(async() => {
     const overlay = createOverlay('Resetting…');
+
+    // Arm the escape hatch BEFORE the wipe, not after it: if the cleanup ever
+    // stalls, the user must not be stuck behind the overlay (#480/#481).
+    armSafetyReload(SAFETY_RELOAD_MS);
 
     // 1. Wipe PhantomChat data (keeping the seed)
     let failed: string[] = [];
@@ -88,6 +102,10 @@ export async function showDeleteAccountPopup() {
     }
   }).then(async() => {
     const overlay = createOverlay('Deleting account…');
+
+    // Arm the escape hatch BEFORE the wipe, not after it: if the cleanup ever
+    // stalls, the user must not be stuck behind the overlay (#480/#481).
+    armSafetyReload(SAFETY_RELOAD_MS);
 
     // Clear the PhantomChat data DBs (messages, groups, virtual-peers, pool).
     // The identity DB is left to logOut below, which deletes it in the Worker

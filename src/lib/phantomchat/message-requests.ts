@@ -14,6 +14,7 @@
 
 import {getDB as getVirtualPeersDB} from './virtual-peers-db';
 import {PhantomChatBridge} from './phantomchat-bridge';
+import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ export class MessageRequestStore {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => resolve(closeOnVersionChange(request.result, () => { this.dbPromise = null; }));
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;

@@ -14,6 +14,8 @@
  *     'aggregation'   → Record<peerId, AggregationEntry>
  */
 
+import {closeOnVersionChange} from './idb-close-on-versionchange';
+
 const DB_NAME = 'phantomchat-push';
 const DB_VERSION = 1;
 const STORE_NAME = 'kv';
@@ -51,7 +53,7 @@ function openDB(): Promise<IDBDatabase> {
         db.createObjectStore(STORE_NAME, {keyPath: 'k'});
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => resolve(closeOnVersionChange(req.result, () => { dbPromise = null; }));
   });
   return dbPromise;
 }

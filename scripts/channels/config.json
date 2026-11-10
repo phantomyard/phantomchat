@@ -179,8 +179,8 @@
     },
     "src/lib/phantomchat/group-store.ts": {
       "stable": "602c6c7c66a3e30136cab7f4685acb5cfa4ead4645ae2de44c3e8765375aede1",
-      "preview": "8c0e5d3905c9ce7ffa216f04c7a6bee95b426cc5f0ce4455a6f361e13b5a7aea",
-      "reason": "Same IDB layout (store name, key path, index) - no schema change. updateInfo accepts `archivedAt` and stores the CLEAR as an explicit 0 instead of deleting the field, so the groups CRDT can tell \"unarchived\" from \"written by a build that never knew about archive\". Pin/unread menu update: Optional numeric pinnedAt/unreadMarkAt fields in existing GroupRecord values, with explicit zero clears and absent updates preserved. Database remains v2. Real Chromium fixture reopens Preview-written rows with pinned Stable GroupStore and verifies Stable rename preserves both fields and existing peer identity. Requires independent exact-head content review. PR423 blocker fixes: synchronous temp-id high-water reservation; optional infoUpdatedAt field timestamps in Unix seconds preserved in the existing GroupRecord/CRDT v2 payload. Info sends/receives stamp only carried fields; unrelated writes do not advance them. Legacy readers ignore this optional property; missing provenance never fabricates a watermark. Sync and the raise helper cap stamps at local time. No database version, key, encryption or required wire-field changes. Independent content review required."
+      "preview": "d5111c340a91495ddaa61250ec6953e82cde392aa0ed7713419206cdd70f9420",
+      "reason": "Same IDB layout (store name, key path, index) - no schema change. updateInfo accepts `archivedAt` and stores the CLEAR as an explicit 0 instead of deleting the field, so the groups CRDT can tell \"unarchived\" from \"written by a build that never knew about archive\". Pin/unread menu update: Optional numeric pinnedAt/unreadMarkAt fields in existing GroupRecord values, with explicit zero clears and absent updates preserved. Database remains v2. Real Chromium fixture reopens Preview-written rows with pinned Stable GroupStore and verifies Stable rename preserves both fields and existing peer identity. Requires independent exact-head content review. PR423 blocker fixes: synchronous temp-id high-water reservation; optional infoUpdatedAt field timestamps in Unix seconds preserved in the existing GroupRecord/CRDT v2 payload. Info sends/receives stamp only carried fields; unrelated writes do not advance them. Legacy readers ignore this optional property; missing provenance never fabricates a watermark. Sync and the raise helper cap stamps at local time. No database version, key, encryption or required wire-field changes. Independent content review required. #480/#481: the opener now passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection and drop the cached promise; no database name, version, store, key or row format change."
     },
     "src/lib/phantomchat/group-types.ts": {
       "stable": "74f7cc28a5500410d80e301f563f2d71fb3636d01a28af47f5370a53461beb74",
@@ -699,8 +699,8 @@
     },
     "src/lib/phantomchat/contact-prefs.ts": {
       "stable": "absent",
-      "preview": "0b31179f1b4f613f5d1866f8c393b7cb9cffe01d038a00222d2eba20dc9fc2fd",
-      "reason": "New module. Contact type, Local tools and (Provider) persona name live in a NEW IndexedDB database, phantomchat-contact-prefs (version 1, one store keyed by pubkey). The persona field is optional and older rows lack it. It does not touch phantomchat-virtual-peers or any existing database. Stable never opens the new database and ignores it."
+      "preview": "016003cac14e3ceed4a40b477622aa2584aa8d7047cfc883b6e659a36d3ca585",
+      "reason": "New module. Contact type, Local tools and (Provider) persona name live in a NEW IndexedDB database, phantomchat-contact-prefs (version 1, one store keyed by pubkey). The persona field is optional and older rows lack it. It does not touch phantomchat-virtual-peers or any existing database. Stable never opens the new database and ignores it. #480/#481: the opener now passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection and drop the cached promise; no database name, version, store, key or row format change."
     },
     "electron/localPersonas/scan.test.ts": {
       "stable": "absent",
@@ -1051,6 +1051,86 @@
       "stable": "absent",
       "preview": "35602f09d6fb1a3513d87e356900f5ea8860ff54559df5c9c70d38c83971ceec",
       "reason": "New pure DOM helper (#478): builds the empty Contacts list text and its Add your first contact button. No storage, network, protocol or IndexedDB access."
+    },
+    "src/components/popups/logOut.ts": {
+      "stable": "5d56d6179a3cbb5325a66e8ebc080f8fce0b3fd2a24408c3006d65ec9c65f9a8",
+      "preview": "1897ba16a4a5819d6393db4b1ebda1e7caf12148a7bf791d7d4be45b3de8ea80",
+      "reason": "#480/#481: arms the existing safety reload before the wipe instead of after it. No storage reads or writes change."
+    },
+    "src/components/popups/resetLocalData.ts": {
+      "stable": "1b3866509ed958b820d0fee28178ed21ff516241700d6a8f177bfa037ef68c5f",
+      "preview": "08e14461147333d8c15cab352d034a7af1d4bfe8961f5c9cb6d98d309316b2a2",
+      "reason": "#480/#481: arms the existing safety reload before the wipe instead of after it. No storage reads or writes change."
+    },
+    "src/lib/phantomchat/idb-close-on-versionchange.ts": {
+      "stable": "absent",
+      "preview": "e31b8bfa683f93c533a8f13e86189dc63d5dbf2e0a6fb5d0a26f58e787918485",
+      "reason": "#480/#481: new helper module. Sets onversionchange on an IDBDatabase so the connection closes when another context deletes or upgrades the database. Touches no stored data, names or versions."
+    },
+    "src/lib/phantomchat/identity.ts": {
+      "stable": "a3a7b63addf50447ed9884e10fe6ad2d3a513150a2ed0d91ac774248e9ebab24",
+      "preview": "0b2396366cca998833ea641517e8cf8f18e8e368f4b65f7ba28c51e52f50f279",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/key-storage.ts": {
+      "stable": "fc7c8a186eb02820fbfc9c50298be1ea9eb2d5a32298cfe4e6fb5a06c5a5aee6",
+      "preview": "6905338515ba7465e7a4cc0e0041db4b9c7b7d70ac54ea5007e4411ea5d4c685",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/message-requests.ts": {
+      "stable": "b25d46e673e5a221df770bc5e75d214b95536e802b7bdbc136ab12d56bce1dc2",
+      "preview": "90331dbda8d552901620b44a4c639e7b5f276c42ce33cfb565d28a065c0c0225",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/nostr-relay-pool.ts": {
+      "stable": "cfde53316ea81b1e043becc806e98ea0842877f7276b0dde333ee7cd5d876f78",
+      "preview": "9128d0cc2e05f18812659a0e66373f4312bf9c3f1df21d8fb159a9af6fd738d8",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/offline-queue.ts": {
+      "stable": "3eb8dc75da6a3373db23280a4d7eb8880a468bcd9024d876644af1ac62dd8141",
+      "preview": "81cea4e1d7f70b5e7794aeadf332df89e7d07c300d726f12ff67293bf113d639",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/phantomchat-cleanup.ts": {
+      "stable": "abc745f05a9de333c4f07f94556e18b64d971a2eb661e82e99521572a05beabd",
+      "preview": "199cb35571f1bade547d5dd494f2f36388f9d450e2608cafaebe7c8a8d0cb5d6",
+      "reason": "#480/#481: Delete Account / Reset Local Data cleanup no longer opens each database at v999999 (the queued open hung every delete behind it). deleteDB treats onblocked as non-final with a bounded timeout; store destroy() is bounded. Same database and localStorage key lists, so the same data is wiped; nothing new is written."
+    },
+    "src/lib/phantomchat/phantomchat-identity-sw.ts": {
+      "stable": "ab441c251c4c283ca37ac31cc90124ab094f9a32628b61a4a8e4724513ecda4a",
+      "preview": "6f29ec674ead8ea074926f97c350d1d9de9b650b7884e115ab74a8e4e97a616a",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/phantomchat-local-media.ts": {
+      "stable": "1a9ae625a8b7911c6743f444e9f5029405339127c357dcbabb11a3c508b0b12b",
+      "preview": "2567825ff658051d2511e7f804dea481894437305210adff188dc5e0eb18a47a",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/phantomchat-push-storage.ts": {
+      "stable": "d1c50449be9a51b5eadbba3597ea3a7a48021accc5d190562bf17b49e8b94014",
+      "preview": "dcc16ce9ea3151f2a1d2be2b50a45d7cab84f4e5c2fd3a36d63df862f8c08f2e",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/phantomchat-reactions-store.ts": {
+      "stable": "c8534a704037d38099d1f9fb79612bf5b09665a6ebd5c0fcc504ece7b84ebe3c",
+      "preview": "455a323f6458d07407753772efb89c7942a63a7a203ab4c74782d49f1908d8b5",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/relay-store.ts": {
+      "stable": "09e56340f8157eb3f1e8b366773841de2b7e42d34e13c75cb97d65a4e9da29f6",
+      "preview": "ed33fa3cee0cb27317a2f2d48473f944105ecc89b7757cc821ddd3c5afdf3aec",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/virtual-peers-db.ts": {
+      "stable": "c222e6559fd972d55b3556fa93f22c4bd2158da211162a42f50b89dfe2b5f834",
+      "preview": "e08afd5e238505c8d7287727bf7a1bf574bbf6fde8d37790e174e2ba50774b5f",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+    },
+    "src/lib/phantomchat/voice-upload-queue.ts": {
+      "stable": "0117a2674682a2970c0ad41cd114843c600e1febeaba6eaa56c261e6d95e9491",
+      "preview": "ade36e07055d4cea0015ffc6db77ef56f9594cdf09248f9e9cd28ade6697cbab",
+      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
     }
   }
 }

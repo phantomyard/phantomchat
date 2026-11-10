@@ -13,6 +13,7 @@
 
 import {Logger, logger} from '@lib/logger';
 import {uploadToBlossomWithProgress} from './blossom-upload-progress';
+import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -166,7 +167,7 @@ function initDB(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve(closeOnVersionChange(request.result, () => { _dbPromise = null; }));
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;

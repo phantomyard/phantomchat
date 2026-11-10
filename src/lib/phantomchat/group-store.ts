@@ -8,6 +8,7 @@
  */
 
 import type {GroupRecord} from './group-types';
+import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 const DB_NAME = 'phantomchat-groups';
 const DB_VERSION = 2;
@@ -42,7 +43,7 @@ function initGroupDB(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve(closeOnVersionChange(request.result, () => { _dbPromise = null; }));
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;

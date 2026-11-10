@@ -29,6 +29,7 @@ import {
   READBACK_QUARANTINE_JITTER,
   READBACK_STRIKE_THRESHOLD
 } from './relay-ranking';
+import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -3820,7 +3821,7 @@ export class NostrRelayPool {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open('PhantomChatPool', 1);
       request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => resolve(closeOnVersionChange(request.result));
       request.onupgradeneeded = () => {
         const db = request.result;
         if(!db.objectStoreNames.contains('config')) {

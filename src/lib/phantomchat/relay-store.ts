@@ -11,6 +11,8 @@
  *   forward_queue (autoIncrement) — pending forwarding tasks
  */
 
+import {closeOnVersionChange} from './idb-close-on-versionchange';
+
 // ─── Types ─────────────────────────────────────────────────────────
 
 export interface NostrEvent {
@@ -75,7 +77,7 @@ export class RelayStore {
       const request = indexedDB.open(this.dbName, DB_VERSION);
 
       request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => resolve(closeOnVersionChange(request.result, () => { this.dbPromise = null; }));
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
