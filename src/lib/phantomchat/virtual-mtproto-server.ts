@@ -43,6 +43,81 @@ function isOneToOneConvId(convId: string): boolean {
   return typeof convId === 'string' && ONE_TO_ONE_CONV_ID_RE.test(convId);
 }
 
+// Group conversationIds: canonical `group:<32-hex-groupId>` (groups-sync) or
+// the legacy bare `<32-hex-groupId>` (group-service-messages).
+const GROUP_CONV_ID_RE = /^(?:group:)?[0-9a-f]{32}$/i;
+
+// Rows scanned per conversation when searching. The store has no full-text
+// index, so a search is a linear scan of the newest N rows of each conv; this
+// bounds the cost without silently hiding very old history from results.
+const SEARCH_SCAN_LIMIT = 2000;
+
+// Total rows one search may scan across all conversations. Search runs on the
+// main thread, so an unbounded sweep over every conversation of a long-lived
+// account would jank the UI; this keeps a worst-case query bounded.
+const SEARCH_SCAN_BUDGET = 20000;
+
+// Message filters `searchMessages` can classify from a stored row. Anything
+// else answers an empty page rather than a wrong (plain-text) one.
+const SEARCH_FILTERS = new Set([
+  'inputMessagesFilterEmpty',
+  'inputMessagesFilterPhotos',
+  'inputMessagesFilterChatPhotos',
+  'inputMessagesFilterVideo',
+  'inputMessagesFilterRoundVideo',
+  'inputMessagesFilterPhotoVideo',
+  'inputMessagesFilterDocument',
+  'inputMessagesFilterUrl',
+  'inputMessagesFilterVoice',
+  'inputMessagesFilterRoundVoice',
+  'inputMessagesFilterMusic',
+  'inputMessagesFilterMyMentions',
+  'inputMessagesFilterMentionUsername'
+]);
+
+const SEARCH_URL_RE = /(?:https?:\/\/|www\.|t\.me\/)/i;
+
+/**
+ * Does this stored row belong in the requested media tab? The text/caption has
+ * already matched the query by the time this runs — this only narrows by kind.
+ */
+function matchesSearchFilter(stored: StoredMessage, mid: number, filterType: string): boolean {
+  if(!filterType ||
+    filterType === 'inputMessagesFilterEmpty' ||
+    filterType === 'inputMessagesFilterMyMentions' ||
+    filterType === 'inputMessagesFilterMentionUsername') {
+    return true;
+  }
+
+  const media = storedRowMedia(stored, mid).media as any;
+  const doc = media?._ === 'messageMediaDocument' ? media.document : undefined;
+  // buildPhantomChatMedia tags the document class ('image' rows are emitted as
+  // messageMediaPhoto, so a doc is only ever voice/video/audio/undefined).
+  const kind: string | undefined = doc?.type;
+
+  switch(filterType) {
+    case 'inputMessagesFilterPhotos':
+    case 'inputMessagesFilterChatPhotos':
+      return media?._ === 'messageMediaPhoto';
+    case 'inputMessagesFilterVideo':
+    case 'inputMessagesFilterRoundVideo':
+      return doc !== undefined && kind === 'video';
+    case 'inputMessagesFilterPhotoVideo':
+      return media?._ === 'messageMediaPhoto' || (doc !== undefined && kind === 'video');
+    case 'inputMessagesFilterVoice':
+    case 'inputMessagesFilterRoundVoice':
+      return doc !== undefined && kind === 'voice';
+    case 'inputMessagesFilterMusic':
+      return doc !== undefined && kind === 'audio';
+    case 'inputMessagesFilterDocument':
+      return doc !== undefined && kind !== 'voice' && kind !== 'audio' && kind !== 'video';
+    case 'inputMessagesFilterUrl':
+      return SEARCH_URL_RE.test(stored.content || '');
+    default:
+      return false;
+  }
+}
+
 // 64-hex Nostr event id (rumor / kind-1059 wrap). NIP-01 fixed-size tags
 // `e` / `p` require 32-byte hex. Used by `sendReaction` to drop publishes
 // whose target row carries a legacy `chat-XXX-N` app id as `eventId` —
@@ -486,6 +561,9 @@ export class PhantomChatMTProtoServer {
 
       case 'messages.search':
         return this.searchMessages(params);
+
+      case 'messages.searchGlobal':
+        return this.searchMessagesGlobal(params);
 
       case 'contacts.getContacts':
         return this.getContacts();
@@ -1467,93 +1545,281 @@ export class PhantomChatMTProtoServer {
     return this.buildHistoryResult({messages, users, chats: [chat], total, offsetIdOffset});
   }
 
+  /**
+   * `messages.search` — content search inside one peer.
+   *
+   * Before #484 this scanned 1:1 conversations only, ignored `peer`, `filter`
+   * and the offset triplet, and skipped every group conversation — so in-chat
+   * search returned nothing for sessions and the media tabs answered with
+   * plain text rows. It now shares one scan with `messages.searchGlobal`.
+   */
   private async searchMessages(params: any): Promise<any> {
-    const filterType = params?.filter?._ || '';
+    return this.searchMessagesInternal(params, false);
+  }
+
+  /** `messages.searchGlobal` — the same scan across every local conversation. */
+  private async searchMessagesGlobal(params: any): Promise<any> {
+    return this.searchMessagesInternal(params, true);
+  }
+
+  private async searchMessagesInternal(params: any, global: boolean): Promise<any> {
+    const emptyResult = () => ({_: 'messages.messages', messages: [] as any[], users: [] as any[], chats: [] as any[], count: 0});
+
+    // An absent filter means inputMessagesFilterEmpty (tweb always sends one,
+    // but the e2e bridge and direct callers do not).
+    const filterType = params?.filter?._ || 'inputMessagesFilterEmpty';
 
     // P2P messages don't support pinning — return empty for pinned filter
-    if(filterType === 'inputMessagesFilterPinned') {
-      return {
-        _: 'messages.messages',
-        messages: [],
-        users: [],
-        chats: [],
-        count: 0
-      };
+    if(filterType === 'inputMessagesFilterPinned') return emptyResult();
+
+    // A filter we cannot classify from a stored row must not degrade into a
+    // plain-text answer (the old behaviour listed text rows under the media
+    // tabs). Unknown filter → empty page.
+    if(!SEARCH_FILTERS.has(filterType)) return emptyResult();
+
+    const query = String(params?.q ?? '').trim().toLowerCase();
+
+    // A media filter narrows by row kind on its own, so the shared-media tabs
+    // (sharedMedia.ts loadType asks `messages.search` with `q: ''` and a media
+    // filter while the user only browses Photos/Voice/Music) must keep
+    // answering with an empty query — the pre-#484 answer was unfiltered, but
+    // it was not empty, and blanking those tabs is a regression. A query is
+    // only load-bearing for text search and the mention filters, which mean
+    // nothing without one.
+    const filterNeedsQuery = filterType === 'inputMessagesFilterEmpty' ||
+      filterType === 'inputMessagesFilterMyMentions' ||
+      filterType === 'inputMessagesFilterMentionUsername';
+    if(!query && filterNeedsQuery) return emptyResult();
+
+    const limit = Math.min(Math.max(Math.trunc(Number(params?.limit)) || 20, 1), 100);
+    const offsetId = Math.max(Math.trunc(Number(params?.offset_id)) || 0, 0);
+    const addOffset = Math.max(Math.trunc(Number(params?.add_offset)) || 0, 0);
+    const minDate = Math.max(Math.trunc(Number(params?.min_date)) || 0, 0);
+    const maxDate = Math.max(Math.trunc(Number(params?.max_date)) || 0, 0);
+
+    // messages.search is scoped to `peer`; messages.searchGlobal spans every
+    // conversation (tweb still sends `offset_peer` there — a cursor, not a
+    // scope — so it is deliberately ignored).
+    let scopedPeerId: number | null = null;
+    if(!global && params?.peer) {
+      scopedPeerId = extractPeerId(params.peer);
+      if(scopedPeerId === null) {
+        console.warn(LOG_PREFIX, 'searchMessages: could not extract peerId from', params?.peer);
+        return emptyResult();
+      }
     }
 
-    const query = (params?.q ?? '').toLowerCase();
     const store = getMessageStore();
-    const messages: any[] = [];
-    const users: any[] = [];
-    const usersById = new Map<number, any>();
+    const {getGroupStore} = await import('./group-store');
+    const groupStore = getGroupStore();
 
-    try {
-      const conversationIds = await store.getAllConversationIds();
-
-      for(const convId of conversationIds) {
+    // Group records are needed once per conversation to map a group convId to
+    // its peerChat. Loaded lazily so a 1:1-scoped search never touches them.
+    const groupsByConvId = new Map<string, any>();
+    let groupsLoaded = false;
+    const groupForConvId = async(convId: string): Promise<any> => {
+      if(!groupsLoaded) {
+        // Flag first: a concurrent lookup must not queue a second full load.
+        groupsLoaded = true;
         try {
-          // Group convs are not searched through this 1:1 path.
-          if(!isOneToOneConvId(convId)) continue;
-
-          const allMsgs = await store.getMessages(convId, 200);
-
-          for(const stored of allMsgs) {
-            if(!stored.content.toLowerCase().includes(query)) continue;
-
-            const [pubkeyA, pubkeyB] = convId.split(':');
-            const peerPubkey = this.ownPubkey && pubkeyA === this.ownPubkey ? pubkeyB :
-              this.ownPubkey && pubkeyB === this.ownPubkey ? pubkeyA :
-              pubkeyB;
-
-            // Skip self:self conversations — don't surface the user as a result.
-            if(peerPubkey === this.ownPubkey) continue;
-
-            const peerId = await this.mapper.mapPubkey(peerPubkey);
-            if(stored.mid == null) {
-              console.error(LOG_PREFIX, 'searchMessages: stored message missing mid — upstream write path is broken', {eventId: stored.eventId, timestamp: stored.timestamp});
-              throw new Error('StoredMessage.mid is required (searchMessages)');
-            }
-            const mid = stored.mid;
-            const isOutgoing = stored.isOutgoing ?? (stored.senderPubkey === this.ownPubkey);
-            const fromPeerId = isOutgoing ? await this.ownFromPeerId('searchMessages') : peerId;
-
-            // Search results feed tweb's saveMessages — a media-less copy here
-            // would land in the render cache and clobber a media-bearing bubble.
-            const rowMedia = storedRowMedia(stored, mid);
-
-            const msg = this.mapper.createTwebMessage({
-              mid,
-              peerId,
-              fromPeerId,
-              date: stored.timestamp,
-              text: rowMedia.text,
-              isOutgoing,
-              ...(rowMedia.media ? {media: rowMedia.media} : {}),
-              ...(stored.replyToMid !== undefined ? {replyToMid: stored.replyToMid} : {})
-            });
-            messages.push(msg);
-
-            if(!usersById.has(peerId)) {
-              const searchMapping = await getMapping(peerPubkey);
-              const user = this.mapper.createTwebUser({peerId, firstName: searchMapping?.displayName, pubkey: peerPubkey});
-              usersById.set(peerId, user);
-              users.push(user);
+          for(const group of await groupStore.getAll()) {
+            if(!groupsByConvId.has(`group:${group.groupId}`)) {
+              groupsByConvId.set(`group:${group.groupId}`, group);
             }
           }
         } catch(err) {
-          console.warn(LOG_PREFIX, 'searchMessages: failed for conversation', convId, err);
+          console.warn(LOG_PREFIX, 'searchMessages: failed to load groups', err);
         }
       }
-    } catch(err) {
-      console.warn(LOG_PREFIX, 'searchMessages: failed to get conversation IDs', err);
+      return groupsByConvId.get(convId) ?? groupsByConvId.get(`group:${convId}`);
+    };
+
+    let convIds: string[];
+    if(scopedPeerId !== null) {
+      if(scopedPeerId < 0) {
+        const group = await groupStore.getByPeerId(scopedPeerId);
+        if(!group) {
+          console.warn(LOG_PREFIX, 'searchMessages: no group for peerId', scopedPeerId);
+          return emptyResult();
+        }
+        // The scoped lookup already knows the record — seed it so the scan
+        // below does not depend on groupStore.getAll() listing it.
+        groupsByConvId.set(`group:${group.groupId}`, group);
+        // Canonical key only — pre-#207 bare-keyed rows are reached by the
+        // fallback read in the scan below, so one group is never scanned twice.
+        convIds = [`group:${group.groupId}`];
+      } else {
+        const pubkey = await this.cachedGetPubkey(scopedPeerId);
+        if(!pubkey) {
+          console.warn(LOG_PREFIX, 'searchMessages: no pubkey for peerId', scopedPeerId);
+          return emptyResult();
+        }
+        convIds = [this.ownPubkey ? store.getConversationId(this.ownPubkey, pubkey) : pubkey];
+      }
+    } else {
+      try {
+        convIds = await store.getAllConversationIds();
+      } catch(err) {
+        console.warn(LOG_PREFIX, 'searchMessages: failed to get conversation IDs', err);
+        return emptyResult();
+      }
+    }
+
+    const matches: {stored: StoredMessage; peerId: number; peerPubkey?: string; group?: any}[] = [];
+    const seenEventIds = new Set<string>();
+    let scanned = 0;
+    let budgetHit = false;
+
+    for(const convId of convIds) {
+      if(scanned >= SEARCH_SCAN_BUDGET) {
+        budgetHit = true;
+        break;
+      }
+
+      try {
+        let peerId: number;
+        let peerPubkey: string | undefined;
+        let group: any;
+
+        if(isOneToOneConvId(convId)) {
+          const [pubkeyA, pubkeyB] = convId.split(':');
+          peerPubkey = this.ownPubkey && pubkeyA === this.ownPubkey ? pubkeyB :
+            this.ownPubkey && pubkeyB === this.ownPubkey ? pubkeyA :
+            pubkeyB;
+
+          // Skip self:self conversations — don't surface the user as a result.
+          if(peerPubkey === this.ownPubkey) continue;
+
+          peerId = Math.abs(await this.mapper.mapPubkey(peerPubkey));
+        } else if(GROUP_CONV_ID_RE.test(convId)) {
+          group = await groupForConvId(convId);
+          if(!group || typeof group.peerId !== 'number') continue;
+          peerId = group.peerId < 0 ? group.peerId : -Math.abs(group.peerId);
+        } else {
+          // Unknown conversationId shape — never feed it to mapPubkey.
+          continue;
+        }
+
+        let rows = await store.getMessages(convId, SEARCH_SCAN_LIMIT);
+        if(!rows.length && group && convId.startsWith('group:')) {
+          // Rows the #207 rekey has not reached yet still live under the legacy
+          // bare group key. Only read it when the canonical key is empty, so a
+          // migrated group is never scanned (or counted) twice.
+          rows = await store.getMessages(convId.slice('group:'.length), SEARCH_SCAN_LIMIT);
+        }
+        scanned += rows.length;
+        for(const stored of rows) {
+          if(!stored || seenEventIds.has(stored.eventId)) continue;
+          if(stored.mid == null) {
+            // A row without a mid can be neither rendered nor navigated to;
+            // the write path is broken upstream (same contract as getHistory).
+            console.error(LOG_PREFIX, 'searchMessages: stored message missing mid — upstream write path is broken', {eventId: stored.eventId, timestamp: stored.timestamp});
+            continue;
+          }
+          if(minDate && stored.timestamp < minDate) continue;
+          if(maxDate && stored.timestamp > maxDate) continue;
+          // An empty query leaves the narrowing to the filter alone.
+          if(query && (!stored.content || !stored.content.toLowerCase().includes(query))) continue;
+          if(!matchesSearchFilter(stored, stored.mid, filterType)) continue;
+
+          seenEventIds.add(stored.eventId);
+          matches.push({stored, peerId, peerPubkey, group});
+        }
+      } catch(err) {
+        console.warn(LOG_PREFIX, 'searchMessages: failed for conversation', convId, err);
+      }
+    }
+
+    if(budgetHit) {
+      console.warn(LOG_PREFIX, 'searchMessages: scan budget reached — results are partial', {scanned, conversations: convIds.length});
+    }
+
+    // Newest first, like Telegram. `count` is the total match count for the
+    // query — tweb renders it as "N results" and uses it to decide whether
+    // another page exists, so it must NOT be the page length.
+    matches.sort((a, b) =>
+      (b.stored.timestamp - a.stored.timestamp) ||
+      (b.stored.mid! - a.stored.mid!)
+    );
+
+    const count = matches.length;
+    let page = matches;
+    if(offsetId) {
+      // offset_id is an exclusive anchor; ids descend, so older = smaller.
+      page = page.filter((m) => m.stored.mid! < offsetId);
+    }
+    if(addOffset) page = page.slice(addOffset);
+    page = page.slice(0, limit);
+
+    const messages: any[] = [];
+    const users: any[] = [];
+    const chats: any[] = [];
+    const usersById = new Map<number, any>();
+    const chatsById = new Map<number, any>();
+
+    const pushUser = async(pubkey: string, userPeerId: number) => {
+      if(!userPeerId || usersById.has(userPeerId)) return;
+      const mapping = await getMapping(pubkey);
+      const user = this.mapper.createTwebUser({peerId: userPeerId, firstName: mapping?.displayName, pubkey});
+      usersById.set(userPeerId, user);
+      users.push(user);
+    };
+
+    for(const {stored, peerId, peerPubkey, group} of page) {
+      try {
+        const mid = stored.mid!;
+        const isOutgoing = stored.isOutgoing ?? (stored.senderPubkey === this.ownPubkey);
+
+        // Search results feed tweb's saveMessages — a media-less copy here
+        // would land in the render cache and clobber a media-bearing bubble.
+        const rowMedia = storedRowMedia(stored, mid);
+
+        // Group rows carry their real sender; 1:1 rows are attributed to the
+        // peer. Same rule as getGroupHistory, so results render identically.
+        const senderPubkey = peerPubkey ?
+          (isOutgoing ? this.ownPubkey : peerPubkey) :
+          (isOutgoing ? this.ownPubkey : stored.senderPubkey);
+        const fromPeerId = senderPubkey ? Math.abs(await this.mapper.mapPubkey(senderPubkey)) : 0;
+
+        if(senderPubkey && fromPeerId) await pushUser(senderPubkey, fromPeerId);
+        if(peerPubkey) await pushUser(peerPubkey, peerId);
+
+        if(group) {
+          const absPeerId = Math.abs(peerId);
+          if(!chatsById.has(absPeerId)) {
+            const chat = this.mapper.createTwebChat({
+              chatId: absPeerId,
+              title: group.name || 'Group',
+              membersCount: group.members?.length ?? 1,
+              date: Math.floor((group.createdAt || Date.now()) / 1000)
+            });
+            chatsById.set(absPeerId, chat);
+            chats.push(chat);
+          }
+        }
+
+        const msg = this.mapper.createTwebMessage({
+          mid,
+          peerId,
+          fromPeerId,
+          date: stored.timestamp,
+          text: rowMedia.text,
+          isOutgoing,
+          ...(rowMedia.media ? {media: rowMedia.media} : {}),
+          ...(stored.replyToMid !== undefined ? {replyToMid: stored.replyToMid} : {})
+        });
+        messages.push(msg);
+      } catch(err) {
+        console.warn(LOG_PREFIX, 'searchMessages: failed to map message', stored.eventId, err);
+      }
     }
 
     return {
       _: 'messages.messages',
       messages,
       users,
-      chats: [],
-      count: messages.length
+      chats,
+      count
     };
   }
 
