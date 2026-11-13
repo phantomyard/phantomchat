@@ -2378,7 +2378,6 @@ export default class AppSearchSuper {
     const isCurrent = () => token === this.messageSearchToken && !!middleware();
 
     let loaded = 0;
-    let lastMid = 0;
 
     const setHeader = (count: number) => {
       if(!group.nameEl) return;
@@ -2386,10 +2385,20 @@ export default class AppSearchSuper {
     };
 
     const loadPage = async(append: boolean) => {
+      // Page by position, never by mid. This request is peerless, so
+      // `requestHistory`'s phantom mid passthrough — guarded on `peerId` —
+      // cannot recognise it and would run the anchor through
+      // `getServerMessageId`, i.e. `mid % 2^32`, while phantomchat mids are
+      // ~1.75e15: every page after the first came back empty and the list
+      // stopped at the first PAGE_SIZE hits behind a full-result header.
+      // `add_offset` passes through untouched, and tweb's own searchGlobal
+      // paging (`isHistoryResultEnd` resets `offsetId = 0` for a peerless
+      // filtered search) pages the same way.
       const result = await this.managers.appMessagesManager.getHistory({
         query: trimmed,
         inputFilter: {_: 'inputMessagesFilterEmpty'},
-        offsetId: append ? lastMid : 0,
+        offsetId: 0,
+        addOffset: append ? loaded : 0,
         limit: PAGE_SIZE
       });
 
@@ -2406,7 +2415,6 @@ export default class AppSearchSuper {
       if(!isCurrent()) return;
 
       loaded += messages.length;
-      if(messages.length) lastMid = messages[messages.length - 1].mid;
       setHeader(count);
 
       if(loaded < count && messages.length) {

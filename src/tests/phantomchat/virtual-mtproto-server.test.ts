@@ -900,6 +900,62 @@ describe('PhantomChatMTProtoServer', () => {
       expect(text.count).toBe(2);
     });
 
+    it('serves the shared-media tabs with an empty query (#484 review)', async() => {
+      // sharedMedia.ts browses Photos/Voice/Music with `q: ''` and a media
+      // filter: the filter alone has to narrow, or every media tab renders
+      // "Nothing found".
+      mockStore.getAllConversationIds.mockResolvedValue([CONVERSATION_ID]);
+      mockStore.getMessages.mockResolvedValue([mockMessage, imageMsg]);
+
+      const photos = await server.handleMethod('messages.search', {
+        q: '',
+        peer: {_: 'inputPeerUser', user_id: PEER_ID},
+        filter: {_: 'inputMessagesFilterPhotos'}
+      });
+
+      expect(photos.messages.map((m: any) => m.id)).toEqual([imageMsg.mid]);
+      expect(photos.count).toBe(1);
+    });
+
+    it('keeps the empty-query guard for text search and the mention filters', async() => {
+      mockStore.getAllConversationIds.mockResolvedValue([CONVERSATION_ID]);
+      mockStore.getMessages.mockResolvedValue([mockMessage, imageMsg]);
+
+      const text = await server.handleMethod('messages.search', {q: '', filter: {_: 'inputMessagesFilterEmpty'}});
+      expect(text.messages).toEqual([]);
+      expect(text.count).toBe(0);
+
+      const mentions = await server.handleMethod('messages.search', {q: '', filter: {_: 'inputMessagesFilterMyMentions'}});
+      expect(mentions.messages).toEqual([]);
+    });
+
+    it('pages a peerless searchGlobal by position, the shape the sidebar sends (#484 review)', async() => {
+      // The sidebar show-more cannot page by mid: a peerless request is not
+      // recognised by requestHistory's phantom mid passthrough, so an
+      // offset_id anchor is truncated to `mid % 2^32` and every page after the
+      // first comes back empty. `add_offset` passes through untouched.
+      const rows = [0, 1, 2, 3, 4].map((i) => ({
+        ...mockMessage,
+        eventId: 'ev-pos-' + i,
+        mid: MID + i,
+        timestamp: mockMessage.timestamp + i,
+        content: 'hello pos ' + i
+      }));
+      mockStore.getAllConversationIds.mockResolvedValue([CONVERSATION_ID]);
+      mockStore.getMessages.mockResolvedValue(rows);
+
+      const first = await server.handleMethod('messages.searchGlobal', {q: 'hello', limit: 2, offset_id: 0, add_offset: 0});
+      expect(first.count).toBe(5);
+      expect(first.messages.map((m: any) => m.id)).toEqual([MID + 4, MID + 3]);
+
+      const second = await server.handleMethod('messages.searchGlobal', {q: 'hello', limit: 2, offset_id: 0, add_offset: 2});
+      expect(second.count).toBe(5);
+      expect(second.messages.map((m: any) => m.id)).toEqual([MID + 2, MID + 1]);
+
+      const third = await server.handleMethod('messages.searchGlobal', {q: 'hello', limit: 2, offset_id: 0, add_offset: 4});
+      expect(third.messages.map((m: any) => m.id)).toEqual([MID]);
+    });
+
     it('answers an empty page for a filter it cannot classify', async() => {
       mockStore.getMessages.mockResolvedValue([mockMessage]);
 

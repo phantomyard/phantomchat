@@ -1578,7 +1578,18 @@ export class PhantomChatMTProtoServer {
     if(!SEARCH_FILTERS.has(filterType)) return emptyResult();
 
     const query = String(params?.q ?? '').trim().toLowerCase();
-    if(!query) return emptyResult();
+
+    // A media filter narrows by row kind on its own, so the shared-media tabs
+    // (sharedMedia.ts loadType asks `messages.search` with `q: ''` and a media
+    // filter while the user only browses Photos/Voice/Music) must keep
+    // answering with an empty query — the pre-#484 answer was unfiltered, but
+    // it was not empty, and blanking those tabs is a regression. A query is
+    // only load-bearing for text search and the mention filters, which mean
+    // nothing without one.
+    const filterNeedsQuery = filterType === 'inputMessagesFilterEmpty' ||
+      filterType === 'inputMessagesFilterMyMentions' ||
+      filterType === 'inputMessagesFilterMentionUsername';
+    if(!query && filterNeedsQuery) return emptyResult();
 
     const limit = Math.min(Math.max(Math.trunc(Number(params?.limit)) || 20, 1), 100);
     const offsetId = Math.max(Math.trunc(Number(params?.offset_id)) || 0, 0);
@@ -1707,7 +1718,8 @@ export class PhantomChatMTProtoServer {
           }
           if(minDate && stored.timestamp < minDate) continue;
           if(maxDate && stored.timestamp > maxDate) continue;
-          if(!stored.content || !stored.content.toLowerCase().includes(query)) continue;
+          // An empty query leaves the narrowing to the filter alone.
+          if(query && (!stored.content || !stored.content.toLowerCase().includes(query))) continue;
           if(!matchesSearchFilter(stored, stored.mid, filterType)) continue;
 
           seenEventIds.add(stored.eventId);

@@ -209,8 +209,8 @@
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "b23eb84b2b32d30fd5c8d02fcc9a582882dbc19fbba654c1be0bd640a091a40e",
-      "preview": "3a2f0e40660bd4de307770cfe47ca1d4ef738c46cc61cf687da07ba9e8734085",
-      "reason": "Search rewrite (#484): scans existing rows via the read-only message-store getters (getAllConversationIds/getMessages) and group-store records. Adds no write path, no new store, no key or schema change; a legacy bare group key is only read when the canonical one is empty."
+      "preview": "a85c1ec9be3eddd2ca950e432f242e1dfe219d049caa0de1b62f5a8ccaf8914f",
+      "reason": "Search rewrite (#484): scans existing rows via the read-only message-store getters (getAllConversationIds/getMessages) and group-store records. Adds no write path, no new store, no key or schema change; a legacy bare group key is only read when the canonical one is empty. A media filter still answers with an empty query (shared-media tabs); only text search and the mention filters require one."
     },
     "src/components/dialogsContextMenu.ts": {
       "stable": "95cb488c369560065eaef66688ec496962cf1011c245d104788ae649a546daf1",
@@ -659,8 +659,8 @@
     },
     "src/components/appSearchSuper.ts": {
       "stable": "2015d79256003871c9ef14b79421973ca08ee3c9fa0500291daa442ca4460616",
-      "preview": "24133e705a1e6818e91eb157282229827876bf6bd934c71629e3476e26a1f2d2",
-      "reason": "Sidebar message search (#484): renders messages.searchGlobal hits into the existing timeline/search-group DOM. No storage access of its own — it reads through appMessagesManager.getHistory, so no schema, key or migration change."
+      "preview": "f3acab80eb221658a0ea5470bab83c76e30bde32b341fa4770a0e667e6c09a04",
+      "reason": "Sidebar message search (#484): renders messages.searchGlobal hits into the existing timeline/search-group DOM. Pages by position (add_offset) because a peerless request cannot carry a mid anchor. No storage access of its own — it reads through appMessagesManager.getHistory, so no schema, key or migration change."
     },
     "src/lib/phantomchat/archive-tile-selection.ts": {
       "stable": "absent",
