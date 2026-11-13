@@ -89,8 +89,8 @@
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "20ecf8550de094f7d0cd8275896bf73bd1cb43e85c2f008429b7ef0c120acba4",
-      "preview": "489e82c0b0a5e882f565000d63dfb0a48d49f5b735a705c76eea238e4b74414f",
-      "reason": "An npub pasted into search opens the New Contact modal prefilled instead of adding directly. Presentation and navigation only, with no storage access. The hamburger menu's Add to Contacts entry now opens the bottom section, directly above Appearance, instead of sitting with the Contacts navigation items. Navigation only; no storage, schema or protocol change. Additional change: Add to contacts, the Contacts + button and a pasted npub open the New Contact right-side pane (openAddContactPane) instead of the modal. Presentation only; no storage, schema or protocol change. Sessions + routing (no contacts -> New Contact pane, one contact -> direct session, picker pick never opens the Edit pane): UI click routing only, no storage keys, schemas or shared-state formats touched. Comment-only: the session title cap reference now reads 128 characters. No code, storage, schema or wire change. Chats + with no contacts opens the New Contact pane (#478). UI routing only; no storage change."
+      "preview": "5932d5d5afd8975ede0e1c050aebcbddc8eae8dffe03aea94e74478ab78d10e7",
+      "reason": "Registers the sidebar Messages search group and opts into searchMessageContent (#484). UI wiring only; every existing local-entity group is unchanged and the disabled global-search branch stays off."
     },
     "src/components/sidebarLeft/tabs/chatFolders.ts": {
       "stable": "bf0b1299a8cb72dba6074bbc76ba42f4ed4e6511ebb7c3b5d18233b50aa7bbc3",
@@ -209,8 +209,8 @@
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "b23eb84b2b32d30fd5c8d02fcc9a582882dbc19fbba654c1be0bd640a091a40e",
-      "preview": "8e7edd9dc79c8308f97b92bbbc680133de6eae6e7e12a060fb38e6b050a30c96",
-      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toast is presentation-only."
+      "preview": "3a2f0e40660bd4de307770cfe47ca1d4ef738c46cc61cf687da07ba9e8734085",
+      "reason": "Search rewrite (#484): scans existing rows via the read-only message-store getters (getAllConversationIds/getMessages) and group-store records. Adds no write path, no new store, no key or schema change; a legacy bare group key is only read when the canonical one is empty."
     },
     "src/components/dialogsContextMenu.ts": {
       "stable": "95cb488c369560065eaef66688ec496962cf1011c245d104788ae649a546daf1",
@@ -339,8 +339,8 @@
     },
     "src/lib/appManagers/apiManager.ts": {
       "stable": "599489f17acb83393f57e848af98792737247ca1494977735a6433954080ca82",
-      "preview": "df2b9b56a02e789314cfa410092cbd633caf28674b3a17c6758fa07b3907e505",
-      "reason": "Forward uses existing encrypted text/file send paths and source reads. No storage schema, identity, or wire-format changes; existing clients receive ordinary messages. Error toast is presentation-only."
+      "preview": "548090d693b2b8369b76a5b854e266230d28309e4671ce0f589dede1416bec08",
+      "reason": "Adds messages.searchGlobal to PHANTOMCHAT_BRIDGE_METHODS so the call reaches the virtual server instead of the worker stub. Routing only — no storage key, schema or migration change."
     },
     "index.html": {
       "stable": "4de92dc7976fd19e38b6f79b91672a92c9dcb37e0878e7f1474a5376cf0a7062",
@@ -659,8 +659,8 @@
     },
     "src/components/appSearchSuper.ts": {
       "stable": "2015d79256003871c9ef14b79421973ca08ee3c9fa0500291daa442ca4460616",
-      "preview": "3438ffd0362bd63f9f7776897742a7905dc0e6516d39d8ca726f5af9c1ea3619",
-      "reason": "#386 (app-bugs batch): the message-search row passes setUnread: false explicitly now that the default is a list row. Presentation only, same paint as before; no storage, schema, protocol or identity change. Independent exact-head content review required."
+      "preview": "24133e705a1e6818e91eb157282229827876bf6bd934c71629e3476e26a1f2d2",
+      "reason": "Sidebar message search (#484): renders messages.searchGlobal hits into the existing timeline/search-group DOM. No storage access of its own — it reads through appMessagesManager.getHistory, so no schema, key or migration change."
     },
     "src/lib/phantomchat/archive-tile-selection.ts": {
       "stable": "absent",

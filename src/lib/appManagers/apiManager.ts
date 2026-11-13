@@ -874,6 +874,7 @@ export class ApiManager extends ApiManagerMethods {
     // blank previews until each chat was opened.
     'messages.getPeerDialogs',
     'messages.search',
+    'messages.searchGlobal',
     'messages.readHistory',
     'messages.toggleDialogPin',
     'messages.markDialogUnread',

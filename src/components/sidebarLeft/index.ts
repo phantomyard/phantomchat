@@ -129,7 +129,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
   private newBtnMenu: HTMLElement;
 
-  private searchGroups: {[k in 'chats' | 'contacts' | 'groups' | 'folders' | 'settings' | 'people' | 'recent']: SearchGroup} = {} as any;
+  private searchGroups: {[k in 'chats' | 'contacts' | 'groups' | 'messages' | 'folders' | 'settings' | 'people' | 'recent']: SearchGroup} = {} as any;
   public searchSuper: AppSearchSuper;
   private searchInitResult: SearchInitResult;
   private isSearchActive = false;
@@ -1336,6 +1336,10 @@ export class AppSidebarLeft extends SidebarSlider {
       chats: new SearchGroup('SearchAllChatsShort', 'contacts', undefined, undefined, undefined, undefined, close),
       contacts: new SearchGroup('Contacts', 'contacts', undefined, undefined, undefined, undefined, close),
       groups: new SearchGroup('FilterGroups', 'contacts', undefined, undefined, undefined, undefined, close),
+      // [PhantomChat.search] #484 message-content hits. The rows are rendered by
+      // AppSearchSuper.renderMessageResults; `close` collapses the search
+      // overlay while the row's data-mid opens the chat at that message.
+      messages: new SearchGroup('Chat.Search.MessagesFound', 'messages', undefined, undefined, undefined, undefined, close),
       folders: new SearchGroup('Filters', 'contacts', undefined, undefined, false),
       settings: new SearchGroup('Settings', 'contacts', undefined, undefined, false),
       people: new SearchGroup(false, 'contacts', true, 'search-group-people', true, false, close, true),
@@ -1366,9 +1370,12 @@ export class AppSidebarLeft extends SidebarSlider {
       hideEmptyTabs: false,
       showSender: true,
       managers: this.managers,
-      // [PhantomChat.search] Relay-backed history isn't full-text searchable, so the
-      // sidebar search is local-entity only — no message-content search.
+      // [PhantomChat.search] Keep tweb's global-search branch off: it would
+      // replace the local-entity sections below with its own layout. Message
+      // content is searched instead by AppSearchSuper.renderMessageResults
+      // (#484), which renders into the `messages` group above.
       disableMessageSearch: true,
+      searchMessageContent: true,
       settingsEntries,
       onResultNavigate: close
     });

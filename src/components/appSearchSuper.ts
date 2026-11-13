@@ -493,10 +493,18 @@ export default class AppSearchSuper {
   // search entirely (relay-backed history can't be full-text searched), and instead
   // renders only local entity results: chats, contacts, groups, folders, settings.
   public disableMessageSearch: boolean;
+  // [PhantomChat.search] Opt-in message-content results for the local-entity
+  // sidebar search (#484). The `!disableMessageSearch` branch is tweb's own
+  // global search, which replaces every local-entity section with its own
+  // chats/contacts/globalContacts layout. This keeps the fork's sections intact
+  // and appends a "Messages" group fed by `messages.searchGlobal`.
+  public searchMessageContent: boolean;
   public settingsEntries: SearchSettingsEntry[];
   public onResultNavigate: () => void;
 
   public slider: SidebarSlider;
+
+  private messageSearchToken = 0;
 
   public stargiftsStore: StarGiftsProfileStore;
   public stargiftsActions: StarGiftsProfileActions;
@@ -512,7 +520,7 @@ export default class AppSearchSuper {
     'onChangeTab' |
     'showSender' |
     'managers'
-  > & Partial<Pick<AppSearchSuper, 'storiesArchive' | 'onLengthChange' | 'openSavedDialogsInner' | 'slider' | 'disableMessageSearch' | 'settingsEntries' | 'onResultNavigate'>>) {
+  > & Partial<Pick<AppSearchSuper, 'storiesArchive' | 'onLengthChange' | 'openSavedDialogsInner' | 'slider' | 'disableMessageSearch' | 'searchMessageContent' | 'settingsEntries' | 'onResultNavigate'>>) {
     safeAssign(this, options);
 
     this.slider ??= appSidebarRight;
@@ -1414,7 +1422,8 @@ export default class AppSearchSuper {
         return Promise.all([
           entityPromise,
           this.renderFolderResults(query, middleware),
-          this.renderSettingsResults(query, middleware)
+          this.renderSettingsResults(query, middleware),
+          this.searchMessageContent ? this.renderMessageResults(query, middleware) : undefined
         ]).then(() => {});
       }
 
@@ -2345,6 +2354,77 @@ export default class AppSearchSuper {
     }
 
     return this.stargiftsActions.loadNext();
+  }
+
+  /**
+   * [PhantomChat.search] Message-content results for the sidebar (#484).
+   *
+   * Renders the `messages.searchGlobal` hits into the dedicated `messages`
+   * group underneath the local-entity sections, newest first, with a "Show
+   * more" row while `count` says another page exists. Rows are built by the
+   * same `performSearchResult` path the media tabs use, so a hit carries its
+   * peer, `data-mid` (clicking opens the chat at that message) and the query
+   * highlight.
+   */
+  private async renderMessageResults(query: string, middleware: () => boolean) {
+    const group = this.searchGroups.messages;
+    const trimmed = query.trim();
+    if(!group || !trimmed) return;
+
+    // Queries can resolve out of order (type, then type more): tag this run so
+    // a stale page can never render into the newest query's group.
+    const token = ++this.messageSearchToken;
+    const PAGE_SIZE = 20;
+    const isCurrent = () => token === this.messageSearchToken && !!middleware();
+
+    let loaded = 0;
+    let lastMid = 0;
+
+    const setHeader = (count: number) => {
+      if(!group.nameEl) return;
+      group.nameEl.replaceChildren(i18n(count ? 'Chat.Search.MessagesFound' : 'Chat.Search.NoMessagesFound', [count]));
+    };
+
+    const loadPage = async(append: boolean) => {
+      const result = await this.managers.appMessagesManager.getHistory({
+        query: trimmed,
+        inputFilter: {_: 'inputMessagesFilterEmpty'},
+        offsetId: append ? lastMid : 0,
+        limit: PAGE_SIZE
+      });
+
+      if(!isCurrent()) return;
+
+      const messages = this.filterMessagesByType(result.messages || [], 'inputMessagesFilterEmpty');
+      const count = result.count ?? messages.length;
+
+      if(!append) group.clear();
+      group.list.querySelector('.search-group__show-more')?.remove();
+
+      await this.performSearchResult({messages, mediaTab: this.mediaTabs[0]});
+
+      if(!isCurrent()) return;
+
+      loaded += messages.length;
+      if(messages.length) lastMid = messages[messages.length - 1].mid;
+      setHeader(count);
+
+      if(loaded < count && messages.length) {
+        const showMore = document.createElement('div');
+        showMore.classList.add('search-group__show-more');
+        showMore.append(i18n('Separator.ShowMore'));
+        showMore.addEventListener('click', () => {
+          showMore.remove();
+          loadPage(true);
+        });
+        group.list.append(showMore);
+        group.setActive();
+      }
+
+      group.toggle();
+    };
+
+    await loadPage(false);
   }
 
   private loadType(options: SearchSuperLoadTypeOptions) {
