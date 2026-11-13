@@ -2395,6 +2395,7 @@ export default class AppSearchSuper {
       // paging (`isHistoryResultEnd` resets `offsetId = 0` for a peerless
       // filtered search) pages the same way.
       const result = await this.managers.appMessagesManager.getHistory({
+        ...this.searchContext,
         query: trimmed,
         inputFilter: {_: 'inputMessagesFilterEmpty'},
         offsetId: 0,
@@ -2408,7 +2409,7 @@ export default class AppSearchSuper {
       const count = result.count ?? messages.length;
 
       if(!append) group.clear();
-      group.list.querySelector('.search-group__show-more')?.remove();
+      group.container.querySelector('.search-group__show-more')?.remove();
 
       await this.performSearchResult({messages, mediaTab: this.mediaTabs[0]});
 
@@ -2421,15 +2422,18 @@ export default class AppSearchSuper {
         const showMore = document.createElement('div');
         showMore.classList.add('search-group__show-more');
         showMore.append(i18n('Separator.ShowMore'));
-        showMore.addEventListener('click', () => {
+        attachClickEvent(showMore, () => {
           showMore.remove();
           loadPage(true);
-        });
-        group.list.append(showMore);
+        }, {cancelMouseDown: true});
+        // Chat lists cancel clicks in capture. Keep the paging control outside
+        // the list so its own handler receives real mouse/touch gestures.
+        group.container.append(showMore);
         group.setActive();
       }
 
-      group.toggle();
+      // Keep the zero-results header visible too. toggle() hides empty lists.
+      group.setActive();
     };
 
     await loadPage(false);
@@ -2486,17 +2490,14 @@ export default class AppSearchSuper {
     const history = this.historyStorage[inputFilter] ??= [];
 
     if(inputFilter === 'inputMessagesFilterEmpty' && !history.length && type !== 'saved') {
-      if(!this.loadedChats) {
-        this.loadChats();
-        this.loadedChats = true;
-      }
+      const chatsPromise = !this.loadedChats ? this.loadChats() : Promise.resolve();
+      this.loadedChats = true;
 
-      // [PhantomChat.search] Global sidebar search is local-entity only. loadChats
-      // has already rendered chats/contacts/groups/folders/settings; there is no
-      // message-content search to run, so stop here.
+      // The sidebar renders its own entity and message sections in loadChats.
+      // Await them so load() owns completion and handles any rejection.
       if(this.disableMessageSearch || (!this.searchContext.query.trim() && !this.searchContext.peerId && !this.searchContext.minDate)) {
         this.loaded[type] = true;
-        return Promise.resolve();
+        return chatsPromise;
       }
     }
 

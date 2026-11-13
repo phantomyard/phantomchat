@@ -43,9 +43,9 @@ function isOneToOneConvId(convId: string): boolean {
   return typeof convId === 'string' && ONE_TO_ONE_CONV_ID_RE.test(convId);
 }
 
-// Group conversationIds: canonical `group:<32-hex-groupId>` (groups-sync) or
-// the legacy bare `<32-hex-groupId>` (group-service-messages).
-const GROUP_CONV_ID_RE = /^(?:group:)?[0-9a-f]{32}$/i;
+// Group conversationIds use 96-hex admin-bound ids or legacy 32-hex ids.
+// Accept canonical `group:<id>` and the legacy bare `<id>` storage key.
+const GROUP_CONV_ID_RE = /^(?:group:)?(?:[0-9a-f]{32}|[0-9a-f]{96})$/i;
 
 // Rows scanned per conversation when searching. The store has no full-text
 // index, so a search is a linear scan of the newest N rows of each conv; this

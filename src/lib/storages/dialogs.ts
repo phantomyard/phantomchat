@@ -460,7 +460,7 @@ export default class DialogsStorage extends AppManager {
 
   public getFilterType(filterId: number) {
     if(filterId && filterId < 0 || this.appPeersManager.isBotforum(filterId)) return FilterType.Forum;
-    else if(filterId === this.appPeersManager.peerId) return FilterType.Saved;
+    else if(filterId && filterId === this.appPeersManager.peerId) return FilterType.Saved;
     else return FilterType.Folder;
   }
 

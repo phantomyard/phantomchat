@@ -506,6 +506,7 @@ export class AppUsersManager extends AppManager {
 
   public testSelfSearch(query: string) {
     const user = this.getSelf();
+    if(!user) return false;
     const index = this.createSearchIndex();
     index.indexObject(user.id, this.getUserSearchText(user.id));
     return index.search(query).has(user.id);
