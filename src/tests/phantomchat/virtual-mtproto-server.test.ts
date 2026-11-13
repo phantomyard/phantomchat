@@ -848,6 +848,22 @@ describe('PhantomChatMTProtoServer', () => {
       expect(result.chats[0].title).toBe('Search Group');
     });
 
+    it.each(['group', 'session'])('finds modern admin-bound %s messages globally', async(kind) => {
+      const groupId = OWN_PUBKEY + 'a'.repeat(32);
+      const convId = 'group:' + groupId;
+      const record = {...groupRecord, groupId, kind};
+      mockStore.getAllConversationIds.mockResolvedValue([CONVERSATION_ID, convId]);
+      mockStore.getMessages.mockImplementation(async(id: string) =>
+        id === convId ? [{...groupMsg, conversationId: convId}] : [mockMessage]
+      );
+      mockGroupStore.getAll.mockResolvedValue([record]);
+
+      const result = await server.handleMethod('messages.searchGlobal', {q: 'hello', limit: 20});
+      expect(result.count).toBe(2);
+      expect(result.messages.map((m: any) => m.id)).toContain(groupMsg.mid);
+      expect(result.chats[0].title).toBe('Search Group');
+    });
+
     it('honours peer scope for a group so other conversations are not searched', async() => {
       mockStore.getAllConversationIds.mockResolvedValue([CONVERSATION_ID, GROUP_CONV_ID]);
       mockStore.getMessages.mockImplementation(async(convId: string) =>

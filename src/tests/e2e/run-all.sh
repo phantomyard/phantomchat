@@ -30,6 +30,7 @@ TESTS=(
   # Run dev-boot-smoke first: fastest, cheapest, catches regressions that
   # would silently break every other test's prerequisites (onboarding mount).
   e2e-dev-boot-smoke.ts
+  e2e-sidebar-message-search.ts
   e2e-branding.ts
   e2e-ui-theme.ts
   e2e-status-ui.ts
