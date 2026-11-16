@@ -71,6 +71,8 @@ export default class PopupForward extends PopupPickUser {
       placeholder: 'ShareModal.Search.ForwardPlaceholder',
       chatRightsActions: chatRightsAction,
       selfPresence: 'ChatYourSelf',
+      // PhantomChat has no Saved Messages: never offer your own account.
+      exceptSelf: true,
       useTopics: !noTopics,
       ...(useIsFrozen() && {
         getMoreCustom: async() => {

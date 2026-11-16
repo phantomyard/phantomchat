@@ -205,6 +205,10 @@ export default class PopupPickUser extends PopupElement {
         options.onChange?.(length);
       } : undefined,
       onSelect: isMultiSelect ? undefined : onSelect,
+      // Show the popup once the first rows paint; groups and contacts keep
+      // streaming in behind it. Waiting for the whole chain made Forward feel
+      // frozen on accounts with many groups/contacts.
+      firstRenderOnFirstRows: true,
       onFirstRender: () => {
         this.show();
         this.selector.checkForTriggers(); // ! due to zero height before mounting
