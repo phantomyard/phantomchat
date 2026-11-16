@@ -101,6 +101,11 @@ export default class AppSelectPeers {
   private rippleEnabled = true;
   private avatarSize: DialogElementSize = 'abitbigger';
   private exceptSelf: boolean;
+  // Fire onFirstRender as soon as the first rows are painted instead of after
+  // the whole initial load chain (chats -> archive -> every group -> first
+  // contacts page). Pending callback is cleared once it has fired.
+  private firstRenderOnFirstRows: boolean;
+  private pendingFirstRender: () => void;
   private filterPeerTypeBy: IsPeerType[] | FilterPeerTypeByFunc;
   private channelParticipantsFilter: ChannelParticipantsFilter | ((q: string) => ChannelParticipantsFilter);
   private channelParticipantsUpdateFilter: (participant: ChannelParticipant | ChatParticipant) => boolean;
@@ -177,6 +182,7 @@ export default class AppSelectPeers {
     placeholder?: AppSelectPeers['placeholder'],
     selfPresence?: AppSelectPeers['selfPresence'],
     exceptSelf?: AppSelectPeers['exceptSelf'],
+    firstRenderOnFirstRows?: AppSelectPeers['firstRenderOnFirstRows'],
     filterPeerTypeBy?: AppSelectPeers['filterPeerTypeBy'],
     sectionNameLangPackKey?: AppSelectPeers['sectionNameLangPackKey'],
     sectionCaption?: AppSelectPeers['sectionCaption'],
@@ -285,6 +291,10 @@ export default class AppSelectPeers {
       }
 
       await f(peerIds, append);
+
+      if(peerIds.length && this.pendingFirstRender && middleware()) {
+        this.firePendingFirstRender();
+      }
 
       if(!this.promise) {
         this.processPlaceholderOnResults();
@@ -534,11 +544,22 @@ export default class AppSelectPeers {
 
     // WARNING TIMEOUT
     setTimeout(() => {
-      const getResultsPromise = this.getMoreResults() as Promise<any>;
       if(options.onFirstRender) {
-        getResultsPromise.then(() => {
+        let fired = false;
+        const fire = () => {
+          if(fired) return;
+          fired = true;
+          this.pendingFirstRender = undefined;
           options.onFirstRender();
-        });
+        };
+
+        if(this.firstRenderOnFirstRows) {
+          this.pendingFirstRender = fire;
+        }
+
+        (this.getMoreResults() as Promise<any>).then(fire);
+      } else {
+        this.getMoreResults();
       }
     }, 0);
   }
@@ -686,6 +707,12 @@ export default class AppSelectPeers {
   public clearInput() {
     this.input.value = '';
     this.onInput();
+  }
+
+  private firePendingFirstRender() {
+    const callback = this.pendingFirstRender;
+    this.pendingFirstRender = undefined;
+    callback?.();
   }
 
   private async renderSaved() {
