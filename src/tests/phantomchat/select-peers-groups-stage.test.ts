@@ -63,7 +63,9 @@ vi.mock('@components/sidebarLeft', () => ({
   default: {}
 }));
 
-const mkDialog = (peerId: number) => ({_: 'dialog', peerId, folder_id: FOLDER_ID_ALL, unread_count: 0}) as any;
+// Real dialogs carry a descending sort index; the Chats walk pages by it.
+let dialogIndex = 1e9;
+const mkDialog = (peerId: number, index = --dialogIndex) => ({_: 'dialog', peerId, folder_id: FOLDER_ID_ALL, unread_count: 0, index_0: index}) as any;
 
 let AppSelectPeers: any;
 let instance: any;
@@ -152,6 +154,35 @@ describe('peer picker — Groups stage (getMoreGroups)', () => {
     await instance.getMoreDialogs();
 
     expect(getDialogs.mock.calls.map((c: any[]) => c[0].filterId)).toEqual([FOLDER_ID_ALL, FOLDER_ID_ALL, FOLDER_ARCHIVED, FOLDER_ID_GROUPS]);
+  });
+
+  // A dialog with no top message has index 0 and sorts last. Taken as the next
+  // offset it restarted the walk from the top forever, so the first render never
+  // resolved and Forward's picker never opened.
+  it('ends the Chats stage when a page ends on a dialog with index 0', async() => {
+    getDialogs
+    .mockResolvedValueOnce({dialogs: [mkDialog(USER_A), mkDialog(USER_B, 0)], isEnd: false})
+    .mockResolvedValueOnce({dialogs: [], isEnd: true})
+    .mockResolvedValueOnce({dialogs: [mkDialog(GROUP_A)], isEnd: true});
+
+    await instance.getMoreDialogs();
+
+    expect(getDialogs.mock.calls.map((c: any[]) => c[0].filterId)).toEqual([FOLDER_ID_ALL, FOLDER_ARCHIVED, FOLDER_ID_GROUPS]);
+    expect(instance.loadedWhat).toMatchObject({dialogs: true, archived: true, groups: true});
+  });
+
+  it('ends the Chats stage on a non-final page that does not move the offset', async() => {
+    const stuck = mkDialog(USER_A);
+    getDialogs
+    .mockResolvedValueOnce({dialogs: [stuck], isEnd: false})
+    .mockResolvedValueOnce({dialogs: [stuck], isEnd: false})
+    .mockResolvedValueOnce({dialogs: [], isEnd: false})
+    .mockResolvedValueOnce({dialogs: [mkDialog(GROUP_A)], isEnd: true});
+
+    await instance.getMoreDialogs();
+
+    expect(getDialogs.mock.calls.map((c: any[]) => c[0].filterId)).toEqual([FOLDER_ID_ALL, FOLDER_ID_ALL, FOLDER_ARCHIVED, FOLDER_ID_GROUPS]);
+    expect(instance.loadedWhat).toMatchObject({dialogs: true, archived: true, groups: true});
   });
 
   it('skips the Groups fetch under a query — the search already covered groups', async() => {

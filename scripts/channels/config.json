@@ -124,8 +124,8 @@
     },
     "src/components/appSelectPeers.ts": {
       "stable": "0122465788cad4e29db0aa92b6209bc9b6a06a1c16809679507ef4582521c32f",
-      "preview": "67c85f9c74683489cd5e9ad583a4c1b37acb1464c7aedf19303105eada17fa6d",
-      "reason": "Forward destination picker includes fresh groups already rendered in the main-thread dialog mirror but not yet present in Worker dialogs. mirrors.dialogs is written at runtime by the PhantomChat message handler though absent from the Mirrors type; existing archive, class and send-rights filters remain. In-memory reads only."
+      "preview": "3600ee03725d34e038daf17803a10181189b9269630cc16159a8fd7051b1b72d",
+      "reason": "Forward destination picker includes fresh groups already rendered in the main-thread dialog mirror but not yet present in Worker dialogs. mirrors.dialogs is written at runtime by the PhantomChat message handler though absent from the Mirrors type; existing archive, class and send-rights filters remain. In-memory reads only. Forward picker stall fix (#487): a dialog page that does not advance the in-memory offset index (dateless dialog with index 0, or empty non-final page) ends that load stage like isEnd. In-memory paging cursor only; no storage, schema, key or wire change."
     },
     "src/lib/appManagers/appMessagesManager.ts": {
       "stable": "dc06ae04e02840ac1d76466ffad6443352c11f317ff316726d716c5561bd96e6",

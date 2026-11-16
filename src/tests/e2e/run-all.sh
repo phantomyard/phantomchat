@@ -59,6 +59,12 @@ TESTS=(
   # white-on-white under the default boring-corporate theme, so opening a chat
   # made its row look empty. Pins the contrast on the active row in every theme.
   e2e-chatlist-typing-contrast.ts
+  # Forward: the real right-click → picker → composer → Send path. #450 added
+  # e2e-forward-messages.ts but never listed it, so Forward broke again
+  # unguarded. The stalled-dialog case pins the picker opening past a dialog
+  # with no top message (it used to loop forever and never show).
+  e2e-forward-messages.ts
+  e2e-forward-picker-stalled-dialog.ts
   e2e-relay-status.ts
   e2e-relay-publish.ts
   e2e-persistence-status.ts
