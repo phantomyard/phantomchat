@@ -739,9 +739,16 @@ export default class AppSelectPeers {
       return;
     }
 
+    // A page that cannot move the cursor forward ends this stage. A dialog
+    // with no top message (no date) has index 0 and sorts last, so using it as
+    // the next offset restarts the walk from the top: the same page comes back
+    // forever, the first render never resolves and Forward's picker never
+    // opens. An empty non-final page stalls the same way.
+    let advanced = false;
     let dialogs = value.dialogs as Dialog[];
     if(dialogs.length) {
       const newOffsetIndex = getDialogIndex(dialogs[dialogs.length - 1]) || 0;
+      advanced = !!newOffsetIndex && newOffsetIndex !== this.offsetIndex;
 
       dialogs = dialogs.slice();
       findAndSplice(dialogs, (d) => d.peerId === rootScope.myId); // no my account
@@ -763,7 +770,7 @@ export default class AppSelectPeers {
 
     await this.renderResultsFunc(dialogs.map((dialog) => dialog.peerId));
 
-    if(value.isEnd) {
+    if(value.isEnd || !advanced) {
       if(!this.loadedWhat.dialogs) {
         await this.renderSaved();
         if(!middleware()) {

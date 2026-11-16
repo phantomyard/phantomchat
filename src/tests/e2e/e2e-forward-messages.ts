@@ -3,6 +3,8 @@
  * Real Worker/MessagePort/IDB + encrypted local relay. Blossom uploads are mocked
  * by the harness; downloads return those actual ciphertext bytes. */
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import {bootHarness, sendTextViaUI} from '../fuzz/harness';
 
 async function rows(page, peerId, text) {
@@ -107,7 +109,7 @@ async function main() {
     console.log('PASS: DM ↔ group voice attachment, caption/waveform preserved, receiver decrypts fresh ciphertext');
   } catch(error) {
     console.error('menus:', await A.page.locator('.btn-menu').allTextContents());
-    await A.page.screenshot({path: '/home/supervisor/kai-scratch/forward-e2e-failure.png'});
+    await A.page.screenshot({path: path.join(os.tmpdir(), 'forward-e2e-failure.png')}).catch(() => {});
     console.error(A.consoleLog.slice(-70).join('\n'));
     console.error(B.consoleLog.slice(-35).join('\n'));
     throw error;
