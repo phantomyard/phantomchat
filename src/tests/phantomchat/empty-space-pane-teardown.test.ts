@@ -29,7 +29,7 @@ import 'fake-indexeddb/auto';
 import '../setup';
 import {describe, it, expect, beforeAll, vi} from 'vitest';
 import rootScope from '@lib/rootScope';
-import {FOLDER_ID_SESSION} from '@appManagers/constants';
+import {FOLDER_ID_ALL, FOLDER_ID_SESSION} from '@appManagers/constants';
 import getDialogIndexKey from '@lib/appManagers/utils/dialogs/getDialogIndexKey';
 
 vi.hoisted(() => {
@@ -78,6 +78,8 @@ vi.hoisted(() => {
 });
 
 vi.mock('@environment/webpSupport', () => ({default: true}));
+// jsdom cannot decode the empty Chats artwork.
+vi.mock('@helpers/dom/renderImageFromUrl', () => ({renderImageFromUrlPromise: async() => {}}));
 
 vi.mock('@lib/apiManagerProxy', () => {
   const anyObj: any = new Proxy(function() {}, {
@@ -227,7 +229,8 @@ describe('empty-space pane teardown for a space that loaded empty', () => {
     host.append(pane);
     host.classList.add('with-placeholder');
 
-    // Empty space → the pane is needed and stays.
+    // Empty space → the pane is needed and stays after a completed load.
+    list.sortedList.addDeferredItems([], 0);
     checkIfPlaceholderNeeded();
     expect(host.querySelector('.empty-placeholder')).toBeTruthy();
 
@@ -242,4 +245,80 @@ describe('empty-space pane teardown for a space that loaded empty', () => {
     });
     expect(host.classList.contains('with-placeholder')).toBe(false);
   });
+
+  async function makeChatsList() {
+    const {default: appDialogsManager} = await import('@lib/appDialogsManager');
+    const adm = appDialogsManager as any;
+    const check = Object.getPrototypeOf(adm).checkIfPlaceholderNeeded.bind(adm);
+    const {list} = await makeList(check);
+    // Use the real Chats folder for the three-phantom artwork path.
+    (list as any).filterId = FOLDER_ID_ALL;
+    adm.filterId = FOLDER_ID_ALL;
+    adm.xds = {[FOLDER_ID_ALL]: list};
+    const host = document.createElement('div');
+    host.append(list.sortedList.list);
+    adm.generateEmptyPlaceholder = () => {
+      const container = document.createElement('div');
+      container.className = 'empty-placeholder';
+      const subtitle = document.createElement('div');
+      container.append(subtitle);
+      return {container, subtitle};
+    };
+    adm.updateContactsLength = async() => 1;
+    return {adm, list, host, check};
+  }
+
+  it('removes stale Chats artwork on activation while its single row is loading', async() => {
+    const {adm, list, host} = await makeChatsList();
+    const pane = document.createElement('div');
+    pane.className = 'empty-placeholder';
+    host.append(pane);
+    host.classList.add('with-placeholder');
+    list.sortedList.addDeferredItems([], 0);
+    list.clear();
+    expect(list.sortedList.hasFetchedDialogs()).toBe(false);
+    // Hold the load open so no completion can conceal a transient pane.
+    const scroll = vi.spyOn(list, 'onChatsScroll').mockImplementation(() => {});
+    adm.onTabChange();
+    expect(host.querySelector('.empty-placeholder')).toBeNull();
+    expect(host.classList.contains('with-placeholder')).toBe(false);
+    scroll.mockRestore();
+    list.destroy();
+  });
+
+  it.each([0, 1])('waits for a successful load before deciding whether Chats is empty (%i rows)', async(count) => {
+    const {list, host, check} = await makeChatsList();
+    (list as any).checkForDialogsPlaceholder = () => {};
+    let finish: (value: any) => void;
+    (list as any).dialogsFetcher = () => new Promise(resolve => { finish = resolve; });
+    const loading = (list as any).loadDialogsInner({canFinish: () => true});
+    check();
+    expect(host.querySelector('.empty-placeholder')).toBeNull();
+    expect(list.sortedList.hasFetchedDialogs()).toBe(false);
+    const dialog = mkSessionDialog(205, 10);
+    finish({dialogs: count ? [dialog] : [], count, isEnd: true});
+    await loading;
+    await vi.waitFor(() => {
+      expect(list.sortedList.itemsLength()).toBe(count);
+      expect(!!host.querySelector('.empty-placeholder')).toBe(count === 0);
+    });
+    expect(list.sortedList.hasFetchedDialogs()).toBe(true);
+    list.destroy();
+  });
+
+  it('does not expose empty Chats after a failed or cancelled load', async() => {
+    const {list, host, check} = await makeChatsList();
+    (list as any).checkForDialogsPlaceholder = () => {};
+    (list as any).dialogsFetcher = async() => { throw new Error('load failed'); };
+    await expect((list as any).loadDialogsInner({canFinish: () => true})).rejects.toThrow('load failed');
+    check();
+    expect(host.querySelector('.empty-placeholder')).toBeNull();
+    (list as any).dialogsFetcher = async() => ({dialogs: [] as any[], count: 0, isEnd: true});
+    await expect((list as any).loadDialogsInner({canFinish: () => false})).rejects.toThrow();
+    check();
+    expect(list.sortedList.hasFetchedDialogs()).toBe(false);
+    expect(host.querySelector('.empty-placeholder')).toBeNull();
+    list.destroy();
+  });
+
 });

@@ -359,6 +359,7 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
     removePinnedItem,
     updateItem,
     removeItem,
+    wasAtLeastOnceFetched,
     setWasAtLeastOnceFetched,
 
     blockAnimation,

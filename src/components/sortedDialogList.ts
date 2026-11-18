@@ -272,6 +272,10 @@ export default class SortedDialogList {
     this.virtualList.updateItem(key, index);
   }
 
+  public hasFetchedDialogs() {
+    return this.virtualList.wasAtLeastOnceFetched();
+  }
+
   public itemsLength() {
     return this.virtualList.itemsLength();
   }

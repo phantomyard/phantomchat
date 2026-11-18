@@ -1159,6 +1159,7 @@ export class AppDialogsManager {
     const {filterId} = this;
     this.xd = this.xds[filterId];
     this.xd.reset();
+    this.checkIfPlaceholderNeeded();
 
     // The active list may have changed — surface-visibility consumers (e.g.
     // the chat top bar avatar) must re-read the row count of the active
@@ -1488,9 +1489,9 @@ export class AppDialogsManager {
     const chatList = this.chatList;
     const part = chatList.parentElement as HTMLElement;
     let placeholderContainer = (Array.from(part.children) as HTMLElement[]).find((el) => el.matches('.empty-placeholder'));
-    // const needPlaceholder = this.xd.scrollable.loadedAll.bottom && !chatList.childElementCount || true;
-    const needPlaceholder = !this.xd.sortedList.itemsLength();
-    // chatList.style.display = 'none';
+    // A cleared list is empty while the new folder is still loading. Only
+    // show the empty state after a successful fetch, never between tabs.
+    const needPlaceholder = this.xd.sortedList.hasFetchedDialogs() && !this.xd.sortedList.itemsLength();
 
     if(needPlaceholder && placeholderContainer) {
       return;
