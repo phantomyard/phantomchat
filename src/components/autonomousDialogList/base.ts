@@ -372,7 +372,6 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
   }
 
   public clear() {
-    this.loadedDialogsAtLeastOnce = false;
     this.sortedList.clear();
     this.placeholder?.remove();
     this.loadDialogsDeferred?.reject();

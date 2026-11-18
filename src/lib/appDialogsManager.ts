@@ -1491,7 +1491,7 @@ export class AppDialogsManager {
     let placeholderContainer = (Array.from(part.children) as HTMLElement[]).find((el) => el.matches('.empty-placeholder'));
     // A cleared list is empty while the new folder is still loading. Only
     // show the empty state after a successful fetch, never between tabs.
-    const needPlaceholder = this.xd.loadedDialogsAtLeastOnce && !this.xd.sortedList.itemsLength();
+    const needPlaceholder = this.xd.sortedList.hasFetchedDialogs() && !this.xd.sortedList.itemsLength();
 
     if(needPlaceholder && placeholderContainer) {
       return;

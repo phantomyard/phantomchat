@@ -230,7 +230,7 @@ describe('empty-space pane teardown for a space that loaded empty', () => {
     host.classList.add('with-placeholder');
 
     // Empty space → the pane is needed and stays after a completed load.
-    list.loadedDialogsAtLeastOnce = true;
+    list.sortedList.addDeferredItems([], 0);
     checkIfPlaceholderNeeded();
     expect(host.querySelector('.empty-placeholder')).toBeTruthy();
 
@@ -274,9 +274,9 @@ describe('empty-space pane teardown for a space that loaded empty', () => {
     pane.className = 'empty-placeholder';
     host.append(pane);
     host.classList.add('with-placeholder');
-    list.loadedDialogsAtLeastOnce = true;
+    list.sortedList.addDeferredItems([], 0);
     list.clear();
-    expect(list.loadedDialogsAtLeastOnce).toBe(false);
+    expect(list.sortedList.hasFetchedDialogs()).toBe(false);
     // Hold the load open so no completion can conceal a transient pane.
     const scroll = vi.spyOn(list, 'onChatsScroll').mockImplementation(() => {});
     adm.onTabChange();
@@ -294,7 +294,7 @@ describe('empty-space pane teardown for a space that loaded empty', () => {
     const loading = (list as any).loadDialogsInner({canFinish: () => true});
     check();
     expect(host.querySelector('.empty-placeholder')).toBeNull();
-    expect(list.loadedDialogsAtLeastOnce).toBeFalsy();
+    expect(list.sortedList.hasFetchedDialogs()).toBe(false);
     const dialog = mkSessionDialog(205, 10);
     finish({dialogs: count ? [dialog] : [], count, isEnd: true});
     await loading;
@@ -302,7 +302,7 @@ describe('empty-space pane teardown for a space that loaded empty', () => {
       expect(list.sortedList.itemsLength()).toBe(count);
       expect(!!host.querySelector('.empty-placeholder')).toBe(count === 0);
     });
-    expect(list.loadedDialogsAtLeastOnce).toBe(true);
+    expect(list.sortedList.hasFetchedDialogs()).toBe(true);
     list.destroy();
   });
 
@@ -316,7 +316,7 @@ describe('empty-space pane teardown for a space that loaded empty', () => {
     (list as any).dialogsFetcher = async() => ({dialogs: [] as any[], count: 0, isEnd: true});
     await expect((list as any).loadDialogsInner({canFinish: () => false})).rejects.toThrow();
     check();
-    expect(list.loadedDialogsAtLeastOnce).toBeFalsy();
+    expect(list.sortedList.hasFetchedDialogs()).toBe(false);
     expect(host.querySelector('.empty-placeholder')).toBeNull();
     list.destroy();
   });

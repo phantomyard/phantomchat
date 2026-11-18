@@ -25,6 +25,9 @@ async function main() {
     const url = new URL(route.request().url());
     return ['localhost', '127.0.0.1'].includes(url.hostname) ? route.continue() : route.abort();
   });
+  // tsx preserves local function names with this helper when serializing
+  // callbacks into page.evaluate; provide it inside the disposable context.
+  await context.addInitScript('globalThis.__name = (fn) => fn;');
   const page = await context.newPage();
   page.on('pageerror', (error) => console.error('browser:', error.message));
   try {
@@ -44,12 +47,20 @@ async function main() {
       setFoldersSidebarEnabled(false);
     });
     await page.waitForFunction(() => !!document.querySelector('[data-filter-id="0"] .empty-placeholder.visible'));
-    await page.locator('.menu-horizontal-div-item[data-filter-id="4"]').click();
+    await page.evaluate(() => {
+      const adm = window.appDialogsManager;
+      const target = document.querySelector('.menu-horizontal-div-item[data-filter-id="4"]');
+      adm.selectTab([...target.parentElement.children].indexOf(target), false);
+    });
+    await page.waitForFunction(() => window.appDialogsManager.filterId === 4 && window.appDialogsManager.xd.sortedList.hasFetchedDialogs());
     // Add exactly one contact while Chats is inactive. Its previously empty
     // pane remains in that folder's DOM until activation reconciles it.
     await page.evaluate(async() => {
       const {addP2PContact} = await import('/src/lib/phantomchat/add-p2p-contact.ts');
-      await addP2PContact({pubkey: '11'.repeat(32), nickname: 'Single contact', source: 'empty-state-regression'});
+      const contact = await addP2PContact({pubkey: '11'.repeat(32), nickname: 'Single contact', deliberate: true, source: 'empty-state-regression'});
+      // Hydrate the Worker's previously empty dialog cache through the real
+      // reload path before measuring folder reloads.
+      await window.rootScope.managers.appMessagesManager.reloadConversation(contact.peerId);
       const adm = window.appDialogsManager;
       const list = adm.xds[0];
       const fetch = list.dialogsFetcher.bind(list);
@@ -64,7 +75,7 @@ async function main() {
         if(!sampling) return;
         if(adm.filterId === 0) {
           window.__emptyPaneFrames.push({
-            loaded: !!list.loadedDialogsAtLeastOnce,
+            loaded: list.sortedList.hasFetchedDialogs(),
             rows: list.sortedList.itemsLength(),
             pane: !!list.sortedList.list.parentElement.querySelector('.empty-placeholder')
           });
@@ -74,20 +85,30 @@ async function main() {
       requestAnimationFrame(sample);
     });
     for(let cycle = 0; cycle < 3; cycle++) {
-      await page.locator('.menu-horizontal-div-item[data-filter-id="0"]').click();
-      await page.waitForFunction(() => window.appDialogsManager.filterId === 0 && window.appDialogsManager.xd.loadedDialogsAtLeastOnce && window.appDialogsManager.xd.sortedList.itemsLength() === 1);
-      await page.locator('.menu-horizontal-div-item[data-filter-id="4"]').click();
+      await page.evaluate(() => {
+        const adm = window.appDialogsManager;
+        const target = document.querySelector('.menu-horizontal-div-item[data-filter-id="0"]');
+        adm.selectTab([...target.parentElement.children].indexOf(target), false);
+      });
+      await page.waitForFunction(() => window.appDialogsManager.filterId === 0 && window.appDialogsManager.xd.sortedList.hasFetchedDialogs() && window.appDialogsManager.xd.sortedList.itemsLength() === 1);
+      await page.evaluate(() => {
+        const adm = window.appDialogsManager;
+        const target = document.querySelector('.menu-horizontal-div-item[data-filter-id="4"]');
+        adm.selectTab([...target.parentElement.children].indexOf(target), false);
+      });
+      await page.waitForFunction(() => window.appDialogsManager.filterId === 4 && window.appDialogsManager.xd.sortedList.hasFetchedDialogs());
     }
     const frames = await page.evaluate(() => {
       window.__stopEmptyPaneSampling();
       return window.__emptyPaneFrames;
     });
+    console.log('frame transitions:', JSON.stringify(frames.filter((frame, i) => !i || JSON.stringify(frame) !== JSON.stringify(frames[i - 1]))));
     assert.ok(frames.some(frame => !frame.loaded), 'sampled pending fetch frames');
     assert.ok(frames.some(frame => frame.rows === 1), 'sampled the single contact');
     assert.equal(frames.filter(frame => frame.pane).length, 0, 'no empty artwork during Chats transitions');
     console.log(`PASS: ${frames.length} animation frames across 3 Sessions → Chats switches, one real contact, 300ms delayed real fetch, no empty artwork`);
   } catch(error) {
-    console.error(await page.evaluate(() => ({menus: [...document.querySelectorAll('.btn-menu')].map((n) => n.textContent), body: document.body.className})));
+    console.error(await page.evaluate(() => ({menus: [...document.querySelectorAll('.btn-menu')].map((n) => n.textContent), body: document.body.className, filter: window.appDialogsManager?.filterId, loaded: window.appDialogsManager?.xd?.loadedDialogsAtLeastOnce, tabs: [...document.querySelectorAll('.menu-horizontal-div-item')].map(e => ({id:e.dataset.filterId, cls:e.className}))})));
     if(process.env.PHANTOMBOT_SCRATCH) await page.screenshot({path: process.env.PHANTOMBOT_SCRATCH + '/empty-pane-failure.png'});
     throw error;
   } finally {
