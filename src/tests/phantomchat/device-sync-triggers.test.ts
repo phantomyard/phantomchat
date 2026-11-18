@@ -222,7 +222,7 @@ describe('device-sync proactive triggers', () => {
     const req = requests()[0];
     expect(req.recentOnly).toBeUndefined();     // FULL scope, not just the tail
     expect(req.conv).toBe(CONV);                // scoped to the SELECTED chat
-    expect(req.haveIds).toEqual(['m1', 'm2']);  // whole-conversation have-set
+    expect([...req.haveIds].sort()).toEqual(['m1', 'm2']);  // newest-window have-set (whole conv here)
   }, 15_000);
 
   it('TRIGGER 1 — benched relays are excluded: all ELIGIBLE green fires the hard rule', async() => {

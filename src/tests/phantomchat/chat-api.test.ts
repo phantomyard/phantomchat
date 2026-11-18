@@ -42,7 +42,10 @@ const messageStoreMocks = {
   getMessages: vi.fn().mockResolvedValue([]),
   getByEventId: vi.fn().mockResolvedValue(null),
   getByAppMessageId: vi.fn().mockResolvedValue(null),
-  getLatestTimestamp: vi.fn().mockResolvedValue(0)
+  getLatestTimestamp: vi.fn().mockResolvedValue(0),
+  getConversationEventIds: vi.fn().mockResolvedValue([]),
+  deleteMessages: vi.fn().mockResolvedValue(undefined),
+  setTombstone: vi.fn().mockResolvedValue(undefined)
 };
 vi.mock('@lib/phantomchat/message-store', () => ({
   getMessageStore: () => messageStoreMocks
@@ -56,7 +59,7 @@ vi.mock('@lib/rootScope', () => ({
   }
 }));
 
-import {ChatAPI, createChatAPI, ChatMessage, ChatState, CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS, CHAT_OPEN_CATCHUP_OVERLAP_S} from '@lib/phantomchat/chat-api';
+import {ChatAPI, createChatAPI, ChatMessage, ChatState, CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS, CHAT_OPEN_CATCHUP_OVERLAP_S, DELETE_BATCH_EVENT_IDS} from '@lib/phantomchat/chat-api';
 import rootScope from '@lib/rootScope';
 import {DecryptedMessage} from '@lib/phantomchat/nostr-relay';
 import type {PublishResult, RelayConfig, NostrRelayPool} from '@lib/phantomchat/nostr-relay-pool';
@@ -1387,6 +1390,32 @@ describe('ChatAPI', () => {
       expect(ev).not.toBeNull();
       expect(ev!.created_at).toBe(200);
       expect(ev!.content).toBe('newer');
+    });
+  });
+
+  describe('deleteConversation() — uncapped local history', () => {
+    it('deletes EVERY stored eventId on the relays, in batches of DELETE_BATCH_EVENT_IDS', async() => {
+      // A long chat (no store cap any more): more ids than one page or one batch.
+      const ids = Array.from({length: DELETE_BATCH_EVENT_IDS * 2 + 7}, (_, i) => `evt-${i}`);
+      messageStoreMocks.getConversationEventIds.mockResolvedValueOnce(ids);
+      messageStoreMocks.getMessages.mockClear();
+      const publish = vi.spyOn(chatApi, 'publishMessageDeletions').mockResolvedValue(undefined);
+
+      await chatApi.deleteConversation('peer-pubkey');
+
+      expect(publish).toHaveBeenCalledTimes(3);
+      const batches = publish.mock.calls.map((c) => c[0]);
+      expect(batches.map((b) => b.length)).toEqual([DELETE_BATCH_EVENT_IDS, DELETE_BATCH_EVENT_IDS, 7]);
+      expect(batches.flat()).toEqual(ids);                 // nothing left behind
+      expect(messageStoreMocks.getMessages).not.toHaveBeenCalled(); // no fixed-size page
+      expect(messageStoreMocks.deleteMessages).toHaveBeenCalledWith('conv-1');
+    });
+
+    it('publishes nothing for an empty conversation', async() => {
+      messageStoreMocks.getConversationEventIds.mockResolvedValueOnce([]);
+      const publish = vi.spyOn(chatApi, 'publishMessageDeletions').mockResolvedValue(undefined);
+      await chatApi.deleteConversation('peer-pubkey');
+      expect(publish).not.toHaveBeenCalled();
     });
   });
 });
