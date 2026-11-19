@@ -633,6 +633,11 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   // mountPhantomChatOnboarding handles both new (shows onboarding) and
   // existing (loads encrypted identity → mounts chat) users.
   try {
+    // Local history is the source of truth (uncapped message store), so ask the
+    // browser not to evict it. Fire-and-forget: never blocks or breaks boot.
+    import('@lib/phantomchat/persistent-storage')
+    .then(({requestPersistentStorage}) => requestPersistentStorage())
+    .catch(() => {});
     const {mountPhantomChatOnboarding} = await import('@/pages/phantomchat-onboarding-integration');
     const {maybeShowResetToast} = await import('@components/popups/resetLocalData');
     const authContainer = document.querySelector('#auth-pages .scrollable') as HTMLElement;

@@ -108,6 +108,21 @@ describe('device-sync pull (request/response, strict union)', () => {
     expect(sent.rows.map((r: any) => r.eventId)).toEqual(['m2', 'm3']); // oldest-first
   });
 
+  it('a full request diffs only our newest DEVICE_SYNC_WINDOW_ROWS rows (uncapped history)', async() => {
+    const store = makeStore([row('m1', 10), row('m2', 20)]);
+    const {mod, captured, deviceId} = await boot(store);
+    await captured.req({deviceId: 'requester', targetId: deviceId, conv: CONV, haveIds: []});
+    expect(mod.DEVICE_SYNC_WINDOW_ROWS).toBe(500);
+    expect(store.getMessages).toHaveBeenCalledWith(CONV, 500);
+  });
+
+  it('a recent-only limit can never exceed the window', async() => {
+    const store = makeStore([row('m1', 10)]);
+    const {captured, deviceId} = await boot(store);
+    await captured.req({deviceId: 'requester', targetId: deviceId, conv: CONV, haveIds: [], recentOnly: true, limit: 100_000});
+    expect(store.getMessages).toHaveBeenCalledWith(CONV, 500);
+  });
+
   it('ignores a request NOT aimed at this device', async() => {
     const store = makeStore([row('m1', 10)]);
     const {captured, pool} = await boot(store);
@@ -216,7 +231,10 @@ describe('device-sync background reconcile (never a render gate)', () => {
     // never downgraded to a tail sync by a trigger that merely got there first.
     const last = pool.publishSyncRequest.mock.calls.at(-1)[0] as any;
     expect(last.recentOnly).toBeUndefined(); // full scope — whole conversation
-    expect(last.haveIds).toEqual(['m1']);    // whole-conversation have-set
+    expect(last.haveIds).toEqual(['m1']);    // newest-window have-set (whole conv here)
+    // Built from the newest window by timestamp, never the full id list.
+    expect(store.getMessages).toHaveBeenCalledWith(CONV, 500);
+    expect(store.getConversationEventIds).not.toHaveBeenCalled();
   });
 
   it('retries when nobody answers, and stops re-asking the moment a sibling does', async() => {

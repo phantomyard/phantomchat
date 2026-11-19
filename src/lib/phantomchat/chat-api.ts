@@ -155,6 +155,13 @@ export const CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS = 60_000;
  */
 export const CHAT_OPEN_CATCHUP_OVERLAP_S = 300;
 
+/**
+ * Max eventIds per deletion event (peer notification + NIP-09) when a whole
+ * conversation is deleted. Local history is uncapped, so a long chat is
+ * deleted in batches no bigger than the old 500-row cap ever produced.
+ */
+export const DELETE_BATCH_EVENT_IDS = 500;
+
 export type ChatCatchUpOutcome = 'ran' | 'skipped' | 'offline' | 'failed';
 
 export class ChatAPI {
@@ -1656,8 +1663,9 @@ export class ChatAPI {
     // Collect event IDs BEFORE deleting (needed for Level 2 and 3)
     let eventIds: string[] = [];
     try {
-      const messages = await store.getMessages(conversationId, 1000);
-      eventIds = messages.map(m => m.eventId).filter(Boolean);
+      // Every eventId we hold — local history is uncapped, so a fixed page size
+      // here would leave older messages undeleted on the relays.
+      eventIds = (await store.getConversationEventIds(conversationId)).filter(Boolean);
     } catch(err) {
       this.log.warn('[ChatAPI] failed to collect event IDs for deletion:', err);
     }
@@ -1703,8 +1711,11 @@ export class ChatAPI {
       return !isConversation;
     });
 
-    // Levels 2 + 3 — peer gift-wrap notification + NIP-09 kind 5 to relays.
-    await this.publishMessageDeletions(eventIds, peerPubkey, 'Conversation deleted');
+    // Levels 2 + 3 — peer gift-wrap notification + NIP-09 kind 5 to relays,
+    // batched so one event never carries more ids than a 500-row chat did.
+    for(let i = 0; i < eventIds.length; i += DELETE_BATCH_EVENT_IDS) {
+      await this.publishMessageDeletions(eventIds.slice(i, i + DELETE_BATCH_EVENT_IDS), peerPubkey, 'Conversation deleted');
+    }
 
     // Dispatch event for display bridge to remove synthetic dialog
     rootScope.dispatchEvent('phantomchat_conversation_deleted', {peerPubkey, conversationId});

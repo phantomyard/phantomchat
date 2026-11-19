@@ -56,8 +56,21 @@ const REQUEST_THROTTLE_MS = 6_000;
 /** Rows per sync-response chunk, so a big backlog never overflows one gift-wrap. */
 const RESPONSE_CHUNK_ROWS = 25;
 
-/** Hard cap on eventIds we advertise in a have-set (bounds a huge conversation). */
-const HAVE_IDS_CAP = 5_000;
+/**
+ * Device-sync reconciles the NEWEST this-many rows of a conversation — both the
+ * have-set a requester advertises and the rows a responder diffs against it.
+ * Local history is uncapped, so without this a "full" sync of a long chat would
+ * put every eventId into one gift-wrap and answer a fresh device with the whole
+ * history as hundreds of chunks. 500 matches the old per-chat store cap, so the
+ * wire size is exactly what it was. Older history is recovered from relays.
+ */
+export const DEVICE_SYNC_WINDOW_ROWS = 500;
+
+/** Have-set for a full sync: eventIds of our newest DEVICE_SYNC_WINDOW_ROWS rows, by timestamp. */
+async function fullSyncHaveIds(store: {getMessages: (conv: string, limit: number) => Promise<Array<{eventId?: string}>>}, conv: string): Promise<string[]> {
+  const rows = await store.getMessages(conv, DEVICE_SYNC_WINDOW_ROWS);
+  return rows.map((r) => r.eventId).filter((id): id is string => typeof id === 'string');
+}
 
 /**
  * RECONCILIATION IS NEVER A RENDER GATE (Andrew's brief — supersedes the old
@@ -654,8 +667,7 @@ async function publishSyncRequest(conv: string, scope: SyncScope, reason: string
 
     let haveIds: string[];
     if(scope === 'full') {
-      haveIds = await store.getConversationEventIds(conv);
-      if(haveIds.length > HAVE_IDS_CAP) haveIds = haveIds.slice(-HAVE_IDS_CAP);
+      haveIds = await fullSyncHaveIds(store, conv);
     } else {
       // Have-set = our most-recent N eventIds, so the sibling's diff stays bounded
       // to the recent tail rather than the whole conversation.
@@ -880,8 +892,7 @@ async function requestSyncFromDevice(conv: string, targetDeviceId: string): Prom
 
     const {getMessageStore} = await import('./message-store');
     const store = getMessageStore();
-    let haveIds = await store.getConversationEventIds(conv);
-    if(haveIds.length > HAVE_IDS_CAP) haveIds = haveIds.slice(-HAVE_IDS_CAP);
+    const haveIds = await fullSyncHaveIds(store, conv);
 
     await pool.publishSyncRequest({deviceId, targetId: targetDeviceId, conv, haveIds});
     console.log(`${LOG_PREFIX} → sync-request ${conv.slice(0, 12)}… have=${haveIds.length} to device ${targetDeviceId.slice(0, 8)}`);
@@ -914,7 +925,11 @@ async function onSyncRequest(req: {deviceId: string; targetId: string; conv: str
     const store = getMessageStore();
     // For a recent-only request, only consider the last N rows so the answer stays
     // cheap; getMessages returns newest-first, so this is exactly the recent tail.
-    const scanLimit = req.recentOnly ? (req.limit && req.limit > 0 ? req.limit : RECENT_SYNC_ROWS) : 100_000;
+    // A full request diffs our newest DEVICE_SYNC_WINDOW_ROWS (the same window the
+    // requester's have-set covers); a requester-supplied limit can never exceed it.
+    const scanLimit = req.recentOnly ?
+      Math.min(req.limit && req.limit > 0 ? req.limit : RECENT_SYNC_ROWS, DEVICE_SYNC_WINDOW_ROWS) :
+      DEVICE_SYNC_WINDOW_ROWS;
     const rows = await store.getMessages(req.conv, scanLimit);
     const have = new Set(req.haveIds);
     const missing = rows.filter((r) => r.eventId && !have.has(r.eventId));

@@ -42,9 +42,9 @@ describe('MessageStore retention cap (#107)', () => {
     vi.restoreAllMocks();
   });
 
-  it('exports a default cap of 500 per chat', () => {
-    expect(MESSAGE_CAP_PER_CHAT).toBe(500);
-    expect((new MessageStore() as any).messageCap).toBe(500);
+  it('has no default cap: local history is kept in full', () => {
+    expect(MESSAGE_CAP_PER_CHAT).toBe(Infinity);
+    expect((new MessageStore() as any).messageCap).toBe(Infinity);
   });
 
   it('prunes oldest beyond the cap on insert', async () => {

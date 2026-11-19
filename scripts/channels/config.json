@@ -269,8 +269,8 @@
     },
     "src/lib/phantomchat/message-store.ts": {
       "stable": "3116e2695d7794da4235df2c19665c4cb2b791423f66068ec0db8b61fd81c8a3",
-      "preview": "3116e2695d7794da4235df2c19665c4cb2b791423f66068ec0db8b61fd81c8a3",
-      "reason": "`setConversationTwebPeerId` re-stamps the identity triple's peer id on a conversation's stored rows for the group/session class reconcile. Rows move inside the SAME conversation key (group:<groupId>) and keep their eventId, mid and timestamp (mid derives from the event id, not the peer), so message identity, edits and reaction targets are unchanged. No schema change. Preview hash refreshed for #295: getMessages returns the whole boundary second so the strict before-cursor cannot skip rows; ordering, keys and stored format unchanged."
+      "preview": "3379090f5f0f629a6ba3f696f4b07fa0eae9171f8be820feea6dfcae3602fc36",
+      "reason": "`setConversationTwebPeerId` re-stamps the identity triple's peer id on a conversation's stored rows for the group/session class reconcile. Rows move inside the SAME conversation key (group:<groupId>) and keep their eventId, mid and timestamp (mid derives from the event id, not the peer), so message identity, edits and reaction targets are unchanged. No schema change. Preview hash refreshed for #295: getMessages returns the whole boundary second so the strict before-cursor cannot skip rows; ordering, keys and stored format unchanged. Preview hash refreshed for uncapped local history: default messageCap is Infinity (explicit caps still prune); countUnread walks conversationMid above the read cursor; getConversationDigest uses count() + one reverse cursor. Shared IndexedDB: no schema/version change, no new store or index, no stored-row format change. Switching back to Stable is safe: Stable's 500-row cap simply prunes the oldest rows of any chat that grew past 500 under Preview on its next insert (old behaviour, nothing corrupted)."
     },
     "src/lib/phantomchat/group-class-reconcile.ts": {
       "stable": "d0def9e86940bc73dfe1f71b4e9e66ba3f199bc59a09f51d154fccd3fd9eb822",
@@ -1151,6 +1151,26 @@
       "stable": "ac78576f24c879fd7e4db76286e1921bd12c8ee77a582e1c1a2a37459aef3b0c",
       "preview": "abaaa064f215921ada7ebc3888e6c36ce56eb858b14c52793eb7b072642f0d55",
       "reason": "Peer picker main selector opts into firstRenderOnFirstRows so the popup shows once the first rows paint; the rest of the load streams in behind it. UI timing only; no storage, schema, key or wire change."
+    },
+    "src/index.ts": {
+      "stable": "32681612805b18d825a38b767a820d42f7c3653c338ebf25bebd0be0eb6d99e0",
+      "preview": "7ad2788c96ee9998c75ef5ecabb7d7d541994bddc8a2d1dee47763938653388f",
+      "reason": "Boot asks navigator.storage.persist() (fire-and-forget, never blocks boot) so the browser keeps the origin's storage out of eviction. Writes no app state. Shared IndexedDB: no schema/version change, no new store or index, no stored-row format change. Switching back to Stable is safe: Stable's 500-row cap simply prunes the oldest rows of any chat that grew past 500 under Preview on its next insert (old behaviour, nothing corrupted)."
+    },
+    "src/lib/phantomchat/chat-api.ts": {
+      "stable": "d34d6ed420e040e3d4db956866ae00f158931bde84731a9f9123cff5f439fc63",
+      "preview": "0689c151f0918a6dc0e9a54f208fbcb9c682aa4547b2dc3d7f6052bec6cd8068",
+      "reason": "deleteConversation collects every stored eventId (getConversationEventIds) instead of the newest 1,000 and publishes the Level 2/3 deletions in batches of 500 ids. Wire format of each deletion event unchanged; only the batching. Shared IndexedDB: no schema/version change, no new store or index, no stored-row format change. Switching back to Stable is safe: Stable's 500-row cap simply prunes the oldest rows of any chat that grew past 500 under Preview on its next insert (old behaviour, nothing corrupted)."
+    },
+    "src/lib/phantomchat/phantomchat-device-sync.ts": {
+      "stable": "3d01603a916e0dce0c67056e989960c8566639031ea3d64da4c033f50f9c0a1b",
+      "preview": "f6bce9958b3cf7ae5241d5d0739ae1c889863f9953a839755b892acec3fc55ab",
+      "reason": "Device sync have-set and responder diff are both bounded to the newest 500 rows by timestamp (DEVICE_SYNC_WINDOW_ROWS). device-sync-req/res envelopes unchanged and still interoperate with Stable devices in both directions; size equals the old 500-cap maximum. Shared IndexedDB: no schema/version change, no new store or index, no stored-row format change. Switching back to Stable is safe: Stable's 500-row cap simply prunes the oldest rows of any chat that grew past 500 under Preview on its next insert (old behaviour, nothing corrupted)."
+    },
+    "src/lib/phantomchat/persistent-storage.ts": {
+      "stable": "absent",
+      "preview": "13e736252d8e3e51b5276f417c61b7968be8a8029d12207adb14163d0a6f0d2b",
+      "reason": "New helper wrapping navigator.storage.persisted()/persist(); never throws, writes no app state. Shared IndexedDB: no schema/version change, no new store or index, no stored-row format change. Switching back to Stable is safe: Stable's 500-row cap simply prunes the oldest rows of any chat that grew past 500 under Preview on its next insert (old behaviour, nothing corrupted)."
     }
   }
 }

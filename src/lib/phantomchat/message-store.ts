@@ -10,11 +10,12 @@
  *        conversationTimestamp [v4, composite — drives retention pruning],
  *        conversationMid [v5, composite — drives anchor paging])
  *
- * Retention: each conversation is capped at MESSAGE_CAP_PER_CHAT rows (default
- * 500). On every INSERT (not upsert-update) the store prunes the oldest rows
- * by timestamp beyond the cap, keeping read cost bounded (closes #107).
- * Insert + count + prune run in ONE readwrite transaction, so retention is
- * failure-atomic — a prune failure aborts the insert with it.
+ * Retention: UNCAPPED by default — the device keeps every message it has ever
+ * stored, so local history never depends on what the relays still hold. Every
+ * hot read is index-bounded (paging, unread count, digest), so a large chat
+ * does not slow chat open. An optional per-store `messageCap` still prunes the
+ * oldest rows by timestamp on INSERT (not upsert-update); insert + count +
+ * prune then run in ONE readwrite transaction, so retention is failure-atomic.
  */
 
 // Read-state sync trigger (#217) — tiny no-import module, safe in every
@@ -132,11 +133,12 @@ const DB_VERSION = 6;
 const STORE_NAME = 'messages';
 
 /**
- * Per-conversation retention cap. Once a conversation exceeds this many rows,
- * the oldest (by timestamp) are pruned on the next insert. Keeps
- * `getAllMessagesSorted` (full-conversation scan) bounded at O(cap).
+ * Default per-conversation retention cap: none. Local history is kept in full
+ * on both Desktop and the PWA (was 500 until local-first history). Storage
+ * management (quotas, user-chosen limits) is a separate, later change; until
+ * then a store only prunes when constructed with an explicit `messageCap`.
  */
-export const MESSAGE_CAP_PER_CHAT = 500;
+export const MESSAGE_CAP_PER_CHAT = Infinity;
 const CURSOR_STORE = 'read-cursors';
 const TOMBSTONE_STORE = 'conversation-tombstones';
 /** One-shot data migrations, keyed by name. See `migrateLegacyGroupConversationKeys`. */
@@ -193,9 +195,9 @@ export function getMessageStore(): MessageStore {
  */
 export interface MessageStoreOptions {
   /**
-   * Retention cap per conversation (default MESSAGE_CAP_PER_CHAT = 500).
-   * Pass `Infinity` (or <= 0) to disable pruning. Exposed mainly for tests
-   * and future per-chat settings.
+   * Retention cap per conversation (default MESSAGE_CAP_PER_CHAT = Infinity,
+   * i.e. no pruning). `Infinity` or <= 0 disables pruning. Exposed for tests
+   * and the later storage-management settings.
    */
   messageCap?: number;
 }
@@ -1316,31 +1318,37 @@ export class MessageStore {
    * digest is the cheap presence-style advertisement that triggers it.
    */
   async getConversationDigest(conversationId: string): Promise<{count: number; latestId: string; latestTimestamp: number}> {
+    // Index-bounded: count() never decodes rows, and the newest second is read
+    // with one reverse cursor over `conversationTimestamp`. Cost no longer
+    // grows with the size of the conversation (local history is uncapped).
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
-      const index = tx.objectStore(STORE_NAME).index('conversationId');
-      const request = index.openCursor(IDBKeyRange.only(conversationId));
+      const store = tx.objectStore(STORE_NAME);
+      const countReq = store.index('conversationId').count(IDBKeyRange.only(conversationId));
+      const range = IDBKeyRange.bound([conversationId, 0], [conversationId, Number.MAX_SAFE_INTEGER]);
+      const cursorReq = store.index('conversationTimestamp').openCursor(range, 'prev');
 
-      let count = 0;
       let latestId = '';
       let latestTimestamp = -1;
 
-      request.onerror = () => reject(request.error);
-      request.onsuccess = (event) => {
-        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+      countReq.onerror = () => reject(countReq.error);
+      cursorReq.onerror = () => reject(cursorReq.error);
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
         if(cursor) {
           const row = cursor.value as StoredMessage;
-          count++;
           const ts = typeof row.timestamp === 'number' ? row.timestamp : 0;
-          if(ts > latestTimestamp || (ts === latestTimestamp && (row.eventId || '') > latestId)) {
+          // Walk only the newest second: ties are broken by the greatest eventId.
+          if(latestTimestamp < 0 || ts === latestTimestamp) {
             latestTimestamp = ts;
-            latestId = row.eventId || '';
+            if((row.eventId || '') > latestId) latestId = row.eventId || '';
+            cursor.continue();
+            return;
           }
-          cursor.continue();
-        } else {
-          resolve({count, latestId, latestTimestamp: latestTimestamp < 0 ? 0 : latestTimestamp});
         }
+        // Count request was issued first, so it has settled by now.
+        resolve({count: countReq.result, latestId, latestTimestamp: latestTimestamp < 0 ? 0 : latestTimestamp});
       };
     });
   }
@@ -1566,22 +1574,40 @@ export class MessageStore {
    * Count unread incoming messages in a conversation.
    *
    * Unread = `mid > cursor` AND message is incoming (not authored by `ownPubkey`)
-   * AND not a synthetic `contact-init-` seed row. Uses the existing
-   * `conversationId` index via `getMessages` for simplicity; caller must not
-   * pass conversations with more messages than the soft limit below.
+   * AND not a synthetic `contact-init-` seed row. Walks only the rows ABOVE the
+   * read cursor via the `conversationMid` index, so cost is O(unread), not
+   * O(conversation) — local history is uncapped. Rows without a `mid` are not
+   * in that index and never count (same as before).
    */
   async countUnread(conversationId: string, ownPubkey: string): Promise<number> {
     const cursor = await this.getReadCursor(conversationId);
-    const msgs = await this.getMessages(conversationId, 10000);
-    let n = 0;
-    for(const m of msgs) {
-      if(m.eventId.startsWith('contact-init-')) continue;
-      if(m.mid == null || m.mid <= cursor) continue;
-      const isOutgoing = m.isOutgoing ?? (m.senderPubkey === ownPubkey);
-      if(isOutgoing) continue;
-      n++;
-    }
-    return n;
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const index = tx.objectStore(STORE_NAME).index('conversationMid');
+      const range = IDBKeyRange.bound(
+        [conversationId, cursor],
+        [conversationId, Number.MAX_SAFE_INTEGER],
+        true,
+        false
+      );
+      const request = index.openCursor(range);
+      let n = 0;
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const c = request.result;
+        if(!c) {
+          resolve(n);
+          return;
+        }
+        const m = c.value as StoredMessage;
+        if(!m.eventId?.startsWith('contact-init-') && m.mid != null && m.mid > cursor) {
+          const isOutgoing = m.isOutgoing ?? (m.senderPubkey === ownPubkey);
+          if(!isOutgoing) n++;
+        }
+        c.continue();
+      };
+    });
   }
 
   async destroy(): Promise<void> {
