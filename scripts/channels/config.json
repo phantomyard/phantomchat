@@ -239,8 +239,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "b34b3bcd4d2399201ca2b74e05d013ce076469daab8d94533fa064347306d2c6",
-      "reason": "Boot: one fire-and-forget import of local-tools, which is a no-op without the desktop Local tools bridge. No storage change. Session name revert fix: the groups CrdtSync now passes merge: mergeGroupsMaps (per-field info merge, same v2 envelope), and the groups-sync upsert drains renames staged before their record (getGroupAPI().drainPendingInfoUpdates), next to the existing backfill drain. No storage change. Contact delete everywhere: Startup wiring: synced deletes run local cleanup, contacts publishes send the nudge, nudges trigger the existing contacts reconcile, and a leftover sweep finishes failed Provider wipes (skips prefs written after the delete). Reads existing stores only; no schema change. Boot: one fire-and-forget dynamic import that mounts the New Update Notification modal — a no-op in the PWA and on desktop builds whose preload cannot snooze or dismiss it."
+      "preview": "aa3ac8ebc839e4bd140d14b25d274067828926cf8ed8daba54dfd27f96d01ff9",
+      "reason": "Boot wiring: fire-and-forget adoptLocalPhantomsAtBoot, and markContactsSettled once contacts reconcile is conclusive or retries are exhausted. No new storage keys. No IndexedDB schema/version change, no new store or index, no stored-row format change; Stable reads everything Preview writes and vice versa."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
@@ -589,8 +589,8 @@
     },
     "src/lib/phantomchat/chat-api-receive.ts": {
       "stable": "c52b56fdef74621b7e023be5712120d3ccc5dc7a97b998503f46eaa774a47a63",
-      "preview": "06f35395bdef731789da1706c1159ee003c2568fd26b4c4714201a344912b942",
-      "reason": "Receive path drops rumors tagged phantomchat-local-tools before any store write (they were never stored before either: Stable renders them as unknown control messages and drops them). No schema or database change. Contact delete everywhere: Recognises the self-addressed sync nudge and skips it before message handling, so it is never stored. Existing stored messages and receive paths unchanged; older clients drop the nudge as an unknown control message. Voice Models454: desktop-only TTS/STT settings and model selectors. Credentials and overrides live in a separate Electron-main encrypted file; no shared identity, IndexedDB or contact-pref schema changes. Remote model-only NIP-17 controls carry the existing local-tools discard tag for old clients/engines; no credentials cross the relay. Independent content review is required."
+      "preview": "dc2e98b46f6fcdc3d2a4d24919b7239644b95de2d9aa5c32f154122ac45f8722",
+      "reason": "Sender gate: 1:1 messages and group_create from non-contacts (not own devices, not local phantoms) are dropped before tombstone, mapping persistence and storage; unknown senders are held in memory until contacts sync settles, then replayed or dropped. The auto-add message-request write is removed, so strangers no longer get mapping/request rows. Fails open on lookup errors. No IndexedDB schema/version change, no new store or index, no stored-row format change; Stable reads everything Preview writes and vice versa. Switching back to Stable only restores the old (leaky) auto-add behaviour."
     },
     "src/lib/phantomchat/desktop-api.ts": {
       "stable": "580e9804a101a8241a133c70d320860a2e82c001b8a1052c729edb262f53b73c",
@@ -784,8 +784,8 @@
     },
     "src/components/sidebarRight/tabs/addContact.ts": {
       "stable": "absent",
-      "preview": "584cf2ca862d36f8b0f91a648296639ecdb58c40a350a4517b1afe596d1deb3c",
-      "reason": "New Contact pane: the former popups/addContact.ts form (Phantom | Human | Provider, Scan and Provider desktop only, Phantom Local tools gate) moved into a right-sidebar tab like the contact and group Edit panes, built from InputField, checkbox Rows and the corner check button. Writes only phantomchat-contact-prefs (version 1 store, optional persona field) and the existing addP2PContact path, exactly as the modal did. Closing the pane over the chat list returns to the chat list. Presentation only; no storage, schema or protocol change. Additional change: a Provider add reads my npub from window.__phantomchatOwnPubkey (loadIdentity() returns null in a real session, so Provider and Scan failed with 'no identity'), the Validate button is gone and the token is checked on save (a rejected token stops before any persona is created). No storage, schema or protocol change. Avatars are now sourced only from the profile's kind-0 `picture`: a save preserves the stored picture, uploads use the live relay-pool key, peers' https pictures render ahead of the Key Sigil, and every other avatar edit control plus the group custom-avatar render path are removed. No stored-format change — same kind-0 event, same localStorage keys. Additional change: the native Provider and Model <select>s are replaced by one searchable picker sheet (44px rows, a bottom sheet on a phone, search over every row, the model list capped at 20 with Show all), the provider list pins PhantomOps and then Anthropic above the engine order, and a provider that needs a model shows its model picker the moment it is picked, filled when the token field loses focus. The status line belongs to the provider/token pair: a check that resolves after the user switched provider no longer writes its verdict, so the old provider cannot speak for the new one. Presentation only; no storage, engine or protocol change. Test and Apply rework: Active badge removed, Test and Apply / Test and Save buttons, Voice ID only on Provider contacts, Provider Edit pane layout, required unique Provider contact name. UI and Electron-main logic only; no browser storage, IndexedDB, contact-pref or wire format change. PhantomOps platform models: New Contact pane: Voice ID picker for Provider contacts, applied via the existing voice-models setContact. No IndexedDB, localStorage, schema or wire change. Add greys out while the token is checked and PhantomOps voices load (#478). UI only; same writes as before, no storage change."
+      "preview": "fbe59bfbb0dd1fca096d173cffcec3909aa84c9a363538666b024a22a11e0689",
+      "reason": "Creating a local phantom registers its pubkey with the in-memory sender gate (rememberLocalPhantom) so its greeting is not dropped before the contact row lands. Memory only, nothing persisted. No IndexedDB schema/version change, no new store or index, no stored-row format change; Stable reads everything Preview writes and vice versa."
     },
     "src/components/sidebarLeft/tabs/editProfile/index.ts": {
       "stable": "6543bd694a0c7eee5d577a659f6e3de8b941beaffce9299f4a5095239a6817a9",
@@ -1089,8 +1089,8 @@
     },
     "src/lib/phantomchat/message-requests.ts": {
       "stable": "b25d46e673e5a221df770bc5e75d214b95536e802b7bdbc136ab12d56bce1dc2",
-      "preview": "90331dbda8d552901620b44a4c639e7b5f276c42ce33cfb565d28a065c0c0225",
-      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+      "preview": "ae9b2b47eaeabe0c0a4adcf3b8dbb8a3b526aa4e4740b304fb8287342bafcd0f",
+      "reason": "isKnownContact now uses virtual-peers-db hasStoredMapping (committed mapping row) instead of the bridge pubkeyCache fast path, which counted every hashed stranger as known. Reads only; phantomchat-message-requests DB v1 unchanged; existing accepted/rejected rows keep their meaning. No IndexedDB schema/version change, no new store or index, no stored-row format change; Stable reads everything Preview writes and vice versa."
     },
     "src/lib/phantomchat/nostr-relay-pool.ts": {
       "stable": "cfde53316ea81b1e043becc806e98ea0842877f7276b0dde333ee7cd5d876f78",
@@ -1134,8 +1134,8 @@
     },
     "src/lib/phantomchat/virtual-peers-db.ts": {
       "stable": "c222e6559fd972d55b3556fa93f22c4bd2158da211162a42f50b89dfe2b5f834",
-      "preview": "e08afd5e238505c8d7287727bf7a1bf574bbf6fde8d37790e174e2ba50774b5f",
-      "reason": "#480/#481: the IndexedDB opener passes its handle through closeOnVersionChange(), which only sets onversionchange to close the connection (and drop the cached handle). No database name, version, store, key, index or row format change. A Stable tab sharing the origin is unaffected; a Preview connection now yields to a delete/upgrade instead of blocking it."
+      "preview": "85ccd23a8cf7ffddeee7c704b4f8250e57037a2c1f569e8e102d3b7213c23a90",
+      "reason": "Adds hasStoredMapping (read via existing getMapping) with an in-memory positive cache filled on read hits/committed writes and evicted on removeMapping. Same mappings store, same version, same row shape. No IndexedDB schema/version change, no new store or index, no stored-row format change; Stable reads everything Preview writes and vice versa."
     },
     "src/lib/phantomchat/voice-upload-queue.ts": {
       "stable": "0117a2674682a2970c0ad41cd114843c600e1febeaba6eaa56c261e6d95e9491",
@@ -1159,8 +1159,8 @@
     },
     "src/lib/phantomchat/chat-api.ts": {
       "stable": "d34d6ed420e040e3d4db956866ae00f158931bde84731a9f9123cff5f439fc63",
-      "preview": "0689c151f0918a6dc0e9a54f208fbcb9c682aa4547b2dc3d7f6052bec6cd8068",
-      "reason": "deleteConversation collects every stored eventId (getConversationEventIds) instead of the newest 1,000 and publishes the Level 2/3 deletions in batches of 500 ids. Wire format of each deletion event unchanged; only the batching. Shared IndexedDB: no schema/version change, no new store or index, no stored-row format change. Switching back to Stable is safe: Stable's 500-row cap simply prunes the oldest rows of any chat that grew past 500 under Preview on its next insert (old behaviour, nothing corrupted)."
+      "preview": "8ecc53acf4de4afa0d5ea0103460c04d368526b04c3ef41af12b4af229dc59ff",
+      "reason": "Passes a replay callback (re-runs handleRelayMessage) into the receive context for held messages. No storage effect."
     },
     "src/lib/phantomchat/phantomchat-device-sync.ts": {
       "stable": "3d01603a916e0dce0c67056e989960c8566639031ea3d64da4c033f50f9c0a1b",
@@ -1171,6 +1171,16 @@
       "stable": "absent",
       "preview": "13e736252d8e3e51b5276f417c61b7968be8a8029d12207adb14163d0a6f0d2b",
       "reason": "New helper wrapping navigator.storage.persisted()/persist(); never throws, writes no app state. Shared IndexedDB: no schema/version change, no new store or index, no stored-row format change. Switching back to Stable is safe: Stable's 500-row cap simply prunes the oldest rows of any chat that grew past 500 under Preview on its next insert (old behaviour, nothing corrupted)."
+    },
+    "src/lib/phantomchat/local-phantoms.ts": {
+      "stable": "absent",
+      "preview": "c0d96acc6adbc28c3b805e5c765492b7d1254b49ff6b3ff9fddd03fde635e9de",
+      "reason": "New module: at Desktop boot, adopts embedded-engine personas into the signed-in account via existing APIs only (engine bridge persona.phantomchat.allow/start, addP2PContact, setContactPrefs {kind:\"provider\",persona}) - the same rows the existing Add Contact provider flow writes. No IndexedDB schema/version change, no new store or index, no stored-row format change; Stable reads everything Preview writes and vice versa."
+    },
+    "src/lib/phantomchat/sender-gate.ts": {
+      "stable": "absent",
+      "preview": "2602cff832d36dd386c6c4c5a05a262bca9ace00201c79d23a1b106f338d7632",
+      "reason": "New module: in-memory sender-gate state (local phantom pubkeys, contacts-settled flag, bounded hold queue 60 s / 200 messages). Nothing persisted; localStorage/IndexedDB untouched."
     }
   }
 }
