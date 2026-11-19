@@ -73,6 +73,17 @@ export interface VirtualPeerMapping {
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
 /**
+ * Pubkeys known to have a COMMITTED mapping row (= a contact). Positive-only
+ * cache for the per-message sender gate (hasStoredMapping): a hit skips
+ * IndexedDB, a miss always falls through to the authoritative read. Filled on
+ * a read hit or a committed write, evicted on every delete, so it never says
+ * "contact" for a pubkey this tab has removed. Deliberately NOT the bridge's
+ * pubkeyCache — that one also holds every pubkey ever hashed to a peerId, so
+ * it would wave strangers through.
+ */
+const storedMappingCache = new Set<string>();
+
+/**
  * Get or create the database singleton.
  */
 export function getDB(): Promise<IDBDatabase> {
@@ -262,7 +273,7 @@ export async function storeMapping(
       // can still abort afterwards, and the caller (bridge) caches the
       // mapping only if this resolves — a mapped-but-not-committed cache
       // entry would disagree with IndexedDB for the rest of the session.
-      tx.oncomplete = () => resolve(true);
+      tx.oncomplete = () => { storedMappingCache.add(pubkey); resolve(true); };
       tx.onabort = () => reject(tx.error || new Error('storeMapping transaction aborted'));
     };
   });
@@ -436,9 +447,27 @@ export async function getMapping(pubkey: string): Promise<VirtualPeerMapping | u
 }
 
 /**
+ * True when `pubkey` has a committed mapping row — i.e. it is in the contacts
+ * list. The sender gate in chat-api-receive asks this for every inbound DM,
+ * so a hit is served from memory (storedMappingCache); a miss reads IndexedDB.
+ */
+export async function hasStoredMapping(pubkey: string): Promise<boolean> {
+  if(storedMappingCache.has(pubkey)) return true;
+  const found = !!(await getMapping(pubkey));
+  if(found) storedMappingCache.add(pubkey);
+  return found;
+}
+
+/** Test hook: forget the positive cache. */
+export function resetStoredMappingCacheForTests(): void {
+  storedMappingCache.clear();
+}
+
+/**
  * Delete a mapping by pubkey.
  */
 export async function removeMapping(pubkey: string): Promise<void> {
+  storedMappingCache.delete(pubkey);
   const db = await getDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');

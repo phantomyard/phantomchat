@@ -12,6 +12,7 @@
 import {DecryptedMessage} from './nostr-relay';
 import {getMessageStore, StoredMessage} from './message-store';
 import {getMessageRequestStore} from './message-requests';
+import {contactsSettled, holdUntilContactsSettled, isLocalPhantom} from './sender-gate';
 import {isControlEvent, getGroupIdFromRumor} from './group-control-messages';
 import {getMsSlotFromTags} from './nostr-crypto';
 import {isVoiceModelsRumor, handleVoiceModelsRumor} from './voice-models-remote';
@@ -20,7 +21,6 @@ import {isSyncNudgeRumor, parseSyncNudge, SYNC_NUDGE_DEVICE_ID, SYNC_NUDGE_MAX_A
 import {handleSyncNudge} from './phantomchat-sync-triggers';
 import {waveformToBase64} from './phantomchat-media-shape';
 import type {ChatMessage, ChatMessageType} from './chat-api';
-import rootScope from '@lib/rootScope';
 
 /** Payload for an incoming edit notification */
 export interface IncomingEdit {
@@ -41,6 +41,12 @@ export interface ReceiveContext {
   offlineQueue: {acknowledge(id: string): void} | null;
   onMessage: ((msg: ChatMessage) => void) | null;
   onEdit: ((edit: IncomingEdit) => void) | null;
+  /**
+   * Re-run this message through the receive path later. The sender gate uses
+   * it to replay an unknown sender's message once contacts sync has settled
+   * (sender-gate.ts). Without it an unknown sender is dropped at once.
+   */
+  replay?: (msg: DecryptedMessage) => Promise<unknown> | unknown;
   log: {
     (...args: any[]): void;
     warn(...args: any[]): void;
@@ -51,6 +57,7 @@ export interface ReceiveContext {
 /** Result of processing a relay message */
 export type ReceiveResult =
   | {action: 'skipped'; reason: string}
+  | {action: 'held'; reason: string}
   | {action: 'deleted'; conversationId: string}
   | {action: 'routed_group'; groupId: string}
   | {action: 'routed_control'}
@@ -211,6 +218,23 @@ export function isCreatedAtInWindow(createdAt: number, nowSeconds?: number): boo
   return Math.abs(createdAt - now) <= MAX_CREATED_AT_SKEW_SECONDS;
 }
 
+/**
+ * Does this rumor open (or continue) a chat with me? True for a 1:1 message
+ * and for a group_create; false for traffic into an existing group (gated by
+ * GroupAPI membership) and for other group controls (they need a live group).
+ */
+export function opensChatWithMe(msg: Pick<DecryptedMessage, 'content' | 'tags'>): boolean {
+  const rumor = {tags: msg.tags || []};
+  if(isControlEvent(rumor)) {
+    try {
+      return JSON.parse(msg.content)?.type === 'group_create';
+    } catch{
+      return false;
+    }
+  }
+  return !getGroupIdFromRumor(rumor);
+}
+
 // ─── Main handler ──────────────────────────────────────────────
 
 /**
@@ -332,6 +356,26 @@ export async function handleRelayMessage(
     return {action: 'skipped', reason: 'blocked'};
   }
 
+  // 2b. Sender gate (sender-gate.ts): only contacts, my own devices and this
+  // PC's local phantoms may open or continue a 1:1 chat, or create a group
+  // with me. A stranger is dropped HERE — before the tombstone gate, mapping
+  // persistence, storage, render or notification — so spam never reaches the
+  // chat list. Messages into a group I already hold are not gated here:
+  // GroupAPI's membership gate covers those, and other group controls need a
+  // live group record to do anything.
+  if(msg.from !== ctx.ownId && opensChatWithMe(msg) && !isLocalPhantom(msg.from)) {
+    // Fail OPEN on a lookup error: losing a real contact's message is worse
+    // than letting one stray message through.
+    const known = await requestStore.isKnownContact(msg.from).catch(() => true);
+    if(!known) {
+      if(!contactsSettled() && holdUntilContactsSettled(msg, ctx.replay)) {
+        return {action: 'held', reason: 'unknown_sender_until_contacts_settled'};
+      }
+      ctx.log('[ChatAPI] dropping message from non-contact:', msg.from.slice(0, 8) + '...');
+      return {action: 'skipped', reason: 'not_a_contact'};
+    }
+  }
+
   // 3. Group message routing
   try {
     const rumorLike = {
@@ -409,7 +453,9 @@ export async function handleRelayMessage(
   // pubkey comes straight off the inbound event). Previously this ran only
   // inside the auto-add branch below, so known senders skipped persistence.
   // storePeerMapping is idempotent (IDB put + cache set), so persisting on
-  // every inbound message is safe and cheap.
+  // every inbound message is safe and cheap. Since the sender gate (2b) only
+  // lets contacts and local phantoms this far, this never turns a stranger
+  // into a contact any more.
   if(msg.from !== ctx.ownId) {
     try {
       const {PhantomChatBridge} = await import('./phantomchat-bridge');
@@ -419,22 +465,6 @@ export async function handleRelayMessage(
     } catch(err) {
       ctx.log.warn('[ChatAPI] failed to persist peer mapping:', err);
     }
-  }
-
-  // 6. Auto-add unknown senders (message request)
-  const isKnown = await requestStore.isKnownContact(msg.from).catch(() => true);
-  if(!isKnown && msg.from !== ctx.ownId) {
-    ctx.log('[ChatAPI] auto-adding unknown sender:', msg.from.slice(0, 8) + '...');
-
-    let firstMsg = msg.content;
-    try {
-      const p = JSON.parse(msg.content);
-      firstMsg = p.content || msg.content;
-    } catch{
-      // plaintext
-    }
-    requestStore.addRequest(msg.from, firstMsg, msg.timestamp).catch((e) => console.debug('[ChatAPI] addRequest failed:', e?.message));
-    rootScope.dispatchEvent('phantomchat_message_request', {pubkey: msg.from, firstMessage: firstMsg});
   }
 
   // 7. Parse content

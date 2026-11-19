@@ -1085,90 +1085,125 @@ describe('ChatAPI', () => {
     });
   });
 
-  describe('unknown sender auto-add', () => {
+  describe('sender gate (strangers dropped)', () => {
     /** Flush microtasks so async handleRelayMessage completes */
     const flush = () => new Promise(r => setTimeout(r, 50));
 
-    beforeEach(() => {
+    const dm = (from: string, id: string, text: string): DecryptedMessage => ({
+      id,
+      from,
+      content: JSON.stringify({id: id + '-app', from, to: OWN_ID, type: 'text', content: text, timestamp: Math.floor(Date.now() / 1000)}),
+      timestamp: Math.floor(Date.now() / 1000)
+    });
+
+    beforeEach(async() => {
       bridgeMocks.mapPubkeyToPeerId.mockClear();
       bridgeMocks.storePeerMapping.mockClear();
       (rootScope.dispatchEvent as ReturnType<typeof vi.fn>).mockClear();
       messageRequestMocks.isKnownContact.mockResolvedValue(true);
+      messageRequestMocks.addRequest.mockClear();
+      const gate = await import('@lib/phantomchat/sender-gate');
+      gate.resetSenderGateForTests();
+      gate.markContactsSettled();
     });
 
-    test('auto-adds unknown sender to virtual-peers-db and still delivers the message', async() => {
-      // Simulate sender being unknown (not in virtual-peers-db)
-      messageRequestMocks.isKnownContact.mockResolvedValueOnce(false);
-
-      await chatApi.connect(PEER_ID);
-
-      let receivedMessage: ChatMessage | null = null;
-      chatApi.onMessage = (msg) => {
-        receivedMessage = msg;
-      };
-
-      const unknownSenderPubkey = 'ff'.repeat(32);
-      const relayMsg: DecryptedMessage = {
-        id: 'unknown-relay-event',
-        from: unknownSenderPubkey,
-        content: JSON.stringify({
-          id: 'unknown-msg-1',
-          from: unknownSenderPubkey,
-          to: OWN_ID,
-          type: 'text',
-          content: 'Hello from stranger',
-          timestamp: Math.floor(Date.now() / 1000)
-        }),
-        timestamp: Math.floor(Date.now() / 1000)
-      };
-
-      mockPool.simulateMessage(relayMsg);
-      await flush();
-
-      // Bridge should have been called to auto-store the unknown sender
-      expect(bridgeMocks.mapPubkeyToPeerId).toHaveBeenCalledWith(unknownSenderPubkey);
-      // Receive path persists with the revive opt-out flag (tombstone guard
-      // pass-through), hence the extra args.
-      expect(bridgeMocks.storePeerMapping).toHaveBeenCalledWith(
-        unknownSenderPubkey, 9999999999, undefined, {allowTombstoned: expect.any(Boolean)});
-
-      // Message should still be delivered to onMessage callback (not filtered away)
-      expect(receivedMessage).toBeDefined();
-      expect(receivedMessage!.content).toBe('Hello from stranger');
+    afterEach(async() => {
+      messageRequestMocks.isKnownContact.mockResolvedValue(true);
+      (await import('@lib/phantomchat/sender-gate')).resetSenderGateForTests();
     });
 
-    test('persists the peer mapping for a known sender but raises no message request', async() => {
-      // Default mock returns isKnownContact = true
+    test('drops a stranger: no delivery, no mapping, no request', async() => {
+      messageRequestMocks.isKnownContact.mockResolvedValue(false);
       await chatApi.connect(PEER_ID);
+      const received: ChatMessage[] = [];
+      chatApi.onMessage = (msg) => { received.push(msg); };
 
-      const knownSenderPubkey = 'aa'.repeat(32);
-      const relayMsg: DecryptedMessage = {
-        id: 'known-relay-event',
-        from: knownSenderPubkey,
-        content: JSON.stringify({
-          id: 'known-msg-1',
-          from: knownSenderPubkey,
-          to: OWN_ID,
-          type: 'text',
-          content: 'Hello from known',
-          timestamp: Math.floor(Date.now() / 1000)
-        }),
-        timestamp: Math.floor(Date.now() / 1000)
-      };
-
-      mockPool.simulateMessage(relayMsg);
+      const stranger = 'ff'.repeat(32);
+      mockPool.simulateMessage(dm(stranger, 'stranger-event', 'link won\'t stay long'));
       await flush();
 
-      // The mapping IS persisted now — every inbound sender must reach
-      // IndexedDB so the Virtual MTProto send path can resolve the recipient
-      // ("VMT returned no phantomchatMid" bug). Receiving used to be the only
-      // path that skipped persistence for known peers.
-      expect(bridgeMocks.storePeerMapping).toHaveBeenCalledWith(
-        knownSenderPubkey, 9999999999, undefined, {allowTombstoned: expect.any(Boolean)});
-
-      // ...but a *known* sender must not raise a message-request prompt.
+      expect(received).toHaveLength(0);
+      expect(bridgeMocks.storePeerMapping).not.toHaveBeenCalled();
+      expect(messageRequestMocks.addRequest).not.toHaveBeenCalled();
+      expect(messageStoreMocks.saveMessage).not.toHaveBeenCalledWith(expect.objectContaining({senderPubkey: stranger}));
       const requestDispatched = (rootScope.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls
-        .some((call) => call[0] === 'phantomchat_message_request');
+      .some((call) => call[0] === 'phantomchat_message_request');
+      expect(requestDispatched).toBe(false);
+    });
+
+    test('drops a group_create from a stranger', async() => {
+      messageRequestMocks.isKnownContact.mockResolvedValue(false);
+      const {handleRelayMessage} = await import('@lib/phantomchat/chat-api-receive');
+      const log = Object.assign((() => {}) as any, {warn: () => {}, error: () => {}});
+      const stranger = 'fe'.repeat(32);
+      const result = await handleRelayMessage({
+        id: 'gc-event',
+        from: stranger,
+        content: JSON.stringify({type: 'group_create', groupId: 'g'.repeat(32), memberPubkeys: [stranger, OWN_ID]}),
+        timestamp: Math.floor(Date.now() / 1000),
+        tags: [['control', 'true'], ['group', 'g'.repeat(32)]]
+      }, {ownId: OWN_ID, history: [], activePeer: null, deliveryTracker: null, offlineQueue: null, onMessage: null, onEdit: null, log});
+      expect(result).toEqual({action: 'skipped', reason: 'not_a_contact'});
+    });
+
+    test('delivers a message from a local phantom that is not a contact yet', async() => {
+      messageRequestMocks.isKnownContact.mockResolvedValue(false);
+      const phantom = 'cc'.repeat(32);
+      (await import('@lib/phantomchat/sender-gate')).rememberLocalPhantom(phantom);
+      await chatApi.connect(PEER_ID);
+      const received: ChatMessage[] = [];
+      chatApi.onMessage = (msg) => { received.push(msg); };
+
+      mockPool.simulateMessage(dm(phantom, 'phantom-event', 'Hi, I am Cora'));
+      await flush();
+
+      expect(received.map((m) => m.content)).toEqual(['Hi, I am Cora']);
+    });
+
+    test('before contacts settle, a not-yet-known sender is held, then delivered once known', async() => {
+      const gate = await import('@lib/phantomchat/sender-gate');
+      gate.resetSenderGateForTests(); // contacts NOT settled (fresh login)
+      messageRequestMocks.isKnownContact.mockResolvedValue(false);
+      await chatApi.connect(PEER_ID);
+      const received: ChatMessage[] = [];
+      chatApi.onMessage = (msg) => { received.push(msg); };
+
+      const contact = 'bb'.repeat(32);
+      mockPool.simulateMessage(dm(contact, 'backlog-event', 'from before sync'));
+      await flush();
+      expect(received).toHaveLength(0); // held, not dropped
+
+      messageRequestMocks.isKnownContact.mockResolvedValue(true); // contacts sync restored it
+      gate.markContactsSettled();
+      await flush();
+      expect(received.map((m) => m.content)).toEqual(['from before sync']);
+    });
+
+    test('before contacts settle, a stranger is held and then dropped', async() => {
+      const gate = await import('@lib/phantomchat/sender-gate');
+      gate.resetSenderGateForTests();
+      messageRequestMocks.isKnownContact.mockResolvedValue(false);
+      await chatApi.connect(PEER_ID);
+      const received: ChatMessage[] = [];
+      chatApi.onMessage = (msg) => { received.push(msg); };
+
+      mockPool.simulateMessage(dm('fd'.repeat(32), 'spam-event', 'spam'));
+      await flush();
+      gate.markContactsSettled();
+      await flush();
+      expect(received).toHaveLength(0);
+    });
+
+    test('a known sender still gets its mapping persisted and no message request', async() => {
+      await chatApi.connect(PEER_ID);
+      const known = 'aa'.repeat(32);
+      mockPool.simulateMessage(dm(known, 'known-relay-event', 'Hello from known'));
+      await flush();
+
+      expect(bridgeMocks.storePeerMapping).toHaveBeenCalledWith(
+        known, 9999999999, undefined, {allowTombstoned: expect.any(Boolean)});
+      const requestDispatched = (rootScope.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls
+      .some((call) => call[0] === 'phantomchat_message_request');
       expect(requestDispatched).toBe(false);
     });
   });
