@@ -1890,6 +1890,7 @@ export class ChatAPI {
         offlineQueue: this.offlineQueue,
         onMessage: this.onMessage,
         onEdit: this.onEditMessage,
+        replay: (held: DecryptedMessage) => this.handleRelayMessage(held),
         log: this.log
       });
       this.log('[ChatAPI] relay message result:', result.action);

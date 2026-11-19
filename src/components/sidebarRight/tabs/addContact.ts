@@ -725,6 +725,16 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
         ownNpub: await getOwnNpub()
       });
       if(created.channelError) console.warn('[AddContactPane] provider channel not running yet:', created.channelError);
+      // Its greeting may beat the contact row: the sender gate must not drop it.
+      try {
+        const [{decodePubkey}, {rememberLocalPhantom}] = await Promise.all([
+          import('@lib/phantomchat/nostr-identity'),
+          import('@lib/phantomchat/sender-gate')
+        ]);
+        rememberLocalPhantom(decodePubkey(created.npub));
+      } catch(err) {
+        console.warn('[AddContactPane] could not register local phantom', err);
+      }
       const voice = voicePicker.value();
       if(voice) {
         // The contact works without it; a failed pick can be redone in its Edit pane.

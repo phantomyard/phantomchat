@@ -4,8 +4,9 @@
  * message; the request status is owned entirely by this store's mutations, so
  * it is cached in memory and updated on add/accept/reject. These tests use the
  * REAL store against fake-indexeddb and verify the cache reflects mutations
- * correctly (block enforcement must never go stale) and that the bridge
- * pubkeyCache fast-path short-circuits isKnownContact.
+ * correctly (block enforcement must never go stale), and that isKnownContact
+ * trusts only a committed contact mapping — never the bridge pubkeyCache,
+ * which holds every pubkey ever hashed (strangers included).
  */
 import 'fake-indexeddb/auto';
 import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
@@ -16,10 +17,11 @@ vi.mock('@lib/phantomchat/phantomchat-bridge', () => ({
   PhantomChatBridge: {getInstance: () => ({hasPeerMapping})}
 }));
 
-// Force the virtual-peers-db read to miss so isKnownContact falls through to
-// the cached request-status check (the vpdb path is exercised elsewhere).
+// The committed-mapping check, controlled per test. Default: no mapping, so
+// isKnownContact falls through to the cached request-status check.
+const hasStoredMapping = vi.fn().mockResolvedValue(false);
 vi.mock('@lib/phantomchat/virtual-peers-db', () => ({
-  getDB: () => Promise.reject(new Error('no vpdb in this test'))
+  hasStoredMapping: (pk: string) => hasStoredMapping(pk)
 }));
 
 import {MessageRequestStore} from '@lib/phantomchat/message-requests';
@@ -31,6 +33,7 @@ describe('MessageRequestStore status cache', () => {
 
   beforeEach(() => {
     hasPeerMapping.mockReturnValue(false);
+    hasStoredMapping.mockResolvedValue(false);
     store = new MessageRequestStore();
   });
 
@@ -61,12 +64,17 @@ describe('MessageRequestStore status cache', () => {
     expect(await store.isKnownContact(pk)).toBe(false); // pending ≠ accepted
   });
 
-  it('isKnownContact short-circuits on the bridge pubkeyCache fast path', async() => {
+  it('isKnownContact ignores the bridge pubkeyCache (strangers live there too)', async() => {
     const pk = PK('4');
-    hasPeerMapping.mockReturnValue(true); // peer is mapped in memory
-    // No request row, vpdb mocked to reject — yet known via the fast path.
+    hasPeerMapping.mockReturnValue(true); // hashed once — NOT a contact
+    expect(await store.isKnownContact(pk)).toBe(false);
+  });
+
+  it('isKnownContact is true for a committed contact mapping', async() => {
+    const pk = PK('7');
+    hasStoredMapping.mockResolvedValue(true);
     expect(await store.isKnownContact(pk)).toBe(true);
-    expect(hasPeerMapping).toHaveBeenCalledWith(pk);
+    expect(hasStoredMapping).toHaveBeenCalledWith(pk);
   });
 
   it('a cold unknown pubkey is not blocked and not known', async() => {

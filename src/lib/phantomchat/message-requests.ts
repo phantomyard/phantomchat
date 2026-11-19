@@ -1,19 +1,17 @@
 /**
  * MessageRequestStore - Unknown sender message request management
  *
- * Manages incoming messages from unknown pubkeys. Messages from senders
- * not in the virtual-peers-db (not yet a contact) go to a "Richieste"
- * (Requests) section rather than the main chat list.
- *
- * Users can accept (move to main chat) or reject (block future messages)
- * message requests from unknown senders.
+ * Holds the per-pubkey block (rejected) / accepted status and answers
+ * isKnownContact for the receive path. Since the sender gate
+ * (sender-gate.ts) drops every non-contact before anything is stored, no new
+ * request rows are created from inbound messages; existing accepted rows
+ * still count as contacts and rejected rows still block.
  *
  * DB: phantomchat-message-requests, version 1
  * Store: requests (keyPath: pubkey)
  */
 
-import {getDB as getVirtualPeersDB} from './virtual-peers-db';
-import {PhantomChatBridge} from './phantomchat-bridge';
+import {hasStoredMapping} from './virtual-peers-db';
 import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -277,35 +275,17 @@ export class MessageRequestStore {
   }
 
   /**
-   * Check if a pubkey is a known contact.
-   * Returns true if pubkey exists in virtual-peers-db (mapped to a peerId)
-   * OR has an accepted message request.
+   * Check if a pubkey is a known contact: it has a committed row in
+   * virtual-peers-db (the contacts list) OR an accepted message request.
+   *
+   * Do NOT use the bridge's pubkeyCache here. mapPubkeyToPeerId caches every
+   * pubkey it ever hashes, so a stranger whose message was merely looked at
+   * counted as "known" — together with the receive path persisting a mapping
+   * for every sender, that let every stranger into the chat list.
    */
   async isKnownContact(pubkey: string): Promise<boolean> {
-    // Fast path: a peer already mapped in the bridge's in-memory pubkeyCache is
-    // a known contact — skip IndexedDB entirely on every message from a known
-    // sender (the reply-burst case). A miss falls through to the authoritative
-    // virtual-peers-db read below, so correctness is unchanged.
     try {
-      if(PhantomChatBridge.getInstance().hasPeerMapping(pubkey)) return true;
-    } catch{
-      // bridge not ready — fall through to the DB checks
-    }
-
-    // Authoritative: check virtual-peers-db for a mapping.
-    try {
-      const vpDb = await getVirtualPeersDB();
-      const tx = vpDb.transaction('mappings', 'readonly');
-      const store = tx.objectStore('mappings');
-
-      const exists = await new Promise<boolean>((resolve) => {
-        // keyPath is 'pubkey', so use store.get() directly
-        const request = store.get(pubkey);
-        request.onsuccess = () => resolve(!!request.result);
-        request.onerror = () => resolve(false);
-      });
-
-      if(exists) return true;
+      if(await hasStoredMapping(pubkey)) return true;
     } catch{
       // virtual-peers-db not available, fall through to request check
     }

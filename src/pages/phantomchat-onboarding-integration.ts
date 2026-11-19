@@ -328,6 +328,13 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       .then(({initLocalTools}) => initLocalTools(identity.publicKey, bridge.getRelayPool()))
       .catch((err) => console.warn('[PhantomChatOnboardingIntegration] local tools init failed:', err));
 
+      // Desktop only: the embedded engine's phantoms belong to this PC, not to
+      // one account — adopt them into whoever is signed in (local-phantoms.ts).
+      // Fire-and-forget; it waits for contacts sync on its own.
+      void import('@lib/phantomchat/local-phantoms')
+      .then(({adoptLocalPhantomsAtBoot}) => adoptLocalPhantomsAtBoot(identity.publicKey))
+      .catch((err) => console.warn('[PhantomChatOnboardingIntegration] local phantoms adopt failed:', err));
+
       // --- Initialize PhantomChatSync ---
       // Wired after the gate (see the receive-boot note above) so no delivery
       // can reach the sync/projection pipeline before it exists.
@@ -865,6 +872,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           // convergence) on every boot of such an account. Only a hard failure
           // keeps the loop alive for it.
           const rBlocking = (o: string) => o === 'failed';
+          const markContactsSettledLazy = () => {
+            void import('@lib/phantomchat/sender-gate')
+            .then(({markContactsSettled}) => markContactsSettled())
+            .catch((e) => console.warn('[sender-gate] settle failed', e));
+          };
           void (async() => {
             const MAX_ATTEMPTS = 5;
             for(let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -873,6 +885,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                 true;
               if(ready) {
                 const {c, g, r} = await reconcileOnce();
+                // Contacts list is as complete as it gets: the sender gate may
+                // now drop unknown senders (and replays the ones it held).
+                if(!inconclusive(c)) markContactsSettledLazy();
                 // Stop only once BOTH domains got a definitive read. Using OR
                 // here would abandon a still-inconclusive domain the moment the
                 // other resolved — e.g. groups 'in-sync' but contacts
@@ -887,6 +902,8 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
                 await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
               }
             }
+            // Retries exhausted: an empty relay is a real answer by now.
+            markContactsSettledLazy();
           })();
 
           // Offline cold start (#218 review): no relay can answer and no remote

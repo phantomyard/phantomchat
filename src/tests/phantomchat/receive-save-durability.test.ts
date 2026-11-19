@@ -10,9 +10,10 @@
  */
 
 import 'fake-indexeddb/auto';
-import {describe, it, expect, afterAll, vi} from 'vitest';
+import {describe, it, expect, afterAll, beforeAll, vi} from 'vitest';
 import {handleRelayMessage, ReceiveContext} from '@lib/phantomchat/chat-api-receive';
 import {getMessageStore} from '@lib/phantomchat/message-store';
+import {storeMapping} from '@lib/phantomchat/virtual-peers-db';
 import type {DecryptedMessage} from '@lib/phantomchat/nostr-relay';
 
 vi.mock('@lib/phantomchat/message-requests', () => ({
@@ -50,6 +51,12 @@ afterAll(() => {
 
 const SENDER_PUB = 'd'.repeat(64);
 const OWN_PUB = 'e'.repeat(64);
+
+// The sender is a contact: the sender gate drops anyone else before the save
+// path. Seed a real mapping rather than trusting the message-requests mock.
+beforeAll(async() => {
+  await storeMapping(SENDER_PUB, 424242, 'Sender');
+});
 
 function makeCtx(overrides: Partial<ReceiveContext> = {}): ReceiveContext {
   const log = Object.assign(((..._args: any[]) => {}) as any, {
