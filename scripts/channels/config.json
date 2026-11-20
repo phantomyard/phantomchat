@@ -24,8 +24,8 @@
     },
     "package.json": {
       "stable": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
-      "preview": "94eacf7559c98efa234d2982d732d3b15ff97bd69440072bcfd83935239e5c6c",
-      "reason": "Registers forwarding and destination-picker regressions in the quick suite; no dependency, runtime or storage changes. Forward picker fast open + no self row: registers select-peers-first-render and forward-popup-no-self in the quick suite; no dependency, runtime or storage change."
+      "preview": "a5fac51d63781890c689ff4017ed4dadfd1b47505fcb559f0bffdd5369d95e5b",
+      "reason": "Registers forwarding and destination-picker regressions in the quick suite; no dependency, runtime or storage changes. Forward picker fast open + no self row: registers select-peers-first-render and forward-popup-no-self in the quick suite; no dependency, runtime or storage change. Phantomyard Desktop display name (#492): launcher/autostart Name=, tray labels and the Linux build script's -c.productName pin only; no store, schema, key, path or protocol change."
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
       "stable": "378b94f843ad08780c207dbf7560a054bb99df0a541758fbdc428cf6457a33e5",
@@ -679,8 +679,8 @@
     },
     "electron/desktopIntegration.ts": {
       "stable": "9061869db34828bc5ee3fb65e476451d903b6da6747e8461df927b9812e23f91",
-      "preview": "ce0a400fb5909945e3197a19f67aba42ae519f881bb97e405dedeaf6bc7817ed",
-      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke."
+      "preview": "b18de220ae474a02b912c5a0034acbb42d1972f784580e4df478b3ad8d113f3d",
+      "reason": "Desktop shell only, never part of the web bundle: no browser storage format, schema or database changes. Existing data is proven by electron-upgrade-smoke. Phantomyard Desktop display name (#492): launcher/autostart Name=, tray labels and the Linux build script's -c.productName pin only; no store, schema, key, path or protocol change."
     },
     "electron/updateCapability.ts": {
       "stable": "1b6f0a83b3a75635651c55ec789f4382847f254bedffa47583d9eac06afcbfd8",
@@ -959,18 +959,18 @@
     },
     "electron/presence.ts": {
       "stable": "absent",
-      "preview": "de13e827f291d1a2b4046b5f966b190a13cada8adc87d82851ffa10d57a04d32",
-      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Deliberately NEW file. Fix: autostartCapability() withholds the login entry for an unpackaged run and a sandboxed package; keepsHiddenStart() re-takes the hidden start once the tray exists."
+      "preview": "0263bef1b9aa5f644fc0921a261ec16f5bf1652b81dd81fd8509f8ed4ecc42cd",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Deliberately NEW file. Fix: autostartCapability() withholds the login entry for an unpackaged run and a sandboxed package; keepsHiddenStart() re-takes the hidden start once the tray exists. Phantomyard Desktop display name (#492): launcher/autostart Name=, tray labels and the Linux build script's -c.productName pin only; no store, schema, key, path or protocol change."
     },
     "electron/tray.test.ts": {
       "stable": "absent",
-      "preview": "3183e018759d76dff15892cab1f0b8a0f80fd2cf0767f6ad315c6f9b54b2f3d5",
-      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Tests only."
+      "preview": "343b250e2177496cbe5bd30fb155f7ab4f1a87889e71c2aaaa9806001d9edae7",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Tests only. Phantomyard Desktop display name (#492): launcher/autostart Name=, tray labels and the Linux build script's -c.productName pin only; no store, schema, key, path or protocol change."
     },
     "electron/tray.ts": {
       "stable": "absent",
-      "preview": "f052b632c89f391cc963aef0feeb8eea09386802c1083e57ab57ac8967024b43",
-      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Deliberately NEW file."
+      "preview": "00c15f4e33ff2bcf0e3e90261f61d6d9fe4e5195dd199b26f0c7489467d0eb51",
+      "reason": "Tray presence (start at login / close to tray): a Tray icon, a close->hide window handler, a Linux StatusNotifier session-bus capability probe and an autostart .desktop entry. No browser storage, schema or network change. Deliberately NEW file. Phantomyard Desktop display name (#492): launcher/autostart Name=, tray labels and the Linux build script's -c.productName pin only; no store, schema, key, path or protocol change."
     },
     "src/components/sidebarLeft/tabs/phantomchatDesktopPresence.ts": {
       "stable": "absent",
