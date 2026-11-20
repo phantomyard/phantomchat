@@ -48,6 +48,11 @@ fi
 [ -f /opt/PhantomChat/resources/app-update.yml ] \
   || fail "resources/app-update.yml missing — installed app has no update feed"
 
+# 3c. Launcher shows the display name (electron-builder.yml linux.desktop) while
+#     the install dir above stays /opt/PhantomChat.
+grep -qx 'Name=Phantomyard Desktop' /usr/share/applications/phantomchat.desktop \
+  || fail "launcher Name is not 'Phantomyard Desktop'"
+
 # 4. Removal cleans up after itself.
 sudo apt-get remove -y phantomchat
 [ ! -e /usr/bin/phantomchat ] || fail "/usr/bin/phantomchat left behind after remove"

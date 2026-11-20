@@ -14,7 +14,9 @@ import {execFileSync} from 'child_process';
 import {homedir} from 'os';
 
 const APP_ID = 'phantomchat';
-const APP_NAME = 'PhantomChat';
+// Display name only (matches electron-builder.yml productName); APP_ID and
+// every path stay phantomchat.
+const APP_NAME = 'Phantomyard Desktop';
 const APP_COMMENT = 'Privacy-first messaging with end-to-end encryption';
 const GENERIC_NAME = 'Internet Messenger';
 const CATEGORIES = 'Network;InstantMessaging;';

@@ -169,7 +169,7 @@ export function autostartEntry(execPath: string): string {
     '[Desktop Entry]',
     'Type=Application',
     'Version=1.0',
-    'Name=PhantomChat',
+    'Name=Phantomyard Desktop',
     'Comment=Privacy-first messaging with end-to-end encryption',
     `Exec=${autostartExec(execPath)}`,
     'Terminal=false',

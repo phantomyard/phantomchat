@@ -38,6 +38,14 @@ PLIST="$APP/Contents/Info.plist"
 [[ -f "$APP/Contents/Resources/app.asar" ]] || { echo "app.asar missing" >&2; exit 1; }
 [[ "$(defaults read "$PLIST" CFBundleIdentifier)" == "ai.phantomyard.chat" ]] \
   || { echo "unexpected bundle identifier" >&2; exit 1; }
+# Display name (Activity Monitor, Dock, activity trackers); the bundle and its
+# executable stay PhantomChat.app / MacOS/PhantomChat.
+[[ "$(defaults read "$PLIST" CFBundleName)" == "Phantomyard Desktop" ]] \
+  || { echo "unexpected CFBundleName" >&2; exit 1; }
+[[ "$(defaults read "$PLIST" CFBundleDisplayName)" == "Phantomyard Desktop" ]] \
+  || { echo "unexpected CFBundleDisplayName" >&2; exit 1; }
+[[ "$(defaults read "$PLIST" CFBundleExecutable)" == "PhantomChat" ]] \
+  || { echo "unexpected CFBundleExecutable" >&2; exit 1; }
 [[ "$(defaults read "$PLIST" NSMicrophoneUsageDescription)" == *microphone* ]] \
   || { echo "microphone usage description missing" >&2; exit 1; }
 [[ "$(defaults read "$PLIST" NSCameraUsageDescription)" == *camera* ]] \

@@ -33,11 +33,11 @@ export function createTray(iconPath: string, platform: NodeJS.Platform, handlers
   if(source.isEmpty()) return undefined;
   const size = trayIconSize(platform);
   const tray = new Tray(source.resize({width: size, height: size, quality: 'best'}));
-  tray.setToolTip('PhantomChat');
+  tray.setToolTip('Phantomyard Desktop');
   tray.setContextMenu(Menu.buildFromTemplate([
-    {label: 'Open PhantomChat', click: () => handlers.onShow()},
+    {label: 'Open Phantomyard Desktop', click: () => handlers.onShow()},
     {type: 'separator'},
-    {label: 'Quit PhantomChat', click: () => handlers.onQuit()}
+    {label: 'Quit Phantomyard Desktop', click: () => handlers.onQuit()}
   ]));
   // Left click opens the window on Windows and Linux. macOS opens the menu
   // instead (the platform's own convention), so the handler is harmless there.
