@@ -166,7 +166,10 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
 
       - name: Package Linux artifacts (AppImage + deb + rpm, x64)
-        run: pnpm exec electron-builder --linux --publish never -c.extraMetadata.version="$VERSION"
+        # -c.productName=PhantomChat keeps the deb/rpm install dir at
+        # /opt/PhantomChat: electron-builder hard-wires it to /opt/<productName>,
+        # and electron-builder.yml's productName is display-only metadata.
+        run: pnpm exec electron-builder --linux --publish never -c.productName=PhantomChat -c.extraMetadata.version="$VERSION"
         env:
           VERSION: ${{ needs.version.outputs.version }}
 

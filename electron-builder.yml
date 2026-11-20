@@ -4,7 +4,23 @@
 # stays out until the Axelera identities exist (see docs/ELECTRON-DESKTOP.md
 # for the reserved secret names).
 appId: ai.phantomyard.chat
-productName: PhantomChat
+# productName is DISPLAY metadata only: Windows FileDescription/ProductName
+# (what Task Manager, Hubstaff and other activity trackers show), the macOS
+# CFBundleName/CFBundleDisplayName (Activity Monitor, Dock) and the
+# Apps & features entry. Every on-disk name stays "PhantomChat"/"phantomchat":
+#   - executableName pins PhantomChat.exe and PhantomChat.app/Contents/MacOS/
+#     PhantomChat (electron-builder otherwise derives both from productName);
+#   - linux.executableName pins /opt/.../phantomchat (the top-level
+#     executableName would otherwise apply to Linux too);
+#   - Linux packages are built with -c.productName=PhantomChat because the
+#     deb/rpm install dir is hard-wired to /opt/<productName> — see the
+#     package.json app:build scripts and app-release.yml;
+#   - every artifactName below spells PhantomChat out instead of using
+#     ${productName};
+#   - userData does not depend on productName at all: the runtime app name
+#     comes from package.json "name" (phantomchat), so profiles stay put.
+productName: Phantomyard Desktop
+executableName: PhantomChat
 copyright: Copyright © 2026 Hodges Enterprises B.V.
 
 directories:
@@ -67,6 +83,12 @@ linux:
     - target: rpm
       arch: [x64]
   syncDesktopName: true
+  # Linux packages keep productName PhantomChat (see the top of this file), so
+  # the launcher name is set here instead.
+  executableName: phantomchat
+  desktop:
+    entry:
+      Name: Phantomyard Desktop
   maintainer: PhantomChat <chat@phantomyard.ai>
   vendor: Hodges Enterprises B.V.
   synopsis: Privacy-first messaging
@@ -113,7 +135,7 @@ rpm:
 appImage:
   # Artifacts must keep a predictable, versioned name for the checksums and
   # the promotion workflow.
-  artifactName: ${productName}-${version}.${ext}
+  artifactName: PhantomChat-${version}.${ext}
 
 mac:
   icon: electron/build/icon.png
@@ -155,7 +177,7 @@ mac:
       arch: [x64, arm64]
     - target: dmg
       arch: [x64, arm64]
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: PhantomChat-${version}-${arch}.${ext}
   extendInfo:
     NSMicrophoneUsageDescription: PhantomChat uses the microphone for voice messages and calls.
     NSCameraUsageDescription: PhantomChat uses the camera for video calls and sharing photos.
@@ -172,10 +194,11 @@ win:
 nsis:
   # Keep the architectures separate so every installer is exercised on its
   # native runner and users never have to guess which payload they received.
-  artifactName: ${productName}-${version}-windows-${arch}.${ext}
+  artifactName: PhantomChat-${version}-windows-${arch}.${ext}
   oneClick: true
   perMachine: false
   createDesktopShortcut: false
   createStartMenuShortcut: true
+  # The .lnk filename stays PhantomChat; only the display metadata moved.
   shortcutName: PhantomChat
   uninstallDisplayName: ${productName} ${version}

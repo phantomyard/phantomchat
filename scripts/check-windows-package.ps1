@@ -33,10 +33,10 @@ $uninstallKey = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\U
   Get-ItemProperty |
   # electron-builder's default uninstallDisplayName is
   # "${productName} ${version}", not the bare productName.
-  Where-Object { $_.DisplayName -like 'PhantomChat *' } |
+  Where-Object { $_.DisplayName -like 'Phantomyard Desktop *' } |
   Select-Object -First 1
 if(!$uninstallKey) {
-  throw 'PhantomChat uninstall registration was not created'
+  throw 'Phantomyard Desktop uninstall registration was not created'
 }
 if($uninstallKey.DisplayVersion -ne $ExpectedVersion) {
   throw "Installed version is $($uninstallKey.DisplayVersion), expected $ExpectedVersion"
@@ -51,6 +51,12 @@ $installDirectory = Split-Path $uninstaller -Parent
 $executable = Join-Path $installDirectory 'PhantomChat.exe'
 if(!(Test-Path $executable -PathType Leaf)) {
   throw "Installed executable not found: $executable"
+}
+# Task Manager, Hubstaff and other activity trackers read these version
+# strings, not the file name: the exe stays PhantomChat.exe.
+$versionInfo = (Get-Item $executable).VersionInfo
+if($versionInfo.FileDescription -ne 'Phantomyard Desktop' -or $versionInfo.ProductName -ne 'Phantomyard Desktop') {
+  throw "Executable metadata is '$($versionInfo.FileDescription)' / '$($versionInfo.ProductName)', expected 'Phantomyard Desktop'"
 }
 if(!(Test-Path (Join-Path $installDirectory 'resources\app.asar') -PathType Leaf)) {
   throw 'Installed app.asar is missing'

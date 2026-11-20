@@ -61,7 +61,7 @@ describe('createTray', () => {
     const tray = createTray('/res/icon.png', 'linux', {onShow, onQuit: vi.fn()});
     expect(tray).toBeDefined();
     expect((tray as any).image).toEqual({resizedFrom: '/res/icon.png', options: {width: 22, height: 22, quality: 'best'}});
-    expect((tray as any).tooltip).toBe('PhantomChat');
+    expect((tray as any).tooltip).toBe('Phantomyard Desktop');
     (tray as any).handlers.click();
     expect(onShow).toHaveBeenCalledTimes(1);
   });
@@ -72,8 +72,8 @@ describe('createTray', () => {
     const tray = createTray('/res/icon.png', 'win32', {onShow, onQuit});
     const template = (tray as any).menu.template;
     const labels = template.filter((item: any) => item.label).map((item: any) => item.label);
-    expect(labels).toEqual(['Open PhantomChat', 'Quit PhantomChat']);
-    template.find((item: any) => item.label === 'Quit PhantomChat').click();
+    expect(labels).toEqual(['Open Phantomyard Desktop', 'Quit Phantomyard Desktop']);
+    template.find((item: any) => item.label === 'Quit Phantomyard Desktop').click();
     expect(onQuit).toHaveBeenCalledTimes(1);
     expect(onShow).not.toHaveBeenCalled();
   });
