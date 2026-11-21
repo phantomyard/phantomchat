@@ -208,7 +208,6 @@ try {
     const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
     return (await getGroupStore().get(id)).peerId;
   }, ids[0]);
-  await b.page.evaluate(async(peerId) => window.appImManager.setInnerPeer({peerId}), sendPeer);
   failGroupMetadata = true;
   await b.page.evaluate(() => window.dispatchEvent(new Event('online')));
   for(let attempt = 0; !failedMetadataQueries && attempt < 300; attempt++) await b.page.waitForTimeout(100);
@@ -225,6 +224,7 @@ try {
     const {PhantomChatPeerMapper} = await import('/src/lib/phantomchat/phantomchat-peer-mapper.ts');
     const mapper = new PhantomChatPeerMapper();
     const managers = window.appImManager.managers;
+    await window.appImManager.setInnerPeer({peerId: 0});
     const group = await getGroupStore().get(ids[0]);
     const session = await getGroupStore().get(ids[1]);
     await managers.appChatsManager.saveApiChat(mapper.createTwebChat({chatId: -ghostPeer, title: 'Stale session row', membersCount: 1, date: 1}));
@@ -243,6 +243,7 @@ try {
       rows.find((d) => d.peerId === projectionPeers.session)?.folder_id === 1;
   }, {ghostPeer, projectionPeers}, {timeout: 60000});
   console.log('PASS unchanged catalog repairs orphan/missing/misplaced rows while legacy metadata stays unreadable');
+  await b.page.evaluate(async(peerId) => window.appImManager.setInnerPeer({peerId}), sendPeer);
 
   const composer = b.page.locator('.chat-input:not(.hide) .input-message-input[contenteditable="true"]:not(.input-field-input-fake)').last();
   await composer.fill('Catalog preserves cached sending');
