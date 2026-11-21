@@ -270,10 +270,13 @@ export function installLaunchDialogs(opts: {
           }
           if(!key) return 'failed';
           const outcome = await chatAPI.catchUpConversation(key, force);
+          if(epoch !== sessionSyncGeneration()) return 'failed';
           if(outcome === 'ran' || outcome === 'skipped') {
             await rootScope.managers.appMessagesManager.invalidateHistoryCache?.(peerId);
+            if(epoch !== sessionSyncGeneration()) return 'failed';
             await rootScope.managers.appMessagesManager.reloadConversation(peerId);
             // Cached bubbles can outlive the history cache. Reload only this peer.
+            if(epoch !== sessionSyncGeneration()) return 'failed';
             rootScope.dispatchEvent?.('history_reload', peerId);
           }
           return outcome;

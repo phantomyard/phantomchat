@@ -1,4 +1,9 @@
 /*
+ * https://github.com/morethanwords/tweb
+ * Copyright (C) 2019-2021 Eduard Kuzmenko
+ * https://github.com/morethanwords/tweb/blob/master/LICENSE
+ */
+
 .session-sync-status {
   display: flex;
   align-items: center;
@@ -21,10 +26,7 @@
   }
 }
 .session-sync-snapshot { position: absolute; width: 100%; pointer-events: none; overflow: hidden; }
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
+
 
 @mixin dialog-badge-transition-reset() {
   transition: none;

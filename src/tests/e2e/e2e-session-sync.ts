@@ -5,10 +5,20 @@
  */
 import {createRequire} from 'node:module';
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {chromium, _electron as electron} from 'playwright';
+import {join} from 'node:path';
+import {mkdirSync} from 'node:fs';
 const require = createRequire(import.meta.url);
 const {WebSocketServer} = createRequire(require.resolve('jsdom'))('ws');
 const APP_URL = process.env.APP_URL || 'http://127.0.0.1:8189';
+async function waitForAsync(page, predicate, arg, options = {}) {
+  const until = Date.now() + (options.timeout ?? 30_000);
+  while(Date.now() < until) {
+    if(await page.evaluate(predicate, arg)) return;
+    await page.waitForTimeout(200);
+  }
+  throw new Error('Async browser predicate did not settle');
+}
 async function main() {
 const events = new Map();
 const subscriptions = new Map();
@@ -60,9 +70,24 @@ relay.on('connection', (socket) => {
 });
 const browser = await chromium.launch({headless: true, args: ['--no-sandbox']});
 const pages = [];
+let desktop;
 const errors = [];
 async function device(label) {
-  const ctx = await browser.newContext({viewport: {width: 1280, height: 800}});
+  let ctx;
+  let desktopPage;
+  if(label === 'B' && process.env.E2E_ELECTRON) {
+    const config = join(process.env.PHANTOMBOT_SCRATCH, 'electron-sync-profile');
+    mkdirSync(config, {recursive: true});
+    desktop = await electron.launch({
+      args: ['--no-sandbox', `--user-data-dir=${config}`, 'electron/dist/main.cjs'],
+      env: {...process.env, VITE_DEV_SERVER_URL: APP_URL, XDG_CONFIG_HOME: config, XDG_CACHE_HOME: join(config, 'cache')},
+      timeout: 60000
+    });
+    ctx = desktop.context();
+    desktopPage = await desktop.firstWindow();
+  } else {
+    ctx = await browser.newContext({viewport: {width: 1280, height: 800}});
+  }
   await ctx.addInitScript((url) => {
     window.__phantomchatTestRelays = [{url, read: true, write: true}];
     localStorage.setItem('phantomchat-relay-config', JSON.stringify([{url, read: true, write: true}]));
@@ -70,11 +95,14 @@ async function device(label) {
   await ctx.route('**/relays.json', (route) => route.fulfill({json: {relays: [relayUrl]}}));
   // Keep the scenario hermetic, including discovery and uploads.
   await ctx.route(/^https:\/\//, (route) => route.abort());
-  const page = await ctx.newPage();
+  const page = desktopPage || await ctx.newPage();
   pages.push(page);
   page.on('pageerror', (error) => errors.push(`${label}: ${error.message}`));
-  page.on('console', (msg) => { if(msg.type() === 'error') errors.push(`${label}: ${msg.text()}`); if(/PhantomChatOnboardingIntegration|NostrRelayPool.*connected/.test(msg.text())) console.log(label, msg.text()); });
+  page.on('console', (msg) => { if(msg.type() === 'error') errors.push(`${label}: ${msg.text()}`); if(/PhantomChatOnboardingIntegration|GroupAPI|groups-sync|contacts-groups-sync|NostrRelayPool.*connected/.test(msg.text())) console.log(label, msg.text()); });
   await page.goto(APP_URL, {waitUntil: 'load'});
+  await page.waitForTimeout(5000);
+  await page.reload({waitUntil: 'load'});
+  await page.waitForTimeout(5000);
   await page.evaluate(async() => {
     const {importFromNsec} = await import('/src/lib/phantomchat/nostr-identity.ts');
     const {generateBrowserScopedKey, encryptKeys, saveBrowserKey, saveEncryptedIdentity} = await import('/src/lib/phantomchat/key-storage.ts');
@@ -86,28 +114,33 @@ async function device(label) {
   });
   await page.reload({waitUntil: 'load'});
   await page.waitForFunction(() => window.__phantomchatChatAPI && window.appImManager?.managers, undefined, {timeout: 60000});
-  await page.waitForFunction(() => document.querySelector('.connection-status-bottom > .session-sync-status')?.dataset.state === 'ready', undefined, {timeout: 60000});
+  await waitForAsync(page, async() => {
+    const {getGroupsSyncStatus} = await import('/src/lib/phantomchat/session-sync-state.ts');
+    return window.__phantomchatDeviceSync && getGroupsSyncStatus() === 'ready';
+  }, undefined, {timeout: 60000});
   console.log(`${label} ready`);
   return {ctx, page};
 }
 try {
   const a = await device('A');
   const b = await device('B');
+  await a.page.waitForTimeout(1000);
   const groupId = await a.page.evaluate(async() => {
     const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
     return getGroupAPI().createGroup('Sync test session', [], undefined, {kind: 'session'});
   });
-  await b.page.waitForFunction(async(id) => {
+  await waitForAsync(b.page, async(id) => {
     const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
     return !!(await getGroupStore().get(id));
   }, groupId, {timeout: 30000});
-  console.log('new session arrived via group nudge');
+  console.log('new session arrived via group nudge', groupId);
+  console.log('groups now', await b.page.evaluate(async() => { const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts'); return {groups: await getGroupStore().getAll(), deleted: await getGroupStore().listDeletedGroups()}; }));
   const peerId = await b.page.evaluate(async(id) => {
     const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
     return (await getGroupStore().get(id)).peerId;
   }, groupId);
   await b.page.evaluate(async(id) => window.appImManager.setInnerPeer({peerId: id}), peerId);
-  await b.page.waitForFunction(async(id) => {
+  await waitForAsync(b.page, async(id) => {
     const {getChatSyncStatus} = await import('/src/lib/phantomchat/session-sync-state.ts');
     return getChatSyncStatus(id) === 'ready';
   }, peerId, {timeout: 30000});
@@ -133,7 +166,7 @@ try {
     const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
     await getGroupAPI().archiveGroup(id);
   }, groupId);
-  await b.page.waitForFunction(async(id) => {
+  await waitForAsync(b.page, async(id) => {
     const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
     return !!(await getGroupStore().get(id))?.archivedAt;
   }, groupId, {timeout: 30000});
@@ -145,7 +178,7 @@ try {
   }, groupId);
   await a.page.waitForTimeout(5000);
   await b.ctx.setOffline(false);
-  await b.page.waitForFunction(async(id) => {
+  await waitForAsync(b.page, async(id) => {
     const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
     return !(await getGroupStore().get(id));
   }, groupId, {timeout: 30000});
@@ -159,6 +192,7 @@ try {
   for(let i = 0; i < pages.length; i++) await pages[i].screenshot({path: `${process.env.PHANTOMBOT_SCRATCH || '/tmp'}/sync-failure-${i}.png`}).catch(() => {});
   process.exitCode = 1;
 } finally {
+  if(desktop) await desktop.close();
   await browser.close();
   for(const socket of relay.clients) socket.terminate();
   await new Promise((resolve) => relay.close(resolve));

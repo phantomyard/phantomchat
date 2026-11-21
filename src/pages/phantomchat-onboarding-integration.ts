@@ -86,6 +86,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
   const handleIdentity = async() => {
     if(identityHandled) return;
     identityHandled = true;
+    enableSessionSync(async() => { setGroupsSyncStatus('failed'); return false; });
     window.removeEventListener('phantomchat-identity-created', handleIdentityFallback);
     console.log('[PhantomChatOnboardingIntegration] onIdentityCreated fired');
     bootProgress?.(5, 8, 'Decrypting identity');

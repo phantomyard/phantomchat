@@ -24,7 +24,7 @@
     },
     "package.json": {
       "stable": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
-      "preview": "70ebed79a9f92285ba99e148f29937dba1ec118a2abe8f3a3bd8ba53a7533dd7",
+      "preview": "567681ca28a8f89d728f60a53bad550ce9c1221c89b8e5ef3f7a579899814f7b",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
@@ -94,7 +94,7 @@
     },
     "src/lib/phantomchat/phantomchat-launch-dialogs.ts": {
       "stable": "588c9958afbb01a88dc40dab4657cbb13c4cb3250ebb3ffbd2b841fb5bfad4f1",
-      "preview": "cfece1e18d2fdb00fea06c409105b3b2f2556983beb3b9a20c7db95571701991",
+      "preview": "0b06a814d3805e0c2945716168e44dae463dea08b890908f7769f522358d5dd8",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/sidebarLeft/index.ts": {
@@ -239,7 +239,7 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "da3193b0701f92e122a4628ff598691294445f616d26656e9aa650b585061cc4",
+      "preview": "f1332557770e0e94e18aed2b4a1eeb108158a4e72d6c0869dd42cc745d2b5c7c",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/autonomousDialogList/base.ts": {
