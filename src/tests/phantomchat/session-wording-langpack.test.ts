@@ -35,3 +35,12 @@ describe('session wording reaches a cached v22 lang pack', () => {
     }
   });
 });
+
+
+it('sync status reaches a cached v23 language pack', () => {
+  expect(buildVersion).toBeGreaterThan(23);
+  for(const key of ['Messages', 'Sessions', 'Offline', 'Failed', 'Retry', 'OfflineQueue', 'FailedQueue']) {
+    expect(read('lang.ts')).toContain(`'SessionSync.${key}':`);
+    expect(read('scripts/out/langPack.strings')).toContain(`"SessionSync.${key}" = `);
+  }
+});

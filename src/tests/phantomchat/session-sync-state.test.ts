@@ -2,7 +2,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {
   enableSessionSync, resetSessionSync, getChatSyncStatus, getGroupsSyncStatus,
   setChatSyncStatus, setGroupsSyncStatus, canSendToSyncedChat, createGroupsReconciler,
-  registerChatSyncRetry, retrySessionSync, subscribeSessionSync
+  registerChatSyncRetry, retrySessionSync, subscribeSessionSync, markChatSyncStale, markGroupsSyncStale
 } from '@lib/phantomchat/session-sync-state';
 
 const PEER = -12_000_000_000_000_004;
@@ -16,6 +16,7 @@ describe('session freshness', () => {
     expect(getChatSyncStatus(PEER)).toBe('syncing');
     setGroupsSyncStatus('ready');
     expect(canSendToSyncedChat(PEER)).toBe(true);
+    markGroupsSyncStale();
     setGroupsSyncStatus('failed');
     expect(canSendToSyncedChat(PEER)).toBe(false);
   });
@@ -74,4 +75,38 @@ describe('session freshness', () => {
     setChatSyncStatus(PEER, 'offline');
     expect(render).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it('untracked peers are unaffected; selected chats explicitly begin a check', () => {
+  enableSessionSync(async() => true);
+  expect(getChatSyncStatus(123)).toBe('ready');
+  setChatSyncStatus(123, 'syncing');
+  expect(canSendToSyncedChat(123)).toBe(false);
+});
+
+it('previously verified chats retain offline queueing, cold cached chats do not', () => {
+  enableSessionSync(async() => true);
+  setGroupsSyncStatus('ready');
+  setChatSyncStatus(PEER, 'offline');
+  expect(canSendToSyncedChat(PEER)).toBe(false);
+  setChatSyncStatus(PEER, 'ready');
+  setChatSyncStatus(PEER, 'offline');
+  expect(canSendToSyncedChat(PEER)).toBe(true);
+  setChatSyncStatus(PEER, 'failed');
+  expect(canSendToSyncedChat(PEER)).toBe(true);
+  markChatSyncStale(PEER);
+  setChatSyncStatus(PEER, 'failed');
+  expect(canSendToSyncedChat(PEER)).toBe(false);
+});
+
+it('a known remote metadata change revokes offline queueing until checked', () => {
+  enableSessionSync(async() => true);
+  setGroupsSyncStatus('ready');
+  setChatSyncStatus(PEER, 'ready');
+  markGroupsSyncStale();
+  setGroupsSyncStatus('failed');
+  expect(canSendToSyncedChat(PEER)).toBe(false);
+  setGroupsSyncStatus('ready');
+  expect(canSendToSyncedChat(PEER)).toBe(true);
 });

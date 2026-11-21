@@ -1644,10 +1644,6 @@ export class NostrRelayPool {
       }
     }
 
-    // Another walk may already have claimed wrappers that this query could
-    // not return. Its persistence must finish before selected-chat readiness.
-    await this.startupWalk;
-    if(this.backfillGapOpen) completed = 0;
     return {delivered: this.deliveredMessageCount - before, completed, responded, queried: readEntries.length};
   }
 

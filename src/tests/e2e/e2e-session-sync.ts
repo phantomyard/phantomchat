@@ -158,9 +158,9 @@ try {
     try {
       await window.__phantomchatMTProtoServer.handleMethod('messages.sendMedia', {peer: {_: 'inputPeerChat', chat_id: Math.abs(id)}});
       return false;
-    } catch { return true; }
+    } catch(error) { return error.message; }
   }, peerId);
-  assert.equal(mediaBlocked, true);
+  assert.match(mediaBlocked, /Sync messages before sending/);
   console.log('stale Enter/media blocked; draft preserved');
   await a.page.evaluate(async(id) => {
     const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');

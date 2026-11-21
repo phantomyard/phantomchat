@@ -1,12 +1,13 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 vi.mock('@lib/phantomchat/group-store', () => ({getGroupStore: () => ({getByPeerId: async() => ({groupId: 'selected-session'})})}));
-vi.mock('@lib/phantomchat/virtual-peers-db', () => ({getPubkey: async() => 'contact-pubkey'}));
+const {lookupPeer} = vi.hoisted(() => ({lookupPeer: vi.fn().mockResolvedValue('contact-pubkey')}));
+vi.mock('@lib/phantomchat/virtual-peers-db', () => ({getPubkey: lookupPeer}));
 import {installLaunchDialogs} from '@lib/phantomchat/phantomchat-launch-dialogs';
 import {enableSessionSync, resetSessionSync, getChatSyncStatus, setGroupsSyncStatus} from '@lib/phantomchat/session-sync-state';
 
 const PEER = -12_000_000_000_000_004;
-beforeEach(() => { enableSessionSync(async() => true); setGroupsSyncStatus('ready'); });
-afterEach(() => resetSessionSync());
+beforeEach(() => { lookupPeer.mockResolvedValue('contact-pubkey'); enableSessionSync(async() => true); setGroupsSyncStatus('ready'); });
+afterEach(() => { vi.useRealTimers(); resetSessionSync(); });
 function install(catchUp = vi.fn().mockResolvedValue('ran')) {
   const listeners: Record<string, (payload: unknown) => void> = {};
   const reload = vi.fn().mockResolvedValue(undefined);
@@ -63,4 +64,27 @@ describe('selected session production wiring', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(getChatSyncStatus(PEER)).toBe('syncing');
   });
+});
+
+
+it('a peer without a virtual mapping does not get permanently stranded', async() => {
+  lookupPeer.mockResolvedValueOnce(null);
+  const h = install();
+  h.listeners.peer_changed({peerId: 123});
+  await vi.waitFor(() => expect(getChatSyncStatus(123)).toBe('ready'));
+  expect(h.catchUp).not.toHaveBeenCalled();
+});
+
+it('a slow selected check heals on late success after timeout feedback', async() => {
+  vi.useFakeTimers();
+  let release: (outcome: string) => void;
+  const h = install(vi.fn(() => new Promise((resolve) => { release = resolve; })));
+  h.listeners.peer_changed({peerId: 123});
+  await vi.advanceTimersByTimeAsync(1);
+  expect(release).toBeTypeOf('function');
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(getChatSyncStatus(123)).toBe('failed');
+  release('ran');
+  await vi.advanceTimersByTimeAsync(0);
+  expect(getChatSyncStatus(123)).toBe('ready');
 });

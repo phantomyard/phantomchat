@@ -2,8 +2,9 @@
 "SessionSync.Sessions" = "Updating sessions… Showing cached sessions.";
 "SessionSync.Offline" = "Offline — showing cached data. Your draft stays here.";
 "SessionSync.Failed" = "Sync could not be verified. Retry before sending.";
-"SessionSync.Ready" = "Sync checked";
 "SessionSync.Retry" = "Retry";
+"SessionSync.OfflineQueue" = "Offline — messages will queue until reconnect.";
+"SessionSync.FailedQueue" = "Could not refresh. Previously checked messages are shown.";
 "VoiceModels" = "Voice Models";
 "SpecializedModels" = "Specialized Models";
 "DecisionModel" = "Decision Model";

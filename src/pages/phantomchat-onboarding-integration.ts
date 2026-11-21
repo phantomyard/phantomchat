@@ -36,7 +36,7 @@ import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTA
 import {createGroupsAdapter, mergeGroupsMaps, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
 import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
-import {enableSessionSync, createGroupsReconciler, setGroupsSyncStatus, onSessionSyncCleanup} from '@lib/phantomchat/session-sync-state';
+import {enableSessionSync, createGroupsReconciler, setGroupsSyncStatus, onSessionSyncCleanup, markGroupsSyncStale, markChatSyncStale, setChatSyncStatus} from '@lib/phantomchat/session-sync-state';
 import {withStableSessionList} from '@lib/phantomchat/session-sync-ui';
 import {registerSyncPublisher, registerSyncNudgeHandler} from '@lib/phantomchat/phantomchat-sync-triggers';
 import {sendSyncNudge} from '@lib/phantomchat/sync-nudge';
@@ -693,6 +693,8 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               // Read the class before the delete — it is what the peerId (and
               // therefore the mirror teardown) is derived from.
               const peerId = (await getGroupStore().get(groupId))?.peerId ?? await groupIdToPeerId(groupId);
+              markChatSyncStale(peerId);
+              setChatSyncStatus(peerId, 'failed');
               await getGroupStore().delete(groupId);
               try { await cleanupGroupChatInjection(peerId); } catch{ /* mirror already gone */ }
               // Mirrors alone leave the persisted row rendering until the next sweep.
@@ -865,7 +867,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             return g !== 'failed';
           }));
           enableSessionSync(reconcileGroups);
-          registerSyncNudgeHandler('groups', () => { void reconcileGroups(); });
+          registerSyncNudgeHandler('groups', () => { markGroupsSyncStale(); void reconcileGroups(); });
           const resumeGroups = () => {
             if(document.visibilityState !== 'hidden') void reconcileGroups();
           };

@@ -36,7 +36,7 @@
  * converges without waiting for user activity.
  */
 
-import {registerChatSyncRetry, retrySessionSync, setChatSyncStatus, sessionSyncGeneration, onSessionSyncCleanup} from './session-sync-state';
+import {registerChatSyncRetry, reconcileSessionGroups, setChatSyncStatus, sessionSyncGeneration, onSessionSyncCleanup, markChatSyncStale} from './session-sync-state';
 import {isGroupPeer} from './group-types';
 import {FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManagers/constants';
 import type {ChatCatchUpOutcome} from './chat-api';
@@ -259,16 +259,16 @@ export function installLaunchDialogs(opts: {
           if(isGroupPeer(peerId)) {
             // Kick metadata immediately, alongside the inbox query. The composer
             // also observes its status, so history alone cannot clear this gate.
-            retrySessionSync();
+            if(!(await reconcileSessionGroups())) return 'failed';
             const {getGroupStore} = await import('./group-store');
             const group = await getGroupStore().getByPeerId(peerId);
-            if(!group) return 'failed';
+            if(!group) { markChatSyncStale(peerId); return 'failed'; }
             key = `group:${group.groupId}`;
           } else {
             const {getPubkey} = await import('./virtual-peers-db');
             key = await getPubkey(peerId);
           }
-          if(!key) return 'failed';
+          if(!key) return 'skipped';
           const outcome = await chatAPI.catchUpConversation(key, force);
           if(epoch !== sessionSyncGeneration()) return 'failed';
           if(outcome === 'ran' || outcome === 'skipped') {
@@ -281,10 +281,12 @@ export function installLaunchDialogs(opts: {
           }
           return outcome;
         };
-        const outcome = await Promise.race([
-          work(),
-          new Promise<ChatCatchUpOutcome>((resolve) => { timer = setTimeout(() => resolve('failed'), 30_000); })
-        ]);
+        // A slow check gets actionable feedback, but its eventual success
+        // still heals the UI without requiring a manual retry.
+        timer = setTimeout(() => {
+          if(epoch === sessionSyncGeneration()) setChatSyncStatus(peerId, 'failed');
+        }, 30_000);
+        const outcome = await work();
         if(epoch !== sessionSyncGeneration()) return;
         setChatSyncStatus(peerId, outcome === 'ran' || outcome === 'skipped' ? 'ready' :
           outcome === 'offline' ? 'offline' : 'failed');

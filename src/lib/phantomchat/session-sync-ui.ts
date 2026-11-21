@@ -1,10 +1,9 @@
 import {i18n} from '@lib/langPack';
 import {
-  getChatSyncStatus, getGroupsSyncStatus, retrySessionSync, subscribeSessionSync
+  getChatSyncStatus, getGroupsSyncStatus, retrySessionSync, subscribeSessionSync, canSendToSyncedChat
 } from './session-sync-state';
-import type {SessionSyncStatus} from './session-sync-state';
 
-/** Persistent status slot avoids moving the composer or sidebar as it settles. */
+/** Transient progress/error feedback; settled views keep their normal layout. */
 export function mountSessionSyncStatus(host: HTMLElement, peer?: () => number): () => void {
   const slot = document.createElement('div');
   slot.className = 'session-sync-status';
@@ -17,16 +16,20 @@ export function mountSessionSyncStatus(host: HTMLElement, peer?: () => number): 
   retry.addEventListener('click', () => retrySessionSync(peer?.()));
   slot.append(label, retry);
   host.prepend(slot);
-  let previous: SessionSyncStatus;
+  let previous: string;
   const unsubscribe = subscribeSessionSync(() => {
     const status = peer ? getChatSyncStatus(peer()) : getGroupsSyncStatus();
-    if(status === previous) return;
-    previous = status;
+    const canQueue = !!peer && canSendToSyncedChat(peer());
+    const identity = `${status}:${canQueue}`;
+    if(identity === previous) return;
+    previous = identity;
     slot.dataset.state = status;
-    label.replaceChildren(i18n(status === 'syncing' ?
+    slot.hidden = status === 'ready';
+    if(status === 'ready') label.replaceChildren();
+    else label.replaceChildren(i18n(status === 'syncing' ?
       peer ? 'SessionSync.Messages' : 'SessionSync.Sessions' :
-      status === 'offline' ? 'SessionSync.Offline' :
-      status === 'failed' ? 'SessionSync.Failed' : 'SessionSync.Ready'));
+      status === 'offline' ? canQueue ? 'SessionSync.OfflineQueue' : 'SessionSync.Offline' :
+      canQueue ? 'SessionSync.FailedQueue' : 'SessionSync.Failed'));
     retry.hidden = status !== 'failed' && status !== 'offline';
   });
   return () => { unsubscribe(); slot.remove(); };

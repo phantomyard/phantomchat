@@ -24,7 +24,7 @@
     },
     "package.json": {
       "stable": "f27ab239d76a2e9a8b35f25760d29622f87b38fdf5fdaab4bc4221ea3bf299ec",
-      "preview": "567681ca28a8f89d728f60a53bad550ce9c1221c89b8e5ef3f7a579899814f7b",
+      "preview": "5e121947d86a944b05db870385dd936be5326c576c0ab3ee18b5b316805bfa0f",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/sidebarLeft/tabs/phantomchatApplicationUpdates.ts": {
@@ -69,7 +69,7 @@
     },
     "src/lang.ts": {
       "stable": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b",
-      "preview": "b7891ec2bbd5ff4aa75f2fe4bfa31c125ccbb271278dfc0542f75032601e6d37",
+      "preview": "ddd4995e64412aa436d0385f90ade4c948a35f82a0860401dbd0ad5293a228ae",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/lib/appDialogsManager.ts": {
@@ -84,7 +84,7 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f8fc66f7707e106851bbf0aa76b018408bda9c59f6740b9fccf4fa2a89fe0d4e",
-      "preview": "67d92976f1d79bdea032309b668602554358ab380d1c8d86b09ab8b996fa48dd",
+      "preview": "56fcffd6c764a95e1cac89bce1d6c1a0d4af9feecf78557b9ae34ac306655843",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
@@ -94,7 +94,7 @@
     },
     "src/lib/phantomchat/phantomchat-launch-dialogs.ts": {
       "stable": "588c9958afbb01a88dc40dab4657cbb13c4cb3250ebb3ffbd2b841fb5bfad4f1",
-      "preview": "0b06a814d3805e0c2945716168e44dae463dea08b890908f7769f522358d5dd8",
+      "preview": "3277f2dfe9010911be136ff31d61436bee698d10a46745d246974c96052bee59",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/sidebarLeft/index.ts": {
@@ -149,8 +149,8 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536",
-      "preview": "2e14e69d78eabfde66606c988beb6737188a9cfb8ec866f83e8b4c34109226db",
-      "reason": "Local lang-pack version 13 -> 14 so cached clients reload the two new keys. Same constant, same generation flow. Preview renames the three typing activity labels to working and bumps the local language-pack version to 15 to refresh cached text. Presentation only; keys, placeholders, protocol and storage formats unchanged. Hamburger menu: Interface Settings moves to the root as Appearance, its Dark Mode and Animations shortcuts and their now unused strings are removed, and the language-pack version goes to 16 so cached clients load the new name. Navigation and text only; settings keys, storage and protocol unchanged. Additional change: Bump local language-pack cache version to refresh the default-folder labels on existing installations; cached pack format unchanged. Preview bumps the local language-pack version 17 -> 18 with this PR's new \"Open New Session\" key, because a cached v17 pack renders the literal key (boot reloads local strings on a version mismatch only, and the update check is a no-op with MTProto off). Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Contacts redesign: bumps the local language-pack version 18 -> 19 so cached clients load ContactName and ContactLocalTools instead of rendering the raw keys. Same constant, same generation flow; keys, placeholders, protocol and storage formats unchanged. Additional change: Local language-pack version 19 -> 20 so a cached client reloads the pack for this PR's two new editor labels (Name, Add Members). Version constant only; no other content, storage or schema change. Additional change: Local language-pack version 20 -> 21 so cached clients load ForwardErrorPartial (and ForwardError, added earlier in this PR) instead of rendering the raw keys. Version constant only; no other content, storage or schema change. Additional change: Local language-pack version 21 -> 22 so cached clients load UITheme.Graphite (the Graphite Corporate theme label, now the default theme) instead of rendering the raw key. Version constant only; no other content, storage or schema change. Session wording (#462): 22 -> 23 so packs cached at 22 (Graphite) reload the new PhantomChat.Session keys."
+      "preview": "a049937cd5762be38d019ce34e997f0c8bde06f8e630fee470e91cc47f3a8a12",
+      "reason": "Invalidates a cached v23 language pack so SessionSync status/retry strings reach returning clients. No identity, storage or database schema change. Independent exact-head review required."
     },
     "src/lib/folders-sidebar-layout.ts": {
       "stable": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
@@ -219,7 +219,7 @@
     },
     "src/lib/phantomchat/virtual-mtproto-server.ts": {
       "stable": "b23eb84b2b32d30fd5c8d02fcc9a582882dbc19fbba654c1be0bd640a091a40e",
-      "preview": "945e5a3715c47e19f686fccd32dcfe4ea90cd35f1a2c023d9426c3a5388b0b94",
+      "preview": "e8b0310812aeedab96150cac0f045561ea7ea8a289d950c474753212db5e8e7b",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/dialogsContextMenu.ts": {
@@ -239,7 +239,7 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "f1332557770e0e94e18aed2b4a1eeb108158a4e72d6c0869dd42cc745d2b5c7c",
+      "preview": "4222e5d04d2abee3e532e9325908fcf0809db5d5b5b3d6f77e3c3522289abff8",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/autonomousDialogList/base.ts": {
@@ -284,7 +284,7 @@
     },
     "src/components/chat/input.ts": {
       "stable": "00902fb8dd1f3fb11ad72d8746fcbde66f54daf52e8d6c77f2c664f208e8bdb5",
-      "preview": "a0c9b00edd2ae504bccd97fd35bb6bcb27d4d613cbcbe2bfc2bbd5fc7d4827d2",
+      "preview": "dbdf31395b20f82e989d532569142a04662b826f33b04662613e7aa9877cf34b",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/lib/phantomchat/phantomchat-message-handler.ts": {
@@ -1094,7 +1094,7 @@
     },
     "src/lib/phantomchat/nostr-relay-pool.ts": {
       "stable": "cfde53316ea81b1e043becc806e98ea0842877f7276b0dde333ee7cd5d876f78",
-      "preview": "bd41fac007fff957e86a647aef8ef10a0f8c88389b8a528e6c863c58fedcb122",
+      "preview": "a0e28835c89d62dc8f35c48d5c3f217a7c19a22acc46caee683715499a5ca98e",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/lib/phantomchat/offline-queue.ts": {
@@ -1184,12 +1184,12 @@
     },
     "src/lib/phantomchat/session-sync-state.ts": {
       "stable": "absent",
-      "preview": "e3b0aa6d1789fb4b6a81965eb0ab73a542634cd9b1968ccb1bdd5f7a1b7291f6",
+      "preview": "62d27fe8d64d9d2f9eee214b04aefc759d043091f06be4badf8e24d5fb6e7c2e",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/lib/phantomchat/session-sync-ui.ts": {
       "stable": "absent",
-      "preview": "70031c33b9b720a1f9a2d92d4b3bdf9de1f3141d9c4bc0e20f9c4311e9762b3e",
+      "preview": "5916e2cd5f791eb0d6290b8d6dff70bdb2bf0d5ad9a5e8a9da436d96ad8227a1",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     }
   }

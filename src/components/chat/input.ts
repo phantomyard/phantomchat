@@ -14,7 +14,7 @@ import {AppImManager, APP_TABS} from '@lib/appImManager';
 import '../../../public/recorder.min';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import opusDecodeController from '@lib/opusDecodeController';
-import {canSendToSyncedChat, refreshSessionSyncViews, subscribeSessionSync} from '@lib/phantomchat/session-sync-state';
+import {canSendToSyncedChat, refreshSessionSyncViews, subscribeSessionSync, setChatSyncStatus} from '@lib/phantomchat/session-sync-state';
 import {mountSessionSyncStatus} from '@lib/phantomchat/session-sync-ui';
 import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
 import emoticonsDropdown, {EmoticonsDropdown} from '@components/emoticonsDropdown';
@@ -1370,7 +1370,7 @@ export default class ChatInput {
     }, false);
 
     this.disposeSyncSend = subscribeSessionSync(() => {
-      this.btnSend.disabled = this.sendingMessage || !canSendToSyncedChat(Number(this.chat.peerId));
+      this.btnSend.disabled = this.sendingMessage || (!this.editMsgId && !canSendToSyncedChat(Number(this.chat.peerId)));
     });
     attachClickEvent(this.btnSend, this.onBtnSendClick, {listenerSetter: this.listenerSetter, touchMouseDown: true});
 
@@ -2144,6 +2144,7 @@ export default class ChatInput {
 
   public async finishPeerChange(options: Parameters<Chat['finishPeerChange']>[0]) {
     const {peerId, startParam, middleware} = options;
+    setChatSyncStatus(Number(peerId), 'syncing');
     refreshSessionSyncViews();
 
     const {
@@ -4132,7 +4133,7 @@ export default class ChatInput {
   }
 
   private checkSyncBeforeSend(): boolean {
-    if(canSendToSyncedChat(Number(this.chat.peerId))) return true;
+    if(this.editMsgId || canSendToSyncedChat(Number(this.chat.peerId))) return true;
     toastNew({langPackKey: 'SessionSync.Messages'});
     return false;
   }
@@ -4218,7 +4219,7 @@ export default class ChatInput {
     } finally {
       this.sendingMessage = false;
       if(this.btnSend) {
-        this.btnSend.disabled = !canSendToSyncedChat(Number(this.chat.peerId));
+        this.btnSend.disabled = !this.editMsgId && !canSendToSyncedChat(Number(this.chat.peerId));
         this.btnSend.classList.remove('is-sending');
       }
     }

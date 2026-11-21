@@ -9,6 +9,8 @@ export function sessionSyncGeneration(): number { return generation; }
 export function onSessionSyncCleanup(cleanup: () => void): void { cleanups.add(cleanup); }
 let groups: SessionSyncStatus = 'syncing';
 const chats = new Map<number, SessionSyncStatus>();
+const verifiedChats = new Set<number>();
+let verifiedGroups = false;
 const listeners = new Set<Listener>();
 let retryGroups: (() => Promise<boolean>) | undefined;
 let retryChat: ((peerId: number) => Promise<void>) | undefined;
@@ -28,6 +30,7 @@ export function enableSessionSync(retry: () => Promise<boolean>): void {
 
 export function setGroupsSyncStatus(status: SessionSyncStatus): void {
   groups = status;
+  if(status === 'ready') verifiedGroups = true;
   refreshSessionSyncViews();
 }
 
@@ -37,13 +40,14 @@ export function getGroupsSyncStatus(): SessionSyncStatus {
 
 export function setChatSyncStatus(peerId: number, status: SessionSyncStatus): void {
   chats.set(peerId, status);
+  if(status === 'ready') verifiedChats.add(peerId);
   refreshSessionSyncViews();
 }
 
 export function getChatSyncStatus(peerId: number): SessionSyncStatus {
   if(!enabled || !peerId) return 'ready';
   if(peerId < 0 && groups !== 'ready') return groups;
-  return chats.get(peerId) ?? 'syncing';
+  return chats.get(peerId) ?? 'ready';
 }
 
 export function subscribeSessionSync(listener: Listener): () => void {
@@ -61,14 +65,37 @@ export function retrySessionSync(peerId?: number): void {
   else void retryGroups?.();
 }
 
+export function markChatSyncStale(peerId: number): void {
+  verifiedChats.delete(peerId);
+  setChatSyncStatus(peerId, 'syncing');
+}
+
+export function markGroupsSyncStale(): void {
+  verifiedGroups = false;
+  setGroupsSyncStatus('syncing');
+}
+
+export function reconcileSessionGroups(): Promise<boolean> {
+  return retryGroups?.() ?? Promise.resolve(false);
+}
+
 export function isChatSyncTracked(peerId: number): boolean { return chats.has(peerId); }
 
 export function canSendToSyncedChat(peerId: number): boolean {
-  return getChatSyncStatus(peerId) === 'ready';
+  const status = getChatSyncStatus(peerId);
+  if(chats.get(peerId) === 'syncing') return false;
+  if(status === 'ready') return true;
+  // Preserve existing offline queueing only after this running client proved
+  // the chat current. A cold cached thread or a known remote change cannot
+  // inherit that permission from a prior session or failed query.
+  return (status === 'offline' || status === 'failed') && verifiedChats.has(peerId) &&
+    (peerId > 0 || verifiedGroups);
 }
 
 export function resetSessionSync(): void {
   generation++;
+  verifiedGroups = false;
+  verifiedChats.clear();
   for(const cleanup of cleanups) cleanup();
   cleanups.clear();
   enabled = false;
