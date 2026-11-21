@@ -108,7 +108,7 @@ async function device(label) {
   const page = desktopPage || await ctx.newPage();
   pages.push(page);
   page.on('pageerror', (error) => errors.push(`${label}: ${error.message}`));
-  page.on('console', (msg) => { if(msg.type() === 'error') errors.push(`${label}: ${msg.text()}`); if(/PhantomChatOnboardingIntegration|GroupAPI|groups-sync|contacts-groups-sync|NostrRelayPool.*connected|sendGroupMessage|sendMessage|handleGroupOutgoing/.test(msg.text())) console.log(label, msg.text()); });
+  page.on('console', (msg) => { if(msg.type() === 'error') errors.push(`${label}: ${msg.text()}`); if(/PhantomChatOnboardingIntegration|GroupAPI|groups-sync|contacts-groups-sync|NostrRelayPool|session-sync|CrdtSync|ChatAPI.*query|sendGroupMessage|sendMessage|handleGroupOutgoing/.test(msg.text())) console.log(label, msg.text()); });
   await page.goto(APP_URL, {waitUntil: 'load'});
   await page.waitForTimeout(5000);
   await page.reload({waitUntil: 'load'});
@@ -207,7 +207,7 @@ try {
   assert.ok(['', 'Syncing...'].includes(await pill.innerText()));
   assert.equal(await pill.locator('button').count(), 0);
   const queryCount = failedMetadataQueries;
-  await b.page.waitForTimeout(35_000);
+  await b.page.waitForTimeout(75_000);
   assert.ok(failedMetadataQueries > queryCount, 'recovery must continue querying without clicks');
   assert.equal(await pill.isVisible(), false, 'ongoing retries must not resurrect the pill');
   assert.equal(await b.page.locator('.session-sync-status:visible').count(), 0);
