@@ -6,7 +6,7 @@ import {
 /** Transient progress/error feedback; settled views keep their normal layout. */
 export function mountSessionSyncStatus(host: HTMLElement, peer?: () => number): () => void {
   const slot = document.createElement('div');
-  slot.className = 'session-sync-status';
+  slot.className = `session-sync-status${peer ? ' session-sync-chat' : ''}`;
   slot.setAttribute('role', 'status');
   slot.setAttribute('aria-live', 'polite');
   const label = document.createElement('span');

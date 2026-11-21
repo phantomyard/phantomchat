@@ -3,7 +3,7 @@ vi.mock('@lib/phantomchat/group-store', () => ({getGroupStore: () => ({getByPeer
 const {lookupPeer} = vi.hoisted(() => ({lookupPeer: vi.fn().mockResolvedValue('contact-pubkey')}));
 vi.mock('@lib/phantomchat/virtual-peers-db', () => ({getPubkey: lookupPeer}));
 import {installLaunchDialogs} from '@lib/phantomchat/phantomchat-launch-dialogs';
-import {enableSessionSync, resetSessionSync, getChatSyncStatus, setGroupsSyncStatus} from '@lib/phantomchat/session-sync-state';
+import {enableSessionSync, resetSessionSync, getChatSyncStatus, setGroupsSyncStatus, canSendToSyncedChat} from '@lib/phantomchat/session-sync-state';
 
 const PEER = -12_000_000_000_000_004;
 beforeEach(() => { lookupPeer.mockResolvedValue('contact-pubkey'); enableSessionSync(async() => true); setGroupsSyncStatus('ready'); });
@@ -87,4 +87,14 @@ it('a slow selected check heals on late success after timeout feedback', async()
   release('ran');
   await vi.advanceTimersByTimeAsync(0);
   expect(getChatSyncStatus(123)).toBe('ready');
+});
+
+
+it('catches up the selected group even while account metadata never completes', async() => {
+  enableSessionSync(() => new Promise(() => {}));
+  const h = install();
+  h.listeners.peer_changed({peerId: PEER});
+  await vi.waitFor(() => expect(h.reload).toHaveBeenCalledWith(PEER));
+  expect(h.catchUp).toHaveBeenCalledWith('group:selected-session', false);
+  expect(canSendToSyncedChat(PEER)).toBe(true);
 });

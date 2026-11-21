@@ -10,7 +10,7 @@ export function onSessionSyncCleanup(cleanup: () => void): void { cleanups.add(c
 let groups: SessionSyncStatus = 'syncing';
 const chats = new Map<number, SessionSyncStatus>();
 const staleChats = new Set<number>();
-let staleGroups = false;
+const staleGroups = new Set<number>();
 const listeners = new Set<Listener>();
 let retryGroups: (() => Promise<boolean>) | undefined;
 let retryChat: ((peerId: number) => Promise<void>) | undefined;
@@ -30,7 +30,7 @@ export function enableSessionSync(retry: () => Promise<boolean>): void {
 
 export function setGroupsSyncStatus(status: SessionSyncStatus): void {
   groups = status;
-  if(status === 'ready') staleGroups = false;
+  if(status === 'ready') staleGroups.clear();
   refreshSessionSyncViews();
 }
 
@@ -46,8 +46,10 @@ export function setChatSyncStatus(peerId: number, status: SessionSyncStatus): vo
 
 export function getChatSyncStatus(peerId: number): SessionSyncStatus {
   if(!enabled || !peerId) return 'ready';
-  if(peerId < 0 && groups !== 'ready') return groups;
-  return chats.get(peerId) ?? 'ready';
+  if(staleGroups.has(peerId) && groups !== 'ready') return groups;
+  const chat = chats.get(peerId) ?? 'ready';
+  if(chat !== 'ready') return chat;
+  return peerId < 0 ? groups : chat;
 }
 
 export function subscribeSessionSync(listener: Listener): () => void {
@@ -70,8 +72,8 @@ export function markChatSyncStale(peerId: number): void {
   setChatSyncStatus(peerId, 'syncing');
 }
 
-export function markGroupsSyncStale(): void {
-  staleGroups = true;
+export function markGroupsSyncStale(peerIds: Iterable<number>): void {
+  for(const peerId of peerIds) staleGroups.add(peerId);
   setGroupsSyncStatus('syncing');
 }
 
@@ -83,15 +85,15 @@ export function isChatSyncTracked(peerId: number): boolean { return chats.has(pe
 
 export function canSendToSyncedChat(peerId: number): boolean {
   if(!enabled || !peerId) return true;
-  if(staleChats.has(peerId) || (peerId < 0 && staleGroups)) return false;
+  if(staleChats.has(peerId) || staleGroups.has(peerId)) return false;
   // A failed/offline query is not evidence of a remote change. Keep the
   // existing send/queue path available with explicit cached-data feedback.
-  return getChatSyncStatus(peerId) !== 'syncing';
+  return chats.get(peerId) !== 'syncing';
 }
 
 export function resetSessionSync(): void {
   generation++;
-  staleGroups = false;
+  staleGroups.clear();
   staleChats.clear();
   for(const cleanup of cleanups) cleanup();
   cleanups.clear();

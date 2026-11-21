@@ -6,25 +6,35 @@
 
 .session-sync-status[hidden] { display: none; }
 .session-sync-status {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: .5rem;
-  min-height: 2rem;
-  padding: .35rem 1rem;
-  font-size: .8125rem;
-  color: var(--secondary-text-color);
-  background: var(--surface-color);
-  button { color: var(--primary-color); background: none; border: 0; cursor: pointer; }
-  button[hidden] { display: none; }
-  &[data-state="syncing"]::before {
-    content: '';
-    flex: 0 0 .5rem;
-    width: .5rem;
-    height: .5rem;
-    border-radius: 50%;
-    background: var(--primary-color);
+  max-width: 92%;
+  width: max-content;
+  padding: 8px 18px;
+  border-radius: 20px;
+  background: #3390ec;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, .35);
+  &.session-sync-chat { top: calc(var(--topbar-height, 56px) + 10px); }
+  button {
+    flex-shrink: 0;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    background: none;
+    border: 0;
+    cursor: pointer;
   }
+  button[hidden] { display: none; }
 }
 .session-sync-snapshot { position: absolute; width: 100%; pointer-events: none; overflow: hidden; }
 

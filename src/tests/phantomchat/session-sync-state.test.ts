@@ -9,14 +9,15 @@ const PEER = -12_000_000_000_000_004;
 afterEach(() => resetSessionSync());
 
 describe('session freshness', () => {
-  it('requires both metadata and message evidence; cached rendering is independent', () => {
+  it('keeps message and affected-metadata guards independent', () => {
     enableSessionSync(async() => true);
+    setChatSyncStatus(PEER, 'syncing');
     expect(canSendToSyncedChat(PEER)).toBe(false);
     setChatSyncStatus(PEER, 'ready');
     expect(getChatSyncStatus(PEER)).toBe('syncing');
     setGroupsSyncStatus('ready');
     expect(canSendToSyncedChat(PEER)).toBe(true);
-    markGroupsSyncStale();
+    markGroupsSyncStale([PEER]);
     setGroupsSyncStatus('failed');
     expect(canSendToSyncedChat(PEER)).toBe(false);
   });
@@ -104,7 +105,7 @@ it('a known remote metadata change revokes offline queueing until checked', () =
   enableSessionSync(async() => true);
   setGroupsSyncStatus('ready');
   setChatSyncStatus(PEER, 'ready');
-  markGroupsSyncStale();
+  markGroupsSyncStale([PEER]);
   setGroupsSyncStatus('failed');
   expect(canSendToSyncedChat(PEER)).toBe(false);
   setGroupsSyncStatus('ready');
@@ -119,7 +120,7 @@ it('starting offline keeps the existing queue available without waiting on a net
     setChatSyncStatus(PEER, 'offline');
     expect(getGroupsSyncStatus()).toBe('offline');
     expect(canSendToSyncedChat(PEER)).toBe(true);
-    markGroupsSyncStale();
+    markGroupsSyncStale([PEER]);
     setGroupsSyncStatus('offline');
     expect(canSendToSyncedChat(PEER)).toBe(false);
   } finally {
@@ -148,7 +149,7 @@ it('a slow metadata check exposes failure feedback and heals when it eventually 
 
 it('a remote delta discovered without a nudge remains blocked after partial application fails', async() => {
   const reconcile = createGroupsReconciler(async() => {
-    markGroupsSyncStale();
+    markGroupsSyncStale([PEER]);
     throw new Error('Remote archive could not be stored');
   });
   enableSessionSync(reconcile);
@@ -157,4 +158,25 @@ it('a remote delta discovered without a nudge remains blocked after partial appl
   expect(await reconcile()).toBe(false);
   expect(getGroupsSyncStatus()).toBe('failed');
   expect(canSendToSyncedChat(PEER)).toBe(false);
+});
+
+
+it('a failed account refresh does not lock healthy groups or other chats', async() => {
+  const reconcile = createGroupsReconciler(async() => false);
+  enableSessionSync(reconcile);
+  const otherGroup = PEER - 100;
+  setChatSyncStatus(PEER, 'ready');
+  setChatSyncStatus(otherGroup, 'ready');
+  expect(await reconcile()).toBe(false);
+  expect(getChatSyncStatus(PEER)).toBe('failed');
+  expect(canSendToSyncedChat(PEER)).toBe(true);
+  expect(canSendToSyncedChat(otherGroup)).toBe(true);
+  markGroupsSyncStale([PEER]);
+  setGroupsSyncStatus('failed');
+  expect(canSendToSyncedChat(PEER)).toBe(false);
+  expect(canSendToSyncedChat(otherGroup)).toBe(true);
+  setChatSyncStatus(PEER, 'ready');
+  expect(canSendToSyncedChat(PEER)).toBe(false);
+  setGroupsSyncStatus('ready');
+  expect(canSendToSyncedChat(PEER)).toBe(true);
 });

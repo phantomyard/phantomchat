@@ -21,6 +21,7 @@ async function waitForAsync(page, predicate, arg, options = {}) {
 }
 async function main() {
 const events = new Map();
+let failGroupMetadata = false;
 const subscriptions = new Map();
 const relay = new WebSocketServer({host: '127.0.0.1', port: 0});
 await new Promise((resolve) => relay.once('listening', resolve));
@@ -56,6 +57,13 @@ relay.on('connection', (socket) => {
         if(fs.some((f) => matches(event, f))) client.send(JSON.stringify(['EVENT', sub, event]));
       }
     } else if(op === 'REQ') {
+      if(failGroupMetadata && args.some((f) => f['#d']?.includes('phantomchat.chat/groups'))) {
+        const snapshot = [...events.values()].find((event) => event.kind === 30078 && event.tags.some((tag) => tag[0] === 'd' && tag[1] === 'phantomchat.chat/groups'));
+        assert.ok(snapshot, 'metadata fixture must exist before making it unreadable');
+        socket.send(JSON.stringify(['EVENT', id, {...snapshot, content: 'unreadable snapshot'}]));
+        socket.send(JSON.stringify(['EOSE', id]));
+        return;
+      }
       subs.set(id, args);
       const sent = new Set();
       for(const filter of args) {
@@ -98,7 +106,7 @@ async function device(label) {
   const page = desktopPage || await ctx.newPage();
   pages.push(page);
   page.on('pageerror', (error) => errors.push(`${label}: ${error.message}`));
-  page.on('console', (msg) => { if(msg.type() === 'error') errors.push(`${label}: ${msg.text()}`); if(/PhantomChatOnboardingIntegration|GroupAPI|groups-sync|contacts-groups-sync|NostrRelayPool.*connected/.test(msg.text())) console.log(label, msg.text()); });
+  page.on('console', (msg) => { if(msg.type() === 'error') errors.push(`${label}: ${msg.text()}`); if(/PhantomChatOnboardingIntegration|GroupAPI|groups-sync|contacts-groups-sync|NostrRelayPool.*connected|sendGroupMessage|sendMessage|handleGroupOutgoing/.test(msg.text())) console.log(label, msg.text()); });
   await page.goto(APP_URL, {waitUntil: 'load'});
   await page.waitForTimeout(5000);
   await page.reload({waitUntil: 'load'});
@@ -145,7 +153,67 @@ try {
     return getChatSyncStatus(id) === 'ready';
   }, peerId, {timeout: 30000});
   console.log('selected session catch-up checked');
-  const input = b.page.locator('.chat-input:not(.hide) .input-message-input[contenteditable="true"]').last();
+  // A unreadable metadata snapshot used to short-circuit every group's catch-up.
+  // Keep message relays available and prove the actual selected history path runs.
+  failGroupMetadata = true;
+  await a.page.evaluate(async() => {
+    const {sendSyncNudge} = await import('/src/lib/phantomchat/sync-nudge.ts');
+    const {PhantomChatBridge} = await import('/src/lib/phantomchat/phantomchat-bridge.ts');
+    await sendSyncNudge(PhantomChatBridge.getInstance().getRelayPool(), window.__phantomchatOwnPubkey, 'groups');
+  });
+  await b.page.evaluate(async(id) => {
+    const {setChatSyncStatus} = await import('/src/lib/phantomchat/session-sync-state.ts');
+    setChatSyncStatus(id, 'ready');
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, peerId);
+  await b.page.evaluate(async(id) => {
+    const {retrySessionSync} = await import('/src/lib/phantomchat/session-sync-state.ts');
+    retrySessionSync(id);
+  }, peerId);
+  await waitForAsync(b.page, async(id) => {
+    const {getGroupsSyncStatus, canSendToSyncedChat} = await import('/src/lib/phantomchat/session-sync-state.ts');
+    return getGroupsSyncStatus() === 'failed' && canSendToSyncedChat(id);
+  }, peerId, {timeout: 45000});
+  const pill = b.page.locator('.chat:not(.hide) > .session-sync-status').last();
+  assert.equal(await pill.evaluate((node) => getComputedStyle(node).backgroundColor), 'rgb(51, 144, 236)');
+  assert.equal(await b.page.locator('.chat-input .session-sync-status').count(), 0);
+  await b.page.setViewportSize({width: 390, height: 844});
+  await b.page.waitForTimeout(500);
+  const bounds = await pill.boundingBox();
+  assert.ok(bounds && bounds.y < 160 && bounds.x >= 0 && bounds.x + bounds.width <= 390, JSON.stringify(bounds));
+  await b.page.screenshot({path: `${process.env.PHANTOMBOT_SCRATCH || '/tmp'}/lockout-mobile.png`});
+  await b.page.setViewportSize({width: 1280, height: 800});
+  await b.page.evaluate(async(id) => {
+    const result = await window.__phantomchatMTProtoServer.handleMethod('messages.sendMessage', {
+      peer: {_: 'inputPeerChat', chat_id: Math.abs(id)},
+      message: 'Group works while metadata is unavailable', random_id: '71301'
+    });
+    if(!result.phantomchatEventId) throw new Error('Production group send returned no persisted event');
+  }, peerId);
+  await waitForAsync(b.page, async(id) => {
+    const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
+    return (await getMessageStore().getMessages(`group:${id}`, 20)).some((row) => row.content === 'Group works while metadata is unavailable');
+  }, groupId);
+  const composer = b.page.locator('.chat-input:not(.hide) .input-message-input[contenteditable="true"]:not(.input-field-input-fake)').last();
+  await composer.fill('Composer works while metadata is unavailable');
+  assert.equal(await b.page.evaluate(() => window.appImManager.chat.input.messageInput.textContent), 'Composer works while metadata is unavailable');
+  await b.page.locator('.chat-input:not(.hide) .btn-send').last().click();
+  await waitForAsync(b.page, async(id) => {
+    const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
+    return (await getMessageStore().getMessages(`group:${id}`, 20)).some((row) => row.content === 'Composer works while metadata is unavailable');
+  }, groupId);
+  console.log('metadata snapshot unreadable: real group send succeeded; blue pill stays above chat on mobile');
+  failGroupMetadata = false;
+  await b.page.evaluate(async(id) => {
+    const {retrySessionSync} = await import('/src/lib/phantomchat/session-sync-state.ts');
+    retrySessionSync(id);
+  }, peerId);
+  await waitForAsync(b.page, async() => {
+    const {getGroupsSyncStatus} = await import('/src/lib/phantomchat/session-sync-state.ts');
+    return getGroupsSyncStatus() === 'ready';
+  });
+
+  const input = b.page.locator('.chat-input:not(.hide) .input-message-input[contenteditable="true"]:not(.input-field-input-fake)').last();
   await input.fill('Keep this draft while catching up');
   await b.page.evaluate(async(id) => {
     const {setChatSyncStatus} = await import('/src/lib/phantomchat/session-sync-state.ts');
@@ -153,7 +221,7 @@ try {
   }, peerId);
   await input.press('Enter');
   assert.match(await input.innerText(), /Keep this draft/);
-  assert.match(await b.page.locator('.chat-input:not(.hide) > .session-sync-status').last().innerText(), /Syncing messages/);
+  assert.match(await b.page.locator('.chat:not(.hide) > .session-sync-status').last().innerText(), /Syncing messages/);
   const mediaBlocked = await b.page.evaluate(async(id) => {
     try {
       await window.__phantomchatMTProtoServer.handleMethod('messages.sendMedia', {peer: {_: 'inputPeerChat', chat_id: Math.abs(id)}});

@@ -257,9 +257,10 @@ export function installLaunchDialogs(opts: {
         const work = async(): Promise<ChatCatchUpOutcome> => {
           let key: string;
           if(isGroupPeer(peerId)) {
-            // Kick metadata immediately, alongside the inbox query. The composer
-            // also observes its status, so history alone cannot clear this gate.
-            if(!(await reconcileSessionGroups())) return 'failed';
+            // Refresh account metadata alongside this conversation's inbox. A slow
+            // or failed snapshot must not prevent history catch-up in all groups.
+            // Known remote changes retain their own per-peer send guard.
+            void reconcileSessionGroups();
             const {getGroupStore} = await import('./group-store');
             const group = await getGroupStore().getByPeerId(peerId);
             if(!group) { markChatSyncStale(peerId); return 'failed'; }

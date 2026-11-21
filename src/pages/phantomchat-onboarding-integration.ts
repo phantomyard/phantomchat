@@ -44,6 +44,7 @@ import {getAllMappings, getMapping, setMappingDisplayName, setMappingUpdatedAt, 
 import {getMessageStore} from '@lib/phantomchat/message-store';
 import {startReceiveAfterCursorWarm} from '@lib/phantomchat/read-cursor-boot';
 import {getGroupStore} from '@lib/phantomchat/group-store';
+import {differs} from '@lib/phantomchat/sync-crdt';
 import {groupIdToPeerId, type GroupRecord} from '@lib/phantomchat/group-types';
 import {createConversationResidueWipe} from '@lib/phantomchat/contacts-residue-wipe';
 import {addP2PContact} from '@lib/phantomchat/add-p2p-contact';
@@ -717,10 +718,17 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             chatAPI: crdtChatAPI,
             adapter: {
               read: () => groupsAdapter.read(),
-              apply: (merged, before) => {
-                // Receiving an actual remote delta is stale evidence even when
-                // the nudge was missed. A partial apply must keep sends blocked.
-                markGroupsSyncStale();
+              apply: async(merged, before) => {
+                // A delta affects these peers only. A nudge or an unavailable
+                // account snapshot must never lock every other conversation.
+                const changed = Object.keys(merged).filter((id) => differs({[id]: merged[id]}, before[id] ? {[id]: before[id]} : {}));
+                // Guard existing cached peers before hashing a changed class.
+                markGroupsSyncStale(changed.flatMap((id) => before[id]?.data?.peerId ? [before[id].data.peerId] : []));
+                const peers = await Promise.all(changed.flatMap((id) => {
+                  const records = [before[id]?.data, merged[id]?.data].filter(Boolean);
+                  return records.map((record) => groupIdToPeerId(id, record.kind));
+                }));
+                markGroupsSyncStale(peers);
                 return withStableSessionList(() => groupsAdapter.apply(merged, before));
               }
             }, ...crdtCrypto
@@ -872,7 +880,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             return g !== 'failed';
           }));
           enableSessionSync(reconcileGroups);
-          registerSyncNudgeHandler('groups', () => { markGroupsSyncStale(); void reconcileGroups(); });
+          registerSyncNudgeHandler('groups', () => { void reconcileGroups(); });
           const resumeGroups = () => {
             if(document.visibilityState !== 'hidden') void reconcileGroups();
           };
