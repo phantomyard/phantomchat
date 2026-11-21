@@ -22,7 +22,12 @@ async function waitForAsync(page, predicate, arg, options = {}) {
     if(await page.evaluate(predicate, arg)) return;
     await page.waitForTimeout(200);
   }
-  throw new Error('Async browser predicate did not settle');
+  const state = await page.evaluate(async() => {
+    const sync = await import('/src/lib/phantomchat/session-sync-state.ts');
+    const peer = +window.appImManager?.chat?.peerId;
+    return {peer, groups: sync.getGroupsSyncStatus(), chat: sync.getChatSyncStatus(peer), canSend: sync.canSendToSyncedChat(peer)};
+  });
+  throw new Error('Async browser predicate did not settle: ' + JSON.stringify(state));
 }
 async function main() {
 const events = new Map();
@@ -194,8 +199,33 @@ try {
   await waitForAsync(b.page, async(id) => {
     const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
     const group = await getGroupStore().get(id);
-    return !!group?.archivedAt && !!group?.catalogArchiveRevision;
+    if(!group?.archivedAt || !group.catalogArchiveRevision) return false;
+    const raw = await window.appImManager.managers.dialogsStorage.getDialog(group.peerId);
+    return (Array.isArray(raw) ? raw[0] : raw)?.folder_id === 1;
   }, ids[1], {timeout: 60000});
+  // The catalog must not reintroduce send lockout when legacy metadata fails.
+  const sendPeer = await b.page.evaluate(async(id) => {
+    const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
+    return (await getGroupStore().get(id)).peerId;
+  }, ids[0]);
+  await b.page.evaluate(async(peerId) => window.appImManager.setInnerPeer({peerId}), sendPeer);
+  failGroupMetadata = true;
+  await b.page.evaluate(() => window.dispatchEvent(new Event('online')));
+  for(let attempt = 0; !failedMetadataQueries && attempt < 300; attempt++) await b.page.waitForTimeout(100);
+  await waitForAsync(b.page, async(peer) => {
+    const {canSendToSyncedChat} = await import('/src/lib/phantomchat/session-sync-state.ts');
+    return canSendToSyncedChat(peer);
+  }, sendPeer, {timeout: 60000});
+  assert.ok(failedMetadataQueries > 0, 'legacy metadata failure must be exercised');
+  const composer = b.page.locator('.chat-input:not(.hide) .input-message-input[contenteditable="true"]:not(.input-field-input-fake)').last();
+  await composer.fill('Catalog preserves cached sending');
+  await b.page.locator('.chat-input:not(.hide) .btn-send').last().click();
+  await waitForAsync(b.page, async(id) => {
+    const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
+    return (await getMessageStore().getMessages(`group:${id}`, 20)).some((row) => row.content === 'Catalog preserves cached sending');
+  }, ids[0], {timeout: 30000});
+  failGroupMetadata = false;
+  console.log('PASS actual Electron composer sends while legacy group metadata is unreadable');
   const stale = [...events.values()].filter((e) => e.tags.some((t) => t[0] === 't' && t[1] === 'phantomchat.chat/catalog-v1'));
   await b.page.evaluate(async(id) => {
     const {getGroupAPI} = await import('/src/lib/phantomchat/group-api.ts');
@@ -203,7 +233,10 @@ try {
   }, ids[1]);
   await waitForAsync(a.page, async(id) => {
     const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
-    return (await getGroupStore().get(id))?.archivedAt === 0;
+    const group = await getGroupStore().get(id);
+    if(group?.archivedAt !== 0) return false;
+    const raw = await window.appImManager.managers.dialogsStorage.getDialog(group.peerId);
+    return ((Array.isArray(raw) ? raw[0] : raw)?.folder_id || 0) === 0;
   }, ids[1], {timeout: 60000});
   console.log('PASS archive/unarchive catalog revision reaches running sibling');
   await a.page.evaluate(async() => {
@@ -218,6 +251,9 @@ try {
   assert(!(await folderList(a.page)).some((f) => f.title === 'Shared folder'));
   assert(!(await folderList(b.page)).some((f) => f.title === 'Shared folder'));
   console.log('PASS stale relay replay cannot resurrect a deleted folder');
+  // Force the new device to recover the roster from the catalog: legacy
+  // group snapshots and expiring gift-wraps are deliberately unavailable.
+  for(const [key, event] of events) if(event.kind === 1059 || event.tags.some((t) => t[0] === 'd' && t[1] === 'phantomchat.chat/groups')) events.delete(key);
   const c = await device('C');
   await hasFolder(c.page, 'Offline Desktop'); await hasFolder(c.page, 'Offline PWA');
   await hasFolder(c.page, 'Shared folder', false);
@@ -229,10 +265,11 @@ try {
   const normalized = (folders) => folders.map(({catalogId, title, included}) => ({catalogId, title, included})).sort((a, b) => a.title.localeCompare(b.title));
   assert.deepEqual(normalized(await folderList(a.page)), normalized(await folderList(c.page)));
   console.log('PASS fresh paired device restores matching folders and session class/archive state');
-  await c.page.evaluate(async({source, id}) => {
+  await c.ctx.route('**/__catalog-old-store.js', (route) => route.fulfill({body: oldStoreJS, contentType: 'application/javascript'}));
+  await c.page.evaluate(async({id}) => {
     const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
     const current = await getGroupStore().get(id);
-    const legacy = await import('data:text/javascript;base64,' + btoa(source));
+    const legacy = await import('/__catalog-old-store.js');
     const store = new legacy.GroupStore();
     const reopened = await store.get(id);
     if(JSON.stringify(reopened.catalogArchiveRevision) !== JSON.stringify(current.catalogArchiveRevision)) throw new Error('Old frontend lost catalog revision on read');
@@ -240,7 +277,7 @@ try {
     await store.destroy();
     const roundTrip = await getGroupStore().get(id);
     if(roundTrip.archivedAt !== 0 || JSON.stringify(roundTrip.catalogArchiveRevision) !== JSON.stringify(current.catalogArchiveRevision)) throw new Error('Old frontend rewrite lost archive placement or revision');
-  }, {source: oldStoreJS, id: ids[1]});
+  }, {id: ids[1]});
   console.log('PASS deployed Stable group-store read/write and Preview reopening preserve catalog fields');
   assert.equal(errors.filter((e) => /account-catalog.*(TypeError|ReferenceError)|Cannot access/.test(e)).length, 0, errors.join('\n'));
   console.log('PASS catalog runtime acceptance', process.env.E2E_ELECTRON ? 'Linux Electron + PWA Chromium' : 'PWA Chromium');

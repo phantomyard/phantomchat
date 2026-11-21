@@ -41,7 +41,11 @@ export class AccountCatalogSync {
   constructor(private deps: Deps) {}
 
   private update<T>(fn: (state: CatalogState) => T): Promise<T> {
-    return updateCatalogState(this.deps.account, fn);
+    if(this.stopped) return Promise.reject(new Error('Catalog stopped'));
+    return updateCatalogState(this.deps.account, (state) => {
+      if(this.stopped) throw new Error('Catalog stopped');
+      return fn(state);
+    });
   }
 
   async start(): Promise<void> {
@@ -131,7 +135,11 @@ export class AccountCatalogSync {
 
   private async pass(signal: AbortSignal): Promise<void> {
     const step = <T>(work: Promise<T>) => syncStep(work, signal);
-    await step(this.capture);
+    const capture = () => step(this.capture.catch(() => {
+      signal.throwIfAborted();
+      return this.filtersChanged();
+    }));
+    await capture();
     const roster = await step(this.deps.roster.read());
     // Persist local roster facts before touching the network. Missing records
     // never delete: only the existing durable deletion log produces tombstones.
@@ -163,7 +171,7 @@ export class AccountCatalogSync {
         remote = mergeCatalog(remote, migration);
       }
     }
-    await step(this.capture);
+    await capture();
     signal.throwIfAborted();
     let state = await step(this.update((current) => {
       current.items = mergeCatalog(current.items, remote);
@@ -189,7 +197,7 @@ export class AccountCatalogSync {
       }
       return current;
     }));
-    await step(this.capture);
+    await capture();
     state = await step(this.update((current) => current));
     const filters = await step(this.deps.getFilters());
     const next = catalogToFilters(filters, state.items);

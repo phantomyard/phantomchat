@@ -5,8 +5,9 @@ import {emptyCatalogState, mergeCatalog, observeCatalog, writeCatalogValue, pars
 import {catalogToFilters, filtersToCatalog, validateCatalogProjection} from '@lib/phantomchat/account-catalog-projection';
 import {AccountCatalogSync} from '@lib/phantomchat/account-catalog-sync';
 import {buildLocalFilter} from '@lib/storages/filtersLocal';
-import {mergeGroupsMaps} from '@lib/phantomchat/groups-sync-adapter';
+import {mergeGroupsMaps, needsGroupMaterialization} from '@lib/phantomchat/groups-sync-adapter';
 import {mergeAccountCatalog} from '@lib/phantomchat/account-catalog-merge';
+import * as catalogStore from '@lib/phantomchat/account-catalog-store';
 import {updateCatalogState} from '@lib/phantomchat/account-catalog-store';
 import {registerCatalogArchiveWriter, recordCatalogArchive} from '@lib/phantomchat/account-catalog-mutations';
 
@@ -15,7 +16,7 @@ beforeAll(() => {
   Object.defineProperty(navigator, 'locks', {value: {request: async(_key: string, _opts: unknown, fn: () => Promise<void>) => fn()}, configurable: true});
 });
 const engines: AccountCatalogSync[] = [];
-afterEach(() => { engines.splice(0).forEach((engine) => engine.stop()); registerCatalogArchiveWriter(undefined); vi.useRealTimers(); });
+afterEach(() => { engines.splice(0).forEach((engine) => engine.stop()); registerCatalogArchiveWriter(undefined); vi.useRealTimers(); vi.restoreAllMocks(); });
 const entry = (counter: number, device: string, value: any): any => ({revision: {counter, device}, value});
 function folder(id: number, catalogId: string, name = catalogId): any {
   return {...buildLocalFilter(0), id, catalogId, title: {_: 'textWithEntities', text: name, entities: []}, pFlags: {}};
@@ -221,4 +222,31 @@ it('reopening a stale cached folder projection cannot resurrect a known deletion
   });
   engines.push(reopen); await reopen.start(); await reopen.reconcile();
   expect(f.filters()).toEqual([]);
+});
+
+it('equivalent materialized group records do not retrigger guards on every catalog poll', () => {
+  const base: any = {groupId: '12'.repeat(16), name: 'Group', members: [], adminPubkey: '34'.repeat(32), createdAt: 1000};
+  const local: any = {id: base.groupId, updatedAt: 10, data: {...base, updatedAt: 10000, peerId: -2000000000000001}};
+  const remote: any = {...local, data: {...base, kind: 'group', updatedAt: 10999, peerId: -2000000000000002}};
+  expect(needsGroupMaterialization(remote, local)).toBe(false);
+  expect(needsGroupMaterialization({...remote, data: {...remote.data, members: ['56'.repeat(32)]}}, local)).toBe(true);
+});
+
+it('a failed local capture is retried automatically before merging remote data', async() => {
+  vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']});
+  const f = fixture(new Map()); await f.engine.start();
+  f.set(f.filters().map((filter) => ({...filter, title: {...filter.title, text: 'Retried local edit'}})));
+  vi.spyOn(catalogStore, 'updateCatalogState').mockRejectedValueOnce(new Error('Temporary IndexedDB failure'));
+  await expect(f.engine.filtersChanged()).rejects.toThrow('IndexedDB');
+  await f.engine.reconcile();
+  const state = await updateCatalogState(f.account, (s) => s);
+  const definition = Object.entries(state.items).find(([key]) => key.startsWith('folder:'))[1].value as any;
+  expect(definition.title.text).toBe('Retried local edit');
+  expect(f.publishes()).toBeGreaterThan(0);
+});
+it('logout stops a queued capture before it can recreate private catalog state', async() => {
+  vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout']});
+  const f = fixture(new Map()); await f.engine.start();
+  const capture = f.engine.filtersChanged(); f.engine.stop();
+  await expect(capture).rejects.toThrow('stopped');
 });

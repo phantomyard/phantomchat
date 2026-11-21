@@ -32,7 +32,7 @@ import {isValidSnapshot, FOLDERS_SYNC_D_TAG, FOLDERS_SYNC_KIND, FOLDER_SYNC_TRIG
 import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/nostr-crypto';
 import {CrdtSync, isInconclusiveReconcile} from '@lib/phantomchat/crdt-sync';
 import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTACTS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/contacts-sync-adapter';
-import {createGroupsAdapter, mergeGroupsMaps, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS, type GroupsLocalAdapter} from '@lib/phantomchat/groups-sync-adapter';
+import {createGroupsAdapter, mergeGroupsMaps, needsGroupMaterialization, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS, type GroupsLocalAdapter} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
 import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
 import {enableSessionSync, createGroupsReconciler, setGroupsSyncStatus, settleGroupsSyncPeers, onSessionSyncCleanup, markGroupsSyncStale, markChatSyncStale, setChatSyncStatus} from '@lib/phantomchat/session-sync-state';
@@ -649,7 +649,8 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             apply: async(merged, before, signal) => {
               // A delta affects these peers only. A nudge or an unavailable
               // account snapshot must never lock every other conversation.
-              const changed = Object.keys(merged).filter((id) => differs({[id]: merged[id]}, before[id] ? {[id]: before[id]} : {}));
+              const changed = Object.keys(merged).filter((id) => needsGroupMaterialization(merged[id], before[id]));
+              if(!changed.length) return groupsAdapter.apply(merged, before, signal);
               // Guard existing cached peers before hashing a changed class.
               markGroupsSyncStale(changed.flatMap((id) => before[id]?.data?.peerId ? [before[id].data.peerId] : []));
               const peers = await Promise.all(changed.flatMap((id) => {

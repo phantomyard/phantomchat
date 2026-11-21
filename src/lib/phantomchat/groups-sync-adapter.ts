@@ -56,6 +56,27 @@ export type GroupsAdapterDeps = {
 
 const GROUP_PREFIX = 'group:';
 
+/** Compare what apply() materializes, excluding device-local peer derivation
+ * and second/millisecond representation differences. */
+function materializedPayload(entry: SyncEntry<GroupRecord>, local: GroupRecord): GroupRecord | undefined {
+  if(!entry.data) return undefined;
+  const record = {...entry.data, peerId: 0, updatedAt: entry.updatedAt * 1000};
+  delete (record as GroupRecord & {tags?: unknown}).tags;
+  record.kind = intendedGroupKind(record) === 'session' || intendedGroupKind(local) === 'session' ? 'session' : undefined;
+  for(const field of ['archivedAt', 'pinnedAt', 'unreadMarkAt'] as const) {
+    if(typeof record[field] !== 'number' && typeof local[field] === 'number') record[field] = local[field];
+  }
+  if(entry.deliberateAddAt !== undefined) record.deliberateAddAt = entry.deliberateAddAt * 1000;
+  return record;
+}
+
+export function needsGroupMaterialization(entry: SyncEntry<GroupRecord>, previous?: SyncEntry<GroupRecord>): boolean {
+  if(!previous || !!entry.deleted !== !!previous.deleted || entry.updatedAt > previous.updatedAt) return true;
+  if(entry.deleted) return false;
+  if((entry.deliberateAddAt || 0) > (previous.deliberateAddAt || 0)) return true;
+  return stableStringify(materializedPayload(entry, previous.data)) !== stableStringify(materializedPayload(previous, previous.data));
+}
+
 export type GroupsLocalAdapter = Omit<LocalAdapter<GroupRecord>, 'apply'> & {
   apply: (merged: SyncMap<GroupRecord>, before: SyncMap<GroupRecord>, signal?: AbortSignal) => Promise<void>;
 };
@@ -250,14 +271,7 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): GroupsLocalAdapter
         // entry live — restore or update when the remote mutation is newer.
         // A stamp-only advance (live/live merge forwarded the max stamp onto
         // the winner) also fires, so the local record carries the proof (#180).
-        const stampAdvanced =
-          typeof entry.deliberateAddAt === 'number' &&
-          entry.deliberateAddAt > (prev?.deliberateAddAt ?? 0);
-        // An info-only change (mergeGroupsMaps kept a newer name from the
-        // losing side) leaves updatedAt equal to this device's copy, so it
-        // must trigger the upsert on its own or the name never lands here.
-        const payloadChanged = wasLive && stableStringify(entry.data) !== stableStringify(prev.data);
-        if(!wasLive || entry.updatedAt > prev.updatedAt || stampAdvanced || payloadChanged) {
+        if(needsGroupMaterialization(entry, prev)) {
           if(!entry.data) continue;
           // REBIND RESURRECTION GUARD (duplicate-groups regression 2026-10-04):
           // a rebind successor record carries a FRESH bound id — the durable
