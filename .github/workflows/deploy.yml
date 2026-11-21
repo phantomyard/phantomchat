@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 15
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +58,15 @@ jobs:
         with:
           path: .release-work/payload/site
       - id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      # The artifact API can briefly list zero items after a successful upload.
+      # Retry inside this run: rebuilding would reuse an immutable release tag.
+      - name: Allow Pages artifact metadata to settle
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 20
+      - id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4
       - name: Record successful publication
         run: node scripts/releases/registry.mjs published

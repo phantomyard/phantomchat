@@ -87,6 +87,12 @@ one concurrency group; Electron operations serialize independently.
 
 PWA jobs need `pages:write`, `id-token:write` and `contents:write` for private
 archive management. Electron publication/promotion need release write access.
+Preview publication retries a failed Pages deployment once after a 20-second
+artifact-metadata settling window, inside the same run. The second attempt must
+succeed before publication is recorded; it does not rebuild or recreate the
+immutable archive. A fresh workflow dispatch is still required if both attempts
+fail after the archive has been created.
+
 No repository settings or live deployments are changed by merging the workflows.
 
 Default Electron promotion never falls back to an older Preview when the newest
