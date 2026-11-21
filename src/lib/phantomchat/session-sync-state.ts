@@ -79,6 +79,12 @@ export function markGroupsSyncStale(peerIds: Iterable<number>): void {
   setGroupsSyncStatus('syncing');
 }
 
+/** Clear only metadata deltas that this catalog pass actually applied. */
+export function settleGroupsSyncPeers(peerIds: Iterable<number>): void {
+  for(const peerId of peerIds) staleGroups.delete(peerId);
+  refreshSessionSyncViews();
+}
+
 export function reconcileSessionGroups(): Promise<boolean> {
   return retryGroups?.() ?? Promise.resolve(false);
 }

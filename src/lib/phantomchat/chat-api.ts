@@ -701,6 +701,22 @@ export class ChatAPI {
     };
   }
 
+  /** All per-device catalog shards. Separate addresses prevent concurrent writers
+   * replacing each other's only durable copy before either can merge. */
+  async queryCatalogEvents(): Promise<Array<{content: string; tags: string[][]}>> {
+    if(!this.relayPool.isConnected()) await this.relayPool.initialize();
+    const {events, responded} = await this.relayPool.queryRawEventsWithMeta({
+      'kinds': [30078], 'authors': [this.ownId], '#t': ['phantomchat.chat/catalog-v1'], 'limit': 1000
+    });
+    if(!responded) throw new Error('No relay answered the account catalog query');
+    if(events.length >= 1000) throw new Error('Account catalog query reached its safety limit');
+    const {verifyEvent} = await import('nostr-tools/pure');
+    if(events.some((event) => event.pubkey !== this.ownId || event.kind !== 30078 || !verifyEvent(event as any))) {
+      throw new Error('Invalid account catalog signature');
+    }
+    return events;
+  }
+
   /**
    * This user's own public key (hex). Used by local-node discovery to query and
    * self-decrypt its OWN capability advert (phantomchat#61 / phantombot#258).

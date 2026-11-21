@@ -1,3 +1,4 @@
+import {compareRevision} from './account-catalog';
 /**
  * groups-sync-adapter — plugs the group store into the union-merge CRDT engine,
  * mirroring contacts-sync-adapter.
@@ -23,7 +24,7 @@
  */
 import type {LocalAdapter} from './crdt-sync';
 import type {SyncEntry, SyncMap} from './sync-crdt';
-import {mergeMaps} from './sync-crdt';
+import {mergeMaps, stableStringify} from './sync-crdt';
 import type {GroupRecord} from './group-types';
 import type {DeletedGroupRecord} from './group-store';
 import {intendedGroupKind} from './group-class-reconcile';
@@ -55,7 +56,11 @@ export type GroupsAdapterDeps = {
 
 const GROUP_PREFIX = 'group:';
 
-export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<GroupRecord> {
+export type GroupsLocalAdapter = Omit<LocalAdapter<GroupRecord>, 'apply'> & {
+  apply: (merged: SyncMap<GroupRecord>, before: SyncMap<GroupRecord>, signal?: AbortSignal) => Promise<void>;
+};
+
+export function createGroupsAdapter(deps: GroupsAdapterDeps): GroupsLocalAdapter {
   const tag = deps.logPrefix || '[groups-sync-adapter]';
 
   const read = async(): Promise<SyncMap<GroupRecord>> => {
@@ -189,7 +194,7 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
     return map;
   };
 
-  const apply = async(merged: SyncMap<GroupRecord>, before: SyncMap<GroupRecord>): Promise<void> => {
+  const apply = async(merged: SyncMap<GroupRecord>, before: SyncMap<GroupRecord>, signal?: AbortSignal): Promise<void> => {
     // Store reality at entry: `before` can mark an id `deleted` (read() overrode
     // a stale live record with a tombstone) while the record still sits in the
     // store, so wasLive alone can't tell "already torn down" from "resurrected".
@@ -214,6 +219,7 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
 
     let failed = false;
     for(const id of Object.keys(merged)) {
+      signal?.throwIfAborted();
       const entry = merged[id];
       const prev = before[id];
       const wasLive = !!prev && !prev.deleted;
@@ -250,10 +256,8 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
         // An info-only change (mergeGroupsMaps kept a newer name from the
         // losing side) leaves updatedAt equal to this device's copy, so it
         // must trigger the upsert on its own or the name never lands here.
-        const infoChanged = wasLive && !!entry.data && !!prev.data &&
-          (INFO_FIELDS.some((f) => entry.data[f] !== prev.data[f]) ||
-            entry.data.archivedAt !== prev.data.archivedAt || entry.data.archiveUpdatedAt !== prev.data.archiveUpdatedAt);
-        if(!wasLive || entry.updatedAt > prev.updatedAt || stampAdvanced || infoChanged) {
+        const payloadChanged = wasLive && stableStringify(entry.data) !== stableStringify(prev.data);
+        if(!wasLive || entry.updatedAt > prev.updatedAt || stampAdvanced || payloadChanged) {
           if(!entry.data) continue;
           // REBIND RESURRECTION GUARD (duplicate-groups regression 2026-10-04):
           // a rebind successor record carries a FRESH bound id — the durable
@@ -407,10 +411,15 @@ export function mergeGroupsMaps(local: SyncMap<GroupRecord>, remote: SyncMap<Gro
     // must never carry an older archive/unarchive value back to another PC.
     const archiveStamp = (r: GroupRecord) => Math.max(r.archiveUpdatedAt ?? 0, r.archivedAt ?? 0);
     const hasArchiveProof = winner.data.archiveUpdatedAt !== undefined || loser.archiveUpdatedAt !== undefined;
-    if(hasArchiveProof && archiveStamp(loser) > archiveStamp(winner.data) && typeof loser.archivedAt === 'number') {
+    const revision = winner.data.catalogArchiveRevision;
+    const otherRevision = loser.catalogArchiveRevision;
+    const archiveLoses = otherRevision ? !revision || compareRevision(otherRevision, revision) > 0 :
+      !revision && hasArchiveProof && archiveStamp(loser) > archiveStamp(winner.data);
+    if(archiveLoses && typeof loser.archivedAt === 'number') {
       merged = merged ?? {...winner.data};
       merged.archivedAt = loser.archivedAt;
       merged.archiveUpdatedAt = archiveStamp(loser);
+      merged.catalogArchiveRevision = otherRevision;
     }
     if(merged) out[id] = {...winner, data: merged} as SyncEntry<GroupRecord>;
   }

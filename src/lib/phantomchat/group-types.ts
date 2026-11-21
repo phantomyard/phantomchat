@@ -6,6 +6,7 @@
  * from user peers to avoid collisions.
  */
 
+import type {CatalogRevision} from './account-catalog';
 import type {DeliveryState} from './delivery-tracker';
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -197,6 +198,8 @@ export interface GroupRecord {
   archivedAt?: number;
   /** Last explicit archive OR unarchive gesture, Unix millis. */
   archiveUpdatedAt?: number;
+  /** Account-catalog revision of the last explicit archive gesture. */
+  catalogArchiveRevision?: CatalogRevision;
   /**
    * Unix-millis PIN stamp (owner batch 15). Present = the row is pinned in the
    * chat list; `0` = explicitly unpinned (same absent/0 semantics as

@@ -1,3 +1,5 @@
+import {compareRevision} from './account-catalog';
+import {recordCatalogArchive} from './account-catalog-mutations';
 /**
  * Group Store - IndexedDB persistence for group metadata
  *
@@ -88,6 +90,27 @@ export class GroupStore {
       const request = store.put(group);
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve();
+    });
+  }
+
+  /** Atomically project only archive fields; a newer gesture or metadata write
+   * must not be overwritten by a catalog pass that read the record earlier. */
+  async applyCatalogArchive(group: GroupRecord): Promise<GroupRecord | undefined> {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const request = store.get(group.groupId);
+      let applied: GroupRecord | undefined;
+      tx.onabort = tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => resolve(applied);
+      request.onsuccess = () => {
+        const current = request.result as GroupRecord | undefined;
+        if(!current || current.catalogArchiveRevision && compareRevision(current.catalogArchiveRevision, group.catalogArchiveRevision!) > 0) return;
+        applied = {...current, archivedAt: group.archivedAt, archiveUpdatedAt: group.archiveUpdatedAt,
+          catalogArchiveRevision: group.catalogArchiveRevision};
+        store.put(applied);
+      };
     });
   }
 
@@ -195,6 +218,8 @@ export class GroupStore {
       // 0 as unarchived.
       existing.archivedAt = updates.archivedAt === null ? 0 : updates.archivedAt;
       existing.archiveUpdatedAt = Math.max(Date.now(), (existing.archiveUpdatedAt ?? 0) + 1);
+      const revision = await recordCatalogArchive(groupId, existing.archivedAt, existing.archiveUpdatedAt, existing.catalogArchiveRevision);
+      if(revision) existing.catalogArchiveRevision = revision;
     }
     // Same absent-vs-cleared contract as archivedAt, for the same reason: these
     // are user-set dialog flags carried over the groups CRDT, and a republish

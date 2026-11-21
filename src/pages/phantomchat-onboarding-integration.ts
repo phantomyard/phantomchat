@@ -27,16 +27,15 @@ import {createIncomingScheduler} from '@lib/phantomchat/phantomchat-incoming-sch
 import {createPendingFlush} from '@lib/phantomchat/phantomchat-pending-flush';
 import {createReadReceiptSender} from '@lib/phantomchat/phantomchat-read-receipts';
 import {createDeliveryUI} from '@lib/phantomchat/phantomchat-delivery-ui';
-import {FoldersSync} from '@lib/phantomchat/folders-sync';
-import {setLastModifiedAt} from '@lib/phantomchat/folders-sync-state';
-import {FOLDER_SYNC_TRIGGER_EVENTS} from '@lib/phantomchat/folders-sync-types';
+import {AccountCatalogSync} from '@lib/phantomchat/account-catalog-sync';
+import {isValidSnapshot, FOLDERS_SYNC_D_TAG, FOLDERS_SYNC_KIND, FOLDER_SYNC_TRIGGER_EVENTS} from '@lib/phantomchat/folders-sync-types';
 import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/nostr-crypto';
 import {CrdtSync, isInconclusiveReconcile} from '@lib/phantomchat/crdt-sync';
 import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTACTS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/contacts-sync-adapter';
-import {createGroupsAdapter, mergeGroupsMaps, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
+import {createGroupsAdapter, mergeGroupsMaps, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS, type GroupsLocalAdapter} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
 import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
-import {enableSessionSync, createGroupsReconciler, setGroupsSyncStatus, onSessionSyncCleanup, markGroupsSyncStale, markChatSyncStale, setChatSyncStatus} from '@lib/phantomchat/session-sync-state';
+import {enableSessionSync, createGroupsReconciler, setGroupsSyncStatus, settleGroupsSyncPeers, onSessionSyncCleanup, markGroupsSyncStale, markChatSyncStale, setChatSyncStatus} from '@lib/phantomchat/session-sync-state';
 import {withStableSessionList} from '@lib/phantomchat/session-sync-ui';
 import {registerSyncPublisher, registerSyncNudgeHandler} from '@lib/phantomchat/phantomchat-sync-triggers';
 import {sendSyncNudge} from '@lib/phantomchat/sync-nudge';
@@ -50,8 +49,6 @@ import {createConversationResidueWipe} from '@lib/phantomchat/contacts-residue-w
 import {addP2PContact} from '@lib/phantomchat/add-p2p-contact';
 import {writeGroupCreateServiceMessage} from '@lib/phantomchat/group-service-messages';
 import {injectGroupCreateDialog, ensureGroupChatInjected, cleanupGroupChatInjection, applyGroupDialogFolder, moveSyncedGroupToPeer, applyGroupDialogFlags} from '@lib/phantomchat/phantomchat-groups-sync';
-import {toast} from '@components/toast';
-import I18n from '@lib/langPack';
 // tweb-contained CSS no longer needed — onboarding uses native tweb styles
 
 declare global {
@@ -480,72 +477,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
       // Delivery status UI
       deliveryUI.attach();
 
-      // --- Folders sync (kind 30078) — cross-device folder reconcile + publish ---
-      // The folder-persistence wipe was NOT this sync. The real root cause was the
-      // boot-time single→multi-account migration: checkIfHasMultiAccount() gated it
-      // on a Telegram MTProto DC auth key, which this P2P fork never has, so the
-      // migration ran every boot and reloaded account 1 from the old/empty `tweb`
-      // DB — clobbering tweb-account-1 and wiping custom folders (see loadState.ts
-      // fix). With that fixed (and verified live: create folder → restart → folder
-      // persists), cross-device folder sync is re-enabled: a bounded remote-wins
-      // reconcile on boot and a debounced publish on filter changes. The reconcile
-      // only wins when the remote snapshot is genuinely newer than local
-      // (decideMerge), so it does not clobber freshly-created local folders.
-      const FOLDERS_SYNC_ENABLED = true;
-      if(FOLDERS_SYNC_ENABLED) {
-        try {
-          const privKeyBytes = new Uint8Array(
-            identity.privateKey.match(/.{2}/g)!.map((b) => parseInt(b, 16))
-          );
-          const convKey = getConversationKey(privKeyBytes, identity.publicKey);
-
-          const foldersSync = new FoldersSync({
-            chatAPI: {
-              publishEvent: async(event) => { await chatAPI.publishEvent(event); },
-              queryLatestEvent: (filter) => chatAPI.queryLatestEvent(filter) as any
-            },
-            filtersStore: {
-              getFilters: async() => {
-                const map = await rootScope.managers.filtersStorage.getFilters();
-                return Object.values(map) as any[];
-              },
-              setFilters: (next) => rootScope.managers.filtersStorage.replaceAllFilters(next),
-              reseedSystemFolders: () => rootScope.managers.filtersStorage.reseedSystemFolders()
-            },
-            encrypt: (plain) => nip44Encrypt(plain, convKey),
-            decrypt: (cipher) => nip44Decrypt(cipher, convKey),
-            nowSeconds: () => Math.floor(Date.now() / 1000),
-            toast: (msg) => toast(msg),
-            i18n: (key) => I18n.format(key as any, true)
-          });
-
-          // Bounded 5s reconcile — never block onboarding on relay latency
-          await Promise.race([
-            foldersSync.reconcile().catch((e) => console.warn('[FoldersSync] reconcile failed', e)),
-            new Promise<void>((resolve) => setTimeout(resolve, 5000))
-          ]);
-
-          // Debounced publish on filter events
-          let publishTimer: ReturnType<typeof setTimeout> | null = null;
-          const schedulePublish = () => {
-            setLastModifiedAt(Math.floor(Date.now() / 1000));
-            if(publishTimer) clearTimeout(publishTimer);
-            publishTimer = setTimeout(() => {
-              foldersSync.publish().catch((e) => console.warn('[FoldersSync] publish failed', e));
-            }, 2000);
-          };
-
-          for(const event of FOLDER_SYNC_TRIGGER_EVENTS) {
-            rootScope.addEventListener(event, schedulePublish);
-          }
-          console.log('[PhantomChatOnboardingIntegration] FoldersSync wired');
-        } catch(err) {
-          console.warn('[PhantomChatOnboardingIntegration] FoldersSync init failed:', err);
-        }
-      }
-
+      let accountCatalog: AccountCatalogSync | undefined;
+      let catalogRoster: GroupsLocalAdapter;
       // --- Contacts + Groups sync (kind 30078) — cross-device address book +
-      // group roster reconcile. Unlike folders (whole-blob last-write-wins),
+      // group roster reconcile. Like the account catalog,
       // these use the union-merge-with-tombstones CRDT so two devices adding
       // different contacts/groups offline never lose either. Pairing a new
       // device (seed-phrase QR) restores keys but NOT contacts/groups; this is
@@ -709,6 +644,23 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             acceptedVersions: CONTACTS_SYNC_ACCEPTED_VERSIONS,
             chatAPI: crdtChatAPI, adapter: contactsAdapter, ...crdtCrypto
           });
+          const guardedGroupsAdapter: GroupsLocalAdapter = {
+            read: () => groupsAdapter.read(),
+            apply: async(merged, before, signal) => {
+              // A delta affects these peers only. A nudge or an unavailable
+              // account snapshot must never lock every other conversation.
+              const changed = Object.keys(merged).filter((id) => differs({[id]: merged[id]}, before[id] ? {[id]: before[id]} : {}));
+              // Guard existing cached peers before hashing a changed class.
+              markGroupsSyncStale(changed.flatMap((id) => before[id]?.data?.peerId ? [before[id].data.peerId] : []));
+              const peers = await Promise.all(changed.flatMap((id) => {
+                const records = [before[id]?.data, merged[id]?.data].filter(Boolean);
+                return records.map((record) => groupIdToPeerId(id, record.kind));
+              }));
+              signal?.throwIfAborted();
+              markGroupsSyncStale(peers);
+              return withStableSessionList(() => groupsAdapter.apply(merged, before, signal));
+            }
+          };
           const groupsSync = new CrdtSync({
             dTag: GROUPS_SYNC_D_TAG, version: GROUPS_SYNC_VERSION,
             acceptedVersions: GROUPS_SYNC_ACCEPTED_VERSIONS,
@@ -716,22 +668,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             // a newer copy must not carry an older name (see mergeGroupsMaps).
             merge: mergeGroupsMaps,
             chatAPI: crdtChatAPI,
-            adapter: {
-              read: () => groupsAdapter.read(),
-              apply: async(merged, before) => {
-                // A delta affects these peers only. A nudge or an unavailable
-                // account snapshot must never lock every other conversation.
-                const changed = Object.keys(merged).filter((id) => differs({[id]: merged[id]}, before[id] ? {[id]: before[id]} : {}));
-                // Guard existing cached peers before hashing a changed class.
-                markGroupsSyncStale(changed.flatMap((id) => before[id]?.data?.peerId ? [before[id].data.peerId] : []));
-                const peers = await Promise.all(changed.flatMap((id) => {
-                  const records = [before[id]?.data, merged[id]?.data].filter(Boolean);
-                  return records.map((record) => groupIdToPeerId(id, record.kind));
-                }));
-                markGroupsSyncStale(peers);
-                return withStableSessionList(() => groupsAdapter.apply(merged, before));
-              }
-            }, ...crdtCrypto
+            adapter: guardedGroupsAdapter, ...crdtCrypto
           });
 
           // --- Read-state sync (#217): the per-conversation read cursors ride
@@ -842,6 +779,17 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             groupsQueue = next.then(() => {}, () => {});
             return next;
           };
+          catalogRoster = {
+            read: () => groupOperation(() => groupsAdapter.read()),
+            apply: (incoming, _before, signal) => groupOperation(async() => {
+              signal?.throwIfAborted();
+              const fresh = await groupsAdapter.read();
+              const merged = mergeGroupsMaps(fresh, incoming);
+              if(differs(merged, fresh)) await guardedGroupsAdapter.apply(merged, fresh, signal);
+              const stored = await getGroupStore().getAll();
+              settleGroupsSyncPeers(stored.filter((group) => merged[group.groupId] && !merged[group.groupId].deleted).map((group) => group.peerId));
+            })
+          };
           const reconcileGroups = createGroupsReconciler((signal, force) => groupOperation(async() => {
             if(signal.aborted) return false;
             if(force) crdtRelayPool?.recoverSyncTransport?.();
@@ -886,7 +834,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             return true;
           }));
           enableSessionSync(reconcileGroups);
-          registerSyncNudgeHandler('groups', () => { void reconcileGroups(); });
+          registerSyncNudgeHandler('groups', () => { void reconcileGroups().finally(() => accountCatalog?.schedule(0)); });
           const resumeGroups = () => {
             if(document.visibilityState !== 'hidden') void reconcileGroups();
           };
@@ -1012,6 +960,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             // after releasing the write queue so any partial apply is retried
             // and readiness reflects the local view, not just relay storage.
             await reconcileGroups();
+            accountCatalog?.schedule(0);
             if(landed) {
               void sendSyncNudge(PhantomChatBridge.getInstance().getRelayPool(), ownPubkey, 'groups')
               .catch((e) => console.warn('[groups-sync] nudge failed', e));
@@ -1044,6 +993,47 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           console.warn('[PhantomChatOnboardingIntegration] Contacts+Groups sync init failed:', err);
         }
       }
+
+      // One encrypted account catalog: independent folder, membership and
+      // archive registers, cached locally and unioned across device addresses.
+      try {
+        const privateKey = new Uint8Array(identity.privateKey.match(/.{2}/g)!.map((b) => parseInt(b, 16)));
+        const key = getConversationKey(privateKey, identity.publicKey);
+        accountCatalog = new AccountCatalogSync({
+          account: identity.publicKey,
+          roster: catalogRoster,
+          getFilters: async() => Object.values(await rootScope.managers.filtersStorage.getFilters()),
+          setFilters: (expected, next) => rootScope.managers.filtersStorage.replaceCatalogFilters(expected, next),
+          legacyFolders: async() => {
+            const event = await chatAPI.queryLatestEvent({'kinds': [FOLDERS_SYNC_KIND], '#d': [FOLDERS_SYNC_D_TAG]});
+            if(!event) return null;
+            const snapshot = JSON.parse(nip44Decrypt(event.content, key));
+            if(!isValidSnapshot(snapshot) || snapshot.version !== 1) throw new Error('Unreadable legacy folders');
+            return {snapshot, createdAt: event.created_at};
+          },
+          getGroups: () => getGroupStore().getAll(),
+          applyArchive: async(record) => {
+            const applied = await getGroupStore().applyCatalogArchive(record);
+            if(applied) await applyGroupDialogFolder(applied);
+          },
+          query: () => chatAPI.queryCatalogEvents(),
+          publish: async(event) => { await chatAPI.publishEvent(event); },
+          encrypt: (plain) => nip44Encrypt(plain, key),
+          decrypt: (cipher) => nip44Decrypt(cipher, key)
+        });
+        await accountCatalog.start();
+        const filtersChanged = () => { void accountCatalog.filtersChanged().catch((e) => console.warn('[account-catalog] local capture failed', e)); };
+        for(const event of FOLDER_SYNC_TRIGGER_EVENTS) rootScope.addEventListener(event, filtersChanged);
+        const resumeCatalog = () => { if(document.visibilityState !== 'hidden') accountCatalog.schedule(0); };
+        document.addEventListener('visibilitychange', resumeCatalog);
+        window.addEventListener('online', resumeCatalog);
+        onSessionSyncCleanup(() => {
+          accountCatalog.stop();
+          for(const event of FOLDER_SYNC_TRIGGER_EVENTS) rootScope.removeEventListener(event, filtersChanged);
+          document.removeEventListener('visibilitychange', resumeCatalog);
+          window.removeEventListener('online', resumeCatalog);
+        });
+      } catch(error) { console.warn('[account-catalog] init failed', error); }
 
       // Trigger initial dialog refresh
       setTimeout(() => {

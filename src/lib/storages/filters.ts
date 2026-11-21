@@ -1,3 +1,4 @@
+import {stableStringify} from '@lib/phantomchat/sync-crdt';
 /*
  * https://github.com/morethanwords/tweb
  * Copyright (C) 2019-2021 Eduard Kuzmenko
@@ -28,7 +29,7 @@ import {isDialog} from '@appManagers/utils/dialogs/isDialog';
 import {isProtectedFolder} from '@lib/phantomchat/folders-protection';
 import {isGroupPeer, isSessionPeer} from '@lib/phantomchat/group-types';
 
-export type MyDialogFilter = Exclude<DialogFilter, DialogFilter.dialogFilterDefault>;
+export type MyDialogFilter = Exclude<DialogFilter, DialogFilter.dialogFilterDefault> & {catalogId?: string};
 
 const convertment = [
   ['pinned_peers', 'pinnedPeerIds'],
@@ -470,6 +471,13 @@ export default class FiltersStorage extends AppManager {
    * that disappear, filter_update for each new/changed filter, and
    * filter_order for the final ordering.
    */
+  public replaceCatalogFilters(expected: MyDialogFilter[], next: MyDialogFilter[]): boolean {
+    if(stableStringify(Object.values(this.getFilters())) !== stableStringify(expected)) return false;
+    this.replaceAllFilters(next);
+    this.reseedSystemFolders();
+    return true;
+  }
+
   public replaceAllFilters(next: MyDialogFilter[]) {
     const nextIds = new Set(next.map((f) => f.id));
     // Delete removed filters
@@ -552,6 +560,7 @@ export default class FiltersStorage extends AppManager {
     // `max(id) + 1` is 5 today and would collide with any folder still sitting
     // on that id from an earlier build (and, once 5 is taken, with itself).
     filter.id = Math.max(START_LOCAL_ID, maxId + 1);
+    filter.catalogId = crypto.randomUUID();
     return this.updateDialogFilter(filter, undefined, prepend);
   }
 
