@@ -543,7 +543,7 @@ it('an aborted remote read cannot apply or publish its late snapshot', async() =
   const {adapter, state} = makeAdapter({cached: liveEntry('cached', {id: 'cached', name: 'Keep'}, 1)});
   const sync = makeSync(relay, adapter);
   let release: (value: any) => void;
-  relay.queryLatestEvent.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+  relay.queryLatestEvent.mockImplementationOnce(() => new Promise<typeof relay.event>((resolve) => { release = resolve; }));
   const controller = new AbortController();
   const first = sync.reconcile(controller.signal);
   await vi.waitFor(() => expect(release).toBeTypeOf('function'));
