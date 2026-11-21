@@ -1,3 +1,4 @@
+import {createSyncRecovery, syncStep} from './session-sync-recovery';
 /**
  * Launch-time chat-list hygiene and chat-open relay catch-up.
  *
@@ -245,63 +246,46 @@ export function installLaunchDialogs(opts: {
   };
 
   const epoch = sessionSyncGeneration();
-  const pending = new Map<number, Promise<void>>();
+  const recoveries = new Map<number, (force?: boolean) => Promise<boolean>>();
   const syncSelected = (peerId: number, force = false): Promise<void> => {
     if(epoch !== sessionSyncGeneration()) return Promise.resolve();
     if(!peerId) return Promise.resolve();
-    if(pending.has(peerId)) return pending.get(peerId);
-    setChatSyncStatus(peerId, 'syncing');
-    const run = (async() => {
-      let timer: ReturnType<typeof setTimeout>;
-      try {
-        const work = async(): Promise<ChatCatchUpOutcome> => {
+    let recover = recoveries.get(peerId);
+    if(!recover) {
+      recover = createSyncRecovery({
+        current: () => epoch === sessionSyncGeneration(),
+        cleanup: onSessionSyncCleanup,
+        status: (status) => setChatSyncStatus(peerId, status),
+        run: async(signal, forced) => {
+          const step = <T>(work: Promise<T>) => syncStep(work, signal);
           let key: string;
           if(isGroupPeer(peerId)) {
-            // Refresh account metadata alongside this conversation's inbox. A slow
-            // or failed snapshot must not prevent history catch-up in all groups.
-            // Known remote changes retain their own per-peer send guard.
             void reconcileSessionGroups();
-            const {getGroupStore} = await import('./group-store');
-            const group = await getGroupStore().getByPeerId(peerId);
-            if(!group) { markChatSyncStale(peerId); return 'failed'; }
+            const {getGroupStore} = await step(import('./group-store'));
+            const group = await step(getGroupStore().getByPeerId(peerId));
+            if(!group) { markChatSyncStale(peerId); return false; }
             key = `group:${group.groupId}`;
           } else {
-            const {getPubkey} = await import('./virtual-peers-db');
-            key = await getPubkey(peerId);
+            const {getPubkey} = await step(import('./virtual-peers-db'));
+            key = await step(getPubkey(peerId));
           }
-          if(!key) return 'skipped';
-          const outcome = await chatAPI.catchUpConversation(key, force);
-          if(epoch !== sessionSyncGeneration()) return 'failed';
-          if(outcome === 'ran' || outcome === 'skipped') {
-            await rootScope.managers.appMessagesManager.invalidateHistoryCache?.(peerId);
-            if(epoch !== sessionSyncGeneration()) return 'failed';
-            await rootScope.managers.appMessagesManager.reloadConversation(peerId);
-            // Cached bubbles can outlive the history cache. Reload only this peer.
-            if(epoch !== sessionSyncGeneration()) return 'failed';
-            rootScope.dispatchEvent?.('history_reload', peerId);
-          }
-          return outcome;
-        };
-        // A slow check gets actionable feedback, but its eventual success
-        // still heals the UI without requiring a manual retry.
-        timer = setTimeout(() => {
-          if(epoch === sessionSyncGeneration()) setChatSyncStatus(peerId, 'failed');
-        }, 30_000);
-        const outcome = await work();
-        if(epoch !== sessionSyncGeneration()) return;
-        setChatSyncStatus(peerId, outcome === 'ran' || outcome === 'skipped' ? 'ready' :
-          outcome === 'offline' ? 'offline' : 'failed');
-      } catch(error) {
-        console.warn(LOG_PREFIX, 'selected chat sync failed', error);
-        if(epoch === sessionSyncGeneration()) setChatSyncStatus(peerId, 'failed');
-      } finally {
-        clearTimeout(timer);
-        pending.delete(peerId);
-      }
-    })();
-    pending.set(peerId, run);
-    return run;
+          if(!key) return true;
+          const outcome = await step(chatAPI.catchUpConversation(key, forced));
+          if(epoch !== sessionSyncGeneration()) return false;
+          if(outcome !== 'ran' && outcome !== 'skipped') return false;
+          await step(Promise.resolve(rootScope.managers.appMessagesManager.invalidateHistoryCache?.(peerId)));
+          if(epoch !== sessionSyncGeneration()) return false;
+          await step(rootScope.managers.appMessagesManager.reloadConversation(peerId));
+          if(epoch !== sessionSyncGeneration()) return false;
+          rootScope.dispatchEvent?.('history_reload', peerId);
+          return true;
+        }
+      });
+      recoveries.set(peerId, recover);
+    }
+    return recover(force).then(() => {});
   };
+
   registerChatSyncRetry((peerId) => syncSelected(peerId, true));
   if(appImManager?.addEventListener) {
     const peerChanged = (payload: unknown) => {

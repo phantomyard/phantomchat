@@ -1,3 +1,4 @@
+import {syncStep} from './session-sync-recovery';
 /**
  * ChatAPI - High-level composition layer for PhantomChat.chat 1:1 chat
  *
@@ -1367,17 +1368,21 @@ export class ChatAPI {
 
     if(!this.relayPool.isConnected()) return Promise.resolve('offline');
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25_000);
+    const step = <T>(work: Promise<T>) => syncStep(work, controller.signal);
     const run = (async(): Promise<ChatCatchUpOutcome> => {
       try {
         const store = getMessageStore();
         const convId = peerPubkey.startsWith('group:') ? peerPubkey : store.getConversationId(this.ownId, peerPubkey);
-        const latest = await store.getLatestTimestamp(convId);
+        const latest = await step(store.getLatestTimestamp(convId));
         const since = latest > 0 ? Math.max(0, latest - CHAT_OPEN_CATCHUP_OVERLAP_S) : undefined;
         this.log('[ChatAPI] chat catch-up:', peerPubkey.slice(0, 8), 'since', since);
         // Delivered through the pool's receive pump (see catchUpInbox).
         this.relayPool.setCatchUpPriority?.(peerPubkey);
-        const result = await this.relayPool.catchUpInbox(since);
+        const result = await step(this.relayPool.catchUpInbox(since));
         if(result.completed === 0) {
+          this.relayPool.recoverSyncTransport?.();
           // No relay finished the walk (all errored, timed out, or truncated):
           // record nothing, so the next open of this chat retries.
           this.log.warn('[ChatAPI] chat catch-up inconclusive:', peerPubkey.slice(0, 8), result);
@@ -1386,10 +1391,12 @@ export class ChatAPI {
         this.lastChatCatchUpAt.set(peerPubkey, Date.now());
         return 'ran';
       } catch(err: any) {
+        if(controller.signal.aborted) this.relayPool.recoverSyncTransport?.();
         this.log.warn('[ChatAPI] chat catch-up failed:', peerPubkey.slice(0, 8), err?.message);
         return 'failed';
       }
     })().finally(() => {
+      clearTimeout(timeout);
       this.chatCatchUpInFlight.delete(peerPubkey);
     });
     this.chatCatchUpInFlight.set(peerPubkey, run);

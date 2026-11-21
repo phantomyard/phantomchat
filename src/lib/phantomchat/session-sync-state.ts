@@ -1,3 +1,5 @@
+import {createSyncRecovery} from './session-sync-recovery';
+
 /** Main-thread freshness evidence. Cached history may paint while sending waits. */
 export type SessionSyncStatus = 'syncing' | 'ready' | 'failed' | 'offline';
 type Listener = () => void;
@@ -88,7 +90,7 @@ export function canSendToSyncedChat(peerId: number): boolean {
   if(staleChats.has(peerId) || staleGroups.has(peerId)) return false;
   // A failed/offline query is not evidence of a remote change. Keep the
   // existing send/queue path available with explicit cached-data feedback.
-  return chats.get(peerId) !== 'syncing';
+  return true;
 }
 
 export function resetSessionSync(): void {
@@ -105,42 +107,17 @@ export function resetSessionSync(): void {
   refreshSessionSyncViews();
 }
 
-/** Single-flight, including a trailing pass when a nudge arrives mid-query. */
-export function createGroupsReconciler(run: () => Promise<boolean>): () => Promise<boolean> {
-  let flight: Promise<boolean> | undefined;
-  let again = false;
+/** Single-flight metadata recovery, including a trailing pass for live nudges. */
+export function createGroupsReconciler(run: (signal: AbortSignal, force: boolean) => Promise<boolean>): () => Promise<boolean> {
+  let epoch: number;
+  const recover = createSyncRecovery({
+    run,
+    status: setGroupsSyncStatus,
+    current: () => epoch === undefined || epoch === generation,
+    cleanup: onSessionSyncCleanup
+  });
   return () => {
-    if(flight) {
-      again = true;
-      return flight;
-    }
-    const epoch = generation;
-    if(typeof navigator !== 'undefined' && navigator.onLine === false) {
-      setGroupsSyncStatus('offline');
-      return Promise.resolve(false);
-    }
-    setGroupsSyncStatus('syncing');
-    const feedback = setTimeout(() => {
-      if(epoch === generation) setGroupsSyncStatus('failed');
-    }, 30_000);
-    flight = (async() => {
-      let ok = false;
-      try {
-        do {
-          again = false;
-          ok = false;
-          ok = await run();
-        } while(again);
-      } catch(error) {
-        console.warn('[session-sync] groups reconcile failed', error);
-      } finally {
-        clearTimeout(feedback);
-        flight = undefined;
-        if(epoch === generation) setGroupsSyncStatus(ok ? 'ready' :
-          typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'failed');
-      }
-      return ok;
-    })();
-    return flight;
+    epoch ??= generation;
+    return recover();
   };
 }

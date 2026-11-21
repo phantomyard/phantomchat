@@ -1,3 +1,4 @@
+import {syncStep} from './session-sync-recovery';
 /**
  * CrdtSync — the transport + reconcile engine shared by contacts-sync and
  * groups-sync.
@@ -179,20 +180,21 @@ export class CrdtSync<T> {
    * "local wins" branch, because with tombstones there is nothing to lose.
    * Both sides always converge on the same union.
    */
-  async reconcile(): Promise<ReconcileOutcome> {
+  async reconcile(signal?: AbortSignal): Promise<ReconcileOutcome> {
+    const step = <V>(work: Promise<V>) => signal ? syncStep(work, signal) : work;
     // NOTE: adapter.read() is a WRITER — the adapters' resurrection self-heal
     // tears store records down inside read() (see groups/contacts-sync-adapter).
     // It runs on every reconcile() AND every publishOnce(); call sites should
     // not assume a read is side-effect free.
     let local: SyncMap<T>;
     try {
-      local = await this.deps.adapter.read();
+      local = await step(this.deps.adapter.read());
     } catch(err) {
       console.warn(this.tag, 'local read failed', err);
       return 'failed';
     }
 
-    const remote = await this.fetchRemote();
+    const remote = await step(this.fetchRemote());
 
     if(remote.status === 'unavailable') {
       // Relay unreachable, or a snapshot exists but we couldn't read it.
@@ -202,12 +204,13 @@ export class CrdtSync<T> {
     }
 
     try {
-      local = await this.deps.adapter.read();
+      local = await step(this.deps.adapter.read());
     } catch(err) {
       console.warn(this.tag, 'local refresh failed', err);
       return 'failed';
     }
 
+    signal?.throwIfAborted();
     if(remote.status === 'absent') {
       // Relay confirmed there is no snapshot. Safe to seed it from local if we
       // have anything worth publishing.
@@ -244,6 +247,7 @@ export class CrdtSync<T> {
       }
     }
 
+    signal?.throwIfAborted();
     if(remoteChanged || versionChanged) {
       await this.publishMap(merged);
       return 'merged-applied-and-published';

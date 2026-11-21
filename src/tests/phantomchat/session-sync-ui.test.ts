@@ -1,7 +1,7 @@
 import {afterEach, expect, it, vi} from 'vitest';
 vi.mock('@lib/langPack', () => ({i18n: (key: string) => document.createTextNode(key)}));
 import {mountSessionSyncStatus, withStableSessionList} from '@lib/phantomchat/session-sync-ui';
-import {enableSessionSync, resetSessionSync, setGroupsSyncStatus, setChatSyncStatus, registerChatSyncRetry} from '@lib/phantomchat/session-sync-state';
+import {enableSessionSync, resetSessionSync, setGroupsSyncStatus, setChatSyncStatus} from '@lib/phantomchat/session-sync-state';
 afterEach(() => { resetSessionSync(); document.body.replaceChildren(); });
 it('shows progress/errors and hides settled status without leaving a permanent row', () => {
   enableSessionSync(async() => true);
@@ -16,10 +16,11 @@ it('shows progress/errors and hides settled status without leaving a permanent r
   expect(slot.hidden).toBe(false);
   expect(slot.textContent).toContain('SessionSync.Messages');
   setChatSyncStatus(123, 'failed');
-  const retry = vi.fn().mockResolvedValue(undefined);
-  registerChatSyncRetry(retry);
-  slot.querySelector('button').click();
-  expect(retry).toHaveBeenCalledWith(123);
+  expect(slot.textContent).toBe('SessionSync.Messages');
+  expect(slot.querySelector('button')).toBeNull();
+  setChatSyncStatus(123, 'offline');
+  expect(slot.hidden).toBe(true);
+  expect(slot.textContent).toBe('');
   setChatSyncStatus(123, 'ready');
   expect(slot.hidden).toBe(true);
   dispose();
@@ -50,4 +51,16 @@ it('restores access to the live list when application fails', async() => {
   await expect(withStableSessionList(async() => { throw new Error('storage unavailable'); })).rejects.toThrow('storage unavailable');
   expect(live.style.visibility).toBe('');
   expect(document.querySelector('.session-sync-snapshot')).toBeNull();
+});
+
+it('reveals the usable cached list even if application never settles', async() => {
+  vi.useFakeTimers();
+  const live = document.createElement('div');
+  live.id = 'folders-container';
+  document.body.append(live);
+  void withStableSessionList(() => new Promise(() => {}));
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(live.style.visibility).toBe('');
+  expect(document.querySelector('.session-sync-snapshot')).toBeNull();
+  vi.useRealTimers();
 });

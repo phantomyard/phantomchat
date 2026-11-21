@@ -69,8 +69,8 @@
     },
     "src/lang.ts": {
       "stable": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b",
-      "preview": "4895023355e8dde02981569d8eb40c95274a7a87897e1f0973aa205c14ef5c39",
-      "reason": "Group sync lockout correction: per-peer ephemeral send guards and independent selected-history catch-up; compact blue status pills and copy. No persistent schema, database, protocol, CRDT payload or encryption changes. Existing deletion/archive semantics retained. Requires independent exact-head review."
+      "preview": "0f29d052534aeab733b7ef2f5a46c5d03baf9ffd5e9b233d1db43978aa1af0fb",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/lib/appDialogsManager.ts": {
       "stable": "9f62067691fbdeebe6589956d1678b727140e8045143ce8cb04bd285bf44ab79",
@@ -84,8 +84,8 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f8fc66f7707e106851bbf0aa76b018408bda9c59f6740b9fccf4fa2a89fe0d4e",
-      "preview": "49c7f315bd467b8b12b9a79e21bfe431615122a2dcbee2b0a98e0381d1c7608b",
-      "reason": "Group sync lockout correction: per-peer ephemeral send guards and independent selected-history catch-up; compact blue status pills and copy. No persistent schema, database, protocol, CRDT payload or encryption changes. Existing deletion/archive semantics retained. Requires independent exact-head review."
+      "preview": "d44042505a725efa8f1cbd3988e49474c808ee5bdfc9e9310f3143be115649cc",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
       "stable": "9c1ec3eda617bffd552966b51b737e85d797049d9f0446f50badfd1c1aa1b625",
@@ -94,8 +94,8 @@
     },
     "src/lib/phantomchat/phantomchat-launch-dialogs.ts": {
       "stable": "588c9958afbb01a88dc40dab4657cbb13c4cb3250ebb3ffbd2b841fb5bfad4f1",
-      "preview": "a25656040e172ca70ab2b3690375cd0edcfe4d20ef552c809691df053ae5ac99",
-      "reason": "Group sync lockout correction: per-peer ephemeral send guards and independent selected-history catch-up; compact blue status pills and copy. No persistent schema, database, protocol, CRDT payload or encryption changes. Existing deletion/archive semantics retained. Requires independent exact-head review."
+      "preview": "de141b0959e40fa61501a6b460645afda9471b1cbf1f76c27faac811a7d92f0f",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/components/sidebarLeft/index.ts": {
       "stable": "20ecf8550de094f7d0cd8275896bf73bd1cb43e85c2f008429b7ef0c120acba4",
@@ -149,8 +149,8 @@
     },
     "src/langPackLocalVersion.example.ts": {
       "stable": "2c4a3dccac516f133aa7c3f11e89d93feb71c41ed02b067b8935af8fcf16d536",
-      "preview": "a049937cd5762be38d019ce34e997f0c8bde06f8e630fee470e91cc47f3a8a12",
-      "reason": "Invalidates a cached v23 language pack so SessionSync status/retry strings reach returning clients. No identity, storage or database schema change. Independent exact-head review required."
+      "preview": "f453c6dcd711c83222f5fd1e07b6f86a0a153f146365c4543ff0542c6dbdffd3",
+      "reason": "Bumps local language cache from v24 to v25 so returning clients receive compact Syncing... copy and removal of Retry/offline queue labels. No shared data/schema change. Independent exact-head review required."
     },
     "src/lib/folders-sidebar-layout.ts": {
       "stable": "1d1cd33035fef08b20ade7d6bfa453c9bc423017d97f02788adfb0da285a6c44",
@@ -239,8 +239,8 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "6bca43a7483e50320da208edfaca5690eed3f8b0d1a7e2e19dc4a7aaa6d620f0",
-      "reason": "Group sync lockout correction: per-peer ephemeral send guards and independent selected-history catch-up; compact blue status pills and copy. No persistent schema, database, protocol, CRDT payload or encryption changes. Existing deletion/archive semantics retained. Requires independent exact-head review."
+      "preview": "6b7d7b1a10f4746f6a55fee43c573355973ee8ac273f428f0689d3a6acbbff29",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/components/autonomousDialogList/base.ts": {
       "stable": "c6fda43198d2a012cbc2c3eee21426f39e369589960f76527593c9906a9a9a8e",
@@ -309,8 +309,8 @@
     },
     "src/lib/phantomchat/crdt-sync.ts": {
       "stable": "7830591c589e574ac85b5c76b9ec990b6eb0897c454da709d2b4ff67b9bed0b8",
-      "preview": "1b2aefac8042c252500be80157594e9fe390a01fefff3edef52dc05ecd0bf592",
-      "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
+      "preview": "74ecd4f4b987d40857fc91b1b665e8818b5d79168fa95a734b96a7a33eddf5a6",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/lib/phantomchat/ensure-sender-user-injected.ts": {
       "stable": "9b1386f4af1d93ea6ef66556bd8400032b7a25dd2c8320b4963df2fc442b63be",
@@ -1094,8 +1094,8 @@
     },
     "src/lib/phantomchat/nostr-relay-pool.ts": {
       "stable": "cfde53316ea81b1e043becc806e98ea0842877f7276b0dde333ee7cd5d876f78",
-      "preview": "a0e28835c89d62dc8f35c48d5c3f217a7c19a22acc46caee683715499a5ca98e",
-      "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
+      "preview": "5763d682d2e46a86cbefe9a1882cf089b0b5c821a3f032e7b425f4fe53c85d46",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/lib/phantomchat/offline-queue.ts": {
       "stable": "3eb8dc75da6a3373db23280a4d7eb8880a468bcd9024d876644af1ac62dd8141",
@@ -1159,8 +1159,8 @@
     },
     "src/lib/phantomchat/chat-api.ts": {
       "stable": "d34d6ed420e040e3d4db956866ae00f158931bde84731a9f9123cff5f439fc63",
-      "preview": "701e56e828c42cda386f084fae62f18869430cd24865697e8f22c4203ce809ae",
-      "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
+      "preview": "607300e6656c3c48d0ccdc706f338282705894109cd52f1a6667d337ca02ce77",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/lib/phantomchat/phantomchat-device-sync.ts": {
       "stable": "3d01603a916e0dce0c67056e989960c8566639031ea3d64da4c033f50f9c0a1b",
@@ -1184,13 +1184,18 @@
     },
     "src/lib/phantomchat/session-sync-state.ts": {
       "stable": "absent",
-      "preview": "c834a64c6205732daee6fd2268f51a2ef612c852bd94f02f7087f8bcb1e62288",
-      "reason": "Group sync lockout correction: per-peer ephemeral send guards and independent selected-history catch-up; compact blue status pills and copy. No persistent schema, database, protocol, CRDT payload or encryption changes. Existing deletion/archive semantics retained. Requires independent exact-head review."
+      "preview": "dba83edd47dd8df3d3b66be9e9948a39f334f95d6191f6ac297a57493452ca75",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/lib/phantomchat/session-sync-ui.ts": {
       "stable": "absent",
-      "preview": "2da30245c1f777ffc731a7150c27a0e4dce08d0c59ab111122b421c0fd54db8a",
-      "reason": "Group sync lockout correction: per-peer ephemeral send guards and independent selected-history catch-up; compact blue status pills and copy. No persistent schema, database, protocol, CRDT payload or encryption changes. Existing deletion/archive semantics retained. Requires independent exact-head review."
+      "preview": "520d137d290e09daa245f036bd9606d7b0bf8389ea27a1cc2cb868d9b3a5af06",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
+    },
+    "src/lib/phantomchat/session-sync-recovery.ts": {
+      "stable": "absent",
+      "preview": "29e360262d60ccfc0c40b8989cccaa25f8550aac849d61fe5f3887f65142aaec",
+      "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     }
   }
 }

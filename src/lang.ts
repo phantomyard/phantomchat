@@ -1,11 +1,5 @@
 const lang = {
-  'SessionSync.Messages': 'Syncing messages…',
-  'SessionSync.Sessions': 'Updating sessions…',
-  'SessionSync.Offline': 'Offline. Waiting to sync.',
-  'SessionSync.Failed': 'Sync paused.',
-  'SessionSync.Retry': 'Retry',
-  'SessionSync.OfflineQueue': 'Offline. Messages will queue.',
-  'SessionSync.FailedQueue': 'Sync paused. Showing cached messages.',
+  'SessionSync.Messages': 'Syncing...',
 
   'VoiceModels': 'Voice Models',
   'SpecializedModels': 'Specialized Models',

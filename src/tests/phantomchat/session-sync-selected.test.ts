@@ -75,18 +75,22 @@ it('a peer without a virtual mapping does not get permanently stranded', async()
   expect(h.catchUp).not.toHaveBeenCalled();
 });
 
-it('a slow selected check heals on late success after timeout feedback', async() => {
+it('automatically forces a new selected attempt and fences the abandoned completion', async() => {
   vi.useFakeTimers();
   let release: (outcome: string) => void;
-  const h = install(vi.fn(() => new Promise((resolve) => { release = resolve; })));
+  const catchUp = vi.fn().mockImplementationOnce(() => new Promise((resolve) => { release = resolve; })).mockResolvedValue('ran');
+  const h = install(catchUp);
   h.listeners.peer_changed({peerId: 123});
-  await vi.advanceTimersByTimeAsync(1);
-  expect(release).toBeTypeOf('function');
   await vi.advanceTimersByTimeAsync(30_000);
   expect(getChatSyncStatus(123)).toBe('failed');
-  release('ran');
+  expect(canSendToSyncedChat(123)).toBe(true);
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(catchUp).toHaveBeenLastCalledWith('contact-pubkey', true);
+  expect(getChatSyncStatus(123)).toBe('ready');
+  release('failed');
   await vi.advanceTimersByTimeAsync(0);
   expect(getChatSyncStatus(123)).toBe('ready');
+  expect(h.reload).toHaveBeenCalledTimes(1);
 });
 
 

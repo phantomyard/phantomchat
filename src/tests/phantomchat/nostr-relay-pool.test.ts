@@ -1420,6 +1420,19 @@ describe('NostrRelayPool', () => {
   describe('Palm-Pilot hard reset on resume (zombie self-heal)', () => {
     const ADV = 0;
 
+    it('shares a rate-limited socket reset across simultaneous sync recoveries', async() => {
+      const pool = new NostrRelayPool({relays: [{url: 'wss://r1.test', read: true, write: true}], onMessage: vi.fn()});
+      await pool.initialize();
+      const reset = vi.spyOn(pool as any, 'hardResetSockets');
+      pool.recoverSyncTransport();
+      pool.recoverSyncTransport();
+      expect(reset).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      pool.recoverSyncTransport();
+      expect(reset).toHaveBeenCalledTimes(2);
+      pool.disconnect();
+    });
+
     it('tears down every socket and dials fresh on visible — zombie sockets cannot survive', async() => {
       const relays = [
         {url: 'wss://r1.test', read: true, write: true},

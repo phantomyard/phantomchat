@@ -991,6 +991,22 @@ describe('ChatAPI', () => {
       expect(catchUpInbox).toHaveBeenCalledTimes(2);
     });
 
+    test('a hung inner inbox flight expires and a forced attempt starts a fresh query', async() => {
+      vi.useFakeTimers();
+      try {
+        let release: (result: typeof DONE) => void;
+        catchUpInbox.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+        const first = chatApi.catchUpConversation(PEER_HEX);
+        await vi.advanceTimersByTimeAsync(25_000);
+        expect(await first).toBe('failed');
+        expect(await chatApi.catchUpConversation(PEER_HEX, true)).toBe('ran');
+        release({...DONE, completed: 0});
+        await vi.advanceTimersByTimeAsync(0);
+        expect(catchUpInbox).toHaveBeenCalledTimes(2);
+        expect(await chatApi.catchUpConversation(PEER_HEX)).toBe('skipped');
+      } finally { vi.useRealTimers(); }
+    });
+
     test('concurrent opens of the same chat share one query', async() => {
       let release!: () => void;
       catchUpInbox.mockImplementationOnce(() => new Promise<any>((r) => { release = () => r(DONE); }));

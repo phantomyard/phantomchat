@@ -842,8 +842,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             groupsQueue = next.then(() => {}, () => {});
             return next;
           };
-          const reconcileGroups = createGroupsReconciler(() => groupOperation(async() => {
-            const g = await groupsSync.reconcile();
+          const reconcileGroups = createGroupsReconciler((signal, force) => groupOperation(async() => {
+            if(signal.aborted) return false;
+            if(force) crdtRelayPool?.recoverSyncTransport?.();
+            const g = await groupsSync.reconcile(signal);
+            if(signal.aborted || g === 'failed') return false;
             // Post-apply convergence (duplicate-groups regression 2026-10-04,
             // round 2): boot-only convergence (#196) misses a rival successor
             // that first ARRIVES via sync after the boot sweep — the init
@@ -858,7 +861,9 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             // its mint time, so the tombstone always wins.)
             try {
               const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+              signal.throwIfAborted();
               await getGroupAPI().reconcileSupersededGroups();
+              signal.throwIfAborted();
               // Class reconcile BEFORE the orphan sweep: a pre-class record
               // ingested in the batch-10 tag era keeps a group-range peerId, so
               // its session renders in Groups and Sessions stays empty (the
@@ -866,6 +871,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               // now, so the repair runs on settled data — and it must precede
               // the sweep, which reads live peer ids to decide what is orphaned.
               await getGroupAPI().repairGroupPeerClasses();
+              signal.throwIfAborted();
               // (#198) Post-convergence chat-list heal: records are now the
               // definitive merged CRDT state, so any remaining group-range
               // dialog without a live record is an orphan left by an older

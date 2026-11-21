@@ -1,6 +1,6 @@
 import {i18n} from '@lib/langPack';
 import {
-  getChatSyncStatus, getGroupsSyncStatus, retrySessionSync, subscribeSessionSync, canSendToSyncedChat
+  getChatSyncStatus, getGroupsSyncStatus, subscribeSessionSync
 } from './session-sync-state';
 
 /** Transient progress/error feedback; settled views keep their normal layout. */
@@ -10,27 +10,18 @@ export function mountSessionSyncStatus(host: HTMLElement, peer?: () => number): 
   slot.setAttribute('role', 'status');
   slot.setAttribute('aria-live', 'polite');
   const label = document.createElement('span');
-  const retry = document.createElement('button');
-  retry.type = 'button';
-  retry.append(i18n('SessionSync.Retry'));
-  retry.addEventListener('click', () => retrySessionSync(peer?.()));
-  slot.append(label, retry);
+  slot.append(label);
   host.prepend(slot);
   let previous: string;
   const unsubscribe = subscribeSessionSync(() => {
     const status = peer ? getChatSyncStatus(peer()) : getGroupsSyncStatus();
-    const canQueue = !!peer && canSendToSyncedChat(peer());
-    const identity = `${status}:${canQueue}`;
+    const identity = status;
     if(identity === previous) return;
     previous = identity;
     slot.dataset.state = status;
-    slot.hidden = status === 'ready';
-    if(status === 'ready') label.replaceChildren();
-    else label.replaceChildren(i18n(status === 'syncing' ?
-      peer ? 'SessionSync.Messages' : 'SessionSync.Sessions' :
-      status === 'offline' ? canQueue ? 'SessionSync.OfflineQueue' : 'SessionSync.Offline' :
-      canQueue ? 'SessionSync.FailedQueue' : 'SessionSync.Failed'));
-    retry.hidden = status !== 'failed' && status !== 'offline';
+    slot.hidden = status === 'ready' || status === 'offline';
+    if(slot.hidden) label.replaceChildren();
+    else label.replaceChildren(i18n('SessionSync.Messages'));
   });
   return () => { unsubscribe(); slot.remove(); };
 }
@@ -54,12 +45,19 @@ export async function withStableSessionList<T>(apply: () => Promise<T>): Promise
   const sourceScrollers = live.querySelectorAll('.scrollable');
   snapshot.querySelectorAll('.scrollable').forEach((node, index) => { node.scrollTop = sourceScrollers[index]?.scrollTop ?? 0; });
   live.style.visibility = 'hidden';
-  try {
-    return await apply();
-  } finally {
+  const reveal = () => {
+    if(!snapshot.parentNode) return;
     snapshot.remove();
     live.style.visibility = '';
     delete live.dataset.syncApplying;
     live.removeAttribute('aria-busy');
+  };
+  // A stuck persistence/worker call must never leave the live list inaccessible.
+  const safety = setTimeout(reveal, 30_000);
+  try {
+    return await apply();
+  } finally {
+    clearTimeout(safety);
+    reveal();
   }
 }

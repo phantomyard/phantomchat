@@ -203,25 +203,27 @@ try {
     return (await getMessageStore().getMessages(`group:${id}`, 20)).some((row) => row.content === 'Composer works while metadata is unavailable');
   }, groupId);
   console.log('metadata snapshot unreadable: real group send succeeded; blue pill stays above chat on mobile');
+  assert.ok(['', 'Syncing...'].includes(await pill.innerText()));
+  assert.equal(await pill.locator('button').count(), 0);
   failGroupMetadata = false;
-  await b.page.evaluate(async(id) => {
-    const {retrySessionSync} = await import('/src/lib/phantomchat/session-sync-state.ts');
-    retrySessionSync(id);
-  }, peerId);
+  // No click, foreground event or manual retry: the background retry must heal.
+
   await waitForAsync(b.page, async() => {
     const {getGroupsSyncStatus} = await import('/src/lib/phantomchat/session-sync-state.ts');
     return getGroupsSyncStatus() === 'ready';
-  });
+  }, undefined, {timeout: 65000});
+  await b.page.waitForFunction(() => [...document.querySelectorAll('.session-sync-status')].every((node) => node.hidden));
+  console.log('automatic metadata recovery cleared all pills without user action');
 
   const input = b.page.locator('.chat-input:not(.hide) .input-message-input[contenteditable="true"]:not(.input-field-input-fake)').last();
   await input.fill('Keep this draft while catching up');
   await b.page.evaluate(async(id) => {
-    const {setChatSyncStatus} = await import('/src/lib/phantomchat/session-sync-state.ts');
-    setChatSyncStatus(id, 'syncing');
+    const {markChatSyncStale} = await import('/src/lib/phantomchat/session-sync-state.ts');
+    markChatSyncStale(id);
   }, peerId);
   await input.press('Enter');
   assert.match(await input.innerText(), /Keep this draft/);
-  assert.match(await b.page.locator('.chat:not(.hide) > .session-sync-status').last().innerText(), /Syncing messages/);
+  assert.match(await b.page.locator('.chat:not(.hide) > .session-sync-status').last().innerText(), /Syncing\.\.\./);
   const mediaBlocked = await b.page.evaluate(async(id) => {
     try {
       await window.__phantomchatMTProtoServer.handleMethod('messages.sendMedia', {peer: {_: 'inputPeerChat', chat_id: Math.abs(id)}});

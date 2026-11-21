@@ -3417,6 +3417,14 @@ export class NostrRelayPool {
    * resume (the same foreground transition would otherwise kill the sockets
    * resumeFromIdle just opened — the two listeners fire on the same event).
    */
+  private lastSyncRecoveryAt = -Infinity;
+  /** Share one socket recovery across metadata/selected-chat retries. */
+  recoverSyncTransport(): void {
+    if(Date.now() - this.lastSyncRecoveryAt < 60_000) return;
+    this.lastSyncRecoveryAt = Date.now();
+    this.hardResetSockets('sync-recovery');
+  }
+
   private hardResetSockets(reason: string): void {
     if(this.idleGated) return;
     if(Date.now() - this.lastResumeFromIdleAt < RESUME_RACE_GUARD_MS) return;
