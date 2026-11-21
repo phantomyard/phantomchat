@@ -37,8 +37,19 @@ writes. The browser lock serializes catalog passes across tabs; IndexedDB
 transactions allocate revisions atomically. Worker folder replacement compares
 the expected current filters before writing, so a concurrent local edit causes
 a retry. Group archive projection updates only archive fields in one transaction.
+Every successful catalog pass also compares persisted worker dialog rows with the
+current group store. Missing rows and stale folder indices are rebuilt through
+`reloadConversation`; orphan group/session rows are swept with a fresh store
+recheck before removal. This repairs a stale chat list even when no catalog
+register changed and the legacy groups snapshot remains unreadable. Group data,
+message history and drafts are retained. Synthetic group/session peers never
+subscribe to Telegram channel-difference polling (they have no channel `pts`);
+relay catch-up remains responsible for their history.
 
-On upgrade, cached folder/archive entries seed revision zero. The legacy folder
+On upgrade, cached folder/archive entries seed revision zero. Cached folder
+migration retains the existing local modified/published stamp so unpublished
+offline edits beat an older legacy relay snapshot; subsequent edits use logical
+revisions. The legacy folder
 relay snapshot is imported once, as a union, without treating missing entries as
 deletes. Group/session records and their delete proofs are also seeded from the
 existing group store and sync. Existing identity, message and group database

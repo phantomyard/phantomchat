@@ -92,14 +92,14 @@ it('a newer metadata record cannot revert a logical archive revision', () => {
   expect(mergeGroupsMaps(b, a).g.data.archivedAt).toBe(10);
 });
 
-function fixture(events: Map<string, any>, options: {query?: () => Promise<any[]>; setFilters?: any; legacy?: any; roster?: any} = {}) {
+function fixture(events: Map<string, any>, options: {query?: () => Promise<any[]>; setFilters?: any; legacy?: any; roster?: any; projectDialogs?: any} = {}) {
   let filters = [folder(5, randomUUID())];
   const account = randomUUID();
   let publishes = 0;
   const engine = new AccountCatalogSync({
     account, roster: options.roster || {read: async() => ({}), apply: async() => {}}, getFilters: async() => structuredClone(filters),
     setFilters: options.setFilters || (async(_expected: any, next: any) => { filters = structuredClone(next); return true; }),
-    getGroups: async() => [], applyArchive: async() => {},
+    getGroups: async() => [], projectDialogs: options.projectDialogs || (async() => {}), applyArchive: async() => {},
     legacyFolders: async() => options.legacy || null,
     query: options.query || (async() => [...events.values()]),
     publish: async(event) => { publishes++; events.set(event.tags[0][1], event); },
@@ -217,7 +217,7 @@ it('reopening a stale cached folder projection cannot resurrect a known deletion
   const reopen = new AccountCatalogSync({
     account, roster: {read: async() => ({}), apply: async() => {}},
     getFilters: async() => structuredClone(f.filters()), setFilters: async(_expected, next) => { f.set(next); return true; },
-    getGroups: async() => [], applyArchive: async() => {}, legacyFolders: async() => null,
+    getGroups: async() => [], projectDialogs: async() => {}, applyArchive: async() => {}, legacyFolders: async() => null,
     query: async() => [...relay.values()], publish: async(event) => { relay.set(event.tags[0][1], event); }, encrypt: (p) => p, decrypt: (p) => p
   });
   engines.push(reopen); await reopen.start(); await reopen.reconcile();
@@ -255,4 +255,29 @@ it('session peer-range evidence still materializes a class upgrade without an ex
   const local: any = {id: data.groupId, updatedAt: 10, data};
   const remote: any = {...local, data: {...data, peerId: -12000000000000001}};
   expect(needsGroupMaterialization(remote, local)).toBe(true);
+});
+it('migration preserves a newer unpublished legacy folder rename over an older relay snapshot', async() => {
+  localStorage.setItem('phantomchat-folders-last-modified', '600');
+  const cached = folder(5, undefined, 'Offline rename'); delete cached.catalogId;
+  const remote = folder(5, undefined, 'Older relay name'); delete remote.catalogId;
+  const f = fixture(new Map(), {legacy: {createdAt: 500, snapshot: {version: 1, order: [5], customFolders: [remote]}}});
+  f.set([cached]);
+  try {
+    await f.engine.start(); await f.engine.reconcile();
+    expect(f.filters()[0].title.text).toBe('Offline rename');
+  } finally {localStorage.removeItem('phantomchat-folders-last-modified');}
+});
+
+it('projects chat rows on every successful catalog read even with no roster delta', async() => {
+  const projectDialogs = vi.fn().mockResolvedValue(undefined);
+  const f = fixture(new Map(), {projectDialogs});
+  await f.engine.start(); await f.engine.reconcile(); await f.engine.reconcile();
+  expect(projectDialogs).toHaveBeenCalledTimes(2);
+  expect(projectDialogs.mock.calls[0][0].aborted).toBe(false);
+});
+it('does not sweep cached rows after an unreadable catalog', async() => {
+  const projectDialogs = vi.fn();
+  const f = fixture(new Map([['bad', {content: 'unreadable', tags: []}]]), {projectDialogs});
+  await f.engine.start(); await expect(f.engine.reconcile()).rejects.toThrow();
+  expect(projectDialogs).not.toHaveBeenCalled();
 });

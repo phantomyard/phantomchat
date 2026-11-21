@@ -68,14 +68,15 @@ export function writeCatalogValue(state: CatalogState, key: string, value: unkno
 }
 
 /** Bootstrap cached entries at revision zero; real edits always outrank migration. */
-export function observeCatalog(state: CatalogState, view: CatalogView, prefix?: string): void {
+export function observeCatalog(state: CatalogState, view: CatalogView, prefix?: string, bootstrapFolderStamp = 0): void {
   const keys = new Set([...Object.keys(view), ...Object.keys(state.observed)]);
   for(const key of keys) {
     if(prefix && !key.startsWith(prefix)) continue;
     if(!state.initialized) {
       if(view[key] !== undefined && !state.items[key]) {
         const value = view[key] as {archiveUpdatedAt?: number};
-        const migration = key.startsWith('archive:') ? String(value.archiveUpdatedAt || 0).padStart(16, '0') : '0';
+        const stamp = key.startsWith('archive:') ? value.archiveUpdatedAt || 0 : bootstrapFolderStamp;
+        const migration = String(stamp).padStart(16, '0');
         state.items[key] = {revision: {counter: 0, device: 'legacy-' + migration}, value: view[key]};
       }
     } else if(stableStringify(view[key]) !== stableStringify(state.observed[key])) {

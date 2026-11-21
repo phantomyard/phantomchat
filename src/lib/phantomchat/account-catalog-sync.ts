@@ -1,3 +1,4 @@
+import {getLastModifiedAt, getLastPublishedAt} from './folders-sync-state';
 import {mergeAccountCatalog as mergeCatalog} from './account-catalog-merge';
 import type {GroupsLocalAdapter} from './groups-sync-adapter';
 import type {SyncMap} from './sync-crdt';
@@ -20,6 +21,7 @@ type Deps = {
   setFilters: (expected: MyDialogFilter[], filters: MyDialogFilter[]) => Promise<boolean>;
   legacyFolders: () => Promise<{snapshot: FolderSnapshot; createdAt: number} | null>;
   getGroups: () => Promise<GroupRecord[]>;
+  projectDialogs: (signal: AbortSignal) => Promise<void>;
   applyArchive: (group: GroupRecord) => Promise<void>;
   query: () => Promise<Array<{content: string; tags: string[][]}>>;
   publish: (event: {kind: number; created_at: number; tags: string[][]; content: string}) => Promise<void>;
@@ -53,7 +55,7 @@ export class AccountCatalogSync {
     await this.update((state) => {
       // Once initialized, archive mutations are recorded at the gesture site.
       // Never promote a stale group replay into a new catalog edit at boot.
-      if(!state.initialized) observeCatalog(state, {...filtersToCatalog(filters), ...groupsToCatalog(groups)});
+      if(!state.initialized) observeCatalog(state, {...filtersToCatalog(filters), ...groupsToCatalog(groups)}, undefined, Math.max(0, getLastModifiedAt(), getLastPublishedAt()));
       else {
         // A cached projection (including an older frontend's rewrite) is not
         // evidence of a new user gesture. Never let boot resurrect tombstones.
@@ -231,6 +233,7 @@ export class AccountCatalogSync {
       await this.deps.applyArchive({...group, ...value, catalogArchiveRevision: entry.revision});
     })));
     signal.throwIfAborted();
+    await step(this.deps.projectDialogs(signal));
     state = await step(this.update((current) => current));
     // Each device has its own replaceable addresses. Union every device's
     // shards; absence is never permission to overwrite another device.

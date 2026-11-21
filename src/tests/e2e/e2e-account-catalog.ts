@@ -217,6 +217,33 @@ try {
     return canSendToSyncedChat(peer);
   }, sendPeer, {timeout: 60000});
   assert.ok(failedMetadataQueries > 0, 'legacy metadata failure must be exercised');
+  // Real-device failure: catalog/group records already agree but the worker
+  // keeps an orphan row, loses a live row and retains stale archive placement.
+  const ghostPeer = -19119131014140290;
+  const projectionPeers = await b.page.evaluate(async({ids, ghostPeer}) => {
+    const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
+    const {PhantomChatPeerMapper} = await import('/src/lib/phantomchat/phantomchat-peer-mapper.ts');
+    const mapper = new PhantomChatPeerMapper();
+    const managers = window.appImManager.managers;
+    const group = await getGroupStore().get(ids[0]);
+    const session = await getGroupStore().get(ids[1]);
+    await managers.appChatsManager.saveApiChat(mapper.createTwebChat({chatId: -ghostPeer, title: 'Stale session row', membersCount: 1, date: 1}));
+    const dialog = mapper.createTwebDialog({peerId: ghostPeer, topMessage: 0, topMessageDate: 1795277071, isGroup: true});
+    await managers.dialogsStorage.pushDialog({dialog, offsetDate: 0});
+    const raw = await managers.dialogsStorage.getDialog(session.peerId);
+    const misplaced = Array.isArray(raw) ? raw[0] : raw;
+    misplaced.folder_id = 0;
+    await managers.dialogsStorage.pushDialog({dialog: misplaced, offsetDate: 0});
+    await managers.dialogsStorage.dropDialogOnDeletion(group.peerId);
+    return {group: group.peerId, session: session.peerId};
+  }, {ids, ghostPeer});
+  await waitForAsync(b.page, async({ghostPeer, projectionPeers}) => {
+    const rows = await window.appImManager.managers.dialogsStorage.getAllPersistedDialogs();
+    const has = (peer) => rows.find((d) => d.peerId === peer);
+    return !has(ghostPeer) && !!has(projectionPeers.group) && has(projectionPeers.session)?.folder_id === 1;
+  }, {ghostPeer, projectionPeers}, {timeout: 60000});
+  console.log('PASS unchanged catalog repairs orphan/missing/misplaced rows while legacy metadata stays unreadable');
+
   const composer = b.page.locator('.chat-input:not(.hide) .input-message-input[contenteditable="true"]:not(.input-field-input-fake)').last();
   await composer.fill('Catalog preserves cached sending');
   await b.page.locator('.chat-input:not(.hide) .btn-send').last().click();

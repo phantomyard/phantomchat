@@ -28,6 +28,7 @@ import {createPendingFlush} from '@lib/phantomchat/phantomchat-pending-flush';
 import {createReadReceiptSender} from '@lib/phantomchat/phantomchat-read-receipts';
 import {createDeliveryUI} from '@lib/phantomchat/phantomchat-delivery-ui';
 import {AccountCatalogSync} from '@lib/phantomchat/account-catalog-sync';
+import {reconcileCatalogDialogs} from '@lib/phantomchat/catalog-dialog-projection';
 import {isValidSnapshot, FOLDERS_SYNC_D_TAG, FOLDERS_SYNC_KIND, FOLDER_SYNC_TRIGGER_EVENTS} from '@lib/phantomchat/folders-sync-types';
 import {getConversationKey, nip44Encrypt, nip44Decrypt} from '@lib/phantomchat/nostr-crypto';
 import {CrdtSync, isInconclusiveReconcile} from '@lib/phantomchat/crdt-sync';
@@ -1013,6 +1014,16 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             return {snapshot, createdAt: event.created_at};
           },
           getGroups: () => getGroupStore().getAll(),
+          projectDialogs: (signal) => reconcileCatalogDialogs({
+            groups: () => getGroupStore().getAll(),
+            dialogs: () => rootScope.managers.dialogsStorage.getAllPersistedDialogs(),
+            reload: (peerId) => rootScope.managers.appMessagesManager.reloadConversation(peerId.toPeerId()),
+            sweep: async(signal) => {
+              const {getGroupAPI} = await import('@lib/phantomchat/group-api');
+              signal.throwIfAborted();
+              await getGroupAPI().dropOrphanGroupDialogs(signal);
+            }
+          }, signal),
           applyArchive: async(record) => {
             const applied = await getGroupStore().applyCatalogArchive(record);
             if(applied) await applyGroupDialogFolder(applied);
