@@ -69,7 +69,7 @@
     },
     "src/lang.ts": {
       "stable": "6829afd89766d813b1f5dea90f440b415a2f486bf1e84ae8f01cb9a3c102dc5b",
-      "preview": "ddd4995e64412aa436d0385f90ade4c948a35f82a0860401dbd0ad5293a228ae",
+      "preview": "c32e018794ffef8a11ebede2646d9e5d5c7ae210ce69139170e95262ea3ac717",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/lib/appDialogsManager.ts": {
@@ -84,7 +84,7 @@
     },
     "src/scripts/out/langPack.strings": {
       "stable": "f8fc66f7707e106851bbf0aa76b018408bda9c59f6740b9fccf4fa2a89fe0d4e",
-      "preview": "56fcffd6c764a95e1cac89bce1d6c1a0d4af9feecf78557b9ae34ac306655843",
+      "preview": "af2a13bb4aa27aaecdf79c672a4891fcd69e2962ad0f59ce26ceeb59e72a667b",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/addToFolderDropdownMenu/hooks.tsx": {
@@ -1184,7 +1184,7 @@
     },
     "src/lib/phantomchat/session-sync-state.ts": {
       "stable": "absent",
-      "preview": "62d27fe8d64d9d2f9eee214b04aefc759d043091f06be4badf8e24d5fb6e7c2e",
+      "preview": "ca25f0f38a0c0fc7cd6a3dd2732dffe39c99da936f1089a1bd1b8a471447fa27",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/lib/phantomchat/session-sync-ui.ts": {

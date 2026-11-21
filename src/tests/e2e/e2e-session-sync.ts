@@ -76,7 +76,7 @@ async function device(label) {
   let ctx;
   let desktopPage;
   if(label === 'B' && process.env.E2E_ELECTRON) {
-    const config = join(process.env.PHANTOMBOT_SCRATCH, 'electron-sync-profile');
+    const config = join(process.env.PHANTOMBOT_SCRATCH, `electron-sync-profile-${Date.now()}-${process.pid}`);
     mkdirSync(config, {recursive: true});
     desktop = await electron.launch({
       args: ['--no-sandbox', `--user-data-dir=${config}`, 'electron/dist/main.cjs'],

@@ -9,8 +9,8 @@ export function sessionSyncGeneration(): number { return generation; }
 export function onSessionSyncCleanup(cleanup: () => void): void { cleanups.add(cleanup); }
 let groups: SessionSyncStatus = 'syncing';
 const chats = new Map<number, SessionSyncStatus>();
-const verifiedChats = new Set<number>();
-let verifiedGroups = false;
+const staleChats = new Set<number>();
+let staleGroups = false;
 const listeners = new Set<Listener>();
 let retryGroups: (() => Promise<boolean>) | undefined;
 let retryChat: ((peerId: number) => Promise<void>) | undefined;
@@ -22,7 +22,7 @@ export function refreshSessionSyncViews(): void {
 export function enableSessionSync(retry: () => Promise<boolean>): void {
   resetSessionSync();
   enabled = true;
-  groups = 'syncing';
+  groups = typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'syncing';
   chats.clear();
   retryGroups = retry;
   refreshSessionSyncViews();
@@ -30,7 +30,7 @@ export function enableSessionSync(retry: () => Promise<boolean>): void {
 
 export function setGroupsSyncStatus(status: SessionSyncStatus): void {
   groups = status;
-  if(status === 'ready') verifiedGroups = true;
+  if(status === 'ready') staleGroups = false;
   refreshSessionSyncViews();
 }
 
@@ -40,7 +40,7 @@ export function getGroupsSyncStatus(): SessionSyncStatus {
 
 export function setChatSyncStatus(peerId: number, status: SessionSyncStatus): void {
   chats.set(peerId, status);
-  if(status === 'ready') verifiedChats.add(peerId);
+  if(status === 'ready') staleChats.delete(peerId);
   refreshSessionSyncViews();
 }
 
@@ -66,12 +66,12 @@ export function retrySessionSync(peerId?: number): void {
 }
 
 export function markChatSyncStale(peerId: number): void {
-  verifiedChats.delete(peerId);
+  staleChats.add(peerId);
   setChatSyncStatus(peerId, 'syncing');
 }
 
 export function markGroupsSyncStale(): void {
-  verifiedGroups = false;
+  staleGroups = true;
   setGroupsSyncStatus('syncing');
 }
 
@@ -82,20 +82,17 @@ export function reconcileSessionGroups(): Promise<boolean> {
 export function isChatSyncTracked(peerId: number): boolean { return chats.has(peerId); }
 
 export function canSendToSyncedChat(peerId: number): boolean {
-  const status = getChatSyncStatus(peerId);
-  if(chats.get(peerId) === 'syncing') return false;
-  if(status === 'ready') return true;
-  // Preserve existing offline queueing only after this running client proved
-  // the chat current. A cold cached thread or a known remote change cannot
-  // inherit that permission from a prior session or failed query.
-  return (status === 'offline' || status === 'failed') && verifiedChats.has(peerId) &&
-    (peerId > 0 || verifiedGroups);
+  if(!enabled || !peerId) return true;
+  if(staleChats.has(peerId) || (peerId < 0 && staleGroups)) return false;
+  // A failed/offline query is not evidence of a remote change. Keep the
+  // existing send/queue path available with explicit cached-data feedback.
+  return getChatSyncStatus(peerId) !== 'syncing';
 }
 
 export function resetSessionSync(): void {
   generation++;
-  verifiedGroups = false;
-  verifiedChats.clear();
+  staleGroups = false;
+  staleChats.clear();
   for(const cleanup of cleanups) cleanup();
   cleanups.clear();
   enabled = false;
@@ -116,7 +113,14 @@ export function createGroupsReconciler(run: () => Promise<boolean>): () => Promi
       return flight;
     }
     const epoch = generation;
+    if(typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setGroupsSyncStatus('offline');
+      return Promise.resolve(false);
+    }
     setGroupsSyncStatus('syncing');
+    const feedback = setTimeout(() => {
+      if(epoch === generation) setGroupsSyncStatus('failed');
+    }, 30_000);
     flight = (async() => {
       let ok = false;
       try {
@@ -128,6 +132,7 @@ export function createGroupsReconciler(run: () => Promise<boolean>): () => Promi
       } catch(error) {
         console.warn('[session-sync] groups reconcile failed', error);
       } finally {
+        clearTimeout(feedback);
         flight = undefined;
         if(epoch === generation) setGroupsSyncStatus(ok ? 'ready' :
           typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'failed');

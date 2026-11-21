@@ -85,11 +85,11 @@ it('untracked peers are unaffected; selected chats explicitly begin a check', ()
   expect(canSendToSyncedChat(123)).toBe(false);
 });
 
-it('previously verified chats retain offline queueing, cold cached chats do not', () => {
+it('cold cached and previously verified chats retain offline queueing unless marked stale', () => {
   enableSessionSync(async() => true);
   setGroupsSyncStatus('ready');
   setChatSyncStatus(PEER, 'offline');
-  expect(canSendToSyncedChat(PEER)).toBe(false);
+  expect(canSendToSyncedChat(PEER)).toBe(true);
   setChatSyncStatus(PEER, 'ready');
   setChatSyncStatus(PEER, 'offline');
   expect(canSendToSyncedChat(PEER)).toBe(true);
@@ -109,4 +109,38 @@ it('a known remote metadata change revokes offline queueing until checked', () =
   expect(canSendToSyncedChat(PEER)).toBe(false);
   setGroupsSyncStatus('ready');
   expect(canSendToSyncedChat(PEER)).toBe(true);
+});
+
+
+it('starting offline keeps the existing queue available without waiting on a network timer', () => {
+  const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+  try {
+    enableSessionSync(async() => false);
+    setChatSyncStatus(PEER, 'offline');
+    expect(getGroupsSyncStatus()).toBe('offline');
+    expect(canSendToSyncedChat(PEER)).toBe(true);
+    markGroupsSyncStale();
+    setGroupsSyncStatus('offline');
+    expect(canSendToSyncedChat(PEER)).toBe(false);
+  } finally {
+    online.mockRestore();
+  }
+});
+
+it('a slow metadata check exposes failure feedback and heals when it eventually completes', async() => {
+  vi.useFakeTimers();
+  try {
+    let release: (ok: boolean) => void;
+    const reconcile = createGroupsReconciler(() => new Promise<boolean>((resolve) => { release = resolve; }));
+    enableSessionSync(reconcile);
+    const pass = reconcile();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getGroupsSyncStatus()).toBe('failed');
+    expect(canSendToSyncedChat(PEER)).toBe(true);
+    release(true);
+    await pass;
+    expect(getGroupsSyncStatus()).toBe('ready');
+  } finally {
+    vi.useRealTimers();
+  }
 });
