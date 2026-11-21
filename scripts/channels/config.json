@@ -1189,8 +1189,8 @@
     },
     "src/lib/phantomchat/session-sync-ui.ts": {
       "stable": "absent",
-      "preview": "d78e6efed1880c6c284a7937577b7470e58ee0f51990335fdd4c3161e63d02ee",
-      "reason": "PR494 transient sync progress: active syncing has a 10-second display budget per unsettled episode. Failed/offline attempts and subsequent retries stay silent until a successful settle resets the budget. Timer and peer-view state are in memory only; no persisted data, transport, retry, send-guard or CRDT changes. Requires independent exact-head review."
+      "preview": "39a0dc4f369ed9f39db996596c4fff99bb5f1e969bffd4e3a64774f7f297463a",
+      "reason": "PR494 sync progress waits four seconds before appearing; quick syncs stay silent. Existing ten-second episode cap and silent retries remain. Timers are memory-only; no persistence, transport or send-guard changes. Requires independent exact-head review."
     },
     "src/lib/phantomchat/session-sync-recovery.ts": {
       "stable": "absent",

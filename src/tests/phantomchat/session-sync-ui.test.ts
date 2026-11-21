@@ -1,9 +1,10 @@
 import {afterEach, expect, it, vi} from 'vitest';
 vi.mock('@lib/langPack', () => ({i18n: (key: string) => document.createTextNode(key)}));
-import {mountSessionSyncStatus, withStableSessionList, SYNC_PROGRESS_VISIBLE_MS} from '@lib/phantomchat/session-sync-ui';
+import {mountSessionSyncStatus, withStableSessionList, SYNC_PROGRESS_DELAY_MS, SYNC_PROGRESS_VISIBLE_MS} from '@lib/phantomchat/session-sync-ui';
 import {enableSessionSync, resetSessionSync, setGroupsSyncStatus, setChatSyncStatus, markGroupsSyncStale, canSendToSyncedChat, getGroupsSyncStatus} from '@lib/phantomchat/session-sync-state';
-afterEach(() => { resetSessionSync(); document.body.replaceChildren(); });
-it('shows active progress and hides failed, offline and settled status', () => {
+afterEach(() => { resetSessionSync(); document.body.replaceChildren(); vi.useRealTimers(); });
+it('delays active progress and hides failed, offline and settled status', async() => {
+  vi.useFakeTimers();
   enableSessionSync(async() => true);
   setGroupsSyncStatus('ready');
   setChatSyncStatus(123, 'ready');
@@ -13,6 +14,10 @@ it('shows active progress and hides failed, offline and settled status', () => {
   const slot = host.querySelector<HTMLElement>('.session-sync-status');
   expect(slot.hidden).toBe(true);
   setChatSyncStatus(123, 'syncing');
+  expect(slot.hidden).toBe(true);
+  await vi.advanceTimersByTimeAsync(SYNC_PROGRESS_DELAY_MS - 1);
+  expect(slot.hidden).toBe(true);
+  await vi.advanceTimersByTimeAsync(1);
   expect(slot.hidden).toBe(false);
   expect(slot.textContent).toContain('SessionSync.Messages');
   setChatSyncStatus(123, 'failed');
@@ -74,9 +79,11 @@ it('bounds an unresolved episode across automatic retries without claiming readi
     document.body.append(host);
     const dispose = mountSessionSyncStatus(host);
     const slot = host.querySelector<HTMLElement>('.session-sync-status');
+    expect(slot.hidden).toBe(true);
+    await vi.advanceTimersByTimeAsync(SYNC_PROGRESS_DELAY_MS);
     expect(slot.hidden).toBe(false);
     markGroupsSyncStale([-123]);
-    await vi.advanceTimersByTimeAsync(SYNC_PROGRESS_VISIBLE_MS);
+    await vi.advanceTimersByTimeAsync(SYNC_PROGRESS_VISIBLE_MS - SYNC_PROGRESS_DELAY_MS);
     expect(slot.hidden).toBe(true);
     expect(getGroupsSyncStatus()).toBe('syncing');
     expect(canSendToSyncedChat(-123)).toBe(false);
@@ -90,8 +97,26 @@ it('bounds an unresolved episode across automatic retries without claiming readi
     }
     setGroupsSyncStatus('ready');
     setGroupsSyncStatus('syncing');
+    expect(slot.hidden).toBe(true);
+    await vi.advanceTimersByTimeAsync(SYNC_PROGRESS_DELAY_MS);
     expect(slot.hidden).toBe(false);
     dispose();
     expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
+});
+
+it('never flashes progress for quick syncs or after disposal', async() => {
+  vi.useFakeTimers();
+  enableSessionSync(async() => true);
+  const host = document.createElement('div');
+  const dispose = mountSessionSyncStatus(host);
+  const slot = host.querySelector<HTMLElement>('.session-sync-status');
+  await vi.advanceTimersByTimeAsync(SYNC_PROGRESS_DELAY_MS - 1);
+  setGroupsSyncStatus('ready');
+  await vi.advanceTimersByTimeAsync(SYNC_PROGRESS_VISIBLE_MS);
+  expect(slot.hidden).toBe(true);
+  expect(slot.textContent).toBe('');
+  setGroupsSyncStatus('syncing');
+  dispose();
+  expect(vi.getTimerCount()).toBe(0);
 });

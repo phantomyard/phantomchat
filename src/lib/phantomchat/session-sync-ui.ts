@@ -5,6 +5,7 @@ import {
 
 // Background recovery may continue indefinitely while relays are unavailable.
 // Spend one display budget per unsettled episode, not one per retry.
+export const SYNC_PROGRESS_DELAY_MS = 4_000;
 export const SYNC_PROGRESS_VISIBLE_MS = 10_000;
 
 /** Transient progress only; failure/backoff is never labelled active syncing. */
@@ -31,7 +32,9 @@ export function mountSessionSyncStatus(host: HTMLElement, peer?: () => number): 
     if(status === 'syncing') started ??= Date.now();
     const remaining = started === undefined ? 0 : SYNC_PROGRESS_VISIBLE_MS - (Date.now() - started);
     slot.dataset.state = status;
-    slot.hidden = status !== 'syncing' || remaining <= 0;
+    const delay = started === undefined ? 0 : SYNC_PROGRESS_DELAY_MS - (Date.now() - started);
+    slot.hidden = status !== 'syncing' || delay > 0 || remaining <= 0;
+    if(status === 'syncing' && delay > 0) timer = setTimeout(render, delay);
     if(slot.hidden) label.replaceChildren();
     else {
       label.replaceChildren(i18n('SessionSync.Messages'));
