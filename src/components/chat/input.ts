@@ -14,6 +14,8 @@ import {AppImManager, APP_TABS} from '@lib/appImManager';
 import '../../../public/recorder.min';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import opusDecodeController from '@lib/opusDecodeController';
+import {canSendToSyncedChat, refreshSessionSyncViews, subscribeSessionSync, setChatSyncStatus} from '@lib/phantomchat/session-sync-state';
+import {mountSessionSyncStatus} from '@lib/phantomchat/session-sync-ui';
 import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
 import emoticonsDropdown, {EmoticonsDropdown} from '@components/emoticonsDropdown';
 import PopupForward from '@components/popups/forward';
@@ -428,6 +430,9 @@ export default class ChatInput {
 
   public paidMessageInterceptor: PaidMessagesInterceptor;
 
+  private disposeSyncStatus: () => void;
+  private disposeSyncSend: () => void;
+
   private fileInputState: ReturnType<ChatInput['createFileInputState']>;
   private starsState: ReturnType<ChatInput['createStarsState']>;
   private directMessagesHandler: ReturnType<ChatInput['createDirectMessagesHandler']>;
@@ -483,6 +488,7 @@ export default class ChatInput {
 
     this.inputContainer.append(this.rowsWrapperWrapper, fakeRowsWrapper, fakeSelectionWrapper);
     this.chatInput.append(this.inputContainer);
+    this.disposeSyncStatus = mountSessionSyncStatus(this.chatInput, () => Number(this.chat.peerId));
 
     if(!this.excludeParts.downButton) {
       this.constructGoDownButton();
@@ -1363,6 +1369,9 @@ export default class ChatInput {
       this.fileInput.value = '';
     }, false);
 
+    this.disposeSyncSend = subscribeSessionSync(() => {
+      this.btnSend.disabled = this.sendingMessage || (!this.editMsgId && !canSendToSyncedChat(Number(this.chat.peerId)));
+    });
     attachClickEvent(this.btnSend, this.onBtnSendClick, {listenerSetter: this.listenerSetter, touchMouseDown: true});
 
     this.saveDraftDebounced = debounce(() => this.saveDraft(), 2500, false, true);
@@ -1982,6 +1991,8 @@ export default class ChatInput {
   }
 
   public destroy() {
+    this.disposeSyncStatus?.();
+    this.disposeSyncSend?.();
     // this.chat.log.error('Input destroying');
 
     if(this.recordingTypingInterval) {
@@ -2133,6 +2144,8 @@ export default class ChatInput {
 
   public async finishPeerChange(options: Parameters<Chat['finishPeerChange']>[0]) {
     const {peerId, startParam, middleware} = options;
+    setChatSyncStatus(Number(peerId), 'syncing');
+    refreshSessionSyncViews();
 
     const {
       forwardElements,
@@ -3333,6 +3346,7 @@ export default class ChatInput {
   private onBtnSendClick = async(e: Event) => {
     cancelEvent(e);
 
+    if(!this.checkSyncBeforeSend()) return;
     const isInputEmpty = this.isInputEmpty();
     if(this.chat.type === ChatType.Stories && isInputEmpty && !this.freezedFocused && this.canForwardStory) {
       this.forwardStoryCallback?.(e as MouseEvent);
@@ -4118,7 +4132,14 @@ export default class ChatInput {
     this.onMessageSent(true, true);
   }
 
+  private checkSyncBeforeSend(): boolean {
+    if(this.editMsgId || canSendToSyncedChat(Number(this.chat.peerId))) return true;
+    toastNew({langPackKey: 'SessionSync.Messages'});
+    return false;
+  }
+
   public async sendMessage(force = false) {
+    if(!this.checkSyncBeforeSend()) return;
     const {editMsgId, chat} = this;
     if(chat.type === ChatType.Scheduled && !force && !editMsgId) {
       this.scheduleSending();
@@ -4198,7 +4219,7 @@ export default class ChatInput {
     } finally {
       this.sendingMessage = false;
       if(this.btnSend) {
-        this.btnSend.disabled = false;
+        this.btnSend.disabled = !this.editMsgId && !canSendToSyncedChat(Number(this.chat.peerId));
         this.btnSend.classList.remove('is-sending');
       }
     }

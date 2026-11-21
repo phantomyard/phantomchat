@@ -118,6 +118,7 @@ import {fillForumTabRegister} from '@components/forumTab/fillRegister';
 import LazyLoadQueue from '@components/lazyLoadQueue';
 import {fastSmoothScrollToStart} from '@helpers/fastSmoothScroll';
 import ArchiveDialog, {archiveDialogTagName} from '@components/archiveDialog';
+import {mountSessionSyncStatus} from '@lib/phantomchat/session-sync-ui';
 import {syncArchiveTileSelection} from '@lib/phantomchat/archive-tile-selection';
 import {createArchiveDialogContextMenu} from '@components/archiveDialogContextMenu';
 import ButtonIcon from '@components/buttonIcon';
@@ -713,6 +714,7 @@ export class AppDialogsManager {
     foldersRow.append(archiveButton);
     syncArchiveTileSelection(foldersRow, archiveButton, this.filterId);
     bottomPart.prepend(foldersRow);
+    mountSessionSyncStatus(bottomPart);
     const selectTab = this.selectTab = horizontalMenuObjArgs({
       tabs: this.folders.menu,
       content: this.folders.container,

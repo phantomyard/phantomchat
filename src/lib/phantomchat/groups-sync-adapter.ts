@@ -212,6 +212,7 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
       deletedIds = null;
     }
 
+    let failed = false;
     for(const id of Object.keys(merged)) {
       const entry = merged[id];
       const prev = before[id];
@@ -250,7 +251,8 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
         // losing side) leaves updatedAt equal to this device's copy, so it
         // must trigger the upsert on its own or the name never lands here.
         const infoChanged = wasLive && !!entry.data && !!prev.data &&
-          INFO_FIELDS.some((f) => entry.data[f] !== prev.data[f]);
+          (INFO_FIELDS.some((f) => entry.data[f] !== prev.data[f]) ||
+            entry.data.archivedAt !== prev.data.archivedAt || entry.data.archiveUpdatedAt !== prev.data.archiveUpdatedAt);
         if(!wasLive || entry.updatedAt > prev.updatedAt || stampAdvanced || infoChanged) {
           if(!entry.data) continue;
           // REBIND RESURRECTION GUARD (duplicate-groups regression 2026-10-04):
@@ -360,9 +362,11 @@ export function createGroupsAdapter(deps: GroupsAdapterDeps): LocalAdapter<Group
           }
         }
       } catch(err) {
+        failed = true;
         console.warn(tag, 'apply failed for', id, err);
       }
     }
+    if(failed) throw new Error('Some session changes could not be applied');
   };
 
   return {read, apply};
@@ -398,6 +402,15 @@ export function mergeGroupsMaps(local: SyncMap<GroupRecord>, remote: SyncMap<Gro
       merged = merged ?? {...winner.data, infoUpdatedAt: {...winner.data.infoUpdatedAt}};
       merged[field] = loser[field];
       merged.infoUpdatedAt![field] = loseStamp;
+    }
+    // Archive is a separate register: a later rename or membership update
+    // must never carry an older archive/unarchive value back to another PC.
+    const archiveStamp = (r: GroupRecord) => Math.max(r.archiveUpdatedAt ?? 0, r.archivedAt ?? 0);
+    const hasArchiveProof = winner.data.archiveUpdatedAt !== undefined || loser.archiveUpdatedAt !== undefined;
+    if(hasArchiveProof && archiveStamp(loser) > archiveStamp(winner.data) && typeof loser.archivedAt === 'number') {
+      merged = merged ?? {...winner.data};
+      merged.archivedAt = loser.archivedAt;
+      merged.archiveUpdatedAt = archiveStamp(loser);
     }
     if(merged) out[id] = {...winner, data: merged} as SyncEntry<GroupRecord>;
   }

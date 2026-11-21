@@ -907,6 +907,19 @@ describe('ChatAPI', () => {
       expect(catchUpInbox).toHaveBeenCalledTimes(2);
     });
 
+    test('selected sessions use the canonical group conversation key', async() => {
+      messageStoreMocks.getConversationId.mockClear();
+      expect(await chatApi.catchUpConversation('group:session-id')).toBe('ran');
+      expect(messageStoreMocks.getLatestTimestamp).toHaveBeenCalledWith('group:session-id');
+      expect(messageStoreMocks.getConversationId).not.toHaveBeenCalled();
+    });
+
+    test('foreground/retry forces a new check inside the normal throttle', async() => {
+      await chatApi.catchUpConversation(PEER_HEX);
+      expect(await chatApi.catchUpConversation(PEER_HEX, true)).toBe('ran');
+      expect(catchUpInbox).toHaveBeenCalledTimes(2);
+    });
+
     test('the throttle is per chat', async() => {
       await chatApi.catchUpConversation(PEER_HEX);
       expect(await chatApi.catchUpConversation('cd'.repeat(32))).toBe('ran');

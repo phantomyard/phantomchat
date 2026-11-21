@@ -8,6 +8,7 @@
  * and phantomchat-bridge with a clean request/response pattern.
  */
 
+import {canSendToSyncedChat} from './session-sync-state';
 import {PhantomChatPeerMapper} from './phantomchat-peer-mapper';
 import {getMessageStore} from './message-store';
 import type {StoredMessage} from './message-store';
@@ -545,6 +546,10 @@ export class PhantomChatMTProtoServer {
   private warnedFallbacks = new Set<string>();
 
   async handleMethod(method: string, params: any): Promise<any> {
+    if(['messages.sendMessage', 'messages.sendMedia', 'messages.sendMultiMedia', 'messages.forwardMessages'].includes(method)) {
+      const peer = extractPeerId(params?.peer ?? params?.to_peer);
+      if(peer !== null && !canSendToSyncedChat(peer)) throw new Error('Sync messages before sending. Your draft is preserved.');
+    }
     switch(method) {
       case 'messages.getDialogs':
       case 'messages.getPinnedDialogs':

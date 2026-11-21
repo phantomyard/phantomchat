@@ -194,6 +194,7 @@ export class GroupStore {
       // never propagate. Truthiness checks (`if(group.archivedAt)`) still read
       // 0 as unarchived.
       existing.archivedAt = updates.archivedAt === null ? 0 : updates.archivedAt;
+      existing.archiveUpdatedAt = Math.max(Date.now(), (existing.archiveUpdatedAt ?? 0) + 1);
     }
     // Same absent-vs-cleared contract as archivedAt, for the same reason: these
     // are user-set dialog flags carried over the groups CRDT, and a republish

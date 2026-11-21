@@ -15,10 +15,14 @@ describe('sync nudge', () => {
     expect(isSyncNudgeRumor(tags)).toBe(true);
   });
 
+  it('round-trips groups nudges', () => {
+    expect(parseSyncNudge(syncNudgeTags(OWN, 'groups'), syncNudgeContent('groups', 'other'))).toEqual({domain: 'groups', deviceId: 'other'});
+  });
+
   it('rejects a body that disagrees with the tag, an unknown domain, no device id, or junk', () => {
     const tags = syncNudgeTags(OWN, 'contacts');
     expect(parseSyncNudge(tags, JSON.stringify({type: SYNC_NUDGE_TAG, domain: 'groups', deviceId: 'x'}))).toBeNull();
-    expect(parseSyncNudge([[SYNC_NUDGE_TAG, 'groups']], JSON.stringify({type: SYNC_NUDGE_TAG, domain: 'groups', deviceId: 'x'}))).toBeNull();
+    expect(parseSyncNudge([[SYNC_NUDGE_TAG, 'unknown']], JSON.stringify({type: SYNC_NUDGE_TAG, domain: 'unknown', deviceId: 'x'}))).toBeNull();
     expect(parseSyncNudge(tags, JSON.stringify({type: SYNC_NUDGE_TAG, domain: 'contacts'}))).toBeNull();
     expect(parseSyncNudge(tags, 'hello')).toBeNull();
     expect(parseSyncNudge([['p', OWN]], syncNudgeContent('contacts'))).toBeNull();

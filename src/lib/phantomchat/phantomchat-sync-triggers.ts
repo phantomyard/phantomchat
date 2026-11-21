@@ -15,6 +15,8 @@
  * them in.
  */
 
+import {resetSessionSync} from './session-sync-state';
+
 export type SyncDomain = 'contacts' | 'groups' | 'read-state';
 
 type Publisher = () => void;
@@ -63,6 +65,7 @@ export function handleSyncNudge(domain: SyncDomain): void {
 
 /** Drop all publishers — called on logout so a stale engine isn't retriggered. */
 export function clearSyncPublishers(): void {
+  resetSessionSync();
   delete publishers.contacts;
   delete publishers.groups;
   delete publishers['read-state'];

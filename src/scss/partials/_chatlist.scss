@@ -4,6 +4,31 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
+.session-sync-status[hidden] { display: none; }
+.session-sync-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  min-height: 2rem;
+  padding: .35rem 1rem;
+  font-size: .8125rem;
+  color: var(--secondary-text-color);
+  background: var(--surface-color);
+  button { color: var(--primary-color); background: none; border: 0; cursor: pointer; }
+  button[hidden] { display: none; }
+  &[data-state="syncing"]::before {
+    content: '';
+    flex: 0 0 .5rem;
+    width: .5rem;
+    height: .5rem;
+    border-radius: 50%;
+    background: var(--primary-color);
+  }
+}
+.session-sync-snapshot { position: absolute; width: 100%; pointer-events: none; overflow: hidden; }
+
+
 @mixin dialog-badge-transition-reset() {
   transition: none;
   transform: scale(0);

@@ -201,6 +201,13 @@ export class CrdtSync<T> {
       return 'failed';
     }
 
+    try {
+      local = await this.deps.adapter.read();
+    } catch(err) {
+      console.warn(this.tag, 'local refresh failed', err);
+      return 'failed';
+    }
+
     if(remote.status === 'absent') {
       // Relay confirmed there is no snapshot. Safe to seed it from local if we
       // have anything worth publishing.
@@ -331,6 +338,13 @@ export class CrdtSync<T> {
     // that's exactly how a concurrent add on another device gets lost.
     if(remote.status === 'unavailable') {
       console.warn(this.tag, 'publish skipped: relay unavailable (unconfirmed)');
+      return false;
+    }
+
+    try {
+      local = await this.deps.adapter.read();
+    } catch(err) {
+      console.warn(this.tag, 'publish local refresh failed', err);
       return false;
     }
 

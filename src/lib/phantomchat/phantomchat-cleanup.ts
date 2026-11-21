@@ -8,6 +8,7 @@
  *                           (`PhantomChat.chat` IndexedDB + `phantomchat_identity` LS key)
  */
 
+import {resetSessionSync} from './session-sync-state';
 import {clearPeerProfileCache} from './peer-profile-cache';
 import {logSwallow} from './log-swallow';
 import {clearConversationKeyCache} from './nostr-crypto';
@@ -230,6 +231,7 @@ async function clearPhantomChatData(opts: {keepSeed: boolean}): Promise<string[]
  * Returns list of database names that failed to delete.
  */
 export function clearAllPhantomChatData(): Promise<string[]> {
+  resetSessionSync();
   return clearPhantomChatData({keepSeed: false});
 }
 
@@ -240,5 +242,6 @@ export function clearAllPhantomChatData(): Promise<string[]> {
  * re-enter the app with the same seed.
  */
 export function clearAllExceptSeed(): Promise<string[]> {
+  resetSessionSync();
   return clearPhantomChatData({keepSeed: true});
 }
