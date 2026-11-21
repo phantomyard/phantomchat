@@ -239,8 +239,8 @@ try {
   }, {ids, ghostPeer});
   await waitForAsync(b.page, async({ghostPeer, projectionPeers}) => {
     const rows = await window.appImManager.managers.dialogsStorage.getAllPersistedDialogs();
-    const has = (peer) => rows.find((d) => d.peerId === peer);
-    return !has(ghostPeer) && !!has(projectionPeers.group) && has(projectionPeers.session)?.folder_id === 1;
+    return !rows.some((d) => d.peerId === ghostPeer) && rows.some((d) => d.peerId === projectionPeers.group) &&
+      rows.find((d) => d.peerId === projectionPeers.session)?.folder_id === 1;
   }, {ghostPeer, projectionPeers}, {timeout: 60000});
   console.log('PASS unchanged catalog repairs orphan/missing/misplaced rows while legacy metadata stays unreadable');
 
@@ -266,6 +266,13 @@ try {
     return ((Array.isArray(raw) ? raw[0] : raw)?.folder_id || 0) === 0;
   }, ids[1], {timeout: 60000});
   console.log('PASS archive/unarchive catalog revision reaches running sibling');
+  await b.page.evaluate(async(id) => {
+    const {getGroupStore} = await import('/src/lib/phantomchat/group-store.ts');
+    await window.appImManager.setInnerPeer({peerId: (await getGroupStore().get(id)).peerId});
+  }, ids[1]);
+  await b.page.waitForTimeout(7000); // crosses two former channel-poll intervals
+  assert.equal(errors.filter((e) => /Add channel state without pts/.test(e)).length, 0, errors.join('\n'));
+  console.log('PASS real session view stays free of Telegram channel-pts worker errors');
   await a.page.evaluate(async() => {
     const fs = window.appImManager.managers.filtersStorage;
     const filter = Object.values(await fs.getFilters()).find((f) => f.title?.text === 'Shared folder');
