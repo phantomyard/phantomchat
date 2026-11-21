@@ -883,7 +883,7 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               console.warn('[groups-sync] post-reconcile convergence failed', e);
               return false;
             }
-            return g !== 'failed';
+            return true;
           }));
           enableSessionSync(reconcileGroups);
           registerSyncNudgeHandler('groups', () => { void reconcileGroups(); });

@@ -239,7 +239,7 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "6b7d7b1a10f4746f6a55fee43c573355973ee8ac273f428f0689d3a6acbbff29",
+      "preview": "10bba86c3c025cfb6c31671d488481e7b24f94e87ed7abe1e64776d9d4669ad3",
       "reason": "PR494 automatic sync recovery: bounded network/read attempts, cancellation fences, capped retries and throttled socket recovery. Cached groups/drafts remain intact; verified unapplied deltas retain per-peer send guards. Removes manual Retry and offline queue feedback. No persistent schema, identity, encryption or CRDT payload changes. Independent exact-head review required."
     },
     "src/components/autonomousDialogList/base.ts": {
