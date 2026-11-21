@@ -538,3 +538,25 @@ it('re-reads local mutations made while the relay query is suspended', async() =
   await pass;
   expect(state.map.local.data.name).toBe('Edited while fetching');
 });
+
+it('an aborted remote read cannot apply or publish its late snapshot', async() => {
+  const {adapter, state} = makeAdapter({cached: liveEntry('cached', {id: 'cached', name: 'Keep'}, 1)});
+  const sync = makeSync(relay, adapter);
+  let release: (value: any) => void;
+  relay.queryLatestEvent.mockImplementationOnce(() => new Promise<typeof relay.event>((resolve) => { release = resolve; }));
+  const controller = new AbortController();
+  const first = sync.reconcile(controller.signal);
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  controller.abort();
+  await expect(first).rejects.toThrow('abandoned');
+  relay.seed({fresh: liveEntry('fresh', {id: 'fresh', name: 'New'}, 2)});
+  await sync.reconcile();
+  const applied = state.applied.length;
+  const published = relay.publishes;
+  release({kind: 30078, content: JSON.stringify({version: 1, items: {}})});
+  await Promise.resolve(); await Promise.resolve();
+  expect(state.applied).toHaveLength(applied);
+  expect(relay.publishes).toBe(published);
+  expect(state.map.cached).toBeDefined();
+  expect(state.map.fresh).toBeDefined();
+});

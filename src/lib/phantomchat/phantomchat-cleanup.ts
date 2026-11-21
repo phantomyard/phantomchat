@@ -27,7 +27,8 @@ const PHANTOMCHAT_DB_NAMES = [
   'PhantomChatPool',
   'PhantomChat.chat',
   'phantomchat-push',
-  'phantomchat-local-media'
+  'phantomchat-local-media',
+  'phantomchat-account-catalog'
 ];
 
 // All PhantomChat localStorage keys

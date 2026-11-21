@@ -1,38 +1,48 @@
 import {i18n} from '@lib/langPack';
 import {
-  getChatSyncStatus, getGroupsSyncStatus, retrySessionSync, subscribeSessionSync, canSendToSyncedChat
+  getChatSyncStatus, getGroupsSyncStatus, subscribeSessionSync
 } from './session-sync-state';
 
-/** Transient progress/error feedback; settled views keep their normal layout. */
+// Background recovery may continue indefinitely while relays are unavailable.
+// Spend one display budget per unsettled episode, not one per retry.
+export const SYNC_PROGRESS_DELAY_MS = 4_000;
+export const SYNC_PROGRESS_VISIBLE_MS = 10_000;
+
+/** Transient progress only; failure/backoff is never labelled active syncing. */
 export function mountSessionSyncStatus(host: HTMLElement, peer?: () => number): () => void {
   const slot = document.createElement('div');
-  slot.className = 'session-sync-status';
+  slot.className = `session-sync-status${peer ? ' session-sync-chat' : ''}`;
   slot.setAttribute('role', 'status');
   slot.setAttribute('aria-live', 'polite');
   const label = document.createElement('span');
-  const retry = document.createElement('button');
-  retry.type = 'button';
-  retry.append(i18n('SessionSync.Retry'));
-  retry.addEventListener('click', () => retrySessionSync(peer?.()));
-  slot.append(label, retry);
+  slot.append(label);
   host.prepend(slot);
-  let previous: string;
-  const unsubscribe = subscribeSessionSync(() => {
-    const status = peer ? getChatSyncStatus(peer()) : getGroupsSyncStatus();
-    const canQueue = !!peer && canSendToSyncedChat(peer());
-    const identity = `${status}:${canQueue}`;
-    if(identity === previous) return;
-    previous = identity;
+  let identity: number;
+  let started: number | undefined;
+  let timer: ReturnType<typeof setTimeout>;
+  const render = () => {
+    const nextIdentity = peer ? peer() : 0;
+    if(identity !== nextIdentity) {
+      identity = nextIdentity;
+      started = undefined;
+    }
+    const status = peer ? getChatSyncStatus(identity) : getGroupsSyncStatus();
+    clearTimeout(timer);
+    if(status === 'ready') started = undefined;
+    if(status === 'syncing') started ??= Date.now();
+    const remaining = started === undefined ? 0 : SYNC_PROGRESS_VISIBLE_MS - (Date.now() - started);
     slot.dataset.state = status;
-    slot.hidden = status === 'ready';
-    if(status === 'ready') label.replaceChildren();
-    else label.replaceChildren(i18n(status === 'syncing' ?
-      peer ? 'SessionSync.Messages' : 'SessionSync.Sessions' :
-      status === 'offline' ? canQueue ? 'SessionSync.OfflineQueue' : 'SessionSync.Offline' :
-      canQueue ? 'SessionSync.FailedQueue' : 'SessionSync.Failed'));
-    retry.hidden = status !== 'failed' && status !== 'offline';
-  });
-  return () => { unsubscribe(); slot.remove(); };
+    const delay = started === undefined ? 0 : SYNC_PROGRESS_DELAY_MS - (Date.now() - started);
+    slot.hidden = status !== 'syncing' || delay > 0 || remaining <= 0;
+    if(status === 'syncing' && delay > 0) timer = setTimeout(render, delay);
+    if(slot.hidden) label.replaceChildren();
+    else {
+      label.replaceChildren(i18n('SessionSync.Messages'));
+      timer = setTimeout(render, remaining);
+    }
+  };
+  const unsubscribe = subscribeSessionSync(render);
+  return () => { clearTimeout(timer); unsubscribe(); slot.remove(); };
 }
 
 /** Keep the visible cached list still while a remote delta is materialised.
@@ -54,12 +64,19 @@ export async function withStableSessionList<T>(apply: () => Promise<T>): Promise
   const sourceScrollers = live.querySelectorAll('.scrollable');
   snapshot.querySelectorAll('.scrollable').forEach((node, index) => { node.scrollTop = sourceScrollers[index]?.scrollTop ?? 0; });
   live.style.visibility = 'hidden';
-  try {
-    return await apply();
-  } finally {
+  const reveal = () => {
+    if(!snapshot.parentNode) return;
     snapshot.remove();
     live.style.visibility = '';
     delete live.dataset.syncApplying;
     live.removeAttribute('aria-busy');
+  };
+  // A stuck persistence/worker call must never leave the live list inaccessible.
+  const safety = setTimeout(reveal, 30_000);
+  try {
+    return await apply();
+  } finally {
+    clearTimeout(safety);
+    reveal();
   }
 }

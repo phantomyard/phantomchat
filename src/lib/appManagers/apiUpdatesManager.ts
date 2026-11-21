@@ -23,6 +23,7 @@ import tsNow from '@helpers/tsNow';
 import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
 import debounce from '@helpers/schedulers/debounce';
 import copy from '@helpers/object/copy';
+import {isGroupPeer} from '@lib/phantomchat/group-types';
 
 type UpdatesState = {
   pendingPtsUpdates: (Update & {pts: number, pts_count: number})[],
@@ -673,6 +674,8 @@ class ApiUpdatesManager {
   }
 
   public subscribeToChannelUpdates(channelId: ChatId) {
+    // Also fence callers with a retained pre-reconcile chat view.
+    if(isGroupPeer(-Number(channelId))) return;
     const subscription = this.subscriptions[channelId] ??= {count: 0};
     ++subscription.count;
 

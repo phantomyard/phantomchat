@@ -2667,7 +2667,7 @@ export class GroupAPI {
    * older build), we abort WITHOUT dropping anything — a blind store must
    * never be interpreted as "no live groups".
    */
-  async dropOrphanGroupDialogs(): Promise<void> {
+  async dropOrphanGroupDialogs(signal?: AbortSignal): Promise<void> {
     let livePeerIds: Set<number>;
     try {
       livePeerIds = new Set((await this.store.getAll()).map((r) => r.peerId));
@@ -2690,6 +2690,7 @@ export class GroupAPI {
 
     let dropped = 0;
     for(const dialog of dialogs) {
+      signal?.throwIfAborted();
       const peerId = dialog?.peerId;
       if(typeof peerId !== 'number' || !isGroupPeer(peerId)) continue;
       if(livePeerIds.has(peerId)) continue;
@@ -2702,6 +2703,7 @@ export class GroupAPI {
         return;
       }
       try {
+        signal?.throwIfAborted();
         await rootScope.managers.dialogsStorage.dropDialogOnDeletion(peerId.toPeerId(true));
         dropped++;
         this.log('[GroupAPI] dropped orphan group dialog:', peerId);

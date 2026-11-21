@@ -9306,6 +9306,9 @@ export class AppMessagesManager extends AppManager {
   }
 
   public isFetchIntervalNeeded(peerId: PeerId) {
+    // Synthetic groups have no Telegram channel pts. Relay catch-up owns their
+    // history; channel polling otherwise throws every three seconds forever.
+    if(isGroupPeer(+peerId)) return false;
     return peerId.isAnyChat() && (
       !this.appChatsManager.isInChat(peerId.toChatId()) ||
       this.appChatsManager.isForum(peerId.toChatId())

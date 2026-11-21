@@ -488,7 +488,7 @@ export default class ChatInput {
 
     this.inputContainer.append(this.rowsWrapperWrapper, fakeRowsWrapper, fakeSelectionWrapper);
     this.chatInput.append(this.inputContainer);
-    this.disposeSyncStatus = mountSessionSyncStatus(this.chatInput, () => Number(this.chat.peerId));
+    this.disposeSyncStatus = mountSessionSyncStatus(this.chat.container, () => Number(this.chat.peerId));
 
     if(!this.excludeParts.downButton) {
       this.constructGoDownButton();

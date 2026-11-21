@@ -1,11 +1,5 @@
 const lang = {
-  'SessionSync.Messages': 'Syncing messages… You can keep drafting.',
-  'SessionSync.Sessions': 'Updating sessions… Showing cached sessions.',
-  'SessionSync.Offline': 'Offline — showing cached data. Your draft stays here.',
-  'SessionSync.Failed': 'Sync could not be verified. Retry before sending.',
-  'SessionSync.Retry': 'Retry',
-  'SessionSync.OfflineQueue': 'Offline — cached messages. Sends queue until reconnect.',
-  'SessionSync.FailedQueue': 'Could not sync — cached messages may be out of date.',
+  'SessionSync.Messages': 'Syncing...',
 
   'VoiceModels': 'Voice Models',
   'SpecializedModels': 'Specialized Models',

@@ -9,14 +9,15 @@ const PEER = -12_000_000_000_000_004;
 afterEach(() => resetSessionSync());
 
 describe('session freshness', () => {
-  it('requires both metadata and message evidence; cached rendering is independent', () => {
+  it('keeps message and affected-metadata guards independent', () => {
     enableSessionSync(async() => true);
-    expect(canSendToSyncedChat(PEER)).toBe(false);
+    setChatSyncStatus(PEER, 'syncing');
+    expect(canSendToSyncedChat(PEER)).toBe(true);
     setChatSyncStatus(PEER, 'ready');
     expect(getChatSyncStatus(PEER)).toBe('syncing');
     setGroupsSyncStatus('ready');
     expect(canSendToSyncedChat(PEER)).toBe(true);
-    markGroupsSyncStale();
+    markGroupsSyncStale([PEER]);
     setGroupsSyncStatus('failed');
     expect(canSendToSyncedChat(PEER)).toBe(false);
   });
@@ -82,7 +83,7 @@ it('untracked peers are unaffected; selected chats explicitly begin a check', ()
   enableSessionSync(async() => true);
   expect(getChatSyncStatus(123)).toBe('ready');
   setChatSyncStatus(123, 'syncing');
-  expect(canSendToSyncedChat(123)).toBe(false);
+  expect(canSendToSyncedChat(123)).toBe(true);
 });
 
 it('cold cached and previously verified chats retain offline queueing unless marked stale', () => {
@@ -104,7 +105,7 @@ it('a known remote metadata change revokes offline queueing until checked', () =
   enableSessionSync(async() => true);
   setGroupsSyncStatus('ready');
   setChatSyncStatus(PEER, 'ready');
-  markGroupsSyncStale();
+  markGroupsSyncStale([PEER]);
   setGroupsSyncStatus('failed');
   expect(canSendToSyncedChat(PEER)).toBe(false);
   setGroupsSyncStatus('ready');
@@ -119,7 +120,7 @@ it('starting offline keeps the existing queue available without waiting on a net
     setChatSyncStatus(PEER, 'offline');
     expect(getGroupsSyncStatus()).toBe('offline');
     expect(canSendToSyncedChat(PEER)).toBe(true);
-    markGroupsSyncStale();
+    markGroupsSyncStale([PEER]);
     setGroupsSyncStatus('offline');
     expect(canSendToSyncedChat(PEER)).toBe(false);
   } finally {
@@ -127,28 +128,32 @@ it('starting offline keeps the existing queue available without waiting on a net
   }
 });
 
-it('a slow metadata check exposes failure feedback and heals when it eventually completes', async() => {
+it('abandons a hung metadata pass, retries automatically and ignores its late success', async() => {
   vi.useFakeTimers();
   try {
     let release: (ok: boolean) => void;
-    const reconcile = createGroupsReconciler(() => new Promise<boolean>((resolve) => { release = resolve; }));
+    const run = vi.fn().mockImplementationOnce(() => new Promise<boolean>((resolve) => { release = resolve; })).mockResolvedValue(false);
+    const reconcile = createGroupsReconciler(run);
     enableSessionSync(reconcile);
     const pass = reconcile();
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(getGroupsSyncStatus()).toBe('failed');
+    expect(await pass).toBe(false);
     expect(canSendToSyncedChat(PEER)).toBe(true);
     release(true);
-    await pass;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getGroupsSyncStatus()).toBe('failed');
+    run.mockResolvedValue(true);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1][1]).toBe(true);
     expect(getGroupsSyncStatus()).toBe('ready');
-  } finally {
-    vi.useRealTimers();
-  }
+  } finally { vi.useRealTimers(); }
 });
 
 
 it('a remote delta discovered without a nudge remains blocked after partial application fails', async() => {
   const reconcile = createGroupsReconciler(async() => {
-    markGroupsSyncStale();
+    markGroupsSyncStale([PEER]);
     throw new Error('Remote archive could not be stored');
   });
   enableSessionSync(reconcile);
@@ -157,4 +162,25 @@ it('a remote delta discovered without a nudge remains blocked after partial appl
   expect(await reconcile()).toBe(false);
   expect(getGroupsSyncStatus()).toBe('failed');
   expect(canSendToSyncedChat(PEER)).toBe(false);
+});
+
+
+it('a failed account refresh does not lock healthy groups or other chats', async() => {
+  const reconcile = createGroupsReconciler(async() => false);
+  enableSessionSync(reconcile);
+  const otherGroup = PEER - 100;
+  setChatSyncStatus(PEER, 'ready');
+  setChatSyncStatus(otherGroup, 'ready');
+  expect(await reconcile()).toBe(false);
+  expect(getChatSyncStatus(PEER)).toBe('failed');
+  expect(canSendToSyncedChat(PEER)).toBe(true);
+  expect(canSendToSyncedChat(otherGroup)).toBe(true);
+  markGroupsSyncStale([PEER]);
+  setGroupsSyncStatus('failed');
+  expect(canSendToSyncedChat(PEER)).toBe(false);
+  expect(canSendToSyncedChat(otherGroup)).toBe(true);
+  setChatSyncStatus(PEER, 'ready');
+  expect(canSendToSyncedChat(PEER)).toBe(false);
+  setGroupsSyncStatus('ready');
+  expect(canSendToSyncedChat(PEER)).toBe(true);
 });
