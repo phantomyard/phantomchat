@@ -144,3 +144,17 @@ it('a slow metadata check exposes failure feedback and heals when it eventually 
     vi.useRealTimers();
   }
 });
+
+
+it('a remote delta discovered without a nudge remains blocked after partial application fails', async() => {
+  const reconcile = createGroupsReconciler(async() => {
+    markGroupsSyncStale();
+    throw new Error('Remote archive could not be stored');
+  });
+  enableSessionSync(reconcile);
+  setGroupsSyncStatus('ready');
+  setChatSyncStatus(PEER, 'ready');
+  expect(await reconcile()).toBe(false);
+  expect(getGroupsSyncStatus()).toBe('failed');
+  expect(canSendToSyncedChat(PEER)).toBe(false);
+});

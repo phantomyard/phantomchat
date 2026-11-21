@@ -239,7 +239,7 @@
     },
     "src/pages/phantomchat-onboarding-integration.ts": {
       "stable": "5dcb137562b5fa7002b281bd18dc1133fc1137691709cce38ab4b1b23f85cf00",
-      "preview": "4222e5d04d2abee3e532e9325908fcf0809db5d5b5b3d6f77e3c3522289abff8",
+      "preview": "7cce4d01b3271a6b5ac7029fd57fe9b554e75cc8ccb8371143deda4731788c96",
       "reason": "Session freshness: no new databases or schema versions. Optional archiveUpdatedAt millis field on existing group records; missing stamps retain legacy merging, explicit stamps preserve archive/unarchive intent across unrelated updates. Existing kind-30078 groups payload/version and durable deletion semantics retained. Groups nudges reuse the existing authenticated self-control envelope; older clients discard the unknown domain. Sync status/send guards and selected-history prioritization are ephemeral UI/runtime state only. Requires independent exact-head compatibility review."
     },
     "src/components/autonomousDialogList/base.ts": {

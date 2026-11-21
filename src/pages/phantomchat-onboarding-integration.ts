@@ -717,7 +717,12 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             chatAPI: crdtChatAPI,
             adapter: {
               read: () => groupsAdapter.read(),
-              apply: (merged, before) => withStableSessionList(() => groupsAdapter.apply(merged, before))
+              apply: (merged, before) => {
+                // Receiving an actual remote delta is stale evidence even when
+                // the nudge was missed. A partial apply must keep sends blocked.
+                markGroupsSyncStale();
+                return withStableSessionList(() => groupsAdapter.apply(merged, before));
+              }
             }, ...crdtCrypto
           });
 
@@ -989,6 +994,10 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
           }, '[contacts-sync]'));
           registerSyncPublisher('groups', mkDebounced(async() => {
             const landed = await groupOperation(() => groupsSync.publishWithRetry());
+            // Publish can discover and apply sibling changes too. Reconcile
+            // after releasing the write queue so any partial apply is retried
+            // and readiness reflects the local view, not just relay storage.
+            await reconcileGroups();
             if(landed) {
               void sendSyncNudge(PhantomChatBridge.getInstance().getRelayPool(), ownPubkey, 'groups')
               .catch((e) => console.warn('[groups-sync] nudge failed', e));
