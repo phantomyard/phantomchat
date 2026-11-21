@@ -195,6 +195,8 @@ export interface GroupRecord {
    * existing archive machinery (folder_peers / getFolderDialogs) does the work.
    */
   archivedAt?: number;
+  /** Last explicit archive OR unarchive gesture, Unix millis. */
+  archiveUpdatedAt?: number;
   /**
    * Unix-millis PIN stamp (owner batch 15). Present = the row is pinned in the
    * chat list; `0` = explicitly unpinned (same absent/0 semantics as

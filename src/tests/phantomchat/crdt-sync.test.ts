@@ -522,3 +522,19 @@ describe('CrdtSync.publishWithRetry', () => {
     expect(relay.publishes).toBe(0);
   });
 });
+
+
+it('re-reads local mutations made while the relay query is suspended', async() => {
+  const relay = new FakeRelay();
+  relay.seed({remote: liveEntry('remote', {id: 'remote', name: 'Remote'}, 100)});
+  const {adapter, state} = makeAdapter({local: liveEntry('local', {id: 'local', name: 'Old'}, 50)});
+  let release: () => void;
+  relay.queryLatestEvent.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(relay.event); }));
+  const sync = makeSync(relay, adapter);
+  const pass = sync.reconcile();
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  state.map.local = liveEntry('local', {id: 'local', name: 'Edited while fetching'}, 200);
+  release();
+  await pass;
+  expect(state.map.local.data.name).toBe('Edited while fetching');
+});

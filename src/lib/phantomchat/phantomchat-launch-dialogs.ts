@@ -36,7 +36,9 @@
  * converges without waiting for user activity.
  */
 
-import {FOLDER_ID_GROUPS} from '@appManagers/constants';
+import {registerChatSyncRetry, retrySessionSync, setChatSyncStatus, sessionSyncGeneration, onSessionSyncCleanup} from './session-sync-state';
+import {isGroupPeer} from './group-types';
+import {FOLDER_ID_GROUPS, FOLDER_ID_SESSION} from '@appManagers/constants';
 import type {ChatCatchUpOutcome} from './chat-api';
 
 const LOG_PREFIX = '[PhantomChatLaunchDialogs]';
@@ -226,7 +228,7 @@ export function isChatDeepLink(hash: string | undefined | null): boolean {
 export function installLaunchDialogs(opts: {
   rootScope: any;
   appImManager: any;
-  chatAPI: {catchUpConversation(pubkey: string): Promise<ChatCatchUpOutcome>};
+  chatAPI: {catchUpConversation(pubkey: string, force?: boolean): Promise<ChatCatchUpOutcome>};
   launchedWithDeepLink: boolean;
   isMobile(): boolean;
 }): {previewsReady: Promise<number>} {
@@ -234,24 +236,92 @@ export function installLaunchDialogs(opts: {
   const getDialogs = async(): Promise<DialogRef[]> => {
     // Groups (3) as well: Chats (0) excludes group chats by presentation rule,
     // so reading folder 0 alone would skip every group conversation's previews.
-    const [chats, groups] = await Promise.all([
+    const [chats, groups, sessions] = await Promise.all([
       rootScope.managers.dialogsStorage.getFolderDialogs(0),
-      rootScope.managers.dialogsStorage.getFolderDialogs(FOLDER_ID_GROUPS)
+      rootScope.managers.dialogsStorage.getFolderDialogs(FOLDER_ID_GROUPS),
+      rootScope.managers.dialogsStorage.getFolderDialogs(FOLDER_ID_SESSION)
     ]);
-    return ((chats || []) as DialogRef[]).concat((groups || []) as DialogRef[]);
+    return ((chats || []) as DialogRef[]).concat((groups || []) as DialogRef[], (sessions || []) as DialogRef[]);
   };
 
+  const epoch = sessionSyncGeneration();
+  const pending = new Map<number, Promise<void>>();
+  const syncSelected = (peerId: number, force = false): Promise<void> => {
+    if(epoch !== sessionSyncGeneration()) return Promise.resolve();
+    if(!peerId) return Promise.resolve();
+    if(pending.has(peerId)) return pending.get(peerId);
+    setChatSyncStatus(peerId, 'syncing');
+    const run = (async() => {
+      let timer: ReturnType<typeof setTimeout>;
+      try {
+        const work = async(): Promise<ChatCatchUpOutcome> => {
+          let key: string;
+          if(isGroupPeer(peerId)) {
+            // Kick metadata immediately, alongside the inbox query. The composer
+            // also observes its status, so history alone cannot clear this gate.
+            retrySessionSync();
+            const {getGroupStore} = await import('./group-store');
+            const group = await getGroupStore().getByPeerId(peerId);
+            if(!group) return 'failed';
+            key = `group:${group.groupId}`;
+          } else {
+            const {getPubkey} = await import('./virtual-peers-db');
+            key = await getPubkey(peerId);
+          }
+          if(!key) return 'failed';
+          const outcome = await chatAPI.catchUpConversation(key, force);
+          if(outcome === 'ran' || outcome === 'skipped') {
+            await rootScope.managers.appMessagesManager.invalidateHistoryCache?.(peerId);
+            await rootScope.managers.appMessagesManager.reloadConversation(peerId);
+            // Cached bubbles can outlive the history cache. Reload only this peer.
+            rootScope.dispatchEvent?.('history_reload', peerId);
+          }
+          return outcome;
+        };
+        const outcome = await Promise.race([
+          work(),
+          new Promise<ChatCatchUpOutcome>((resolve) => { timer = setTimeout(() => resolve('failed'), 30_000); })
+        ]);
+        if(epoch !== sessionSyncGeneration()) return;
+        setChatSyncStatus(peerId, outcome === 'ran' || outcome === 'skipped' ? 'ready' :
+          outcome === 'offline' ? 'offline' : 'failed');
+      } catch(error) {
+        console.warn(LOG_PREFIX, 'selected chat sync failed', error);
+        if(epoch === sessionSyncGeneration()) setChatSyncStatus(peerId, 'failed');
+      } finally {
+        clearTimeout(timer);
+        pending.delete(peerId);
+      }
+    })();
+    pending.set(peerId, run);
+    return run;
+  };
+  registerChatSyncRetry((peerId) => syncSelected(peerId, true));
   if(appImManager?.addEventListener) {
-    appImManager.addEventListener('peer_changed', (payload: unknown) => {
-      void onChatOpenedCatchUp(payload, {
-        resolvePubkey: async(peerId) => {
-          const {getPubkey} = await import('./virtual-peers-db');
-          return getPubkey(peerId);
-        },
-        catchUp: (pubkey) => chatAPI.catchUpConversation(pubkey)
-      });
-    });
+    const peerChanged = (payload: unknown) => {
+      const peerId = Number(typeof payload === 'number' ? payload : (payload as any)?.peerId);
+      if(Number.isFinite(peerId)) void syncSelected(peerId);
+    };
+    appImManager.addEventListener('peer_changed', peerChanged);
+    onSessionSyncCleanup(() => appImManager.removeEventListener?.('peer_changed', peerChanged));
   }
+  const resumeSelected = () => {
+    if(document.visibilityState !== 'hidden' && appImManager?.chat?.peerId) {
+      void syncSelected(Number(appImManager.chat.peerId), true);
+    }
+  };
+  if(typeof document !== 'undefined') document.addEventListener('visibilitychange', resumeSelected);
+  if(typeof window !== 'undefined') window.addEventListener('online', resumeSelected);
+  const offlineSelected = () => {
+    if(appImManager?.chat?.peerId) setChatSyncStatus(Number(appImManager.chat.peerId), 'offline');
+  };
+  if(typeof window !== 'undefined') window.addEventListener('offline', offlineSelected);
+  onSessionSyncCleanup(() => {
+    document.removeEventListener('visibilitychange', resumeSelected);
+    window.removeEventListener('online', resumeSelected);
+    window.removeEventListener('offline', offlineSelected);
+  });
+  if(appImManager?.chat?.peerId) void syncSelected(Number(appImManager.chat.peerId));
 
   const refreshOnce = () => refreshDialogPreviews({
     getDialogs,

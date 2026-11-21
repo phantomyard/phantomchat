@@ -92,3 +92,32 @@ describe('groups adapter applies an info-only merge', () => {
     expect(upserts.map((r) => r.name)).toEqual(['Fix the login bug']);
   });
 });
+
+
+describe('archive register across stale clients', () => {
+  it('a rename on a stale PC cannot unarchive the newer explicit archive', () => {
+    const archived = rec(5000, {archivedAt: 4_000_000, archiveUpdatedAt: 4_000_000});
+    const renamed = rec(9000, {name: 'Renamed', archivedAt: 0, archiveUpdatedAt: 3_000_000});
+    for(const [a, b] of [[archived, renamed], [renamed, archived]]) {
+      const merged = mergeGroupsMaps(map(a), map(b))[G].data;
+      expect(merged.archivedAt).toBe(4_000_000);
+      expect(merged.name).toBe('Renamed');
+    }
+  });
+
+  it('an explicit unarchive survives an offline device republishing its old archive', () => {
+    const active = rec(5000, {archivedAt: 0, archiveUpdatedAt: 4_000_000});
+    const stale = rec(9000, {archivedAt: 3_000_000});
+    for(const [a, b] of [[active, stale], [stale, active]]) {
+      const merged = mergeGroupsMaps(map(a), map(b))[G].data;
+      expect(merged.archivedAt).toBe(0);
+      expect(merged.archiveUpdatedAt).toBe(4_000_000);
+    }
+  });
+
+  it('forwards the newer proof even when both copies have the same archive value', () => {
+    const a = rec(5000, {archivedAt: 0, archiveUpdatedAt: 4_000_000});
+    const b = rec(9000, {archivedAt: 0, archiveUpdatedAt: 3_000_000});
+    expect(mergeGroupsMaps(map(a), map(b))[G].data.archiveUpdatedAt).toBe(4_000_000);
+  });
+});

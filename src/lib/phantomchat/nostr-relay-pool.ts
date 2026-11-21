@@ -29,6 +29,7 @@ import {
   READBACK_QUARANTINE_JITTER,
   READBACK_STRIKE_THRESHOLD
 } from './relay-ranking';
+import {getGroupIdFromRumor} from './group-control-messages';
 import {closeOnVersionChange} from './idb-close-on-versionchange';
 
 // ─── Types ─────────────────────────────────────────────────────────
@@ -360,6 +361,25 @@ export class NostrRelayPool {
   // Catch-up poll (delivery backbone — recovers wraps the live push dropped)
   private backfillPollInterval: ReturnType<typeof setInterval> | null = null;
   private backfillPollInFlight = false;
+  private catchUpPriority: string | null = null;
+
+  setCatchUpPriority(conversation: string): void {
+    this.catchUpPriority = conversation;
+  }
+
+  private prioritizeCatchUp(messages: DecryptedMessage[]): DecryptedMessage[] {
+    const key = this.catchUpPriority;
+    if(!key) return messages;
+    const priority: DecryptedMessage[] = [];
+    const rest: DecryptedMessage[] = [];
+    for(const msg of messages) {
+      const groupId = getGroupIdFromRumor(msg);
+      const selected = key.startsWith('group:') ? groupId === key.slice(6) : !groupId && msg.from === key;
+      (selected ? priority : rest).push(msg);
+    }
+    return priority.concat(rest);
+  }
+
   // Wall-clock of the last completed catch-up (startup backfill or poll tick).
   // The visible-triggered dormancy catch-up keys off this: a backgrounded PWA
   // freezes the poll timer, so on wake a stale timestamp means "the poll could
@@ -1619,11 +1639,15 @@ export class NostrRelayPool {
     const before = this.deliveredMessageCount;
     for(const page of pages) {
       if(!page) continue;
-      for(const msg of page.messages) {
+      for(const msg of this.prioritizeCatchUp(page.messages)) {
         await this.handleIncomingMessage(msg);
       }
     }
 
+    // Another walk may already have claimed wrappers that this query could
+    // not return. Its persistence must finish before selected-chat readiness.
+    await this.startupWalk;
+    if(this.backfillGapOpen) completed = 0;
     return {delivered: this.deliveredMessageCount - before, completed, responded, queried: readEntries.length};
   }
 
@@ -2996,7 +3020,7 @@ export class NostrRelayPool {
     const before = this.deliveredMessageCount;
     for(const page of pages) {
       if(!page) continue;
-      for(const msg of page.messages) {
+      for(const msg of this.prioritizeCatchUp(page.messages)) {
         await this.handleIncomingMessage(msg);
       }
     }
@@ -3034,7 +3058,7 @@ export class NostrRelayPool {
     this.applyWalkEvidence([page], {mayClear: false});
 
     const before = this.deliveredMessageCount;
-    for(const msg of page?.messages ?? []) {
+    for(const msg of this.prioritizeCatchUp(page?.messages ?? [])) {
       await this.handleIncomingMessage(msg);
     }
     this.notifyBackfillProgress(before);
@@ -3277,7 +3301,7 @@ export class NostrRelayPool {
       const before = this.deliveredMessageCount;
       for(const page of pages) {
         if(!page) continue;
-        for(const msg of page.messages) {
+        for(const msg of this.prioritizeCatchUp(page.messages)) {
           await this.handleIncomingMessage(msg);
         }
       }

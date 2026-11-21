@@ -1352,7 +1352,7 @@ export class ChatAPI {
    * connected (the reconnect backfill covers that). Concurrent calls for the
    * same chat share one query. Never throws.
    */
-  catchUpConversation(peerPubkey: string): Promise<ChatCatchUpOutcome> {
+  catchUpConversation(peerPubkey: string, force = false): Promise<ChatCatchUpOutcome> {
     if(!peerPubkey || peerPubkey === this.ownId) return Promise.resolve('skipped');
 
     const inFlight = this.chatCatchUpInFlight.get(peerPubkey);
@@ -1360,7 +1360,7 @@ export class ChatAPI {
 
     const now = Date.now();
     const lastAt = Math.max(this.lastChatCatchUpAt.get(peerPubkey) ?? 0, this.lastFullBackfillAt);
-    if(lastAt && now - lastAt < CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS) {
+    if(!force && lastAt && now - lastAt < CHAT_OPEN_CATCHUP_MIN_INTERVAL_MS) {
       this.log.debug('[ChatAPI] chat catch-up skipped (recent):', peerPubkey.slice(0, 8));
       return Promise.resolve('skipped');
     }
@@ -1370,11 +1370,12 @@ export class ChatAPI {
     const run = (async(): Promise<ChatCatchUpOutcome> => {
       try {
         const store = getMessageStore();
-        const convId = store.getConversationId(this.ownId, peerPubkey);
+        const convId = peerPubkey.startsWith('group:') ? peerPubkey : store.getConversationId(this.ownId, peerPubkey);
         const latest = await store.getLatestTimestamp(convId);
         const since = latest > 0 ? Math.max(0, latest - CHAT_OPEN_CATCHUP_OVERLAP_S) : undefined;
         this.log('[ChatAPI] chat catch-up:', peerPubkey.slice(0, 8), 'since', since);
         // Delivered through the pool's receive pump (see catchUpInbox).
+        this.relayPool.setCatchUpPriority?.(peerPubkey);
         const result = await this.relayPool.catchUpInbox(since);
         if(result.completed === 0) {
           // No relay finished the walk (all errored, timed out, or truncated):

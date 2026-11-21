@@ -23,7 +23,7 @@ export const SYNC_NUDGE_TAG = 'phantomchat-sync-nudge';
 /** Nudges older than this are relay replays: the reconcile they ask for has long happened. */
 export const SYNC_NUDGE_MAX_AGE_SECONDS = 10 * 60;
 
-const NUDGE_DOMAINS: readonly SyncDomain[] = ['contacts'];
+const NUDGE_DOMAINS: readonly SyncDomain[] = ['contacts', 'groups'];
 
 /** Random per page load: a device ignores its own nudge. */
 export const SYNC_NUDGE_DEVICE_ID = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);

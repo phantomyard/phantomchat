@@ -36,6 +36,8 @@ import {createContactsAdapter, CONTACTS_SYNC_D_TAG, CONTACTS_SYNC_VERSION, CONTA
 import {createGroupsAdapter, mergeGroupsMaps, GROUPS_SYNC_D_TAG, GROUPS_SYNC_VERSION, GROUPS_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/groups-sync-adapter';
 import {createReadStateAdapter, mergeReadStateMaps, READ_STATE_SYNC_D_TAG, READ_STATE_SYNC_VERSION, READ_STATE_SYNC_ACCEPTED_VERSIONS} from '@lib/phantomchat/read-state-sync-adapter';
 import {markChatListReady, whenChatListReady} from '@lib/phantomchat/phantomchat-ready-gate';
+import {enableSessionSync, createGroupsReconciler, setGroupsSyncStatus, onSessionSyncCleanup} from '@lib/phantomchat/session-sync-state';
+import {withStableSessionList} from '@lib/phantomchat/session-sync-ui';
 import {registerSyncPublisher, registerSyncNudgeHandler} from '@lib/phantomchat/phantomchat-sync-triggers';
 import {sendSyncNudge} from '@lib/phantomchat/sync-nudge';
 import {getAllMappings, getMapping, setMappingDisplayName, setMappingUpdatedAt, setDeliberateAddAt, removeMapping, listDeletedPeers, recordDeletedPeer, clearDeletedPeer} from '@lib/phantomchat/virtual-peers-db';
@@ -709,7 +711,11 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             // Per-field name/description/avatar merge on top of record LWW:
             // a newer copy must not carry an older name (see mergeGroupsMaps).
             merge: mergeGroupsMaps,
-            chatAPI: crdtChatAPI, adapter: groupsAdapter, ...crdtCrypto
+            chatAPI: crdtChatAPI,
+            adapter: {
+              read: () => groupsAdapter.read(),
+              apply: (merged, before) => withStableSessionList(() => groupsAdapter.apply(merged, before))
+            }, ...crdtCrypto
           });
 
           // --- Read-state sync (#217): the per-conversation read cursors ride
@@ -812,20 +818,16 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             void reconcileContacts();
           });
 
-          const reconcileOnce = async() => {
-            const [c, g, r] = await Promise.all([
-              reconcileContacts(),
-              groupsSync.reconcile().catch((e) => { console.warn('[groups-sync] reconcile failed', e); return 'failed'; }),
-              readStateSync.reconcile().catch((e) => { console.warn('[read-state-sync] reconcile failed', e); return 'failed'; })
-            ]);
-            console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g, 'read-state:', r);
-            // Read state has had its first settle (#217): badges are
-            // account-true (or the relay said nothing — the ready gate's own
-            // bound covers a dead relay). Normalize the device-local unread
-            // counters against the store BEFORE the gate lifts (#218 review),
-            // so the ordering is explicit rather than accidental.
-            await reconcileUnreadFromStore();
-            markChatListReady('read-state');
+          // All group sync writers share a queue; an in-flight publish must
+          // not apply an older snapshot over a newer reconcile (or vice versa).
+          let groupsQueue = Promise.resolve();
+          const groupOperation = <T>(run: () => Promise<T>): Promise<T> => {
+            const next = groupsQueue.then(run, run);
+            groupsQueue = next.then(() => {}, () => {});
+            return next;
+          };
+          const reconcileGroups = createGroupsReconciler(() => groupOperation(async() => {
+            const g = await groupsSync.reconcile();
             // Post-apply convergence (duplicate-groups regression 2026-10-04,
             // round 2): boot-only convergence (#196) misses a rival successor
             // that first ARRIVES via sync after the boot sweep — the init
@@ -857,7 +859,47 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
               if(!isInconclusiveReconcile(g)) await getGroupAPI().dropOrphanGroupDialogs();
             } catch(e) {
               console.warn('[groups-sync] post-reconcile convergence failed', e);
+              return false;
             }
+            return g !== 'failed';
+          }));
+          enableSessionSync(reconcileGroups);
+          registerSyncNudgeHandler('groups', () => { void reconcileGroups(); });
+          const resumeGroups = () => {
+            if(document.visibilityState !== 'hidden') void reconcileGroups();
+          };
+          document.addEventListener('visibilitychange', resumeGroups);
+          window.addEventListener('online', resumeGroups);
+          const groupsOffline = () => setGroupsSyncStatus('offline');
+          window.addEventListener('offline', groupsOffline);
+          let groupsConnected = false;
+          const groupsRelayChanged = (connected: number) => {
+            const online = connected > 0;
+            if(online && !groupsConnected) void reconcileGroups();
+            else if(!online) setGroupsSyncStatus('offline');
+            groupsConnected = online;
+          };
+          crdtRelayPool?.addStateChangeListener(groupsRelayChanged);
+          onSessionSyncCleanup(() => {
+            document.removeEventListener('visibilitychange', resumeGroups);
+            window.removeEventListener('online', resumeGroups);
+            window.removeEventListener('offline', groupsOffline);
+            crdtRelayPool?.removeStateChangeListener(groupsRelayChanged);
+          });
+          const reconcileOnce = async() => {
+            const [c, g, r] = await Promise.all([
+              reconcileContacts(),
+              reconcileGroups().then((ok) => ok ? 'in-sync' : 'failed'),
+              readStateSync.reconcile().catch((e) => { console.warn('[read-state-sync] reconcile failed', e); return 'failed'; })
+            ]);
+            console.log('[contacts-groups-sync] reconcile outcome — contacts:', c, 'groups:', g, 'read-state:', r);
+            // Read state has had its first settle (#217): badges are
+            // account-true (or the relay said nothing — the ready gate's own
+            // bound covers a dead relay). Normalize the device-local unread
+            // counters against the store BEFORE the gate lifts (#218 review),
+            // so the ordering is explicit rather than accidental.
+            await reconcileUnreadFromStore();
+            markChatListReady('read-state');
             return {c, g, r};
           };
           // 'failed' = relay hiccup; 'no-remote-nothing-local' = we queried but
@@ -942,7 +984,14 @@ export async function mountPhantomChatOnboarding(container: HTMLElement): Promis
             }
             return landed;
           }, '[contacts-sync]'));
-          registerSyncPublisher('groups', mkDebounced(() => groupsSync.publishWithRetry(), '[groups-sync]'));
+          registerSyncPublisher('groups', mkDebounced(async() => {
+            const landed = await groupOperation(() => groupsSync.publishWithRetry());
+            if(landed) {
+              void sendSyncNudge(PhantomChatBridge.getInstance().getRelayPool(), ownPubkey, 'groups')
+              .catch((e) => console.warn('[groups-sync] nudge failed', e));
+            }
+            return landed;
+          }, '[groups-sync]'));
           // Read cursors advance constantly (every readHistory) — the debounce
           // collapses a scrolling session into one publish.
           registerSyncPublisher('read-state', mkDebounced(() => readStateSync.publishWithRetry(), '[read-state-sync]'));
