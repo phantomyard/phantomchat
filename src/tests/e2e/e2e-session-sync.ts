@@ -22,6 +22,7 @@ async function waitForAsync(page, predicate, arg, options = {}) {
 async function main() {
 const events = new Map();
 let failGroupMetadata = false;
+let failedMetadataQueries = 0;
 const subscriptions = new Map();
 const relay = new WebSocketServer({host: '127.0.0.1', port: 0});
 await new Promise((resolve) => relay.once('listening', resolve));
@@ -58,6 +59,7 @@ relay.on('connection', (socket) => {
       }
     } else if(op === 'REQ') {
       if(failGroupMetadata && args.some((f) => f['#d']?.includes('phantomchat.chat/groups'))) {
+        failedMetadataQueries++;
         const snapshot = [...events.values()].find((event) => event.kind === 30078 && event.tags.some((tag) => tag[0] === 'd' && tag[1] === 'phantomchat.chat/groups'));
         assert.ok(snapshot, 'metadata fixture must exist before making it unreadable');
         socket.send(JSON.stringify(['EVENT', id, {...snapshot, content: 'unreadable snapshot'}]));
@@ -179,8 +181,7 @@ try {
   assert.equal(await b.page.locator('.chat-input .session-sync-status').count(), 0);
   await b.page.setViewportSize({width: 390, height: 844});
   await b.page.waitForTimeout(500);
-  const bounds = await pill.boundingBox();
-  assert.ok(bounds && bounds.y < 160 && bounds.x >= 0 && bounds.x + bounds.width <= 390, JSON.stringify(bounds));
+  assert.equal(await pill.isVisible(), false, 'failed metadata is background recovery, not active progress');
   await b.page.screenshot({path: `${process.env.PHANTOMBOT_SCRATCH || '/tmp'}/lockout-mobile.png`});
   await b.page.setViewportSize({width: 1280, height: 800});
   await b.page.evaluate(async(id) => {
@@ -202,9 +203,15 @@ try {
     const {getMessageStore} = await import('/src/lib/phantomchat/message-store.ts');
     return (await getMessageStore().getMessages(`group:${id}`, 20)).some((row) => row.content === 'Composer works while metadata is unavailable');
   }, groupId);
-  console.log('metadata snapshot unreadable: real group send succeeded; blue pill stays above chat on mobile');
+  console.log('metadata snapshot unreadable: real group send succeeded; no permanent mobile pill');
   assert.ok(['', 'Syncing...'].includes(await pill.innerText()));
   assert.equal(await pill.locator('button').count(), 0);
+  const queryCount = failedMetadataQueries;
+  await b.page.waitForTimeout(35_000);
+  assert.ok(failedMetadataQueries > queryCount, 'recovery must continue querying without clicks');
+  assert.equal(await pill.isVisible(), false, 'ongoing retries must not resurrect the pill');
+  assert.equal(await b.page.locator('.session-sync-status:visible').count(), 0);
+  console.log('persistent metadata failure: retries continue silently and cached conversation stays usable');
   failGroupMetadata = false;
   // No click, foreground event or manual retry: the background retry must heal.
 

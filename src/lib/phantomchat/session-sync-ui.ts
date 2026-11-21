@@ -3,7 +3,11 @@ import {
   getChatSyncStatus, getGroupsSyncStatus, subscribeSessionSync
 } from './session-sync-state';
 
-/** Transient progress/error feedback; settled views keep their normal layout. */
+// Background recovery may continue indefinitely while relays are unavailable.
+// Spend one display budget per unsettled episode, not one per retry.
+export const SYNC_PROGRESS_VISIBLE_MS = 10_000;
+
+/** Transient progress only; failure/backoff is never labelled active syncing. */
 export function mountSessionSyncStatus(host: HTMLElement, peer?: () => number): () => void {
   const slot = document.createElement('div');
   slot.className = `session-sync-status${peer ? ' session-sync-chat' : ''}`;
@@ -12,18 +16,30 @@ export function mountSessionSyncStatus(host: HTMLElement, peer?: () => number): 
   const label = document.createElement('span');
   slot.append(label);
   host.prepend(slot);
-  let previous: string;
-  const unsubscribe = subscribeSessionSync(() => {
-    const status = peer ? getChatSyncStatus(peer()) : getGroupsSyncStatus();
-    const identity = status;
-    if(identity === previous) return;
-    previous = identity;
+  let identity: number;
+  let started: number | undefined;
+  let timer: ReturnType<typeof setTimeout>;
+  const render = () => {
+    const nextIdentity = peer ? peer() : 0;
+    if(identity !== nextIdentity) {
+      identity = nextIdentity;
+      started = undefined;
+    }
+    const status = peer ? getChatSyncStatus(identity) : getGroupsSyncStatus();
+    clearTimeout(timer);
+    if(status === 'ready') started = undefined;
+    if(status === 'syncing') started ??= Date.now();
+    const remaining = started === undefined ? 0 : SYNC_PROGRESS_VISIBLE_MS - (Date.now() - started);
     slot.dataset.state = status;
-    slot.hidden = status === 'ready' || status === 'offline';
+    slot.hidden = status !== 'syncing' || remaining <= 0;
     if(slot.hidden) label.replaceChildren();
-    else label.replaceChildren(i18n('SessionSync.Messages'));
-  });
-  return () => { unsubscribe(); slot.remove(); };
+    else {
+      label.replaceChildren(i18n('SessionSync.Messages'));
+      timer = setTimeout(render, remaining);
+    }
+  };
+  const unsubscribe = subscribeSessionSync(render);
+  return () => { clearTimeout(timer); unsubscribe(); slot.remove(); };
 }
 
 /** Keep the visible cached list still while a remote delta is materialised.
