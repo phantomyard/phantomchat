@@ -62,7 +62,7 @@ function materializedPayload(entry: SyncEntry<GroupRecord>, local: GroupRecord):
   if(!entry.data) return undefined;
   const record = {...entry.data, peerId: 0, updatedAt: entry.updatedAt * 1000};
   delete (record as GroupRecord & {tags?: unknown}).tags;
-  record.kind = intendedGroupKind(record) === 'session' || intendedGroupKind(local) === 'session' ? 'session' : undefined;
+  record.kind = intendedGroupKind(entry.data) === 'session' || intendedGroupKind(local) === 'session' ? 'session' : undefined;
   for(const field of ['archivedAt', 'pinnedAt', 'unreadMarkAt'] as const) {
     if(typeof record[field] !== 'number' && typeof local[field] === 'number') record[field] = local[field];
   }

@@ -250,3 +250,9 @@ it('logout stops a queued capture before it can recreate private catalog state',
   const capture = f.engine.filtersChanged(); f.engine.stop();
   await expect(capture).rejects.toThrow('stopped');
 });
+it('session peer-range evidence still materializes a class upgrade without an explicit kind', () => {
+  const data: any = {groupId: '12'.repeat(16), name: 'Legacy session', members: [], adminPubkey: '34'.repeat(32), createdAt: 1000, updatedAt: 10000, peerId: -2000000000000001};
+  const local: any = {id: data.groupId, updatedAt: 10, data};
+  const remote: any = {...local, data: {...data, peerId: -12000000000000001}};
+  expect(needsGroupMaterialization(remote, local)).toBe(true);
+});
