@@ -67,12 +67,13 @@ async function device(label) {
     window.__phantomchatTestRelays = [{url, read: true, write: true}];
     localStorage.setItem('phantomchat-relay-config', JSON.stringify([{url, read: true, write: true}]));
   }, relayUrl);
+  await ctx.route('**/relays.json', (route) => route.fulfill({json: {relays: [relayUrl]}}));
   // Keep the scenario hermetic, including discovery and uploads.
   await ctx.route(/^https:\/\//, (route) => route.abort());
   const page = await ctx.newPage();
   pages.push(page);
   page.on('pageerror', (error) => errors.push(`${label}: ${error.message}`));
-  page.on('console', (msg) => { if(msg.type() === 'error') errors.push(`${label}: ${msg.text()}`); });
+  page.on('console', (msg) => { if(msg.type() === 'error') errors.push(`${label}: ${msg.text()}`); if(/PhantomChatOnboardingIntegration|NostrRelayPool.*connected/.test(msg.text())) console.log(label, msg.text()); });
   await page.goto(APP_URL, {waitUntil: 'load'});
   await page.evaluate(async() => {
     const {importFromNsec} = await import('/src/lib/phantomchat/nostr-identity.ts');
@@ -84,8 +85,8 @@ async function device(label) {
     await saveEncryptedIdentity({id: 'current', npub: identity.npub, displayName: 'Session sync test', protectionType: 'none', iv, encryptedKeys: ciphertext, createdAt: Date.now()});
   });
   await page.reload({waitUntil: 'load'});
-  await page.waitForFunction(() => window.__phantomchatChatAPI && window.appImManager?.managers, {timeout: 60000});
-  await page.waitForFunction(() => document.querySelector('.connection-status-bottom > .session-sync-status')?.dataset.state === 'ready', {timeout: 60000});
+  await page.waitForFunction(() => window.__phantomchatChatAPI && window.appImManager?.managers, undefined, {timeout: 60000});
+  await page.waitForFunction(() => document.querySelector('.connection-status-bottom > .session-sync-status')?.dataset.state === 'ready', undefined, {timeout: 60000});
   console.log(`${label} ready`);
   return {ctx, page};
 }

@@ -14,7 +14,7 @@ function install(catchUp = vi.fn().mockResolvedValue('ran')) {
   const dispatch = vi.fn();
   const im = {chat: {peerId: 0}, addEventListener: (name: string, listener: any) => { listeners[name] = listener; }};
   installLaunchDialogs({
-    rootScope: {dispatchEvent: dispatch, managers: {dialogsStorage: {getFolderDialogs: async() => []}, appMessagesManager: {reloadConversation: reload, invalidateHistoryCache: invalidate}}},
+    rootScope: {dispatchEvent: dispatch, managers: {dialogsStorage: {getFolderDialogs: async(): Promise<Array<{peerId: number}>> => []}, appMessagesManager: {reloadConversation: reload, invalidateHistoryCache: invalidate}}},
     appImManager: im,
     chatAPI: {catchUpConversation: catchUp}, launchedWithDeepLink: true, isMobile: () => false
   });
