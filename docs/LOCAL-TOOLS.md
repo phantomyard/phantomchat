@@ -29,9 +29,10 @@ human or phantom, gets trusted turns in that group, with those same full tools o
 this PC, no judge and no sandbox. Outside that group nothing changes for them.
 Adding a Provider contact to a group therefore gives everyone in it the use of
 this PC through that contact. Removing a member takes effect at my next message
-in the group. The roster is in memory: after the engine restarts it is rebuilt
-from my messages in the group. Phantoms wake each other only by @mention and
-pause after 60 handoffs with no human message.
+in the group. The roster is in memory: after the engine restarts it is rebuilt,
+best effort, from my messages of the last 48 hours in the group. With none found,
+nobody but me is trusted there until my next message. Phantoms wake each other
+only by @mention and pause after 60 handoffs with no human message.
 
 ## Scan
 
@@ -52,13 +53,17 @@ Pi's own built-ins).
 
 Tools answer **only** when the sender npub has the switch ON and the request arrived over
 NIP-17, with its signature verified against that npub. A Session with that contact counts
-as the contact, whoever else is in it. Other groups do not.
+as the contact, whoever else is in it. A call that names any other group is denied.
 
 Everything else gets no answer at all, and the capability is not advertised.
 
 The switch belongs to the phantom, not to the people talking to it. A phantom on
-phantombot v1.1.514 or later takes trusted turns from every member of a Session I
-am in, so a teammate there can ask it to use its Local tools on this PC.
+phantombot v1.1.514 or later takes trusted turns from every member of any group
+where it treats me as its principal, so a teammate there can ask it to use its
+Local tools on this PC. The Session rule above does not prevent that: the phantom
+declares which group a call is for, the app cannot verify it, and a call that
+names no group is not checked against one. Turning Local tools ON for a phantom
+therefore exposes this PC to everyone in all of those groups, not only Sessions.
 
 ## Tool protocol
 
