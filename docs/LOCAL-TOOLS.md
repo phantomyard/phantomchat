@@ -11,7 +11,7 @@ An AI contact that is a persona of the bundled engine. The New Contact modal
 
 1. `personas.create`, then `persona.configure` with `brain.native`
    (provider, model, key). The key goes into the persona's encrypted vault.
-2. `persona.phantomchat.allow` with my npub (the only one it answers), then
+2. `persona.phantomchat.allow` with my npub (the only one on its allowlist), then
    `persona.phantomchat.start`. The contact is the persona's npub.
 
 A failure before the contact lands deletes the persona. Deleting the contact
@@ -22,6 +22,16 @@ URL are not offered yet: the engine's brain settings have no endpoint field.
 A Provider contact runs on this PC with the persona's full tools, like a
 phantom answering its principal. It has no Local tools switch yet: the
 engine's hosted channel has no per-channel tools setting to turn off.
+
+In a DM it answers only me. In a group I am in, an engine at phantombot v1.1.514
+or later treats the group as a team: every member my latest message there lists,
+human or phantom, gets trusted turns in that group, with those same full tools on
+this PC, no judge and no sandbox. Outside that group nothing changes for them.
+Adding a Provider contact to a group therefore gives everyone in it the use of
+this PC through that contact. Removing a member takes effect at my next message
+in the group. The roster is in memory: after the engine restarts it is rebuilt
+from my messages in the group. Phantoms wake each other only by @mention and
+pause after 60 handoffs with no human message.
 
 ## Scan
 
@@ -45,6 +55,10 @@ NIP-17, with its signature verified against that npub. A Session with that conta
 as the contact, whoever else is in it. Other groups do not.
 
 Everything else gets no answer at all, and the capability is not advertised.
+
+The switch belongs to the phantom, not to the people talking to it. A phantom on
+phantombot v1.1.514 or later takes trusted turns from every member of a Session I
+am in, so a teammate there can ask it to use its Local tools on this PC.
 
 ## Tool protocol
 
