@@ -100,6 +100,15 @@ export function effectivePresence(settings: PresenceSettings, capability: Presen
 }
 
 /**
+ * Does closing the window hide it to the tray instead of closing it? Never
+ * during a real quit — including an update restart, which closes the windows
+ * before the app's own quit starts.
+ */
+export function closeHidesWindow(quitting: boolean, settings: PresenceSettings, capability: PresenceCapability): boolean {
+  return !quitting && effectivePresence(settings, capability).closeToTray;
+}
+
+/**
  * Should this launch stay in the tray? Only when there is a tray to stay in:
  * without one the window is the only way back, so an unsupported desktop
  * always gets a visible window (the status quo).

@@ -10,7 +10,7 @@
  *    is blocked, window.open is denied and vetted https links are handed to the
  *    OS browser
  */
-import {app, BrowserWindow, Tray, session, shell, protocol, net, ipcMain, dialog, safeStorage} from 'electron';
+import {app, autoUpdater as nativeAutoUpdater, BrowserWindow, Tray, session, shell, protocol, net, ipcMain, dialog, safeStorage} from 'electron';
 import {spawnSync} from 'child_process';
 import {readFileSync, writeFileSync, renameSync, mkdirSync, existsSync} from 'fs';
 import {join} from 'path';
@@ -21,6 +21,7 @@ import {
   autostartCapability,
   autostartPath,
   autostartTargetPath,
+  closeHidesWindow,
   effectivePresence,
   keepsHiddenStart,
   normalizePresenceSettings,
@@ -57,6 +58,7 @@ import {
   type PermissionSettings
 } from './permissions';
 import {initUpdater} from './updater';
+import {quitForRealOnUpdateRestart} from './updateRestart';
 import {attachWindowDiagnostics, logsDir, startDiagnosticsAfterReady, startDiagnosticsEarly} from './diagnosticsElectron';
 import {LOG_FILE_NAME} from './diagnostics';
 
@@ -721,7 +723,7 @@ function createWindow(): void {
   // Closing the window hides it to the tray when that is both enabled and
   // possible; without a tray the old behaviour stands and the app quits.
   mainWindow.on('close', (event) => {
-    if(quitting || !effectivePresence(presenceSettings, presenceCapability).closeToTray) return;
+    if(!closeHidesWindow(quitting, presenceSettings, presenceCapability)) return;
     event.preventDefault();
     if(mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
   });
@@ -789,6 +791,15 @@ app.whenReady().then(() => {
   console.error(err instanceof Error ? err.message : err);
   app.exit(1);
 });
+
+// An update restart closes the windows before 'before-quit' fires; without
+// this, close-to-tray hides the window and the macOS restart never quits.
+// Linux installs never go through the native updater.
+if(process.platform !== 'linux') {
+  quitForRealOnUpdateRestart(nativeAutoUpdater, () => {
+    quitting = true;
+  });
+}
 
 // Let the engine cancel its turns and release its root before the app goes.
 let phantombotStopped = false;

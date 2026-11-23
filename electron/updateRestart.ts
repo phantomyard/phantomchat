@@ -236,3 +236,28 @@ export function createInstallNowHandler(deps: InstallNowDeps): () => void {
     deps.stockQuitAndInstall();
   };
 }
+
+// --- macOS update restart (quit, don't hide) ----------------------------------
+
+/** The slice of Electron's native autoUpdater this module listens on. */
+export interface UpdateQuitSource {
+  on(event: 'before-quit-for-update', listener: () => void): unknown;
+}
+
+/**
+ * Make an update restart a REAL quit, not a close-to-tray hide.
+ *
+ * On macOS electron-updater hands the install to Electron's native
+ * (Squirrel.Mac) autoUpdater. Its quitAndInstall closes every window FIRST
+ * and only quits once they are all gone — app 'before-quit' fires after the
+ * windows close, too late for the close handler. With close-to-tray on, that
+ * handler still sees "not quitting", cancels the close and hides the window,
+ * so the restart waits forever: the window vanishes, the app stays running,
+ * and only a manual Quit lets the pending install relaunch.
+ *
+ * Electron emits 'before-quit-for-update' just before it closes the windows;
+ * marking the app as quitting there lets the close go through.
+ */
+export function quitForRealOnUpdateRestart(source: UpdateQuitSource, markQuitting: () => void): void {
+  source.on('before-quit-for-update', markQuitting);
+}
