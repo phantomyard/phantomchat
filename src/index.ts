@@ -21,6 +21,7 @@ import toggleAttributePolyfill from '@helpers/dom/toggleAttributePolyfill';
 import rootScope from '@lib/rootScope';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import I18n, {checkLangPackForUpdates, i18n, LangPackKey} from '@lib/langPack';
+import {setGatePlaceholderResolver} from '@lib/phantomchat/gate-envelope';
 import '@helpers/peerIdPolyfill';
 import '@lib/polyfill';
 import apiManagerProxy from '@lib/apiManagerProxy';
@@ -482,6 +483,8 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
 
     const langPack = await I18n.getCacheLangPackAndApply();
     setDocumentLangPackProperties(langPack);
+    // #498: localize the gate-pause placeholder bubbles from the applied pack.
+    setGatePlaceholderResolver((key) => I18n.format(key as LangPackKey, true));
     bootProgress?.(3, 8, 'Loading settings');
 
     if(IS_BETA) import('./pages/pageIm'); // cache it

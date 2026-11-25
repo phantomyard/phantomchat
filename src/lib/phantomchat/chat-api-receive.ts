@@ -20,6 +20,7 @@ import {isLocalToolsRumor} from './local-tools-wire';
 import {isSyncNudgeRumor, parseSyncNudge, SYNC_NUDGE_DEVICE_ID, SYNC_NUDGE_MAX_AGE_SECONDS} from './sync-nudge';
 import {handleSyncNudge} from './phantomchat-sync-triggers';
 import {waveformToBase64} from './phantomchat-media-shape';
+import {matchGateEnvelope, resolveGatePlaceholder} from './gate-envelope';
 import type {ChatMessage, ChatMessageType} from './chat-api';
 
 /** Payload for an incoming edit notification */
@@ -473,6 +474,23 @@ export async function handleRelayMessage(
   const fileMetadata = extractFileMetadata(parsed, msg.rumorKind);
   if(fileMetadata) msgType = 'file';
 
+  // #498: a paused turn's gate-control text must never render as a chat
+  // message — it names the internal gate endpoints and, in groups, would
+  // broadcast them to every member. Swap the whole-payload envelope for a
+  // neutral placeholder; anything merely quoting it passes untouched.
+  // Review follow-up: a file message's caption is a bubble text too, so the
+  // match runs on the rendered text regardless of message type — never guard
+  // it behind !fileMetadata (the caption was the one unstripped surface).
+  let bubbleContent = fileMetadata ? (fileMetadata.caption || '') : parsed.content;
+  const gateKind = matchGateEnvelope(bubbleContent);
+  if(gateKind) bubbleContent = resolveGatePlaceholder(gateKind);
+  // Review follow-up #2: the live media renderer reads the caption off
+  // fileMetadata directly, so the placeholder must land there too — otherwise
+  // the raw envelope survives on the metadata object while content is clean.
+  const cleanFileMetadata = (gateKind && fileMetadata) ?
+    {...fileMetadata, caption: bubbleContent} :
+    fileMetadata;
+
   const chatMessage: ChatMessage = {
     id: parsed.id || msg.id,
     from: msg.from,
@@ -481,7 +499,7 @@ export async function handleRelayMessage(
     // #11: for a file message the rendered bubble text is the caption (render
     // reads row.content as `text`) — never the fileContent JSON. Caption-less
     // files store ''. Plain text keeps parsed.content.
-    content: fileMetadata ? (fileMetadata.caption || '') : parsed.content,
+    content: bubbleContent,
     timestamp: msg.timestamp,
     // Sub-second ordering signal off the wire. Attached here so every
     // downstream mid writer (the row save below, and PhantomChatSync's
@@ -489,7 +507,7 @@ export async function handleRelayMessage(
     msSlot: getMsSlotFromTags(msg.tags),
     status: 'delivered',
     relayEventId: msg.id,
-    fileMetadata
+    fileMetadata: cleanFileMetadata
   };
 
   // 8. Dedup check

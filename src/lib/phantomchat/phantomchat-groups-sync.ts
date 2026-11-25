@@ -44,6 +44,7 @@ import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 import {buildPhantomChatMedia, waveformToBase64} from './phantomchat-media-shape';
+import {matchGateEnvelope, resolveGatePlaceholder} from './gate-envelope';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '@lib/rootScope';
 import {isConversationSelected} from '@lib/phantomchat/selected-conversation';
@@ -998,6 +999,23 @@ export async function handleGroupIncoming(
     return;
   }
   const {content, type, messageId, timestamp: appTsMs, replyToRumorId, fileMetadata} = parsed;
+
+  // #498: a paused turn's gate-control text must never render as a group
+  // message — it would broadcast the internal gate endpoints to every
+  // member. Swap the whole-payload envelope for a neutral placeholder;
+  // anything merely quoting it passes untouched. This is the single ingest
+  // point for group live receive AND history backfill, so both are covered.
+  // Review follow-up: `content` is the rendered bubble text — the caption on a
+  // file message — so the match runs unconditionally; never guard it behind
+  // !fileMetadata (the caption was the one unstripped surface).
+  const gateKind = matchGateEnvelope(content);
+  const bubbleContent = gateKind ? resolveGatePlaceholder(gateKind) : content;
+  // Review follow-up #2: a sender can carry the envelope on the metadata
+  // caption alone, with `content` empty — the projection then falls back to
+  // `fileMetadata.caption` (see the dispatch below) and the media builder
+  // reads the caption directly. Sanitize it at ingest so every downstream
+  // reader sees the placeholder, exactly like the DM receive path does.
+  const mdGateKind = fileMetadata?.caption ? matchGateEnvelope(fileMetadata.caption) : null;
   const rumorId: string = rumor.id;
   const timestampSec = typeof rumor.created_at === 'number' ?
     rumor.created_at :
@@ -1089,9 +1107,12 @@ export async function handleGroupIncoming(
   // too: a history reload rebuilds the bubble from the stored row, and a
   // voice note without duration/waveform (e.g. MP3 TTS) otherwise comes back
   // as a generic "file-<mid>" attachment.
-  const mediaFm = fileMetadata && type !== 'text' ?
+  const baseMediaFm = fileMetadata && type !== 'text' ?
     {...fileMetadata, mediaType: (fileMetadata as any).mediaType ?? type} :
     fileMetadata;
+  const mediaFm = mdGateKind && baseMediaFm ?
+    {...baseMediaFm, caption: resolveGatePlaceholder(mdGateKind)} :
+    baseMediaFm;
 
   try {
     await store.saveMessage({
@@ -1099,7 +1120,7 @@ export async function handleGroupIncoming(
       appMessageId: messageId,
       conversationId: `group:${groupId}`,
       senderPubkey,
-      content,
+      content: bubbleContent,
       type: type === 'text' ? 'text' : 'file',
       timestamp: timestampSec,
       deliveryState: isOutgoing ? 'sent' : 'delivered',
@@ -1125,7 +1146,7 @@ export async function handleGroupIncoming(
     peerId: groupPeerId,
     fromPeerId: senderPeerId,
     date: timestampSec,
-    text: content,
+    text: bubbleContent,
     isOutgoing,
     ...(replyToMid !== undefined ? {replyToMid} : {}),
     ...(media ? {media} : {})
@@ -1199,7 +1220,7 @@ export async function handleGroupIncoming(
     senderPubkey,
     message: {
       id: messageId,
-      content,
+      content: bubbleContent,
       type,
       from: senderPubkey,
       timestamp: timestampSec,
@@ -1208,7 +1229,7 @@ export async function handleGroupIncoming(
       // the projection reads the bubble text from `fileMetadata.caption`. Keep
       // whatever the metadata already carried when `content` is empty, so a
       // sender that captions the metadata alone does not lose it here.
-      ...(mediaFm ? {fileMetadata: {...mediaFm, caption: content || mediaFm.caption}} : {})
+      ...(mediaFm ? {fileMetadata: {...mediaFm, caption: bubbleContent || mediaFm.caption}} : {})
     },
     timestamp: timestampSec
   });

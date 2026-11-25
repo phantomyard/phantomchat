@@ -4618,7 +4618,12 @@ const lang = {
   'Update.Sources.OpenInTab': 'Open',
   'Update.Compromise.CopyDiagnostics': 'Copy diagnostics',
   'Update.Compromise.DiagnosticsCopied': 'Diagnostics copied to clipboard',
-  'Update.Compromise.DiagnosticsCopyFailed': 'Copy failed'
+  'Update.Compromise.DiagnosticsCopyFailed': 'Copy failed',
+
+  // #498: neutral placeholder shown where a paused turn's gate-control text
+  // would otherwise render (see lib/phantomchat/gate-envelope.ts).
+  'Chat.Gate.ApprovalPaused': 'Waiting for the operator to approve this action.',
+  'Chat.Gate.SecretPaused': 'Waiting for the operator to provide a required secret.'
 };
 
 export default lang;
