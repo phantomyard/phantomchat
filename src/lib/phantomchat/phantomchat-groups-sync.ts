@@ -1005,7 +1005,10 @@ export async function handleGroupIncoming(
   // member. Swap the whole-payload envelope for a neutral placeholder;
   // anything merely quoting it passes untouched. This is the single ingest
   // point for group live receive AND history backfill, so both are covered.
-  const gateKind = !fileMetadata ? matchGateEnvelope(content) : null;
+  // Review follow-up: `content` is the rendered bubble text — the caption on a
+  // file message — so the match runs unconditionally; never guard it behind
+  // !fileMetadata (the caption was the one unstripped surface).
+  const gateKind = matchGateEnvelope(content);
   const bubbleContent = gateKind ? resolveGatePlaceholder(gateKind) : content;
   const rumorId: string = rumor.id;
   const timestampSec = typeof rumor.created_at === 'number' ?

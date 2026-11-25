@@ -478,8 +478,11 @@ export async function handleRelayMessage(
   // message — it names the internal gate endpoints and, in groups, would
   // broadcast them to every member. Swap the whole-payload envelope for a
   // neutral placeholder; anything merely quoting it passes untouched.
+  // Review follow-up: a file message's caption is a bubble text too, so the
+  // match runs on the rendered text regardless of message type — never guard
+  // it behind !fileMetadata (the caption was the one unstripped surface).
   let bubbleContent = fileMetadata ? (fileMetadata.caption || '') : parsed.content;
-  const gateKind = !fileMetadata ? matchGateEnvelope(bubbleContent) : null;
+  const gateKind = matchGateEnvelope(bubbleContent);
   if(gateKind) bubbleContent = resolveGatePlaceholder(gateKind);
 
   const chatMessage: ChatMessage = {

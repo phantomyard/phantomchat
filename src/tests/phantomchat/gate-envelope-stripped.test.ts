@@ -257,6 +257,26 @@ describe('1:1 relay receive strips the gate envelope', () => {
     const result = await handleRelayMessage(dm('gate-event-4', 'plain hello'), ctx());
     expect((result as any).message.content).toBe('plain hello');
   });
+
+  it('strips the envelope when it rides a FILE CAPTION — the one surface the !fileMetadata guard left raw', async() => {
+    const filePayload = JSON.stringify({
+      url: 'https://blossom.example/f.png',
+      sha256: 'aa'.repeat(32),
+      key: 'bb'.repeat(16),
+      iv: 'cc'.repeat(8),
+      mimeType: 'image/png',
+      size: 1024,
+      mediaType: 'image',
+      caption: GATE_ENVELOPE
+    });
+    const result = await handleRelayMessage(dm('gate-event-5', filePayload), ctx());
+    expect(result.action).toBe('received');
+
+    const message = (result as any).message;
+    expect(message.type).toBe('file');
+    expect(message.content).toBe(APPROVAL_PLACEHOLDER);
+    expect(message.content).not.toContain('/api/v1/gates/');
+  });
 });
 
 // ─── Group receive (live + backfill) ────────────────────────────
@@ -314,5 +334,34 @@ describe('group receive strips the gate envelope', () => {
     const dispatch = vi.fn();
     await handleGroupIncoming(OWN_PUBKEY, GROUP_ID, rumor('12'.repeat(32), 'just chatting'), PHANTOM_PUBKEY, dispatch);
     expect(savedRows()[0].content).toBe('just chatting');
+  });
+
+  it('live receive: a file whose CAPTION is the whole envelope is stripped — the surface the !fileMetadata guard left raw', async() => {
+    const dispatch = vi.fn();
+    const fileRumor = {
+      id: '56'.repeat(32),
+      kind: 14,
+      pubkey: PHANTOM_PUBKEY,
+      created_at: NOW,
+      content: JSON.stringify({
+        content: GATE_ENVELOPE,
+        type: 'image',
+        id: '56'.repeat(32) + '-app',
+        timestamp: NOW * 1000,
+        fileMetadata: {
+          url: 'https://blossom.example/f.png',
+          sha256: 'aa'.repeat(32),
+          keyHex: 'bb'.repeat(16),
+          ivHex: 'cc'.repeat(8),
+          mimeType: 'image/png',
+          size: 1024
+        }
+      }),
+      tags: [['group', GROUP_ID]]
+    };
+    await handleGroupIncoming(OWN_PUBKEY, GROUP_ID, fileRumor, PHANTOM_PUBKEY, dispatch);
+
+    expect(savedRows()[0].content).toBe(APPROVAL_PLACEHOLDER);
+    expect(savedRows()[0].content).not.toContain('/api/v1/gates/');
   });
 });
