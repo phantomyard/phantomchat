@@ -484,6 +484,12 @@ export async function handleRelayMessage(
   let bubbleContent = fileMetadata ? (fileMetadata.caption || '') : parsed.content;
   const gateKind = matchGateEnvelope(bubbleContent);
   if(gateKind) bubbleContent = resolveGatePlaceholder(gateKind);
+  // Review follow-up #2: the live media renderer reads the caption off
+  // fileMetadata directly, so the placeholder must land there too — otherwise
+  // the raw envelope survives on the metadata object while content is clean.
+  const cleanFileMetadata = (gateKind && fileMetadata) ?
+    {...fileMetadata, caption: bubbleContent} :
+    fileMetadata;
 
   const chatMessage: ChatMessage = {
     id: parsed.id || msg.id,
@@ -501,7 +507,7 @@ export async function handleRelayMessage(
     msSlot: getMsSlotFromTags(msg.tags),
     status: 'delivered',
     relayEventId: msg.id,
-    fileMetadata
+    fileMetadata: cleanFileMetadata
   };
 
   // 8. Dedup check

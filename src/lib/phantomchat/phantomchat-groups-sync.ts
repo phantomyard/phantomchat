@@ -1010,6 +1010,12 @@ export async function handleGroupIncoming(
   // !fileMetadata (the caption was the one unstripped surface).
   const gateKind = matchGateEnvelope(content);
   const bubbleContent = gateKind ? resolveGatePlaceholder(gateKind) : content;
+  // Review follow-up #2: a sender can carry the envelope on the metadata
+  // caption alone, with `content` empty — the projection then falls back to
+  // `fileMetadata.caption` (see the dispatch below) and the media builder
+  // reads the caption directly. Sanitize it at ingest so every downstream
+  // reader sees the placeholder, exactly like the DM receive path does.
+  const mdGateKind = fileMetadata?.caption ? matchGateEnvelope(fileMetadata.caption) : null;
   const rumorId: string = rumor.id;
   const timestampSec = typeof rumor.created_at === 'number' ?
     rumor.created_at :
@@ -1101,9 +1107,12 @@ export async function handleGroupIncoming(
   // too: a history reload rebuilds the bubble from the stored row, and a
   // voice note without duration/waveform (e.g. MP3 TTS) otherwise comes back
   // as a generic "file-<mid>" attachment.
-  const mediaFm = fileMetadata && type !== 'text' ?
+  const baseMediaFm = fileMetadata && type !== 'text' ?
     {...fileMetadata, mediaType: (fileMetadata as any).mediaType ?? type} :
     fileMetadata;
+  const mediaFm = mdGateKind && baseMediaFm ?
+    {...baseMediaFm, caption: resolveGatePlaceholder(mdGateKind)} :
+    baseMediaFm;
 
   try {
     await store.saveMessage({

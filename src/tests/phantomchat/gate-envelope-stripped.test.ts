@@ -276,7 +276,12 @@ describe('1:1 relay receive strips the gate envelope', () => {
     expect(message.type).toBe('file');
     expect(message.content).toBe(APPROVAL_PLACEHOLDER);
     expect(message.content).not.toContain('/api/v1/gates/');
+    // The live media renderer reads the caption off fileMetadata directly —
+    // the placeholder must land there too, never the raw envelope.
+    expect(message.fileMetadata?.caption).toBe(APPROVAL_PLACEHOLDER);
+    expect(message.fileMetadata?.caption).not.toContain('/api/v1/gates/');
   });
+
 });
 
 // ─── Group receive (live + backfill) ────────────────────────────
@@ -363,5 +368,39 @@ describe('group receive strips the gate envelope', () => {
 
     expect(savedRows()[0].content).toBe(APPROVAL_PLACEHOLDER);
     expect(savedRows()[0].content).not.toContain('/api/v1/gates/');
+  });
+
+  it('live receive: envelope on fileMetadata.caption with EMPTY content is stripped — the projection falls back to the metadata caption', async() => {
+    const dispatch = vi.fn();
+    const fileRumor = {
+      id: '78'.repeat(32),
+      kind: 14,
+      pubkey: PHANTOM_PUBKEY,
+      created_at: NOW,
+      content: JSON.stringify({
+        content: '',
+        type: 'image',
+        id: '78'.repeat(32) + '-app',
+        timestamp: NOW * 1000,
+        fileMetadata: {
+          url: 'https://blossom.example/g.png',
+          sha256: 'dd'.repeat(32),
+          keyHex: 'ee'.repeat(16),
+          ivHex: 'ff'.repeat(8),
+          mimeType: 'image/png',
+          size: 512,
+          caption: GATE_ENVELOPE
+        }
+      }),
+      tags: [['group', GROUP_ID]]
+    };
+    await handleGroupIncoming(OWN_PUBKEY, GROUP_ID, fileRumor, PHANTOM_PUBKEY, dispatch);
+
+    const savedRow = savedRows()[0];
+    expect(savedRow.fileMetadata?.caption).toBe(APPROVAL_PLACEHOLDER);
+    expect(savedRow.fileMetadata?.caption).not.toContain('/api/v1/gates/');
+    const dispatched = dispatchedMessages(dispatch)[0];
+    expect(dispatched.fileMetadata?.caption).toBe(APPROVAL_PLACEHOLDER);
+    expect(dispatched.fileMetadata?.caption).not.toContain('/api/v1/gates/');
   });
 });
