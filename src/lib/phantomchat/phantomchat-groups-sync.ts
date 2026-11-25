@@ -44,6 +44,7 @@ import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {getGroupStore} from './group-store';
 import {ensureSenderUserInjected} from './ensure-sender-user-injected';
 import {buildPhantomChatMedia, waveformToBase64} from './phantomchat-media-shape';
+import {matchGateEnvelope, resolveGatePlaceholder} from './gate-envelope';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import rootScope from '@lib/rootScope';
 import {isConversationSelected} from '@lib/phantomchat/selected-conversation';
@@ -998,6 +999,14 @@ export async function handleGroupIncoming(
     return;
   }
   const {content, type, messageId, timestamp: appTsMs, replyToRumorId, fileMetadata} = parsed;
+
+  // #498: a paused turn's gate-control text must never render as a group
+  // message — it would broadcast the internal gate endpoints to every
+  // member. Swap the whole-payload envelope for a neutral placeholder;
+  // anything merely quoting it passes untouched. This is the single ingest
+  // point for group live receive AND history backfill, so both are covered.
+  const gateKind = !fileMetadata ? matchGateEnvelope(content) : null;
+  const bubbleContent = gateKind ? resolveGatePlaceholder(gateKind) : content;
   const rumorId: string = rumor.id;
   const timestampSec = typeof rumor.created_at === 'number' ?
     rumor.created_at :
@@ -1099,7 +1108,7 @@ export async function handleGroupIncoming(
       appMessageId: messageId,
       conversationId: `group:${groupId}`,
       senderPubkey,
-      content,
+      content: bubbleContent,
       type: type === 'text' ? 'text' : 'file',
       timestamp: timestampSec,
       deliveryState: isOutgoing ? 'sent' : 'delivered',
@@ -1125,7 +1134,7 @@ export async function handleGroupIncoming(
     peerId: groupPeerId,
     fromPeerId: senderPeerId,
     date: timestampSec,
-    text: content,
+    text: bubbleContent,
     isOutgoing,
     ...(replyToMid !== undefined ? {replyToMid} : {}),
     ...(media ? {media} : {})
@@ -1199,7 +1208,7 @@ export async function handleGroupIncoming(
     senderPubkey,
     message: {
       id: messageId,
-      content,
+      content: bubbleContent,
       type,
       from: senderPubkey,
       timestamp: timestampSec,
@@ -1208,7 +1217,7 @@ export async function handleGroupIncoming(
       // the projection reads the bubble text from `fileMetadata.caption`. Keep
       // whatever the metadata already carried when `content` is empty, so a
       // sender that captions the metadata alone does not lose it here.
-      ...(mediaFm ? {fileMetadata: {...mediaFm, caption: content || mediaFm.caption}} : {})
+      ...(mediaFm ? {fileMetadata: {...mediaFm, caption: bubbleContent || mediaFm.caption}} : {})
     },
     timestamp: timestampSec
   });

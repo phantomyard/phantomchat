@@ -20,6 +20,7 @@ import {isLocalToolsRumor} from './local-tools-wire';
 import {isSyncNudgeRumor, parseSyncNudge, SYNC_NUDGE_DEVICE_ID, SYNC_NUDGE_MAX_AGE_SECONDS} from './sync-nudge';
 import {handleSyncNudge} from './phantomchat-sync-triggers';
 import {waveformToBase64} from './phantomchat-media-shape';
+import {matchGateEnvelope, resolveGatePlaceholder} from './gate-envelope';
 import type {ChatMessage, ChatMessageType} from './chat-api';
 
 /** Payload for an incoming edit notification */
@@ -473,6 +474,14 @@ export async function handleRelayMessage(
   const fileMetadata = extractFileMetadata(parsed, msg.rumorKind);
   if(fileMetadata) msgType = 'file';
 
+  // #498: a paused turn's gate-control text must never render as a chat
+  // message — it names the internal gate endpoints and, in groups, would
+  // broadcast them to every member. Swap the whole-payload envelope for a
+  // neutral placeholder; anything merely quoting it passes untouched.
+  let bubbleContent = fileMetadata ? (fileMetadata.caption || '') : parsed.content;
+  const gateKind = !fileMetadata ? matchGateEnvelope(bubbleContent) : null;
+  if(gateKind) bubbleContent = resolveGatePlaceholder(gateKind);
+
   const chatMessage: ChatMessage = {
     id: parsed.id || msg.id,
     from: msg.from,
@@ -481,7 +490,7 @@ export async function handleRelayMessage(
     // #11: for a file message the rendered bubble text is the caption (render
     // reads row.content as `text`) — never the fileContent JSON. Caption-less
     // files store ''. Plain text keeps parsed.content.
-    content: fileMetadata ? (fileMetadata.caption || '') : parsed.content,
+    content: bubbleContent,
     timestamp: msg.timestamp,
     // Sub-second ordering signal off the wire. Attached here so every
     // downstream mid writer (the row save below, and PhantomChatSync's
