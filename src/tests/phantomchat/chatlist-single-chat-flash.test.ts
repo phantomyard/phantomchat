@@ -206,6 +206,29 @@ describe('single-chat Chats space never drops its only row on a same-message upd
     expect(list.sortedList.has(bottom)).toBe(true);
   });
 
+  it('keeps an unchanged bottom row in a paginated multi-row list', async() => {
+    // Review regression (#500): skipping self moved the comparison to the
+    // penultimate row and evicted the bottom row on an unchanged update.
+    const top = 4105, bottom = 4106;
+    const bottomIndex = STORED_INDEX - 0x10000 * 60;
+    const {list} = await makeList([[top, STORED_INDEX], [bottom, bottomIndex]]);
+
+    await list.updateDialog(mkChatDialog(bottom, bottomIndex));
+    expect(list.sortedList.has(bottom)).toBe(true);
+    expect(list.sortedList.has(top)).toBe(true);
+  });
+
+  it('keeps the bottom row of a multi-row list when its own bridge snapshot arrives', async() => {
+    const top = 4107, bottom = 4108;
+    const bottomStored = STORED_INDEX - 0x10000 * 60;
+    const {list} = await makeList([[top, STORED_INDEX], [bottom, bottomStored]]);
+
+    // Same message, bridge-shaped index: just under the row's stored index.
+    await list.updateDialog(mkChatDialog(bottom, bottomStored - 7));
+    expect(list.sortedList.has(bottom)).toBe(true);
+    expect(list.sortedList.getVisibleRowsCount()).toBe(2);
+  });
+
   it('waits before painting the empty artwork when a list that had rows drops to zero', async() => {
     const {default: appDialogsManager} = await import('@lib/appDialogsManager');
     const adm = appDialogsManager as any;
