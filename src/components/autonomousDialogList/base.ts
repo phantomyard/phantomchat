@@ -147,14 +147,36 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
     this.sortedList.update(key);
   }
 
+  /**
+   * May this dialog occupy a row? It may unless it sorts BELOW the loaded
+   * window (older than the bottom row while more pages remain unfetched).
+   *
+   * The bottom row IS the edge of the loaded window, so an update for the
+   * dialog that already holds the bottom row always keeps it: there is no
+   * loaded row below it to be misordered against, and measuring it against
+   * itself deleted it. Bridge snapshots (`createTwebDialog`) carry
+   * `date * 0x10000`, while the row's stored index from DialogsStorage is
+   * `date * 0x10000 + counter` — so a re-dispatch for the SAME top message
+   * (delivery receipts, the send/"working" bursts and their delayed retries)
+   * always ranks just under its own row. With exactly one chat that removed
+   * the only row, the Chats space hit zero rows and painted the empty
+   * three-phantom artwork until the retry dispatch re-added it.
+   *
+   * Every other dialog — a new one, or an existing row above the bottom — is
+   * still measured against the bottom row itself, so the window boundary
+   * never moves (skipping the bottom row would compare it to the penultimate
+   * row and evict an unchanged bottom row in paginated lists).
+   */
   protected canUpdateDialog(dialog: T) {
+    if(this.hasReachedTheEnd) return true;
+
     const sortedItems = this.sortedList.getSortedItems();
     const last = sortedItems[sortedItems.length - 1];
+    if(!last) return true;
+    if(last.id === this.getDialogKey(dialog)) return true;
 
-    const bottomIndex = last?.index;
     const dialogIndex = getDialogIndex(dialog, this.indexKey);
-
-    return !last || dialogIndex >= bottomIndex || this.hasReachedTheEnd;
+    return dialogIndex >= last.index;
   }
 
   public onChatsScroll() {

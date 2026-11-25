@@ -127,6 +127,8 @@ import {attachClickEvent as attachButtonClickEvent} from '@helpers/dom/clickEven
 
 export const DIALOG_LIST_ELEMENT_TAG = 'A';
 const DIALOG_LOAD_COUNT = 20;
+/** How long a list that just emptied must STAY empty before the artwork shows. */
+const EMPTY_PLACEHOLDER_GRACE_MS = 250;
 
 export type DialogDom = {
   avatarEl: ReturnType<typeof avatarNew>,
@@ -562,6 +564,9 @@ export class AppDialogsManager {
 
   private emptyDialogsPlaceholderSubtitle: I18n.IntlElement;
   private updateContactsLengthPromise: Promise<number>;
+  /** Rows were on screen at the last empty-pane check. */
+  private chatListHadRows = false;
+  private emptyPlaceholderGraceTimer: number;
 
   private filtersNavigationItem: NavigationItem;
 
@@ -1498,9 +1503,27 @@ export class AppDialogsManager {
     if(needPlaceholder && placeholderContainer) {
       return;
     } else if(!needPlaceholder) {
+      this.clearEmptyPlaceholderGrace();
+      this.chatListHadRows = this.xd.sortedList.itemsLength() > 0;
       if(placeholderContainer) {
         part.classList.remove('with-placeholder');
         placeholderContainer.remove();
+      }
+
+      return;
+    }
+
+    // A list that just HAD rows and drops to zero is usually a row being
+    // re-keyed or swapped (remove is synchronous, the re-add awaits a worker
+    // round-trip). Don't paint the full-screen empty artwork for that one
+    // frame — confirm the list is still empty a moment later.
+    if(this.chatListHadRows) {
+      if(!this.emptyPlaceholderGraceTimer) {
+        this.emptyPlaceholderGraceTimer = window.setTimeout(() => {
+          this.emptyPlaceholderGraceTimer = undefined;
+          this.chatListHadRows = false;
+          this.checkIfPlaceholderNeeded();
+        }, EMPTY_PLACEHOLDER_GRACE_MS);
       }
 
       return;
@@ -1567,6 +1590,13 @@ export class AppDialogsManager {
     part.append(placeholderContainer);
     part.classList.add('with-placeholder');
     part.dataset.placeholderType = type;
+  }
+
+  private clearEmptyPlaceholderGrace() {
+    if(this.emptyPlaceholderGraceTimer) {
+      clearTimeout(this.emptyPlaceholderGraceTimer);
+      this.emptyPlaceholderGraceTimer = undefined;
+    }
   }
 
   private updateContactsLength(updatePartClassName: boolean) {
