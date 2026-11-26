@@ -246,6 +246,24 @@ describe('empty-space pane teardown for a space that loaded empty', () => {
     expect(host.classList.contains('with-placeholder')).toBe(false);
   });
 
+  it('keeps a loaded folder current while another folder is active', async() => {
+    const {adm, list} = await makeList(vi.fn());
+    list.sortedList.addDeferredItems([], 0);
+    adm.xd = {};
+
+    const dialog = mkSessionDialog(206, 10);
+    rootScope.dispatchEvent('dialogs_multiupdate', new Map([[dialog.peerId, {dialog}]]) as any);
+    await vi.waitFor(() => {
+      expect(list.sortedList.itemsLength()).toBe(1);
+    });
+
+    rootScope.dispatchEvent('dialog_drop', dialog);
+    await vi.waitFor(() => {
+      expect(list.sortedList.itemsLength()).toBe(0);
+    });
+    list.destroy();
+  });
+
   async function makeChatsList() {
     const {default: appDialogsManager} = await import('@lib/appDialogsManager');
     const adm = appDialogsManager as any;

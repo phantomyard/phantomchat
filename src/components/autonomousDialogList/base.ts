@@ -180,7 +180,10 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
   }
 
   public onChatsScroll() {
-    this.requestItemForIdx(0);
+    // A warm folder may have gained rows through live traffic while hidden.
+    // Its rendered row count is the fetched count too; otherwise the first
+    // switch back sees a stale zero and needlessly reloads from the worker.
+    this.cursorFetcher.fetchUntil(1, this.sortedList.itemsLength());
   };
 
   protected onScrolledBottom() {

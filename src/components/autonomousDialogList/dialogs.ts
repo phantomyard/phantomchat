@@ -59,7 +59,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     });
 
     this.listenerSetter.add(rootScope)('dialog_flush', ({dialog}) => {
-      if(!this.isActive || !dialog) {
+      if(!this.shouldProcessDialogUpdates || !dialog) {
         return;
       }
 
@@ -67,7 +67,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     });
 
     this.listenerSetter.add(rootScope)('dialogs_multiupdate', (dialogs) => {
-      if(!this.isActive) {
+      if(!this.shouldProcessDialogUpdates) {
         return;
       }
 
@@ -81,7 +81,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     });
 
     this.listenerSetter.add(rootScope)('dialog_drop', (dialog) => {
-      if(!this.isActive || !isDialog(dialog)) {
+      if(!this.shouldProcessDialogUpdates || !isDialog(dialog)) {
         return;
       }
 
@@ -89,7 +89,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     });
 
     this.listenerSetter.add(rootScope)('dialog_unread', ({dialog}) => {
-      if(!this.isActive || !isDialog(dialog)) {
+      if(!this.shouldProcessDialogUpdates || !isDialog(dialog)) {
         return;
       }
 
@@ -97,7 +97,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     });
 
     this.listenerSetter.add(rootScope)('dialog_notify_settings', (dialog) => {
-      if(!this.isActive || !isDialog(dialog)) {
+      if(!this.shouldProcessDialogUpdates || !isDialog(dialog)) {
         return;
       }
 
@@ -105,7 +105,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     });
 
     this.listenerSetter.add(rootScope)('dialog_draft', ({dialog, drop, peerId}) => {
-      if(!this.isActive || isForumTopic(dialog)) {
+      if(!this.shouldProcessDialogUpdates || isForumTopic(dialog)) {
         return;
       }
 
@@ -117,7 +117,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     });
 
     this.listenerSetter.add(rootScope)('filter_update', async(filter) => {
-      if(this.isActive && filter.id === this.filterId && !REAL_FOLDERS.has(filter.id)) {
+      if(this.shouldProcessDialogUpdates && filter.id === this.filterId && !REAL_FOLDERS.has(filter.id)) {
         const dialogs = await this.managers.dialogsStorage.getCachedDialogs(true);
         await this.validateListForFilter();
         for(let i = 0, length = dialogs.length; i < length; ++i) {
@@ -138,6 +138,15 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
 
   private get isActive() {
     return this.appDialogsManager.xd === this;
+  }
+
+  /**
+   * A folder that has painted once keeps its rows when another folder opens.
+   * Keep applying live traffic to that warm list so switching back is both
+   * immediate and current; never materialize rows in folders not loaded yet.
+   */
+  private get shouldProcessDialogUpdates() {
+    return this.isActive || !!this.sortedList?.hasFetchedDialogs();
   }
 
   public getRectFromForPlaceholder() {
@@ -285,7 +294,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       // Re-fetch the canonical dialog (indices regenerated) and re-test against
       // the rule-based predicate, which never reads the transient index.
       const fresh = await this.managers.appMessagesManager.getDialogOnly(peerId);
-      if(!this.isActive || !this.getDialogElement(peerId)) {
+      if(!this.shouldProcessDialogUpdates || !this.getDialogElement(peerId)) {
         return;
       }
 
@@ -295,7 +304,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       }
 
       const stillMember = await this.managers.filtersStorage.testDialogForFilterId(fresh, this.filterId);
-      if(!this.isActive || !this.getDialogElement(peerId)) {
+      if(!this.shouldProcessDialogUpdates || !this.getDialogElement(peerId)) {
         return;
       }
 
