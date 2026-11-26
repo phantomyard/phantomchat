@@ -53,18 +53,21 @@ async function main() {
       adm.selectTab([...target.parentElement.children].indexOf(target), false);
     });
     await page.waitForFunction(() => window.appDialogsManager.filterId === 4 && window.appDialogsManager.xd.sortedList.hasFetchedDialogs());
-    // Add exactly one contact while Chats is inactive. Its previously empty
-    // pane remains in that folder's DOM until activation reconciles it.
+    // Add exactly one contact while Chats is inactive. Its warm list must
+    // receive the live row without waiting for activation or a refetch.
     await page.evaluate(async() => {
       const {addP2PContact} = await import('/src/lib/phantomchat/add-p2p-contact.ts');
       const contact = await addP2PContact({pubkey: '11'.repeat(32), nickname: 'Single contact', deliberate: true, source: 'empty-state-regression'});
+      window.__cachedContactPeerId = contact.peerId;
       // Hydrate the Worker's previously empty dialog cache through the real
       // reload path before measuring folder reloads.
       await window.rootScope.managers.appMessagesManager.reloadConversation(contact.peerId);
       const adm = window.appDialogsManager;
       const list = adm.xds[0];
       const fetch = list.dialogsFetcher.bind(list);
+      window.__folderFetchCount = 0;
       list.dialogsFetcher = async(...args) => {
+        window.__folderFetchCount++;
         await new Promise(resolve => setTimeout(resolve, 300));
         return fetch(...args);
       };
@@ -91,6 +94,16 @@ async function main() {
         adm.selectTab([...target.parentElement.children].indexOf(target), false);
       });
       await page.waitForFunction(() => window.appDialogsManager.filterId === 0 && window.appDialogsManager.xd.sortedList.hasFetchedDialogs() && window.appDialogsManager.xd.sortedList.itemsLength() === 1);
+      if(cycle === 0) {
+        // The contact's initial storage hydration may refetch the previously
+        // empty folder once. Measure only subsequent warm-folder switches.
+        await page.waitForTimeout(350);
+        await page.evaluate(() => {
+          const adm = window.appDialogsManager;
+          window.__cachedDialogElement = adm.xds[0].sortedList.getDialogElement(window.__cachedContactPeerId);
+          window.__folderFetchCount = 0;
+        });
+      }
       await page.evaluate(() => {
         const adm = window.appDialogsManager;
         const target = document.querySelector('.menu-horizontal-div-item[data-filter-id="4"]');
@@ -98,15 +111,23 @@ async function main() {
       });
       await page.waitForFunction(() => window.appDialogsManager.filterId === 4 && window.appDialogsManager.xd.sortedList.hasFetchedDialogs());
     }
-    const frames = await page.evaluate(() => {
+    const {frames, fetchCount, sameRows} = await page.evaluate(() => {
       window.__stopEmptyPaneSampling();
-      return window.__emptyPaneFrames;
+      const adm = window.appDialogsManager;
+      return {
+        frames: window.__emptyPaneFrames,
+        fetchCount: window.__folderFetchCount,
+        sameRows: adm.xds[0].sortedList.getDialogElement(window.__cachedContactPeerId) === window.__cachedDialogElement
+      };
     });
     console.log('frame transitions:', JSON.stringify(frames.filter((frame, i) => !i || JSON.stringify(frame) !== JSON.stringify(frames[i - 1]))));
-    assert.ok(frames.some(frame => !frame.loaded), 'sampled pending fetch frames');
-    assert.ok(frames.some(frame => frame.rows === 1), 'sampled the single contact');
+    assert.ok(frames.length > 0, 'sampled Chats frames');
+    assert.ok(frames.every(frame => frame.loaded), 'the warm list stays loaded on every switch');
+    assert.ok(frames.every(frame => frame.rows === 1), 'the single contact paints immediately on every switch');
     assert.equal(frames.filter(frame => frame.pane).length, 0, 'no empty artwork during Chats transitions');
-    console.log(`PASS: ${frames.length} animation frames across 3 Sessions → Chats switches, one real contact, 300ms delayed real fetch, no empty artwork`);
+    assert.equal(fetchCount, 0, 'repeat switches do not call the worker');
+    assert.ok(sameRows, 'repeat switches retain the row objects');
+    console.log(`PASS: ${frames.length} animation frames across 3 Sessions → Chats switches, immediate retained rows, zero refetches, no empty artwork`);
   } catch(error) {
     console.error(await page.evaluate(() => ({menus: [...document.querySelectorAll('.btn-menu')].map((n) => n.textContent), body: document.body.className, filter: window.appDialogsManager?.filterId, loaded: window.appDialogsManager?.xd?.loadedDialogsAtLeastOnce, tabs: [...document.querySelectorAll('.menu-horizontal-div-item')].map(e => ({id:e.dataset.filterId, cls:e.className}))})));
     if(process.env.PHANTOMBOT_SCRATCH) await page.screenshot({path: process.env.PHANTOMBOT_SCRATCH + '/empty-pane-failure.png'});

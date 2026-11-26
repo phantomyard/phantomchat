@@ -764,7 +764,9 @@ export class AppDialogsManager {
           return;
         }
 
-        this.xds[id].clear();
+        // Keep each loaded folder's rows and scroll position warm. Clearing
+        // here (and again after the transition) forced every switch through a
+        // worker round-trip and per-row reconstruction before anything painted.
         const promise = this.setFilterIdAndChangeTab(id).then(() => {
           // if(cached) {
           //   return renderPromise;
@@ -773,13 +775,6 @@ export class AppDialogsManager {
 
         if(wasFilterId !== -1) {
           return promise;
-        }
-      },
-      onTransitionEnd: () => {
-        for(const folderId in this.xds) {
-          if(+folderId !== this.filterId) {
-            this.xds[folderId].clear();
-          }
         }
       },
       scrollableX: foldersScrollable,
