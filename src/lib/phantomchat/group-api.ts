@@ -234,6 +234,25 @@ export interface GroupSendOptions {
  *  bug #4). 64-char lowercase hex is the canonical NIP-01 form. */
 const SECP_PUBKEY_HEX_RE = /^[0-9a-f]{64}$/;
 
+/** Union two member lists, current members first, never shrinking (#503).
+ *
+ * An add event carries the sender's snapshot of the whole list, and adds a
+ * second apart publish overlapping snapshots (`[A,B,C]` then `[A,B,C,D]`).
+ * Whatever order those land in, membership must only ever GROW: removals are
+ * their own `group_remove_member` event, so a shorter list is never a
+ * removal. Entries that are not a non-empty string are ignored rather than
+ * persisted as a member. */
+function unionMembers(current: readonly string[], incoming: readonly (string | undefined | null)[]): string[] {
+  const merged = [...current];
+  const seen = new Set(merged);
+  for(const pubkey of incoming) {
+    if(typeof pubkey !== 'string' || !pubkey || seen.has(pubkey)) continue;
+    seen.add(pubkey);
+    merged.push(pubkey);
+  }
+  return merged;
+}
+
 /** Unknown-group deletes cannot be trusted yet, but may have raced ahead of
  *  their create during relay backlog processing. Keep them only in memory,
  *  bounded and short-lived, until a create supplies the admin key needed to
@@ -275,6 +294,7 @@ export class GroupAPI {
   private sentMessageIds: Set<string> = new Set();
   private pendingGroupDeletes: Map<string, PendingGroupDelete> = new Map();
   private pendingInfoUpdates: Map<string, PendingInfoUpdate[]> = new Map();
+  private memberMutationChain: Map<string, Promise<unknown>> = new Map();
   private log: Logger;
 
   /** Optional test hook for incoming group messages. Production render is
@@ -728,10 +748,39 @@ export class GroupAPI {
   // ─── Member management ────────────────────────────────────────
 
   /**
+   * Serialize a membership read-modify-write per group (issue #503).
+   *
+   * `addMember` / `removeMember` and the two membership control handlers all
+   * read the record, compute a new list and write it back. Two of those in
+   * flight at once read the same base, so the second write drops the first
+   * add — what a user does when adding members quickly, and what this device
+   * does when its own published add echo arrives mid-add. The queue is per
+   * group and never rejects: a failed task is kept as a resolved link so one
+   * failure cannot wedge the group's chain.
+   */
+  private serializeMemberMutation<T>(groupId: string, task: () => Promise<T>): Promise<T> {
+    const key = groupId ?? '';
+    const previous = this.memberMutationChain.get(key) ?? Promise.resolve();
+    const run = previous.then(task, task);
+    const settled: Promise<void> = run.then((): void => {}, (): void => {});
+    this.memberMutationChain.set(key, settled);
+    // Drop the link once the queue drains, so the map holds only groups with
+    // work in flight instead of every group this device ever mutated.
+    void settled.then(() => {
+      if(this.memberMutationChain.get(key) === settled) this.memberMutationChain.delete(key);
+    });
+    return run;
+  }
+
+  /**
    * Add a member to the group.
    * Only admin can add members.
    */
   async addMember(groupId: string, newMemberPubkey: string): Promise<void> {
+    return this.serializeMemberMutation(groupId, () => this.addMemberLocked(groupId, newMemberPubkey));
+  }
+
+  private async addMemberLocked(groupId: string, newMemberPubkey: string): Promise<void> {
     const group = await this.store.get(groupId);
     if(!group) throw new Error(`Group not found: ${groupId}`);
     if(group.adminPubkey !== this.ownPubkey) throw new Error('Only admin can add members');
@@ -887,6 +936,10 @@ export class GroupAPI {
    * Only admin can remove members.
    */
   async removeMember(groupId: string, memberPubkey: string): Promise<void> {
+    return this.serializeMemberMutation(groupId, () => this.removeMemberLocked(groupId, memberPubkey));
+  }
+
+  private async removeMemberLocked(groupId: string, memberPubkey: string): Promise<void> {
     const group = await this.store.get(groupId);
     if(!group) throw new Error(`Group not found: ${groupId}`);
     if(group.adminPubkey !== this.ownPubkey) throw new Error('Only admin can remove members');
@@ -2749,14 +2802,43 @@ export class GroupAPI {
 
   private async handleAddMember(payload: GroupControlPayload): Promise<boolean> {
     if(!payload.memberPubkeys || payload.memberPubkeys.length === 0) {
+      // Deliberately NOT a no-op write: an add with no list carries nothing,
+      // and returning false leaves the members watermark un-advanced so a
+      // legitimate older add still queued behind it applies (PR #138).
       return false;
     }
-    await this.store.updateMembers(payload.groupId, payload.memberPubkeys);
-    this.log('[GroupAPI] group_add_member:', payload.targetPubkey?.slice(0, 8));
-    return true;
+    return this.serializeMemberMutation(payload.groupId, async() => {
+      // ADD-ONLY, NEVER REPLACE (#503). The payload list is a snapshot from
+      // the sender's moment, and our own echoes come back to us. Applying it
+      // wholesale let an older snapshot land last and drop the member added
+      // after it — five adds in two seconds left two members. A union is
+      // monotone, so a stale or echoed add cannot shrink the list, and a
+      // record that genuinely diverged still heals on the next add.
+      const group = await this.store.get(payload.groupId);
+      if(!group) {
+        // Throw, do not return false: a membership event can beat the
+        // `group_create` that carries this device's record. Throwing leaves
+        // the watermark un-advanced so a relay redelivery retries once the
+        // record exists.
+        throw new Error(`Group not found: ${payload.groupId}`);
+      }
+      const merged = unionMembers(group.members, [payload.targetPubkey, ...(payload.memberPubkeys ?? [])]);
+      // Write only on a real change: `updateMembers` stamps `updatedAt`, the
+      // groups-CRDT LWW key, so a no-op echo must not make this device's list
+      // look newer than another device's genuine change.
+      if(merged.length !== group.members.length) {
+        await this.store.updateMembers(payload.groupId, merged);
+      }
+      this.log('[GroupAPI] group_add_member:', payload.targetPubkey?.slice(0, 8));
+      return true;
+    });
   }
 
   private async handleRemoveMember(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<boolean> {
+    return this.serializeMemberMutation(payload.groupId, () => this.handleRemoveMemberLocked(payload, senderPubkey, createdAt));
+  }
+
+  private async handleRemoveMemberLocked(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<boolean> {
     if(payload.targetPubkey === this.ownPubkey) {
       // QUARANTINE THE KICK BEFORE THE FIRST AWAIT (cold join). A newcomer's
       // record now arrives as a targeted `group_create` from the adder, so a
