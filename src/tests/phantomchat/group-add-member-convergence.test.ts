@@ -77,6 +77,10 @@ describe('group membership convergence (#503)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // #505 reset: the anti-resurrection ledger persists per group in
+    // localStorage like the event watermarks; a remove stamped in an earlier
+    // test must not block this test's adds, which are all dated "now-ish".
+    localStorage.removeItem('phantomchat:group-member-removals:' + GROUP_ID);
     live = {
       groupId: GROUP_ID, name: 'G', adminPubkey: OWN, members: [A, B, OWN],
       peerId: -2000000000000001, createdAt: Date.now(), updatedAt: Date.now()
