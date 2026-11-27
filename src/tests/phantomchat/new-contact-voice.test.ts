@@ -26,7 +26,7 @@ vi.mock('@components/sidebarLeft/tabs/phantomchatModelKit', () => ({
   }
 }));
 vi.mock('@lib/phantomchat/desktop-api', () => ({getDesktopVoiceModels: (): null => null}));
-import {applyNewContactVoice, createContactVoicePicker, createNewContactVoicePicker, newContactVoices} from '@lib/phantomchat/voice-models';
+import {applyNewContactVoice, createContactVoicePicker, createNewContactVoicePicker, newContactVoiceHint, newContactVoices, VOICE_SETUP_HINT} from '@lib/phantomchat/voice-models';
 
 const voiceCall = (settings: any) => vi.fn(async(method: string) => method === 'get' ? {ok: true, value: settings} : {ok: true, value: {}});
 const on = {tts: {enabled: true, voices: ['alloy', 'echo']}, stt: {enabled: true}};
@@ -64,6 +64,22 @@ describe('new contact voices', () => {
     expect(picker.value()).toBe('');
     picker.setVoices(undefined);
     expect(picker.value()).toBe('');
+    picker.destroy();
+  });
+
+  it('no voices yet: greyed out with the reason, never offered, never hidden', () => {
+    const picker = createNewContactVoicePicker();
+    picker.setVoices(undefined, newContactVoiceHint('openrouter', ''));
+    expect(picker.container.style.display).toBe('');
+    expect(picker.container.textContent).toContain(VOICE_SETUP_HINT);
+    expect(picker.visible()).toBe(false);
+    expect(picker.value()).toBe('');
+    picker.setVoices(['nova']);
+    expect(picker.visible()).toBe(true);
+    picker.setVoices(undefined);
+    expect(picker.container.style.display).toBe('none');
+    expect(newContactVoiceHint('phantomops', '')).toBe('Check the token to load voices');
+    expect(newContactVoiceHint('phantomops', 'pok_x')).toContain('no voices');
     picker.destroy();
   });
 
