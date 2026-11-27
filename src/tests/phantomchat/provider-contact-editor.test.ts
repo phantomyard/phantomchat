@@ -14,7 +14,7 @@ vi.mock('@lib/apiManagerProxy', () => {
 vi.mock('@components/row', () => ({default: class {
   container = document.createElement('label');
 }}));
-import {mountProviderModelEditor} from '@lib/phantomchat/provider-contact-editor';
+import {mountProviderModelEditor, mountVoiceOnlyEditor} from '@lib/phantomchat/provider-contact-editor';
 
 const q = (root: ParentNode, id: string) => root.querySelector(`[data-testid="${id}"]`) as HTMLElement;
 const pick = (id: string, value: string) => {
@@ -108,4 +108,31 @@ it('an older engine mounts nothing', async() => {
   const parent = document.createElement('div');
   expect(await mountProviderModelEditor(parent, 'bob', call as any)).toBeUndefined();
   expect(parent.children.length).toBe(0);
+});
+
+it('a brain that cannot be read reports why, and the Voice ID still mounts alone with its own Save', async() => {
+  const call = vi.fn(async(method: string): Promise<any> => method === 'persona.brain' ?
+    {ok: false, error: {code: 'engine', message: 'brain unreadable'}} : {ok: true, value: []});
+  const container = document.createElement('div');
+  container.dataset.testid = 'contact-voice-id';
+  let picked = '';
+  let current = '';
+  const save = vi.fn(async() => {current = picked;});
+  const voice = {container, value: () => picked, changed: () => picked !== current, save, destroy: vi.fn()};
+  const parent = document.createElement('div');
+  document.body.append(parent);
+  let why = '';
+  expect(await mountProviderModelEditor(parent, 'bob', call, {voice, onUnavailable: (r) => {why = r;}})).toBeUndefined();
+  expect(why).toBe('brain unreadable');
+  const alone = mountVoiceOnlyEditor(parent, voice, why);
+  expect(parent.contains(container)).toBe(true);
+  expect(parent.textContent).toContain('Provider and model could not be loaded (brain unreadable)');
+  q(parent, 'provider-contact-save').click();
+  await vi.waitFor(() => expect(q(parent, 'provider-contact-status').textContent).toBe('Nothing to save'));
+  picked = 'nova';
+  q(parent, 'provider-contact-save').click();
+  await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(q(parent, 'provider-contact-status').textContent).toBe('Saved: voice nova'));
+  alone.destroy();
+  expect(voice.destroy).toHaveBeenCalled();
 });

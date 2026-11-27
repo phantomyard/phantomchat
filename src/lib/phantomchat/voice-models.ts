@@ -157,22 +157,28 @@ export interface ContactVoicePicker {
 
 /**
  * The gated Voice ID picker of a Provider contact's Edit pane. Undefined
- * (nothing shown) unless the contact runs on this app's engine and has voice
- * models: Voice Models on in Settings (the voices Test and Save stored for
- * the TTS model), or, for a PhantomOps contact, its server's voice models.
+ * (nothing shown) only when Voice Models is off in Settings for a contact on
+ * the app-wide voice models, or for a contact with no persona on this engine.
  *
- * A PhantomOps server that has not answered yet never hides the picker: it
- * shows disabled as "Loading voices..." and fills in when the server answers
- * (or says it could not, and why). Only a server that answered with no voice
- * models leaves it out.
+ * Everything else shows the picker: its voices, disabled "Loading voices..."
+ * while a PhantomOps server has not answered, or disabled "Could not load
+ * voices (why)" for any failure - a server with no voice models, a server
+ * that is down, a contact that cannot be read, an engine that does not
+ * answer. A failure never just hides it.
  */
 export async function createContactVoicePicker(pubkey: string, call: VoiceModelsCall | undefined = getDesktopVoiceModels()?.call): Promise<ContactVoicePicker | undefined> {
   if(!call) return undefined;
-  const state = await voiceValue(call, 'contact', {pubkey});
-  if(!state.persona) return undefined;
-  const waiting = !!state.phantomops && !!state.pending;
-  const unavailable = !!state.phantomops && typeof state.unavailable === 'string';
-  if(!state.enabled && !waiting && !unavailable) return undefined;
+  let state: any;
+  let failed: string | undefined;
+  try {
+    state = await voiceValue(call, 'contact', {pubkey});
+  } catch(err) {
+    failed = err instanceof Error && err.message ? err.message : 'no answer';
+  }
+  if(state && !state.persona) return undefined;
+  const waiting = !!state?.phantomops && !!state?.pending;
+  const unavailable = failed ?? (typeof state?.unavailable === 'string' ? state.unavailable : undefined);
+  if(!state?.enabled && !waiting && unavailable === undefined) return undefined;
   let current = '';
   let destroyed = false;
   const {container, picker} = labelledPicker({testId: 'contact-voice-id', label: 'Voice ID', placeholder: 'No voice', limit: 20});
@@ -190,8 +196,8 @@ export async function createContactVoicePicker(pubkey: string, call: VoiceModels
     picker.setPlaceholder(`Could not load voices (${detail})`);
     picker.setDisabled(true);
   };
-  if(state.enabled) fill(state);
-  else if(unavailable) cannot(state.unavailable);
+  if(state?.enabled) fill(state);
+  else if(unavailable !== undefined) cannot(unavailable);
   else {
     picker.setOptions([]);
     picker.setPlaceholder('Loading voices...');
@@ -200,7 +206,7 @@ export async function createContactVoicePicker(pubkey: string, call: VoiceModels
       if(destroyed) return;
       if(s?.enabled) fill(s);
       else if(typeof s?.unavailable === 'string') cannot(s.unavailable);
-      else container.style.display = 'none';
+      else cannot('no voice models');
     }, (err: unknown) => {
       if(!destroyed) cannot(err instanceof Error && err.message ? err.message : 'no answer');
     });

@@ -47,13 +47,14 @@ export interface ProviderModelEditor {
  * mounts nothing) when this app's engine cannot read a persona's brain yet.
  */
 export async function mountProviderModelEditor(parent: HTMLElement, persona: string, call: BridgeCall,
-  opts: {voice?: ContactVoicePicker} = {}): Promise<ProviderModelEditor | undefined> {
+  opts: {voice?: ContactVoicePicker; onUnavailable?: (why: string) => void} = {}): Promise<ProviderModelEditor | undefined> {
   const voice = opts.voice;
   let brain: BrainInfo;
   let providers: ProviderOption[];
   try {
     [brain, providers] = await Promise.all([value<BrainInfo>(call, 'persona.brain', {persona}), listProviderOptions(call)]);
-  } catch{
+  } catch(err) {
+    if(opts.onUnavailable) opts.onUnavailable(err instanceof Error && err.message ? err.message : 'no answer');
     return undefined;
   }
   if(brain.provider && !providers.some((p) => p.id === brain.provider)) {
@@ -218,4 +219,41 @@ export async function mountProviderModelEditor(parent: HTMLElement, persona: str
       voice?.destroy();
     }
   };
+}
+
+/**
+ * When the provider editor cannot mount (the brain cannot be read), the
+ * Voice ID still shows, with its own Save, and a line saying why Provider and
+ * Model are missing. A broken provider read never takes the Voice ID with it.
+ */
+export function mountVoiceOnlyEditor(parent: HTMLElement, voice: ContactVoicePicker, why: string): ProviderModelEditor {
+  const section = formColumn('provider-contact-voice-only');
+  const note = noteLine('provider-contact-unavailable');
+  note.textContent = `Provider and model could not be loaded (${why})`;
+  const status = noteLine('provider-contact-status', true);
+  const saveBtn = saveButton('provider-contact-save', 'Save');
+  section.append(note, voice.container, status, saveBtn);
+  let busy = false;
+  async function save(): Promise<void> {
+    if(busy) return;
+    if(!voice.changed()) {
+      status.textContent = 'Nothing to save';
+      return;
+    }
+    busy = true;
+    saveBtn.disabled = true;
+    try {
+      status.textContent = 'Saving voice...';
+      await voice.save();
+      status.textContent = `Saved: ${voice.value() ? `voice ${voice.value()}` : 'no voice'}`;
+    } catch(err) {
+      status.textContent = err instanceof Error ? err.message : 'Could not save';
+    } finally {
+      busy = false;
+      saveBtn.disabled = false;
+    }
+  }
+  saveBtn.addEventListener('click', () => void save());
+  parent.append(section);
+  return {section, save, destroy: () => voice.destroy()};
 }

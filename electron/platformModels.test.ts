@@ -170,9 +170,27 @@ describe('Voice ID of a PhantomOps contact', () => {
     expect(await res).toMatchObject({ok: true, value: {enabled: true}});
   });
 
-  it('no picker when the server has no voice models', async() => {
+  it('a server with no voice models says why, so the picker shows disabled instead of vanishing', async() => {
     delete platform.stt;
-    expect((await voice.contact(OPS_PUBKEY)).enabled).toBe(false);
+    expect(await voice.contact(OPS_PUBKEY)).toMatchObject({enabled: false, phantomops: true, unavailable: 'this PhantomOps server has no speech-to-text model'});
+    forgetPlatformModels();
+    platform = {...platform, stt: 'openai/whisper', tts: {model: 'openai/tts', voices: []}};
+    expect(await voice.contact(OPS_PUBKEY)).toMatchObject({enabled: false, unavailable: 'this PhantomOps server has no voices'});
+  });
+
+  it('a brain read that fails says why instead of falling back to app-wide Voice Models', async() => {
+    const broken = new VoiceModels(join(root, 'voice2.enc'), plain, async(method: string, p: any = {}) =>
+      method === 'persona.brain' ? {ok: false as const, error: {code: 'engine', message: 'brain unreadable'}} : call(method, p));
+    expect(await broken.contact(OPS_PUBKEY)).toMatchObject({persona: 'ops', enabled: false, unavailable: "Could not read this contact's provider (brain unreadable)"});
+  });
+
+  it('one persona that cannot report its identity does not hide another contact\'s Voice ID', async() => {
+    brains = {broken: 'openrouter', ops: 'phantomops'};
+    const flaky = new VoiceModels(join(root, 'voice3.enc'), plain, async(method: string, p: any = {}) =>
+      method === 'persona.phantomchat.info' && p.persona === 'broken' ? {ok: false as const, error: {code: 'engine', message: 'not running'}} : call(method, p));
+    expect(await flaky.contact(OPS_PUBKEY)).toEqual({persona: 'ops', enabled: true, voices: ['nova', 'echo'], voice: '', phantomops: true});
+    // No match at all, with a failure: an error that says why, not "no persona".
+    await expect(flaky.contact('d'.repeat(64))).rejects.toThrow('Could not identify this contact (broken: not running)');
   });
 
   it('a pick turns both directions on over the server; clearing turns them off', async() => {

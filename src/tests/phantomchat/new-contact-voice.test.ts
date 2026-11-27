@@ -9,13 +9,15 @@ vi.mock('@components/sidebarLeft/tabs/phantomchatModelKit', () => ({
     let options: {value: string}[] = [];
     let current = '';
     const state = {placeholder: '', disabled: false};
+    // The placeholder is what a disabled picker shows, so it is the text here.
+    const container = document.createElement('div');
     return {
-      container: document.createElement('div'),
+      container,
       picker: {
         setOptions: (o: {value: string}[], v?: string) => {options = o; current = v ?? '';},
         getValue: () => current,
         getOptions: () => options,
-        setPlaceholder: (t: string) => {state.placeholder = t;},
+        setPlaceholder: (t: string) => {state.placeholder = t; container.textContent = t;},
         setDisabled: (d: boolean) => {state.disabled = d;},
         state,
         destroy: () => {}
@@ -94,23 +96,45 @@ describe('Edit pane Voice ID of a PhantomOps contact', () => {
     expect(picker!.changed()).toBe(false);
   });
 
-  it('a server that answers with no voices hides it; an unreachable one says why', async() => {
+  it('a server that answers with no voices, or not at all, shows it disabled with why', async() => {
     const call = (later: any) => vi.fn(async(method: string, params?: any) => method === 'contact' && !params.wait ?
       {ok: true, value: {persona: 'ops', enabled: false, voices: [] as string[], voice: '', phantomops: true, pending: true}} :
       {ok: true, value: later});
     const none = await createContactVoicePicker(PUB, call({persona: 'ops', enabled: false, voices: [], voice: '', phantomops: true}));
     await new Promise((r) => setTimeout(r, 0));
-    expect(none!.container.style.display).toBe('none');
+    expect(none!.container.style.display).not.toBe('none');
+    expect(none!.container.textContent).toContain('Could not load voices (no voice models)');
 
     const down = await createContactVoicePicker(PUB, call({persona: 'ops', enabled: false, voices: [], voice: '', phantomops: true, unavailable: 'HTTP 502'}));
     await new Promise((r) => setTimeout(r, 0));
     expect(down!.container.style.display).not.toBe('none');
+    expect(down!.container.textContent).toContain('Could not load voices (HTTP 502)');
     expect(down!.value()).toBe('');
   });
 
-  it('a server that answered with no voice models still gets no picker', async() => {
-    const call = vi.fn(async() => ({ok: true, value: {persona: 'ops', enabled: false, voices: [] as string[], voice: '', phantomops: true}}));
-    expect(await createContactVoicePicker(PUB, call)).toBeUndefined();
+  it('a server that answered with no voice models shows the picker disabled with why', async() => {
+    const call = vi.fn(async() => ({ok: true, value: {persona: 'ops', enabled: false, voices: [] as string[], voice: '', phantomops: true,
+      unavailable: 'this PhantomOps server has no voices'}}));
+    const picker = await createContactVoicePicker(PUB, call);
+    expect(picker).toBeDefined();
+    expect(picker!.container.textContent).toContain('Could not load voices (this PhantomOps server has no voices)');
+    expect(picker!.changed()).toBe(false);
     expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('a contact lookup that fails shows the picker disabled with the error, never nothing', async() => {
+    const threw = await createContactVoicePicker(PUB, vi.fn(async() => { throw new Error('bridge gone'); }));
+    expect(threw!.container.textContent).toContain('Could not load voices (bridge gone)');
+    const refused = await createContactVoicePicker(PUB, vi.fn(async() => ({ok: false, error: {message: 'Could not identify this contact (x: down)'}})));
+    expect(refused!.container.textContent).toContain('Could not load voices (Could not identify this contact (x: down))');
+    expect(refused!.value()).toBe('');
+    expect(refused!.changed()).toBe(false);
+  });
+
+  it('a non-PhantomOps contact whose provider cannot be read says so too', async() => {
+    const call = vi.fn(async() => ({ok: true, value: {persona: 'barry', enabled: false, voices: [] as string[], voice: '',
+      unavailable: "Could not read this contact's provider (brain unreadable)"}}));
+    const picker = await createContactVoicePicker(PUB, call);
+    expect(picker!.container.textContent).toContain("Could not load voices (Could not read this contact's provider (brain unreadable))");
   });
 });
