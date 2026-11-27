@@ -200,4 +200,80 @@ describe('group membership authority and anti-resurrection (#505)', () => {
     }, now - 5, OWN), OWN);
     expect(live!.members).not.toContain(C);
   });
+
+  // ── 3. Reordered delivery and concurrency (round-2 review) ───────────
+
+  it('a remove arriving before the target add still blocks that add (reordered delivery)', async() => {
+    const now = Math.floor(Date.now() / 1000);
+    // The target C has NOT reached this device yet — the admin remove
+    // lands first, with the list write a no-op for C.
+    live = {...live!, members: [A, B, OWN]} as GroupRecord;
+    await api.handleControlMessage(controlRumor('rm-early', {
+      type: 'group_remove_member', groupId: GROUP_ID, targetPubkey: C
+    }, now, OWN), OWN);
+    expect(live!.members).not.toContain(C);
+
+    // The older add, delivered after the remove, must not resurrect C.
+    await api.handleControlMessage(controlRumor('late-add-c', {
+      type: 'group_add_member', groupId: GROUP_ID, targetPubkey: C,
+      memberPubkeys: [A, B, OWN, C], groupName: 'G'
+    }, now - 5, OWN), OWN);
+    expect(live!.members).not.toContain(C);
+  });
+
+  it('a leave cannot race an in-flight add and restore the leaver', async() => {
+    const now = Math.floor(Date.now() / 1000);
+    live = {...live!, members: [A, B, OWN]} as GroupRecord;
+
+    // Pause the add exactly where the round-2 repro did: it has read the
+    // members [A, B, OWN] and the empty removal ledger, and is inside its
+    // write.
+    let releaseAdd!: () => void;
+    const addPaused = new Promise<void>(res => { releaseAdd = res; });
+    let addWriteStarted = false;
+    mockStore.updateMembers.mockImplementation(async(_id: string, members: string[]) => {
+      if(!addWriteStarted) {
+        addWriteStarted = true;
+        await addPaused;
+      }
+      live = {...live!, members: [...members]};
+    });
+
+    const addP = api.handleControlMessage(controlRumor('add-c', {
+      type: 'group_add_member', groupId: GROUP_ID, targetPubkey: C,
+      memberPubkeys: [A, B, OWN, C], groupName: 'G'
+    }, now - 10, OWN), OWN);
+    for(let i = 0; i < 200 && !addWriteStarted; i++) {
+      await new Promise(r => setTimeout(r, 5));
+    }
+    expect(addWriteStarted).toBe(true);
+
+    // The newer leave arrives while the add write is still pending. With
+    // the leave serialized behind the add, its removal (and its ledger
+    // row) applies AFTER the add snapshot — the leaver stays gone.
+    const leaveP = api.handleControlMessage(controlRumor('leave-b', {
+      type: 'group_leave', groupId: GROUP_ID
+    }, now - 2, B), B);
+    releaseAdd();
+    await Promise.all([addP, leaveP]);
+
+    expect(live!.members).not.toContain(B);
+    expect(live!.members).toContain(C);
+  });
+
+  it('a leave arriving before the leaver add still blocks that add (reordered delivery)', async() => {
+    const now = Math.floor(Date.now() / 1000);
+    live = {...live!, members: [A, B, OWN]} as GroupRecord;
+    // C is not in our list yet — the C leave lands before the C add.
+    await api.handleControlMessage(controlRumor('leave-early', {
+      type: 'group_leave', groupId: GROUP_ID
+    }, now, C), C);
+    expect(live!.members).not.toContain(C);
+
+    await api.handleControlMessage(controlRumor('late-add-c2', {
+      type: 'group_add_member', groupId: GROUP_ID, targetPubkey: C,
+      memberPubkeys: [A, B, OWN, C], groupName: 'G'
+    }, now - 5, OWN), OWN);
+    expect(live!.members).not.toContain(C);
+  });
 });

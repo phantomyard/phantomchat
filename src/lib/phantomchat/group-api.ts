@@ -2987,11 +2987,20 @@ export class GroupAPI {
     // check any sender could delete an arbitrary member from my local view
     // (pre-existing on main, closed here since this handler is being
     // authenticated anyway).
-    if(!group || group.adminPubkey !== senderPubkey || !group.members.includes(payload.targetPubkey)) {
+    if(!group || group.adminPubkey !== senderPubkey) {
       return false;
     }
-    const remaining = group.members.filter(m => m !== payload.targetPubkey);
-    await this.store.updateMembers(payload.groupId, remaining);
+    // Reordered delivery (round-2 review): the remove can arrive BEFORE the
+    // target's own add has reached this device. The list write is then a
+    // no-op, but the ledger write below is the whole point — the old
+    // `members.includes(target)` guard short-circuited it, and the late,
+    // older add resurrected the member the admin had just removed.
+    if(group.members.includes(payload.targetPubkey)) {
+      const remaining = group.members.filter(m => m !== payload.targetPubkey);
+      await this.store.updateMembers(payload.groupId, remaining);
+    } else {
+      this.log('[GroupAPI] authenticated remove of absent member; removal recorded:', payload.targetPubkey.slice(0, 8));
+    }
     // #505: remember WHEN this member was removed, so a stale add dated at
     // or before this moment cannot resurrect them inside the grace window.
     recordMemberRemoval(payload.groupId, payload.targetPubkey, createdAt);
@@ -3088,35 +3097,52 @@ export class GroupAPI {
   }
 
   private async handleMemberLeave(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<boolean> {
+    // Round-2 review: serialize the leave's read, list write and ledger
+    // write with the add/remove paths. Unserialized, an older add paused
+    // between its read and its write could restore the leaver AFTER this
+    // leave fully applied — the add's stale snapshot won the last write.
+    return this.serializeMemberMutation(payload.groupId, () => this.handleMemberLeaveLocked(payload, senderPubkey, createdAt));
+  }
+
+  private async handleMemberLeaveLocked(payload: GroupControlPayload, senderPubkey: string, createdAt: number): Promise<boolean> {
     const group = await this.store.get(payload.groupId);
-    if(!group || !group.members.includes(senderPubkey)) {
+    if(!group) {
       return false;
     }
-    const remaining = group.members.filter(m => m !== senderPubkey);
+    // The leave can arrive BEFORE the leaver's own add has reached this
+    // device (the same reordered-delivery class as the remove path above).
+    // The list write is then a no-op, but the removal ledger must still be
+    // recorded — and a leave only ever records the sender's OWN key, so a
+    // not-yet-listed leaver's ledger row cannot be abused against anyone.
+    if(group.members.includes(senderPubkey)) {
+      const remaining = group.members.filter(m => m !== senderPubkey);
 
-    // Admin-orphan protection: if the departing member was the admin, the
-    // remaining record would keep `adminPubkey` pointing at the gone admin
-    // — violating INV-group-admin-is-member. Auto-transfer admin to the
-    // lex-smallest remaining pubkey so every member derives the same new
-    // admin deterministically without a separate control-message round.
-    const wasAdminLeaving = group.adminPubkey === senderPubkey;
-    const newAdmin = wasAdminLeaving && remaining.length > 0 ?
+      // Admin-orphan protection: if the departing member was the admin, the
+      // remaining record would keep `adminPubkey` pointing at the gone admin
+      // — violating INV-group-admin-is-member. Auto-transfer admin to the
+      // lex-smallest remaining pubkey so every member derives the same new
+      // admin deterministically without a separate control-message round.
+      const wasAdminLeaving = group.adminPubkey === senderPubkey;
+      const newAdmin = wasAdminLeaving && remaining.length > 0 ?
       [...remaining].sort()[0] :
       group.adminPubkey;
 
-    if(wasAdminLeaving && newAdmin !== group.adminPubkey) {
-      const updated = {
-        ...group,
-        members: remaining,
-        adminPubkey: newAdmin,
-        updatedAt: Date.now()
-      };
-      await this.store.save(updated);
-      this.log('[GroupAPI] admin left; auto-promoted new admin:', newAdmin.slice(0, 8), 'in group', payload.groupId.slice(0, 8));
+      if(wasAdminLeaving && newAdmin !== group.adminPubkey) {
+        const updated = {
+          ...group,
+          members: remaining,
+          adminPubkey: newAdmin,
+          updatedAt: Date.now()
+        };
+        await this.store.save(updated);
+        this.log('[GroupAPI] admin left; auto-promoted new admin:', newAdmin.slice(0, 8), 'in group', payload.groupId.slice(0, 8));
+      } else {
+        await this.store.updateMembers(payload.groupId, remaining);
+      }
+      this.log('[GroupAPI] member left group:', senderPubkey.slice(0, 8));
     } else {
-      await this.store.updateMembers(payload.groupId, remaining);
+      this.log('[GroupAPI] leave from member not yet in list; removal recorded:', senderPubkey.slice(0, 8));
     }
-    this.log('[GroupAPI] member left group:', senderPubkey.slice(0, 8));
     // #505: a leave is a removal for anti-resurrection purposes — an add
     // echo dated before it must not put the leaver back on our list.
     recordMemberRemoval(payload.groupId, senderPubkey, createdAt);
