@@ -235,17 +235,26 @@ export class VoiceModels {
    */
   async contact(pubkey: string, wait = false) {
     const persona = await this.personaOf(pubkey);
+    let platform = false;
     if(persona) {
-      // A brain read that fails must not quietly turn a PhantomOps contact
-      // into an app-wide one (whose Voice Models may be off): say why.
+      // Classify from ONE brain read. A read or capability check that fails
+      // must not quietly turn a PhantomOps contact into an app-wide one
+      // (whose Voice Models may be off): say why instead. Only a successful
+      // non-PhantomOps classification falls through to app-wide gating.
+      const unavailable = (why: string) => ({persona, enabled: false, voices: [] as string[], voice: this.state.voices[persona] ?? '', unavailable: why});
+      const errText = (err: unknown) => err instanceof Error ? err.message : String(err);
       const brain = await this.call('persona.brain', {persona})
-      .catch((err): {ok: false; error: {message: string}} => ({ok: false, error: {message: err instanceof Error ? err.message : String(err)}}));
-      if(!brain.ok) {
-        return {persona, enabled: false, voices: [] as string[], voice: this.state.voices[persona] ?? '',
-          unavailable: `Could not read this contact's provider (${brain.error?.message || 'no answer'})`};
+      .catch((err): {ok: false; error: {code: string; message: string}} => ({ok: false, error: {code: 'bridge', message: errText(err)}}));
+      if(!brain.ok) return unavailable(`Could not read this contact's provider (${brain.error?.message || 'no answer'})`);
+      const provider = (brain.value as any)?.provider;
+      if(typeof provider === 'string' && provider.trim().toLowerCase() === PHANTOMOPS_PROVIDER) {
+        const supported = await this.call('platformModels.supported', {})
+        .catch((err): {ok: false; error: {code: string; message: string}} => ({ok: false, error: {code: 'bridge', message: errText(err)}}));
+        if(!supported.ok) return unavailable(`Could not check PhantomOps support (${supported.error?.message || 'no answer'})`);
+        platform = supported.value === true;
       }
     }
-    if(persona && await isPlatformPersona(this.call, persona)) {
+    if(persona && platform) {
       const m = wait ? await personaPlatformModels(this.call, persona) : await lastPlatformModels(this.call, persona);
       // A PhantomOps contact always gets the picker: voices, "Loading", or why not.
       const why = m.pending ? undefined :

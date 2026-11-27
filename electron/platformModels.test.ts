@@ -184,6 +184,32 @@ describe('Voice ID of a PhantomOps contact', () => {
     expect(await broken.contact(OPS_PUBKEY)).toMatchObject({persona: 'ops', enabled: false, unavailable: "Could not read this contact's provider (brain unreadable)"});
   });
 
+  it('only the first brain read succeeding still keeps a PhantomOps contact on the server picker', async() => {
+    let reads = 0;
+    const flaky = new VoiceModels(join(root, 'voice4.enc'), plain, async(method: string, p: any = {}) =>
+      method === 'persona.brain' && ++reads > 1 ? {ok: false as const, error: {code: 'engine', message: 'brain unreadable'}} : call(method, p));
+    expect(await flaky.contact(OPS_PUBKEY)).toEqual({persona: 'ops', enabled: true, voices: ['nova', 'echo'], voice: '', phantomops: true});
+    expect(reads).toBe(1);
+  });
+
+  it('a failed PhantomOps capability check says why instead of falling back to app-wide Voice Models', async() => {
+    const refused = new VoiceModels(join(root, 'voice5.enc'), plain, async(method: string, p: any = {}) =>
+      method === 'platformModels.supported' ? {ok: false as const, error: {code: 'engine', message: 'bridge down'}} : call(method, p));
+    expect(await refused.contact(OPS_PUBKEY)).toMatchObject({persona: 'ops', enabled: false, unavailable: 'Could not check PhantomOps support (bridge down)'});
+    const thrown = new VoiceModels(join(root, 'voice6.enc'), plain, async(method: string, p: any = {}) => {
+      if(method === 'platformModels.supported') throw new Error('socket closed');
+      return call(method, p);
+    });
+    expect(await thrown.contact(OPS_PUBKEY)).toMatchObject({persona: 'ops', enabled: false, unavailable: 'Could not check PhantomOps support (socket closed)'});
+  });
+
+  it('an older engine that answers "not supported" uses app-wide Voice Models (a successful classification)', async() => {
+    supported = false;
+    const res = await voice.contact(OPS_PUBKEY);
+    expect(res).not.toHaveProperty('unavailable');
+    expect(res).not.toHaveProperty('phantomops');
+  });
+
   it('one persona that cannot report its identity does not hide another contact\'s Voice ID', async() => {
     brains = {broken: 'openrouter', ops: 'phantomops'};
     const flaky = new VoiceModels(join(root, 'voice3.enc'), plain, async(method: string, p: any = {}) =>
