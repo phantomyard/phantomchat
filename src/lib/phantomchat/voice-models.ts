@@ -146,6 +146,9 @@ export function createVoiceForm(saved: Record<VoiceModality, any>, providers: an
   };
 }
 
+/** Why a non-PhantomOps Provider contact's Voice ID is greyed out: it exists, it just needs setting up. */
+export const VOICE_SETUP_HINT = 'Set up Voice Models in Settings to pick a voice';
+
 export interface ContactVoicePicker {
   container: HTMLElement;
   /** The Voice ID on screen ('' = no voice). */
@@ -156,23 +159,31 @@ export interface ContactVoicePicker {
 }
 
 /**
- * The gated Voice ID picker of a Provider contact's Edit pane. Undefined
- * (nothing shown) unless the contact runs on this app's engine and has voice
- * models: Voice Models on in Settings (the voices Test and Save stored for
- * the TTS model), or, for a PhantomOps contact, its server's voice models.
+ * The Voice ID picker of a Provider contact's Edit pane. Undefined (nothing
+ * shown) only for a contact with no persona on this engine, or without the
+ * desktop app.
  *
- * A PhantomOps server that has not answered yet never hides the picker: it
- * shows disabled as "Loading voices..." and fills in when the server answers
- * (or says it could not, and why). Only a server that answered with no voice
- * models leaves it out.
+ * Every Provider contact shows it, so users learn voice exists: its voices,
+ * disabled "Loading voices..." while a PhantomOps server has not answered,
+ * disabled VOICE_SETUP_HINT while Settings > Voice Models is off (contacts on
+ * the app-wide voice models), or disabled "Could not load voices (why)" for
+ * any failure - a server with no voice models, a server that is down, a
+ * contact that cannot be read, an engine that does not answer. It is never
+ * just hidden.
  */
 export async function createContactVoicePicker(pubkey: string, call: VoiceModelsCall | undefined = getDesktopVoiceModels()?.call): Promise<ContactVoicePicker | undefined> {
   if(!call) return undefined;
-  const state = await voiceValue(call, 'contact', {pubkey});
-  if(!state.persona) return undefined;
-  const waiting = !!state.phantomops && !!state.pending;
-  const unavailable = !!state.phantomops && typeof state.unavailable === 'string';
-  if(!state.enabled && !waiting && !unavailable) return undefined;
+  let state: any;
+  let failed: string | undefined;
+  try {
+    state = await voiceValue(call, 'contact', {pubkey});
+  } catch(err) {
+    failed = err instanceof Error && err.message ? err.message : 'no answer';
+  }
+  if(state && !state.persona) return undefined;
+  const waiting = !!state?.phantomops && !!state?.pending;
+  const unavailable = failed ?? (typeof state?.unavailable === 'string' ? state.unavailable : undefined);
+  const setup = !state?.enabled && !waiting && unavailable === undefined;
   let current = '';
   let destroyed = false;
   const {container, picker} = labelledPicker({testId: 'contact-voice-id', label: 'Voice ID', placeholder: 'No voice', limit: 20});
@@ -190,8 +201,12 @@ export async function createContactVoicePicker(pubkey: string, call: VoiceModels
     picker.setPlaceholder(`Could not load voices (${detail})`);
     picker.setDisabled(true);
   };
-  if(state.enabled) fill(state);
-  else if(unavailable) cannot(state.unavailable);
+  if(state?.enabled) fill(state);
+  else if(setup) {
+    picker.setOptions([]);
+    picker.setPlaceholder(VOICE_SETUP_HINT);
+    picker.setDisabled(true);
+  } else if(unavailable !== undefined) cannot(unavailable);
   else {
     picker.setOptions([]);
     picker.setPlaceholder('Loading voices...');
@@ -200,7 +215,7 @@ export async function createContactVoicePicker(pubkey: string, call: VoiceModels
       if(destroyed) return;
       if(s?.enabled) fill(s);
       else if(typeof s?.unavailable === 'string') cannot(s.unavailable);
-      else container.style.display = 'none';
+      else cannot('no voice models');
     }, (err: unknown) => {
       if(!destroyed) cannot(err instanceof Error && err.message ? err.message : 'no answer');
     });
@@ -223,11 +238,15 @@ export async function createContactVoicePicker(pubkey: string, call: VoiceModels
 
 export interface NewContactVoicePicker {
   container: HTMLElement;
-  /** Show these voices ('No voice' first), or hide the picker (undefined). */
-  setVoices(voices: readonly string[] | undefined): void;
-  /** The picked Voice ID ('' = no voice, or the picker is hidden). */
+  /**
+   * Show these voices ('No voice' first). Without voices: greyed out with
+   * `why` (it is available, just not set up), or hidden when there is no
+   * `why` (no provider chosen yet).
+   */
+  setVoices(voices: readonly string[] | undefined, why?: string): void;
+  /** The picked Voice ID ('' = no voice, greyed out, or hidden). */
   value(): string;
-  /** Whether the picker is on screen (it has voices). */
+  /** Whether the picker offers voices (greyed out or hidden = false). */
   visible(): boolean;
   destroy(): void;
 }
@@ -235,7 +254,8 @@ export interface NewContactVoicePicker {
 /**
  * The Voice ID picker of the New Contact pane (Provider type): the same
  * picker as the Edit pane, so a voice can be chosen when the contact is
- * created. Hidden until `setVoices` gets a list.
+ * created. Hidden until a provider is chosen; greyed out with the reason
+ * when that provider has no voices yet.
  */
 export function createNewContactVoicePicker(): NewContactVoicePicker {
   const {container, picker} = labelledPicker({testId: 'add-contact-voice-id', label: 'Voice ID', placeholder: 'No voice', limit: 20});
@@ -243,11 +263,19 @@ export function createNewContactVoicePicker(): NewContactVoicePicker {
   let shown = false;
   return {
     container,
-    setVoices: (voices) => {
+    setVoices: (voices, why) => {
       shown = !!voices?.length;
-      container.style.display = shown ? '' : 'none';
+      container.style.display = shown || why ? '' : 'none';
+      if(!shown && why) {
+        picker.setOptions([]);
+        picker.setPlaceholder(why);
+        picker.setDisabled(true);
+        return;
+      }
       const previous = picker.getValue() || '';
       const list = voices ?? [];
+      picker.setPlaceholder('No voice');
+      picker.setDisabled(false);
       picker.setOptions([{value: '', label: 'No voice'}, ...list.map(v => ({value: v, label: v}))], list.includes(previous) ? previous : '');
     },
     value: () => shown ? picker.getValue() || '' : '',
@@ -278,6 +306,12 @@ export async function newContactVoices(provider: string, token: string, bridge: 
   if(!settings?.tts?.enabled || !settings?.stt?.enabled) return undefined;
   const voices: string[] = Array.isArray(settings.tts.voices) ? settings.tts.voices : [];
   return voices.length ? voices : undefined;
+}
+
+/** Why a new contact on `provider` has no Voice ID yet (shown greyed out in its place). */
+export function newContactVoiceHint(provider: string, token: string): string {
+  if(provider !== 'phantomops') return VOICE_SETUP_HINT;
+  return token ? 'Could not load voices (this PhantomOps server has no voices)' : 'Check the token to load voices';
 }
 
 /** Give a just-created contact its Voice ID (the Edit pane's save, same rules). */

@@ -205,11 +205,22 @@ export class VoiceModels {
     const names = await this.value<string[]>('personas.list');
     const {nip19} = await import('nostr-tools');
     const npub = nip19.npubEncode(pubkey);
+    // One persona that cannot say who it is must not hide every other
+    // contact's Voice ID: skip it, and only fail when nothing matched.
+    const failed: string[] = [];
     const matches = await Promise.all(names.map(async persona => {
-      const info = await this.value<any>('persona.phantomchat.info', {persona});
-      return info.npub === npub ? persona : undefined;
+      try {
+        const info = await this.value<any>('persona.phantomchat.info', {persona});
+        return info?.npub === npub ? persona : undefined;
+      } catch(err) {
+        failed.push(`${persona}: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }
     }));
-    return matches.find(Boolean) ?? null;
+    const found = matches.find(Boolean);
+    if(found) return found;
+    if(failed.length) throw new Error(`Could not identify this contact (${failed.join('; ')})`);
+    return null;
   }
   /**
    * What the contact Edit pane needs: whether Voice is on (gates the Voice ID
@@ -219,15 +230,40 @@ export class VoiceModels {
    * waits on the server. With none yet and a slow server it says `pending`,
    * and the pane asks again with `wait`, which waits for the server's answer
    * (the engine's own timeout). An unreachable server says `unavailable`, so
-   * the pane can say why there is no picker instead of hiding it.
+   * the pane can say why there is no picker instead of hiding it. So does a
+   * server with no voice models, and a contact whose provider cannot be read.
    */
   async contact(pubkey: string, wait = false) {
     const persona = await this.personaOf(pubkey);
-    if(persona && await isPlatformPersona(this.call, persona)) {
+    let platform = false;
+    if(persona) {
+      // Classify from ONE brain read. A read or capability check that fails
+      // must not quietly turn a PhantomOps contact into an app-wide one
+      // (whose Voice Models may be off): say why instead. Only a successful
+      // non-PhantomOps classification falls through to app-wide gating.
+      const unavailable = (why: string) => ({persona, enabled: false, voices: [] as string[], voice: this.state.voices[persona] ?? '', unavailable: why});
+      const errText = (err: unknown) => err instanceof Error ? err.message : String(err);
+      const brain = await this.call('persona.brain', {persona})
+      .catch((err): {ok: false; error: {code: string; message: string}} => ({ok: false, error: {code: 'bridge', message: errText(err)}}));
+      if(!brain.ok) return unavailable(`Could not read this contact's provider (${brain.error?.message || 'no answer'})`);
+      const provider = (brain.value as any)?.provider;
+      if(typeof provider === 'string' && provider.trim().toLowerCase() === PHANTOMOPS_PROVIDER) {
+        const supported = await this.call('platformModels.supported', {})
+        .catch((err): {ok: false; error: {code: string; message: string}} => ({ok: false, error: {code: 'bridge', message: errText(err)}}));
+        if(!supported.ok) return unavailable(`Could not check PhantomOps support (${supported.error?.message || 'no answer'})`);
+        platform = supported.value === true;
+      }
+    }
+    if(persona && platform) {
       const m = wait ? await personaPlatformModels(this.call, persona) : await lastPlatformModels(this.call, persona);
+      // A PhantomOps contact always gets the picker: voices, "Loading", or why not.
+      const why = m.pending ? undefined :
+        m.status !== 'available' ? m.detail || 'PhantomOps unavailable' :
+        !m.stt ? 'this PhantomOps server has no speech-to-text model' :
+        !m.tts?.voices.length ? 'this PhantomOps server has no voices' : undefined;
       return {
         persona, enabled: platformVoiceReady(m), voices: m.tts?.voices ?? [], voice: this.state.voices[persona] ?? '', phantomops: true,
-        ...(m.pending ? {pending: true} : m.status !== 'available' ? {unavailable: m.detail || 'PhantomOps unavailable'} : {})
+        ...(m.pending ? {pending: true} : why ? {unavailable: why} : {})
       };
     }
     const d = this.state.defaults;

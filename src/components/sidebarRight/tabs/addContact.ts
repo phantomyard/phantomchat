@@ -19,7 +19,7 @@ import {attachClickEvent} from '@helpers/dom/clickEvent';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import Icon from '@components/icon';
 import {createListPicker} from '@components/listPicker';
-import {applyNewContactVoice, createNewContactVoicePicker, newContactVoices} from '@lib/phantomchat/voice-models';
+import {applyNewContactVoice, createNewContactVoicePicker, newContactVoiceHint, newContactVoices} from '@lib/phantomchat/voice-models';
 
 /**
  * New Contact pane (contacts redesign). It slides in from the right like the
@@ -489,7 +489,7 @@ export function createAddContactForm(opts: AddContactFormOptions): AddContactFor
     }
     try {
       const voices = await newContactVoices(p.id, token, call).catch((): undefined => undefined);
-      if(mine === voiceGeneration && opts.isAlive()) voicePicker.setVoices(voices);
+      if(mine === voiceGeneration && opts.isAlive()) voicePicker.setVoices(voices, newContactVoiceHint(p.id, token));
     } finally {
       if(voicesFor === mine) voicesFor = -1;
       if(opts.isAlive()) syncSubmit();

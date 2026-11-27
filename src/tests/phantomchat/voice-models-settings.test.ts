@@ -20,7 +20,7 @@ vi.mock('@components/row', () => ({default: class {
     if(options.checkboxField) this.container.append(options.checkboxField.label);
   }
 }}));
-import {createVoiceForm, createContactVoicePicker} from '@lib/phantomchat/voice-models';
+import {createVoiceForm, createContactVoicePicker, VOICE_SETUP_HINT} from '@lib/phantomchat/voice-models';
 import {mountVoiceModels} from '@components/sidebarLeft/tabs/phantomchatVoiceModels';
 
 const savedTts = {enabled: true, provider: 'openai-compatible', baseUrl: 'https://audio.example/v1', model: 'speech-a', models: [{id: 'speech-a'}], voices: ['alloy'], hasKey: true};
@@ -139,9 +139,13 @@ it('contact Voice ID: shown for a Provider contact with Voice on, "No voice" cle
   expect(q(picker.container, 'contact-stt-model')).toBeNull();
 });
 
-it('no Voice ID when Voice Models is off, or for an npub Phantom', async() => {
+it('Voice Models off: the Voice ID shows greyed out with how to set it up; npub Phantoms get none', async() => {
   const off = vi.fn(async() => ({ok: true, value: {persona: 'barry', enabled: false, voices: ['alloy'], voice: ''}}));
-  expect(await createContactVoicePicker('a'.repeat(64), off)).toBeUndefined();
+  const picker = await createContactVoicePicker('a'.repeat(64), off);
+  expect(picker).toBeDefined();
+  expect(picker!.container.textContent).toContain(VOICE_SETUP_HINT);
+  expect(picker!.value()).toBe('');
+  picker!.destroy();
   const remote = vi.fn(async() => ({ok: true, value: {persona: null as string | null, enabled: true, voices: ['alloy'], voice: ''}}));
   expect(await createContactVoicePicker('a'.repeat(64), remote)).toBeUndefined();
 });

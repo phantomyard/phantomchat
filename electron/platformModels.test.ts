@@ -170,9 +170,53 @@ describe('Voice ID of a PhantomOps contact', () => {
     expect(await res).toMatchObject({ok: true, value: {enabled: true}});
   });
 
-  it('no picker when the server has no voice models', async() => {
+  it('a server with no voice models says why, so the picker shows disabled instead of vanishing', async() => {
     delete platform.stt;
-    expect((await voice.contact(OPS_PUBKEY)).enabled).toBe(false);
+    expect(await voice.contact(OPS_PUBKEY)).toMatchObject({enabled: false, phantomops: true, unavailable: 'this PhantomOps server has no speech-to-text model'});
+    forgetPlatformModels();
+    platform = {...platform, stt: 'openai/whisper', tts: {model: 'openai/tts', voices: []}};
+    expect(await voice.contact(OPS_PUBKEY)).toMatchObject({enabled: false, unavailable: 'this PhantomOps server has no voices'});
+  });
+
+  it('a brain read that fails says why instead of falling back to app-wide Voice Models', async() => {
+    const broken = new VoiceModels(join(root, 'voice2.enc'), plain, async(method: string, p: any = {}) =>
+      method === 'persona.brain' ? {ok: false as const, error: {code: 'engine', message: 'brain unreadable'}} : call(method, p));
+    expect(await broken.contact(OPS_PUBKEY)).toMatchObject({persona: 'ops', enabled: false, unavailable: "Could not read this contact's provider (brain unreadable)"});
+  });
+
+  it('only the first brain read succeeding still keeps a PhantomOps contact on the server picker', async() => {
+    let reads = 0;
+    const flaky = new VoiceModels(join(root, 'voice4.enc'), plain, async(method: string, p: any = {}) =>
+      method === 'persona.brain' && ++reads > 1 ? {ok: false as const, error: {code: 'engine', message: 'brain unreadable'}} : call(method, p));
+    expect(await flaky.contact(OPS_PUBKEY)).toEqual({persona: 'ops', enabled: true, voices: ['nova', 'echo'], voice: '', phantomops: true});
+    expect(reads).toBe(1);
+  });
+
+  it('a failed PhantomOps capability check says why instead of falling back to app-wide Voice Models', async() => {
+    const refused = new VoiceModels(join(root, 'voice5.enc'), plain, async(method: string, p: any = {}) =>
+      method === 'platformModels.supported' ? {ok: false as const, error: {code: 'engine', message: 'bridge down'}} : call(method, p));
+    expect(await refused.contact(OPS_PUBKEY)).toMatchObject({persona: 'ops', enabled: false, unavailable: 'Could not check PhantomOps support (bridge down)'});
+    const thrown = new VoiceModels(join(root, 'voice6.enc'), plain, async(method: string, p: any = {}) => {
+      if(method === 'platformModels.supported') throw new Error('socket closed');
+      return call(method, p);
+    });
+    expect(await thrown.contact(OPS_PUBKEY)).toMatchObject({persona: 'ops', enabled: false, unavailable: 'Could not check PhantomOps support (socket closed)'});
+  });
+
+  it('an older engine that answers "not supported" uses app-wide Voice Models (a successful classification)', async() => {
+    supported = false;
+    const res = await voice.contact(OPS_PUBKEY);
+    expect(res).not.toHaveProperty('unavailable');
+    expect(res).not.toHaveProperty('phantomops');
+  });
+
+  it('one persona that cannot report its identity does not hide another contact\'s Voice ID', async() => {
+    brains = {broken: 'openrouter', ops: 'phantomops'};
+    const flaky = new VoiceModels(join(root, 'voice3.enc'), plain, async(method: string, p: any = {}) =>
+      method === 'persona.phantomchat.info' && p.persona === 'broken' ? {ok: false as const, error: {code: 'engine', message: 'not running'}} : call(method, p));
+    expect(await flaky.contact(OPS_PUBKEY)).toEqual({persona: 'ops', enabled: true, voices: ['nova', 'echo'], voice: '', phantomops: true});
+    // No match at all, with a failure: an error that says why, not "no persona".
+    await expect(flaky.contact('d'.repeat(64))).rejects.toThrow('Could not identify this contact (broken: not running)');
   });
 
   it('a pick turns both directions on over the server; clearing turns them off', async() => {

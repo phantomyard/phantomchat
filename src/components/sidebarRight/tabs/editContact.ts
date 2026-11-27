@@ -129,7 +129,7 @@ export default class AppEditContactTab extends SliderSuperTab {
         const {getDesktopPhantombot} = await import('@lib/phantomchat/desktop-api');
         const bridge = getDesktopPhantombot();
         if(bridge) {
-          const [{mountProviderModelEditor}, {createContactVoicePicker}] = await Promise.all([
+          const [{mountProviderModelEditor, mountVoiceOnlyEditor}, {createContactVoicePicker}] = await Promise.all([
             import('@lib/phantomchat/provider-contact-editor'), import('@lib/phantomchat/voice-models')
           ]);
           const title = document.createElement('span');
@@ -137,14 +137,21 @@ export default class AppEditContactTab extends SliderSuperTab {
           providerSection = new SettingSection({name: title});
           const modelSection = providerSection;
           const voice = await createContactVoicePicker(contactPubkey).catch((): undefined => undefined);
-          void mountProviderModelEditor(modelSection.content, providerPersona, (method, params) => bridge.call(method, params), {voice})
-          .then((editor) => {
-            if(!editor) {
-              voice?.destroy();
-              modelSection.container.remove();
-            } else this.middlewareHelper.get().onDestroy(() => editor.destroy());
+          let why = 'no answer';
+          // The Voice ID never goes down with the provider editor: without
+          // one it mounts alone, with its own Save and the reason.
+          const fallback = (reason: string) => {
+            if(!voice) return modelSection.container.remove();
+            const alone = mountVoiceOnlyEditor(modelSection.content, voice, reason);
+            this.middlewareHelper.get().onDestroy(() => alone.destroy());
+          };
+          void mountProviderModelEditor(modelSection.content, providerPersona, (method, params) => bridge.call(method, params), {
+            voice, onUnavailable: (reason) => {why = reason;}
           })
-          .catch(() => modelSection.container.remove());
+          .then((editor) => {
+            if(!editor) fallback(why);
+            else this.middlewareHelper.get().onDestroy(() => editor.destroy());
+          }, (err: unknown) => fallback(err instanceof Error && err.message ? err.message : why));
         }
       }
 
